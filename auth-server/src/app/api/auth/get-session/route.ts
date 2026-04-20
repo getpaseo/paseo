@@ -71,8 +71,23 @@ export async function GET(request: NextRequest) {
       if (u.banned) {
         return NextResponse.json({ error: "Account is suspended" }, { status: 403 });
       }
+      // Better Auth's returned `session` object omits the raw `token` field
+      // for security. Fetch the row from the DB by id so the browser client
+      // can pass it as a bearer to non-cookie transports (e.g. the Colyseus
+      // WebSocket, which is cross-origin and doesn't forward the cookie).
+      const sessionId = (result.session as { id?: string } | null)?.id ?? null;
+      let sessionToken: string | null = null;
+      if (sessionId) {
+        const row = await db.query.session.findFirst({
+          where: eq(session.id, sessionId),
+        });
+        sessionToken = row?.token ?? null;
+      }
       return NextResponse.json({
-        session: result.session,
+        session: {
+          ...(result.session as Record<string, unknown>),
+          ...(sessionToken ? { token: sessionToken } : {}),
+        },
         user: {
           id: u.id,
           name: u.name,

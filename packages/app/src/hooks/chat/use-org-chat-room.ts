@@ -41,7 +41,10 @@ export function useOrgChatRoom(
   const qc = useQueryClient();
 
   useEffect(() => {
-    if (!orgId || !sessionToken) {
+    // Web uses cookie auth → sessionToken is intentionally "". Treat `null`
+    // as "not authenticated yet" and anything else (including empty string)
+    // as authenticated.
+    if (!orgId || sessionToken === null) {
       setState("idle");
       return;
     }
@@ -141,8 +144,7 @@ function wireRoomEvents(
     if (self && msg.userId === self) return;
     const active = useChatStore.getState().activeChannelId;
     if (active === msg.channelId) return;
-    const mentioned =
-      self !== null && extractMentionUserIdsClient(msg.content).includes(self);
+    const mentioned = self !== null && extractMentionUserIdsClient(msg.content).includes(self);
     bumpChannelUnread(ctx.qc, {
       orgId,
       channelId: msg.channelId,

@@ -1,20 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq, inArray, or } from "drizzle-orm";
-import {
-  channel,
-  channelMember,
-  mention,
-  message,
-  reaction,
-} from "@/db/schema";
+import { channel, channelMember, mention, message, reaction } from "@/db/schema";
 import { setupTestDb, resetDb, teardownTestDb, type TestDb } from "@/test/db";
-import {
-  addOrgMember,
-  createTestChannel,
-  createTestOrg,
-  createTestUser,
-} from "@/test/fixtures";
+import { addOrgMember, createTestChannel, createTestOrg, createTestUser } from "@/test/fixtures";
 
 let db: TestDb;
 
@@ -143,10 +132,7 @@ describe("message schema", () => {
       parentId,
       content: "reply",
     });
-    const replies = await db
-      .select()
-      .from(message)
-      .where(eq(message.parentId, parentId));
+    const replies = await db.select().from(message).where(eq(message.parentId, parentId));
     expect(replies).toHaveLength(1);
     expect(replies[0]?.id).toBe(replyId);
   });
@@ -202,9 +188,9 @@ describe("reaction & mention schema", () => {
       content: `hey <@${other.id}>`,
     });
     await db.insert(mention).values({ messageId: msgId, userId: other.id });
-    await expect(
-      db.insert(mention).values({ messageId: msgId, userId: other.id }),
-    ).rejects.toThrow(/duplicate key|mention_pkey/);
+    await expect(db.insert(mention).values({ messageId: msgId, userId: other.id })).rejects.toThrow(
+      /duplicate key|mention_pkey/,
+    );
   });
 });
 

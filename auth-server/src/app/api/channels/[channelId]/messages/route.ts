@@ -2,11 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest, unauthorized } from "@/lib/api-auth";
 import { db } from "@/lib/db";
 import { chatErrorResponse } from "@/lib/chat/http";
-import {
-  listMessages,
-  sendMessage,
-  type MessageAttachmentInput,
-} from "@/lib/chat/messages";
+import { listMessages, sendMessage, type MessageAttachmentInput } from "@/lib/chat/messages";
 
 export async function GET(
   request: NextRequest,

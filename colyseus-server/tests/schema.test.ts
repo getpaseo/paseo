@@ -135,7 +135,7 @@ describe("QueuedMessage", () => {
     state.messageQueue.push(m2);
 
     // Remove sent messages (convert to array, filter, rebuild)
-    const remaining = Array.from(state.messageQueue).filter(m => m.status !== "sent");
+    const remaining = Array.from(state.messageQueue).filter((m) => m.status !== "sent");
     while (state.messageQueue.length > 0) state.messageQueue.pop();
     for (const m of remaining) state.messageQueue.push(m);
 

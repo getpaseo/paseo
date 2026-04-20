@@ -67,13 +67,7 @@ export function SearchPanel({
   );
 }
 
-export function SearchResultRow({
-  hit,
-  onPress,
-}: {
-  hit: SearchHit;
-  onPress: () => void;
-}) {
+export function SearchResultRow({ hit, onPress }: { hit: SearchHit; onPress: () => void }) {
   const { theme } = useUnistyles();
   const Icon = hit.channelKind === "private" ? Lock : hit.channelKind === "dm" ? User : Hash;
   return (
@@ -83,9 +77,7 @@ export function SearchResultRow({
         <Text style={styles.rowChannel} numberOfLines={1}>
           {hit.channelName ?? "Direct message"}
         </Text>
-        <Text style={styles.rowDate}>
-          {new Date(hit.createdAt).toLocaleDateString()}
-        </Text>
+        <Text style={styles.rowDate}>{new Date(hit.createdAt).toLocaleDateString()}</Text>
       </View>
       <Text style={styles.rowAuthor} numberOfLines={1}>
         {hit.authorName}

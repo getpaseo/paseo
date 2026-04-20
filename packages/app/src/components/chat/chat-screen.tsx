@@ -16,6 +16,7 @@ import { useWindowControlsPadding } from "@/utils/desktop-window";
 import {
   useChannelMembersQuery,
   useChannelsQuery,
+  useDeleteChannelMutation,
   useDmsQuery,
   useMarkChannelReadMutation,
   useOpenDmMutation,
@@ -23,9 +24,11 @@ import {
 import { useOrgMembersQuery } from "@/hooks/chat/use-org-members";
 import { selectOrgPresence } from "@/stores/chat-store";
 import { useOrgChatRoom } from "@/hooks/chat/use-org-chat-room";
+import { useChatNotifications } from "@/hooks/chat/use-chat-notifications";
 import { useChatStore } from "@/stores/chat-store";
 import type { ChatMessage } from "@/api/chat";
 import { ChannelSidebar, type DmEntry } from "./channel-sidebar";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ChannelMessages } from "./channel-messages";
 import { ThreadPanel } from "./thread-panel";
 import { CreateChannelModal } from "./create-channel-modal";
@@ -36,7 +39,18 @@ import type { SearchHit } from "@/api/chat";
 
 export function ChatScreen() {
   const orgId = useActiveOrgId();
-  const { session, signIn, isSigningIn, isLoading: authLoading } = useAuthSession();
+  const {
+    session,
+    signIn,
+    isSigningIn,
+    isLoading: authLoading,
+    isAuthenticated,
+  } = useAuthSession();
+  // On web, Better Auth authenticates via cookies — `session.sessionToken` is
+  // intentionally empty. Use `isAuthenticated` for "has session" gating; keep
+  // `sessionToken` for passing the bearer to HTTP helpers (empty string on
+  // web is correct; authServerFetch just skips the Authorization header and
+  // `credentials: "include"` carries the cookie).
   const sessionToken = session?.sessionToken ?? null;
   const currentUserId = session?.user?.userId ?? null;
   const isCompact = useIsCompactFormFactor();
@@ -49,7 +63,36 @@ export function ChatScreen() {
   const orgMembersQuery = useOrgMembersQuery(orgId ?? undefined, sessionToken);
   const openDmMutation = useOpenDmMutation(sessionToken);
   const chatRoom = useOrgChatRoom(orgId, sessionToken, currentUserId);
+  useChatNotifications({
+    room: chatRoom.room,
+    currentUserId,
+    orgId,
+    channels: channelsQuery.data ?? [],
+    dms: dmsQuery.data ?? [],
+    members: orgMembersQuery.data ?? [],
+  });
   const markRead = useMarkChannelReadMutation(sessionToken);
+  const deleteChannelMutation = useDeleteChannelMutation(sessionToken);
+  const [channelPendingDelete, setChannelPendingDelete] =
+    useState<import("@/api/chat").ChatChannel | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const handleDeleteChannel = (c: import("@/api/chat").ChatChannel) => {
+    if (c.kind === "dm") return;
+    setDeleteError(null);
+    setChannelPendingDelete(c);
+  };
+  const handleConfirmDeleteChannel = async () => {
+    const c = channelPendingDelete;
+    if (!c) return;
+    try {
+      await deleteChannelMutation.mutateAsync({ channelId: c.id, orgId: c.orgId });
+      if (selectedChannelId === c.id) setSelectedChannelId(null);
+      setChannelPendingDelete(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to delete channel";
+      setDeleteError(msg);
+    }
+  };
   const setActiveChannelId = useChatStore((s) => s.setActiveChannelId);
   const presenceByUser = useChatStore(selectOrgPresence(orgId ?? ""));
 
@@ -58,7 +101,7 @@ export function ChatScreen() {
     const members = orgMembersQuery.data ?? [];
     // Map 1:1 DMs to the other participant via server-provided `dmPeerUserIds`.
     // Group DMs (2+ peers) are kept as standalone entries keyed by channel id.
-    const existingByUserId = new Map<string, typeof dms[number]>();
+    const existingByUserId = new Map<string, (typeof dms)[number]>();
     const groupDms: typeof dms = [];
     for (const c of dms) {
       const peers = c.dmPeerUserIds ?? [];
@@ -186,7 +229,7 @@ export function ChatScreen() {
   // session hasn't landed yet (including briefly during boot / post-F5).
   useEffect(() => {
     setActiveChannelId(selectedChannelId);
-    if (selectedChannelId && orgId && sessionToken) {
+    if (selectedChannelId && orgId && sessionToken !== null) {
       markRead.mutate({ channelId: selectedChannelId, orgId });
     }
     return () => setActiveChannelId(null);
@@ -200,13 +243,13 @@ export function ChatScreen() {
   // leaving `sessionToken` briefly null even for logged-in users). Avoids the
   // "Sign in to chat" CTA from flashing for ~300ms before messages load.
   if (authLoading) return <ChatBootSkeleton />;
-  if (!sessionToken) return <SignInToChatEmpty onSignIn={() => signIn(undefined)} isSigningIn={isSigningIn} />;
+  if (!isAuthenticated)
+    return <SignInToChatEmpty onSignIn={() => signIn(undefined)} isSigningIn={isSigningIn} />;
   // Defer the chat UI until the member roster has loaded so message bubbles
   // can show real names/avatars instead of falling back to user IDs for a
   // flash on boot.
   const chatBooting =
-    orgMembersQuery.isPending ||
-    (orgMembersQuery.isFetching && !orgMembersQuery.data);
+    orgMembersQuery.isPending || (orgMembersQuery.isFetching && !orgMembersQuery.data);
   if (chatBooting) return <ChatBootSkeleton />;
 
   const modals = (
@@ -233,6 +276,26 @@ export function ChatScreen() {
         onClose={() => setMentionsOpen(false)}
         onPickHit={handlePickHit}
       />
+      <ConfirmDialog
+        visible={!!channelPendingDelete}
+        title={
+          channelPendingDelete?.name
+            ? `Delete #${channelPendingDelete.name}?`
+            : "Delete channel?"
+        }
+        description={
+          deleteError ??
+          "This permanently removes the channel and all of its messages. This action cannot be undone."
+        }
+        confirmLabel="Delete"
+        destructive
+        isPending={deleteChannelMutation.isPending}
+        onCancel={() => {
+          setChannelPendingDelete(null);
+          setDeleteError(null);
+        }}
+        onConfirm={handleConfirmDeleteChannel}
+      />
     </Fragment>
   );
   const createModal = modals;
@@ -242,62 +305,63 @@ export function ChatScreen() {
     if (threadParent && selectedChannel) {
       return (
         <Fragment>
-        <View style={[styles.mobileWrap, { paddingTop: topOffset }]}>
-          <BackHeader onBack={() => setThreadParent(null)} label="Thread" />
-          <ThreadPanel
-            parent={threadParent}
-            channel={selectedChannel}
-            members={membersQuery.data ?? []}
-            channels={channelsQuery.data ?? []}
-            sessionToken={sessionToken}
-            currentUserId={currentUserId}
-            chatRoom={chatRoom}
-            onClose={() => setThreadParent(null)}
-          />
-        </View>
-        {createModal}
+          <View style={[styles.mobileWrap, { paddingTop: topOffset }]}>
+            <BackHeader onBack={() => setThreadParent(null)} label="Thread" />
+            <ThreadPanel
+              parent={threadParent}
+              channel={selectedChannel}
+              members={membersQuery.data ?? []}
+              channels={channelsQuery.data ?? []}
+              sessionToken={sessionToken}
+              currentUserId={currentUserId}
+              chatRoom={chatRoom}
+              onClose={() => setThreadParent(null)}
+            />
+          </View>
+          {createModal}
         </Fragment>
       );
     }
     if (!selectedChannel) {
       return (
         <Fragment>
-        <View style={[styles.mobileWrap, { paddingTop: topOffset }]}>
-          <ChannelSidebar
-            channels={channelsQuery.data ?? []}
-            dmEntries={dmEntries}
-            selectedChannelId={null}
-            mentionsCount={mentionsCount}
-            onSelectChannel={setSelectedChannelId}
-            onOpenDm={handleOpenDm}
-            onCreateChannel={() => setCreateOpen(true)}
-            onOpenSearch={() => setSearchOpen(true)}
-            onOpenMentions={() => setMentionsOpen(true)}
-          />
-        </View>
-        {createModal}
+          <View style={[styles.mobileWrap, { paddingTop: topOffset }]}>
+            <ChannelSidebar
+              channels={channelsQuery.data ?? []}
+              dmEntries={dmEntries}
+              selectedChannelId={null}
+              mentionsCount={mentionsCount}
+              onSelectChannel={setSelectedChannelId}
+              onOpenDm={handleOpenDm}
+              onCreateChannel={() => setCreateOpen(true)}
+              onOpenSearch={() => setSearchOpen(true)}
+              onOpenMentions={() => setMentionsOpen(true)}
+              onDeleteChannel={handleDeleteChannel}
+            />
+          </View>
+          {createModal}
         </Fragment>
       );
     }
     return (
       <Fragment>
-      <View style={[styles.mobileWrap, { paddingTop: topOffset }]}>
-        <BackHeader
-          onBack={() => setSelectedChannelId(null)}
-          label={channelHeader(selectedChannel)}
-        />
-        <ChannelMessages
-          channel={selectedChannel}
-          sessionToken={sessionToken}
-          currentUserId={currentUserId}
-          chatRoom={chatRoom}
-          onOpenThread={setThreadParent}
-          highlightedMessageId={
-            selectedChannel.id === selectedChannelId ? highlightedMessageId : null
-          }
-        />
-      </View>
-      {createModal}
+        <View style={[styles.mobileWrap, { paddingTop: topOffset }]}>
+          <BackHeader
+            onBack={() => setSelectedChannelId(null)}
+            label={channelHeader(selectedChannel)}
+          />
+          <ChannelMessages
+            channel={selectedChannel}
+            sessionToken={sessionToken}
+            currentUserId={currentUserId}
+            chatRoom={chatRoom}
+            onOpenThread={setThreadParent}
+            highlightedMessageId={
+              selectedChannel.id === selectedChannelId ? highlightedMessageId : null
+            }
+          />
+        </View>
+        {createModal}
       </Fragment>
     );
   }
@@ -305,9 +369,7 @@ export function ChatScreen() {
   // Desktop/tablet: 2 or 3 panes.
   return (
     <View style={[styles.wideWrap, { paddingTop: topOffset }]}>
-      <View
-        style={channelsPaneOpen ? styles.sidebarPane : styles.sidebarPaneCollapsed}
-      >
+      <View style={channelsPaneOpen ? styles.sidebarPane : styles.sidebarPaneCollapsed}>
         <ChannelSidebar
           channels={channelsQuery.data ?? []}
           dmEntries={dmEntries}
@@ -318,6 +380,7 @@ export function ChatScreen() {
           onCreateChannel={() => setCreateOpen(true)}
           onOpenSearch={() => setSearchOpen(true)}
           onOpenMentions={() => setMentionsOpen(true)}
+          onDeleteChannel={handleDeleteChannel}
           collapsed={!channelsPaneOpen}
         />
       </View>
@@ -397,10 +460,7 @@ function ChatBootSkeleton() {
   return (
     <View style={styles.skeletonWrap}>
       <Animated.View
-        style={[
-          styles.skeletonSpinner,
-          { opacity: pulse, borderColor: theme.colors.brandMagenta },
-        ]}
+        style={[styles.skeletonSpinner, { opacity: pulse, borderColor: theme.colors.brandMagenta }]}
       />
       <Text style={styles.skeletonLabel}>Loading chat…</Text>
       <View style={styles.skeletonLines}>
@@ -435,8 +495,7 @@ function SignInToChatEmpty({
         </View>
         <Text style={styles.signInTitle}>Sign in to chat</Text>
         <Text style={styles.signInSubtitle}>
-          Connect your account to message teammates, join channels, and get
-          mention notifications.
+          Connect your account to message teammates, join channels, and get mention notifications.
         </Text>
         <Pressable
           accessibilityRole="button"

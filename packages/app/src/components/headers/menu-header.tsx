@@ -47,13 +47,9 @@ export function SidebarMenuToggle({
   const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
-  const desktopAgentListCollapsed = usePanelStore(
-    (state) => state.desktop.agentListCollapsed,
-  );
+  const desktopAgentListCollapsed = usePanelStore((state) => state.desktop.agentListCollapsed);
   const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
-  const toggleAgentListCollapsed = usePanelStore(
-    (state) => state.toggleAgentListCollapsed,
-  );
+  const toggleAgentListCollapsed = usePanelStore((state) => state.toggleAgentListCollapsed);
   const toggleShortcutKeys = getShortcutOs() === "mac" ? ["mod", "B"] : ["mod", "."];
 
   const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;

@@ -96,10 +96,10 @@ export class ChatApiClient {
   }
 
   async validateSession(sessionToken: string): Promise<SessionUser> {
-    const body = await this.request<{ user: SessionUser }>(
-      "/api/auth/get-session",
-      { method: "GET", bearer: sessionToken },
-    );
+    const body = await this.request<{ user: SessionUser }>("/api/auth/get-session", {
+      method: "GET",
+      bearer: sessionToken,
+    });
     return body.user;
   }
 
@@ -126,9 +126,7 @@ export class ChatApiClient {
     return body.channels;
   }
 
-  async getChannelMembers(
-    channelId: string,
-  ): Promise<Array<{ userId: string; role: string }>> {
+  async getChannelMembers(channelId: string): Promise<Array<{ userId: string; role: string }>> {
     const body = await this.request<{ members: Array<{ userId: string; role: string }> }>(
       `/api/internal/chat/channels/${encodeURIComponent(channelId)}/members`,
       { method: "GET", internal: true },
@@ -175,10 +173,7 @@ export class ChatApiClient {
     return body.message;
   }
 
-  async deleteMessage(params: {
-    userId: string;
-    messageId: string;
-  }): Promise<void> {
+  async deleteMessage(params: { userId: string; messageId: string }): Promise<void> {
     await this.request(
       `/api/internal/chat/messages/${encodeURIComponent(
         params.messageId,
@@ -187,11 +182,7 @@ export class ChatApiClient {
     );
   }
 
-  async addReaction(params: {
-    userId: string;
-    messageId: string;
-    emoji: string;
-  }): Promise<void> {
+  async addReaction(params: { userId: string; messageId: string; emoji: string }): Promise<void> {
     await this.request(
       `/api/internal/chat/messages/${encodeURIComponent(params.messageId)}/reactions`,
       {

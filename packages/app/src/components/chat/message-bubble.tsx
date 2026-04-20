@@ -9,21 +9,9 @@ import {
   View,
 } from "react-native";
 import Markdown from "react-native-markdown-display";
-import {
-  FileIcon,
-  MessageSquare,
-  Pencil,
-  Pin,
-  SmilePlus,
-  Trash2,
-} from "lucide-react-native";
+import { FileIcon, MessageSquare, Pencil, Pin, SmilePlus, Trash2 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type {
-  ChatChannel,
-  ChatMember,
-  ChatMessage,
-  ChatReactionGroup,
-} from "@/api/chat";
+import type { ChatChannel, ChatMember, ChatMessage, ChatReactionGroup } from "@/api/chat";
 import { isNative, isWeb } from "@/constants/platform";
 import { Avatar } from "./avatar";
 import { ChatEmojiPicker } from "./emoji-picker.web";
@@ -123,8 +111,8 @@ export const MessageBubble = memo(function MessageBubble({
       pageX?: number;
       pageY?: number;
     };
-    const x = typeof ne.clientX === "number" ? ne.clientX : ne.pageX ?? null;
-    const y = typeof ne.clientY === "number" ? ne.clientY : ne.pageY ?? null;
+    const x = typeof ne.clientX === "number" ? ne.clientX : (ne.pageX ?? null);
+    const y = typeof ne.clientY === "number" ? ne.clientY : (ne.pageY ?? null);
     if (x !== null && y !== null) {
       setPickerAnchor({ x: x - 10, y: y - 10, width: 20, height: 20 });
     } else {
@@ -153,27 +141,14 @@ export const MessageBubble = memo(function MessageBubble({
       (isAuthor && onDelete)
     );
 
-  const rowWebProps = (isWeb
-    ? { dataSet: { hubcodeRow: "1" } }
-    : {}) as object;
-  const toolbarWebProps = (isWeb
-    ? { dataSet: { hubcodeToolbar: "1" } }
-    : {}) as object;
-  const threadWebProps = (isWeb
-    ? { dataSet: { hubcodeThread: "1" } }
-    : {}) as object;
-  const threadCountWebProps = (isWeb
-    ? { dataSet: { hubcodeThreadCount: "1" } }
-    : {}) as object;
-  const threadCtaWebProps = (isWeb
-    ? { dataSet: { hubcodeThreadCta: "1" } }
-    : {}) as object;
+  const rowWebProps = (isWeb ? { dataSet: { hubcodeRow: "1" } } : {}) as object;
+  const toolbarWebProps = (isWeb ? { dataSet: { hubcodeToolbar: "1" } } : {}) as object;
+  const threadWebProps = (isWeb ? { dataSet: { hubcodeThread: "1" } } : {}) as object;
+  const threadCountWebProps = (isWeb ? { dataSet: { hubcodeThreadCount: "1" } } : {}) as object;
+  const threadCtaWebProps = (isWeb ? { dataSet: { hubcodeThreadCta: "1" } } : {}) as object;
 
   return (
-    <View
-      {...rowWebProps}
-      style={[styles.row, highlighted && styles.rowHighlighted]}
-    >
+    <View {...rowWebProps} style={[styles.row, highlighted && styles.rowHighlighted]}>
       <Avatar
         name={author?.name ?? displayName}
         imageUrl={author?.image ?? null}
@@ -194,9 +169,7 @@ export const MessageBubble = memo(function MessageBubble({
             <View style={styles.authorSkeleton} />
           )}
           <Text style={styles.time}>{timeLabel}</Text>
-          {message.editedAt && !isDeleted ? (
-            <Text style={styles.edited}>(edited)</Text>
-          ) : null}
+          {message.editedAt && !isDeleted ? <Text style={styles.edited}>(edited)</Text> : null}
         </View>
         {isDeleted ? (
           <Text style={styles.deleted}>This message was deleted</Text>
@@ -252,9 +225,7 @@ export const MessageBubble = memo(function MessageBubble({
           <ReactionsRow
             reactions={reactions}
             currentUserId={currentUserId}
-            onToggleReaction={(emoji, op) =>
-              onToggleReaction(message.id, emoji, op)
-            }
+            onToggleReaction={(emoji, op) => onToggleReaction(message.id, emoji, op)}
             onOpenPicker={openEmojiPicker}
           />
         ) : null}
@@ -350,11 +321,7 @@ export const MessageBubble = memo(function MessageBubble({
   );
 });
 
-function AttachmentView({
-  attachment,
-}: {
-  attachment: ChatMessage["attachments"][number];
-}) {
+function AttachmentView({ attachment }: { attachment: ChatMessage["attachments"][number] }) {
   const isImage = attachment.mimeType.startsWith("image/");
   const isVideo = attachment.mimeType.startsWith("video/");
 

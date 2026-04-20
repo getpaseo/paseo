@@ -73,10 +73,7 @@ export async function removeReaction(
     );
 }
 
-export async function listReactions(
-  db: DbLike,
-  messageId: string,
-): Promise<ReactionGroup[]> {
+export async function listReactions(db: DbLike, messageId: string): Promise<ReactionGroup[]> {
   const rows = await db
     .select({
       emoji: reaction.emoji,
@@ -99,10 +96,7 @@ export async function listReactions(
   }));
 }
 
-export async function countReactions(
-  db: DbLike,
-  messageId: string,
-): Promise<number> {
+export async function countReactions(db: DbLike, messageId: string): Promise<number> {
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(reaction)

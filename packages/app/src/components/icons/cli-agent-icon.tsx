@@ -2,6 +2,7 @@ import { Image, type ImageSourcePropType } from "react-native";
 import { Asset } from "expo-asset";
 import { SvgUri } from "react-native-svg";
 import { SquareTerminal } from "lucide-react-native";
+import { isWeb } from "@/constants/platform";
 
 interface CliAgentIconProps {
   icon?: string;
@@ -84,6 +85,20 @@ export function CliAgentIcon({ icon, size = 16, color }: CliAgentIconProps) {
   }
 
   if (asset.kind === "svg") {
+    // On web (RNW), <Image> can render SVG files directly because metro
+    // bundles them with an accessible URI — use that path for reliability.
+    // `Asset.fromModule(...).uri` has been returning undefined in some cases,
+    // which made SVG icons (Codex, Cursor, etc.) fall back to the generic
+    // terminal icon.
+    if (isWeb) {
+      return (
+        <Image
+          source={asset.source}
+          style={{ width: size, height: size }}
+          resizeMode="contain"
+        />
+      );
+    }
     let uri: string | undefined;
     if (typeof asset.source === "string") {
       uri = asset.source;

@@ -106,9 +106,7 @@ export function Composer({
     }
   };
 
-  const handleSelection = (
-    e: NativeSyntheticEvent<TextInputSelectionChangeEventData>,
-  ) => {
+  const handleSelection = (e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
     setSelection(e.nativeEvent.selection);
   };
 
@@ -153,9 +151,7 @@ export function Composer({
     setSelection({ start: urlStart, end: urlStart + 3 });
   }, [selection, value]);
 
-  const handleKeyPress = (
-    e: NativeSyntheticEvent<TextInputKeyPressEventData>,
-  ) => {
+  const handleKeyPress = (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
     const native = e.nativeEvent as TextInputKeyPressEventData & {
       shiftKey?: boolean;
       metaKey?: boolean;
@@ -219,9 +215,7 @@ export function Composer({
   };
 
   const canSend =
-    (value.trim().length > 0 || readyAttachments.length > 0) &&
-    !disabled &&
-    !anyPendingUploading;
+    (value.trim().length > 0 || readyAttachments.length > 0) && !disabled && !anyPendingUploading;
 
   return (
     <View style={styles.container}>
@@ -250,10 +244,7 @@ export function Composer({
           {pendingUploads.map((p) => (
             <View
               key={p.localId}
-              style={[
-                styles.uploadChip,
-                p.status === "error" && styles.uploadChipError,
-              ]}
+              style={[styles.uploadChip, p.status === "error" && styles.uploadChipError]}
             >
               <Text style={styles.uploadName} numberOfLines={1}>
                 {p.filename}
@@ -262,7 +253,7 @@ export function Composer({
                 {p.status === "uploading"
                   ? "Uploading…"
                   : p.status === "error"
-                    ? p.error ?? "Failed"
+                    ? (p.error ?? "Failed")
                     : "Ready"}
               </Text>
               {onRemoveUpload ? (
@@ -314,10 +305,7 @@ export function Composer({
           <>
             <View style={styles.divider} />
             <View style={styles.uploadMenuWrap}>
-              <ToolbarBtn
-                onPress={() => setUploadMenuOpen((p) => !p)}
-                label="Attach"
-              >
+              <ToolbarBtn onPress={() => setUploadMenuOpen((p) => !p)} label="Attach">
                 <Paperclip size={14} color={theme.colors.foregroundMuted} />
               </ToolbarBtn>
               {uploadMenuOpen ? (
@@ -336,13 +324,8 @@ export function Composer({
                         style={styles.uploadMenuItem}
                         accessibilityRole="button"
                       >
-                        <ImageIcon
-                          size={14}
-                          color={theme.colors.foregroundMuted}
-                        />
-                        <Text style={styles.uploadMenuLabel}>
-                          Image or video
-                        </Text>
+                        <ImageIcon size={14} color={theme.colors.foregroundMuted} />
+                        <Text style={styles.uploadMenuLabel}>Image or video</Text>
                       </Pressable>
                     ) : null}
                     {onPickFile ? (
@@ -354,10 +337,7 @@ export function Composer({
                         style={styles.uploadMenuItem}
                         accessibilityRole="button"
                       >
-                        <FileUp
-                          size={14}
-                          color={theme.colors.foregroundMuted}
-                        />
+                        <FileUp size={14} color={theme.colors.foregroundMuted} />
                         <Text style={styles.uploadMenuLabel}>File</Text>
                       </Pressable>
                     ) : null}

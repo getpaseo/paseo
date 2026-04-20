@@ -115,7 +115,13 @@ import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/l
 import { isWeb, isNative } from "@/constants/platform";
 import { useBrowserLaunchListener } from "@/hooks/use-browser-launch-listener";
 import { useCliAgentLaunch } from "@/hooks/use-cli-agent-launch";
-import type { CliProviderId } from "@server/shared/cli-provider-registry";
+import { useCliAgents } from "@/hooks/use-cli-agents";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import {
+  listCliProviders,
+  type CliProviderDefinition,
+  type CliProviderId,
+} from "@server/shared/cli-provider-registry";
 
 const TERMINALS_QUERY_STALE_TIME = 5_000;
 const NEW_TAB_AGENT_OPTION_ID = "__new_tab_agent__";
@@ -1083,6 +1089,39 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   );
 
   const { launch: launchCliAgent } = useCliAgentLaunch(normalizedServerId);
+  const { config: daemonConfig } = useDaemonConfig(normalizedServerId);
+  const { installedAgents: installedCliAgents } = useCliAgents(normalizedServerId);
+
+  const cliProviderOptions = useMemo<CliProviderDefinition[]>(() => {
+    const overrides = daemonConfig?.agents?.cliProviders ?? {};
+    const providers = listCliProviders({ overrides, includeDisabled: false });
+    const installedIds = new Set(installedCliAgents.map((agent) => agent.id));
+    return providers.filter((provider) => installedIds.has(provider.id));
+  }, [daemonConfig, installedCliAgents]);
+
+  const handleLaunchCliAgentFromMenu = useCallback(
+    (providerId: string) => {
+      void (async () => {
+        try {
+          const result = await launchCliAgent({
+            providerId: providerId as CliProviderId,
+            cwd: normalizedWorkspaceId,
+          });
+          if (persistenceKey) {
+            const tabId = useWorkspaceLayoutStore
+              .getState()
+              .openTab(persistenceKey, { kind: "terminal", terminalId: result.terminalId });
+            if (tabId) {
+              useWorkspaceLayoutStore.getState().focusTab(persistenceKey, tabId);
+            }
+          }
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : String(err));
+        }
+      })();
+    },
+    [launchCliAgent, normalizedWorkspaceId, persistenceKey, toast],
+  );
 
   const launchWorkspaceCliAgentIfDefault = useCallback((): boolean => {
     if (workspaceDescriptor?.agentMode !== "cli" || !workspaceDescriptor?.agentProvider) {
@@ -2296,6 +2335,8 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
               onNewBrowserTab={handleLaunchBrowser}
               onSplitRight={() => {}}
               onSplitDown={() => {}}
+              onLaunchCliAgent={handleLaunchCliAgentFromMenu}
+              cliProviderOptions={cliProviderOptions}
               showPaneSplitActions={false}
             />
           ) : null}
@@ -2333,6 +2374,8 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                     onFocusPane={handleFocusPane}
                     onNewTerminalTab={handleCreateTerminal}
                     onNewBrowserTab={handleLaunchBrowser}
+                    onLaunchCliAgent={handleLaunchCliAgentFromMenu}
+                    cliProviderOptions={cliProviderOptions}
                     onSplitPane={handleSplitPane}
                     onSplitPaneEmpty={handleCreateDraftSplit}
                     onMoveTabToPane={handleMoveTabToPane}

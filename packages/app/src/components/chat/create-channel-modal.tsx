@@ -41,9 +41,7 @@ export function CreateChannelModal({
   const orgMembersQuery = useOrgMembersQuery(orgId, sessionToken);
 
   const invitables = useMemo(() => {
-    const list = (orgMembersQuery.data ?? []).filter(
-      (m) => m.user && m.userId !== currentUserId,
-    );
+    const list = (orgMembersQuery.data ?? []).filter((m) => m.user && m.userId !== currentUserId);
     if (!memberQuery.trim()) return list;
     const q = memberQuery.trim().toLowerCase();
     return list.filter((m) => {
@@ -133,9 +131,7 @@ export function CreateChannelModal({
             style={styles.input}
             focusBorderColor={theme.colors.brandMagenta}
           />
-          <Text style={styles.hint}>
-            Letters, numbers and hyphens only. Spaces become hyphens.
-          </Text>
+          <Text style={styles.hint}>Letters, numbers and hyphens only. Spaces become hyphens.</Text>
         </Field>
 
         <Field label="Topic">
@@ -233,10 +229,7 @@ export function CreateChannelModal({
           <Pressable
             onPress={handleSubmit}
             disabled={!name.trim() || submitting}
-            style={[
-              styles.submitBtn,
-              (!name.trim() || submitting) && styles.submitBtnDisabled,
-            ]}
+            style={[styles.submitBtn, (!name.trim() || submitting) && styles.submitBtnDisabled]}
             accessibilityRole="button"
           >
             <Text style={styles.submitText}>{submitting ? "Creating…" : "Create"}</Text>
@@ -247,13 +240,7 @@ export function CreateChannelModal({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>

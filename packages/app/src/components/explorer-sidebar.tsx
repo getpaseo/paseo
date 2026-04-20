@@ -356,7 +356,7 @@ function SidebarContent({
   const resolvedTab: ExplorerTab = !isGit && activeTab === "changes" ? "files" : activeTab;
 
   return (
-    <View style={[styles.sidebarContent, { pointerEvents: "auto" }]}>
+    <View style={[styles.sidebarContent, { pointerEvents: "auto", paddingTop: padding.top }]}>
       {/* Header with tabs and close button */}
       <View style={[styles.header, { paddingRight: padding.right }]} testID="explorer-header">
         <TitlebarDragRegion />

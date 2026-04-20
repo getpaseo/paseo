@@ -1,8 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  LocalstackContainer,
-  type StartedLocalStackContainer,
-} from "@testcontainers/localstack";
+import { LocalstackContainer, type StartedLocalStackContainer } from "@testcontainers/localstack";
 import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import {
   ALLOWED_MIME_EXACT,
@@ -75,9 +72,7 @@ describe("presigned PUT against LocalStack", () => {
       300,
     );
     expect(presigned.url).toContain(BUCKET);
-    expect(presigned.key).toMatch(
-      /^orgs\/org_acme\/u\/user_alice\/\d+-[a-f0-9-]+\.png$/,
-    );
+    expect(presigned.key).toMatch(/^orgs\/org_acme\/u\/user_alice\/\d+-[a-f0-9-]+\.png$/);
 
     const body = Buffer.alloc(1024, 0xab);
     const res = await fetch(presigned.url, {
@@ -88,9 +83,7 @@ describe("presigned PUT against LocalStack", () => {
     expect(res.status).toBe(200);
 
     // Confirm the object is there.
-    const head = await s3.send(
-      new HeadObjectCommand({ Bucket: BUCKET, Key: presigned.key }),
-    );
+    const head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: presigned.key }));
     expect(head.ContentLength).toBe(1024);
     expect(head.ContentType).toBe("image/png");
   });

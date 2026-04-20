@@ -50,9 +50,7 @@ export async function searchMessages(
   const tsqRaw = sql`websearch_to_tsquery('simple', ${q})`;
   const tsvExpr = sql`to_tsvector('simple', ${message.content})`;
   const ftsMatch = sql`${tsvExpr} @@ ${tsqRaw}`;
-  const ilikeMatch = sql`${message.content} ILIKE ${
-    "%" + q.replace(/[%_]/g, "") + "%"
-  }`;
+  const ilikeMatch = sql`${message.content} ILIKE ${"%" + q.replace(/[%_]/g, "") + "%"}`;
 
   const conditions = [
     eq(channel.orgId, params.orgId),
@@ -78,10 +76,7 @@ export async function searchMessages(
     .innerJoin(channel, eq(channel.id, message.channelId))
     .innerJoin(userTable, eq(userTable.id, message.userId))
     .where(and(...conditions))
-    .orderBy(
-      desc(sql`coalesce(ts_rank(${tsvExpr}, ${tsqRaw}), 0)`),
-      desc(message.createdAt),
-    )
+    .orderBy(desc(sql`coalesce(ts_rank(${tsvExpr}, ${tsqRaw}), 0)`), desc(message.createdAt))
     .limit(limit);
 
   return rows.map((r) => ({

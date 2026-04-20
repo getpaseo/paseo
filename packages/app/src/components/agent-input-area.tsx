@@ -1,8 +1,5 @@
 import { View, Pressable, Text, ActivityIndicator } from "react-native";
-import {
-  getSharedSessionAuthor,
-  notifyChatMessageAuthored,
-} from "@/stores/shared-session-store";
+import { getSharedSessionAuthor, notifyChatMessageAuthored } from "@/stores/shared-session-store";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";

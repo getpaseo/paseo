@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "NEXT_IGNORE_INCORRECT_LOCKFILE=1 next dev -p 3002",
+    "dev": "NEXT_IGNORE_INCORRECT_LOCKFILE=1 next dev --turbo -p 3002",
     "build": "next build",
     "start": "next start -p 3002",
     "db:generate": "drizzle-kit generate",

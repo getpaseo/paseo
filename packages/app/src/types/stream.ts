@@ -520,13 +520,7 @@ export function reduceStreamUpdate(
       let nextState = state;
       switch (item.type) {
         case "user_message":
-          nextState = appendUserMessage(
-            state,
-            item.text,
-            timestamp,
-            item.messageId,
-            item.author,
-          );
+          nextState = appendUserMessage(state, item.text, timestamp, item.messageId, item.author);
           break;
         case "assistant_message":
           nextState = appendAssistantMessage(state, item.text, timestamp, source);

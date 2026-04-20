@@ -67,9 +67,7 @@ export function JoiningSharedSessionOverlay() {
           </View>
         </View>
         <Text style={styles.title}>Joining session…</Text>
-        <Text style={styles.subtitle}>
-          Connecting to the room, syncing participants and video.
-        </Text>
+        <Text style={styles.subtitle}>Connecting to the room, syncing participants and video.</Text>
       </View>
     </View>
   );
@@ -95,9 +93,7 @@ const styles = StyleSheet.create((theme) => ({
     right: 0,
     bottom: 0,
     backgroundColor: "rgba(0, 0, 0, 0.72)",
-    ...(isWeb
-      ? ({ backdropFilter: "blur(8px)" } as Record<string, unknown>)
-      : {}),
+    ...(isWeb ? ({ backdropFilter: "blur(8px)" } as Record<string, unknown>) : {}),
   },
   card: {
     maxWidth: 380,

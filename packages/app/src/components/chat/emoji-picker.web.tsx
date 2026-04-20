@@ -15,17 +15,10 @@ const PICKER_EMOJI_BUTTON_SIZE = 32;
 const PICKER_WIDTH = PICKER_PER_LINE * PICKER_EMOJI_BUTTON_SIZE + 24;
 const PICKER_HEIGHT = 360;
 
-export function ChatEmojiPicker({
-  open,
-  onClose,
-  onEmojiSelected,
-  anchor,
-}: ChatEmojiPickerProps) {
+export function ChatEmojiPicker({ open, onClose, onEmojiSelected, anchor }: ChatEmojiPickerProps) {
   const { theme } = useUnistyles();
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(
-    null,
-  );
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -60,8 +53,7 @@ export function ChatEmojiPicker({
 
   // Mirror the app's current light/dark palette so the picker doesn't stay
   // dark when the user switched to light mode in Settings.
-  const pickerTheme: "light" | "dark" =
-    theme.colorScheme === "light" ? "light" : "dark";
+  const pickerTheme: "light" | "dark" = theme.colorScheme === "light" ? "light" : "dark";
 
   if (!open || typeof document === "undefined" || !position) return null;
 

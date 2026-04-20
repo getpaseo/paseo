@@ -33,9 +33,7 @@ export function useUploads(params: {
   const [pending, setPending] = useState<PendingUpload[]>([]);
 
   const patch = (localId: string, patch: Partial<PendingUpload>) =>
-    setPending((prev) =>
-      prev.map((p) => (p.localId === localId ? { ...p, ...patch } : p)),
-    );
+    setPending((prev) => prev.map((p) => (p.localId === localId ? { ...p, ...patch } : p)));
 
   const uploadOne = async (opts: {
     uri: string;
@@ -100,12 +98,8 @@ export function useUploads(params: {
     });
     if (result.canceled || result.assets.length === 0) return;
     for (const asset of result.assets) {
-      const filename =
-        asset.fileName ??
-        inferFilename(asset.uri) ??
-        `upload_${Date.now()}.bin`;
-      const mimeType =
-        asset.mimeType ?? (asset.type === "video" ? "video/mp4" : "image/jpeg");
+      const filename = asset.fileName ?? inferFilename(asset.uri) ?? `upload_${Date.now()}.bin`;
+      const mimeType = asset.mimeType ?? (asset.type === "video" ? "video/mp4" : "image/jpeg");
       await uploadOne({
         uri: asset.uri,
         filename,
@@ -127,8 +121,7 @@ export function useUploads(params: {
     for (const asset of result.assets) {
       await uploadOne({
         uri: asset.uri,
-        filename:
-          asset.name ?? inferFilename(asset.uri) ?? `upload_${Date.now()}.bin`,
+        filename: asset.name ?? inferFilename(asset.uri) ?? `upload_${Date.now()}.bin`,
         mimeType: asset.mimeType ?? "application/octet-stream",
         sizeBytes: asset.size ?? 0,
       });
@@ -144,9 +137,7 @@ export function useUploads(params: {
 
   const collectReady = useCallback(
     (): ChatAttachment[] =>
-      pending
-        .filter((p) => p.status === "ready" && p.attachment)
-        .map((p) => p.attachment!),
+      pending.filter((p) => p.status === "ready" && p.attachment).map((p) => p.attachment!),
     [pending],
   );
 

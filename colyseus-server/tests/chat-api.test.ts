@@ -6,10 +6,7 @@ interface FetchCall {
   init: RequestInit;
 }
 
-function mockFetch(response: {
-  status?: number;
-  body?: unknown;
-}) {
+function mockFetch(response: { status?: number; body?: unknown }) {
   const calls: FetchCall[] = [];
   const fetchFn: typeof fetch = async (input, init) => {
     const url = typeof input === "string" ? input : (input as URL).toString();

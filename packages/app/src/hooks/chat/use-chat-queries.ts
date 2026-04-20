@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import {
   addReactionHttp,
   archiveChannel as archiveChannelHttp,
+  deleteChannel as deleteChannelHttp,
   addChannelMember,
   createChannel as createChannelHttp,
   deleteMessageHttp,
@@ -52,7 +53,7 @@ export function useChannelsQuery(orgId: string | undefined, sessionToken: string
   const cached = useChatStore((s) => (orgId ? s.channelsByOrg[orgId] : undefined));
   const query = useQuery<ChatChannel[]>({
     queryKey: chatKeys.channels(orgId ?? ""),
-    enabled: !!orgId && !!sessionToken,
+    enabled: !!orgId && sessionToken !== null,
     queryFn: async () => {
       const list = await listChannels({ orgId: orgId!, sessionToken });
       setChannels(orgId!, list);
@@ -72,7 +73,7 @@ export function useDmsQuery(orgId: string | undefined, sessionToken: string | nu
   const cached = useChatStore((s) => (orgId ? s.dmsByOrg[orgId] : undefined));
   return useQuery<ChatChannel[]>({
     queryKey: chatKeys.dms(orgId),
-    enabled: !!orgId && !!sessionToken,
+    enabled: !!orgId && sessionToken !== null,
     queryFn: async () => {
       const list = await listDms({ orgId, sessionToken });
       if (orgId) setDms(orgId, list);
@@ -84,13 +85,10 @@ export function useDmsQuery(orgId: string | undefined, sessionToken: string | nu
   });
 }
 
-export function useChannelMembersQuery(
-  channelId: string | undefined,
-  sessionToken: string | null,
-) {
+export function useChannelMembersQuery(channelId: string | undefined, sessionToken: string | null) {
   return useQuery({
     queryKey: chatKeys.members(channelId ?? ""),
-    enabled: !!channelId && !!sessionToken,
+    enabled: !!channelId && sessionToken !== null,
     queryFn: () => listChannelMembers({ channelId: channelId!, sessionToken }),
     staleTime: 30_000,
   });
@@ -100,16 +98,13 @@ export function useChannelMembersQuery(
  * Loads a single page of channel history (newest first); feeds them into the
  * chat-store so realtime events can merge into the same source of truth.
  */
-export function useChannelMessages(
-  channelId: string | undefined,
-  sessionToken: string | null,
-) {
+export function useChannelMessages(channelId: string | undefined, sessionToken: string | null) {
   const setMessages = useChatStore((s) => s.setMessages);
   const prependMessages = useChatStore((s) => s.prependMessages);
 
   const query = useInfiniteQuery<ChatMessage[]>({
     queryKey: chatKeys.messages(channelId ?? ""),
-    enabled: !!channelId && !!sessionToken,
+    enabled: !!channelId && sessionToken !== null,
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }) => {
       const msgs = await listMessages({
@@ -140,13 +135,10 @@ export function useChannelMessages(
   return query;
 }
 
-export function useThreadRepliesQuery(
-  messageId: string | undefined,
-  sessionToken: string | null,
-) {
+export function useThreadRepliesQuery(messageId: string | undefined, sessionToken: string | null) {
   return useQuery<ChatMessage[]>({
     queryKey: chatKeys.replies(messageId ?? ""),
-    enabled: !!messageId && !!sessionToken,
+    enabled: !!messageId && sessionToken !== null,
     queryFn: () => listReplies({ messageId: messageId!, sessionToken }),
     staleTime: 5_000,
   });
@@ -158,7 +150,7 @@ export function useMessageReactionsQuery(
 ) {
   return useQuery<ChatReactionGroup[]>({
     queryKey: chatKeys.reactions(messageId ?? ""),
-    enabled: !!messageId && !!sessionToken,
+    enabled: !!messageId && sessionToken !== null,
     queryFn: () => listReactions({ messageId: messageId!, sessionToken }),
     staleTime: 30_000,
   });
@@ -169,7 +161,12 @@ export function useMessageReactionsQuery(
 export function useCreateChannelMutation(sessionToken: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { orgId: string; name: string; kind: "public" | "private"; topic?: string }) =>
+    mutationFn: (vars: {
+      orgId: string;
+      name: string;
+      kind: "public" | "private";
+      topic?: string;
+    }) =>
       createChannelHttp({
         orgId: vars.orgId,
         name: vars.name,
@@ -190,6 +187,20 @@ export function useArchiveChannelMutation(sessionToken: string | null) {
       archiveChannelHttp({ channelId: vars.channelId, sessionToken }),
     onSuccess: (_void, vars) => {
       qc.invalidateQueries({ queryKey: chatKeys.channels(vars.orgId) });
+    },
+  });
+}
+
+export function useDeleteChannelMutation(sessionToken: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { channelId: string; orgId: string }) =>
+      deleteChannelHttp({ channelId: vars.channelId, sessionToken }),
+    onSuccess: (_void, vars) => {
+      qc.invalidateQueries({ queryKey: chatKeys.channels(vars.orgId) });
+      qc.removeQueries({ queryKey: chatKeys.messages(vars.channelId) });
+      qc.removeQueries({ queryKey: chatKeys.members(vars.channelId) });
+      qc.removeQueries({ queryKey: chatKeys.pins(vars.channelId) });
     },
   });
 }
@@ -288,9 +299,7 @@ export function useMarkChannelReadMutation(sessionToken: string | null) {
         qc.setQueryData<ChatChannel[]>(
           chatKeys.channels(vars.orgId),
           prev.map((c) =>
-            c.id === vars.channelId
-              ? { ...c, unreadCount: 0, hasMention: false }
-              : c,
+            c.id === vars.channelId ? { ...c, unreadCount: 0, hasMention: false } : c,
           ),
         );
       }
@@ -304,13 +313,10 @@ export function useMarkChannelReadMutation(sessionToken: string | null) {
   });
 }
 
-export function usePinsQuery(
-  channelId: string | undefined,
-  sessionToken: string | null,
-) {
+export function usePinsQuery(channelId: string | undefined, sessionToken: string | null) {
   return useQuery<PinnedMessage[]>({
     queryKey: chatKeys.pins(channelId ?? ""),
-    enabled: !!channelId && !!sessionToken,
+    enabled: !!channelId && sessionToken !== null,
     queryFn: () => listPins({ channelId: channelId!, sessionToken }),
     staleTime: 30_000,
   });
@@ -380,19 +386,16 @@ export function useSearchMessagesQuery(
   const trimmed = query.trim();
   return useQuery<SearchHit[]>({
     queryKey: chatKeys.search(orgId ?? "", trimmed),
-    enabled: !!orgId && !!sessionToken && trimmed.length >= 2,
+    enabled: !!orgId && sessionToken !== null && trimmed.length >= 2,
     queryFn: () => searchMessagesHttp({ orgId: orgId!, query: trimmed, sessionToken }),
     staleTime: 5_000,
   });
 }
 
-export function useMyMentionsQuery(
-  orgId: string | undefined,
-  sessionToken: string | null,
-) {
+export function useMyMentionsQuery(orgId: string | undefined, sessionToken: string | null) {
   return useQuery<SearchHit[]>({
     queryKey: chatKeys.myMentions(orgId ?? ""),
-    enabled: !!orgId && !!sessionToken,
+    enabled: !!orgId && sessionToken !== null,
     queryFn: () => listMyMentionsHttp({ orgId: orgId!, sessionToken }),
     staleTime: 30_000,
   });

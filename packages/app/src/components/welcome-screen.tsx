@@ -433,8 +433,8 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
                 </View>
                 <Text style={styles.stepText}>
                   Install and open the Hubcode{" "}
-                  <Text style={styles.stepTextMuted}>daemon or desktop app</Text> on the computer you
-                  want to control.
+                  <Text style={styles.stepTextMuted}>daemon or desktop app</Text> on the computer
+                  you want to control.
                 </Text>
               </View>
 
@@ -522,9 +522,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
               )}
 
               {isElectron && isAuthenticated && user && (
-                <Text style={styles.signedInHint}>
-                  Signed in as {user.username || user.email}
-                </Text>
+                <Text style={styles.signedInHint}>Signed in as {user.username || user.email}</Text>
               )}
 
               {showHostList && (

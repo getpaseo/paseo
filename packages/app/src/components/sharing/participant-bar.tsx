@@ -100,7 +100,9 @@ export function ParticipantBar({ participants }: ParticipantBarProps) {
                 )}
               </TooltipTrigger>
               <TooltipContent side="bottom" align="center" offset={6}>
-                <Text style={styles.tooltipText}>{p.isMe ? `${p.username} (You)` : p.username}</Text>
+                <Text style={styles.tooltipText}>
+                  {p.isMe ? `${p.username} (You)` : p.username}
+                </Text>
               </TooltipContent>
             </Tooltip>
           ))}

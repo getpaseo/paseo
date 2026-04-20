@@ -54,10 +54,9 @@ export function JoinCard({
     let cancelled = false;
     const fetchOnce = async () => {
       try {
-        const res = await fetch(
-          `/api/livekit/participants?room=${encodeURIComponent(token)}`,
-          { headers: { Authorization: `Bearer ${sessionToken}` } },
-        );
+        const res = await fetch(`/api/livekit/participants?room=${encodeURIComponent(token)}`, {
+          headers: { Authorization: `Bearer ${sessionToken}` },
+        });
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as { participants: RoomParticipant[] };
         if (!cancelled) setParticipants(data.participants ?? []);
@@ -156,9 +155,7 @@ function ParticipantList({ participants }: { participants: RoomParticipant[] }) 
   return (
     <div className="space-y-2">
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {count === 0
-          ? "No one is in the session yet"
-          : `In the session · ${count}`}
+        {count === 0 ? "No one is in the session yet" : `In the session · ${count}`}
       </p>
       {count > 0 && (
         <ul className="flex flex-col gap-2 rounded-md border border-border bg-background/40 p-2">

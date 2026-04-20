@@ -297,9 +297,9 @@ describe("listDmsForUser & listChannelMembers", () => {
       name: "vip",
       kind: "private",
     });
-    await expect(
-      listChannelMembers(db, priv.id, outsider.id),
-    ).rejects.toMatchObject({ code: "forbidden" });
+    await expect(listChannelMembers(db, priv.id, outsider.id)).rejects.toMatchObject({
+      code: "forbidden",
+    });
     const roster = await listChannelMembers(db, priv.id, owner.id);
     expect(roster.map((r) => r.userId)).toEqual([owner.id]);
   });

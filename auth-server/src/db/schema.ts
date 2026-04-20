@@ -309,9 +309,7 @@ export const channel = pgTable(
   },
   (t) => [
     // Unique channel name per org, but only when name is set (skips DMs).
-    uniqueIndex("channel_org_name_unique")
-      .on(t.orgId, t.name)
-      .where(sql`name is not null`),
+    uniqueIndex("channel_org_name_unique").on(t.orgId, t.name).where(sql`name is not null`),
     index("channel_org_idx").on(t.orgId),
   ],
 );
@@ -411,10 +409,7 @@ export const mention = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
-  (t) => [
-    primaryKey({ columns: [t.messageId, t.userId] }),
-    index("mention_user_idx").on(t.userId),
-  ],
+  (t) => [primaryKey({ columns: [t.messageId, t.userId] }), index("mention_user_idx").on(t.userId)],
 );
 
 export const pin = pgTable(

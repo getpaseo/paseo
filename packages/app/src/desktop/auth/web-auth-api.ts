@@ -39,6 +39,32 @@ async function webFetch(path: string, init: RequestInit = {}): Promise<Response>
   });
 }
 
+/**
+ * Web sign-in: redirect the browser to the auth-server's sign-in page. The
+ * OAuth provider finishes the flow there, sets the Better Auth cookie, and
+ * redirects back to the current app URL. Session then populates via
+ * `webGetSession` on the next mount/refresh.
+ */
+export function webSignIn(): void {
+  if (typeof window === "undefined") return;
+  const returnTo = encodeURIComponent(window.location.href);
+  window.location.href = `${authServerBaseUrl()}/sign-in?redirect=${returnTo}`;
+}
+
+/**
+ * Web sign-out: calls Better Auth's sign-out endpoint to clear the server-
+ * side session + cookie, then returns. Callers should invalidate their
+ * session cache afterwards.
+ */
+export async function webSignOut(): Promise<void> {
+  try {
+    await webFetch("/api/auth/sign-out", { method: "POST" });
+  } catch {
+    // Network failure still counts as "signed out" locally — let callers wipe
+    // their cache regardless.
+  }
+}
+
 function toAccessLevel(v: unknown): WorkspaceShareAccessLevel {
   return v === "full_access" ? "full_access" : "read_only";
 }
@@ -48,7 +74,12 @@ export async function webGetSession(): Promise<DesktopAuthSession | null> {
     const res = await webFetch("/api/auth/get-session");
     if (!res.ok) return null;
     const body = (await res.json()) as {
-      session?: { id?: string; userId?: string; expiresAt?: string };
+      session?: {
+        id?: string;
+        userId?: string;
+        token?: string;
+        expiresAt?: string;
+      };
       user?: {
         id: string;
         name: string;
@@ -59,9 +90,11 @@ export async function webGetSession(): Promise<DesktopAuthSession | null> {
     };
     if (!body.user) return null;
     return {
-      // Web session has no bearer token — we rely on cookies for subsequent
-      // requests, so leave it blank.
-      sessionToken: "",
+      // Better Auth's cookie-based getSession returns the session row with
+      // its `token` field. We surface it so non-cookie transports (e.g.
+      // Colyseus WebSocket, which doesn't forward the HttpOnly cookie to a
+      // cross-origin ws server) can still authenticate with it.
+      sessionToken: body.session?.token ?? "",
       providerId: "web-cookie",
       expiresAt: body.session?.expiresAt ?? "",
       user: {

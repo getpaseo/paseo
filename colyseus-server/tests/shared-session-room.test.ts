@@ -129,7 +129,7 @@ describe("SharedSessionRoom — FIFO queue behavior", () => {
     state.messageQueue.push(m3);
 
     // Cleanup sent messages
-    const remaining = Array.from(state.messageQueue).filter(m => m.status !== "sent");
+    const remaining = Array.from(state.messageQueue).filter((m) => m.status !== "sent");
     while (state.messageQueue.length > 0) state.messageQueue.pop();
     for (const m of remaining) state.messageQueue.push(m);
 

@@ -58,10 +58,7 @@ export function extractMentionUserIds(content: string): string[] {
   return Array.from(found);
 }
 
-export async function sendMessage(
-  db: DbLike,
-  input: SendMessageInput,
-): Promise<MessageRow> {
+export async function sendMessage(db: DbLike, input: SendMessageInput): Promise<MessageRow> {
   const access = await resolveChannelAccess(db, input.channelId, input.userId);
   if (!access) throw new ChatError("not_found", "Channel not found");
   if (!access.canWrite) throw new ChatError("forbidden", "Cannot write to channel");
@@ -167,21 +164,11 @@ export async function sendMessage(
   };
 }
 
-export async function getMessageById(
-  db: DbLike,
-  messageId: string,
-): Promise<MessageRow | null> {
-  const rows = await db
-    .select()
-    .from(message)
-    .where(eq(message.id, messageId))
-    .limit(1);
+export async function getMessageById(db: DbLike, messageId: string): Promise<MessageRow | null> {
+  const rows = await db.select().from(message).where(eq(message.id, messageId)).limit(1);
   const m = rows[0];
   if (!m) return null;
-  const atts = await db
-    .select()
-    .from(attachment)
-    .where(eq(attachment.messageId, messageId));
+  const atts = await db.select().from(attachment).where(eq(attachment.messageId, messageId));
   return {
     id: m.id,
     channelId: m.channelId,
@@ -209,9 +196,7 @@ async function countReplies(db: DbLike, parentId: string): Promise<number> {
   const rows = await db
     .select({ c: sql<number>`count(*)::int` })
     .from(message)
-    .where(
-      and(eq(message.parentId, parentId), isNull(message.deletedAt)),
-    );
+    .where(and(eq(message.parentId, parentId), isNull(message.deletedAt)));
   return Number(rows[0]?.c ?? 0);
 }
 
@@ -224,10 +209,7 @@ export interface ListMessagesParams {
   includeDeleted?: boolean;
 }
 
-export async function listMessages(
-  db: DbLike,
-  params: ListMessagesParams,
-): Promise<MessageRow[]> {
+export async function listMessages(db: DbLike, params: ListMessagesParams): Promise<MessageRow[]> {
   const access = await resolveChannelAccess(db, params.channelId, params.userId);
   if (!access) throw new ChatError("not_found", "Channel not found");
   if (!access.canRead) throw new ChatError("forbidden", "Cannot read channel");
@@ -251,10 +233,7 @@ export async function listMessages(
     cursor = rows[0];
   }
 
-  const conditions = [
-    eq(message.channelId, params.channelId),
-    isNull(message.parentId),
-  ];
+  const conditions = [eq(message.channelId, params.channelId), isNull(message.parentId)];
   if (!params.includeDeleted) conditions.push(isNull(message.deletedAt));
   if (cursor && params.before) {
     const beforeCursor = or(
@@ -285,10 +264,7 @@ export async function listMessages(
   const attsByMsg = new Map<string, MessageRow["attachments"]>();
   const replyCountByParent = new Map<string, number>();
   if (ids.length > 0) {
-    const atts = await db
-      .select()
-      .from(attachment)
-      .where(inArray(attachment.messageId, ids));
+    const atts = await db.select().from(attachment).where(inArray(attachment.messageId, ids));
     for (const a of atts) {
       const arr = attsByMsg.get(a.messageId) ?? [];
       arr.push({
@@ -309,9 +285,7 @@ export async function listMessages(
         c: sql<number>`count(*)::int`,
       })
       .from(message)
-      .where(
-        and(inArray(message.parentId, ids), isNull(message.deletedAt)),
-      )
+      .where(and(inArray(message.parentId, ids), isNull(message.deletedAt)))
       .groupBy(message.parentId);
     for (const row of counts) {
       if (row.parentId) replyCountByParent.set(row.parentId, Number(row.c));
@@ -387,12 +361,7 @@ export async function listThreadReplies(
   const rows = await db
     .select()
     .from(message)
-    .where(
-      and(
-        eq(message.parentId, params.parentMessageId),
-        isNull(message.deletedAt),
-      ),
-    )
+    .where(and(eq(message.parentId, params.parentMessageId), isNull(message.deletedAt)))
     .orderBy(asc(message.createdAt), asc(message.id))
     .limit(limit);
 
@@ -400,10 +369,7 @@ export async function listThreadReplies(
   const attsByMsg = new Map<string, MessageRow["attachments"]>();
   const reactionsByMsg = new Map<string, MessageRow["reactions"]>();
   if (ids.length > 0) {
-    const atts = await db
-      .select()
-      .from(attachment)
-      .where(inArray(attachment.messageId, ids));
+    const atts = await db.select().from(attachment).where(inArray(attachment.messageId, ids));
     for (const a of atts) {
       const arr = attsByMsg.get(a.messageId) ?? [];
       arr.push({

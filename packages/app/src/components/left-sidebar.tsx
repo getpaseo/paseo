@@ -376,11 +376,7 @@ function ChatTabButton() {
         <>
           <MessageSquare
             size={theme.iconSize.md}
-            color={
-              hovered || isActive
-                ? theme.colors.brandMagenta
-                : theme.colors.foregroundMuted
-            }
+            color={hovered || isActive ? theme.colors.brandMagenta : theme.colors.foregroundMuted}
           />
           <Text
             style={[
@@ -853,11 +849,7 @@ function CollapsedDesktopSidebar({
           <CollapsedRailIconBtn
             label="Expand sidebar"
             icon={
-              <PanelLeftOpen
-                size={18}
-                color={theme.colors.foregroundMuted}
-                strokeWidth={1.75}
-              />
+              <PanelLeftOpen size={18} color={theme.colors.foregroundMuted} strokeWidth={1.75} />
             }
             onPress={onExpand}
           />
@@ -870,11 +862,7 @@ function CollapsedDesktopSidebar({
                 icon={
                   <MessageSquare
                     size={18}
-                    color={
-                      isChatActive
-                        ? theme.colors.brandMagenta
-                        : theme.colors.foregroundMuted
-                    }
+                    color={isChatActive ? theme.colors.brandMagenta : theme.colors.foregroundMuted}
                     strokeWidth={1.75}
                   />
                 }
@@ -887,9 +875,7 @@ function CollapsedDesktopSidebar({
                   <MessagesSquare
                     size={18}
                     color={
-                      isSessionsActive
-                        ? theme.colors.foreground
-                        : theme.colors.foregroundMuted
+                      isSessionsActive ? theme.colors.foreground : theme.colors.foregroundMuted
                     }
                     strokeWidth={1.75}
                   />
@@ -898,18 +884,10 @@ function CollapsedDesktopSidebar({
               />
               <CollapsedRailIconBtn
                 label="Shared workspaces"
-                icon={
-                  <Share2
-                    size={18}
-                    color={theme.colors.foregroundMuted}
-                    strokeWidth={1.75}
-                  />
-                }
+                icon={<Share2 size={18} color={theme.colors.foregroundMuted} strokeWidth={1.75} />}
                 onPress={onOpenTeamProjects}
               />
-              {projects.length > 0 ? (
-                <View style={styles.collapsedDivider} />
-              ) : null}
+              {projects.length > 0 ? <View style={styles.collapsedDivider} /> : null}
             </>
           )}
         </View>
@@ -938,24 +916,12 @@ function CollapsedDesktopSidebar({
             <>
               <CollapsedRailIconBtn
                 label="Add project"
-                icon={
-                  <Plus
-                    size={18}
-                    color={theme.colors.foregroundMuted}
-                    strokeWidth={2}
-                  />
-                }
+                icon={<Plus size={18} color={theme.colors.foregroundMuted} strokeWidth={2} />}
                 onPress={onOpenAddProject}
               />
               <CollapsedRailIconBtn
                 label="Team projects"
-                icon={
-                  <Users
-                    size={18}
-                    color={theme.colors.foregroundMuted}
-                    strokeWidth={1.75}
-                  />
-                }
+                icon={<Users size={18} color={theme.colors.foregroundMuted} strokeWidth={1.75} />}
                 onPress={onOpenTeamProjects}
               />
             </>
@@ -993,15 +959,9 @@ function CollapsedProjectMonogram({
           {project.totalWorkspaces > 0 ? (
             <Text style={styles.collapsedMonogramText}>{initial}</Text>
           ) : (
-            <Folder
-              size={16}
-              color={theme.colors.foregroundMuted}
-              strokeWidth={1.75}
-            />
+            <Folder size={16} color={theme.colors.foregroundMuted} strokeWidth={1.75} />
           )}
-          {project.activeCount > 0 ? (
-            <View style={styles.collapsedMonogramDot} />
-          ) : null}
+          {project.activeCount > 0 ? <View style={styles.collapsedMonogramDot} /> : null}
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="right" align="center" offset={8}>

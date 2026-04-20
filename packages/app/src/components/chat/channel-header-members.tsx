@@ -44,10 +44,7 @@ export const ChannelHeaderMembers = memo(function ChannelHeaderMembers({
         accessibilityLabel={`${ordered.length} members`}
       >
         {visible.map((m, idx) => (
-          <View
-            key={m.userId}
-            style={[styles.avatarWrap, { marginLeft: idx === 0 ? 0 : -8 }]}
-          >
+          <View key={m.userId} style={[styles.avatarWrap, { marginLeft: idx === 0 ? 0 : -8 }]}>
             <Avatar
               name={m.name}
               imageUrl={m.image}

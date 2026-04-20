@@ -38,8 +38,7 @@ export function PlanUpgradeSection() {
   // misleading "Free plan" state that can't be acted on.
   if (!isAuthenticated) return null;
   const activeOrgId = useActiveOrgId();
-  const activeOrg =
-    organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
+  const activeOrg = organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
   const planId = activeOrg?.planId ?? null;
   const subscriptionStatus = activeOrg?.subscriptionStatus ?? null;
   const isPro = isPaidPlan(planId);
@@ -52,9 +51,7 @@ export function PlanUpgradeSection() {
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
             <View style={styles.currentHeader}>
-              {isPro ? (
-                <Crown size={14} color={theme.colors.accent} />
-              ) : null}
+              {isPro ? <Crown size={14} color={theme.colors.accent} /> : null}
               <Text style={settingsStyles.rowTitle}>
                 {isPro ? `${planLabel} plan` : "Free plan"}
               </Text>

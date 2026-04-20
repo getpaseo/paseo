@@ -3,10 +3,7 @@ import { Buffer } from "buffer";
 import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useClientActivity } from "@/hooks/use-client-activity";
-import {
-  getSharedSessionAuthor,
-  notifyChatMessageAuthored,
-} from "@/stores/shared-session-store";
+import { getSharedSessionAuthor, notifyChatMessageAuthored } from "@/stores/shared-session-store";
 import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";

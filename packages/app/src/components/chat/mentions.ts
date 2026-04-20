@@ -69,10 +69,7 @@ export interface MentionTrigger {
   endIndex: number; // exclusive
 }
 
-export function detectMentionTrigger(
-  text: string,
-  caret: number,
-): MentionTrigger | null {
+export function detectMentionTrigger(text: string, caret: number): MentionTrigger | null {
   if (caret <= 0) return null;
   // Scan backwards from caret to find the nearest trigger char without a space
   // in between.
@@ -123,7 +120,5 @@ export function filterChannelsByQuery(
   const q = query.trim().toLowerCase();
   const named = channels.filter((c) => c.name !== null && c.kind !== "dm");
   if (!q) return named.slice(0, limit);
-  return named
-    .filter((c) => (c.name ?? "").toLowerCase().includes(q))
-    .slice(0, limit);
+  return named.filter((c) => (c.name ?? "").toLowerCase().includes(q)).slice(0, limit);
 }

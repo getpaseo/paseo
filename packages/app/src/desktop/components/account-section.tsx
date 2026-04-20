@@ -97,9 +97,7 @@ function UserProfileCard() {
           <Button
             variant="outline"
             size="sm"
-            leftIcon={
-              <ExternalLink size={theme.iconSize.sm} color={theme.colors.foreground} />
-            }
+            leftIcon={<ExternalLink size={theme.iconSize.sm} color={theme.colors.foreground} />}
             onPress={() => void openExternalUrl(dashboardUrl())}
           >
             Open web dashboard

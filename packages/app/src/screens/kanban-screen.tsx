@@ -222,12 +222,7 @@ export function KanbanScreen({ serverId, projectId }: KanbanScreenProps) {
   );
 
   return (
-    <View
-      style={[
-        screenStyles.container,
-        { paddingTop: insets.top + headerPadding.top },
-      ]}
-    >
+    <View style={[screenStyles.container, { paddingTop: insets.top + headerPadding.top }]}>
       <View style={screenStyles.header}>
         <Text style={screenStyles.title}>{projectName}</Text>
         <Text style={screenStyles.subtitle}>Tasks</Text>

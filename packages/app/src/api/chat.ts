@@ -76,10 +76,7 @@ interface FetchArgs {
   sessionToken: string | null;
 }
 
-async function request<T>(
-  path: string,
-  init: RequestInit & FetchArgs,
-): Promise<T> {
+async function request<T>(path: string, init: RequestInit & FetchArgs): Promise<T> {
   const res = await authServerFetch(path, init);
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as {
@@ -109,9 +106,7 @@ export class ChatApiError extends Error {
 
 // ─── Channels ───────────────────────────────────────────────────────────────
 
-export async function listChannels(
-  args: FetchArgs & { orgId: string },
-): Promise<ChatChannel[]> {
+export async function listChannels(args: FetchArgs & { orgId: string }): Promise<ChatChannel[]> {
   const body = await request<{ channels: ChatChannel[] }>(
     `/api/orgs/${encodeURIComponent(args.orgId)}/channels`,
     { sessionToken: args.sessionToken, method: "GET" },
@@ -142,13 +137,18 @@ export async function createChannel(
   return body.channel;
 }
 
-export async function archiveChannel(
-  args: FetchArgs & { channelId: string },
-): Promise<void> {
+export async function archiveChannel(args: FetchArgs & { channelId: string }): Promise<void> {
   await request(`/api/channels/${encodeURIComponent(args.channelId)}/archive`, {
     sessionToken: args.sessionToken,
     method: "POST",
     body: JSON.stringify({}),
+  });
+}
+
+export async function deleteChannel(args: FetchArgs & { channelId: string }): Promise<void> {
+  await request(`/api/channels/${encodeURIComponent(args.channelId)}`, {
+    sessionToken: args.sessionToken,
+    method: "DELETE",
   });
 }
 
@@ -220,9 +220,7 @@ export async function listMessages(
   if (args.after) qs.set("after", args.after);
   if (args.limit) qs.set("limit", String(args.limit));
   const body = await request<{ messages: ChatMessage[] }>(
-    `/api/channels/${encodeURIComponent(args.channelId)}/messages${
-      qs.toString() ? `?${qs}` : ""
-    }`,
+    `/api/channels/${encodeURIComponent(args.channelId)}/messages${qs.toString() ? `?${qs}` : ""}`,
     { sessionToken: args.sessionToken, method: "GET" },
   );
   return body.messages;
@@ -265,18 +263,14 @@ export async function editMessageHttp(
   return body.message;
 }
 
-export async function deleteMessageHttp(
-  args: FetchArgs & { messageId: string },
-): Promise<void> {
+export async function deleteMessageHttp(args: FetchArgs & { messageId: string }): Promise<void> {
   await request(`/api/messages/${encodeURIComponent(args.messageId)}`, {
     sessionToken: args.sessionToken,
     method: "DELETE",
   });
 }
 
-export async function listReplies(
-  args: FetchArgs & { messageId: string },
-): Promise<ChatMessage[]> {
+export async function listReplies(args: FetchArgs & { messageId: string }): Promise<ChatMessage[]> {
   const body = await request<{ messages: ChatMessage[] }>(
     `/api/messages/${encodeURIComponent(args.messageId)}/replies`,
     { sessionToken: args.sessionToken, method: "GET" },
@@ -316,14 +310,11 @@ export async function listReactions(
 export async function addReactionHttp(
   args: FetchArgs & { messageId: string; emoji: string },
 ): Promise<void> {
-  await request(
-    `/api/messages/${encodeURIComponent(args.messageId)}/reactions`,
-    {
-      sessionToken: args.sessionToken,
-      method: "POST",
-      body: JSON.stringify({ emoji: args.emoji }),
-    },
-  );
+  await request(`/api/messages/${encodeURIComponent(args.messageId)}/reactions`, {
+    sessionToken: args.sessionToken,
+    method: "POST",
+    body: JSON.stringify({ emoji: args.emoji }),
+  });
 }
 
 export async function removeReactionHttp(
@@ -337,9 +328,7 @@ export async function removeReactionHttp(
   );
 }
 
-export async function markChannelReadHttp(
-  args: FetchArgs & { channelId: string },
-): Promise<void> {
+export async function markChannelReadHttp(args: FetchArgs & { channelId: string }): Promise<void> {
   await request(`/api/channels/${encodeURIComponent(args.channelId)}/read`, {
     sessionToken: args.sessionToken,
     method: "POST",
@@ -363,9 +352,7 @@ export interface PinnedMessage {
   };
 }
 
-export async function listPins(
-  args: FetchArgs & { channelId: string },
-): Promise<PinnedMessage[]> {
+export async function listPins(args: FetchArgs & { channelId: string }): Promise<PinnedMessage[]> {
   const body = await request<{ pins: PinnedMessage[] }>(
     `/api/channels/${encodeURIComponent(args.channelId)}/pins`,
     { sessionToken: args.sessionToken, method: "GET" },
@@ -442,10 +429,10 @@ export async function listMyMentionsHttp(
 ): Promise<SearchHit[]> {
   const qs = new URLSearchParams({ orgId: args.orgId });
   if (args.limit) qs.set("limit", String(args.limit));
-  const body = await request<{ hits: SearchHit[] }>(
-    `/api/users/me/mentions?${qs}`,
-    { sessionToken: args.sessionToken, method: "GET" },
-  );
+  const body = await request<{ hits: SearchHit[] }>(`/api/users/me/mentions?${qs}`, {
+    sessionToken: args.sessionToken,
+    method: "GET",
+  });
   return body.hits;
 }
 

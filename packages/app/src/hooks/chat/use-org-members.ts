@@ -1,8 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  desktopAuthGetOrgMembers,
-  type DesktopOrgMember,
-} from "@/desktop/auth/desktop-auth";
+import { desktopAuthGetOrgMembers, type DesktopOrgMember } from "@/desktop/auth/desktop-auth";
 import { webGetOrgMembers } from "@/desktop/auth/web-auth-api";
 import { getIsElectron } from "@/constants/platform";
 import type { OrgMember } from "@/api/organizations";
@@ -11,9 +8,9 @@ import { useChatStore } from "@/stores/chat-store";
 export const orgMembersKey = (orgId: string) => ["chat", "orgMembers", orgId] as const;
 
 function toOrgMember(m: DesktopOrgMember): OrgMember {
-  const role = (["owner", "admin", "member"].includes(m.role)
-    ? m.role
-    : "member") as OrgMember["role"];
+  const role = (
+    ["owner", "admin", "member"].includes(m.role) ? m.role : "member"
+  ) as OrgMember["role"];
   return {
     id: m.id,
     userId: m.userId,

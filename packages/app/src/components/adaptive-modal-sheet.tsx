@@ -261,17 +261,11 @@ type AdaptiveTextInputProps = TextInputProps & {
 };
 
 export const AdaptiveTextInput = forwardRef<TextInput, AdaptiveTextInputProps>(
-  function AdaptiveTextInput(
-    { focusBorderColor, style, onFocus, onBlur, ...rest },
-    ref,
-  ) {
+  function AdaptiveTextInput({ focusBorderColor, style, onFocus, onBlur, ...rest }, ref) {
     const isMobile = useIsCompactFormFactor();
     const [focused, setFocused] = useState(false);
     const mergedStyle = useMemo(
-      () =>
-        focused && focusBorderColor
-          ? [style, { borderColor: focusBorderColor }]
-          : style,
+      () => (focused && focusBorderColor ? [style, { borderColor: focusBorderColor }] : style),
       [focused, focusBorderColor, style],
     );
     const handleFocus = useCallback<NonNullable<TextInputProps["onFocus"]>>(

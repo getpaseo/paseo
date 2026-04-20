@@ -45,10 +45,7 @@ export async function pinMessage(
     .select({ c: channelMember.channelId })
     .from(channelMember)
     .where(
-      and(
-        eq(channelMember.channelId, params.channelId),
-        eq(channelMember.userId, params.userId),
-      ),
+      and(eq(channelMember.channelId, params.channelId), eq(channelMember.userId, params.userId)),
     )
     .limit(1);
   if (myMembership.length === 0 && access.kind !== "public") {
@@ -86,12 +83,7 @@ export async function unpinMessage(
   const pinRow = await db
     .select({ pinnedBy: pin.pinnedBy })
     .from(pin)
-    .where(
-      and(
-        eq(pin.channelId, params.channelId),
-        eq(pin.messageId, params.messageId),
-      ),
-    )
+    .where(and(eq(pin.channelId, params.channelId), eq(pin.messageId, params.messageId)))
     .limit(1);
   if (pinRow.length === 0) return;
   const pinner = pinRow[0]!.pinnedBy;
@@ -101,12 +93,7 @@ export async function unpinMessage(
 
   await db
     .delete(pin)
-    .where(
-      and(
-        eq(pin.channelId, params.channelId),
-        eq(pin.messageId, params.messageId),
-      ),
-    );
+    .where(and(eq(pin.channelId, params.channelId), eq(pin.messageId, params.messageId)));
 }
 
 export async function listPinnedMessages(

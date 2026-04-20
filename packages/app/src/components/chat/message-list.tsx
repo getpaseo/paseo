@@ -8,6 +8,13 @@ import { MessageBubble } from "./message-bubble";
 interface MessageListProps {
   messages: readonly ChatMessage[];
   members: ChatMember[];
+  /**
+   * Optional fallback pool of authors — typically the org-wide members list.
+   * Used when a message's author isn't in `members` (e.g. public channel posts
+   * from an org member who hasn't joined the channel explicitly, or a message
+   * arriving via realtime before `members` has refetched).
+   */
+  fallbackAuthors?: ChatMember[];
   channels: ChatChannel[];
   currentUserId: string | null;
   presenceByUser?: Record<string, ChatPresence>;
@@ -25,6 +32,7 @@ interface MessageListProps {
 export function MessageList({
   messages,
   members,
+  fallbackAuthors,
   channels,
   currentUserId,
   presenceByUser,
@@ -40,9 +48,13 @@ export function MessageList({
 }: MessageListProps) {
   const memberById = useMemo(() => {
     const map = new Map<string, ChatMember>();
+    // Fill from fallback first so channel members win on conflict.
+    if (fallbackAuthors) {
+      for (const m of fallbackAuthors) map.set(m.userId, m);
+    }
     for (const m of members) map.set(m.userId, m);
     return map;
-  }, [members]);
+  }, [members, fallbackAuthors]);
 
   const channelById = useMemo(() => {
     const map = new Map<string, ChatChannel>();

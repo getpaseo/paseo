@@ -61,6 +61,7 @@ import {
   WorkspaceTabIcon,
 } from "@/screens/workspace/workspace-tab-presentation";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import type { CliProviderDefinition } from "@server/shared/cli-provider-registry";
 import {
   useWorkspaceLayoutStore,
   type SplitNode,
@@ -95,6 +96,8 @@ interface SplitContainerProps {
   }) => void;
   onNewTerminalTab: (input: { paneId?: string }) => void;
   onNewBrowserTab: () => void;
+  onLaunchCliAgent: (providerId: string) => void;
+  cliProviderOptions: CliProviderDefinition[];
   newTabAgentOptionId?: "__new_tab_agent__" | "__new_tab_terminal__";
   buildPaneContentModel: (input: {
     paneId: string;
@@ -262,6 +265,8 @@ export function SplitContainer({
   onSelectNewTabOption,
   onNewTerminalTab,
   onNewBrowserTab,
+  onLaunchCliAgent,
+  cliProviderOptions,
   newTabAgentOptionId = "__new_tab_agent__",
   buildPaneContentModel,
   onFocusPane,
@@ -533,6 +538,8 @@ export function SplitContainer({
         onSelectNewTabOption={onSelectNewTabOption}
         onNewTerminalTab={onNewTerminalTab}
         onNewBrowserTab={onNewBrowserTab}
+        onLaunchCliAgent={onLaunchCliAgent}
+        cliProviderOptions={cliProviderOptions}
         newTabAgentOptionId={newTabAgentOptionId}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
@@ -657,6 +664,8 @@ function SplitNodeView({
   onSelectNewTabOption,
   onNewTerminalTab,
   onNewBrowserTab,
+  onLaunchCliAgent,
+  cliProviderOptions,
   newTabAgentOptionId,
   buildPaneContentModel,
   onFocusPane,
@@ -694,6 +703,8 @@ function SplitNodeView({
         onSelectNewTabOption={onSelectNewTabOption}
         onNewTerminalTab={onNewTerminalTab}
         onNewBrowserTab={onNewBrowserTab}
+        onLaunchCliAgent={onLaunchCliAgent}
+        cliProviderOptions={cliProviderOptions}
         newTabAgentOptionId={newTabAgentOptionId}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
@@ -746,6 +757,8 @@ function SplitNodeView({
               onSelectNewTabOption={onSelectNewTabOption}
               onNewTerminalTab={onNewTerminalTab}
               onNewBrowserTab={onNewBrowserTab}
+              onLaunchCliAgent={onLaunchCliAgent}
+              cliProviderOptions={cliProviderOptions}
               newTabAgentOptionId={newTabAgentOptionId}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
@@ -797,6 +810,8 @@ function SplitPaneView({
   onSelectNewTabOption,
   onNewTerminalTab,
   onNewBrowserTab,
+  onLaunchCliAgent,
+  cliProviderOptions,
   newTabAgentOptionId,
   buildPaneContentModel,
   onFocusPane,
@@ -905,6 +920,8 @@ function SplitPaneView({
           onSelectNewTabOption={onSelectNewTabOption}
           onNewTerminalTab={onNewTerminalTab}
           onNewBrowserTab={onNewBrowserTab}
+          onLaunchCliAgent={onLaunchCliAgent}
+          cliProviderOptions={cliProviderOptions}
           newTabAgentOptionId={newTabAgentOptionId ?? "__new_tab_agent__"}
           onReorderTabs={(nextTabs) => {
             onReorderTabsInPane(

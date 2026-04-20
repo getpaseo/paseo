@@ -137,8 +137,7 @@ export function ThreadPanel({
       {threadTypingNames.length > 0 ? (
         <View style={styles.typingRow}>
           <Text style={styles.typingText}>
-            {threadTypingNames.join(", ")}{" "}
-            {threadTypingNames.length === 1 ? "is" : "are"} typing…
+            {threadTypingNames.join(", ")} {threadTypingNames.length === 1 ? "is" : "are"} typing…
           </Text>
         </View>
       ) : null}

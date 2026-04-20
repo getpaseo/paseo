@@ -9,9 +9,7 @@ export interface SlashCommandContext {
   args: string;
 }
 
-export type SlashCommandResult =
-  | { kind: "replace"; content: string }
-  | { kind: "suppress" };
+export type SlashCommandResult = { kind: "replace"; content: string } | { kind: "suppress" };
 
 export interface SlashCommand {
   name: string;

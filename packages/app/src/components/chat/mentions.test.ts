@@ -39,12 +39,8 @@ function channel(partial: Partial<ChatChannel>): ChatChannel {
 describe("expandMentions", () => {
   it("expands user and channel tokens to bold markdown", () => {
     const out = expandMentions("hey <@u1> in <#c1>", {
-      membersById: new Map([
-        ["u1", member({ userId: "u1", name: "Alice" })],
-      ]),
-      channelsById: new Map([
-        ["c1", channel({ id: "c1", name: "general" })],
-      ]),
+      membersById: new Map([["u1", member({ userId: "u1", name: "Alice" })]]),
+      channelsById: new Map([["c1", channel({ id: "c1", name: "general" })]]),
     });
     expect(out).toBe("hey **@Alice** in **#general**");
   });

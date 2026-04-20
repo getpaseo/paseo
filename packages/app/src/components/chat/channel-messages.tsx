@@ -12,6 +12,7 @@ import {
   usePinsQuery,
   useUnpinMutation,
 } from "@/hooks/chat/use-chat-queries";
+import { useOrgMembersQuery } from "@/hooks/chat/use-org-members";
 import {
   useChatStore,
   selectChannelMessages,
@@ -52,12 +53,26 @@ export function ChannelMessages({
   const { theme } = useUnistyles();
   const messagesQuery = useChannelMessages(channel.id, sessionToken);
   const membersQuery = useChannelMembersQuery(channel.id, sessionToken);
+  const orgMembersQuery = useOrgMembersQuery(channel.orgId, sessionToken);
   const allChannelsQuery = useChannelsQuery(channel.orgId, sessionToken);
+  // Derive an author fallback from org members so public-channel posts from
+  // users who aren't explicit channel members still render with name + avatar
+  // instead of the skeleton placeholder.
+  const orgMemberFallback = useMemo(() => {
+    const list = orgMembersQuery.data ?? [];
+    return list
+      .filter((m) => m.user !== null)
+      .map((m) => ({
+        userId: m.userId,
+        role: m.role === "admin" ? ("admin" as const) : ("member" as const),
+        joinedAt: m.createdAt,
+        name: m.user?.name ?? "",
+        email: m.user?.email ?? "",
+        image: m.user?.image ?? null,
+      }));
+  }, [orgMembersQuery.data]);
   const allMessages = useChatStore(selectChannelMessages(channel.id));
-  const messages = useMemo(
-    () => allMessages.filter((m) => m.parentId === null),
-    [allMessages],
-  );
+  const messages = useMemo(() => allMessages.filter((m) => m.parentId === null), [allMessages]);
   const replyCountsByParent = useMemo(() => {
     const counts: Record<string, number> = {};
     // Seed from server-provided replyCount on each parent message so the
@@ -132,8 +147,8 @@ export function ChannelMessages({
       <View style={styles.alphaBanner} accessibilityRole="alert">
         <FlaskConical size={12} color="#f59e0b" strokeWidth={2} />
         <Text style={styles.alphaText}>
-          Messages is in <Text style={styles.alphaBold}>alpha</Text> — expect
-          bugs and breaking changes.
+          Messages is in <Text style={styles.alphaBold}>alpha</Text> — expect bugs and breaking
+          changes.
         </Text>
       </View>
       <View style={styles.header}>
@@ -145,18 +160,12 @@ export function ChannelMessages({
                 style={styles.toggleBtn}
                 accessibilityRole="button"
                 accessibilityLabel={
-                  channelsPaneOpen
-                    ? "Collapse channels sidebar"
-                    : "Expand channels sidebar"
+                  channelsPaneOpen ? "Collapse channels sidebar" : "Expand channels sidebar"
                 }
               >
                 <PanelLeft
                   size={15}
-                  color={
-                    channelsPaneOpen
-                      ? theme.colors.foreground
-                      : theme.colors.foregroundMuted
-                  }
+                  color={channelsPaneOpen ? theme.colors.foreground : theme.colors.foregroundMuted}
                 />
               </Pressable>
             </TooltipTrigger>
@@ -207,6 +216,7 @@ export function ChannelMessages({
       <MessageList
         messages={messages}
         members={membersQuery.data ?? []}
+        fallbackAuthors={orgMemberFallback}
         channels={allChannelsQuery.data ?? []}
         currentUserId={currentUserId}
         presenceByUser={presenceByUser}
@@ -241,9 +251,7 @@ export function ChannelMessages({
         </View>
       ) : null}
       <Composer
-        placeholder={
-          channel.kind === "dm" ? `Message ${title}` : `Message #${title}`
-        }
+        placeholder={channel.kind === "dm" ? `Message ${title}` : `Message #${title}`}
         disabled={disabled}
         onSend={(raw, attachments) => {
           const result = applySlashCommand(raw);

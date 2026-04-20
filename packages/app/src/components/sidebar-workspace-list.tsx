@@ -1242,6 +1242,12 @@ function WorkspaceRowInner({
           </View>
           <View style={styles.workspaceRowRight}>
             {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
+            {workspace.diffStat ? (
+              <View style={styles.diffStatRow}>
+                <Text style={styles.diffStatAdditions}>+{workspace.diffStat.additions}</Text>
+                <Text style={styles.diffStatDeletions}>-{workspace.diffStat.deletions}</Text>
+              </View>
+            ) : null}
             {onArchive && (isHovered || platformIsNative || isCompact) ? (
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -1301,11 +1307,6 @@ function WorkspaceRowInner({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            ) : workspace.diffStat ? (
-              <View style={styles.diffStatRow}>
-                <Text style={styles.diffStatAdditions}>+{workspace.diffStat.additions}</Text>
-                <Text style={styles.diffStatDeletions}>-{workspace.diffStat.deletions}</Text>
-              </View>
             ) : null}
             {showShortcutBadge && shortcutNumber !== null ? (
               <View style={styles.shortcutBadge}>

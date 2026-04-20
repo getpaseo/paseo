@@ -9,8 +9,7 @@ import { useActiveOrgId } from "@/stores/active-org-store";
 function useIsOnPaidPlan(): boolean {
   const { organizations } = useOrganizations();
   const activeOrgId = useActiveOrgId();
-  const activeOrg =
-    organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
+  const activeOrg = organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
   const planId = activeOrg?.planId;
   return !!planId && planId.toLowerCase() !== "free";
 }

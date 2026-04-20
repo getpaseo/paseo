@@ -132,6 +132,11 @@ export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
     right = focusModeEnabled && !explorerOpen ? rawPadding.right : 0;
   } else if (role === "explorerSidebar") {
     right = rawPadding.right;
+    // Clear the magenta `DesktopTitlebarAccent` that sits at the top of the
+    // Electron window so the Changes / Files tab bar isn't covered by it.
+    // During a shared session the participant bar replaces the accent and
+    // already reserves that space — don't double-pad.
+    top = isInSharedSession ? 0 : rawPadding.top;
   }
 
   return useMemo(() => ({ left, right, top }), [left, right, top]);

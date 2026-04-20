@@ -64,9 +64,11 @@ describe("AuthService", () => {
     });
 
     it("sends correct Authorization header", async () => {
-      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
-      );
+      const fetchSpy = vi
+        .spyOn(global, "fetch")
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+        );
 
       await authService.validateShareToken("tok", "my-session-token");
 

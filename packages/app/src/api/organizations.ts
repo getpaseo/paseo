@@ -17,10 +17,10 @@ export async function listOrgMembers(
   orgId: string,
   sessionToken: string | null,
 ): Promise<OrgMember[]> {
-  const res = await authServerFetch(
-    `/api/organizations/${encodeURIComponent(orgId)}/members`,
-    { sessionToken, method: "GET" },
-  );
+  const res = await authServerFetch(`/api/organizations/${encodeURIComponent(orgId)}/members`, {
+    sessionToken,
+    method: "GET",
+  });
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) return [];
     throw new Error(`Failed to list org members (${res.status})`);

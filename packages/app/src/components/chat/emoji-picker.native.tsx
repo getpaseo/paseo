@@ -6,11 +6,7 @@ import type { ChatEmojiPickerProps } from "./emoji-picker";
  * Native (iOS/Android) variant: bottom sheet with full emoji database.
  * The popover approach used on web isn't idiomatic on mobile.
  */
-export function ChatEmojiPicker({
-  open,
-  onClose,
-  onEmojiSelected,
-}: ChatEmojiPickerProps) {
+export function ChatEmojiPicker({ open, onClose, onEmojiSelected }: ChatEmojiPickerProps) {
   const { theme } = useUnistyles();
   return (
     <EmojiPicker

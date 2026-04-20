@@ -412,9 +412,7 @@ function AppContainer({
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
   const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
-  const toggleAgentListCollapsed = usePanelStore(
-    (state) => state.toggleAgentListCollapsed,
-  );
+  const toggleAgentListCollapsed = usePanelStore((state) => state.toggleAgentListCollapsed);
   const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
   const toggleBothSidebars = usePanelStore((state) => state.toggleBothSidebars);

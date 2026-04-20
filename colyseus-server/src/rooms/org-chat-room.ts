@@ -68,10 +68,7 @@ export class OrgChatRoom extends Room<OrgChatState> {
   // channelId → { userIds, fetchedAt }. Populated on first broadcast; reused
   // for every subsequent message/reaction event in that channel so we avoid a
   // REST round-trip per send. Short TTL keeps membership changes roughly fresh.
-  private channelMembersCache = new Map<
-    string,
-    { userIds: Set<string>; fetchedAt: number }
-  >();
+  private channelMembersCache = new Map<string, { userIds: Set<string>; fetchedAt: number }>();
   private static readonly CHANNEL_MEMBERS_TTL_MS = 30_000;
 
   static deps: OrgChatRoomDeps = {};
@@ -216,11 +213,7 @@ export class OrgChatRoom extends Room<OrgChatState> {
     }
   }
 
-  private async handleReaction(
-    client: Client,
-    msg: ReactPayload,
-    op: "add" | "remove",
-  ) {
+  private async handleReaction(client: Client, msg: ReactPayload, op: "add" | "remove") {
     const auth = this.authOf(client);
     if (!auth || !msg.messageId || !msg.emoji) return;
     try {

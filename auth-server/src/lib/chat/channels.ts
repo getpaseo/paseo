@@ -1,35 +1,11 @@
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  gt,
-  inArray,
-  isNotNull,
-  isNull,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
-import {
-  channel,
-  channelMember,
-  member,
-  mention,
-  message,
-  user as userTable,
-} from "@/db/schema";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { channel, channelMember, member, mention, message, user as userTable } from "@/db/schema";
 import { type DbLike, isOrgMember } from "./authz";
 import { newChannelId, slugifyChannelName } from "./ids";
 
 export class ChatError extends Error {
   constructor(
-    public code:
-      | "not_found"
-      | "forbidden"
-      | "conflict"
-      | "bad_request"
-      | "not_org_member",
+    public code: "not_found" | "forbidden" | "conflict" | "bad_request" | "not_org_member",
     message: string,
   ) {
     super(message);
@@ -110,11 +86,7 @@ export async function getChannelById(
   channelId: string,
   viewerId: string,
 ): Promise<ChannelSummary | null> {
-  const rows = await db
-    .select()
-    .from(channel)
-    .where(eq(channel.id, channelId))
-    .limit(1);
+  const rows = await db.select().from(channel).where(eq(channel.id, channelId)).limit(1);
   const c = rows[0];
   if (!c) return null;
 
@@ -131,12 +103,7 @@ export async function getChannelById(
       notifyPref: channelMember.notifyPref,
     })
     .from(channelMember)
-    .where(
-      and(
-        eq(channelMember.channelId, channelId),
-        eq(channelMember.userId, viewerId),
-      ),
-    )
+    .where(and(eq(channelMember.channelId, channelId), eq(channelMember.userId, viewerId)))
     .limit(1);
   const lastReadAt = mine[0]?.lastReadAt ?? null;
   const muted = mine[0]?.muted ?? false;
@@ -144,6 +111,13 @@ export async function getChannelById(
 
   const unread = await computeUnread(db, viewerId, [channelId]);
   const u = unread.get(channelId);
+  const rawUnreadCount = u?.unreadCount ?? 0;
+  const rawHasMention = u?.hasMention ?? false;
+  const { unreadCount: effectiveUnreadCount, hasMention: effectiveHasMention } = applyNotifyPref(
+    rawUnreadCount,
+    rawHasMention,
+    notifyPref,
+  );
 
   let dmPeerUserIds: string[] | undefined;
   if (c.kind === "dm") {
@@ -151,9 +125,7 @@ export async function getChannelById(
       .select({ userId: channelMember.userId })
       .from(channelMember)
       .where(eq(channelMember.channelId, channelId));
-    dmPeerUserIds = peers
-      .map((p) => p.userId)
-      .filter((uid) => uid !== viewerId);
+    dmPeerUserIds = peers.map((p) => p.userId).filter((uid) => uid !== viewerId);
   }
 
   return {
@@ -167,8 +139,8 @@ export async function getChannelById(
     archivedAt: c.archivedAt,
     memberCount: count,
     isMember: mine.length > 0,
-    unreadCount: u?.unreadCount ?? 0,
-    hasMention: u?.hasMention ?? false,
+    unreadCount: effectiveUnreadCount,
+    hasMention: effectiveHasMention,
     lastReadAt,
     muted,
     notifyPref,
@@ -203,20 +175,14 @@ export async function computeUnread(
     .from(message)
     .innerJoin(
       channelMember,
-      and(
-        eq(channelMember.channelId, message.channelId),
-        eq(channelMember.userId, userId),
-      ),
+      and(eq(channelMember.channelId, message.channelId), eq(channelMember.userId, userId)),
     )
     .where(
       and(
         inArray(message.channelId, channelIds),
         isNull(message.deletedAt),
         ne(message.userId, userId),
-        or(
-          isNull(channelMember.lastReadAt),
-          gt(message.createdAt, channelMember.lastReadAt),
-        ),
+        or(isNull(channelMember.lastReadAt), gt(message.createdAt, channelMember.lastReadAt)),
       ),
     )
     .groupBy(message.channelId);
@@ -241,10 +207,7 @@ export async function markChannelRead(
     .update(channelMember)
     .set({ lastReadAt: when })
     .where(
-      and(
-        eq(channelMember.channelId, params.channelId),
-        eq(channelMember.userId, params.userId),
-      ),
+      and(eq(channelMember.channelId, params.channelId), eq(channelMember.userId, params.userId)),
     );
 }
 
@@ -316,12 +279,7 @@ export async function listChannelsForUser(
         notifyPref: channelMember.notifyPref,
       })
       .from(channelMember)
-      .where(
-        and(
-          eq(channelMember.userId, userId),
-          inArray(channelMember.channelId, myChannelIds),
-        ),
-      );
+      .where(and(eq(channelMember.userId, userId), inArray(channelMember.channelId, myChannelIds)));
     for (const r of rows) {
       myPrefs.set(r.channelId, {
         lastReadAt: r.lastReadAt,
@@ -335,6 +293,12 @@ export async function listChannelsForUser(
   return channelRows.map((c) => {
     const u = unread.get(c.id);
     const p = myPrefs.get(c.id);
+    const notifyPref: NotifyPref = p?.notifyPref ?? "all";
+    const { unreadCount, hasMention } = applyNotifyPref(
+      u?.unreadCount ?? 0,
+      u?.hasMention ?? false,
+      notifyPref,
+    );
     return {
       id: c.id,
       orgId: c.orgId,
@@ -346,13 +310,34 @@ export async function listChannelsForUser(
       archivedAt: c.archivedAt,
       memberCount: counts.get(c.id) ?? 0,
       isMember: myIdsSet.has(c.id),
-      unreadCount: u?.unreadCount ?? 0,
-      hasMention: u?.hasMention ?? false,
+      unreadCount,
+      hasMention,
       lastReadAt: p?.lastReadAt ?? null,
       muted: p?.muted ?? false,
-      notifyPref: p?.notifyPref ?? "all",
+      notifyPref,
     };
   });
+}
+
+/**
+ * Reshape raw unread counts according to the viewer's per-channel
+ * `notifyPref`. `computeUnread` stays pure; this is the presentation rule:
+ *   - "nothing": no badge, no mention indicator
+ *   - "mentions": unread count collapses to a single-bit "mentioned or not"
+ *   - "all": pass through
+ */
+function applyNotifyPref(
+  unreadCount: number,
+  hasMention: boolean,
+  notifyPref: NotifyPref,
+): { unreadCount: number; hasMention: boolean } {
+  if (notifyPref === "nothing") {
+    return { unreadCount: 0, hasMention: false };
+  }
+  if (notifyPref === "mentions") {
+    return { unreadCount: hasMention ? 1 : 0, hasMention };
+  }
+  return { unreadCount, hasMention };
 }
 
 /**
@@ -361,10 +346,7 @@ export async function listChannelsForUser(
  * `#general` owned by the org's owner. Safe to call on every channel list
  * request — the `channel_org_name_unique` partial index guards against races.
  */
-export async function ensureGeneralChannel(
-  db: DbLike,
-  orgId: string,
-): Promise<string | null> {
+export async function ensureGeneralChannel(db: DbLike, orgId: string): Promise<string | null> {
   const existing = await db
     .select({ id: channel.id })
     .from(channel)
@@ -424,10 +406,7 @@ export async function updateChannelPrefs(
     .update(channelMember)
     .set(patch)
     .where(
-      and(
-        eq(channelMember.channelId, params.channelId),
-        eq(channelMember.userId, params.userId),
-      ),
+      and(eq(channelMember.channelId, params.channelId), eq(channelMember.userId, params.userId)),
     );
 }
 
@@ -503,10 +482,7 @@ export async function removeChannelMember(
   await db
     .delete(channelMember)
     .where(
-      and(
-        eq(channelMember.channelId, params.channelId),
-        eq(channelMember.userId, params.userId),
-      ),
+      and(eq(channelMember.channelId, params.channelId), eq(channelMember.userId, params.userId)),
     );
 }
 
@@ -518,38 +494,45 @@ export async function archiveChannel(
   const actorRow = await db
     .select({ role: channelMember.role })
     .from(channelMember)
-    .where(
-      and(
-        eq(channelMember.channelId, chan.id),
-        eq(channelMember.userId, params.userId),
-      ),
-    )
+    .where(and(eq(channelMember.channelId, chan.id), eq(channelMember.userId, params.userId)))
     .limit(1);
   if (actorRow[0]?.role !== "admin") {
     throw new ChatError("forbidden", "Only channel admins can archive");
   }
-  await db
-    .update(channel)
-    .set({ archivedAt: new Date() })
-    .where(eq(channel.id, chan.id));
+  await db.update(channel).set({ archivedAt: new Date() }).where(eq(channel.id, chan.id));
 }
 
-export async function listChannelMembers(
+/**
+ * Permanently delete a channel and all of its messages, members, pins, and
+ * reactions. Gated to channel admins only — the row is nuked via cascade on
+ * the FK references declared in `channel`.
+ */
+export async function deleteChannel(
   db: DbLike,
-  channelId: string,
-  viewerId: string,
-) {
+  params: { channelId: string; userId: string },
+): Promise<void> {
+  const chan = await requireChannel(db, params.channelId);
+  if (chan.kind === "dm") {
+    throw new ChatError("forbidden", "DMs cannot be deleted");
+  }
+  const actorRow = await db
+    .select({ role: channelMember.role })
+    .from(channelMember)
+    .where(and(eq(channelMember.channelId, chan.id), eq(channelMember.userId, params.userId)))
+    .limit(1);
+  if (actorRow[0]?.role !== "admin") {
+    throw new ChatError("forbidden", "Only channel admins can delete");
+  }
+  await db.delete(channel).where(eq(channel.id, chan.id));
+}
+
+export async function listChannelMembers(db: DbLike, channelId: string, viewerId: string) {
   const chan = await requireChannel(db, channelId);
   if (chan.kind !== "public") {
     const mine = await db
       .select({ c: channelMember.channelId })
       .from(channelMember)
-      .where(
-        and(
-          eq(channelMember.channelId, channelId),
-          eq(channelMember.userId, viewerId),
-        ),
-      )
+      .where(and(eq(channelMember.channelId, channelId), eq(channelMember.userId, viewerId)))
       .limit(1);
     if (mine.length === 0) {
       throw new ChatError("forbidden", "Not a member");
@@ -604,7 +587,10 @@ export async function openDm(
         SELECT array_agg(cm.user_id ORDER BY cm.user_id)
         FROM channel_member cm
         WHERE cm.channel_id = c.id
-      ) = ${sql`ARRAY[${sql.join(members.map((m) => sql`${m}`), sql`, `)}]::text[]`}
+      ) = ${sql`ARRAY[${sql.join(
+        members.map((m) => sql`${m}`),
+        sql`, `,
+      )}]::text[]`}
     LIMIT 1
   `);
   const existingId = (existing.rows[0] as { id?: string } | undefined)?.id;
@@ -648,13 +634,8 @@ export async function listDmsForUser(
   const ids = myDmRows.map((r) => r.channelId);
   if (ids.length === 0) return [];
 
-  const rows = await db
-    .select()
-    .from(channel)
-    .where(inArray(channel.id, ids));
-  return Promise.all(
-    rows.map(async (c) => (await getChannelById(db, c.id, params.userId))!),
-  );
+  const rows = await db.select().from(channel).where(inArray(channel.id, ids));
+  return Promise.all(rows.map(async (c) => (await getChannelById(db, c.id, params.userId))!));
 }
 
 async function requireChannel(

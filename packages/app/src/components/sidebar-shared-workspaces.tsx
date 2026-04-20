@@ -146,16 +146,9 @@ export function SidebarSharedWorkspaces({
     return null;
   }
 
-  const [headerHovered, setHeaderHovered] = useState(false);
-  const showAdd = headerHovered || isNative;
-
   return (
     <View style={styles.container}>
-      <Pressable
-        style={styles.header}
-        onHoverIn={() => setHeaderHovered(true)}
-        onHoverOut={() => setHeaderHovered(false)}
-      >
+      <View style={styles.header}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={collapsed ? "Expand shared workspaces" : "Collapse shared workspaces"}
@@ -171,18 +164,22 @@ export function SidebarSharedWorkspaces({
           <Text style={styles.headerText}>Shared Workspaces</Text>
           {totalCount > 0 && <Text style={styles.countBadge}>{totalCount}</Text>}
         </Pressable>
-        {showAdd ? (
+        {isAuthenticated ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Share a workspace"
-            style={({ hovered = false }) => [styles.addButton, hovered && styles.headerHovered]}
+            style={({ hovered = false }) => [
+              styles.addButton,
+              hovered && styles.headerHovered,
+              !orgId && styles.addButtonDisabled,
+            ]}
             onPress={() => setModalOpen(true)}
             disabled={!orgId}
           >
             <Plus size={12} color={theme.colors.foregroundMuted} />
           </Pressable>
         ) : null}
-      </Pressable>
+      </View>
 
       {!collapsed && (
         <View style={styles.body}>
@@ -198,15 +195,9 @@ export function SidebarSharedWorkspaces({
                   <Pressable
                     key={share.token}
                     {...(isWeb
-                      ? ({ dataSet: { hubcodeRow: "1" } } as unknown as Record<
-                          string,
-                          unknown
-                        >)
+                      ? ({ dataSet: { hubcodeRow: "1" } } as unknown as Record<string, unknown>)
                       : {})}
-                    style={[
-                      styles.row,
-                      isActive && styles.rowActive,
-                    ]}
+                    style={[styles.row, isActive && styles.rowActive]}
                     accessibilityLabel={`Open shared workspace ${share.workspaceName}`}
                     disabled={isActive}
                     onPress={() => {
@@ -241,10 +232,7 @@ export function SidebarSharedWorkspaces({
                             {isCopied ? (
                               <Check size={12} color={theme.colors.accent} />
                             ) : (
-                              <Copy
-                                size={12}
-                                color={theme.colors.foregroundMuted}
-                              />
+                              <Copy size={12} color={theme.colors.foregroundMuted} />
                             )}
                           </Pressable>
                           <Pressable
@@ -260,10 +248,7 @@ export function SidebarSharedWorkspaces({
                             }}
                             disabled={isRevoking}
                           >
-                            <Trash2
-                              size={12}
-                              color={theme.colors.destructive}
-                            />
+                            <Trash2 size={12} color={theme.colors.destructive} />
                           </Pressable>
                         </View>
                       </>
@@ -281,10 +266,7 @@ export function SidebarSharedWorkspaces({
                 <Pressable
                   key={share.token}
                   {...(isWeb
-                    ? ({ dataSet: { hubcodeRow: "1" } } as unknown as Record<
-                        string,
-                        unknown
-                      >)
+                    ? ({ dataSet: { hubcodeRow: "1" } } as unknown as Record<string, unknown>)
                     : {})}
                   accessibilityLabel={`Open ${share.workspaceName}`}
                   style={styles.row}
@@ -311,10 +293,7 @@ export function SidebarSharedWorkspaces({
                           void handleOpenShareUrl(share.shareUrl);
                         }}
                       >
-                        <ExternalLink
-                          size={12}
-                          color={theme.colors.foregroundMuted}
-                        />
+                        <ExternalLink size={12} color={theme.colors.foregroundMuted} />
                       </Pressable>
                     </>
                   )}
@@ -383,6 +362,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.base,
+  },
+  addButtonDisabled: {
+    opacity: 0.4,
   },
   body: {
     paddingTop: theme.spacing[1],

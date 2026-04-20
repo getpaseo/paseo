@@ -22,12 +22,23 @@ import {
   Columns2,
   Copy,
   Globe,
+  Plus,
   RotateCw,
   Rows2,
   SquarePen,
   SquareTerminal,
   X,
 } from "lucide-react-native";
+import type { CliProviderDefinition } from "@server/shared/cli-provider-registry";
+import { CliAgentIcon } from "@/components/icons/cli-agent-icon";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { SortableInlineList } from "@/components/sortable-inline-list";
 import { isNative, isWeb } from "@/constants/platform";
@@ -92,6 +103,8 @@ type WorkspaceDesktopTabsRowProps = {
   onNewBrowserTab: () => void;
   onSplitRight: () => void;
   onSplitDown: () => void;
+  onLaunchCliAgent: (providerId: string) => void;
+  cliProviderOptions: CliProviderDefinition[];
   externalDndContext?: boolean;
   activeDragTabId?: string | null;
   tabDropPreviewIndex?: number | null;
@@ -398,6 +411,8 @@ export function WorkspaceDesktopTabsRow({
   onNewBrowserTab,
   onSplitRight,
   onSplitDown,
+  onLaunchCliAgent,
+  cliProviderOptions,
   externalDndContext = false,
   activeDragTabId = null,
   tabDropPreviewIndex = null,
@@ -531,116 +546,112 @@ export function WorkspaceDesktopTabsRow({
         />
       </ScrollView>
       <View style={styles.tabsActions} onLayout={handleTabsActionsLayout}>
-        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger
-            testID="workspace-new-agent-tab"
-            onPress={() =>
-              onSelectNewTabOption({
-                optionId: newTabAgentOptionId,
-                paneId,
-              })
-            }
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            testID="workspace-new-tab-menu-trigger"
             accessibilityRole="button"
-            accessibilityLabel="New agent tab"
+            accessibilityLabel="New tab"
             style={({ hovered, pressed }) => [
               styles.newTabActionButton,
               (hovered || pressed) && styles.newTabActionButtonHovered,
             ]}
           >
-            <SquarePen size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
-            <View style={styles.newTabTooltipRow}>
-              <Text style={styles.newTabTooltipText}>New agent tab</Text>
-              {newAgentTabKeys ? (
-                <Shortcut chord={newAgentTabKeys} style={styles.newTabTooltipShortcut} />
-              ) : null}
-            </View>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger
-            onPress={() => onNewTerminalTab({ paneId })}
-            accessibilityRole="button"
-            accessibilityLabel="New terminal tab"
-            style={({ hovered, pressed }) => [
-              styles.newTabActionButton,
-              (hovered || pressed) && styles.newTabActionButtonHovered,
-            ]}
+            <Plus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            side="bottom"
+            align="end"
+            width={240}
+            testID="workspace-new-tab-menu"
           >
-            <SquareTerminal size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
-            <View style={styles.newTabTooltipRow}>
-              <Text style={styles.newTabTooltipText}>New terminal tab</Text>
-              {newTerminalTabKeys ? (
-                <Shortcut chord={newTerminalTabKeys} style={styles.newTabTooltipShortcut} />
-              ) : null}
-            </View>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger
-            onPress={onNewBrowserTab}
-            accessibilityRole="button"
-            accessibilityLabel="Open browser"
-            style={({ hovered, pressed }) => [
-              styles.newTabActionButton,
-              (hovered || pressed) && styles.newTabActionButtonHovered,
-            ]}
-          >
-            <Globe size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center" offset={8}>
-            <Text style={styles.newTabTooltipText}>Open browser</Text>
-          </TooltipContent>
-        </Tooltip>
-        {showPaneSplitActions ? (
-          <>
-            <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-              <TooltipTrigger
-                onPress={onSplitRight}
-                accessibilityRole="button"
-                accessibilityLabel="Split pane right"
-                style={({ hovered, pressed }) => [
-                  styles.newTabActionButton,
-                  (hovered || pressed) && styles.newTabActionButtonHovered,
-                ]}
-              >
-                <Columns2 size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </TooltipTrigger>
-              <TooltipContent side="bottom" align="center" offset={8}>
-                <View style={styles.newTabTooltipRow}>
-                  <Text style={styles.newTabTooltipText}>Split pane right</Text>
-                  {splitRightKeys ? (
-                    <Shortcut chord={splitRightKeys} style={styles.newTabTooltipShortcut} />
-                  ) : null}
-                </View>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-              <TooltipTrigger
-                onPress={onSplitDown}
-                accessibilityRole="button"
-                accessibilityLabel="Split pane down"
-                style={({ hovered, pressed }) => [
-                  styles.newTabActionButton,
-                  (hovered || pressed) && styles.newTabActionButtonHovered,
-                ]}
-              >
-                <Rows2 size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </TooltipTrigger>
-              <TooltipContent side="bottom" align="center" offset={8}>
-                <View style={styles.newTabTooltipRow}>
-                  <Text style={styles.newTabTooltipText}>Split pane down</Text>
-                  {splitDownKeys ? (
-                    <Shortcut chord={splitDownKeys} style={styles.newTabTooltipShortcut} />
-                  ) : null}
-                </View>
-              </TooltipContent>
-            </Tooltip>
-          </>
-        ) : null}
+            <DropdownMenuLabel>New agent tab</DropdownMenuLabel>
+            <DropdownMenuItem
+              testID="workspace-new-gui-agent-tab"
+              onSelect={() =>
+                onSelectNewTabOption({ optionId: newTabAgentOptionId, paneId })
+              }
+              leading={<SquarePen size={16} color={theme.colors.foreground} />}
+              trailing={
+                newAgentTabKeys ? (
+                  <Shortcut chord={newAgentTabKeys} style={styles.newTabTooltipShortcut} />
+                ) : undefined
+              }
+            >
+              New agent (GUI)
+            </DropdownMenuItem>
+            {cliProviderOptions.length > 0
+              ? cliProviderOptions.map((provider) => (
+                  <DropdownMenuItem
+                    key={provider.id}
+                    testID={`workspace-new-agent-tab-${provider.id}`}
+                    onSelect={() => onLaunchCliAgent(provider.id)}
+                    leading={
+                      provider.icon ? (
+                        <CliAgentIcon
+                          icon={provider.icon}
+                          size={16}
+                          color={theme.colors.foreground}
+                        />
+                      ) : (
+                        <SquarePen size={16} color={theme.colors.foregroundMuted} />
+                      )
+                    }
+                  >
+                    {`${provider.name} - CLI`}
+                  </DropdownMenuItem>
+                ))
+              : null}
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Other</DropdownMenuLabel>
+            <DropdownMenuItem
+              testID="workspace-new-terminal-tab"
+              onSelect={() => onNewTerminalTab({ paneId })}
+              leading={<SquareTerminal size={16} color={theme.colors.foregroundMuted} />}
+              trailing={
+                newTerminalTabKeys ? (
+                  <Shortcut chord={newTerminalTabKeys} style={styles.newTabTooltipShortcut} />
+                ) : undefined
+              }
+            >
+              New terminal tab
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              testID="workspace-new-browser-tab"
+              onSelect={onNewBrowserTab}
+              leading={<Globe size={16} color={theme.colors.foregroundMuted} />}
+            >
+              Open browser
+            </DropdownMenuItem>
+            {showPaneSplitActions ? (
+              <>
+                <DropdownMenuItem
+                  testID="workspace-split-right"
+                  onSelect={onSplitRight}
+                  leading={<Columns2 size={16} color={theme.colors.foregroundMuted} />}
+                  trailing={
+                    splitRightKeys ? (
+                      <Shortcut chord={splitRightKeys} style={styles.newTabTooltipShortcut} />
+                    ) : undefined
+                  }
+                >
+                  Split pane right
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  testID="workspace-split-down"
+                  onSelect={onSplitDown}
+                  leading={<Rows2 size={16} color={theme.colors.foregroundMuted} />}
+                  trailing={
+                    splitDownKeys ? (
+                      <Shortcut chord={splitDownKeys} style={styles.newTabTooltipShortcut} />
+                    ) : undefined
+                  }
+                >
+                  Split pane down
+                </DropdownMenuItem>
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </View>
     </View>
   );
@@ -782,7 +793,12 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   tabsScrollFitContent: {
-    flex: 1,
+    // No flex — let the ScrollView size to its content so the `+` dropdown
+    // sits immediately to the right of the last tab instead of being pushed
+    // to the far edge of the row. When tabs DO overflow the viewport, the
+    // sibling style `tabsScrollOverflow` applies instead and forces scroll.
+    flexGrow: 0,
+    flexShrink: 0,
   },
   tabsScrollOverflow: {
     flex: 1,

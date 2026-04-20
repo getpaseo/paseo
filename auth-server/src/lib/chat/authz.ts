@@ -5,11 +5,7 @@ import * as schema from "@/db/schema";
 
 export type DbLike = NodePgDatabase<typeof schema>;
 
-export async function isOrgMember(
-  db: DbLike,
-  orgId: string,
-  userId: string,
-): Promise<boolean> {
+export async function isOrgMember(db: DbLike, orgId: string, userId: string): Promise<boolean> {
   const rows = await db
     .select({ id: member.id })
     .from(member)
@@ -41,9 +37,7 @@ export async function isChannelMember(
   const rows = await db
     .select({ channelId: channelMember.channelId })
     .from(channelMember)
-    .where(
-      and(eq(channelMember.channelId, channelId), eq(channelMember.userId, userId)),
-    )
+    .where(and(eq(channelMember.channelId, channelId), eq(channelMember.userId, userId)))
     .limit(1);
   return rows.length > 0;
 }
@@ -86,9 +80,7 @@ export async function resolveChannelAccess(
   const memberRows = await db
     .select({ role: channelMember.role })
     .from(channelMember)
-    .where(
-      and(eq(channelMember.channelId, channelId), eq(channelMember.userId, userId)),
-    )
+    .where(and(eq(channelMember.channelId, channelId), eq(channelMember.userId, userId)))
     .limit(1);
   const isMember = memberRows.length > 0;
   const chanRole = memberRows[0]?.role;
@@ -101,10 +93,7 @@ export async function resolveChannelAccess(
   // membership for both read and write.
   const canRead = kind === "public" ? true : isMember;
   const canWrite = !archived && (kind === "public" ? true : isMember);
-  const canAdmin =
-    orgRole === "owner" ||
-    orgRole === "admin" ||
-    chanRole === "admin";
+  const canAdmin = orgRole === "owner" || orgRole === "admin" || chanRole === "admin";
 
   return { canRead, canWrite, canAdmin, orgId: chan.orgId, kind, archived };
 }

@@ -50,9 +50,7 @@ export function ChannelMembersModal({
   );
 
   const invitables = useMemo(() => {
-    const list = (orgMembersQuery.data ?? []).filter(
-      (m) => m.user && !currentIds.has(m.userId),
-    );
+    const list = (orgMembersQuery.data ?? []).filter((m) => m.user && !currentIds.has(m.userId));
     if (!query.trim()) return list;
     const q = query.trim().toLowerCase();
     return list.filter((m) => {
@@ -97,12 +95,7 @@ export function ChannelMembersModal({
                 accessibilityRole="radio"
                 accessibilityState={{ selected: currentPref === p }}
               >
-                <View
-                  style={[
-                    styles.radio,
-                    currentPref === p && styles.radioActive,
-                  ]}
-                />
+                <View style={[styles.radio, currentPref === p && styles.radioActive]} />
                 <View style={styles.prefTextWrap}>
                   <Text style={styles.prefTitle}>{prefLabel(p)}</Text>
                   <Text style={styles.prefHint}>{prefDescription(p)}</Text>
@@ -175,9 +168,7 @@ export function ChannelMembersModal({
             />
             {invitables.length === 0 ? (
               <Text style={styles.empty}>
-                {orgMembersQuery.isLoading
-                  ? "Loading…"
-                  : "No other members to invite."}
+                {orgMembersQuery.isLoading ? "Loading…" : "No other members to invite."}
               </Text>
             ) : (
               invitables.slice(0, 20).map((m) => {
@@ -185,9 +176,7 @@ export function ChannelMembersModal({
                 return (
                   <Pressable
                     key={m.userId}
-                    onPress={() =>
-                      addMutation.mutate({ channelId: channel.id, userId: m.userId })
-                    }
+                    onPress={() => addMutation.mutate({ channelId: channel.id, userId: m.userId })}
                     style={styles.row}
                     accessibilityRole="button"
                   >

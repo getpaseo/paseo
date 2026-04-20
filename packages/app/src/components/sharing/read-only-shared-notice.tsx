@@ -7,9 +7,7 @@ export function ReadOnlySharedNotice() {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   return (
-    <View
-      style={[styles.wrapper, { paddingBottom: Math.max(insets.bottom, 12) + 12 }]}
-    >
+    <View style={[styles.wrapper, { paddingBottom: Math.max(insets.bottom, 12) + 12 }]}>
       <View style={styles.card}>
         <View style={styles.iconWrap}>
           <Eye size={14} color={theme.colors.foregroundMuted} />
@@ -17,8 +15,8 @@ export function ReadOnlySharedNotice() {
         <View style={styles.body}>
           <Text style={styles.title}>View-only session</Text>
           <Text style={styles.hint}>
-            You were invited with view access — you can watch the agent but can't send messages
-            or interact with tools.
+            You were invited with view access — you can watch the agent but can't send messages or
+            interact with tools.
           </Text>
         </View>
       </View>

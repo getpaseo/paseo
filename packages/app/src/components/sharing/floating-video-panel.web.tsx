@@ -118,7 +118,11 @@ function PanelShell({ roomSend }: { roomSend: (type: string, payload?: unknown) 
   const count = participants.length;
 
   const onMouseDown = (e: React.MouseEvent) => {
-    dragRef.current = { startX: e.clientX - position.x, startY: e.clientY - position.y, isDragging: true };
+    dragRef.current = {
+      startX: e.clientX - position.x,
+      startY: e.clientY - position.y,
+      isDragging: true,
+    };
   };
   useEffect(() => {
     let rafId = 0;
@@ -163,7 +167,13 @@ function PanelShell({ roomSend }: { roomSend: (type: string, payload?: unknown) 
     e.stopPropagation();
     const w = customSize?.w ?? autoWidth;
     const h = customSize?.h ?? 400;
-    resizeRef.current = { startX: e.clientX, startY: e.clientY, startW: w, startH: h, dragging: true };
+    resizeRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startW: w,
+      startH: h,
+      dragging: true,
+    };
     // Mutate the DOM directly during drag — React re-renders cause LiveKit
     // tiles to relayout, which visibly lags. Commit to state only on mouseup.
     let lastW = w;
@@ -193,173 +203,185 @@ function PanelShell({ roomSend }: { roomSend: (type: string, payload?: unknown) 
   return (
     <>
       <style>{PANEL_CSS}</style>
-    <div
-      ref={panelRef}
-      style={{
-        position: "fixed",
-        left: position.x,
-        top: position.y,
-        width: panelWidth,
-        ...panelHeightStyle,
-        borderRadius: minimized ? 9999 : 12,
-        overflow: "hidden",
-        backgroundColor: minimized ? "rgba(49,39,52,0.92)" : "rgba(15,15,17,0.95)",
-        backdropFilter: "blur(14px) saturate(130%)",
-        WebkitBackdropFilter: "blur(14px) saturate(130%)",
-        border: minimized
-          ? "1px solid rgba(196,25,139,0.28)"
-          : "1px solid rgba(255,255,255,0.06)",
-        boxShadow: minimized
-          ? "0 6px 24px rgba(196,25,139,0.22), 0 2px 8px rgba(0,0,0,0.4)"
-          : "0 12px 40px rgba(0,0,0,0.55)",
-        fontFamily: PANEL_FONT_FAMILY,
-        display: "flex",
-        flexDirection: "column",
-        transition: "border-radius 140ms ease, width 140ms ease",
-      }}
-    >
       <div
-        onMouseDown={onMouseDown}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: minimized ? 10 : 8,
-          padding: minimized ? "6px 10px 6px 16px" : "8px 12px",
-          cursor: "grab",
-          borderBottom: minimized ? "none" : "1px solid rgba(255,255,255,0.06)",
-          userSelect: "none",
-        }}
-      >
-        <span
-          style={{
-            flex: 1,
-            fontSize: 12,
-            color: "#d4d4d8",
-            fontWeight: 500,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {count} participant{count === 1 ? "" : "s"}
-        </span>
-        {minimized && (
-          <div style={{ display: "flex", gap: 6, marginRight: 4 }} onMouseDown={(e) => e.stopPropagation()}>
-            <MicToggle compact />
-            <DrawControls roomSend={roomSend} compact />
-          </div>
-        )}
-        {!minimized && (
-          <button
-            onClick={() => {
-              if (expanded) setCustomSize(null);
-              else setCustomSize({ w: autoWidth * 2, h: 500 });
-            }}
-            style={iconBtnStyle}
-            aria-label={expanded ? "Shrink" : "Enlarge"}
-            title={expanded ? "Shrink" : "Enlarge — then drag the corner to resize"}
-          >
-            {expanded ? (
-              <Shrink size={14} color="#a1a1aa" />
-            ) : (
-              <Expand size={14} color="#a1a1aa" />
-            )}
-          </button>
-        )}
-        <button
-          onClick={() => setMinimized(!minimized)}
-          style={iconBtnStyle}
-          aria-label={minimized ? "Restore" : "Collapse"}
-          title={minimized ? "Restore" : "Collapse"}
-        >
-          {minimized ? (
-            <ChevronDown size={14} color="#a1a1aa" />
-          ) : (
-            <ChevronUp size={14} color="#a1a1aa" />
-          )}
-        </button>
-      </div>
-
-      {!minimized && (
-        <>
-          <div
-            style={{
-              ...(expanded ? { flex: 1, minHeight: 0 } : {}),
-              display: "flex",
-              overflow: "hidden",
-              paddingBottom: expanded ? 12 : 0,
-              backgroundColor: "#09090b",
-            }}
-          >
-            <ParticipantGrid cols={cols} expanded={expanded} fillHeight={expanded} tileSize={tileSize} />
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 12,
-              padding: "10px",
-              backgroundColor: "rgba(24,24,27,0.6)",
-              borderTop: "1px solid rgba(255,255,255,0.04)",
-            }}
-          >
-            <MicToggle />
-            <CamToggle />
-            <TrackToggle source={Track.Source.ScreenShare} className="hc-control" showIcon={false}>
-              <Monitor size={16} color="#fafafa" />
-            </TrackToggle>
-            <DrawControls roomSend={roomSend} disabled={expanded} />
-            <button
-              onClick={() => setChatOpen((o) => !o)}
-              className={`hc-control${chatOpen ? " hc-active" : ""}`}
-              aria-label={chatOpen ? "Close chat" : "Open chat"}
-            >
-              <MessageSquare size={16} color="#fafafa" />
-            </button>
-          </div>
-        </>
-      )}
-      {!minimized && (
-        <div
-          onMouseDown={startResize}
-          title="Drag to resize"
-          style={{
-            position: "absolute",
-            right: 0,
-            bottom: 0,
-            width: 18,
-            height: 18,
-            cursor: "nwse-resize",
-            background:
-              "linear-gradient(135deg, transparent 0 50%, rgba(255,255,255,0.2) 50% 60%, transparent 60% 70%, rgba(255,255,255,0.2) 70% 80%, transparent 80%)",
-          }}
-        />
-      )}
-    </div>
-    {chatOpen && !minimized && (
-      <div
+        ref={panelRef}
         style={{
           position: "fixed",
-          left: position.x - 320 - 8,
+          left: position.x,
           top: position.y,
-          width: 320,
-          height: 440,
-          borderRadius: 12,
+          width: panelWidth,
+          ...panelHeightStyle,
+          borderRadius: minimized ? 9999 : 12,
           overflow: "hidden",
-          backgroundColor: "rgba(15,15,17,0.72)",
-          backdropFilter: "blur(18px) saturate(140%)",
-          WebkitBackdropFilter: "blur(18px) saturate(140%)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
+          backgroundColor: minimized ? "rgba(49,39,52,0.92)" : "rgba(15,15,17,0.95)",
+          backdropFilter: "blur(14px) saturate(130%)",
+          WebkitBackdropFilter: "blur(14px) saturate(130%)",
+          border: minimized
+            ? "1px solid rgba(196,25,139,0.28)"
+            : "1px solid rgba(255,255,255,0.06)",
+          boxShadow: minimized
+            ? "0 6px 24px rgba(196,25,139,0.22), 0 2px 8px rgba(0,0,0,0.4)"
+            : "0 12px 40px rgba(0,0,0,0.55)",
+          fontFamily: PANEL_FONT_FAMILY,
           display: "flex",
           flexDirection: "column",
-          fontFamily: PANEL_FONT_FAMILY,
+          transition: "border-radius 140ms ease, width 140ms ease",
         }}
       >
-        <Chat style={{ flex: 1, minHeight: 0, width: "100%" }} />
+        <div
+          onMouseDown={onMouseDown}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: minimized ? 10 : 8,
+            padding: minimized ? "6px 10px 6px 16px" : "8px 12px",
+            cursor: "grab",
+            borderBottom: minimized ? "none" : "1px solid rgba(255,255,255,0.06)",
+            userSelect: "none",
+          }}
+        >
+          <span
+            style={{
+              flex: 1,
+              fontSize: 12,
+              color: "#d4d4d8",
+              fontWeight: 500,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {count} participant{count === 1 ? "" : "s"}
+          </span>
+          {minimized && (
+            <div
+              style={{ display: "flex", gap: 6, marginRight: 4 }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <MicToggle compact />
+              <DrawControls roomSend={roomSend} compact />
+            </div>
+          )}
+          {!minimized && (
+            <button
+              onClick={() => {
+                if (expanded) setCustomSize(null);
+                else setCustomSize({ w: autoWidth * 2, h: 500 });
+              }}
+              style={iconBtnStyle}
+              aria-label={expanded ? "Shrink" : "Enlarge"}
+              title={expanded ? "Shrink" : "Enlarge — then drag the corner to resize"}
+            >
+              {expanded ? (
+                <Shrink size={14} color="#a1a1aa" />
+              ) : (
+                <Expand size={14} color="#a1a1aa" />
+              )}
+            </button>
+          )}
+          <button
+            onClick={() => setMinimized(!minimized)}
+            style={iconBtnStyle}
+            aria-label={minimized ? "Restore" : "Collapse"}
+            title={minimized ? "Restore" : "Collapse"}
+          >
+            {minimized ? (
+              <ChevronDown size={14} color="#a1a1aa" />
+            ) : (
+              <ChevronUp size={14} color="#a1a1aa" />
+            )}
+          </button>
+        </div>
+
+        {!minimized && (
+          <>
+            <div
+              style={{
+                ...(expanded ? { flex: 1, minHeight: 0 } : {}),
+                display: "flex",
+                overflow: "hidden",
+                paddingBottom: expanded ? 12 : 0,
+                backgroundColor: "#09090b",
+              }}
+            >
+              <ParticipantGrid
+                cols={cols}
+                expanded={expanded}
+                fillHeight={expanded}
+                tileSize={tileSize}
+              />
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 12,
+                padding: "10px",
+                backgroundColor: "rgba(24,24,27,0.6)",
+                borderTop: "1px solid rgba(255,255,255,0.04)",
+              }}
+            >
+              <MicToggle />
+              <CamToggle />
+              <TrackToggle
+                source={Track.Source.ScreenShare}
+                className="hc-control"
+                showIcon={false}
+              >
+                <Monitor size={16} color="#fafafa" />
+              </TrackToggle>
+              <DrawControls roomSend={roomSend} disabled={expanded} />
+              <button
+                onClick={() => setChatOpen((o) => !o)}
+                className={`hc-control${chatOpen ? " hc-active" : ""}`}
+                aria-label={chatOpen ? "Close chat" : "Open chat"}
+              >
+                <MessageSquare size={16} color="#fafafa" />
+              </button>
+            </div>
+          </>
+        )}
+        {!minimized && (
+          <div
+            onMouseDown={startResize}
+            title="Drag to resize"
+            style={{
+              position: "absolute",
+              right: 0,
+              bottom: 0,
+              width: 18,
+              height: 18,
+              cursor: "nwse-resize",
+              background:
+                "linear-gradient(135deg, transparent 0 50%, rgba(255,255,255,0.2) 50% 60%, transparent 60% 70%, rgba(255,255,255,0.2) 70% 80%, transparent 80%)",
+            }}
+          />
+        )}
       </div>
-    )}
+      {chatOpen && !minimized && (
+        <div
+          style={{
+            position: "fixed",
+            left: position.x - 320 - 8,
+            top: position.y,
+            width: 320,
+            height: 440,
+            borderRadius: 12,
+            overflow: "hidden",
+            backgroundColor: "rgba(15,15,17,0.72)",
+            backdropFilter: "blur(18px) saturate(140%)",
+            WebkitBackdropFilter: "blur(18px) saturate(140%)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
+            display: "flex",
+            flexDirection: "column",
+            fontFamily: PANEL_FONT_FAMILY,
+          }}
+        >
+          <Chat style={{ flex: 1, minHeight: 0, width: "100%" }} />
+        </div>
+      )}
     </>
   );
 }
@@ -635,10 +657,7 @@ function ParticipantGrid({
           ...(fillHeight ? { width: "100%", height: "100%" } : {}),
         }}
       >
-        <TrackRefContext.Provider
-          key={focus.participant.sid + focus.source}
-          value={focus}
-        >
+        <TrackRefContext.Provider key={focus.participant.sid + focus.source} value={focus}>
           <CustomTile trackRef={focus} noAspectRatio={fillHeight} />
         </TrackRefContext.Provider>
         <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
@@ -659,9 +678,7 @@ function ParticipantGrid({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: fillHeight
-          ? `repeat(${cols}, 1fr)`
-          : `repeat(${cols}, ${tileSize}px)`,
+        gridTemplateColumns: fillHeight ? `repeat(${cols}, 1fr)` : `repeat(${cols}, ${tileSize}px)`,
         gap: 8,
         padding: 6,
         backgroundColor: "#09090b",
@@ -686,8 +703,14 @@ function CustomTile({
   noAspectRatio?: boolean;
   aspectRatio?: string;
 }) {
-  const cameraMuted = useIsMuted({ source: Track.Source.Camera, participant: trackRef.participant });
-  const micMuted = useIsMuted({ source: Track.Source.Microphone, participant: trackRef.participant });
+  const cameraMuted = useIsMuted({
+    source: Track.Source.Camera,
+    participant: trackRef.participant,
+  });
+  const micMuted = useIsMuted({
+    source: Track.Source.Microphone,
+    participant: trackRef.participant,
+  });
   const speaking = useIsSpeaking(trackRef.participant);
   let avatarUrl = "";
   try {
@@ -703,7 +726,9 @@ function CustomTile({
     <div
       style={{
         position: "relative",
-        ...(noAspectRatio ? { width: "100%", height: "100%", minHeight: 0 } : { aspectRatio, width: "100%" }),
+        ...(noAspectRatio
+          ? { width: "100%", height: "100%", minHeight: 0 }
+          : { aspectRatio, width: "100%" }),
         borderRadius: 8,
         overflow: "hidden",
         border: speaking ? "2px solid #C4198B" : "1px solid rgba(255,255,255,0.04)",
@@ -756,7 +781,10 @@ function CustomTile({
           )}
         </div>
       ) : (
-        <VideoTrack trackRef={trackRef} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <VideoTrack
+          trackRef={trackRef}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
       )}
       <div
         style={{
@@ -826,7 +854,8 @@ function DrawControls({
   const isOn = active && !disabled;
   const paletteOpen = isOn;
   const btnClass = `hc-control${compact ? " hc-control-sm" : ""}${isOn ? " hc-active" : ""}`;
-  const disabledTitle = "Drawing is disabled while the video panel is enlarged — shrink it first to annotate your workspace.";
+  const disabledTitle =
+    "Drawing is disabled while the video panel is enlarged — shrink it first to annotate your workspace.";
   return (
     <div style={{ position: "relative", display: "flex", gap: 6 }}>
       <button
@@ -846,7 +875,9 @@ function DrawControls({
       >
         <Pencil size={compact ? 13 : 16} color="#fafafa" />
       </button>
-      {paletteOpen && pencilBtnRef.current && typeof document !== "undefined" &&
+      {paletteOpen &&
+        pencilBtnRef.current &&
+        typeof document !== "undefined" &&
         createPortal(
           <PalettePopover
             anchor={pencilBtnRef.current}
@@ -918,7 +949,14 @@ function PalettePopover({
           }}
         />
       ))}
-      <div style={{ width: 1, alignSelf: "stretch", background: "rgba(255,255,255,0.12)", margin: "0 2px" }} />
+      <div
+        style={{
+          width: 1,
+          alignSelf: "stretch",
+          background: "rgba(255,255,255,0.12)",
+          margin: "0 2px",
+        }}
+      />
       <button
         onClick={onClear}
         aria-label="Clear drawings"

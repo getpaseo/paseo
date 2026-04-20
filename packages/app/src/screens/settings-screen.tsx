@@ -801,15 +801,12 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
   // account view) and fall back to "hosts" for guest mode where account is
   // hidden. An explicit `?tab=` param always wins.
   const hasAccount = sections.some((s) => s.id === "account");
-  const initialSectionId: SettingsSectionId = sections.some(
-    (s) => s.id === requestedTab,
-  )
+  const initialSectionId: SettingsSectionId = sections.some((s) => s.id === requestedTab)
     ? (requestedTab as SettingsSectionId)
     : hasAccount
       ? "account"
       : "hosts";
-  const [selectedSectionId, setSelectedSectionId] =
-    useState<SettingsSectionId>(initialSectionId);
+  const [selectedSectionId, setSelectedSectionId] = useState<SettingsSectionId>(initialSectionId);
   // Keep the selection in sync when the `tab` param changes (e.g., user
   // clicks the Account shortcut in the org rail while Settings is already open).
   useEffect(() => {

@@ -31,10 +31,7 @@ function resolveExpectedSecret(): string | null {
 export function requireInternalSecret(request: NextRequest): NextResponse | null {
   const expected = resolveExpectedSecret();
   if (!expected) {
-    return NextResponse.json(
-      { error: "Internal API not configured" },
-      { status: 503 },
-    );
+    return NextResponse.json({ error: "Internal API not configured" }, { status: 503 });
   }
   const got = request.headers.get("x-internal-secret");
   if (!got || got !== expected) {

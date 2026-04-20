@@ -1,10 +1,5 @@
 import { memo, useMemo } from "react";
-import {
-  type GestureResponderEvent,
-  Pressable,
-  Text,
-  View,
-} from "react-native";
+import { type GestureResponderEvent, Pressable, Text, View } from "react-native";
 import { SmilePlus } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { ChatReactionGroup } from "@/api/chat";
@@ -23,10 +18,7 @@ export const ReactionsRow = memo(function ReactionsRow({
   onOpenPicker,
 }: ReactionsRowProps) {
   const { theme } = useUnistyles();
-  const sorted = useMemo(
-    () => [...reactions].sort((a, b) => b.count - a.count),
-    [reactions],
-  );
+  const sorted = useMemo(() => [...reactions].sort((a, b) => b.count - a.count), [reactions]);
 
   if (sorted.length === 0) return null;
 
@@ -42,9 +34,7 @@ export const ReactionsRow = memo(function ReactionsRow({
             accessibilityRole="button"
           >
             <Text style={styles.chipEmoji}>{g.emoji}</Text>
-            <Text style={[styles.chipCount, mine && styles.chipCountMine]}>
-              {g.count}
-            </Text>
+            <Text style={[styles.chipCount, mine && styles.chipCountMine]}>{g.count}</Text>
           </Pressable>
         );
       })}

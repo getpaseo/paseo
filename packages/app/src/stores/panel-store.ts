@@ -149,7 +149,7 @@ export const usePanelStore = create<PanelState>()(
       },
 
       // File explorer defaults
-      explorerTab: "changes",
+      explorerTab: "files",
       explorerTabByCheckout: {},
       expandedPathsByWorkspace: {},
       diffExpandedPathsByWorkspace: {},
@@ -325,7 +325,7 @@ export const usePanelStore = create<PanelState>()(
     }),
     {
       name: "panel-state",
-      version: 11,
+      version: 12,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState, version) => {
         const state = persistedState as Partial<PanelState> & Record<string, unknown>;
@@ -397,6 +397,18 @@ export const usePanelStore = create<PanelState>()(
           const desktop = state.desktop as Record<string, unknown> | undefined;
           if (desktop && typeof desktop.agentListCollapsed !== "boolean") {
             desktop.agentListCollapsed = false;
+          }
+        }
+
+        if (version < 12) {
+          // Default explorer tab switched from "changes" to "files" — users
+          // who persisted the old default would still land on Changes. Reset
+          // only when the persisted state is clearly the legacy default.
+          if (state.explorerTab === "changes" && !state.explorerTabByCheckout) {
+            state.explorerTab = "files";
+          }
+          if (state.explorerTab === undefined) {
+            state.explorerTab = "files";
           }
         }
 

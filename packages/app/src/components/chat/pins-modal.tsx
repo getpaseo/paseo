@@ -43,8 +43,7 @@ export function PinsModal({
       ) : (
         <View style={styles.list}>
           {pins.map((p) => {
-            const canUnpin =
-              currentUserId !== null && p.pinnedBy === currentUserId;
+            const canUnpin = currentUserId !== null && p.pinnedBy === currentUserId;
             return (
               <View key={p.messageId} style={styles.row}>
                 <Pressable

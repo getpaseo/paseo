@@ -4,10 +4,7 @@ import { chatErrorResponse } from "@/lib/chat/http";
 import { isOrgMember } from "@/lib/chat/authz";
 import { db } from "@/lib/db";
 import { ChatError } from "@/lib/chat/channels";
-import {
-  createPresignedUpload,
-  uploadConfigFromEnv,
-} from "@/lib/chat/uploads";
+import { createPresignedUpload, uploadConfigFromEnv } from "@/lib/chat/uploads";
 
 export async function POST(request: NextRequest) {
   const me = await authenticateRequest(request);
@@ -15,10 +12,7 @@ export async function POST(request: NextRequest) {
 
   const cfg = uploadConfigFromEnv();
   if (!cfg) {
-    return NextResponse.json(
-      { error: "Upload storage not configured" },
-      { status: 503 },
-    );
+    return NextResponse.json({ error: "Upload storage not configured" }, { status: 503 });
   }
 
   let body: {

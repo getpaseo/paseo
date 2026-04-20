@@ -1,10 +1,15 @@
 import { memo, useMemo, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import { AtSign, Hash, Lock, Search } from "lucide-react-native";
+import { AtSign, Hash, Lock, Search, Trash2 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { ChatChannel } from "@/api/chat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { isNative } from "@/constants/platform";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { useRowStateStyle } from "@/hooks/use-row-state";
 import { Avatar } from "./avatar";
 
@@ -52,6 +57,9 @@ interface ChannelSidebarProps {
   onCreateChannel?: () => void;
   onOpenSearch?: () => void;
   onOpenMentions?: () => void;
+  /** Right-click → Delete. Admin-only server side; UI shows it to all and lets
+   * the backend 403 if the user lacks permission. Undefined hides the option. */
+  onDeleteChannel?: (channel: ChatChannel) => void;
   /** When true, render as a narrow icon-only rail with tooltips. */
   collapsed?: boolean;
 }
@@ -66,6 +74,7 @@ export function ChannelSidebar({
   onCreateChannel,
   onOpenSearch,
   onOpenMentions,
+  onDeleteChannel,
   collapsed,
 }: ChannelSidebarProps) {
   const { theme } = useUnistyles();
@@ -81,9 +90,7 @@ export function ChannelSidebar({
   const sortedDmEntries = useMemo(() => {
     const withChannel = dmEntries
       .filter((e) => e.channel)
-      .sort((a, b) =>
-        (b.channel?.createdAt ?? "").localeCompare(a.channel?.createdAt ?? ""),
-      );
+      .sort((a, b) => (b.channel?.createdAt ?? "").localeCompare(a.channel?.createdAt ?? ""));
     const without = dmEntries
       .filter((e) => !e.channel)
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -158,6 +165,7 @@ export function ChannelSidebar({
               channel={c}
               selected={selectedChannelId === c.id}
               onSelect={onSelectChannel}
+              onDelete={onDeleteChannel ? () => onDeleteChannel(c) : undefined}
             />
           ))
         )}
@@ -170,9 +178,7 @@ export function ChannelSidebar({
             <DmRow
               key={entry.userId}
               entry={entry}
-              selected={
-                !!entry.channel && selectedChannelId === entry.channel.id
-              }
+              selected={!!entry.channel && selectedChannelId === entry.channel.id}
               onPress={() => onOpenDm(entry)}
             />
           ))
@@ -195,26 +201,22 @@ function Section({
 }) {
   return (
     <View style={styles.section}>
-      <Pressable style={styles.sectionHeader}>
-        {({ hovered = false }) => {
-          const showAction = hovered || isNative;
-          return (
-            <>
-              <Text style={styles.sectionTitle}>{title}</Text>
-              {onAction && actionLabel && showAction ? (
-                <Pressable
-                  onPress={onAction}
-                  style={styles.sectionAction}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Add ${title.toLowerCase()}`}
-                >
-                  <Text style={styles.sectionActionText}>{actionLabel}</Text>
-                </Pressable>
-              ) : null}
-            </>
-          );
-        }}
-      </Pressable>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        {onAction && actionLabel ? (
+          <Pressable
+            onPress={onAction}
+            style={({ hovered = false }) => [
+              styles.sectionAction,
+              hovered && styles.sectionActionHovered,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Add ${title.toLowerCase()}`}
+          >
+            <Text style={styles.sectionActionText}>{actionLabel}</Text>
+          </Pressable>
+        ) : null}
+      </View>
       {children}
     </View>
   );
@@ -276,11 +278,7 @@ function CollapsedRail({
             icon={
               <Icon
                 size={15}
-                color={
-                  selected || unread
-                    ? theme.colors.foreground
-                    : theme.colors.foregroundMuted
-                }
+                color={selected || unread ? theme.colors.foreground : theme.colors.foregroundMuted}
               />
             }
           />
@@ -288,8 +286,7 @@ function CollapsedRail({
       })}
       {dmEntries.length > 0 ? <View style={styles.railDivider} /> : null}
       {dmEntries.map((entry) => {
-        const selected =
-          !!entry.channel && selectedChannelId === entry.channel.id;
+        const selected = !!entry.channel && selectedChannelId === entry.channel.id;
         const unread = (entry.channel?.unreadCount ?? 0) > 0 && !selected;
         return (
           <RailAvatarBtn
@@ -338,9 +335,7 @@ function RailIconBtn({
         {unread ? <View style={styles.railUnreadDot} /> : null}
         {badge ? (
           <View style={styles.railBadge}>
-            <Text style={styles.railBadgeText}>
-              {badge > 99 ? "99+" : badge}
-            </Text>
+            <Text style={styles.railBadgeText}>{badge > 99 ? "99+" : badge}</Text>
           </View>
         ) : null}
       </Pressable>
@@ -409,11 +404,7 @@ const DmRow = memo(function DmRow({
       accessibilityLabel={`Direct message with ${entry.name}`}
     >
       {({ hovered = false, pressed = false }) => (
-        <RowContent
-          selected={selected}
-          hovered={hovered}
-          pressed={pressed}
-        >
+        <RowContent selected={selected} hovered={hovered} pressed={pressed}>
           <Avatar
             name={entry.name}
             imageUrl={entry.avatarUrl ?? null}
@@ -437,9 +428,7 @@ const DmRow = memo(function DmRow({
             </View>
           ) : showNumericBadge ? (
             <View style={styles.badge}>
-              <Text style={styles.badgeText}>
-                {unread > 99 ? "99+" : unread}
-              </Text>
+              <Text style={styles.badgeText}>{unread > 99 ? "99+" : unread}</Text>
             </View>
           ) : null}
         </RowContent>
@@ -477,10 +466,12 @@ const ChannelRow = memo(function ChannelRow({
   channel,
   selected,
   onSelect,
+  onDelete,
 }: {
   channel: ChatChannel;
   selected: boolean;
   onSelect: (id: string) => void;
+  onDelete?: () => void;
 }) {
   const { theme } = useUnistyles();
   const Icon = channel.kind === "private" ? Lock : Hash;
@@ -492,49 +483,69 @@ const ChannelRow = memo(function ChannelRow({
   const unreadLook = !selected && unread > 0 && (!muted || hasMention);
   const showNumericBadge = unread > 0 && !selected && !muted;
 
+  const renderInner = ({ hovered = false, pressed = false }) => (
+    <RowContent selected={selected} hovered={hovered} pressed={pressed}>
+      <Icon
+        size={14}
+        strokeWidth={1.75}
+        color={selected || unreadLook ? theme.colors.foreground : theme.colors.foregroundMuted}
+      />
+      <Text
+        style={[
+          styles.rowLabel,
+          selected && styles.rowLabelSelected,
+          unreadLook && styles.rowLabelUnread,
+          muted && !hasMention && styles.rowLabelMuted,
+        ]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      {hasMention && !selected ? (
+        <View style={[styles.badge, styles.badgeMention]}>
+          <Text style={styles.badgeText}>@</Text>
+        </View>
+      ) : showNumericBadge ? (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{unread > 99 ? "99+" : unread}</Text>
+        </View>
+      ) : null}
+    </RowContent>
+  );
+
+  if (!onDelete) {
+    return (
+      <Pressable
+        onPress={() => onSelect(channel.id)}
+        style={styles.rowReset}
+        accessibilityRole="button"
+        accessibilityLabel={`${channel.kind === "private" ? "Private" : "Public"} channel ${label}`}
+      >
+        {renderInner}
+      </Pressable>
+    );
+  }
+
   return (
-    <Pressable
-      onPress={() => onSelect(channel.id)}
-      style={styles.rowReset}
-      accessibilityRole="button"
-      accessibilityLabel={`${channel.kind === "private" ? "Private" : "Public"} channel ${label}`}
-    >
-      {({ hovered = false, pressed = false }) => (
-        <RowContent selected={selected} hovered={hovered} pressed={pressed}>
-          <Icon
-            size={14}
-            strokeWidth={1.75}
-            color={
-              selected || unreadLook
-                ? theme.colors.foreground
-                : theme.colors.foregroundMuted
-            }
-          />
-          <Text
-            style={[
-              styles.rowLabel,
-              selected && styles.rowLabelSelected,
-              unreadLook && styles.rowLabelUnread,
-              muted && !hasMention && styles.rowLabelMuted,
-            ]}
-            numberOfLines={1}
-          >
-            {label}
-          </Text>
-          {hasMention && !selected ? (
-            <View style={[styles.badge, styles.badgeMention]}>
-              <Text style={styles.badgeText}>@</Text>
-            </View>
-          ) : showNumericBadge ? (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>
-                {unread > 99 ? "99+" : unread}
-              </Text>
-            </View>
-          ) : null}
-        </RowContent>
-      )}
-    </Pressable>
+    <ContextMenu>
+      <ContextMenuTrigger
+        onPress={() => onSelect(channel.id)}
+        style={styles.rowReset}
+        accessibilityRole="button"
+        accessibilityLabel={`${channel.kind === "private" ? "Private" : "Public"} channel ${label}`}
+      >
+        {renderInner({})}
+      </ContextMenuTrigger>
+      <ContextMenuContent width={200}>
+        <ContextMenuItem
+          leading={<Trash2 size={14} color={theme.colors.destructive} />}
+          destructive
+          onSelect={onDelete}
+        >
+          Delete channel
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 });
 
@@ -571,6 +582,9 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 28,
     alignItems: "center",
     justifyContent: "center",
+  },
+  sectionActionHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   sectionActionText: {
     fontSize: 16,
