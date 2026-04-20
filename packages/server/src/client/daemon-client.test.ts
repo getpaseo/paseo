@@ -1536,6 +1536,90 @@ describe("DaemonClient", () => {
     vi.useRealTimers();
   });
 
+  test("sends fetch_recoverable_agents_request via fetchRecoverableAgents", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const runtimeClient = client as unknown as {
+      fetchRecoverableAgents: (options?: {
+        sort?: Array<{
+          key: "status_priority" | "created_at" | "updated_at" | "title";
+          direction: "asc" | "desc";
+        }>;
+        page?: { limit: number; cursor?: string };
+        requestId?: string;
+      }) => Promise<{
+        requestId: string;
+        entries: unknown[];
+        pageInfo: { nextCursor: string | null; prevCursor: string | null; hasMore: boolean };
+      }>;
+    };
+
+    const promise = runtimeClient.fetchRecoverableAgents({
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 50, cursor: "recoverable-page-2" },
+    });
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(mock.sent[0]) as {
+      type: "session";
+      message: {
+        type: "fetch_recoverable_agents_request";
+        requestId: string;
+        sort?: Array<{
+          key: "status_priority" | "created_at" | "updated_at" | "title";
+          direction: "asc" | "desc";
+        }>;
+        page?: { limit: number; cursor?: string };
+      };
+    };
+
+    expect(request.message).toEqual({
+      type: "fetch_recoverable_agents_request",
+      requestId: request.message.requestId,
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: 50, cursor: "recoverable-page-2" },
+    });
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "fetch_recoverable_agents_response",
+        payload: {
+          requestId: request.message.requestId,
+          entries: [],
+          pageInfo: {
+            nextCursor: null,
+            prevCursor: "recoverable-page-2",
+            hasMore: false,
+          },
+        },
+      }),
+    );
+
+    await expect(promise).resolves.toEqual({
+      requestId: request.message.requestId,
+      entries: [],
+      pageInfo: {
+        nextCursor: null,
+        prevCursor: "recoverable-page-2",
+        hasMore: false,
+      },
+    });
+  });
+
   test("resolves dictation finish when final arrives after finish accepted", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();

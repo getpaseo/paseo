@@ -347,6 +347,12 @@ type FetchAgentsResponsePayload = Extract<
 >["payload"];
 type FetchAgentsResponseEntry = FetchAgentsResponsePayload["entries"][number];
 type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
+type FetchRecoverableAgentsResponsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_recoverable_agents_response" }
+>["payload"];
+type FetchRecoverableAgentsResponseEntry = FetchRecoverableAgentsResponsePayload["entries"][number];
+type FetchRecoverableAgentsResponsePageInfo = FetchRecoverableAgentsResponsePayload["pageInfo"];
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 type AgentUpdatesFilter = FetchAgentsRequestFilter;
 type AgentUpdatesSubscriptionState = {
@@ -1462,6 +1468,10 @@ export class Session {
 
           case "fetch_agents_request":
             await this.handleFetchAgents(msg);
+            break;
+
+          case "fetch_recoverable_agents_request":
+            await this.handleFetchRecoverableAgents(msg);
             break;
 
           case "fetch_workspaces_request":
@@ -5184,6 +5194,19 @@ export class Session {
     return agents;
   }
 
+  private async listRecoverableAgentPayloads(): Promise<AgentSnapshotPayload[]> {
+    const liveIds = new Set(this.agentManager.listAgents().map((agent) => agent.id));
+    const registryRecords = await this.agentStorage.list();
+
+    return registryRecords
+      .filter((record) => !liveIds.has(record.id) && !record.internal)
+      .map((record) => this.buildStoredAgentPayload(record))
+      .filter(
+        (agent) =>
+          agent.status === "closed" && agent.archivedAt == null && agent.persistence != null,
+      );
+  }
+
   private async resolveAgentIdentifier(
     identifier: string,
   ): Promise<{ ok: true; agentId: string } | { ok: false; error: string }> {
@@ -5543,6 +5566,57 @@ export class Session {
 
     return {
       entries: pagedEntries,
+      pageInfo: {
+        nextCursor,
+        prevCursor: request.page?.cursor ?? null,
+        hasMore,
+      },
+    };
+  }
+
+  private async listFetchRecoverableAgentsEntries(
+    request: Extract<SessionInboundMessage, { type: "fetch_recoverable_agents_request" }>,
+  ): Promise<{
+    entries: FetchRecoverableAgentsResponseEntry[];
+    pageInfo: FetchRecoverableAgentsResponsePageInfo;
+  }> {
+    const sort = this.normalizeFetchAgentsSort(
+      request.sort as FetchAgentsRequestSort[] | undefined,
+    );
+    let candidates = await this.listRecoverableAgentPayloads();
+
+    candidates.sort((left, right) => this.compareFetchAgentsAgents(left, right, sort));
+    const cursorToken = request.page?.cursor;
+    if (cursorToken) {
+      const cursor = this.decodeFetchAgentsCursor(cursorToken, sort);
+      candidates = candidates.filter(
+        (agent) => this.compareAgentWithCursor(agent, cursor, sort) > 0,
+      );
+    }
+
+    const limit = request.page?.limit ?? 200;
+    const pagedAgents = candidates.slice(0, limit);
+    const hasMore = candidates.length > limit;
+    const nextCursor =
+      hasMore && pagedAgents.length > 0
+        ? this.encodeFetchAgentsCursor(
+            {
+              agent: pagedAgents[pagedAgents.length - 1],
+              project: await this.buildProjectPlacement(pagedAgents[pagedAgents.length - 1].cwd),
+            },
+            sort,
+          )
+        : null;
+
+    const entries = await Promise.all(
+      pagedAgents.map(async (agent) => ({
+        agent,
+        project: await this.buildProjectPlacement(agent.cwd),
+      })),
+    );
+
+    return {
+      entries,
       pageInfo: {
         nextCursor,
         prevCursor: request.page?.cursor ?? null,
@@ -6346,6 +6420,40 @@ export class Session {
       const code = error instanceof SessionRequestError ? error.code : "fetch_agents_failed";
       const message = error instanceof Error ? error.message : "Failed to fetch agents";
       this.sessionLogger.error({ err: error }, "Failed to handle fetch_agents_request");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: request.requestId,
+          requestType: request.type,
+          error: message,
+          code,
+        },
+      });
+    }
+  }
+
+  private async handleFetchRecoverableAgents(
+    request: Extract<SessionInboundMessage, { type: "fetch_recoverable_agents_request" }>,
+  ): Promise<void> {
+    try {
+      const payload = await this.listFetchRecoverableAgentsEntries(request);
+
+      payload.entries = payload.entries.filter((entry) =>
+        this.isProviderVisibleToClient(entry.agent.provider),
+      );
+
+      this.emit({
+        type: "fetch_recoverable_agents_response",
+        payload: {
+          requestId: request.requestId,
+          ...payload,
+        },
+      });
+    } catch (error) {
+      const code =
+        error instanceof SessionRequestError ? error.code : "fetch_recoverable_agents_failed";
+      const message = error instanceof Error ? error.message : "Failed to fetch recoverable agents";
+      this.sessionLogger.error({ err: error }, "Failed to handle fetch_recoverable_agents_request");
       this.emit({
         type: "rpc_error",
         payload: {

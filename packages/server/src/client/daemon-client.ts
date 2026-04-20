@@ -377,6 +377,20 @@ export type FetchAgentsOptions = Omit<FetchAgentsRequest, "type" | "requestId"> 
 };
 export type FetchAgentsEntry = FetchAgentsPayload["entries"][number];
 export type FetchAgentsPageInfo = FetchAgentsPayload["pageInfo"];
+type FetchRecoverableAgentsPayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_recoverable_agents_response" }
+>["payload"];
+type FetchRecoverableAgentsRequest = Extract<
+  SessionInboundMessage,
+  { type: "fetch_recoverable_agents_request" }
+>;
+export type FetchRecoverableAgentsOptions = Omit<
+  FetchRecoverableAgentsRequest,
+  "type" | "requestId"
+> & {
+  requestId?: string;
+};
 type FetchWorkspacesPayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_workspaces_response" }
@@ -1350,6 +1364,33 @@ export class DaemonClient {
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agents_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async fetchRecoverableAgents(
+    options?: FetchRecoverableAgentsOptions,
+  ): Promise<FetchRecoverableAgentsPayload> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "fetch_recoverable_agents_request",
+      requestId: resolvedRequestId,
+      ...(options?.sort ? { sort: options.sort } : {}),
+      ...(options?.page ? { page: options.page } : {}),
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "fetch_recoverable_agents_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {

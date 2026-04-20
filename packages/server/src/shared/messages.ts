@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "../server/agent/agent-title-limits.js";
-import { AgentProviderSchema } from "../server/agent/provider-manifest.js";
+import {
+  AgentProviderSchema,
+  AgentProviderSchema as ImportedAgentProviderSchema,
+} from "../server/agent/provider-manifest.js";
+// COMPAT(rn-dev-client): Metro can evaluate this import path as undefined during circular init.
+const AgentProviderValueSchema: z.ZodType<string> = (ImportedAgentProviderSchema ??
+  z.string()) as z.ZodType<string>;
 import { TOOL_CALL_ICON_NAMES } from "../server/agent/agent-sdk-types.js";
 import {
   ChatCreateRequestSchema,
@@ -726,6 +732,25 @@ export const FetchAgentsRequestMessageSchema = z.object({
     .optional(),
 });
 
+export const FetchRecoverableAgentsRequestMessageSchema = z.object({
+  type: z.literal("fetch_recoverable_agents_request"),
+  requestId: z.string(),
+  sort: z
+    .array(
+      z.object({
+        key: z.enum(["status_priority", "created_at", "updated_at", "title"]),
+        direction: z.enum(["asc", "desc"]),
+      }),
+    )
+    .optional(),
+  page: z
+    .object({
+      limit: z.number().int().positive().max(200),
+      cursor: z.string().min(1).optional(),
+    })
+    .optional(),
+});
+
 const WorkspaceStateBucketSchema = z.enum([
   "needs_input",
   "failed",
@@ -887,7 +912,7 @@ export const GetProvidersSnapshotRequestMessageSchema = z.object({
 export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("refresh_providers_snapshot_request"),
   cwd: z.string().optional(),
-  providers: z.array(AgentProviderSchema).optional(),
+  providers: z.array(AgentProviderValueSchema).optional(),
   requestId: z.string(),
 });
 
@@ -1519,6 +1544,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
+  FetchRecoverableAgentsRequestMessageSchema,
   FetchWorkspacesRequestMessageSchema,
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
@@ -2087,6 +2113,24 @@ export const FetchAgentsResponseMessageSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     subscriptionId: z.string().nullable().optional(),
+    entries: z.array(
+      z.object({
+        agent: AgentSnapshotPayloadSchema,
+        project: ProjectPlacementPayloadSchema,
+      }),
+    ),
+    pageInfo: z.object({
+      nextCursor: z.string().nullable(),
+      prevCursor: z.string().nullable(),
+      hasMore: z.boolean(),
+    }),
+  }),
+});
+
+export const FetchRecoverableAgentsResponseMessageSchema = z.object({
+  type: z.literal("fetch_recoverable_agents_response"),
+  payload: z.object({
+    requestId: z.string(),
     entries: z.array(
       z.object({
         agent: AgentSnapshotPayloadSchema,
@@ -3083,6 +3127,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentStreamMessageSchema,
   AgentStatusMessageSchema,
   FetchAgentsResponseMessageSchema,
+  FetchRecoverableAgentsResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,
   OpenProjectResponseMessageSchema,
   StartWorkspaceScriptResponseMessageSchema,
@@ -3205,6 +3250,9 @@ export type LegacyEditorTargetId = z.infer<typeof LegacyEditorTargetIdSchema>;
 export type EditorTargetId = LiteralUnion<KnownEditorTargetId, string>;
 export type EditorTargetDescriptorPayload = z.infer<typeof EditorTargetDescriptorPayloadSchema>;
 export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessageSchema>;
+export type FetchRecoverableAgentsResponseMessage = z.infer<
+  typeof FetchRecoverableAgentsResponseMessageSchema
+>;
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>;
 export type ScriptStatusUpdateMessage = z.infer<typeof ScriptStatusUpdateMessageSchema>;
 export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessageSchema>;
@@ -3278,6 +3326,9 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 // Type exports for inbound message types
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
+export type FetchRecoverableAgentsRequestMessage = z.infer<
+  typeof FetchRecoverableAgentsRequestMessageSchema
+>;
 export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
