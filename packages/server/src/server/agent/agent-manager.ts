@@ -820,9 +820,13 @@ export class AgentManager {
       await agent.session.setModel(normalizedModelId);
     }
 
-    agent.config.model = normalizedModelId ?? undefined;
+    // "default" means use the provider's default (e.g., from ~/.claude/settings.json)
+    // Normalize it to undefined so it doesn't get passed to SDK on query restart.
+    const effectiveModelId =
+      normalizedModelId === "default" ? undefined : (normalizedModelId ?? undefined);
+    agent.config.model = effectiveModelId;
     if (agent.runtimeInfo) {
-      agent.runtimeInfo = { ...agent.runtimeInfo, model: normalizedModelId };
+      agent.runtimeInfo = { ...agent.runtimeInfo, model: effectiveModelId ?? null };
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
@@ -2738,6 +2742,7 @@ export class AgentManager {
 
     if (typeof normalized.model === "string") {
       const trimmed = normalized.model.trim();
+      // "default" means use the provider's default (e.g., from ~/.claude/settings.json)
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 

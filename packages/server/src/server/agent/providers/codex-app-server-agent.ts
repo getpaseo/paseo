@@ -2616,7 +2616,8 @@ class CodexAppServerAgentSession implements AgentSession {
       .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
       .join("\n\n");
     if (developerInstructions) settings.developer_instructions = developerInstructions;
-    if (this.config.model) settings.model = this.config.model;
+    // "default" means use the model from ~/.codex/config.toml (don't override)
+    if (this.config.model && this.config.model !== "default") settings.model = this.config.model;
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;
     return { mode: match.mode ?? "code", settings, name: match.name };
@@ -2978,7 +2979,8 @@ class CodexAppServerAgentSession implements AgentSession {
       ),
     };
 
-    if (this.config.model) {
+    // "default" means use the model from ~/.codex/config.toml (don't override)
+    if (this.config.model && this.config.model !== "default") {
       params.model = this.config.model;
     }
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
@@ -4154,7 +4156,7 @@ export class CodexAppServerAgentClient implements AgentClient {
         typeof configuredDefaultModelId === "string"
           ? models.some((model) => model?.id === configuredDefaultModelId)
           : false;
-      return models.map((model) => {
+      const mappedModels = models.map((model) => {
         const defaultReasoningEffort = normalizeCodexThinkingOptionId(
           typeof model.defaultReasoningEffort === "string" ? model.defaultReasoningEffort : null,
         );
@@ -4214,6 +4216,15 @@ export class CodexAppServerAgentClient implements AgentClient {
           },
         };
       });
+      // Insert default option that uses config file settings
+      const defaultEntry: AgentModelDefinition = {
+        provider: CODEX_PROVIDER,
+        id: "default",
+        label: "default",
+        description: "From ~/.codex/config.toml",
+        isDefault: true,
+      };
+      return [defaultEntry, ...mappedModels];
     } finally {
       await client.dispose();
     }
