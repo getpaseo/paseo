@@ -10,6 +10,7 @@ import {
   User,
   RefreshCw,
   ArrowRight,
+  ExternalLink,
 } from "lucide-react-native";
 import { settingsStyles } from "@/styles/settings";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,14 @@ import { useOrganizations } from "@/desktop/hooks/use-organizations";
 import { useOrgMembers } from "@/desktop/hooks/use-org-members";
 import type { DesktopOrganization } from "@/desktop/auth/desktop-auth";
 import { UpgradeBanner, UpgradeLimitHint } from "@/desktop/components/upgrade-banner";
+import { openExternalUrl } from "@/utils/open-external-url";
+
+function dashboardUrl(): string {
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    return "http://localhost:3002/dashboard";
+  }
+  return "https://auth.hubcode.ai/dashboard";
+}
 
 // ---------------------------------------------------------------------------
 // Sign-in section (shown when not authenticated)
@@ -84,15 +93,27 @@ function UserProfileCard() {
             </Text>
           </View>
         </View>
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={<LogOut size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
-          onPress={() => void signOut()}
-          disabled={isSigningOut}
-        >
-          {isSigningOut ? "Signing out…" : "Sign out"}
-        </Button>
+        <View style={styles.profileActions}>
+          <Button
+            variant="outline"
+            size="sm"
+            leftIcon={
+              <ExternalLink size={theme.iconSize.sm} color={theme.colors.foreground} />
+            }
+            onPress={() => void openExternalUrl(dashboardUrl())}
+          >
+            Open web dashboard
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={<LogOut size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
+            onPress={() => void signOut()}
+            disabled={isSigningOut}
+          >
+            {isSigningOut ? "Signing out…" : "Sign out"}
+          </Button>
+        </View>
       </View>
     </View>
   );
@@ -532,6 +553,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   profileInfo: {
     flex: 1,
+  },
+  profileActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flexShrink: 0,
   },
   profileName: {
     color: theme.colors.foreground,

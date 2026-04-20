@@ -52,7 +52,7 @@ export function useChannelsQuery(orgId: string | undefined, sessionToken: string
   const cached = useChatStore((s) => (orgId ? s.channelsByOrg[orgId] : undefined));
   const query = useQuery<ChatChannel[]>({
     queryKey: chatKeys.channels(orgId ?? ""),
-    enabled: !!orgId,
+    enabled: !!orgId && !!sessionToken,
     queryFn: async () => {
       const list = await listChannels({ orgId: orgId!, sessionToken });
       setChannels(orgId!, list);
@@ -72,7 +72,7 @@ export function useDmsQuery(orgId: string | undefined, sessionToken: string | nu
   const cached = useChatStore((s) => (orgId ? s.dmsByOrg[orgId] : undefined));
   return useQuery<ChatChannel[]>({
     queryKey: chatKeys.dms(orgId),
-    enabled: !!orgId,
+    enabled: !!orgId && !!sessionToken,
     queryFn: async () => {
       const list = await listDms({ orgId, sessionToken });
       if (orgId) setDms(orgId, list);
@@ -90,7 +90,7 @@ export function useChannelMembersQuery(
 ) {
   return useQuery({
     queryKey: chatKeys.members(channelId ?? ""),
-    enabled: !!channelId,
+    enabled: !!channelId && !!sessionToken,
     queryFn: () => listChannelMembers({ channelId: channelId!, sessionToken }),
     staleTime: 30_000,
   });
@@ -109,7 +109,7 @@ export function useChannelMessages(
 
   const query = useInfiniteQuery<ChatMessage[]>({
     queryKey: chatKeys.messages(channelId ?? ""),
-    enabled: !!channelId,
+    enabled: !!channelId && !!sessionToken,
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }) => {
       const msgs = await listMessages({
@@ -146,7 +146,7 @@ export function useThreadRepliesQuery(
 ) {
   return useQuery<ChatMessage[]>({
     queryKey: chatKeys.replies(messageId ?? ""),
-    enabled: !!messageId,
+    enabled: !!messageId && !!sessionToken,
     queryFn: () => listReplies({ messageId: messageId!, sessionToken }),
     staleTime: 5_000,
   });
@@ -158,7 +158,7 @@ export function useMessageReactionsQuery(
 ) {
   return useQuery<ChatReactionGroup[]>({
     queryKey: chatKeys.reactions(messageId ?? ""),
-    enabled: !!messageId,
+    enabled: !!messageId && !!sessionToken,
     queryFn: () => listReactions({ messageId: messageId!, sessionToken }),
     staleTime: 30_000,
   });
@@ -310,7 +310,7 @@ export function usePinsQuery(
 ) {
   return useQuery<PinnedMessage[]>({
     queryKey: chatKeys.pins(channelId ?? ""),
-    enabled: !!channelId,
+    enabled: !!channelId && !!sessionToken,
     queryFn: () => listPins({ channelId: channelId!, sessionToken }),
     staleTime: 30_000,
   });
@@ -380,7 +380,7 @@ export function useSearchMessagesQuery(
   const trimmed = query.trim();
   return useQuery<SearchHit[]>({
     queryKey: chatKeys.search(orgId ?? "", trimmed),
-    enabled: !!orgId && trimmed.length >= 2,
+    enabled: !!orgId && !!sessionToken && trimmed.length >= 2,
     queryFn: () => searchMessagesHttp({ orgId: orgId!, query: trimmed, sessionToken }),
     staleTime: 5_000,
   });
@@ -392,7 +392,7 @@ export function useMyMentionsQuery(
 ) {
   return useQuery<SearchHit[]>({
     queryKey: chatKeys.myMentions(orgId ?? ""),
-    enabled: !!orgId,
+    enabled: !!orgId && !!sessionToken,
     queryFn: () => listMyMentionsHttp({ orgId: orgId!, sessionToken }),
     staleTime: 30_000,
   });

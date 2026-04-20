@@ -442,6 +442,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     zIndex: OVERLAY_Z.modal,
+    // The overlay-root portal container has `pointer-events: none` so it
+    // doesn't block clicks behind it when empty. Re-enable pointer events
+    // on the modal backdrop so its buttons actually receive clicks.
+    pointerEvents: "auto" as const,
   },
   backdropClickable: {
     position: "absolute",
@@ -459,6 +463,10 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     overflow: "hidden",
+    // The card must render above the full-screen `backdropClickable` Pressable
+    // so its buttons receive clicks. Without an explicit z-index the RN-Web
+    // stacking order can place the absolute-positioned backdrop on top.
+    zIndex: 1,
   },
   header: {
     flexDirection: "row",

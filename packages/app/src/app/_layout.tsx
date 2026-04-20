@@ -69,11 +69,13 @@ import { CommandCenter } from "@/components/command-center";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { WebGlobalScrollbarStyle } from "@/components/web-global-scrollbar-style";
+import { WebFocusRingStyle } from "@/components/web-focus-ring-style";
 import { AddProjectModal } from "@/components/add-project-modal";
 import { TeamProjectsModal } from "@/components/team-projects-modal";
 import { ParticipantBar } from "@/components/sharing/participant-bar";
 import { FloatingVideoPanel } from "@/components/sharing/floating-video-panel";
 import { SharedWorkspaceRouteGuard } from "@/components/sharing/shared-workspace-route-guard";
+import { JoiningSharedSessionOverlay } from "@/components/sharing/joining-shared-session-overlay";
 import { SharedDrawOverlay } from "@/components/sharing/shared-draw-overlay";
 import { useJoinSound } from "@/hooks/sharing/use-join-sound";
 import { useProjectRegistrySync } from "@/hooks/use-project-registry-sync";
@@ -410,6 +412,10 @@ function AppContainer({
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
   const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
+  const toggleAgentListCollapsed = usePanelStore(
+    (state) => state.toggleAgentListCollapsed,
+  );
+  const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
   const toggleBothSidebars = usePanelStore((state) => state.toggleBothSidebars);
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
@@ -455,10 +461,24 @@ function AppContainer({
     );
   }, [isCompactLayout, chromeEnabled, isFocusModeEnabled, agentListOpen, sidebarWidth]);
 
+  // On desktop, ⌘B collapses the sidebar to icons instead of hiding it.
+  // On mobile, there's no collapse mode, so fall back to show/hide.
+  const handleSidebarShortcut = useCallback(() => {
+    if (isCompactLayout) {
+      toggleAgentList();
+      return;
+    }
+    if (!desktopAgentListOpen) {
+      toggleAgentList();
+      return;
+    }
+    toggleAgentListCollapsed();
+  }, [isCompactLayout, desktopAgentListOpen, toggleAgentList, toggleAgentListCollapsed]);
+
   useKeyboardShortcuts({
     enabled: chromeEnabled,
     isMobile: isCompactLayout,
-    toggleAgentList,
+    toggleAgentList: handleSidebarShortcut,
     selectedAgentId,
     toggleFileExplorer,
     toggleBothSidebars,
@@ -647,6 +667,8 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
   return (
     <VoiceProvider>
       <WebGlobalScrollbarStyle />
+      <WebFocusRingStyle />
+      <JoiningSharedSessionOverlay />
       <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
       <HostSessionManager />
       <FaviconStatusSync />

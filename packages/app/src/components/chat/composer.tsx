@@ -393,8 +393,9 @@ export function Composer({
           accessibilityLabel="Send message"
         >
           <Send
-            size={18}
-            color={canSend ? theme.colors.primary : theme.colors.foregroundMuted}
+            size={14}
+            color={canSend ? "#ffffff" : theme.colors.foregroundMuted}
+            strokeWidth={2}
           />
         </Pressable>
       </View>
@@ -490,35 +491,46 @@ const styles = StyleSheet.create((theme) => ({
   inputRow: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: theme.spacing[2],
-    padding: theme.spacing[2],
+    gap: 0,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
   },
   input: {
     flex: 1,
-    minHeight: 36,
-    maxHeight: 120,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    borderRadius: 6,
+    minHeight: 38,
+    maxHeight: 140,
+    paddingLeft: theme.spacing[3],
+    paddingRight: 48,
+    paddingVertical: 9,
+    borderTopLeftRadius: 8,
+    borderBottomLeftRadius: 8,
+    borderTopRightRadius: 8,
+    borderBottomRightRadius: 8,
     backgroundColor: theme.colors.surface1,
     color: theme.colors.foreground,
     fontSize: 14,
     borderWidth: 1,
-    borderColor: "transparent",
+    borderColor: theme.colors.border,
   },
   inputFocused: {
     borderColor: theme.colors.brandMagenta,
   },
+  // Send button sits over the right edge of the input (absolute), so the
+  // input + send read as a single surface instead of two disconnected rectangles.
   sendBtn: {
-    width: 36,
-    height: 36,
+    position: "absolute",
+    right: theme.spacing[3] + 6,
+    bottom: theme.spacing[2] + 5,
+    width: 28,
+    height: 28,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 6,
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.brandMagenta,
   },
   sendBtnDisabled: {
-    opacity: 0.5,
+    backgroundColor: "transparent",
+    opacity: 0.55,
   },
   suggestions: {
     maxHeight: 220,

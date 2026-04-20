@@ -21,26 +21,24 @@ export function ParticipantBar({ participants }: ParticipantBarProps) {
   const { currentUser, ownerName, accessLevel } = useSharedSessionStore();
   const list = Array.from(participants.values()).filter((p) => p.isOnline);
 
-  const agentListOpen = usePanelStore((s) => s.desktop.agentListOpen);
-  const toggleAgentList = usePanelStore((s) => s.toggleAgentList);
-  // Collapse the sidebar on entry; if we were the ones who closed it, reopen
-  // on exit — otherwise the user is left with no visible toggle (this bar,
-  // which owns the toggle, unmounts when the session ends).
+  // Collapse the sidebar to its icon rail on entry (not fully hidden — the
+  // user still wants to see the org/messages/sessions shortcuts). Restore the
+  // previous expanded state on exit. We only revert the state *we* set, so
+  // user interactions during the session stick.
   const didAutoCollapseRef = useRef(false);
   useEffect(() => {
-    if (agentListOpen) {
+    const { agentListCollapsed } = usePanelStore.getState().desktop;
+    if (!agentListCollapsed) {
       didAutoCollapseRef.current = true;
-      toggleAgentList();
+      usePanelStore.getState().toggleAgentListCollapsed();
     }
     return () => {
       if (didAutoCollapseRef.current) {
-        // Read latest state to avoid toggling a sidebar the user reopened.
-        const latest = usePanelStore.getState().desktop.agentListOpen;
-        if (!latest) usePanelStore.getState().toggleAgentList();
+        const latest = usePanelStore.getState().desktop.agentListCollapsed;
+        if (latest) usePanelStore.getState().toggleAgentListCollapsed();
       }
     };
-    // Run only on mount/unmount — session lifecycle. Re-running on every
-    // agentListOpen change would re-toggle every time the user interacts.
+    // Run only on mount/unmount — session lifecycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

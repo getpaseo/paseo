@@ -137,6 +137,22 @@ export function AdaptiveModalSheet({
     }
   }, [visible, isMobile]);
 
+  // Desktop: close on Escape. Top-most modal wins via capture-phase listener
+  // and Esc is only handled when this modal is actually visible.
+  useEffect(() => {
+    if (!isWeb) return;
+    if (isMobile) return;
+    if (!visible) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [visible, isMobile, onClose]);
+
   const handleSheetChange = useCallback(
     (index: number) => {
       if (index === -1) {

@@ -73,12 +73,13 @@ export async function POST(request: NextRequest) {
     // Create a new session
     const sessionToken = randomBytes(32).toString("base64url");
     const sessionId = randomUUID();
+    const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
     await db.insert(session).values({
       id: sessionId,
       token: sessionToken,
       userId: userRecord.id,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+      expiresAt: sessionExpiresAt,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -90,6 +91,11 @@ export async function POST(request: NextRequest) {
       sessionToken,
       accessToken: authCode.accessToken || "",
       providerId: authCode.providerId,
+      // Authoritative server-side session expiry — the desktop app should
+      // persist this as-is instead of inventing its own duration, otherwise
+      // the stored session can claim to be valid after the server has already
+      // rotated or expired the underlying row.
+      expiresAt: sessionExpiresAt.toISOString(),
       user: {
         userId: userRecord.id,
         username: userRecord.name,

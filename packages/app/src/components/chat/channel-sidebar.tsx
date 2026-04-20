@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { ChatChannel } from "@/api/chat";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isNative } from "@/constants/platform";
+import { useRowStateStyle } from "@/hooks/use-row-state";
 import { Avatar } from "./avatar";
 
 function Tip({
@@ -111,18 +112,26 @@ export function ChannelSidebar({
           {onOpenSearch ? (
             <Pressable
               onPress={onOpenSearch}
-              style={styles.quickBtn}
+              style={({ hovered, pressed }) => [
+                styles.quickBtn,
+                hovered && styles.quickBtnHover,
+                pressed && styles.quickBtnPressed,
+              ]}
               accessibilityRole="button"
               accessibilityLabel="Search messages"
             >
-              <Search size={13} color={theme.colors.foregroundMuted} />
+              <Search size={13} strokeWidth={2} color={theme.colors.foregroundMuted} />
               <Text style={styles.quickLabel}>Search</Text>
             </Pressable>
           ) : null}
           {onOpenMentions ? (
             <Pressable
               onPress={onOpenMentions}
-              style={styles.quickBtn}
+              style={({ hovered, pressed }) => [
+                styles.quickBtn,
+                hovered && styles.quickBtnHover,
+                pressed && styles.quickBtnPressed,
+              ]}
               accessibilityRole="button"
               accessibilityLabel="View mentions"
             >
@@ -197,6 +206,7 @@ function Section({
                   onPress={onAction}
                   style={styles.sectionAction}
                   accessibilityRole="button"
+                  accessibilityLabel={`Add ${title.toLowerCase()}`}
                 >
                   <Text style={styles.sectionActionText}>{actionLabel}</Text>
                 </Pressable>
@@ -314,7 +324,13 @@ function RailIconBtn({
     <Tip label={label}>
       <Pressable
         onPress={onPress}
-        style={[styles.railBtn, selected && styles.railBtnSelected]}
+        hitSlop={6}
+        style={({ hovered, pressed }) => [
+          styles.railBtn,
+          selected && styles.railBtnSelected,
+          !selected && hovered && styles.railBtnHover,
+          pressed && styles.railBtnPressed,
+        ]}
         accessibilityRole="button"
         accessibilityLabel={label}
       >
@@ -347,9 +363,15 @@ function RailAvatarBtn({
     <Tip label={entry.name}>
       <Pressable
         onPress={onPress}
-        style={[styles.railBtn, selected && styles.railBtnSelected]}
+        hitSlop={6}
+        style={({ hovered, pressed }) => [
+          styles.railBtn,
+          selected && styles.railBtnSelected,
+          !selected && hovered && styles.railBtnHover,
+          pressed && styles.railBtnPressed,
+        ]}
         accessibilityRole="button"
-        accessibilityLabel={entry.name}
+        accessibilityLabel={`Direct message with ${entry.name}`}
       >
         <Avatar
           name={entry.name}
@@ -382,41 +404,74 @@ const DmRow = memo(function DmRow({
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.row, selected && styles.rowSelected]}
+      style={styles.rowReset}
       accessibilityRole="button"
       accessibilityLabel={`Direct message with ${entry.name}`}
     >
-      <Avatar
-        name={entry.name}
-        imageUrl={entry.avatarUrl ?? null}
-        size={20}
-        online={entry.online}
-      />
-      <Text
-        style={[
-          styles.rowLabel,
-          selected && styles.rowLabelSelected,
-          unreadLook && styles.rowLabelUnread,
-          muted && !hasMention && styles.rowLabelMuted,
-        ]}
-        numberOfLines={1}
-      >
-        {entry.name}
-      </Text>
-      {hasMention && !selected ? (
-        <View style={[styles.badge, styles.badgeMention]}>
-          <Text style={styles.badgeText}>@</Text>
-        </View>
-      ) : showNumericBadge ? (
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>
-            {unread > 99 ? "99+" : unread}
+      {({ hovered = false, pressed = false }) => (
+        <RowContent
+          selected={selected}
+          hovered={hovered}
+          pressed={pressed}
+        >
+          <Avatar
+            name={entry.name}
+            imageUrl={entry.avatarUrl ?? null}
+            size={20}
+            online={entry.online}
+          />
+          <Text
+            style={[
+              styles.rowLabel,
+              selected && styles.rowLabelSelected,
+              unreadLook && styles.rowLabelUnread,
+              muted && !hasMention && styles.rowLabelMuted,
+            ]}
+            numberOfLines={1}
+          >
+            {entry.name}
           </Text>
-        </View>
-      ) : null}
+          {hasMention && !selected ? (
+            <View style={[styles.badge, styles.badgeMention]}>
+              <Text style={styles.badgeText}>@</Text>
+            </View>
+          ) : showNumericBadge ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>
+                {unread > 99 ? "99+" : unread}
+              </Text>
+            </View>
+          ) : null}
+        </RowContent>
+      )}
     </Pressable>
   );
 });
+
+function RowContent({
+  selected,
+  hovered,
+  pressed,
+  children,
+}: {
+  selected: boolean;
+  hovered: boolean;
+  pressed: boolean;
+  children: React.ReactNode;
+}) {
+  const { container } = useRowStateStyle({ selected, hovered, pressed });
+  // dataSet gives the CSS rule in WebFocusRingStyle a hook to add the
+  // brand-magenta glow only on the currently-active row. The prop is
+  // RN-Web-only; cast through `any` to keep the rest of the View typed.
+  const dataAttr = selected
+    ? ({ dataSet: { hubcodeSelected: "1" } } as unknown as Record<string, unknown>)
+    : null;
+  return (
+    <View style={[styles.row, container]} {...dataAttr}>
+      {children}
+    </View>
+  );
+}
 
 const ChannelRow = memo(function ChannelRow({
   channel,
@@ -440,41 +495,45 @@ const ChannelRow = memo(function ChannelRow({
   return (
     <Pressable
       onPress={() => onSelect(channel.id)}
-      style={[styles.row, selected && styles.rowSelected]}
+      style={styles.rowReset}
       accessibilityRole="button"
+      accessibilityLabel={`${channel.kind === "private" ? "Private" : "Public"} channel ${label}`}
     >
-      <Icon
-        size={14}
-        color={
-          selected
-            ? theme.colors.foreground
-            : unreadLook
-              ? theme.colors.foreground
-              : theme.colors.foregroundMuted
-        }
-      />
-      <Text
-        style={[
-          styles.rowLabel,
-          selected && styles.rowLabelSelected,
-          unreadLook && styles.rowLabelUnread,
-          muted && !hasMention && styles.rowLabelMuted,
-        ]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
-      {hasMention && !selected ? (
-        <View style={[styles.badge, styles.badgeMention]}>
-          <Text style={styles.badgeText}>@</Text>
-        </View>
-      ) : showNumericBadge ? (
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>
-            {unread > 99 ? "99+" : unread}
+      {({ hovered = false, pressed = false }) => (
+        <RowContent selected={selected} hovered={hovered} pressed={pressed}>
+          <Icon
+            size={14}
+            strokeWidth={1.75}
+            color={
+              selected || unreadLook
+                ? theme.colors.foreground
+                : theme.colors.foregroundMuted
+            }
+          />
+          <Text
+            style={[
+              styles.rowLabel,
+              selected && styles.rowLabelSelected,
+              unreadLook && styles.rowLabelUnread,
+              muted && !hasMention && styles.rowLabelMuted,
+            ]}
+            numberOfLines={1}
+          >
+            {label}
           </Text>
-        </View>
-      ) : null}
+          {hasMention && !selected ? (
+            <View style={[styles.badge, styles.badgeMention]}>
+              <Text style={styles.badgeText}>@</Text>
+            </View>
+          ) : showNumericBadge ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>
+                {unread > 99 ? "99+" : unread}
+              </Text>
+            </View>
+          ) : null}
+        </RowContent>
+      )}
     </Pressable>
   );
 });
@@ -482,47 +541,55 @@ const ChannelRow = memo(function ChannelRow({
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.surface0,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[1],
-    gap: theme.spacing[3],
+    backgroundColor: theme.colors.surfaceSidebar,
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[2],
+    gap: theme.spacing[4],
   },
-  section: { gap: theme.spacing[1] },
+  section: { gap: 2 },
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: theme.spacing[2],
     paddingTop: theme.spacing[1],
-    paddingBottom: theme.spacing[1],
+    paddingBottom: theme.spacing[2],
+    minHeight: 28,
   },
   sectionTitle: {
     fontSize: 11,
-    fontWeight: "600",
+    fontWeight: "700",
     color: theme.colors.foregroundMuted,
     textTransform: "uppercase",
-    letterSpacing: 0.4,
+    letterSpacing: 0.6,
   },
   sectionAction: {
     paddingHorizontal: theme.spacing[2],
     paddingVertical: 2,
     borderRadius: 4,
+    minWidth: 28,
+    minHeight: 28,
+    alignItems: "center",
+    justifyContent: "center",
   },
   sectionActionText: {
     fontSize: 16,
     color: theme.colors.foregroundMuted,
     fontWeight: "600",
   },
+  rowReset: {
+    // Pressable outer wrapper — actual row visuals live in RowContent so the
+    // state helper can own bg + accent stripe without nested style conflicts.
+  },
   row: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 6,
-    borderRadius: 4,
-  },
-  rowSelected: {
-    backgroundColor: theme.colors.surface1,
+    paddingLeft: theme.spacing[3] - 3,
+    paddingRight: theme.spacing[3],
+    paddingVertical: 8,
+    borderRadius: 8,
+    minHeight: 32,
   },
   rowLabel: {
     flex: 1,
@@ -531,31 +598,33 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowLabelSelected: {
     color: theme.colors.foreground,
-    fontWeight: "500",
+    fontWeight: "600",
   },
   rowLabelUnread: {
     color: theme.colors.foreground,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   rowLabelMuted: {
     opacity: 0.6,
   },
   badge: {
     minWidth: 20,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     borderRadius: 10,
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.brandMagenta,
     alignItems: "center",
     justifyContent: "center",
   },
   badgeMention: {
-    backgroundColor: "#e53935",
+    backgroundColor: "#ef4444",
   },
   badgeText: {
     fontSize: 11,
-    color: theme.colors.foreground,
-    fontWeight: "600",
+    color: "#ffffff",
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+    letterSpacing: 0.2,
   },
   empty: {
     paddingHorizontal: theme.spacing[2],
@@ -565,24 +634,35 @@ const styles = StyleSheet.create((theme) => ({
   },
   quickRow: {
     flexDirection: "row",
-    gap: 4,
+    gap: 6,
     paddingHorizontal: theme.spacing[1],
-    paddingBottom: theme.spacing[1],
+    paddingBottom: theme.spacing[2],
   },
   quickBtn: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 8,
-    borderRadius: 4,
+    gap: 8,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: 10,
+    borderRadius: 10,
     backgroundColor: theme.colors.surface1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    minHeight: 36,
+  },
+  quickBtnHover: {
+    backgroundColor: theme.colors.rowSelected,
+    borderColor: theme.colors.brandMagenta,
+  },
+  quickBtnPressed: {
+    backgroundColor: theme.colors.rowPressed,
   },
   quickLabel: {
     flex: 1,
     fontSize: 13,
-    color: theme.colors.foregroundMuted,
+    color: theme.colors.foreground,
+    fontWeight: "500",
   },
   quickBadge: {
     minWidth: 18,
@@ -597,6 +677,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 10,
     color: "#ffffff",
     fontWeight: "600",
+    fontVariant: ["tabular-nums"],
   },
   railContainer: {
     flex: 1,
@@ -614,7 +695,13 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
   },
   railBtnSelected: {
-    backgroundColor: theme.colors.surface1,
+    backgroundColor: theme.colors.rowSelected,
+  },
+  railBtnHover: {
+    backgroundColor: theme.colors.rowHover,
+  },
+  railBtnPressed: {
+    backgroundColor: theme.colors.rowPressed,
   },
   railDivider: {
     width: 20,
@@ -647,5 +734,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 9,
     color: "#ffffff",
     fontWeight: "700",
+    fontVariant: ["tabular-nums"],
   },
 }));

@@ -267,12 +267,16 @@ async function signIn(args?: Record<string, unknown>): Promise<{
     sessionToken: string;
     accessToken: string;
     providerId: string;
+    expiresAt?: string;
     user: StoredAuthUser;
   };
 
-  const expiresAt = new Date(
-    Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  // Prefer the server-issued expiry so the cached session agrees with the
+  // DB row. Fall back to the legacy client-computed window only if an older
+  // auth-server build skips the field.
+  const expiresAt =
+    exchangeData.expiresAt ??
+    new Date(Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   saveAuthSession({
     sessionToken: exchangeData.sessionToken,

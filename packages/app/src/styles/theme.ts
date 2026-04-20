@@ -145,6 +145,15 @@ const lightSemanticColors = {
   accentBright: "#D93BA5",
   accentForeground: "#ffffff",
 
+  // Interactive row states — applied consistently across every list row
+  // (channels, DMs, sessions, shared workspaces, nav items). Avoids each
+  // component reinventing "what does hover look like here".
+  rowHover: "#f4f4f5",
+  rowSelected: "#e4e4e7", // noticeably darker than hover so selection pops
+  rowPressed: "#d4d4d8",
+  rowSelectedAccent: "#C4198B",
+  focusRing: "#C4198B",
+
   // Semantic
   destructive: "#dc2626",
   destructiveForeground: "#ffffff",
@@ -258,6 +267,14 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     accent: tint.accent,
     accentBright: tint.accentBright,
     accentForeground: "#ffffff",
+
+    // Interactive row states. Selected uses surface3 (noticeably brighter
+    // than hover surface1) so the active row clearly pops in dense sidebars.
+    rowHover: tint.surface1,
+    rowSelected: tint.surface3,
+    rowPressed: tint.surface4,
+    rowSelectedAccent: tint.accent,
+    focusRing: tint.accent,
 
     destructive: "#ef4444",
     destructiveForeground: "#ffffff",

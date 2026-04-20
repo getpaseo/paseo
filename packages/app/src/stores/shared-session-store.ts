@@ -34,6 +34,13 @@ interface SharedSessionState {
   /** Recipient-only scope: when set, sidebar is restricted to this workspace. */
   scopedServerId: string | null;
   scopedWorkspaceId: string | null;
+  /**
+   * True while we're in the middle of joining a shared session (Colyseus room
+   * connection in flight). Drives a full-screen loading overlay so the UI
+   * doesn't flash workspace chrome + progressively-appearing video/sidebar
+   * layers as each piece finishes.
+   */
+  joining: boolean;
 }
 
 export interface SharedParticipant {
@@ -122,6 +129,7 @@ let state: SharedSessionState = {
   hostMode: false,
   scopedServerId: persisted.scopedServerId ?? null,
   scopedWorkspaceId: persisted.scopedWorkspaceId ?? null,
+  joining: false,
 };
 
 const listeners = new Set<() => void>();
@@ -513,6 +521,8 @@ export async function startSharedSessionAsHost(params: {
   if (state.enteredViaShare && !state.hostMode) {
     await endSharedSessionAndDisconnect();
   }
+  state = { ...state, joining: true };
+  emit();
   try {
     const { joinSharedSession } = await import("@/hooks/sharing/colyseus-client");
     const room = await joinSharedSession({
@@ -533,6 +543,7 @@ export async function startSharedSessionAsHost(params: {
       // Host keeps local daemon — no scope.
       scopedServerId: null,
       scopedWorkspaceId: null,
+      joining: false,
     };
     emit();
     wireParticipantSync(room);
@@ -540,6 +551,8 @@ export async function startSharedSessionAsHost(params: {
     wireChatMessageListener(room);
   } catch (err) {
     console.warn("[shared-session] host-mode join failed:", err);
+    state = { ...state, joining: false };
+    emit();
   }
 }
 
@@ -573,6 +586,7 @@ function clearSharedSessionWithReason(opts: { wasHostMode: boolean }): void {
     hostMode: false,
     scopedServerId: null,
     scopedWorkspaceId: null,
+    joining: false,
   };
   try {
     if (typeof sessionStorage !== "undefined") {
@@ -653,6 +667,11 @@ export function useIsInSharedSession(): boolean {
   return enteredViaShare;
 }
 
+export function useIsJoiningSharedSession(): boolean {
+  const { joining } = useSharedSessionStore();
+  return joining;
+}
+
 /**
  * True only when the user joined as a *recipient* (not the host). Used by UI
  * pieces that should only apply to recipients — hidden org rail, scoped
@@ -720,10 +739,13 @@ export async function reconnectIfNeeded(sessionTokenOverride?: string | null): P
     return;
   }
   reconnecting = true;
+  const shareTokenSnapshot = state.shareToken;
+  state = { ...state, joining: true };
+  emit();
   try {
     const { joinSharedSession } = await import("@/hooks/sharing/colyseus-client");
     const room = await joinSharedSession({
-      shareToken: state.shareToken,
+      shareToken: shareTokenSnapshot,
       sessionToken,
     });
     // Guard against a race: if some other code path set state.room while
@@ -736,7 +758,7 @@ export async function reconnectIfNeeded(sessionTokenOverride?: string | null): P
       }
       return;
     }
-    state = { ...state, room };
+    state = { ...state, room, joining: false };
     emit();
     console.log("[shared-session] auto-reconnected to Colyseus room");
     wireParticipantSync(room);
@@ -749,5 +771,9 @@ export async function reconnectIfNeeded(sessionTokenOverride?: string | null): P
     void endSharedSessionAndDisconnect();
   } finally {
     reconnecting = false;
+    if (state.joining) {
+      state = { ...state, joining: false };
+      emit();
+    }
   }
 }

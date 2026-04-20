@@ -13,6 +13,7 @@ import {
 import {
   View,
   Pressable,
+  ScrollView,
   Text,
   useWindowDimensions,
   StyleSheet as RNStyleSheet,
@@ -27,7 +28,17 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { MessageSquare, MessagesSquare, Plus, Settings, Users } from "lucide-react-native";
+import {
+  Folder,
+  MessageSquare,
+  MessagesSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  Settings,
+  Share2,
+  Users,
+} from "lucide-react-native";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -59,6 +70,7 @@ import {
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
+import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useIsInSharedSession } from "@/stores/shared-session-store";
 import { isWeb, getIsElectron } from "@/constants/platform";
@@ -115,6 +127,8 @@ interface MobileSidebarProps extends SidebarSharedProps {
 interface DesktopSidebarProps extends SidebarSharedProps {
   insetsTop: number;
   isOpen: boolean;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   handleViewMore: () => void;
 }
 
@@ -128,6 +142,8 @@ export const LeftSidebar = memo(function LeftSidebar({
   const isCompactLayout = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const desktopAgentListCollapsed = usePanelStore((state) => state.desktop.agentListCollapsed);
+  const toggleAgentListCollapsed = usePanelStore((state) => state.toggleAgentListCollapsed);
   const closeToAgent = usePanelStore((state) => state.closeToAgent);
   const pathname = usePathname();
   const daemons = useHosts();
@@ -305,6 +321,8 @@ export const LeftSidebar = memo(function LeftSidebar({
       {...sharedProps}
       insetsTop={insets.top}
       isOpen={isOpen}
+      collapsed={desktopAgentListCollapsed}
+      onToggleCollapsed={toggleAgentListCollapsed}
       handleOpenProject={handleOpenProjectDesktop}
       handleSettings={handleSettingsDesktop}
       handleViewMore={handleViewMoreNavigate}
@@ -775,6 +793,260 @@ function SidebarUpgradeHint() {
   return <UpgradeBanner compact title="Upgrade to Pro" />;
 }
 
+function CollapsedDesktopSidebar({
+  theme,
+  insetsTop,
+  padding,
+  sharedSessionActive,
+  onExpand,
+  onOpenChat,
+  onOpenSessions,
+  onOpenAddProject,
+  onOpenTeamProjects,
+  projects,
+  activeServerId,
+  isScopedRecipient,
+}: {
+  theme: SidebarTheme;
+  insetsTop: number;
+  padding: { top: number };
+  sharedSessionActive: boolean;
+  onExpand: () => void;
+  onOpenChat: () => void;
+  onOpenSessions: () => void;
+  onOpenAddProject: () => void;
+  onOpenTeamProjects: () => void;
+  projects: SidebarProjectEntry[];
+  activeServerId: string | null;
+  isScopedRecipient: boolean;
+}) {
+  const pathname = usePathname();
+  const isChatActive = pathname === "/chat" || pathname.startsWith("/chat/");
+  const isSessionsActive = pathname.includes("/sessions");
+
+  const openProject = (project: SidebarProjectEntry) => {
+    if (!activeServerId) return;
+    // Open the first workspace of the project (same default as the
+    // expanded list). If the project has no workspaces, nothing to do.
+    const first = project.workspaces[0];
+    if (!first) return;
+    navigateToWorkspace(activeServerId, first.workspaceId);
+  };
+
+  return (
+    <View
+      style={[
+        staticStyles.desktopSidebar,
+        styles.collapsedRail,
+        { paddingTop: insetsTop, width: 56 },
+      ]}
+    >
+      <View style={styles.collapsedRailInner}>
+        <View style={styles.sidebarDragArea}>
+          <TitlebarDragRegion />
+          {padding.top > 0 && !sharedSessionActive ? (
+            <View style={{ height: padding.top }} />
+          ) : null}
+        </View>
+        {/* Top icon group */}
+        <View style={styles.collapsedIconGroup}>
+          <CollapsedRailIconBtn
+            label="Expand sidebar"
+            icon={
+              <PanelLeftOpen
+                size={18}
+                color={theme.colors.foregroundMuted}
+                strokeWidth={1.75}
+              />
+            }
+            onPress={onExpand}
+          />
+          <View style={styles.collapsedDivider} />
+          {!isScopedRecipient && (
+            <>
+              <CollapsedRailIconBtn
+                label="Messages"
+                active={isChatActive}
+                icon={
+                  <MessageSquare
+                    size={18}
+                    color={
+                      isChatActive
+                        ? theme.colors.brandMagenta
+                        : theme.colors.foregroundMuted
+                    }
+                    strokeWidth={1.75}
+                  />
+                }
+                onPress={onOpenChat}
+              />
+              <CollapsedRailIconBtn
+                label="Sessions"
+                active={isSessionsActive}
+                icon={
+                  <MessagesSquare
+                    size={18}
+                    color={
+                      isSessionsActive
+                        ? theme.colors.foreground
+                        : theme.colors.foregroundMuted
+                    }
+                    strokeWidth={1.75}
+                  />
+                }
+                onPress={onOpenSessions}
+              />
+              <CollapsedRailIconBtn
+                label="Shared workspaces"
+                icon={
+                  <Share2
+                    size={18}
+                    color={theme.colors.foregroundMuted}
+                    strokeWidth={1.75}
+                  />
+                }
+                onPress={onOpenTeamProjects}
+              />
+              {projects.length > 0 ? (
+                <View style={styles.collapsedDivider} />
+              ) : null}
+            </>
+          )}
+        </View>
+        {/* Scrollable projects list — each project becomes a monogram chip. */}
+        {!isScopedRecipient && projects.length > 0 ? (
+          <ScrollView
+            style={styles.collapsedProjects}
+            contentContainerStyle={styles.collapsedProjectsContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {projects.map((project) => (
+              <CollapsedProjectMonogram
+                key={project.projectKey}
+                project={project}
+                onPress={() => openProject(project)}
+                theme={theme}
+              />
+            ))}
+          </ScrollView>
+        ) : (
+          <View style={{ flex: 1 }} />
+        )}
+        {/* Footer icon group pinned to bottom */}
+        <View style={styles.collapsedFooter}>
+          {!isScopedRecipient && (
+            <>
+              <CollapsedRailIconBtn
+                label="Add project"
+                icon={
+                  <Plus
+                    size={18}
+                    color={theme.colors.foregroundMuted}
+                    strokeWidth={2}
+                  />
+                }
+                onPress={onOpenAddProject}
+              />
+              <CollapsedRailIconBtn
+                label="Team projects"
+                icon={
+                  <Users
+                    size={18}
+                    color={theme.colors.foregroundMuted}
+                    strokeWidth={1.75}
+                  />
+                }
+                onPress={onOpenTeamProjects}
+              />
+            </>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function CollapsedProjectMonogram({
+  project,
+  onPress,
+  theme,
+}: {
+  project: SidebarProjectEntry;
+  onPress: () => void;
+  theme: SidebarTheme;
+}) {
+  const initial = (project.projectName || "?").slice(0, 1).toUpperCase();
+  return (
+    <Tooltip delayDuration={0}>
+      <TooltipTrigger asChild>
+        <Pressable
+          onPress={onPress}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${project.projectName}`}
+          style={({ hovered, pressed }) => [
+            styles.collapsedMonogram,
+            hovered && styles.collapsedRailBtnHover,
+            pressed && styles.collapsedRailBtnPressed,
+          ]}
+        >
+          {project.totalWorkspaces > 0 ? (
+            <Text style={styles.collapsedMonogramText}>{initial}</Text>
+          ) : (
+            <Folder
+              size={16}
+              color={theme.colors.foregroundMuted}
+              strokeWidth={1.75}
+            />
+          )}
+          {project.activeCount > 0 ? (
+            <View style={styles.collapsedMonogramDot} />
+          ) : null}
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="right" align="center" offset={8}>
+        <Text style={styles.tooltipText}>{project.projectName}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function CollapsedRailIconBtn({
+  label,
+  icon,
+  onPress,
+  active,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onPress: () => void;
+  active?: boolean;
+}) {
+  return (
+    <Tooltip delayDuration={0}>
+      <TooltipTrigger asChild>
+        <Pressable
+          onPress={onPress}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          style={({ hovered, pressed }) => [
+            styles.collapsedRailBtn,
+            active && styles.collapsedRailBtnActive,
+            !active && hovered && styles.collapsedRailBtnHover,
+            pressed && styles.collapsedRailBtnPressed,
+          ]}
+        >
+          {icon}
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="right" align="center" offset={8}>
+        <Text style={styles.tooltipText}>{label}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function DesktopSidebar({
   theme,
   activeServerId,
@@ -798,6 +1070,8 @@ function DesktopSidebar({
   handleSettings,
   insetsTop,
   isOpen,
+  collapsed,
+  onToggleCollapsed,
   handleViewMore,
   isScopedRecipient,
 }: DesktopSidebarProps) {
@@ -855,6 +1129,25 @@ function DesktopSidebar({
     return null;
   }
 
+  if (collapsed) {
+    return (
+      <CollapsedDesktopSidebar
+        theme={theme}
+        insetsTop={insetsTop}
+        padding={padding}
+        sharedSessionActive={sharedSessionActive}
+        onExpand={onToggleCollapsed}
+        onOpenChat={() => router.push("/chat")}
+        onOpenSessions={handleViewMore}
+        onOpenAddProject={handleOpenProject}
+        onOpenTeamProjects={handleOpenTeamProjects}
+        projects={projects}
+        activeServerId={activeServerId}
+        isScopedRecipient={isScopedRecipient}
+      />
+    );
+  }
+
   return (
     <Animated.View
       style={[staticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insetsTop }]}
@@ -862,12 +1155,14 @@ function DesktopSidebar({
       <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
-          {/* Skip the traffic-light spacer when the shared-session bar is on
-              top — the bar already reserves that area, so the extra padding
-              just adds dead space above "Sessions". */}
-          {padding.top > 0 && !sharedSessionActive ? (
-            <View style={{ height: padding.top }} />
-          ) : null}
+          {/* Always reserve at least 8px under the magenta DesktopTitlebarAccent
+              so the tabs don't visually collide with it. When there's no
+              shared session we also clear the full traffic-light height. */}
+          <View
+            style={{
+              height: sharedSessionActive ? 8 : Math.max(padding.top, 8),
+            }}
+          />
           {!isScopedRecipient && (
             <View style={styles.sidebarHeader}>
               <View style={styles.sidebarHeaderRow}>
@@ -945,23 +1240,27 @@ function DesktopSidebar({
                   </View>
                 </TooltipContent>
               </Tooltip>
-              <Pressable
-                style={styles.footerIconButton}
-                testID="sidebar-settings"
-                nativeID="sidebar-settings"
-                collapsable={false}
-                accessible
-                accessibilityLabel="Settings"
-                accessibilityRole="button"
-                onPress={handleSettings}
-              >
-                {({ hovered }) => (
-                  <Settings
-                    size={theme.iconSize.md}
-                    color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                  />
-                )}
-              </Pressable>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Pressable
+                    style={styles.footerIconButton}
+                    accessible
+                    accessibilityLabel="Collapse sidebar"
+                    accessibilityRole="button"
+                    onPress={onToggleCollapsed}
+                  >
+                    {({ hovered }) => (
+                      <PanelLeftClose
+                        size={theme.iconSize.md}
+                        color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                      />
+                    )}
+                  </Pressable>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="center" offset={8}>
+                  <Text style={styles.tooltipText}>Collapse sidebar</Text>
+                </TooltipContent>
+              </Tooltip>
             </View>
           )}
           <Combobox
@@ -1016,6 +1315,84 @@ const styles = StyleSheet.create((theme) => ({
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
+  },
+  collapsedRail: {
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceSidebar,
+  },
+  collapsedRailInner: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: theme.spacing[2],
+    gap: 4,
+  },
+  collapsedIconGroup: {
+    alignItems: "center",
+    gap: 4,
+    paddingTop: theme.spacing[2],
+  },
+  collapsedDivider: {
+    width: 24,
+    height: 1,
+    backgroundColor: theme.colors.border,
+    marginVertical: theme.spacing[1],
+  },
+  collapsedFooter: {
+    marginTop: "auto",
+    alignItems: "center",
+    gap: 4,
+    paddingBottom: theme.spacing[2],
+  },
+  collapsedRailBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+  },
+  collapsedRailBtnActive: {
+    backgroundColor: theme.colors.rowSelected,
+  },
+  collapsedRailBtnHover: {
+    backgroundColor: theme.colors.rowHover,
+  },
+  collapsedRailBtnPressed: {
+    backgroundColor: theme.colors.rowPressed,
+  },
+  collapsedProjects: {
+    flex: 1,
+    alignSelf: "stretch",
+  },
+  collapsedProjectsContent: {
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: theme.spacing[2],
+  },
+  collapsedMonogram: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+    position: "relative",
+  },
+  collapsedMonogramText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: theme.colors.foreground,
+  },
+  collapsedMonogramDot: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: theme.colors.brandMagenta,
   },
   resizeHandle: {
     position: "absolute",

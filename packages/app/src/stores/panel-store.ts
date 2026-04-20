@@ -32,6 +32,9 @@ type MobilePanelView = "agent" | "agent-list" | "file-explorer";
  */
 interface DesktopSidebarState {
   agentListOpen: boolean;
+  /** When true, the left sidebar renders as a narrow icon rail (~56px)
+   *  instead of the full expanded panel. Independent of `agentListOpen`. */
+  agentListCollapsed: boolean;
   fileExplorerOpen: boolean;
   focusModeEnabled: boolean;
 }
@@ -80,6 +83,7 @@ interface PanelState {
   closeFileExplorer: () => void;
   closeToAgent: () => void;
   toggleAgentList: () => void;
+  toggleAgentListCollapsed: () => void;
   toggleFileExplorer: () => void;
   toggleBothSidebars: () => void;
   toggleFocusMode: () => void;
@@ -139,6 +143,7 @@ export const usePanelStore = create<PanelState>()(
       // Desktop defaults based on platform
       desktop: {
         agentListOpen: DEFAULT_DESKTOP_OPEN,
+        agentListCollapsed: false,
         fileExplorerOpen: false,
         focusModeEnabled: false,
       },
@@ -200,6 +205,14 @@ export const usePanelStore = create<PanelState>()(
           desktop: {
             ...state.desktop,
             agentListOpen: !state.desktop.agentListOpen,
+          },
+        })),
+
+      toggleAgentListCollapsed: () =>
+        set((state) => ({
+          desktop: {
+            ...state.desktop,
+            agentListCollapsed: !state.desktop.agentListCollapsed,
           },
         })),
 
@@ -312,7 +325,7 @@ export const usePanelStore = create<PanelState>()(
     }),
     {
       name: "panel-state",
-      version: 10,
+      version: 11,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState, version) => {
         const state = persistedState as Partial<PanelState> & Record<string, unknown>;
@@ -377,6 +390,13 @@ export const usePanelStore = create<PanelState>()(
             if (typeof desktop.focusModeEnabled !== "boolean") {
               desktop.focusModeEnabled = false;
             }
+          }
+        }
+
+        if (version < 11) {
+          const desktop = state.desktop as Record<string, unknown> | undefined;
+          if (desktop && typeof desktop.agentListCollapsed !== "boolean") {
+            desktop.agentListCollapsed = false;
           }
         }
 

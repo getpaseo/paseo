@@ -30,7 +30,7 @@ import {
   useIsSharedRecipient,
   useSharedSessionStore,
 } from "@/stores/shared-session-store";
-import { isNative } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 
 interface SidebarSharedWorkspacesProps {
   serverId: string | null;
@@ -79,7 +79,11 @@ export function SidebarSharedWorkspaces({
   );
 
   const handleOpenShared = useCallback(
-    (share: { serverId: string; workspaceId: string }) => {
+    (share: { serverId: string; workspaceId: string; shareUrl: string }) => {
+      if (isWeb && share.shareUrl && typeof window !== "undefined") {
+        window.open(share.shareUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
       router.push(buildHostWorkspaceRoute(share.serverId, share.workspaceId));
       onWorkspacePress?.();
     },
@@ -117,6 +121,10 @@ export function SidebarSharedWorkspaces({
 
   const handleOpenShareUrl = useCallback(async (shareUrl: string) => {
     if (!shareUrl) return;
+    if (isWeb && typeof window !== "undefined") {
+      window.open(shareUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
     try {
       await Clipboard.setStringAsync(shareUrl);
     } catch {
@@ -189,17 +197,16 @@ export function SidebarSharedWorkspaces({
                 return (
                   <Pressable
                     key={share.token}
-                    style={({ hovered = false }) => [
+                    {...(isWeb
+                      ? ({ dataSet: { hubcodeRow: "1" } } as unknown as Record<
+                          string,
+                          unknown
+                        >)
+                      : {})}
+                    style={[
                       styles.row,
-                      hovered && !isActive && styles.rowHovered,
                       isActive && styles.rowActive,
                     ]}
-                    // Intentionally no accessibilityRole — the row contains
-                    // nested Pressable icons (Copy, Revoke) which render as
-                    // <button> on web. Giving this outer Pressable role=button
-                    // would produce nested <button> inside <button>, which is
-                    // invalid HTML and triggers a hydration error. Leaving it
-                    // off renders the row as a plain <div> with click handling.
                     accessibilityLabel={`Open shared workspace ${share.workspaceName}`}
                     disabled={isActive}
                     onPress={() => {
@@ -212,60 +219,55 @@ export function SidebarSharedWorkspaces({
                       });
                     }}
                   >
-                    {({ hovered = false }) => {
-                      const showActions = hovered || isNative || isCopied;
-                      return (
-                        <>
-                          <Share2 size={12} color={theme.colors.foregroundMuted} />
-                          <Text style={styles.rowTitle} numberOfLines={1}>
-                            {share.workspaceName}
-                          </Text>
-                          {showActions ? (
-                            <View style={styles.rowActions}>
-                              <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel="Copy share link"
-                                style={({ hovered: btnHover = false }) => [
-                                  styles.iconButton,
-                                  btnHover && styles.iconButtonHovered,
-                                ]}
-                                onPress={(e) => {
-                                  e.stopPropagation?.();
-                                  void handleCopy(share.shareUrl, share.token);
-                                }}
-                              >
-                                {isCopied ? (
-                                  <Check size={12} color={theme.colors.accent} />
-                                ) : (
-                                  <Copy
-                                    size={12}
-                                    color={theme.colors.foregroundMuted}
-                                  />
-                                )}
-                              </Pressable>
-                              <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel="Revoke share"
-                                style={({ hovered: btnHover = false }) => [
-                                  styles.iconButton,
-                                  btnHover && styles.iconButtonDestructive,
-                                ]}
-                                onPress={(e) => {
-                                  e.stopPropagation?.();
-                                  void handleRevoke(share.token);
-                                }}
-                                disabled={isRevoking}
-                              >
-                                <Trash2
-                                  size={12}
-                                  color={theme.colors.destructive}
-                                />
-                              </Pressable>
-                            </View>
-                          ) : null}
-                        </>
-                      );
-                    }}
+                    {() => (
+                      <>
+                        <Share2 size={12} color={theme.colors.foregroundMuted} />
+                        <Text style={styles.rowTitle} numberOfLines={1}>
+                          {share.workspaceName}
+                        </Text>
+                        <View style={styles.rowActions}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Copy share link"
+                            style={({ hovered: btnHover = false }) => [
+                              styles.iconButton,
+                              btnHover && styles.iconButtonHovered,
+                            ]}
+                            onPress={(e) => {
+                              e.stopPropagation?.();
+                              void handleCopy(share.shareUrl, share.token);
+                            }}
+                          >
+                            {isCopied ? (
+                              <Check size={12} color={theme.colors.accent} />
+                            ) : (
+                              <Copy
+                                size={12}
+                                color={theme.colors.foregroundMuted}
+                              />
+                            )}
+                          </Pressable>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Revoke share"
+                            style={({ hovered: btnHover = false }) => [
+                              styles.iconButton,
+                              btnHover && styles.iconButtonDestructive,
+                            ]}
+                            onPress={(e) => {
+                              e.stopPropagation?.();
+                              void handleRevoke(share.token);
+                            }}
+                            disabled={isRevoking}
+                          >
+                            <Trash2
+                              size={12}
+                              color={theme.colors.destructive}
+                            />
+                          </Pressable>
+                        </View>
+                      </>
+                    )}
                   </Pressable>
                 );
               })}
@@ -278,43 +280,44 @@ export function SidebarSharedWorkspaces({
               {withMe.map((share) => (
                 <Pressable
                   key={share.token}
-                  // No accessibilityRole on the outer: it contains a nested
-                  // Pressable (Copy/Open) which renders as <button> on web;
-                  // giving this row role=button would produce nested buttons.
+                  {...(isWeb
+                    ? ({ dataSet: { hubcodeRow: "1" } } as unknown as Record<
+                        string,
+                        unknown
+                      >)
+                    : {})}
                   accessibilityLabel={`Open ${share.workspaceName}`}
-                  style={({ hovered = false }) => [styles.row, hovered && styles.rowHovered]}
+                  style={styles.row}
                   onPress={() => handleOpenShared(share)}
                 >
-                  {({ hovered = false }) => {
-                    const showActions = hovered || isNative;
-                    return (
-                      <>
-                        <Users size={12} color={theme.colors.foregroundMuted} />
-                        <Text style={styles.rowTitle} numberOfLines={1}>
-                          {share.workspaceName}
-                        </Text>
-                        <Text style={styles.rowOwner} numberOfLines={1}>
-                          {share.owner.name}
-                        </Text>
-                        {showActions ? (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Copy share link"
-                            style={({ hovered: btnHover = false }) => [
-                              styles.iconButton,
-                              btnHover && styles.iconButtonHovered,
-                            ]}
-                            onPress={() => void handleOpenShareUrl(share.shareUrl)}
-                          >
-                            <ExternalLink
-                              size={12}
-                              color={theme.colors.foregroundMuted}
-                            />
-                          </Pressable>
-                        ) : null}
-                      </>
-                    );
-                  }}
+                  {() => (
+                    <>
+                      <Users size={12} color={theme.colors.foregroundMuted} />
+                      <Text style={styles.rowTitle} numberOfLines={1}>
+                        {share.workspaceName}
+                      </Text>
+                      <Text style={styles.rowOwner} numberOfLines={1}>
+                        {share.owner.name}
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Open share link in new tab"
+                        style={({ hovered: btnHover = false }) => [
+                          styles.iconButton,
+                          btnHover && styles.iconButtonHovered,
+                        ]}
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          void handleOpenShareUrl(share.shareUrl);
+                        }}
+                      >
+                        <ExternalLink
+                          size={12}
+                          color={theme.colors.foregroundMuted}
+                        />
+                      </Pressable>
+                    </>
+                  )}
                 </Pressable>
               ))}
             </View>

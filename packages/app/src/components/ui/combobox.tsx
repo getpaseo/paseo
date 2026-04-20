@@ -754,6 +754,15 @@ export function Combobox({
             typeof availableSize?.height === "number"
               ? { maxHeight: Math.min(availableSize.height, desktopFixedHeight ?? 400) }
               : null,
+            // Above-search popovers (e.g. model picker) anchor their bottom
+            // edge to the trigger, so their top edge can exceed the viewport
+            // when the list is tall. Cap the height to the space above the
+            // trigger so the search input (and any close control) stay visible.
+            isDesktopAboveSearch && referenceTop !== null
+              ? {
+                  maxHeight: Math.max(referenceTop - collisionPadding, 200),
+                }
+              : null,
           ]}
           ref={refs.setFloating}
           collapsable={false}
@@ -817,6 +826,8 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: theme.spacing[3],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
     gap: theme.spacing[2],
     backgroundColor: theme.colors.surface1,
     borderBottomWidth: 1,

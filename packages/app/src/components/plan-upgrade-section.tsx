@@ -5,6 +5,7 @@ import { settingsStyles } from "@/styles/settings";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useOrganizations } from "@/desktop/hooks/use-organizations";
 import { useActiveOrgId } from "@/stores/active-org-store";
+import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 
 function getBillingUrl(): string {
   if (__DEV__) {
@@ -30,7 +31,12 @@ function isPaidPlan(planId: string | null | undefined): boolean {
 
 export function PlanUpgradeSection() {
   const { theme } = useUnistyles();
+  const { isAuthenticated } = useAuthSession();
   const { organizations } = useOrganizations();
+  // Plan/billing only makes sense scoped to a signed-in account. When the
+  // user is not authenticated, hide the whole section rather than showing a
+  // misleading "Free plan" state that can't be acted on.
+  if (!isAuthenticated) return null;
   const activeOrgId = useActiveOrgId();
   const activeOrg =
     organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;

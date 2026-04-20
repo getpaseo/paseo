@@ -6,6 +6,7 @@ import { View, Text } from "react-native";
 import { useRouter } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { KanbanBoard } from "@/components/kanban/kanban-board";
 import {
   TaskCreationModal,
@@ -57,6 +58,7 @@ function workspaceToKanbanTask(workspace: WorkspaceDescriptor, serverId: string)
 export function KanbanScreen({ serverId, projectId }: KanbanScreenProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const headerPadding = useWindowControlsPadding("header");
   const toast = useToast();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const sessionWorkspaces = useSessionStore((state) => state.sessions[serverId]?.workspaces);
@@ -220,7 +222,12 @@ export function KanbanScreen({ serverId, projectId }: KanbanScreenProps) {
   );
 
   return (
-    <View style={[screenStyles.container, { paddingTop: insets.top }]}>
+    <View
+      style={[
+        screenStyles.container,
+        { paddingTop: insets.top + headerPadding.top },
+      ]}
+    >
       <View style={screenStyles.header}>
         <Text style={screenStyles.title}>{projectName}</Text>
         <Text style={screenStyles.subtitle}>Tasks</Text>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
@@ -58,7 +58,10 @@ export function ChatEmojiPicker({
     };
   }, [open, onClose]);
 
-  const pickerTheme = useMemo<"light" | "dark">(() => "dark", []);
+  // Mirror the app's current light/dark palette so the picker doesn't stay
+  // dark when the user switched to light mode in Settings.
+  const pickerTheme: "light" | "dark" =
+    theme.colorScheme === "light" ? "light" : "dark";
 
   if (!open || typeof document === "undefined" || !position) return null;
 

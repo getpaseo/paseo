@@ -39,9 +39,11 @@ export function DesktopTitlebarAccent() {
   const hideAccent = useIsInSharedSession();
   if (!getIsElectron()) return null;
   if (hideAccent) return null;
+  // Raw <div> (not <View>) so we can set `-webkit-app-region: drag` — React
+  // Native Web strips `WebkitAppRegion` from View styles, which made the
+  // magenta strip eat the OS drag region without providing one of its own.
   return (
-    <View
-      pointerEvents="none"
+    <div
       style={{
         position: "absolute",
         top: 0,
@@ -50,6 +52,8 @@ export function DesktopTitlebarAccent() {
         height: DESKTOP_TRAFFIC_LIGHT_HEIGHT,
         backgroundColor: theme.colors.accent,
         zIndex: 0,
+        // @ts-expect-error — WebkitAppRegion is not in CSSProperties
+        WebkitAppRegion: "drag",
       }}
     />
   );
@@ -64,7 +68,7 @@ export function DesktopTitlebarAccent() {
  */
 export function DesktopOrgRail() {
   const { theme } = useUnistyles();
-  const { user } = useAuthSession();
+  const { user, isAuthenticated } = useAuthSession();
   const { organizations, createOrganization, isCreating } = useOrganizations();
   const activeOrgId = useActiveOrgId();
   const windowPadding = useWindowControlsPadding("sidebar");
@@ -223,23 +227,25 @@ export function DesktopOrgRail() {
           );
         })}
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Create organization"
-          style={({ hovered = false }) => [styles.addTile, hovered && styles.itemHovered]}
-          onPress={() => setModalOpen(true)}
-        >
-          <Plus size={16} color="rgba(255,255,255,0.85)" />
-        </Pressable>
+        {isAuthenticated ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Create organization"
+            style={({ hovered = false }) => [styles.addTile, hovered && styles.itemHovered]}
+            onPress={() => setModalOpen(true)}
+          >
+            <Plus size={16} color="rgba(255,255,255,0.85)" />
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={styles.spacer} />
 
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Organizations settings"
+        accessibilityLabel="Account"
         style={({ hovered = false }) => [styles.bottomTile, hovered && styles.itemHovered]}
-        onPress={() => router.push("/settings?tab=organizations")}
+        onPress={() => router.push("/settings?tab=account")}
       >
         <Building2 size={14} color="rgba(255,255,255,0.85)" />
       </Pressable>

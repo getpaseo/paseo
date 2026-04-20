@@ -1,12 +1,17 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Animated, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft } from "lucide-react-native";
+import { ArrowLeft, LogIn, MessageSquare } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { useActiveOrgId } from "@/stores/active-org-store";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import {
+  SIDEBAR_COLLAPSED_WIDTH,
+  SIDEBAR_EXPANDED_WIDTH,
+  THREAD_PANE_WIDTH,
+  useIsCompactFormFactor,
+} from "@/constants/layout";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import {
   useChannelMembersQuery,
@@ -31,7 +36,7 @@ import type { SearchHit } from "@/api/chat";
 
 export function ChatScreen() {
   const orgId = useActiveOrgId();
-  const { session } = useAuthSession();
+  const { session, signIn, isSigningIn, isLoading: authLoading } = useAuthSession();
   const sessionToken = session?.sessionToken ?? null;
   const currentUserId = session?.user?.userId ?? null;
   const isCompact = useIsCompactFormFactor();
@@ -176,19 +181,33 @@ export function ChatScreen() {
   }, [selectedChannelId]);
 
   // Track the focused channel so the Colyseus hook knows when not to bump
-  // unread counts locally, and mark the channel as read server-side.
+  // unread counts locally, and mark the channel as read server-side. The
+  // markRead call needs an auth token to avoid firing a 401 — skip when the
+  // session hasn't landed yet (including briefly during boot / post-F5).
   useEffect(() => {
     setActiveChannelId(selectedChannelId);
-    if (selectedChannelId && orgId) {
+    if (selectedChannelId && orgId && sessionToken) {
       markRead.mutate({ channelId: selectedChannelId, orgId });
     }
     return () => setActiveChannelId(null);
     // markRead is stable via useMutation; including it in deps is noisy.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedChannelId, orgId]);
+  }, [selectedChannelId, orgId, sessionToken]);
 
   if (!orgId) return <EmptyState label="Select an organization to chat." />;
-  if (!sessionToken) return <EmptyState label="Sign in to chat." />;
+  // Show the boot skeleton while the auth session query is still resolving
+  // (F5 path: `useAuthSession` runs an async IPC call to the desktop bridge,
+  // leaving `sessionToken` briefly null even for logged-in users). Avoids the
+  // "Sign in to chat" CTA from flashing for ~300ms before messages load.
+  if (authLoading) return <ChatBootSkeleton />;
+  if (!sessionToken) return <SignInToChatEmpty onSignIn={() => signIn(undefined)} isSigningIn={isSigningIn} />;
+  // Defer the chat UI until the member roster has loaded so message bubbles
+  // can show real names/avatars instead of falling back to user IDs for a
+  // flash on boot.
+  const chatBooting =
+    orgMembersQuery.isPending ||
+    (orgMembersQuery.isFetching && !orgMembersQuery.data);
+  if (chatBooting) return <ChatBootSkeleton />;
 
   const modals = (
     <Fragment>
@@ -350,10 +369,93 @@ function BackHeader({ onBack, label }: { onBack: () => void; label: string }) {
   );
 }
 
+function ChatBootSkeleton() {
+  const { theme } = useUnistyles();
+  const pulse = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.4, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  const bar = (w: number) => (
+    <Animated.View
+      style={{
+        height: 10,
+        width: w,
+        borderRadius: 4,
+        backgroundColor: theme.colors.surface2,
+        opacity: pulse,
+        marginBottom: 6,
+      }}
+    />
+  );
+  return (
+    <View style={styles.skeletonWrap}>
+      <Animated.View
+        style={[
+          styles.skeletonSpinner,
+          { opacity: pulse, borderColor: theme.colors.brandMagenta },
+        ]}
+      />
+      <Text style={styles.skeletonLabel}>Loading chat…</Text>
+      <View style={styles.skeletonLines}>
+        {bar(180)}
+        {bar(140)}
+        {bar(200)}
+      </View>
+    </View>
+  );
+}
+
 function EmptyState({ label }: { label: string }) {
   return (
     <View style={styles.emptyWrap}>
       <Text style={styles.emptyLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function SignInToChatEmpty({
+  onSignIn,
+  isSigningIn,
+}: {
+  onSignIn: () => void;
+  isSigningIn: boolean;
+}) {
+  return (
+    <View style={styles.signInWrap}>
+      <View style={styles.signInCard}>
+        <View style={styles.signInIconWrap}>
+          <MessageSquare size={24} color="#ffffff" strokeWidth={1.75} />
+        </View>
+        <Text style={styles.signInTitle}>Sign in to chat</Text>
+        <Text style={styles.signInSubtitle}>
+          Connect your account to message teammates, join channels, and get
+          mention notifications.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Sign in"
+          disabled={isSigningIn}
+          onPress={onSignIn}
+          style={({ hovered, pressed }) => [
+            styles.signInButton,
+            hovered && styles.signInButtonHover,
+            pressed && styles.signInButtonPressed,
+            isSigningIn && styles.signInButtonDisabled,
+          ]}
+        >
+          <LogIn size={16} color="#ffffff" strokeWidth={2} />
+          <Text style={styles.signInButtonText}>
+            {isSigningIn ? "Opening browser..." : "Sign in"}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -370,12 +472,12 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   sidebarPane: {
-    width: 260,
+    width: SIDEBAR_EXPANDED_WIDTH,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
   },
   sidebarPaneCollapsed: {
-    width: 52,
+    width: SIDEBAR_COLLAPSED_WIDTH,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
   },
@@ -383,7 +485,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   threadPane: {
-    width: 380,
+    width: THREAD_PANE_WIDTH,
     borderLeftWidth: 1,
     borderLeftColor: theme.colors.border,
   },
@@ -419,5 +521,101 @@ const styles = StyleSheet.create((theme) => ({
   emptyLabel: {
     fontSize: 14,
     color: theme.colors.foregroundMuted,
+  },
+  signInWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[6],
+    backgroundColor: theme.colors.surface0,
+  },
+  signInCard: {
+    maxWidth: 380,
+    width: "100%",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    padding: theme.spacing[6],
+    borderRadius: 16,
+    backgroundColor: theme.colors.surface1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  signInIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.brandMagenta,
+    marginBottom: theme.spacing[1],
+    shadowColor: theme.colors.brandMagenta,
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  signInTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: theme.colors.foreground,
+    letterSpacing: -0.2,
+  },
+  signInSubtitle: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: theme.colors.foregroundMuted,
+    textAlign: "center",
+  },
+  signInButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderRadius: 10,
+    backgroundColor: theme.colors.brandMagenta,
+    minWidth: 180,
+    marginTop: theme.spacing[2],
+  },
+  signInButtonHover: {
+    backgroundColor: theme.colors.brandMagentaHover,
+  },
+  signInButtonPressed: {
+    opacity: 0.9,
+  },
+  signInButtonDisabled: {
+    opacity: 0.7,
+  },
+  signInButtonText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  skeletonWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: theme.spacing[6],
+    gap: theme.spacing[3],
+    backgroundColor: theme.colors.surface0,
+  },
+  skeletonSpinner: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderTopColor: "transparent",
+    borderRightColor: "transparent",
+    marginBottom: theme.spacing[2],
+  },
+  skeletonLabel: {
+    fontSize: 13,
+    color: theme.colors.foregroundMuted,
+    fontWeight: "500",
+  },
+  skeletonLines: {
+    marginTop: theme.spacing[2],
+    alignItems: "center",
   },
 }));

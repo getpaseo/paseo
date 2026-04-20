@@ -47,16 +47,46 @@ export function SidebarMenuToggle({
   const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const desktopAgentListCollapsed = usePanelStore(
+    (state) => state.desktop.agentListCollapsed,
+  );
   const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
+  const toggleAgentListCollapsed = usePanelStore(
+    (state) => state.toggleAgentListCollapsed,
+  );
   const toggleShortcutKeys = getShortcutOs() === "mac" ? ["mod", "B"] : ["mod", "."];
 
   const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
   const menuIconColor =
     !isMobile && isOpen ? theme.colors.foreground : theme.colors.foregroundMuted;
 
+  // When the desktop sidebar is already showing as a collapsed icon rail, it
+  // has its own expand button at the top of the rail. Don't duplicate the
+  // toggle in every screen header — that created two identical sidebar icons
+  // side-by-side in Sessions, Settings, etc.
+  if (!isMobile && desktopAgentListOpen && desktopAgentListCollapsed) {
+    return null;
+  }
+
+  // On desktop, prefer the collapse-to-icons toggle — hiding the whole pane
+  // felt too drastic (users lost navigation entirely). Mobile keeps the
+  // show/hide behavior since there's no room for an icon rail there.
+  const handlePress = () => {
+    if (isMobile) {
+      toggleAgentList();
+      return;
+    }
+    // If the user closed the sidebar entirely, re-open it expanded.
+    if (!desktopAgentListOpen) {
+      toggleAgentList();
+      return;
+    }
+    toggleAgentListCollapsed();
+  };
+
   return (
     <HeaderToggleButton
-      onPress={toggleAgentList}
+      onPress={handlePress}
       tooltipLabel="Toggle sidebar"
       tooltipKeys={toggleShortcutKeys}
       tooltipSide={tooltipSide}
@@ -65,8 +95,8 @@ export function SidebarMenuToggle({
       style={style}
       accessible
       accessibilityRole="button"
-      accessibilityLabel={isOpen ? "Close menu" : "Open menu"}
-      accessibilityState={{ expanded: isOpen }}
+      accessibilityLabel={isOpen ? "Collapse menu" : "Open menu"}
+      accessibilityState={{ expanded: isOpen && !desktopAgentListCollapsed }}
     >
       {isMobile ? (
         <MobileMenuIcon color={menuIconColor} />

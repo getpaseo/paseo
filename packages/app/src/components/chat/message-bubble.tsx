@@ -93,7 +93,10 @@ export const MessageBubble = memo(function MessageBubble({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerAnchor, setPickerAnchor] = useState<EmojiPickerAnchor | null>(null);
   const { theme } = useUnistyles();
-  const displayName = author?.name ?? message.userId.slice(0, 8);
+  // While `author` is null (members roster still loading), show a neutral
+  // skeleton-friendly placeholder instead of the raw user ID. The real name
+  // snaps in as soon as `members` resolves.
+  const displayName = author?.name ?? "";
   const timeLabel = useMemo(() => formatTime(message.createdAt), [message.createdAt]);
   const isDeleted = message.deletedAt !== null;
   const isAuthor = currentUserId === message.userId;
@@ -185,7 +188,11 @@ export const MessageBubble = memo(function MessageBubble({
           </View>
         ) : null}
         <View style={styles.header}>
-          <Text style={styles.author}>{displayName}</Text>
+          {author ? (
+            <Text style={styles.author}>{displayName}</Text>
+          ) : (
+            <View style={styles.authorSkeleton} />
+          )}
           <Text style={styles.time}>{timeLabel}</Text>
           {message.editedAt && !isDeleted ? (
             <Text style={styles.edited}>(edited)</Text>
@@ -544,6 +551,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 5,
     paddingVertical: 4,
     borderRadius: 4,
+    minWidth: 28,
+    minHeight: 28,
+    alignItems: "center",
+    justifyContent: "center",
   },
   body: {
     flex: 1,
@@ -559,9 +570,16 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "600",
     color: theme.colors.foreground,
   },
+  authorSkeleton: {
+    width: 120,
+    height: 12,
+    borderRadius: 4,
+    backgroundColor: theme.colors.surface2,
+  },
   time: {
     fontSize: 11,
     color: theme.colors.foregroundMuted,
+    fontVariant: ["tabular-nums"],
   },
   edited: {
     fontSize: 11,

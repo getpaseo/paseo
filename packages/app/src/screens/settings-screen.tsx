@@ -795,7 +795,28 @@ function SettingsMobileLayout({ sections, sectionContentProps }: SettingsLayoutP
 function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayoutProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const [selectedSectionId, setSelectedSectionId] = useState<SettingsSectionId>("hosts");
+  const tabParams = useLocalSearchParams<{ tab?: string }>();
+  const requestedTab = typeof tabParams.tab === "string" ? tabParams.tab : null;
+  // Default to "account" when available (signed-in users land on their
+  // account view) and fall back to "hosts" for guest mode where account is
+  // hidden. An explicit `?tab=` param always wins.
+  const hasAccount = sections.some((s) => s.id === "account");
+  const initialSectionId: SettingsSectionId = sections.some(
+    (s) => s.id === requestedTab,
+  )
+    ? (requestedTab as SettingsSectionId)
+    : hasAccount
+      ? "account"
+      : "hosts";
+  const [selectedSectionId, setSelectedSectionId] =
+    useState<SettingsSectionId>(initialSectionId);
+  // Keep the selection in sync when the `tab` param changes (e.g., user
+  // clicks the Account shortcut in the org rail while Settings is already open).
+  useEffect(() => {
+    if (!requestedTab) return;
+    if (!sections.some((s) => s.id === requestedTab)) return;
+    setSelectedSectionId(requestedTab as SettingsSectionId);
+  }, [requestedTab, sections]);
 
   return (
     <View style={desktopStyles.row}>

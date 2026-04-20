@@ -1,13 +1,6 @@
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import {
-  Hash,
-  Lock,
-  PanelLeft,
-  PanelLeftClose,
-  Pin,
-  User,
-} from "lucide-react-native";
+import { FlaskConical, Hash, Lock, PanelLeft, Pin, User } from "lucide-react-native";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { ChatMessage, ChatChannel } from "@/api/chat";
@@ -19,7 +12,6 @@ import {
   usePinsQuery,
   useUnpinMutation,
 } from "@/hooks/chat/use-chat-queries";
-import { usePanelStore } from "@/stores/panel-store";
 import {
   useChatStore,
   selectChannelMessages,
@@ -137,8 +129,14 @@ export function ChannelMessages({
 
   return (
     <View style={styles.container}>
+      <View style={styles.alphaBanner} accessibilityRole="alert">
+        <FlaskConical size={12} color="#f59e0b" strokeWidth={2} />
+        <Text style={styles.alphaText}>
+          Messages is in <Text style={styles.alphaBold}>alpha</Text> — expect
+          bugs and breaking changes.
+        </Text>
+      </View>
       <View style={styles.header}>
-        <LeftSidebarToggle />
         {onToggleChannelsPane ? (
           <Tooltip delayDuration={0}>
             <TooltipTrigger asChild>
@@ -285,56 +283,53 @@ export function ChannelMessages({
   );
 }
 
-function LeftSidebarToggle() {
-  const { theme } = useUnistyles();
-  const agentListOpen = usePanelStore((s) => s.desktop.agentListOpen);
-  const toggleAgentList = usePanelStore((s) => s.toggleAgentList);
-  const label = agentListOpen ? "Hide app sidebar" : "Show app sidebar";
-  return (
-    <Tooltip delayDuration={0}>
-      <TooltipTrigger asChild>
-        <Pressable
-          onPress={toggleAgentList}
-          style={styles.toggleBtn}
-          accessibilityRole="button"
-          accessibilityLabel={label}
-        >
-          <PanelLeftClose
-            size={15}
-            color={
-              agentListOpen
-                ? theme.colors.foreground
-                : theme.colors.foregroundMuted
-            }
-          />
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" align="center" offset={8}>
-        <Text style={styles.tooltipText}>{label}</Text>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
   },
+  alphaBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: 6,
+    // Warning / amber: works on both light and dark themes. Uses a tinted
+    // background (amber-500 at ~10% alpha) with a slightly stronger border
+    // so it reads as a soft caution without shouting at the user.
+    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(245, 158, 11, 0.35)",
+  },
+  alphaText: {
+    fontSize: 11,
+    color: theme.colors.foregroundMuted,
+    letterSpacing: 0.1,
+  },
+  alphaBold: {
+    color: "#f59e0b",
+    fontWeight: "700",
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+    minHeight: 56,
   },
   toggleBtn: {
     paddingHorizontal: 6,
     paddingVertical: 4,
     borderRadius: 4,
     marginRight: 2,
+    minWidth: 32,
+    minHeight: 32,
+    alignItems: "center",
+    justifyContent: "center",
   },
   tooltipText: {
     fontSize: theme.fontSize.sm,
@@ -347,9 +342,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   title: {
-    fontSize: 15,
-    fontWeight: "600",
+    fontSize: 16,
+    fontWeight: "700",
     color: theme.colors.foreground,
+    letterSpacing: -0.2,
   },
   topic: {
     flex: 1,
