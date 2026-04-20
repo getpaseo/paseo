@@ -32,6 +32,7 @@ import {
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { applyFetchedAgentDirectory } from "@/utils/agent-directory-sync";
 import { useSessionStore, type Agent } from "@/stores/session-store";
+import { getIsElectron, isWeb } from "@/constants/platform";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 
@@ -391,10 +392,22 @@ function toSnapshotConnectionPatch(
 }
 
 function buildConnectionCandidates(host: HostProfile): ConnectionCandidate[] {
-  return host.connections.map((connection) => ({
-    connectionId: connection.id,
-    connection,
-  }));
+  // Local IPC transports (unix socket / named pipe) only work when we control
+  // the WebSocket factory — i.e. in Electron where we install a custom
+  // transport. In a plain browser the native `new WebSocket(url)` rejects the
+  // `local-daemon://` scheme with "Wrong protocol for WebSocket", so skip those
+  // candidates entirely and fall through to directTcp/relay.
+  const localIpcSupported = !isWeb || getIsElectron();
+  return host.connections
+    .filter(
+      (connection) =>
+        localIpcSupported ||
+        (connection.type !== "directSocket" && connection.type !== "directPipe"),
+    )
+    .map((connection) => ({
+      connectionId: connection.id,
+      connection,
+    }));
 }
 
 function findConnectionById(host: HostProfile, connectionId: string | null): HostConnection | null {

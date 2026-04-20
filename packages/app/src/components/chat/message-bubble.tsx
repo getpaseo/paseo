@@ -386,15 +386,21 @@ function AttachmentView({ attachment }: { attachment: ChatMessage["attachments"]
             height: attachment.height,
           })
         }
-        style={styles.attachmentFileChip}
         accessibilityRole="button"
         accessibilityLabel={attachment.filename}
       >
-        <FileIcon size={14} />
-        <Text style={styles.attachmentFilename} numberOfLines={1}>
-          🎬 {attachment.filename}
+        <VideoThumbnail
+          url={attachment.url}
+          aspectRatio={
+            attachment.width && attachment.height ? attachment.width / attachment.height : undefined
+          }
+        />
+        <Text
+          style={[styles.attachmentSize, { marginTop: 4 }]}
+          numberOfLines={1}
+        >
+          🎬 {attachment.filename} · {formatBytes(attachment.sizeBytes)}
         </Text>
-        <Text style={styles.attachmentSize}>{formatBytes(attachment.sizeBytes)}</Text>
       </Pressable>
     );
   }
@@ -411,6 +417,47 @@ function AttachmentView({ attachment }: { attachment: ChatMessage["attachments"]
       </Text>
       <Text style={styles.attachmentSize}>{formatBytes(attachment.sizeBytes)}</Text>
     </Pressable>
+  );
+}
+
+function VideoThumbnail({ url, aspectRatio }: { url: string; aspectRatio?: number }) {
+  if (isWeb) {
+    return (
+      <View style={styles.videoThumbWrap}>
+        {/* Web: <video preload="metadata"> shows the first frame as a poster.
+            Muted + pointer-events:none so clicks fall through to the parent
+            Pressable which opens the lightbox. */}
+        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+        <video
+          src={`${url}#t=0.1`}
+          preload="metadata"
+          muted
+          playsInline
+          style={{
+            width: "100%",
+            maxWidth: 320,
+            maxHeight: 240,
+            aspectRatio: aspectRatio ?? 16 / 9,
+            borderRadius: 6,
+            backgroundColor: "#000",
+            display: "block",
+            pointerEvents: "none",
+          }}
+        />
+        <View style={styles.videoPlayOverlay} pointerEvents="none">
+          <View style={styles.videoPlayCircle}>
+            <Text style={styles.videoPlayIcon}>▶</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+  // Native: no cheap way to extract a frame without expo-video-thumbnails.
+  // Fall back to a minimal chip that matches the other attachment styles.
+  return (
+    <View style={[styles.videoThumbWrap, styles.videoThumbFallback]}>
+      <Text style={styles.videoPlayIcon}>▶</Text>
+    </View>
   );
 }
 
@@ -690,6 +737,37 @@ const styles = StyleSheet.create((theme) => ({
     maxHeight: 360,
     borderRadius: 6,
     backgroundColor: theme.colors.surface1,
+  },
+  videoThumbWrap: {
+    position: "relative",
+    alignSelf: "flex-start",
+    borderRadius: 6,
+    overflow: "hidden",
+  },
+  videoThumbFallback: {
+    width: 280,
+    height: 160,
+    backgroundColor: theme.colors.surface1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  videoPlayOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  videoPlayCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  videoPlayIcon: {
+    color: "#fff",
+    fontSize: 18,
+    marginLeft: 3,
   },
   attachmentFileChip: {
     flexDirection: "row",

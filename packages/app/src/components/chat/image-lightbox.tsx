@@ -67,13 +67,7 @@ export function ImageLightbox() {
     >
       <Pressable style={styles.backdrop} onPress={close}>
         <Pressable style={styles.contentWrap} onPress={(e) => e.stopPropagation?.()}>
-          {media?.kind === "image" ? (
-            <Image
-              source={{ uri: media.url }}
-              style={[styles.media, aspectRatio ? { aspectRatio } : null]}
-              resizeMode="contain"
-            />
-          ) : null}
+          {media?.kind === "image" ? <ImagePreview url={media.url} aspectRatio={aspectRatio} /> : null}
           {media?.kind === "video" ? <VideoPlayer url={media.url} /> : null}
         </Pressable>
         <View style={styles.topBar} pointerEvents="box-none">
@@ -106,6 +100,34 @@ export function ImageLightbox() {
   );
 }
 
+function ImagePreview({ url, aspectRatio }: { url: string; aspectRatio?: number }) {
+  if (isWeb) {
+    return (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      <img
+        src={url}
+        alt=""
+        style={{
+          maxWidth: "90vw",
+          maxHeight: "90vh",
+          width: "auto",
+          height: "auto",
+          display: "block",
+          objectFit: "contain",
+          borderRadius: 6,
+        }}
+      />
+    );
+  }
+  return (
+    <Image
+      source={{ uri: url }}
+      style={[styles.media, aspectRatio ? { aspectRatio } : null]}
+      resizeMode="contain"
+    />
+  );
+}
+
 /**
  * Web renders a native <video> element for full controls; on native we fall
  * back to opening the URL in the system player (keeps the modal dependency
@@ -116,7 +138,8 @@ function VideoPlayer({ url }: { url: string }) {
     // react-native-web passes unknown props through to the underlying DOM, so
     // we can render a plain <video>.
     return (
-      // @ts-expect-error – web-only element under react-native-web
+      // react-native-web forwards unknown JSX to the DOM; <video> renders as-is.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       <video
         src={url}
         controls
