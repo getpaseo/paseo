@@ -83,3 +83,4 @@ packages/server/src/server/fixtures/dictation/dictation-debug-largest.transcript
 /artifacts
 packages/desktop/.cache/
 packages/desktop/src-tauri/resources/managed-runtime/
+.omx/
