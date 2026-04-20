@@ -7,6 +7,7 @@ import type { ListTerminalsResponse } from "@server/shared/messages";
 import { TerminalPane } from "@/components/terminal-pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { queryClient } from "@/query/query-client";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
@@ -30,21 +31,24 @@ function useTerminalPanelDescriptor(
   const workspaceDirectory = workspaceAuthority.ok
     ? workspaceAuthority.authority.workspaceDirectory
     : null;
-  const terminalsQuery = useQuery({
-    queryKey: ["terminals", context.serverId, workspaceDirectory] as const,
-    enabled: Boolean(client && workspaceDirectory),
-    queryFn: async (): Promise<ListTerminalsPayload> => {
-      if (!client || !workspaceDirectory) {
-        throw new Error(
-          workspaceAuthority.ok
-            ? "Workspace execution directory not found"
-            : workspaceAuthority.message,
-        );
-      }
-      return client.listTerminals(workspaceDirectory);
+  const terminalsQuery = useQuery(
+    {
+      queryKey: ["terminals", context.serverId, workspaceDirectory] as const,
+      enabled: Boolean(client && workspaceDirectory),
+      queryFn: async (): Promise<ListTerminalsPayload> => {
+        if (!client || !workspaceDirectory) {
+          throw new Error(
+            workspaceAuthority.ok
+              ? "Workspace execution directory not found"
+              : workspaceAuthority.message,
+          );
+        }
+        return client.listTerminals(workspaceDirectory);
+      },
+      staleTime: 5_000,
     },
-    staleTime: 5_000,
-  });
+    queryClient,
+  );
   const terminal =
     terminalsQuery.data?.terminals.find((entry) => entry.id === target.terminalId) ?? null;
 

@@ -66,8 +66,37 @@ function resolveWithCustomWebOverlay(context, moduleName, platform) {
   return defaultResolveRequest(context, moduleName, platform);
 }
 
+function resolveExpoDomGeneratedSourceImport(context, moduleName) {
+  const origin = context.originModulePath;
+  if (
+    !origin ||
+    !origin.endsWith(`${path.sep}node_modules${path.sep}expo${path.sep}dom${path.sep}entry.js`) ||
+    !moduleName.startsWith(".")
+  ) {
+    return null;
+  }
+
+  const candidatePath = path.resolve(path.dirname(origin), moduleName);
+  if (
+    fs.existsSync(candidatePath) &&
+    candidatePath.includes(`${path.sep}packages${path.sep}app${path.sep}src${path.sep}`)
+  ) {
+    return {
+      type: "sourceFile",
+      filePath: candidatePath,
+    };
+  }
+
+  return null;
+}
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const origin = context.originModulePath;
+  const expoDomGeneratedSourceImport = resolveExpoDomGeneratedSourceImport(context, moduleName);
+  if (expoDomGeneratedSourceImport) {
+    return expoDomGeneratedSourceImport;
+  }
+
   if (
     origin &&
     (origin.startsWith(serverSrcRoot) || origin.startsWith(relaySrcRoot)) &&
