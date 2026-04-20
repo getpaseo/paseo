@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useWindowDimensions } from "react-native";
 import { useSharedValue, withTiming, Easing, type SharedValue } from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
@@ -93,7 +101,7 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
     backdropOpacity.value = targets.backdropOpacity;
   }, [isOpen, translateX, backdropOpacity, windowWidth, isGesturing]);
 
-  const animateToOpen = () => {
+  const animateToOpen = useCallback(() => {
     "worklet";
     translateX.value = withTiming(0, {
       duration: ANIMATION_DURATION,
@@ -103,9 +111,9 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
       duration: ANIMATION_DURATION,
       easing: ANIMATION_EASING,
     });
-  };
+  }, [translateX, backdropOpacity]);
 
-  const animateToClose = () => {
+  const animateToClose = useCallback(() => {
     "worklet";
     translateX.value = withTiming(windowWidth, {
       duration: ANIMATION_DURATION,
@@ -115,22 +123,25 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
       duration: ANIMATION_DURATION,
       easing: ANIMATION_EASING,
     });
-  };
+  }, [translateX, backdropOpacity, windowWidth]);
+
+  const value = useMemo<ExplorerSidebarAnimationContextValue>(
+    () => ({
+      translateX,
+      backdropOpacity,
+      windowWidth,
+      animateToOpen,
+      animateToClose,
+      isGesturing,
+      gestureAnimatingRef,
+      openGestureRef,
+      closeGestureRef,
+    }),
+    [translateX, backdropOpacity, windowWidth, animateToOpen, animateToClose, isGesturing],
+  );
 
   return (
-    <ExplorerSidebarAnimationContext.Provider
-      value={{
-        translateX,
-        backdropOpacity,
-        windowWidth,
-        animateToOpen,
-        animateToClose,
-        isGesturing,
-        gestureAnimatingRef,
-        openGestureRef,
-        closeGestureRef,
-      }}
-    >
+    <ExplorerSidebarAnimationContext.Provider value={value}>
       {children}
     </ExplorerSidebarAnimationContext.Provider>
   );
