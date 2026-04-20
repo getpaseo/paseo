@@ -18,6 +18,7 @@ export interface SendMessageInput {
   userId: string;
   content: string;
   parentId?: string | null;
+  quotedMessageId?: string | null;
   attachments?: MessageAttachmentInput[];
 }
 
@@ -26,6 +27,7 @@ export interface MessageRow {
   channelId: string;
   userId: string;
   parentId: string | null;
+  quotedMessageId: string | null;
   content: string;
   createdAt: Date;
   editedAt: Date | null;
@@ -98,6 +100,7 @@ export async function sendMessage(db: DbLike, input: SendMessageInput): Promise<
       channelId: input.channelId,
       userId: input.userId,
       parentId: input.parentId ?? null,
+      quotedMessageId: input.quotedMessageId ?? null,
       content,
     })
     .returning();
@@ -157,6 +160,7 @@ export async function sendMessage(db: DbLike, input: SendMessageInput): Promise<
     channelId: row.channelId,
     userId: row.userId,
     parentId: row.parentId,
+    quotedMessageId: row.quotedMessageId ?? null,
     content: row.content,
     createdAt: row.createdAt,
     editedAt: row.editedAt,
@@ -178,6 +182,7 @@ export async function getMessageById(db: DbLike, messageId: string): Promise<Mes
     channelId: m.channelId,
     userId: m.userId,
     parentId: m.parentId,
+    quotedMessageId: m.quotedMessageId ?? null,
     content: m.content,
     createdAt: m.createdAt,
     editedAt: m.editedAt,
@@ -374,6 +379,7 @@ export async function listMessages(db: DbLike, params: ListMessagesParams): Prom
     channelId: m.channelId,
     userId: m.userId,
     parentId: m.parentId,
+    quotedMessageId: m.quotedMessageId ?? null,
     content: m.content,
     createdAt: m.createdAt,
     editedAt: m.editedAt,
@@ -462,6 +468,7 @@ export async function listThreadReplies(
     channelId: m.channelId,
     userId: m.userId,
     parentId: m.parentId,
+    quotedMessageId: m.quotedMessageId ?? null,
     content: m.content,
     createdAt: m.createdAt,
     editedAt: m.editedAt,

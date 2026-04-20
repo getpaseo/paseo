@@ -48,6 +48,13 @@ interface ComposerProps {
   onRemoveUpload?: (localId: string) => void;
   onPickAttachment?: () => void;
   onPickFile?: () => void;
+  /** WhatsApp-style reply target shown as a banner above the input. */
+  replyingTo?: {
+    messageId: string;
+    authorName: string;
+    preview: string;
+  } | null;
+  onCancelReply?: () => void;
 }
 
 export function Composer({
@@ -61,6 +68,8 @@ export function Composer({
   onRemoveUpload,
   onPickAttachment,
   onPickFile,
+  replyingTo,
+  onCancelReply,
 }: ComposerProps) {
   const [value, setValue] = useState("");
   const [selection, setSelection] = useState<{ start: number; end: number }>({
@@ -239,6 +248,28 @@ export function Composer({
         </View>
       ) : null}
 
+      {replyingTo ? (
+        <View style={styles.replyBanner}>
+          <View style={styles.replyBar} />
+          <View style={styles.replyContent}>
+            <Text style={styles.replyAuthor} numberOfLines={1}>
+              Replying to {replyingTo.authorName}
+            </Text>
+            <Text style={styles.replyPreview} numberOfLines={1}>
+              {replyingTo.preview}
+            </Text>
+          </View>
+          <Pressable
+            onPress={onCancelReply}
+            style={styles.replyClose}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel reply"
+          >
+            <Text style={styles.replyCloseText}>✕</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {pendingUploads && pendingUploads.length > 0 ? (
         <View style={styles.uploadsRow}>
           {pendingUploads.map((p) => (
@@ -409,6 +440,47 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
     backgroundColor: theme.colors.surface0,
+  },
+  replyBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 8,
+    backgroundColor: theme.colors.surface1,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  replyBar: {
+    width: 3,
+    alignSelf: "stretch",
+    borderRadius: 2,
+    backgroundColor: theme.colors.brandMagenta,
+  },
+  replyContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  replyAuthor: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: theme.colors.brandMagenta,
+  },
+  replyPreview: {
+    fontSize: 12,
+    color: theme.colors.foregroundMuted,
+    marginTop: 2,
+  },
+  replyClose: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 4,
+  },
+  replyCloseText: {
+    fontSize: 14,
+    color: theme.colors.foregroundMuted,
   },
   toolbarRow: {
     flexDirection: "row",

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef } from "react";
-import { FlatList, View, type ListRenderItem } from "react-native";
+import { ActivityIndicator, FlatList, Text, View, type ListRenderItem } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { ChatChannel, ChatMember, ChatMessage } from "@/api/chat";
 import { selectMessageReactions, useChatStore, type ChatPresence } from "@/stores/chat-store";
@@ -23,7 +23,10 @@ interface MessageListProps {
   replyAuthorsByParent?: Readonly<Record<string, readonly string[]>>;
   highlightedMessageId?: string | null;
   onLoadMore?: () => void;
+  isLoadingMore?: boolean;
+  hasMore?: boolean;
   onOpenThread?: (message: ChatMessage) => void;
+  onReply?: (message: ChatMessage) => void;
   onToggleReaction?: (messageId: string, emoji: string, op: "add" | "remove") => void;
   onTogglePin?: (messageId: string, nextPinned: boolean) => void;
   onEdit?: (messageId: string, content: string) => void;
@@ -42,7 +45,10 @@ export function MessageList({
   replyAuthorsByParent,
   highlightedMessageId,
   onLoadMore,
+  isLoadingMore,
+  hasMore,
   onOpenThread,
+  onReply,
   onToggleReaction,
   onTogglePin,
   onEdit,
@@ -80,6 +86,7 @@ export function MessageList({
         replyAuthorIds={replyAuthorsByParent?.[item.id]}
         highlighted={highlightedMessageId === item.id}
         onOpenThread={onOpenThread}
+        onReply={onReply}
         onToggleReaction={onToggleReaction}
         onTogglePin={onTogglePin}
         onEdit={onEdit}
@@ -96,6 +103,7 @@ export function MessageList({
       replyAuthorsByParent,
       highlightedMessageId,
       onOpenThread,
+      onReply,
       onToggleReaction,
       onTogglePin,
       onEdit,
@@ -125,6 +133,18 @@ export function MessageList({
         removeClippedSubviews
         windowSize={11}
         initialNumToRender={30}
+        ListFooterComponent={
+          isLoadingMore ? (
+            <View style={styles.loadMoreRow}>
+              <ActivityIndicator size="small" />
+              <Text style={styles.loadMoreText}>Loading older messages…</Text>
+            </View>
+          ) : hasMore === false && inverted.length > 0 ? (
+            <View style={styles.loadMoreRow}>
+              <Text style={styles.beginningText}>— beginning of conversation —</Text>
+            </View>
+          ) : null
+        }
       />
     </View>
   );
@@ -146,6 +166,7 @@ function MessageBubbleBridge({
   replyAuthorIds,
   highlighted,
   onOpenThread,
+  onReply,
   onToggleReaction,
   onTogglePin,
   onEdit,
@@ -162,6 +183,7 @@ function MessageBubbleBridge({
   replyAuthorIds?: readonly string[];
   highlighted?: boolean;
   onOpenThread?: (message: ChatMessage) => void;
+  onReply?: (message: ChatMessage) => void;
   onToggleReaction?: (messageId: string, emoji: string, op: "add" | "remove") => void;
   onTogglePin?: (messageId: string, nextPinned: boolean) => void;
   onEdit?: (messageId: string, content: string) => void;
@@ -182,6 +204,7 @@ function MessageBubbleBridge({
       replyAuthorIds={replyAuthorIds}
       highlighted={highlighted}
       onOpenThread={onOpenThread}
+      onReply={onReply}
       onToggleReaction={onToggleReaction}
       onTogglePin={onTogglePin}
       onEdit={onEdit}
@@ -194,5 +217,21 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
+  },
+  loadMoreRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+  },
+  loadMoreText: {
+    fontSize: 12,
+    color: theme.colors.foregroundMuted,
+  },
+  beginningText: {
+    fontSize: 11,
+    color: theme.colors.foregroundMuted,
+    opacity: 0.6,
   },
 }));

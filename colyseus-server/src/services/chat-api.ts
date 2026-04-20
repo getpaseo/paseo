@@ -152,6 +152,7 @@ export class ChatApiClient {
     channelId: string;
     content: string;
     parentId?: string | null;
+    quotedMessageId?: string | null;
     attachments?: ChatAttachmentInput[];
   }): Promise<ChatMessage> {
     const body = await this.request<{ message: ChatMessage }>(
@@ -163,6 +164,7 @@ export class ChatApiClient {
           userId: params.userId,
           content: params.content,
           parentId: params.parentId ?? null,
+          quotedMessageId: params.quotedMessageId ?? null,
           attachments: params.attachments ?? [],
         }),
       },

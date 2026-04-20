@@ -15,6 +15,13 @@
       "when": 1776571200000,
       "tag": "0001_chat_search_index",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776585600000,
+      "tag": "0002_message_quoted",
+      "breakpoints": true
     }
   ]
 }

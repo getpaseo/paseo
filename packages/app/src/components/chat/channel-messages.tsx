@@ -129,6 +129,7 @@ export function ChannelMessages({
 
   const [membersOpen, setMembersOpen] = useState(false);
   const [pinsOpen, setPinsOpen] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const uploads = useUploads({ orgId: channel.orgId, sessionToken });
   const pinsQuery = usePinsQuery(channel.id, sessionToken);
   const pinMutation = usePinMutation(sessionToken);
@@ -261,7 +262,10 @@ export function ChannelMessages({
             void messagesQuery.fetchNextPage();
           }
         }}
+        isLoadingMore={messagesQuery.isFetchingNextPage}
+        hasMore={messagesQuery.hasNextPage}
         onOpenThread={onOpenThread}
+        onReply={(message) => setReplyingTo(message)}
         onToggleReaction={(messageId, emoji, op) => {
           if (op === "add") chatRoom.reactAdd({ messageId, emoji });
           else chatRoom.reactRemove({ messageId, emoji });
@@ -292,6 +296,7 @@ export function ChannelMessages({
           // Optimistic placeholder so the message appears instantly. The real
           // broadcast replaces it in use-org-chat-room (matched by tmp_ prefix
           // + same userId/channel/content).
+          const quotedMessageId = replyingTo?.id ?? null;
           if (currentUserId && (result.content.trim().length > 0 || (attachments?.length ?? 0) > 0)) {
             const tmpId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             useChatStore.getState().upsertMessage({
@@ -299,6 +304,7 @@ export function ChannelMessages({
               channelId: channel.id,
               userId: currentUserId,
               parentId: null,
+              quotedMessageId,
               content: result.content,
               createdAt: new Date().toISOString(),
               editedAt: null,
@@ -309,9 +315,11 @@ export function ChannelMessages({
           chatRoom.send({
             channelId: channel.id,
             content: result.content,
+            quotedMessageId,
             attachments,
           });
           uploads.reset();
+          setReplyingTo(null);
         }}
         onTyping={() => chatRoom.typing(channel.id)}
         members={channel.kind === "public" ? orgMemberFallback : (membersQuery.data ?? [])}
@@ -320,6 +328,21 @@ export function ChannelMessages({
         onRemoveUpload={uploads.remove}
         onPickAttachment={uploads.pickImage}
         onPickFile={uploads.pickFile}
+        replyingTo={
+          replyingTo
+            ? {
+                messageId: replyingTo.id,
+                authorName:
+                  (channel.kind === "public" ? orgMemberFallback : (membersQuery.data ?? [])).find(
+                    (m) => m.userId === replyingTo.userId,
+                  )?.name ??
+                  orgMemberFallback.find((m) => m.userId === replyingTo.userId)?.name ??
+                  "user",
+                preview: (replyingTo.content || "[attachment]").slice(0, 120),
+              }
+            : null
+        }
+        onCancelReply={() => setReplyingTo(null)}
       />
       <ChannelMembersModal
         visible={membersOpen}

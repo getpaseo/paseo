@@ -39,6 +39,7 @@ export async function POST(
   let body: {
     content?: string;
     parentId?: string | null;
+    quotedMessageId?: string | null;
     attachments?: MessageAttachmentInput[];
   } = {};
   try {
@@ -52,6 +53,7 @@ export async function POST(
       userId: me.id,
       content: typeof body.content === "string" ? body.content : "",
       parentId: body.parentId ?? null,
+      quotedMessageId: body.quotedMessageId ?? null,
       attachments: Array.isArray(body.attachments) ? body.attachments : undefined,
     });
     return NextResponse.json({ message: msg }, { status: 201 });

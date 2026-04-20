@@ -40,6 +40,11 @@ export interface ChatMessage {
   channelId: string;
   userId: string;
   parentId: string | null;
+  /**
+   * ID of the message this one is a WhatsApp-style quote reply to. Optional
+   * for backward compat — older daemons never send it, older clients ignore it.
+   */
+  quotedMessageId?: string | null;
   content: string;
   createdAt: string;
   editedAt: string | null;
@@ -237,6 +242,7 @@ export async function sendMessageHttp(
     channelId: string;
     content: string;
     parentId?: string | null;
+    quotedMessageId?: string | null;
     attachments?: ChatAttachment[];
   },
 ): Promise<ChatMessage> {
@@ -248,6 +254,7 @@ export async function sendMessageHttp(
       body: JSON.stringify({
         content: args.content,
         parentId: args.parentId ?? null,
+        quotedMessageId: args.quotedMessageId ?? null,
         attachments: args.attachments ?? [],
       }),
     },

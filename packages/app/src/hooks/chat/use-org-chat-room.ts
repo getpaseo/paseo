@@ -16,6 +16,7 @@ export interface UseOrgChatRoomResult {
     channelId: string;
     content: string;
     parentId?: string | null;
+    quotedMessageId?: string | null;
     attachments?: ChatAttachment[];
   }) => void;
   edit: (payload: { messageId: string; content: string }) => void;

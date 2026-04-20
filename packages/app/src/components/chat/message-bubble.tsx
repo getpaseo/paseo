@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native";
 import Markdown from "react-native-markdown-display";
-import { FileIcon, MessageSquare, Pencil, Pin, SmilePlus, Trash2 } from "lucide-react-native";
+import { FileIcon, MessageSquare, Pencil, Pin, Reply, SmilePlus, Trash2 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { ChatChannel, ChatMember, ChatMessage, ChatReactionGroup } from "@/api/chat";
 import { isNative, isWeb } from "@/constants/platform";
@@ -19,6 +19,7 @@ import type { EmojiPickerAnchor } from "./emoji-picker";
 import { preprocessMarkdown } from "./mentions";
 import { ReactionsRow } from "./reactions-row";
 import { openImageLightbox, openVideoLightbox } from "./image-lightbox";
+import { useChatStore } from "@/stores/chat-store";
 
 // Inject a Slack-style hover stylesheet once. We use a real CSS :hover rule
 // instead of React state so there is zero re-render and zero flicker: moving
@@ -50,6 +51,7 @@ interface MessageBubbleProps {
   reactions: readonly ChatReactionGroup[];
   currentUserId: string | null;
   onOpenThread?: (message: ChatMessage) => void;
+  onReply?: (message: ChatMessage) => void;
   onToggleReaction?: (messageId: string, emoji: string, op: "add" | "remove") => void;
   onDelete?: (messageId: string) => void;
   onTogglePin?: (messageId: string, nextPinned: boolean) => void;
@@ -69,6 +71,7 @@ export const MessageBubble = memo(function MessageBubble({
   reactions,
   currentUserId,
   onOpenThread,
+  onReply,
   onToggleReaction,
   onDelete,
   onTogglePin,
@@ -139,6 +142,7 @@ export const MessageBubble = memo(function MessageBubble({
     !!(
       onToggleReaction ||
       onOpenThread ||
+      onReply ||
       onTogglePin ||
       (isAuthor && onEdit) ||
       (isAuthor && onDelete)
@@ -212,6 +216,12 @@ export const MessageBubble = memo(function MessageBubble({
           </View>
         ) : (
           <>
+            {message.quotedMessageId ? (
+              <QuotedMessageCard
+                quotedMessageId={message.quotedMessageId}
+                membersById={membersById}
+              />
+            ) : null}
             {markdown.trim().length > 0 ? (
               <Markdown style={markdownStyles}>{markdown}</Markdown>
             ) : null}
@@ -282,6 +292,16 @@ export const MessageBubble = memo(function MessageBubble({
               accessibilityRole="button"
             >
               <SmilePlus size={15} color={theme.colors.foregroundMuted} />
+            </Pressable>
+          ) : null}
+          {onReply ? (
+            <Pressable
+              onPress={() => onReply(message)}
+              style={styles.toolbarBtn}
+              accessibilityLabel="Reply (quote)"
+              accessibilityRole="button"
+            >
+              <Reply size={15} color={theme.colors.foregroundMuted} />
             </Pressable>
           ) : null}
           {onOpenThread ? (
@@ -417,6 +437,61 @@ function AttachmentView({ attachment }: { attachment: ChatMessage["attachments"]
       </Text>
       <Text style={styles.attachmentSize}>{formatBytes(attachment.sizeBytes)}</Text>
     </Pressable>
+  );
+}
+
+function QuotedMessageCard({
+  quotedMessageId,
+  membersById,
+}: {
+  quotedMessageId: string;
+  membersById: Map<string, ChatMember>;
+}) {
+  // Look up the quoted message from whatever channel currently has it in the
+  // store. We don't know the channel up front (the quote can be rendered
+  // inside any message list view), so scan the flat index of messages.
+  const quoted = useChatStore((s) => {
+    for (const channelId of Object.keys(s.messagesByChannel)) {
+      const arr = s.messagesByChannel[channelId];
+      if (!arr) continue;
+      const m = arr.find((x) => x.id === quotedMessageId);
+      if (m) return m;
+    }
+    return null;
+  });
+  if (!quoted) {
+    return (
+      <View style={styles.quoteCard}>
+        <View style={styles.quoteBar} />
+        <View style={styles.quoteBody}>
+          <Text style={styles.quoteAuthor}>Original message</Text>
+          <Text style={styles.quotePreview} numberOfLines={1}>
+            (not loaded)
+          </Text>
+        </View>
+      </View>
+    );
+  }
+  const author = membersById.get(quoted.userId);
+  const preview = quoted.deletedAt
+    ? "[deleted]"
+    : quoted.content.trim().length > 0
+      ? quoted.content
+      : quoted.attachments.length > 0
+        ? `[${quoted.attachments[0]?.mimeType.startsWith("image/") ? "image" : "attachment"}]`
+        : "";
+  return (
+    <View style={styles.quoteCard}>
+      <View style={styles.quoteBar} />
+      <View style={styles.quoteBody}>
+        <Text style={styles.quoteAuthor} numberOfLines={1}>
+          {author?.name ?? "user"}
+        </Text>
+        <Text style={styles.quotePreview} numberOfLines={2}>
+          {preview}
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -730,6 +805,35 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "column",
     gap: 6,
     marginTop: 4,
+  },
+  quoteCard: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 6,
+    paddingVertical: 4,
+    paddingRight: 8,
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+  },
+  quoteBar: {
+    width: 3,
+    alignSelf: "stretch",
+    borderRadius: 2,
+    backgroundColor: theme.colors.brandMagenta,
+  },
+  quoteBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  quoteAuthor: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: theme.colors.brandMagenta,
+  },
+  quotePreview: {
+    fontSize: 12,
+    color: theme.colors.foregroundMuted,
+    marginTop: 1,
   },
   attachmentImage: {
     width: 280,

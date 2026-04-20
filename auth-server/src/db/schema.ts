@@ -346,6 +346,7 @@ export const message = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
     parentId: text("parent_id"),
+    quotedMessageId: text("quoted_message_id"),
     content: text("content").notNull().default(""), // markdown source
     createdAt: timestamp("created_at").notNull().defaultNow(),
     editedAt: timestamp("edited_at"),

@@ -42,6 +42,7 @@ type SendPayload = {
   channelId?: string;
   content?: string;
   parentId?: string | null;
+  quotedMessageId?: string | null;
   attachments?: Array<{
     url: string;
     mimeType: string;
@@ -215,6 +216,7 @@ export class OrgChatRoom extends Room<OrgChatState> {
         channelId: msg.channelId,
         content: typeof msg.content === "string" ? msg.content : "",
         parentId: msg.parentId ?? null,
+        quotedMessageId: msg.quotedMessageId ?? null,
         attachments: Array.isArray(msg.attachments) ? msg.attachments : undefined,
       });
       await this.broadcastToChannel(message.channelId, "message", { message });
