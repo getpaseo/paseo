@@ -1,0 +1,40 @@
+# NOTE: Maestro requires a config section for every flow file, even when used
+# via `runFlow`. Keep this aligned with the dev build application id.
+appId: sh.paseo
+---
+- launchApp:
+    clearState: true
+- runFlow: launch.yaml
+
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 30000
+
+- tapOn:
+    id: "welcome-direct-connection"
+
+- extendedWaitUntil:
+    visible:
+      id: "add-host-modal"
+    timeout: 10000
+
+- tapOn:
+    id: "direct-host-input"
+- eraseText
+- inputText: "127.0.0.1:6767"
+
+- assertVisible:
+    id: "direct-host-input"
+    text: "127.0.0.1:6767"
+
+- tapOn:
+    id: "direct-host-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "message-input-root"
+    timeout: 60000
+
+- assertVisible:
+    id: "message-input-attach-button"

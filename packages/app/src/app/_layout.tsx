@@ -62,7 +62,9 @@ import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout
 import { CommandCenter } from "@/components/command-center";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
+import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
 import { queryClient } from "@/query/query-client";
 import {
   WEB_NOTIFICATION_CLICK_EVENT,
@@ -79,6 +81,7 @@ import {
   parseServerIdFromPathname,
   parseHostAgentRouteFromPathname,
   parseWorkspaceOpenIntent,
+  decodeWorkspaceIdFromPathSegment,
 } from "@/utils/host-routes";
 import { syncNavigationActiveWorkspace } from "@/stores/navigation-active-workspace-store";
 import { isWeb, isNative } from "@/constants/platform";
@@ -401,6 +404,12 @@ function AppContainer({
 
   const isCompactLayout = useIsCompactFormFactor();
   const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
+  const pathname = usePathname();
+  // TODO: stop matching pathname here as a branch. `chromeEnabled` should not
+  // conflate workspace/project-specific chrome (sidebar, mobile gesture) with
+  // global concerns like keyboard shortcuts. Split those out so settings (and
+  // other non-workspace routes) don't need a special-case to keep shortcuts alive.
+  const keyboardShortcutsEnabled = chromeEnabled || pathname.startsWith("/settings");
 
   useEffect(() => {
     const bp = UnistylesRuntime.breakpoint;
@@ -432,15 +441,16 @@ function AppContainer({
   }, [isCompactLayout, chromeEnabled, isFocusModeEnabled, agentListOpen, sidebarWidth]);
 
   useKeyboardShortcuts({
-    enabled: chromeEnabled,
+    enabled: keyboardShortcutsEnabled,
     isMobile: isCompactLayout,
     toggleAgentList,
-    selectedAgentId,
     toggleFileExplorer,
     toggleBothSidebars,
     toggleFocusMode,
     cycleTheme,
   });
+
+  useActiveWorktreeNewAction();
 
   const containerStyle = useMemo(
     () => ({ flex: 1 as const, backgroundColor: theme.colors.surface0 }),
@@ -460,6 +470,7 @@ function AppContainer({
       <UpdateBanner />
       <CommandCenter />
       <ProjectPickerModal />
+      <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
     </View>
   );
@@ -788,7 +799,6 @@ function FaviconStatusSync() {
 function RootStack() {
   const storeReady = useStoreReady();
   const { theme } = useUnistyles();
-
   return (
     <Stack
       screenOptions={{
@@ -801,23 +811,25 @@ function RootStack() {
     >
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
-        <Stack.Screen name="settings" />
+        <Stack.Screen name="settings/index" />
+        <Stack.Screen name="settings/[section]" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
-      <Stack.Screen
-        name="h/[serverId]/workspace/[workspaceId]"
-        getId={({ params }) => {
-          const serverId = getRouteParamValue(params?.serverId);
-          const workspaceId = getRouteParamValue(params?.workspaceId);
-          return serverId && workspaceId ? `${serverId}:${workspaceId}` : undefined;
-        }}
-      />
+      {/*
+        Do not add getId or dangerouslySingular back to the workspace route.
+        Expo Router maps dangerouslySingular to React Navigation getId, and
+        getId repeatedly breaks Android native-stack/Fabric by reordering an
+        already-mounted workspace screen. Keep workspace identity/retention
+        outside this route-level native-stack API.
+      */}
+      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
       <Stack.Screen name="h/[serverId]/agent/[agentId]" options={{ gestureEnabled: false }} />
       <Stack.Screen name="h/[serverId]/index" />
       <Stack.Screen name="h/[serverId]/sessions" />
       <Stack.Screen name="h/[serverId]/open-project" />
       <Stack.Screen name="h/[serverId]/settings" />
       <Stack.Screen name="index" />
+      <Stack.Screen name="settings/hosts/[serverId]" />
     </Stack>
   );
 }
@@ -855,18 +867,18 @@ export default function RootLayout() {
               <BottomSheetModalProvider>
                 <HostRuntimeBootstrapProvider>
                   <PushNotificationRouter />
-                  <ProvidersWrapper>
-                    <SidebarAnimationProvider>
-                      <HorizontalScrollProvider>
-                        <ToastProvider>
+                  <ToastProvider>
+                    <ProvidersWrapper>
+                      <SidebarAnimationProvider>
+                        <HorizontalScrollProvider>
                           <OpenProjectListener />
                           <AppWithSidebar>
                             <RootStack />
                           </AppWithSidebar>
-                        </ToastProvider>
-                      </HorizontalScrollProvider>
-                    </SidebarAnimationProvider>
-                  </ProvidersWrapper>
+                        </HorizontalScrollProvider>
+                      </SidebarAnimationProvider>
+                    </ProvidersWrapper>
+                  </ToastProvider>
                 </HostRuntimeBootstrapProvider>
               </BottomSheetModalProvider>
             </QueryProvider>

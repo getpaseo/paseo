@@ -505,13 +505,16 @@ class FakeAgentSession implements AgentSession {
       await this.appendHistoryEvent(assistantChunkA);
       this.notifySubscribers(assistantChunkA);
 
-      const assistantChunkB: AgentStreamEvent = {
-        type: "timeline",
-        provider: this.providerName,
-        item: { type: "assistant_message", text: assistantText.slice(6) },
-      };
-      await this.appendHistoryEvent(assistantChunkB);
-      this.notifySubscribers(assistantChunkB);
+      const assistantChunkBText = assistantText.slice(6);
+      if (assistantChunkBText.length > 0) {
+        const assistantChunkB: AgentStreamEvent = {
+          type: "timeline",
+          provider: this.providerName,
+          item: { type: "assistant_message", text: assistantChunkBText },
+        };
+        await this.appendHistoryEvent(assistantChunkB);
+        this.notifySubscribers(assistantChunkB);
+      }
 
       const completed: AgentStreamEvent = {
         type: "turn_completed",

@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.1.59 - 2026-04-16
+
+### Added
+- Opus 4.7 in the Claude model picker, with a 1M-context variant.
+- Extra High reasoning effort for Opus 4.7, between High and Max.
+
+## 0.1.58 - 2026-04-16
+
+### Added
+- Markdown files render as formatted markdown in the file pane. ([#427](https://github.com/getpaseo/paseo/pull/427) by [@aaronflorey](https://github.com/aaronflorey))
+- Cmd+L (Ctrl+L on Windows/Linux) focuses the agent message input.
+- Provider models refresh on a freshness TTL; Settings shows last-updated time and any fetch errors. ([#426](https://github.com/getpaseo/paseo/pull/426))
+- `disallowedTools` option in provider config to block specific tools from an agent.
+
+### Improved
+- Windows: agents launch reliably from npm `.cmd` shims, paths with spaces, and JSON config args — fixes `spawn EINVAL` startup errors. ([#454](https://github.com/getpaseo/paseo/pull/454))
+- OpenCode permission prompts include the requesting tool's context. ([#398](https://github.com/getpaseo/paseo/pull/398) by [@aaronflorey](https://github.com/aaronflorey))
+- OpenCode todo and compaction events render in the timeline. ([#429](https://github.com/getpaseo/paseo/pull/429) by [@aaronflorey](https://github.com/aaronflorey))
+- OpenCode sessions archive cleanly when closed. ([#408](https://github.com/getpaseo/paseo/pull/408) by [@aaronflorey](https://github.com/aaronflorey))
+- OpenCode slash commands recover from SSE timeouts. ([#407](https://github.com/getpaseo/paseo/pull/407) by [@aaronflorey](https://github.com/aaronflorey))
+- Paseo MCP tools work against archived agents, matching the CLI. ([#423](https://github.com/getpaseo/paseo/pull/423))
+- Native scrollbars match the active theme across all web views. ([#399](https://github.com/getpaseo/paseo/pull/399) by [@ethersh](https://github.com/ethersh))
+
+### Fixed
+- Code file previews can be selected and copied on iOS. ([#447](https://github.com/getpaseo/paseo/pull/447) by [@muzhi1991](https://github.com/muzhi1991))
+- File preview no longer shows stale content when reopening the same file. ([#411](https://github.com/getpaseo/paseo/pull/411) by [@muzhi1991](https://github.com/muzhi1991))
+- File explorer reinitialises when the client reconnects after a page refresh. ([#442](https://github.com/getpaseo/paseo/pull/442) by [@1996fanrui](https://github.com/1996fanrui))
+- Generic ACP providers no longer receive duplicated command arguments. ([#444](https://github.com/getpaseo/paseo/pull/444) by [@edvardchen](https://github.com/edvardchen))
+- Workspace headers no longer show a branch icon for non-git workspaces.
+- Branch switcher layout is stable on mobile.
+- Model names no longer truncate mid-word in the picker rows.
+- Messages appear in the correct order after reconnecting on mobile.
+- Clearing agent attention no longer throws on timeout.
+
 ## 0.1.56 - 2026-04-14
 
 ### Fixed

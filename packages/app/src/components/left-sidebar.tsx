@@ -33,6 +33,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { router, usePathname } from "expo-router";
 import { usePanelStore, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from "@/stores/panel-store";
+import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
@@ -46,14 +47,10 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { useHostRuntimeSnapshot, useHosts } from "@/runtime/host-runtime";
 import { formatConnectionStatus } from "@/utils/daemons";
-import {
-  HEADER_INNER_HEIGHT,
-  HEADER_INNER_HEIGHT_MOBILE,
-  useIsCompactFormFactor,
-} from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   buildHostSessionsRoute,
-  buildHostSettingsRoute,
+  buildSettingsRoute,
   mapPathnameToServer,
   parseServerIdFromPathname,
 } from "@/utils/host-routes";
@@ -220,19 +217,13 @@ export const LeftSidebar = memo(function LeftSidebar({
   }, [openProjectPicker]);
 
   const handleSettingsMobile = useCallback(() => {
-    if (!activeServerId) {
-      return;
-    }
     closeToAgent();
-    router.push(buildHostSettingsRoute(activeServerId));
-  }, [activeServerId, closeToAgent]);
+    router.push(buildSettingsRoute());
+  }, [closeToAgent]);
 
   const handleSettingsDesktop = useCallback(() => {
-    if (!activeServerId) {
-      return;
-    }
-    router.push(buildHostSettingsRoute(activeServerId));
-  }, [activeServerId]);
+    router.push(buildSettingsRoute());
+  }, []);
 
   const handleViewMoreNavigate = useCallback(() => {
     if (!activeServerId) {
@@ -328,44 +319,6 @@ function HostSwitchOption({
   );
 }
 
-function SessionsButton({ onPress }: { onPress: () => void }) {
-  const { theme } = useUnistyles();
-  const pathname = usePathname();
-  const isActive = pathname.includes("/sessions");
-
-  return (
-    <Pressable
-      style={({ hovered }) => [
-        styles.newAgentButton,
-        hovered && styles.newAgentButtonHovered,
-        isActive && styles.newAgentButtonActive,
-      ]}
-      testID="sidebar-sessions"
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel="Sessions"
-      onPress={onPress}
-    >
-      {({ hovered }) => (
-        <>
-          <MessagesSquare
-            size={theme.iconSize.md}
-            color={hovered || isActive ? theme.colors.foreground : theme.colors.foregroundMuted}
-          />
-          <Text
-            style={[
-              styles.newAgentButtonText,
-              (hovered || isActive) && styles.newAgentButtonTextHovered,
-            ]}
-          >
-            Sessions
-          </Text>
-        </>
-      )}
-    </Pressable>
-  );
-}
-
 function MobileSidebar({
   theme,
   activeServerId,
@@ -394,6 +347,8 @@ function MobileSidebar({
   handleViewMoreNavigate,
 }: MobileSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
+  const pathname = usePathname();
+  const isSessionsActive = pathname.includes("/sessions");
   const {
     translateX,
     backdropOpacity,
@@ -544,11 +499,13 @@ function MobileSidebar({
           pointerEvents="auto"
         >
           <View style={styles.sidebarContent} pointerEvents="auto">
-            <View style={styles.sidebarHeader}>
-              <View style={styles.sidebarHeaderRow}>
-                <SessionsButton onPress={handleViewMore} />
-              </View>
-            </View>
+            <SidebarHeaderRow
+              icon={MessagesSquare}
+              label="Sessions"
+              onPress={handleViewMore}
+              isActive={isSessionsActive}
+              testID="sidebar-sessions"
+            />
 
             {isInitialLoad ? (
               <SidebarAgentListSkeleton />
@@ -676,6 +633,8 @@ function DesktopSidebar({
   handleViewMore,
 }: DesktopSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
+  const pathname = usePathname();
+  const isSessionsActive = pathname.includes("/sessions");
   const padding = useWindowControlsPadding("sidebar");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
@@ -732,11 +691,13 @@ function DesktopSidebar({
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
           {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
-          <View style={styles.sidebarHeader}>
-            <View style={styles.sidebarHeaderRow}>
-              <SessionsButton onPress={handleViewMore} />
-            </View>
-          </View>
+          <SidebarHeaderRow
+            icon={MessagesSquare}
+            label="Sessions"
+            onPress={handleViewMore}
+            isActive={isSessionsActive}
+            testID="sidebar-sessions"
+          />
         </View>
 
         {isInitialLoad ? (
@@ -880,46 +841,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarDragArea: {
     position: "relative",
-  },
-  sidebarHeader: {
-    height: {
-      xs: HEADER_INNER_HEIGHT_MOBILE,
-      md: HEADER_INNER_HEIGHT,
-    },
-    paddingHorizontal: theme.spacing[2],
-    justifyContent: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    userSelect: "none",
-  },
-  sidebarHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-  },
-  newAgentButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-  },
-  newAgentButtonText: {
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foregroundMuted,
-  },
-  newAgentButtonTextHovered: {
-    color: theme.colors.foreground,
-  },
-  newAgentButtonHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  newAgentButtonActive: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   hostTrigger: {
     flexDirection: "row",

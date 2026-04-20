@@ -14,6 +14,7 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
+import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -25,10 +26,12 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
-import { PiACPAgentClient } from "./providers/pi-acp-agent.js";
+import { PiDirectAgentClient } from "./providers/pi-direct-agent.js";
+import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
+  DEV_AGENT_PROVIDER_DEFINITIONS,
   getAgentProviderDefinition,
   type AgentProviderDefinition,
 } from "./provider-manifest.js";
@@ -46,11 +49,14 @@ export interface ProviderDefinition extends AgentProviderDefinition {
 export type BuildProviderRegistryOptions = {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  isDev?: boolean;
 };
 
 type ProviderClientFactory = (
   logger: Logger,
   runtimeSettings?: ProviderRuntimeSettings,
+  options?: Pick<BuildProviderRegistryOptions, "workspaceGitService">,
 ) => AgentClient;
 
 type ResolvedProvider = {
@@ -67,7 +73,10 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       runtimeSettings,
     }),
-  codex: (logger, runtimeSettings) => new CodexAppServerAgentClient(logger, runtimeSettings),
+  codex: (logger, runtimeSettings, options) =>
+    new CodexAppServerAgentClient(logger, runtimeSettings, {
+      workspaceGitService: options?.workspaceGitService,
+    }),
   copilot: (logger, runtimeSettings) =>
     new CopilotACPAgentClient({
       logger,
@@ -75,10 +84,11 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
     }),
   opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings),
   pi: (logger, runtimeSettings) =>
-    new PiACPAgentClient({
+    new PiDirectAgentClient({
       logger,
       runtimeSettings,
     }),
+  mock: (logger) => new MockLoadTestAgentClient(logger),
 };
 
 function getProviderClientFactory(provider: string): ProviderClientFactory {
@@ -90,7 +100,7 @@ function getProviderClientFactory(provider: string): ProviderClientFactory {
 }
 
 function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings | undefined {
-  if (!override?.command && !override?.env) {
+  if (!override?.command && !override?.env && !override?.disallowedTools) {
     return undefined;
   }
 
@@ -102,6 +112,7 @@ function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings
         }
       : undefined,
     env: override.env,
+    disallowedTools: override.disallowedTools,
   };
 }
 
@@ -121,6 +132,10 @@ function mergeRuntimeSettings(
             ...(base?.env ?? {}),
             ...(override?.env ?? {}),
           }
+        : undefined,
+    disallowedTools:
+      base?.disallowedTools || override?.disallowedTools
+        ? [...(base?.disallowedTools ?? []), ...(override?.disallowedTools ?? [])]
         : undefined,
   };
 }
@@ -337,10 +352,16 @@ function createRegistryEntry(
 function buildResolvedBuiltinProviders(
   providerOverrides: Record<string, ProviderOverride>,
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
+  options: Pick<BuildProviderRegistryOptions, "workspaceGitService">,
+  isDev: boolean,
 ): Map<string, ResolvedProvider> {
   const resolvedProviders = new Map<string, ResolvedProvider>();
 
-  for (const definition of AGENT_PROVIDER_DEFINITIONS) {
+  const definitions = isDev
+    ? [...AGENT_PROVIDER_DEFINITIONS, ...DEV_AGENT_PROVIDER_DEFINITIONS]
+    : AGENT_PROVIDER_DEFINITIONS;
+
+  for (const definition of definitions) {
     const override = providerOverrides[definition.id];
     const factory = getProviderClientFactory(definition.id);
     const mergedRuntimeSettings = mergeRuntimeSettings(
@@ -353,7 +374,10 @@ function buildResolvedBuiltinProviders(
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override?.models ?? [],
       enabled: override?.enabled !== false,
-      createBaseClient: (logger) => factory(logger, mergedRuntimeSettings),
+      createBaseClient: (logger) =>
+        factory(logger, mergedRuntimeSettings, {
+          workspaceGitService: options.workspaceGitService,
+        }),
     });
   }
 
@@ -365,7 +389,7 @@ function addDerivedProviders(
   providerOverrides: Record<string, ProviderOverride>,
 ): void {
   for (const [providerId, override] of Object.entries(providerOverrides)) {
-    if (BUILTIN_PROVIDER_IDS.includes(providerId)) {
+    if (resolvedProviders.has(providerId) || BUILTIN_PROVIDER_IDS.includes(providerId)) {
       continue;
     }
 
@@ -433,7 +457,14 @@ export function buildProviderRegistry(
 ): Record<AgentProvider, ProviderDefinition> {
   const runtimeSettings = options?.runtimeSettings;
   const providerOverrides = options?.providerOverrides ?? {};
-  const resolvedProviders = buildResolvedBuiltinProviders(providerOverrides, runtimeSettings);
+  const resolvedProviders = buildResolvedBuiltinProviders(
+    providerOverrides,
+    runtimeSettings,
+    {
+      workspaceGitService: options?.workspaceGitService,
+    },
+    options?.isDev === true,
+  );
   addDerivedProviders(resolvedProviders, providerOverrides);
 
   return Object.fromEntries(

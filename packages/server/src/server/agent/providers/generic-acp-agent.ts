@@ -21,10 +21,6 @@ export class GenericACPAgentClient extends ACPAgentClient {
       provider: "acp",
       logger: options.logger,
       runtimeSettings: {
-        command: {
-          mode: "replace",
-          argv: options.command,
-        },
         env: options.env,
       },
       defaultCommand: options.command as [string, ...string[]],

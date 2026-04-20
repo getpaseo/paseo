@@ -47,6 +47,12 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup, build sync requir
 - **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
 - **NEVER add auth checks to tests** — agent providers handle their own auth.
+- **NEVER run the full test suite locally.** The test suites are heavy and will freeze the machine, especially if multiple agents run them in parallel. Rules:
+  - Run only the specific test file you changed: `npx vitest run <file> --bail=1`
+  - Never run `npm run test` for an entire workspace unless explicitly asked.
+  - If you must run a broad suite, pipe output to a file and read it afterward: `npx vitest run <file> --bail=1 > /tmp/test-output.txt 2>&1` then read the file.
+  - Never re-run a test suite that another agent already ran and reported green — trust the result.
+  - For full suite verification, push to CI and check GitHub Actions instead.
 - **Always run typecheck after every change.**
 - **Run `npm run format` before committing.** This repo uses Biome for formatting. Do not manually fix formatting — let the formatter handle it.
 - **NEVER make breaking changes to WebSocket or message schemas.** The primary compatibility path is old mobile app clients talking to newly updated daemons. Users update desktop and daemon first, then keep running the old app for a while. Every schema change MUST be backward-compatible for old clients against new daemons:

@@ -1,5 +1,4 @@
 import { describe, expect, test, vi } from "vitest";
-
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import {
@@ -101,43 +100,6 @@ function createRecord(overrides?: Partial<StoredAgentRecord>): StoredAgentRecord
 }
 
 describe("persistence hooks", () => {
-  test("attachAgentStoragePersistence forwards agent snapshots", async () => {
-    const applySnapshot = vi.fn().mockResolvedValue(undefined);
-    let subscriber: (event: any) => void = () => {
-      throw new Error("Agent manager subscriber was not registered");
-    };
-    const agentManager = {
-      subscribe: vi.fn((callback: (event: any) => void) => {
-        subscriber = callback;
-        return () => {
-          subscriber = () => {
-            throw new Error("Agent manager subscriber was not registered");
-          };
-        };
-      }),
-    };
-    attachAgentStoragePersistence(
-      testLogger,
-      agentManager as any,
-      {
-        applySnapshot,
-        list: vi.fn(),
-      } as any,
-    );
-
-    expect(agentManager.subscribe).toHaveBeenCalledTimes(1);
-    const agent = createManagedAgent();
-    subscriber({ type: "agent_state", agent });
-    expect(applySnapshot).toHaveBeenCalledWith(agent);
-
-    subscriber({
-      type: "agent_stream",
-      agentId: agent.id,
-      event: { type: "timeline", item: { type: "assistant_message", text: "hi" } },
-    });
-    expect(applySnapshot).toHaveBeenCalledTimes(1);
-  });
-
   test("buildConfigOverrides carries systemPrompt and mcpServers", () => {
     const record = createRecord({
       title: "Voice agent (current)",
@@ -207,6 +169,22 @@ describe("persistence hooks", () => {
           args: ["/tmp/bridge.mjs", "--socket", "/tmp/agent.sock"],
         },
       },
+    });
+  });
+
+  test("buildSessionConfig accepts providers from the canonical manifest", () => {
+    const record = createRecord({
+      provider: "claude",
+      persistence: {
+        provider: "claude",
+        sessionId: "session-123",
+      },
+      config: {},
+    });
+
+    expect(buildSessionConfig(record)).toMatchObject({
+      provider: "claude",
+      cwd: "/tmp/project",
     });
   });
 

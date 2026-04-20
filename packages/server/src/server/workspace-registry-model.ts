@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 
 import type { ProjectCheckoutLitePayload, ProjectPlacementPayload } from "../shared/messages.js";
+import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 
@@ -20,7 +21,8 @@ export function normalizeWorkspaceId(cwd: string): string {
 }
 
 export function deriveWorkspaceId(cwd: string, checkout: ProjectCheckoutLitePayload): string {
-  return checkout.worktreeRoot ?? normalizeWorkspaceId(cwd);
+  const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
+  return worktreeRoot ?? normalizeWorkspaceId(cwd);
 }
 
 function deriveRemoteProjectKey(remoteUrl: string | null): string | null {

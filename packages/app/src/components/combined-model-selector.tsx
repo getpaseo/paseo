@@ -533,10 +533,22 @@ export function CombinedModelSelector({
     return { kind: "provider", providerId, providerLabel: label };
   }, [allProviderModels, providerDefinitions]);
 
+  const computeInitialView = useCallback((): SelectorView => {
+    if (singleProviderView) return singleProviderView;
+
+    const selectedFavoriteKey = `${selectedProvider}:${selectedModel}`;
+    if (selectedProvider && selectedModel && !favoriteKeys.has(selectedFavoriteKey)) {
+      const label = resolveProviderLabel(providerDefinitions, selectedProvider);
+      return { kind: "provider", providerId: selectedProvider, providerLabel: label };
+    }
+
+    return { kind: "all" };
+  }, [singleProviderView, selectedProvider, selectedModel, favoriteKeys, providerDefinitions]);
+
   const handleOpenChange = useCallback(
     (open: boolean) => {
       setIsOpen(open);
-      setView(singleProviderView ?? { kind: "all" });
+      setView(computeInitialView());
       if (open) {
         onOpen?.();
       } else {
@@ -544,26 +556,24 @@ export function CombinedModelSelector({
         onClose?.();
       }
     },
-    [onOpen, onClose, singleProviderView],
+    [onOpen, onClose, computeInitialView],
   );
 
   const handleSelect = useCallback(
     (provider: string, modelId: string) => {
       onSelect(provider as AgentProvider, modelId);
       setIsOpen(false);
-      setView(singleProviderView ?? { kind: "all" });
       setSearchQuery("");
     },
-    [onSelect, singleProviderView],
+    [onSelect],
   );
 
   const ProviderIcon = getProviderIcon(selectedProvider);
-  const selectedProviderLabel = useMemo(
-    () => resolveProviderLabel(providerDefinitions, selectedProvider),
-    [providerDefinitions, selectedProvider],
-  );
 
   const selectedModelLabel = useMemo(() => {
+    if (!selectedModel) {
+      return isLoading ? "Loading..." : "Select model";
+    }
     const models = allProviderModels.get(selectedProvider);
     if (!models) {
       return isLoading ? "Loading..." : "Select model";
@@ -586,8 +596,8 @@ export function CombinedModelSelector({
       return selectedModelLabel;
     }
 
-    return buildSelectedTriggerLabel(selectedProviderLabel, selectedModelLabel);
-  }, [selectedModelLabel, selectedProviderLabel]);
+    return buildSelectedTriggerLabel(selectedModelLabel);
+  }, [selectedModelLabel]);
 
   useEffect(() => {
     if (platformIsWeb) {
@@ -788,11 +798,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
-  level2Header: {
-    backgroundColor: theme.colors.surface1,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
+  level2Header: {},
   backButton: {
     flexDirection: "row",
     alignItems: "center",

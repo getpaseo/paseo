@@ -25,6 +25,7 @@ import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { type GestureType } from "react-native-gesture-handler";
 import * as Clipboard from "expo-clipboard";
+import { DiffStat } from "@/components/diff-stat";
 import {
   Archive,
   CircleAlert,
@@ -35,6 +36,8 @@ import {
   FolderPlus,
   FolderGit2,
   GitPullRequest,
+  Globe,
+  SquareTerminal,
   Monitor,
   MoreVertical,
   Plus,
@@ -46,15 +49,25 @@ import type { DraggableListDragHandleProps } from "./draggable-list.types";
 import { getHostRuntimeStore, isHostRuntimeConnected } from "@/runtime/host-runtime";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { projectIconQueryKey } from "@/hooks/use-project-icon-query";
-import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
+import {
+  buildHostNewWorkspaceRoute,
+  parseHostWorkspaceRouteFromPathname,
+} from "@/utils/host-routes";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import {
+  createSidebarWorkspaceEntry,
   type SidebarProjectEntry,
   type SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
-import { ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  useContextMenu,
+} from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -79,10 +92,21 @@ import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { type PrHint, useWorkspacePrHint } from "@/hooks/use-checkout-pr-status-query";
 import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
 import { useNavigationActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
-import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
-import { createNameId } from "mnemonic-id";
+import {
+  normalizeWorkspaceDescriptor,
+  useSessionStore,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 import { openExternalUrl } from "@/utils/open-external-url";
+import {
+  requireWorkspaceExecutionDirectory,
+  resolveWorkspaceExecutionDirectory,
+} from "@/utils/workspace-execution";
+import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
+import { GitHubIcon } from "@/components/icons/github-icon";
+import { createNameId } from "mnemonic-id";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
@@ -95,7 +119,6 @@ function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): 
 const workspaceKeyExtractor = (workspace: SidebarWorkspaceEntry) => workspace.workspaceKey;
 
 const projectKeyExtractor = (project: SidebarProjectEntry) => project.projectKey;
-const EMPTY_WORKSPACES = new Map();
 const WORKSPACE_STATUS_DOT_WIDTH = 14;
 const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
@@ -175,10 +198,23 @@ interface WorkspaceRowInnerProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }
 
-function WorkspacePrBadge({ hint }: { hint: PrHint }) {
+function useSidebarWorkspaceEntry(
+  serverId: string | null,
+  workspaceId: string | null,
+): SidebarWorkspaceEntry | null {
+  const projectWorkspaceEntry = useCallback(
+    (workspace: WorkspaceDescriptor): SidebarWorkspaceEntry =>
+      createSidebarWorkspaceEntry({ serverId: serverId ?? "", workspace }),
+    [serverId],
+  );
+
+  return useWorkspaceFields(serverId, workspaceId, projectWorkspaceEntry);
+}
+
+export function PrBadge({ hint }: { hint: PrHint }) {
   const { theme } = useUnistyles();
   const [isHovered, setIsHovered] = useState(false);
-  const textColor = isHovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+  const activeColor = isHovered ? theme.colors.foreground : theme.colors.foregroundMuted;
   const iconColor = getWorkspacePrIconColor(theme, hint.state);
 
   const handlePressIn = useCallback((event: GestureResponderEvent) => {
@@ -196,22 +232,73 @@ function WorkspacePrBadge({ hint }: { hint: PrHint }) {
   return (
     <Pressable
       accessibilityRole="link"
-      accessibilityLabel={`${hint.state} pull request #${hint.number}`}
+      accessibilityLabel={`Pull request #${hint.number}`}
       hitSlop={4}
       onPressIn={handlePressIn}
       onPress={handlePress}
       onHoverIn={() => setIsHovered(true)}
       onHoverOut={() => setIsHovered(false)}
-      style={({ pressed }) => [styles.workspacePrBadge, pressed && styles.workspacePrBadgePressed]}
+      style={({ pressed }) => [prBadgeStyles.badge, pressed && prBadgeStyles.badgePressed]}
     >
-      <GitPullRequest size={12} color={iconColor} />
-      <Text style={[styles.workspacePrBadgeText, { color: textColor }]} numberOfLines={1}>
+      {isHovered ? (
+        <ExternalLink size={12} color={activeColor} />
+      ) : (
+        <GitPullRequest size={12} color={iconColor} />
+      )}
+      <Text style={[prBadgeStyles.text, { color: activeColor }]} numberOfLines={1}>
         #{hint.number}
       </Text>
-      {isHovered && <ExternalLink size={10} color={textColor} />}
     </Pressable>
   );
 }
+
+const prBadgeStyles = StyleSheet.create((theme) => ({
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  badgePressed: {
+    opacity: 0.82,
+  },
+  text: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    lineHeight: 14,
+  },
+}));
+
+function ChecksBadge({ checks }: { checks: PrHint["checks"] }): ReactElement | null {
+  const { theme } = useUnistyles();
+
+  if (!checks || checks.length === 0) return null;
+
+  const failed = checks.filter((c) => c.status === "failure").length;
+  if (failed === 0) return null;
+
+  const color = theme.colors.palette.red[500];
+  const label = `${failed} failed`;
+
+  return (
+    <View style={checksBadgeStyles.badge}>
+      <GitHubIcon size={10} color={color} />
+      <Text style={[checksBadgeStyles.text, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
+const checksBadgeStyles = StyleSheet.create((theme) => ({
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  text: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    lineHeight: 14,
+  },
+}));
 
 function WorkspaceStatusIndicator({
   bucket,
@@ -719,53 +806,17 @@ function ProjectHeaderRow({
   const { theme } = useUnistyles();
   const [isHovered, setIsHovered] = useState(false);
   const isMobileBreakpoint = useIsCompactFormFactor();
+  const handleBeginWorkspaceSetup = useCallback(() => {
+    if (!serverId) {
+      return;
+    }
+    router.navigate(
+      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, { displayName }) as any,
+    );
+    onWorkspacePress?.();
+  }, [displayName, onWorkspacePress, project.iconWorkingDir, serverId]);
   const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const toast = useToast();
-
-  const createWorktreeMutation = useMutation({
-    mutationFn: async () => {
-      if (!serverId) {
-        throw new Error("No server");
-      }
-      const client = getHostRuntimeStore().getClient(serverId);
-      if (!client || !isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(serverId))) {
-        throw new Error("Host is not connected");
-      }
-      const payload = await client.createPaseoWorktree({
-        cwd: project.iconWorkingDir,
-        worktreeSlug: createNameId(),
-      });
-      if (payload.error || !payload.workspace) {
-        throw new Error(payload.error ?? "Failed to create worktree");
-      }
-      return payload.workspace;
-    },
-    onSuccess: (workspace) => {
-      mergeWorkspaces(serverId!, [normalizeWorkspaceDescriptor(workspace)]);
-      onWorktreeCreated?.(workspace.id);
-      onWorkspacePress?.();
-      router.navigate(
-        prepareWorkspaceTab({
-          serverId: serverId!,
-          workspaceId: workspace.id,
-          target: { kind: "draft", draftId: "new" },
-        }) as any,
-      );
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : String(error));
-    },
-  });
-  useKeyboardActionHandler({
-    handlerId: `worktree-new-${project.projectKey}`,
-    actions: ["worktree.new"],
-    enabled: isProjectActive && canCreateWorktree && !createWorktreeMutation.isPending,
-    priority: 0,
-    handle: () => {
-      createWorktreeMutation.mutate();
-      return true;
-    },
-  });
 
   const interaction = useLongPressDragInteraction({
     drag,
@@ -782,12 +833,7 @@ function ProjectHeaderRow({
 
   const rowChildren = (
     <>
-      <View
-        {...(dragHandleProps?.attributes as any)}
-        {...(dragHandleProps?.listeners as any)}
-        ref={dragHandleProps?.setActivatorNodeRef as any}
-        style={styles.projectRowLeft}
-      >
+      <View style={styles.projectRowLeft}>
         <ProjectLeadingVisual
           displayName={displayName}
           iconDataUri={iconDataUri}
@@ -807,14 +853,8 @@ function ProjectHeaderRow({
         {canCreateWorktree ? (
           <NewWorktreeButton
             displayName={displayName}
-            onPress={() => createWorktreeMutation.mutate()}
-            visible={
-              isHovered ||
-              platformIsNative ||
-              isMobileBreakpoint ||
-              createWorktreeMutation.isPending
-            }
-            loading={createWorktreeMutation.isPending}
+            onPress={handleBeginWorkspaceSetup}
+            visible={isHovered || platformIsNative || isMobileBreakpoint}
             showShortcutHint={isProjectActive}
             testID={`sidebar-project-new-worktree-${project.projectKey}`}
           />
@@ -870,7 +910,13 @@ function ProjectHeaderRow({
 
   if (menuController) {
     return (
-      <View onPointerEnter={() => setIsHovered(true)} onPointerLeave={() => setIsHovered(false)}>
+      <View
+        {...(dragHandleProps?.attributes as any)}
+        {...(dragHandleProps?.listeners as any)}
+        ref={dragHandleProps?.setActivatorNodeRef as any}
+        onPointerEnter={() => setIsHovered(true)}
+        onPointerLeave={() => setIsHovered(false)}
+      >
         <ContextMenuTrigger
           enabledOnMobile={false}
           style={({ pressed }) => [
@@ -893,7 +939,13 @@ function ProjectHeaderRow({
   }
 
   return (
-    <View onPointerEnter={() => setIsHovered(true)} onPointerLeave={() => setIsHovered(false)}>
+    <View
+      {...(dragHandleProps?.attributes as any)}
+      {...(dragHandleProps?.listeners as any)}
+      ref={dragHandleProps?.setActivatorNodeRef as any}
+      onPointerEnter={() => setIsHovered(true)}
+      onPointerLeave={() => setIsHovered(false)}
+    >
       <Pressable
         style={({ pressed }) => [
           styles.projectRow,
@@ -937,10 +989,14 @@ function WorkspaceRowInner({
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
+  const isTouchPlatform = platformIsNative;
+  const workspaceDirectory = resolveWorkspaceExecutionDirectory({
+    workspaceDirectory: workspace.workspaceDirectory,
+  });
   const prHint = useWorkspacePrHint({
     serverId: workspace.serverId,
-    cwd: workspace.workspaceId,
-    enabled: workspace.workspaceKind !== "directory",
+    cwd: workspaceDirectory ?? "",
+    enabled: workspace.projectKind === "git" && Boolean(workspaceDirectory),
   });
   const interaction = useLongPressDragInteraction({
     drag,
@@ -955,122 +1011,143 @@ function WorkspaceRowInner({
     onPress();
   }, [interaction.didLongPressRef, onPress]);
 
+  const isDesktop = !isTouchPlatform;
+  const showScriptsIcon = isDesktop && workspace.hasRunningScripts;
+  const hasRunningService = workspace.scripts.some(
+    (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
+  );
+
   return (
-    <View
-      style={styles.workspaceRowContainer}
-      onPointerEnter={() => setIsHovered(true)}
-      onPointerLeave={() => setIsHovered(false)}
-    >
-      <Pressable
-        disabled={isArchiving}
-        style={({ pressed }) => [
-          styles.workspaceRow,
-          isDragging && styles.workspaceRowDragging,
-          selected && styles.sidebarRowSelected,
-          isHovered && styles.workspaceRowHovered,
-          pressed && styles.workspaceRowPressed,
-        ]}
-        onPressIn={interaction.handlePressIn}
-        onTouchMove={interaction.handleTouchMove}
-        onPressOut={interaction.handlePressOut}
-        onPress={handlePress}
-        testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
+    <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
+      <View
+        {...(dragHandleProps?.attributes as any)}
+        {...(dragHandleProps?.listeners as any)}
+        ref={dragHandleProps?.setActivatorNodeRef as any}
+        style={styles.workspaceRowContainer}
+        onPointerEnter={() => setIsHovered(true)}
+        onPointerLeave={() => setIsHovered(false)}
       >
-        <View style={styles.workspaceRowMain}>
-          <View
-            {...(dragHandleProps?.attributes as any)}
-            {...(dragHandleProps?.listeners as any)}
-            ref={dragHandleProps?.setActivatorNodeRef as any}
-            style={styles.workspaceRowLeft}
-          >
-            <WorkspaceStatusIndicator
-              bucket={workspace.statusBucket}
-              workspaceKind={workspace.workspaceKind}
-              loading={isArchiving || isCreating}
-            />
-            <Text
-              style={[
-                styles.workspaceBranchText,
-                isHovered && styles.workspaceBranchTextHovered,
-                isCreating && styles.workspaceBranchTextCreating,
-              ]}
-              numberOfLines={1}
-            >
-              {workspace.name}
-            </Text>
-          </View>
-          <View style={styles.workspaceRowRight}>
-            {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
-            {onArchive && (isHovered || platformIsNative || isCompact) ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  hitSlop={8}
-                  style={({ hovered = false }) => [
-                    styles.kebabButton,
-                    hovered && styles.kebabButtonHovered,
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Workspace actions"
-                  testID={`sidebar-workspace-kebab-${workspace.workspaceKey}`}
-                >
-                  {({ hovered }) => (
-                    <MoreVertical
-                      size={14}
-                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                    />
+        <Pressable
+          disabled={isArchiving}
+          aria-selected={selected}
+          accessibilityRole="button"
+          accessibilityState={{ selected }}
+          style={({ pressed }) => [
+            styles.workspaceRow,
+            isDragging && styles.workspaceRowDragging,
+            selected && styles.sidebarRowSelected,
+            isHovered && styles.workspaceRowHovered,
+            pressed && styles.workspaceRowPressed,
+          ]}
+          onPressIn={interaction.handlePressIn}
+          onTouchMove={interaction.handleTouchMove}
+          onPressOut={interaction.handlePressOut}
+          onPress={handlePress}
+          testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
+        >
+          <View style={styles.workspaceRowMain}>
+            <View style={styles.workspaceRowLeft}>
+              <WorkspaceStatusIndicator
+                bucket={workspace.statusBucket}
+                workspaceKind={workspace.workspaceKind}
+                loading={isArchiving || isCreating}
+              />
+              <Text
+                style={[
+                  styles.workspaceBranchText,
+                  isHovered && styles.workspaceBranchTextHovered,
+                  isCreating && styles.workspaceBranchTextCreating,
+                ]}
+                numberOfLines={1}
+              >
+                {workspace.name}
+              </Text>
+            </View>
+            <View style={styles.workspaceRowRight}>
+              {showScriptsIcon ? (
+                <View testID="workspace-globe-icon" accessibilityLabel="Scripts available">
+                  {hasRunningService ? (
+                    <Globe size={12} color={theme.colors.palette.blue[500]} />
+                  ) : (
+                    <SquareTerminal size={12} color={theme.colors.palette.blue[500]} />
                   )}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" width={260}>
-                  {onCopyPath ? (
-                    <DropdownMenuItem
-                      testID={`sidebar-workspace-menu-copy-path-${workspace.workspaceKey}`}
-                      leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
-                      onSelect={onCopyPath}
-                    >
-                      Copy path
-                    </DropdownMenuItem>
-                  ) : null}
-                  {onCopyBranchName ? (
-                    <DropdownMenuItem
-                      testID={`sidebar-workspace-menu-copy-branch-name-${workspace.workspaceKey}`}
-                      leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
-                      onSelect={onCopyBranchName}
-                    >
-                      Copy branch name
-                    </DropdownMenuItem>
-                  ) : null}
-                  <DropdownMenuItem
-                    testID={`sidebar-workspace-menu-archive-${workspace.workspaceKey}`}
-                    leading={<Archive size={14} color={theme.colors.foregroundMuted} />}
-                    trailing={archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null}
-                    status={archiveStatus}
-                    pendingLabel={archivePendingLabel}
-                    onSelect={onArchive}
+                </View>
+              ) : null}
+              {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
+              {onArchive && (isHovered || isTouchPlatform) ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    hitSlop={8}
+                    style={({ hovered = false }) => [
+                      styles.kebabButton,
+                      hovered && styles.kebabButtonHovered,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Workspace actions"
+                    testID={`sidebar-workspace-kebab-${workspace.workspaceKey}`}
                   >
-                    {archiveLabel ?? "Archive"}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : workspace.diffStat ? (
-              <View style={styles.diffStatRow}>
-                <Text style={styles.diffStatAdditions}>+{workspace.diffStat.additions}</Text>
-                <Text style={styles.diffStatDeletions}>-{workspace.diffStat.deletions}</Text>
-              </View>
-            ) : null}
-            {showShortcutBadge && shortcutNumber !== null ? (
-              <View style={styles.shortcutBadge}>
-                <Text style={styles.shortcutBadgeText}>{shortcutNumber}</Text>
-              </View>
-            ) : null}
+                    {({ hovered }) => (
+                      <MoreVertical
+                        size={14}
+                        color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                      />
+                    )}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" width={260}>
+                    {onCopyPath ? (
+                      <DropdownMenuItem
+                        testID={`sidebar-workspace-menu-copy-path-${workspace.workspaceKey}`}
+                        leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
+                        onSelect={onCopyPath}
+                      >
+                        Copy path
+                      </DropdownMenuItem>
+                    ) : null}
+                    {onCopyBranchName ? (
+                      <DropdownMenuItem
+                        testID={`sidebar-workspace-menu-copy-branch-name-${workspace.workspaceKey}`}
+                        leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
+                        onSelect={onCopyBranchName}
+                      >
+                        Copy branch name
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuItem
+                      testID={`sidebar-workspace-menu-archive-${workspace.workspaceKey}`}
+                      leading={<Archive size={14} color={theme.colors.foregroundMuted} />}
+                      trailing={
+                        archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null
+                      }
+                      status={archiveStatus}
+                      pendingLabel={archivePendingLabel}
+                      onSelect={onArchive}
+                    >
+                      {archiveLabel ?? "Archive"}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : workspace.diffStat ? (
+                <DiffStat
+                  additions={workspace.diffStat.additions}
+                  deletions={workspace.diffStat.deletions}
+                />
+              ) : null}
+              {showShortcutBadge && shortcutNumber !== null ? (
+                <View style={styles.shortcutBadge}>
+                  <Text style={styles.shortcutBadgeText}>{shortcutNumber}</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
-        </View>
-        {prHint ? (
-          <View style={styles.workspacePrBadgeRow}>
-            <WorkspacePrBadge hint={prHint} />
-          </View>
-        ) : null}
-      </Pressable>
-    </View>
+          {prHint ? (
+            <View style={styles.workspacePrBadgeRow}>
+              <PrBadge hint={prHint} />
+              <ChecksBadge checks={prHint.checks} />
+            </View>
+          ) : null}
+        </Pressable>
+      </View>
+    </WorkspaceHoverCard>
   );
 }
 
@@ -1100,16 +1177,18 @@ function WorkspaceRowWithMenu({
   const toast = useToast();
   const activeWorkspaceSelection = useNavigationActiveWorkspaceSelection();
   const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree);
-  const sessionWorkspaces = useSessionStore(
-    (state) => state.sessions[workspace.serverId]?.workspaces ?? EMPTY_WORKSPACES,
-  );
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
+  const workspaceDirectory = resolveWorkspaceExecutionDirectory({
+    workspaceDirectory: workspace.workspaceDirectory,
+  });
   const archiveStatus = useCheckoutGitActionsStore((state) =>
-    state.getStatus({
-      serverId: workspace.serverId,
-      cwd: workspace.workspaceId,
-      actionId: "archive-worktree",
-    }),
+    workspaceDirectory
+      ? state.getStatus({
+          serverId: workspace.serverId,
+          cwd: workspaceDirectory,
+          actionId: "archive-worktree",
+        })
+      : "idle",
   );
   const isWorktree = workspace.workspaceKind === "worktree";
   const isArchiving = isWorktree ? archiveStatus === "pending" : isArchivingWorkspace;
@@ -1125,10 +1204,11 @@ function WorkspaceRowWithMenu({
       buildWorkspaceArchiveRedirectRoute({
         serverId: workspace.serverId,
         archivedWorkspaceId: workspace.workspaceId,
-        workspaces: sessionWorkspaces.values(),
+        workspaces:
+          useSessionStore.getState().sessions[workspace.serverId]?.workspaces.values() ?? [],
       }),
     );
-  }, [activeWorkspaceSelection, sessionWorkspaces, workspace.serverId, workspace.workspaceId]);
+  }, [activeWorkspaceSelection, workspace.serverId, workspace.workspaceId]);
 
   const handleArchiveWorktree = useCallback(() => {
     if (isArchiving) {
@@ -1147,19 +1227,32 @@ function WorkspaceRowWithMenu({
       if (!confirmed) {
         return;
       }
+      let workspaceDirectory: string;
+      try {
+        workspaceDirectory = requireWorkspaceExecutionDirectory({
+          workspaceId: workspace.workspaceId,
+          workspaceDirectory: workspace.workspaceDirectory,
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Workspace path not available");
+        return;
+      }
+
+      if (!workspaceDirectory) {
+        toast.error("Workspace path not available");
+        return;
+      }
+
+      redirectAfterArchive();
 
       void archiveWorktree({
         serverId: workspace.serverId,
-        cwd: workspace.workspaceId,
-        worktreePath: workspace.workspaceId,
-      })
-        .then(() => {
-          redirectAfterArchive();
-        })
-        .catch((error) => {
-          const message = error instanceof Error ? error.message : "Failed to archive worktree";
-          toast.error(message);
-        });
+        cwd: workspaceDirectory,
+        worktreePath: workspaceDirectory,
+      }).catch((error) => {
+        const message = error instanceof Error ? error.message : "Failed to archive worktree";
+        toast.error(message);
+      });
     })();
   }, [
     archiveWorktree,
@@ -1167,6 +1260,7 @@ function WorkspaceRowWithMenu({
     redirectAfterArchive,
     toast,
     workspace.name,
+    workspace.workspaceDirectory,
     workspace.serverId,
     workspace.workspaceId,
   ]);
@@ -1195,17 +1289,20 @@ function WorkspaceRowWithMenu({
       }
 
       setIsArchivingWorkspace(true);
-      try {
-        const payload = await client.archiveWorkspace(workspace.workspaceId);
-        if (payload.error) {
-          throw new Error(payload.error);
+      redirectAfterArchive();
+
+      void (async () => {
+        try {
+          const payload = await client.archiveWorkspace(workspace.workspaceId);
+          if (payload.error) {
+            throw new Error(payload.error);
+          }
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Failed to hide workspace");
+        } finally {
+          setIsArchivingWorkspace(false);
         }
-        redirectAfterArchive();
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to hide workspace");
-      } finally {
-        setIsArchivingWorkspace(false);
-      }
+      })();
     })();
   }, [
     isArchivingWorkspace,
@@ -1217,9 +1314,19 @@ function WorkspaceRowWithMenu({
   ]);
 
   const handleCopyPath = useCallback(() => {
-    void Clipboard.setStringAsync(workspace.workspaceId);
+    let workspaceDirectory: string;
+    try {
+      workspaceDirectory = requireWorkspaceExecutionDirectory({
+        workspaceId: workspace.workspaceId,
+        workspaceDirectory: workspace.workspaceDirectory,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Workspace path not available");
+      return;
+    }
+    void Clipboard.setStringAsync(workspaceDirectory);
     toast.copied("Path copied");
-  }, [toast, workspace.workspaceId]);
+  }, [toast, workspace.workspaceDirectory, workspace.workspaceId]);
 
   const handleCopyBranchName = useCallback(() => {
     void Clipboard.setStringAsync(workspace.name);
@@ -1267,6 +1374,161 @@ function WorkspaceRowWithMenu({
   );
 }
 
+function NonGitProjectRowWithMenuContent({
+  project,
+  displayName,
+  iconDataUri,
+  workspace,
+  selected,
+  onPress,
+  shortcutNumber,
+  showShortcutBadge,
+  drag,
+  isDragging,
+  dragHandleProps,
+}: {
+  project: SidebarProjectEntry;
+  displayName: string;
+  iconDataUri: string | null;
+  workspace: SidebarWorkspaceEntry;
+  selected: boolean;
+  onPress: () => void;
+  shortcutNumber: number | null;
+  showShortcutBadge: boolean;
+  drag: () => void;
+  isDragging: boolean;
+  dragHandleProps?: DraggableListDragHandleProps;
+}) {
+  const toast = useToast();
+  const contextMenu = useContextMenu();
+  const activeWorkspaceSelection = useNavigationActiveWorkspaceSelection();
+  const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
+  const redirectAfterArchive = useCallback(() => {
+    if (
+      activeWorkspaceSelection?.serverId !== workspace.serverId ||
+      activeWorkspaceSelection.workspaceId !== workspace.workspaceId
+    ) {
+      return;
+    }
+
+    router.replace(
+      buildWorkspaceArchiveRedirectRoute({
+        serverId: workspace.serverId,
+        archivedWorkspaceId: workspace.workspaceId,
+        workspaces:
+          useSessionStore.getState().sessions[workspace.serverId]?.workspaces.values() ?? [],
+      }) as any,
+    );
+  }, [activeWorkspaceSelection, workspace.serverId, workspace.workspaceId]);
+
+  const handleArchiveWorkspace = useCallback(() => {
+    if (isArchivingWorkspace) {
+      return;
+    }
+
+    void (async () => {
+      const confirmed = await confirmDialog({
+        title: "Hide workspace?",
+        message: `Hide "${workspace.name}" from the sidebar?\n\nFiles on disk will not be changed.`,
+        confirmLabel: "Hide",
+        cancelLabel: "Cancel",
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+
+      const client = getHostRuntimeStore().getClient(workspace.serverId);
+      if (!client) {
+        toast.error("Host is not connected");
+        return;
+      }
+
+      setIsArchivingWorkspace(true);
+      redirectAfterArchive();
+
+      void (async () => {
+        try {
+          const payload = await client.archiveWorkspace(workspace.workspaceId);
+          if (payload.error) {
+            throw new Error(payload.error);
+          }
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Failed to hide workspace");
+        } finally {
+          setIsArchivingWorkspace(false);
+        }
+      })();
+    })();
+  }, [
+    isArchivingWorkspace,
+    redirectAfterArchive,
+    toast,
+    workspace.name,
+    workspace.serverId,
+    workspace.workspaceId,
+  ]);
+
+  return (
+    <>
+      <ProjectHeaderRow
+        project={project}
+        displayName={displayName}
+        iconDataUri={iconDataUri}
+        workspace={workspace}
+        selected={selected}
+        chevron={null}
+        onPress={onPress}
+        serverId={null}
+        canCreateWorktree={false}
+        shortcutNumber={shortcutNumber}
+        showShortcutBadge={showShortcutBadge}
+        drag={drag}
+        isDragging={isDragging}
+        isArchiving={isArchivingWorkspace}
+        menuController={contextMenu}
+        dragHandleProps={dragHandleProps}
+      />
+      <ContextMenuContent
+        align="start"
+        width={220}
+        mobileMode="sheet"
+        testID={`sidebar-workspace-context-${workspace.workspaceKey}`}
+      >
+        <ContextMenuItem
+          testID={`sidebar-workspace-context-${workspace.workspaceKey}-archive`}
+          status={isArchivingWorkspace ? "pending" : "idle"}
+          pendingLabel="Hiding..."
+          destructive
+          onSelect={handleArchiveWorkspace}
+        >
+          Hide from sidebar
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </>
+  );
+}
+
+function NonGitProjectRowWithMenu(props: {
+  project: SidebarProjectEntry;
+  displayName: string;
+  iconDataUri: string | null;
+  workspace: SidebarWorkspaceEntry;
+  selected: boolean;
+  onPress: () => void;
+  shortcutNumber: number | null;
+  showShortcutBadge: boolean;
+  drag: () => void;
+  isDragging: boolean;
+  dragHandleProps?: DraggableListDragHandleProps;
+}) {
+  return (
+    <ContextMenu>
+      <NonGitProjectRowWithMenuContent {...props} />
+    </ContextMenu>
+  );
+}
+
 function FlattenedProjectRow({
   project,
   displayName,
@@ -1302,12 +1564,36 @@ function FlattenedProjectRow({
   onRemoveProject?: () => void;
   removeProjectStatus?: "idle" | "pending";
 }) {
+  const workspace = useSidebarWorkspaceEntry(serverId, rowModel.workspace.workspaceId);
+
+  if (!workspace) {
+    return null;
+  }
+
+  if (project.projectKind === "directory") {
+    return (
+      <NonGitProjectRowWithMenu
+        project={project}
+        displayName={displayName}
+        iconDataUri={iconDataUri}
+        workspace={workspace}
+        selected={rowModel.selected}
+        onPress={onPress}
+        shortcutNumber={shortcutNumber}
+        showShortcutBadge={showShortcutBadge}
+        drag={drag}
+        isDragging={isDragging}
+        dragHandleProps={dragHandleProps}
+      />
+    );
+  }
+
   return (
     <ProjectHeaderRow
       project={project}
       displayName={displayName}
       iconDataUri={iconDataUri}
-      workspace={rowModel.workspace}
+      workspace={workspace}
       selected={rowModel.selected}
       chevron={rowModel.chevron}
       onPress={onPress}
@@ -1351,9 +1637,15 @@ function WorkspaceRow({
   canCopyBranchName: boolean;
   isCreating?: boolean;
 }) {
+  const hydratedWorkspace = useSidebarWorkspaceEntry(workspace.serverId, workspace.workspaceId);
+
+  if (!hydratedWorkspace) {
+    return null;
+  }
+
   return (
     <WorkspaceRowWithMenu
-      workspace={workspace}
+      workspace={hydratedWorkspace}
       selected={selected}
       shortcutNumber={shortcutNumber}
       showShortcutBadge={showShortcutBadge}
@@ -1520,18 +1812,21 @@ function ProjectBlock({
       }
 
       setIsRemovingProject(true);
-      try {
-        for (const ws of project.workspaces) {
+
+      void Promise.allSettled(
+        project.workspaces.map(async (ws) => {
           const payload = await client.archiveWorkspace(ws.workspaceId);
           if (payload.error) {
             throw new Error(payload.error);
           }
+        }),
+      ).then((results) => {
+        const failed = results.filter((r) => r.status === "rejected");
+        if (failed.length > 0) {
+          toast.error("Failed to remove some workspaces");
         }
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to remove project");
-      } finally {
         setIsRemovingProject(false);
-      }
+      });
     })();
   }, [isRemovingProject, serverId, displayName, toast, project.workspaces]);
 
@@ -1979,6 +2274,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
+    userSelect: "none",
   },
   projectRowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
@@ -2122,6 +2418,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "stretch",
     justifyContent: "center",
     gap: theme.spacing[1],
+    userSelect: "none",
   },
   workspaceRowMain: {
     flexDirection: "row",
@@ -2212,42 +2509,15 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 1,
   },
   workspacePrBadgeRow: {
-    paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
-  },
-  workspacePrBadge: {
-    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  workspacePrBadgePressed: {
-    opacity: 0.82,
-  },
-  workspacePrBadgeText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    lineHeight: 14,
+    gap: theme.spacing[2],
+    paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
   },
   workspaceCreatingText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     flexShrink: 0,
-  },
-  diffStatRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flexShrink: 0,
-  },
-  diffStatAdditions: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.diffAddition,
-  },
-  diffStatDeletions: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.diffDeletion,
   },
   kebabButton: {
     padding: 2,

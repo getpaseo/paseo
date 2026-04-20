@@ -3,6 +3,7 @@ import { View, Text } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { StyleSheet } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
+import { SettingsSection } from "@/screens/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
@@ -176,30 +177,29 @@ export function KeyboardShortcutsSection() {
 
   if (isNative) {
     return (
-      <View style={settingsStyles.section}>
-        <Text style={settingsStyles.sectionTitle}>Shortcuts</Text>
+      <SettingsSection title="Shortcuts">
         <View style={[settingsStyles.card, styles.mobileCard]}>
           <Text style={styles.mobileText}>Keyboard shortcuts are only available on desktop.</Text>
         </View>
-      </View>
+      </SettingsSection>
     );
   }
 
-  return (
-    <View style={settingsStyles.section}>
-      <View style={settingsStyles.sectionHeader}>
-        <Text style={settingsStyles.sectionHeaderTitle}>Shortcuts</Text>
-        {hasOverrides && (
-          <Button variant="ghost" size="sm" onPress={() => void resetAll()}>
-            Reset all
-          </Button>
-        )}
-      </View>
+  const resetAllButton = hasOverrides ? (
+    <Button variant="ghost" size="sm" onPress={() => void resetAll()}>
+      Reset all
+    </Button>
+  ) : undefined;
 
-      {sections.map(function (section) {
+  return (
+    <>
+      {sections.map(function (section, sectionIndex) {
         return (
-          <View key={section.id}>
-            <Text style={styles.subsectionTitle}>{section.title}</Text>
+          <SettingsSection
+            key={section.id}
+            title={section.title}
+            trailing={sectionIndex === 0 ? resetAllButton : undefined}
+          >
             <View style={settingsStyles.card}>
               {section.rows.map(function (row, index) {
                 const bindingId = getBindingIdForAction(row.id, {
@@ -233,22 +233,14 @@ export function KeyboardShortcutsSection() {
                 );
               })}
             </View>
-          </View>
+          </SettingsSection>
         );
       })}
-    </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  subsectionTitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    marginBottom: theme.spacing[2],
-    marginTop: theme.spacing[4],
-    marginLeft: theme.spacing[1],
-  },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",

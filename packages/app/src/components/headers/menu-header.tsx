@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
-import { Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PanelLeft } from "lucide-react-native";
 import { ScreenHeader } from "./screen-header";
+import { ScreenTitle } from "./screen-title";
 import { HeaderToggleButton } from "./header-toggle-button";
 import { usePanelStore } from "@/stores/panel-store";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -83,11 +84,7 @@ export function MenuHeader({ title, rightContent, borderless }: MenuHeaderProps)
       left={
         <>
           <SidebarMenuToggle />
-          {title && (
-            <Text style={styles.title} numberOfLines={1}>
-              {title}
-            </Text>
-          )}
+          {title && <ScreenTitle>{title}</ScreenTitle>}
         </>
       }
       right={rightContent}
@@ -100,15 +97,6 @@ export function MenuHeader({ title, rightContent, borderless }: MenuHeaderProps)
 const styles = StyleSheet.create((theme) => ({
   left: {
     gap: theme.spacing[2],
-  },
-  title: {
-    flex: 1,
-    fontSize: theme.fontSize.base,
-    fontWeight: {
-      xs: "400",
-      md: "300",
-    },
-    color: theme.colors.foreground,
   },
   mobileMenuIcon: {
     width: MOBILE_MENU_LINE_WIDTH,

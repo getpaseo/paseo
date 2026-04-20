@@ -10,13 +10,17 @@ import type {
 
 function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorkspaceEntry {
   return {
-    workspaceKey: "srv:/repo",
+    workspaceKey: "srv:ws-root",
     serverId: "srv",
-    workspaceId: "/repo",
-    workspaceKind: "directory",
+    workspaceId: "ws-root",
+    workspaceDirectory: "/repo",
+    projectKind: "git",
+    workspaceKind: "checkout",
     name: "paseo",
     statusBucket: "done",
     diffStat: null,
+    scripts: [],
+    hasRunningScripts: false,
     ...overrides,
   };
 }
@@ -27,9 +31,6 @@ function project(overrides: Partial<SidebarProjectEntry> = {}): SidebarProjectEn
     projectName: "paseo",
     projectKind: "git",
     iconWorkingDir: "/repo",
-    statusBucket: "done",
-    activeCount: 0,
-    totalWorkspaces: 1,
     workspaces: [workspace()],
     ...overrides,
   };
@@ -38,14 +39,14 @@ function project(overrides: Partial<SidebarProjectEntry> = {}): SidebarProjectEn
 describe("buildSidebarProjectRowModel", () => {
   it("flattens non-git projects with one workspace into a direct workspace row model", () => {
     const flattenedWorkspace = workspace({
-      workspaceId: "/repo/non-git",
-      workspaceKind: "directory",
+      workspaceId: "ws-non-git",
+      workspaceKind: "checkout",
       statusBucket: "running",
     });
 
     const result = buildSidebarProjectRowModel({
       project: project({
-        projectKind: "non_git",
+        projectKind: "directory",
         workspaces: [flattenedWorkspace],
       }),
       collapsed: false,
@@ -63,19 +64,19 @@ describe("buildSidebarProjectRowModel", () => {
   it("marks flattened non-git project rows as selected when their workspace is active", () => {
     const flattenedWorkspace = workspace({
       serverId: "srv-2",
-      workspaceId: "/repo/non-git",
+      workspaceId: "ws-non-git",
     });
 
     const result = buildSidebarProjectRowModel({
       project: project({
-        projectKind: "non_git",
+        projectKind: "directory",
         workspaces: [flattenedWorkspace],
       }),
       collapsed: false,
       serverId: "srv-2",
       activeWorkspaceSelection: {
         serverId: "srv-2",
-        workspaceId: "/repo/non-git",
+        workspaceId: "ws-non-git",
       },
     });
 
@@ -86,15 +87,15 @@ describe("buildSidebarProjectRowModel", () => {
   });
 
   it("keeps single-workspace git projects as sections with the new worktree action", () => {
-    const flattenedWorkspace = workspace({
-      workspaceId: "/repo/main",
-      workspaceKind: "local_checkout",
+    const onlyWorkspace = workspace({
+      workspaceId: "ws-main",
+      workspaceKind: "checkout",
     });
 
     const result = buildSidebarProjectRowModel({
       project: project({
         projectKind: "git",
-        workspaces: [flattenedWorkspace],
+        workspaces: [onlyWorkspace],
       }),
       collapsed: true,
     });
@@ -111,8 +112,8 @@ describe("buildSidebarProjectRowModel", () => {
       project: project({
         projectKind: "git",
         workspaces: [
-          workspace({ workspaceId: "/repo/main", workspaceKind: "local_checkout" }),
-          workspace({ workspaceId: "/repo/feature", workspaceKind: "worktree" }),
+          workspace({ workspaceId: "ws-main", workspaceKind: "checkout" }),
+          workspace({ workspaceId: "ws-feature", workspaceKind: "worktree" }),
         ],
       }),
       collapsed: true,
@@ -132,7 +133,7 @@ describe("isSidebarProjectFlattened", () => {
       isSidebarProjectFlattened(project({ projectKind: "git", workspaces: [workspace()] })),
     ).toBe(false);
     expect(
-      isSidebarProjectFlattened(project({ projectKind: "non_git", workspaces: [workspace()] })),
+      isSidebarProjectFlattened(project({ projectKind: "directory", workspaces: [workspace()] })),
     ).toBe(true);
   });
 
@@ -141,8 +142,8 @@ describe("isSidebarProjectFlattened", () => {
       isSidebarProjectFlattened(
         project({
           workspaces: [
-            workspace({ workspaceId: "/repo/main" }),
-            workspace({ workspaceId: "/repo/feat" }),
+            workspace({ workspaceId: "ws-main" }),
+            workspace({ workspaceId: "ws-feat" }),
           ],
         }),
       ),

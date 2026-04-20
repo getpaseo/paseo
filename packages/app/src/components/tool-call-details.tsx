@@ -6,6 +6,7 @@ import { Fonts } from "@/constants/theme";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import { buildLineDiff, parseUnifiedDiff } from "@/utils/tool-call-parsers";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
@@ -30,6 +31,7 @@ export function ToolCallDetailsContent({
   showLoadingSkeleton = false,
 }: ToolCallDetailsContentProps) {
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
+  const webScrollbarStyle = useWebScrollbarStyle();
 
   // Compute diff lines for edit type
   const diffLines = useMemo(() => {
@@ -65,6 +67,7 @@ export function ToolCallDetailsContent({
               styles.codeVerticalScroll,
               resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
               shouldFill && styles.fillHeight,
+              webScrollbarStyle,
             ]}
             contentContainerStyle={styles.codeVerticalContent}
             nestedScrollEnabled
@@ -74,6 +77,7 @@ export function ToolCallDetailsContent({
               horizontal
               nestedScrollEnabled
               showsHorizontalScrollIndicator
+              style={webScrollbarStyle}
               contentContainerStyle={styles.codeHorizontalContent}
             >
               <View style={styles.codeLine}>
@@ -99,6 +103,7 @@ export function ToolCallDetailsContent({
               styles.codeVerticalScroll,
               resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
               shouldFill && styles.fillHeight,
+              webScrollbarStyle,
             ]}
             contentContainerStyle={styles.codeVerticalContent}
             nestedScrollEnabled
@@ -108,6 +113,7 @@ export function ToolCallDetailsContent({
               horizontal
               nestedScrollEnabled
               showsHorizontalScrollIndicator
+              style={webScrollbarStyle}
               contentContainerStyle={styles.codeHorizontalContent}
             >
               <View style={styles.codeLine}>
@@ -137,6 +143,7 @@ export function ToolCallDetailsContent({
               styles.codeVerticalScroll,
               resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
               shouldFill && styles.fillHeight,
+              webScrollbarStyle,
             ]}
             contentContainerStyle={styles.codeVerticalContent}
             nestedScrollEnabled
@@ -146,6 +153,7 @@ export function ToolCallDetailsContent({
               horizontal
               nestedScrollEnabled
               showsHorizontalScrollIndicator
+              style={webScrollbarStyle}
               contentContainerStyle={styles.codeHorizontalContent}
             >
               <View style={styles.codeLine}>
@@ -181,12 +189,18 @@ export function ToolCallDetailsContent({
               styles.scrollArea,
               resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
               shouldFill && styles.fillHeight,
+              webScrollbarStyle,
             ]}
             contentContainerStyle={styles.scrollContent}
             nestedScrollEnabled
             showsVerticalScrollIndicator={true}
           >
-            <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={true}>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator={true}
+              style={webScrollbarStyle}
+            >
               <Text selectable style={styles.scrollText}>
                 {detail.content}
               </Text>
@@ -204,12 +218,18 @@ export function ToolCallDetailsContent({
               styles.scrollArea,
               resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
               shouldFill && styles.fillHeight,
+              webScrollbarStyle,
             ]}
             contentContainerStyle={styles.scrollContent}
             nestedScrollEnabled
             showsVerticalScrollIndicator={true}
           >
-            <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={true}>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator={true}
+              style={webScrollbarStyle}
+            >
               <Text selectable style={styles.scrollText}>
                 {detail.content}
               </Text>
@@ -236,12 +256,18 @@ export function ToolCallDetailsContent({
             style={[
               styles.scrollArea,
               resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+              webScrollbarStyle,
             ]}
             contentContainerStyle={styles.scrollContent}
             nestedScrollEnabled
             showsVerticalScrollIndicator
           >
-            <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator
+              style={webScrollbarStyle}
+            >
               <Text selectable style={styles.scrollText}>
                 {detail.content}
               </Text>
@@ -286,12 +312,18 @@ export function ToolCallDetailsContent({
             styles.scrollArea,
             resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
             shouldFill && styles.fillHeight,
+            webScrollbarStyle,
           ]}
           contentContainerStyle={styles.scrollContent}
           nestedScrollEnabled
           showsVerticalScrollIndicator
         >
-          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={webScrollbarStyle}
+          >
             <Text selectable style={styles.scrollText}>
               {detail.result ? `${detail.url}\n\n${detail.result}` : detail.url}
             </Text>
@@ -356,7 +388,7 @@ export function ToolCallDetailsContent({
             <ScrollView
               horizontal
               nestedScrollEnabled
-              style={styles.jsonScroll}
+              style={[styles.jsonScroll, webScrollbarStyle]}
               contentContainerStyle={styles.jsonContent}
               showsHorizontalScrollIndicator={true}
             >
@@ -378,7 +410,7 @@ export function ToolCallDetailsContent({
         <ScrollView
           horizontal
           nestedScrollEnabled
-          style={[styles.jsonScroll, styles.jsonScrollError]}
+          style={[styles.jsonScroll, styles.jsonScrollError, webScrollbarStyle]}
           contentContainerStyle={styles.jsonContent}
           showsHorizontalScrollIndicator={true}
         >

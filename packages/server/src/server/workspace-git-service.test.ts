@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import path from "node:path";
+import type { GitHubService } from "../services/github-service.js";
 import type { CheckoutStatusGit, PullRequestStatusResult } from "../utils/checkout-git.js";
 import {
   WorkspaceGitServiceImpl,
@@ -32,9 +33,11 @@ function createSnapshot(
       remoteUrl: "https://github.com/acme/repo.git",
       isPaseoOwnedWorktree: false,
       isDirty: false,
+      baseRef: "main",
       aheadBehind: { ahead: 0, behind: 0 },
       aheadOfOrigin: 0,
       behindOfOrigin: 0,
+      hasRemote: true,
       diffStat: { additions: 1, deletions: 0 },
     },
     github: {
@@ -139,11 +142,37 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+function createGitHubServiceStub(): GitHubService {
+  return {
+    listPullRequests: vi.fn(async () => []),
+    listIssues: vi.fn(async () => []),
+    searchIssuesAndPrs: vi.fn(async () => ({ items: [], githubFeaturesEnabled: true })),
+    getPullRequest: vi.fn(async () => ({
+      number: 1,
+      title: "PR",
+      url: "https://github.com/acme/repo/pull/1",
+      state: "OPEN",
+      body: null,
+      baseRefName: "main",
+      headRefName: "feature",
+      labels: [],
+    })),
+    getPullRequestHeadRef: vi.fn(async () => "feature"),
+    getCurrentPullRequestStatus: vi.fn(async () => null),
+    createPullRequest: vi.fn(async () => ({
+      url: "https://github.com/acme/repo/pull/1",
+      number: 1,
+    })),
+    isAuthenticated: vi.fn(async () => true),
+    invalidate: vi.fn(),
+  };
+}
+
 function createService(options?: {
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
-  resolveGhPath?: ReturnType<typeof vi.fn>;
+  github?: GitHubService;
   resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
   hasOriginRemote?: ReturnType<typeof vi.fn>;
   runGitFetch?: ReturnType<typeof vi.fn>;
@@ -168,7 +197,7 @@ function createService(options?: {
         })),
       getPullRequestStatus:
         options?.getPullRequestStatus ?? vi.fn(async () => createPullRequestStatusResult()),
-      resolveGhPath: options?.resolveGhPath ?? vi.fn(async () => "/usr/bin/gh"),
+      github: options?.github ?? createGitHubServiceStub(),
       resolveAbsoluteGitDir: options?.resolveAbsoluteGitDir ?? vi.fn(async () => "/tmp/repo/.git"),
       hasOriginRemote: options?.hasOriginRemote ?? vi.fn(async () => false),
       runGitFetch: options?.runGitFetch ?? vi.fn(async () => {}),
@@ -266,7 +295,7 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(0);
     expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(0);
-    expect((service as any).workspaceTargets.size).toBe(0);
+    expect((service as any).workspaceTargets.size).toBe(1);
     expect((service as any).workspaceTargetSetups.size).toBe(1);
 
     checkoutStatusDeferred.resolve(createCheckoutStatus("/tmp/repo"));
@@ -293,9 +322,11 @@ describe("WorkspaceGitServiceImpl", () => {
     const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
     const resolveAbsoluteGitDir = vi.fn(async () => "/tmp/repo/.git");
 
+    let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const service = createService({
       getPullRequestStatus,
       resolveAbsoluteGitDir,
+      now: () => new Date(nowMs),
     });
 
     const [first, second] = await Promise.all([
@@ -316,9 +347,11 @@ describe("WorkspaceGitServiceImpl", () => {
     const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
     const resolveAbsoluteGitDir = vi.fn(async () => "/tmp/repo/.git");
 
+    let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const service = createService({
       getPullRequestStatus,
       resolveAbsoluteGitDir,
+      now: () => new Date(nowMs),
     });
 
     const subscription = await service.subscribe({ cwd: "/tmp/repo/." }, vi.fn());
@@ -326,8 +359,15 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(subscription.initial).toEqual(createSnapshot("/tmp/repo"));
     expect(service.peekSnapshot("/tmp/repo")).toEqual(createSnapshot("/tmp/repo"));
 
+    nowMs += 3_000;
     await service.refresh("/tmp/repo");
-    await expect(service.getSnapshot("/tmp/repo/.")).resolves.toEqual(createSnapshot("/tmp/repo"));
+    await expect(service.getSnapshot("/tmp/repo/.")).resolves.toEqual(
+      createSnapshot("/tmp/repo", {
+        github: {
+          refreshedAt: "2026-04-12T00:00:03.000Z",
+        },
+      }),
+    );
 
     expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
     expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
@@ -404,8 +444,7 @@ describe("WorkspaceGitServiceImpl", () => {
 
     expect(subscription.initial.github.pullRequest?.title).toBe("Before refresh");
 
-    service.refresh("/tmp/repo");
-    await (service as any).workspaceTargets.get("/tmp/repo")?.refreshPromise;
+    await service.refresh("/tmp/repo");
     await flushPromises();
 
     expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
@@ -433,10 +472,11 @@ describe("WorkspaceGitServiceImpl", () => {
   test("unchanged runtime snapshots do not emit duplicate updates", async () => {
     const getCheckoutStatus = vi
       .fn<() => Promise<CheckoutStatusGit>>()
-      .mockResolvedValueOnce(createCheckoutStatus("/tmp/repo"))
+      .mockResolvedValueOnce(createCheckoutStatus("/tmp/repo", { remoteUrl: null }))
       .mockResolvedValueOnce(
         createCheckoutStatus("/tmp/repo", {
           currentBranch: "feature/runtime-payloads",
+          remoteUrl: null,
           aheadBehind: { ahead: 2, behind: 0 },
           aheadOfOrigin: 2,
         }),
@@ -444,6 +484,7 @@ describe("WorkspaceGitServiceImpl", () => {
       .mockResolvedValueOnce(
         createCheckoutStatus("/tmp/repo", {
           currentBranch: "feature/runtime-payloads",
+          remoteUrl: null,
           aheadBehind: { ahead: 2, behind: 0 },
           aheadOfOrigin: 2,
         }),
@@ -461,10 +502,11 @@ describe("WorkspaceGitServiceImpl", () => {
       }),
     );
 
+    let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const service = createService({
       getCheckoutStatus,
       getPullRequestStatus,
-      now: () => new Date("2026-04-12T00:00:00.000Z"),
+      now: () => new Date(nowMs),
     });
 
     const listener = vi.fn();
@@ -472,12 +514,12 @@ describe("WorkspaceGitServiceImpl", () => {
 
     expect(subscription.initial.git.currentBranch).toBe("main");
 
-    service.refresh("/tmp/repo");
-    await (service as any).workspaceTargets.get("/tmp/repo")?.refreshPromise;
+    nowMs += 3_000;
+    await service.refresh("/tmp/repo");
     await flushPromises();
 
-    service.refresh("/tmp/repo");
-    await (service as any).workspaceTargets.get("/tmp/repo")?.refreshPromise;
+    nowMs += 3_000;
+    await service.refresh("/tmp/repo");
     await flushPromises();
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -485,21 +527,43 @@ describe("WorkspaceGitServiceImpl", () => {
       createSnapshot("/tmp/repo", {
         git: {
           currentBranch: "feature/runtime-payloads",
+          remoteUrl: null,
           aheadBehind: { ahead: 2, behind: 0 },
           aheadOfOrigin: 2,
         },
         github: {
-          pullRequest: {
-            url: "https://github.com/acme/repo/pull/123",
-            title: "Runtime payloads",
-            state: "open",
-            baseRefName: "main",
-            headRefName: "feature/runtime-payloads",
-            isMerged: false,
-          },
+          featuresEnabled: false,
+          pullRequest: null,
+          refreshedAt: null,
         },
       }),
     );
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("forced snapshot refresh emits even when the fingerprint matches", async () => {
+    const getCheckoutStatus = vi.fn(async () => createCheckoutStatus("/tmp/repo"));
+    const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
+    let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
+    const service = createService({
+      getCheckoutStatus,
+      getPullRequestStatus,
+      now: () => new Date(nowMs),
+    });
+
+    const listener = vi.fn();
+    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+
+    await service.getSnapshot("/tmp/repo", {
+      force: true,
+      reason: "test-force-emit",
+    });
+    await flushPromises();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(createSnapshot("/tmp/repo"));
 
     subscription.unsubscribe();
     service.dispose();
@@ -667,9 +731,54 @@ describe("WorkspaceGitServiceImpl", () => {
     watchCallbacks[0]?.();
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(refreshSpy).toHaveBeenCalledWith("/tmp/repo");
+    expect(refreshSpy).toHaveBeenCalledWith("/tmp/repo", {
+      force: true,
+      reason: "working-tree-watch",
+    });
 
     subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("working tree changes force a fresh diff stat for workspace subscribers", async () => {
+    const watchCallbacks: Array<{ path: string; callback: () => void }> = [];
+    const watch = vi.fn(
+      (watchPath: string, _options: { recursive: boolean }, callback: () => void) => {
+        watchCallbacks.push({ path: watchPath, callback });
+        return createWatcher() as any;
+      },
+    );
+    const getCheckoutShortstat = vi
+      .fn()
+      .mockResolvedValueOnce({ additions: 1, deletions: 0 })
+      .mockResolvedValueOnce({ additions: 8, deletions: 3 });
+    const service = createService({ getCheckoutShortstat, watch });
+    const workspaceListener = vi.fn();
+
+    const workspaceSubscription = await service.subscribe({ cwd: "/tmp/repo" }, workspaceListener);
+    const diffSubscription = await service.requestWorkingTreeWatch("/tmp/repo", vi.fn());
+
+    expect(workspaceSubscription.initial.git.diffStat).toEqual({ additions: 1, deletions: 0 });
+    const repoRootWatch = watchCallbacks.find((entry) => entry.path === "/tmp/repo");
+    expect(repoRootWatch).toBeDefined();
+
+    repoRootWatch?.callback();
+    await vi.advanceTimersByTimeAsync(500);
+    await flushPromises();
+
+    expect(getCheckoutShortstat).toHaveBeenLastCalledWith(
+      "/tmp/repo",
+      { paseoHome: "/tmp/paseo-test" },
+      { force: true },
+    );
+    expect(workspaceListener).toHaveBeenCalledWith(
+      createSnapshot("/tmp/repo", {
+        git: { diffStat: { additions: 8, deletions: 3 } },
+      }),
+    );
+
+    diffSubscription.unsubscribe();
+    workspaceSubscription.unsubscribe();
     service.dispose();
   });
 });

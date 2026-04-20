@@ -71,7 +71,6 @@ describe("daemon E2E", () => {
       await ctx.client.fetchAgentTimeline(agent.id, {
         direction: "tail",
         limit: 200,
-        projection: "projected",
       });
       const refreshedResult = await ctx.client.fetchAgent(agent.id);
 
@@ -89,7 +88,6 @@ describe("daemon E2E", () => {
       await ctx.client.fetchAgentTimeline(agent.id, {
         direction: "tail",
         limit: 200,
-        projection: "projected",
       });
       const clearResult = await ctx.client.fetchAgent(agent.id);
 

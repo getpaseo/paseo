@@ -130,7 +130,7 @@ Single file, validated with `PersistedConfigSchema`.
   version: 1,
   daemon: {
     listen: "127.0.0.1:6767",
-    allowedHosts: true | string[],
+    hostnames: true | string[],
     mcp: { enabled: boolean },
     cors: { allowedOrigins: string[] },
     relay: { enabled: boolean, endpoint: string, publicEndpoint: string }

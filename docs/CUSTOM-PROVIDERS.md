@@ -107,6 +107,7 @@ Required fields for custom providers:
 - `ANTHROPIC_AUTH_TOKEN` is used instead of `ANTHROPIC_API_KEY` — this is the z.ai API key
 - The `API_TIMEOUT_MS` env var extends the request timeout (z.ai can be slower than direct Anthropic)
 - If you get auth errors, run `/logout` inside Claude Code before switching to the z.ai provider
+- Web search (`WebSearch` tool) is an Anthropic-only server-side feature — third-party endpoints don't support it. Add `"disallowedTools": ["WebSearch"]` to avoid errors.
 - Automated setup is also available: `npx @z_ai/coding-helper`
 - Official docs: [docs.z.ai/devpack/tool/claude](https://docs.z.ai/devpack/tool/claude)
 
@@ -173,6 +174,7 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 
 - API keys must be created in the **Singapore region**
 - The coding plan is for personal use only in interactive coding tools
+- Web search (`WebSearch` tool) is an Anthropic-only server-side feature — third-party endpoints don't support it. Add `"disallowedTools": ["WebSearch"]` to avoid errors.
 - Official docs: [alibabacloud.com/help/en/model-studio/claude-code-coding-plan](https://www.alibabacloud.com/help/en/model-studio/claude-code-coding-plan)
 
 ---
@@ -436,6 +438,7 @@ Every entry under `agents.providers` accepts these fields:
 | `command` | `string[]` | Yes (ACP only) | Command to spawn the agent process |
 | `env` | `Record<string, string>` | No | Environment variables to set for the agent process |
 | `models` | `ProviderProfileModel[]` | No | Static model list (overrides runtime discovery) |
+| `disallowedTools` | `string[]` | No | Tool names to disable for this provider (e.g. `["WebSearch"]`) |
 | `enabled` | `boolean` | No | Set to `false` to hide the provider (default: `true`) |
 | `order` | `number` | No | Sort order in the provider list |
 
@@ -459,6 +462,29 @@ Each entry in the `models` array:
 | `label` | `string` | Yes | Display name |
 | `description` | `string` | No | Short description |
 | `isDefault` | `boolean` | No | Mark as the default thinking option |
+
+### Gotcha: `extends: "claude"` with third-party endpoints
+
+When a custom provider extends `"claude"` but points `ANTHROPIC_BASE_URL` at a non-Anthropic API (Z.AI, Alibaba/Qwen, proxies), the Claude Agent SDK may try to use Anthropic-only server-side tools like `WebSearch`. Third-party APIs don't support these tools, causing errors.
+
+Use `disallowedTools` to disable unsupported tools:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-proxy": {
+        "extends": "claude",
+        "label": "My Proxy",
+        "env": {
+          "ANTHROPIC_BASE_URL": "https://my-proxy.example.com/v1"
+        },
+        "disallowedTools": ["WebSearch"]
+      }
+    }
+  }
+}
+```
 
 ### Valid `extends` values
 

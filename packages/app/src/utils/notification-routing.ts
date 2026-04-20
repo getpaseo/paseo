@@ -23,7 +23,7 @@ export function resolveNotificationTarget(data: NotificationData): {
   return {
     serverId: readNonEmptyString(data, "serverId"),
     agentId: readNonEmptyString(data, "agentId"),
-    workspaceId: readNonEmptyString(data, "workspaceId") ?? readNonEmptyString(data, "cwd"),
+    workspaceId: readNonEmptyString(data, "workspaceId"),
   };
 }
 

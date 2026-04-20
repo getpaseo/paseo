@@ -52,6 +52,8 @@ import {
   resolveAgentModelSelection,
 } from "@/components/agent-status-bar.utils";
 import { isWeb as platformIsWeb } from "@/constants/platform";
+import { useToast } from "@/contexts/toast-context";
+import { toErrorMessage } from "@/utils/error-messages";
 
 type StatusOption = {
   id: string;
@@ -424,12 +426,7 @@ function ControlledStatusBar({
 
           {thinkingOptions && thinkingOptions.length > 0 ? (
             <>
-              <Tooltip
-                key={`thinking-${openSelector === "thinking" ? "open" : "closed"}`}
-                delayDuration={0}
-                enabledOnDesktop
-                enabledOnMobile={false}
-              >
+              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild triggerRefProp="ref">
                   <Pressable
                     ref={thinkingAnchorRef}
@@ -470,12 +467,7 @@ function ControlledStatusBar({
 
           {modeOptions && modeOptions.length > 0 ? (
             <>
-              <Tooltip
-                key={`mode-${openSelector === "mode" ? "open" : "closed"}`}
-                delayDuration={0}
-                enabledOnDesktop
-                enabledOnMobile={false}
-              >
+              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild triggerRefProp="ref">
                   <Pressable
                     ref={modeAnchorRef}
@@ -873,13 +865,13 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const toast = useToast();
 
   const {
     entries: snapshotEntries,
     isLoading: snapshotIsLoading,
-    isFetching: snapshotIsFetching,
-    invalidate: invalidateSnapshot,
-  } = useProvidersSnapshot(serverId);
+    refetchIfStale: refetchSnapshotIfStale,
+  } = useProvidersSnapshot(serverId, agent?.cwd);
 
   const snapshotModels = useMemo(() => {
     if (!snapshotEntries || !agent?.provider) {
@@ -964,6 +956,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         }
         void client.setAgentMode(agentId, modeId).catch((error) => {
           console.warn("[AgentStatusBar] setAgentMode failed", error);
+          toast.error(toErrorMessage(error));
         });
       }}
       modelOptions={modelOptions}
@@ -985,6 +978,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         });
         void client.setAgentModel(agentId, modelId).catch((error) => {
           console.warn("[AgentStatusBar] setAgentModel failed", error);
+          toast.error(toErrorMessage(error));
         });
       }}
       favoriteKeys={favoriteKeys}
@@ -1020,6 +1014,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         }
         void client.setAgentThinkingOption(agentId, thinkingOptionId).catch((error) => {
           console.warn("[AgentStatusBar] setAgentThinkingOption failed", error);
+          toast.error(toErrorMessage(error));
         });
       }}
       features={agent.features}
@@ -1042,10 +1037,11 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         });
         void client.setAgentFeature(agentId, featureId, value).catch((error) => {
           console.warn("[AgentStatusBar] setAgentFeature failed", error);
+          toast.error(toErrorMessage(error));
         });
       }}
-      isModelLoading={snapshotIsLoading || snapshotIsFetching}
-      onModelSelectorOpen={invalidateSnapshot}
+      isModelLoading={snapshotIsLoading}
+      onModelSelectorOpen={refetchSnapshotIfStale}
       onDropdownClose={onDropdownClose}
       disabled={!client}
     />

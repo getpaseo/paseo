@@ -86,7 +86,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
   const isScreenFocused = useIsFocused();
   const isAppVisible = useAppVisible();
   const { theme } = useUnistyles();
-  const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme.colors.terminal]);
+  const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
   const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const openAgentList = usePanelStore((state) => state.openAgentList);

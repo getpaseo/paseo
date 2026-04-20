@@ -1,12 +1,10 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useId, useMemo } from "react";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useId, useMemo } from "react";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePanelStore } from "@/stores/panel-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { SubscribeCheckoutDiffResponse } from "@server/shared/messages";
 import { orderCheckoutDiffFiles } from "./checkout-diff-order";
-
-const CHECKOUT_DIFF_STALE_TIME = 30_000;
 
 function checkoutDiffQueryKey(
   serverId: string,
@@ -78,24 +76,10 @@ export function useCheckoutDiffQuery({
     [serverId, cwd, mode, baseRef, compareIgnoreWhitespace],
   );
 
-  const query = useQuery({
+  const query = useQuery<CheckoutDiffQueryPayload>({
     queryKey,
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Daemon client not available");
-      }
-      const payload = await client.getCheckoutDiff(cwd, {
-        mode: compareMode,
-        baseRef: compareBaseRef,
-        ignoreWhitespace: compareIgnoreWhitespace,
-      });
-      return {
-        ...payload,
-        files: orderCheckoutDiffFiles(payload.files),
-      };
-    },
-    enabled: !!client && isConnected && !!cwd && enabled,
-    staleTime: CHECKOUT_DIFF_STALE_TIME,
+    queryFn: skipToken,
+    staleTime: Infinity,
   });
 
   useEffect(() => {
@@ -118,9 +102,6 @@ export function useCheckoutDiffQuery({
     let cancelled = false;
 
     const unsubscribeUpdate = client.on("checkout_diff_update", (message) => {
-      if (message.type !== "checkout_diff_update") {
-        return;
-      }
       if (message.payload.subscriptionId !== subscriptionId) {
         return;
       }
@@ -134,9 +115,6 @@ export function useCheckoutDiffQuery({
     const unsubscribeSubscribeResponse = client.on(
       "subscribe_checkout_diff_response",
       (message) => {
-        if (message.type !== "subscribe_checkout_diff_response") {
-          return;
-        }
         if (message.payload.subscriptionId !== subscriptionId) {
           return;
         }
@@ -207,20 +185,15 @@ export function useCheckoutDiffQuery({
     queryClient,
   ]);
 
-  const refresh = useCallback(() => {
-    return query.refetch();
-  }, [query]);
-
   const payload = query.data ?? null;
   const payloadError = payload?.error ?? null;
 
   return {
     files: payload?.files ?? [],
     payloadError,
-    isLoading: query.isLoading,
-    isFetching: query.isFetching,
-    isError: query.isError || Boolean(payloadError),
-    error: query.error,
-    refresh,
+    isLoading: payload === null && enabled && isConnected,
+    isFetching: false,
+    isError: Boolean(payloadError),
+    error: null,
   };
 }

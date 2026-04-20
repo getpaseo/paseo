@@ -207,6 +207,44 @@ describe("shared messages stream parsing", () => {
     }
   });
 
+  it("parses permission request detail compatibly", () => {
+    const parsed = AgentStreamMessageSchema.parse({
+      type: "agent_stream",
+      payload: {
+        agentId: "agent_live",
+        timestamp: "2026-02-08T20:10:00.000Z",
+        event: {
+          type: "permission_requested",
+          provider: "opencode",
+          request: {
+            id: "perm-shell-1",
+            provider: "opencode",
+            name: "external_directory",
+            kind: "tool",
+            title: "Access external directory",
+            input: {
+              command: "ls /tmp/outside",
+            },
+            detail: {
+              type: "shell",
+              command: "ls /tmp/outside",
+              cwd: "/home/dev/project",
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.payload.event.type).toBe("permission_requested");
+    if (parsed.payload.event.type === "permission_requested") {
+      expect(parsed.payload.event.request.detail).toEqual({
+        type: "shell",
+        command: "ls /tmp/outside",
+        cwd: "/home/dev/project",
+      });
+    }
+  });
+
   it("rejects removed initialize_agent_request inbound payload", () => {
     const parsed = SessionInboundMessageSchema.safeParse({
       type: "initialize_agent_request",

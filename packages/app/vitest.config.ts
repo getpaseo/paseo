@@ -36,6 +36,21 @@ export default defineConfig({
     },
   },
   resolve: {
+    extensions: [
+      ".web.mjs",
+      ".web.js",
+      ".web.mts",
+      ".web.ts",
+      ".web.jsx",
+      ".web.tsx",
+      ".mjs",
+      ".js",
+      ".mts",
+      ".ts",
+      ".jsx",
+      ".tsx",
+      ".json",
+    ],
     alias: [
       {
         find: /^@getpaseo\/relay\/e2ee$/,

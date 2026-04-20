@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { startCommand } from "./start.js";
 import { runStatusCommand } from "./status.js";
 import { runStopCommand } from "./stop.js";
@@ -36,10 +36,27 @@ export function createDaemonCommand(): Command {
     .option("--no-mcp", "Disable Agent MCP on restarted daemon")
     .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
     .option(
-      "--allowed-hosts <hosts>",
-      'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")',
+      "--hostnames <hosts>",
+      'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',
     )
-    .action(withOutput(runRestartCommand));
+    .addOption(new Option("--allowed-hosts <hosts>").hideHelp())
+    .action(
+      withOutput((...args) => {
+        const [options, command] = args.slice(-2) as [(typeof args)[number], Command];
+        return runRestartCommand(
+          {
+            ...options,
+            hostnames:
+              typeof options.hostnames === "string"
+                ? options.hostnames
+                : typeof options.allowedHosts === "string"
+                  ? options.allowedHosts
+                  : undefined,
+          },
+          command,
+        );
+      }),
+    );
 
   return daemon;
 }

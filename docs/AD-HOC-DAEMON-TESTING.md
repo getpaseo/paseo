@@ -23,7 +23,7 @@ const daemon = await createPaseoDaemon(
     listen: "127.0.0.1:0", // OS picks a free port
     paseoHome,
     corsAllowedOrigins: [],
-    allowedHosts: true,
+    hostnames: true,
     mcpEnabled: false,
     staticDir,
     mcpDebug: false,

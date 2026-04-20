@@ -81,6 +81,8 @@ export interface ComboboxProps {
   desktopFixedHeight?: number;
   /** Content rendered above the scroll area on desktop (sticky header). */
   stickyHeader?: ReactNode;
+  /** When true, selecting an option does not close the picker (multi-select mode). */
+  keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
   children?: ReactNode;
 }
@@ -99,7 +101,21 @@ function toNumericStyleValue(value: unknown): number | null {
 }
 
 function ComboboxSheetBackground({ style }: BottomSheetBackgroundProps) {
-  return <Animated.View pointerEvents="none" style={[style, styles.bottomSheetBackground]} />;
+  const { theme } = useUnistyles();
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        style,
+        {
+          backgroundColor: theme.colors.surface0,
+          borderTopLeftRadius: theme.borderRadius["2xl"],
+          borderTopRightRadius: theme.borderRadius["2xl"],
+        },
+      ]}
+    />
+  );
 }
 
 export interface SearchInputProps {
@@ -262,9 +278,11 @@ export function Combobox({
   desktopMinWidth,
   desktopFixedHeight,
   stickyHeader,
+  keepOpenOnSelect = false,
   anchorRef,
   children,
 }: ComboboxProps): ReactElement {
+  const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
   const effectiveOptionsPosition = isMobile ? "below-search" : optionsPosition;
   const isDesktopAboveSearch = !isMobile && isWeb && effectiveOptionsPosition === "above-search";
@@ -440,7 +458,7 @@ export function Combobox({
         ? clampedMeasuredTopStartLeft !== null && measuredTopStartBottom !== null
         : floatingLeft !== null &&
           floatingTop !== null &&
-          (hasNonZeroFloatingPosition || !referenceAtOrigin));
+          (hasNonZeroFloatingPosition || referenceAtOrigin));
   const shouldHideDesktopContent = desktopPreventInitialFlash && !hasResolvedDesktopPosition;
   const shouldUseDesktopFade = !desktopPreventInitialFlash;
 
@@ -587,9 +605,11 @@ export function Combobox({
   const handleSelect = useCallback(
     (id: string) => {
       onSelect(id);
-      handleClose();
+      if (!keepOpenOnSelect) {
+        handleClose();
+      }
     },
-    [handleClose, onSelect],
+    [handleClose, keepOpenOnSelect, onSelect],
   );
 
   const handleSubmitSearch = useCallback(() => {
@@ -709,12 +729,12 @@ export function Combobox({
         enableDismissOnClose={enableDismissOnClose}
         stackBehavior={stackBehavior}
         backgroundComponent={ComboboxSheetBackground}
-        handleIndicatorStyle={styles.bottomSheetHandle}
+        handleIndicatorStyle={{ backgroundColor: theme.colors.palette.zinc[600] }}
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
       >
         <View style={styles.bottomSheetHeader}>
-          <Text style={styles.comboboxTitle}>{title}</Text>
+          <Text style={[styles.comboboxTitle, { color: theme.colors.foreground }]}>{title}</Text>
         </View>
         {stickyHeader}
         {!children && searchable ? searchInput : null}
@@ -779,6 +799,7 @@ export function Combobox({
             </>
           ) : (
             <>
+              {stickyHeader}
               {searchable ? searchInput : null}
               {effectiveOptionsPosition === "above-search" ? (
                 <ScrollView
@@ -890,6 +911,7 @@ const styles = StyleSheet.create((theme) => ({
   comboboxItemLabel: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+    flexShrink: 0,
   },
   comboboxItemDescription: {
     fontSize: theme.fontSize.xs,
@@ -901,14 +923,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-  },
-  bottomSheetBackground: {
-    backgroundColor: theme.colors.surface0,
-    borderTopLeftRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius["2xl"],
-  },
-  bottomSheetHandle: {
-    backgroundColor: theme.colors.palette.zinc[600],
   },
   bottomSheetHeader: {
     paddingHorizontal: theme.spacing[6],

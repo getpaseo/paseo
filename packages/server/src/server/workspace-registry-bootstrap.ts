@@ -93,6 +93,7 @@ export async function bootstrapWorkspaceRegistries(options: {
 
   for (const [workspaceId, entry] of recordsByWorkspaceId.entries()) {
     const { placement, records: workspaceRecords } = entry;
+    const workspaceCwd = placement.checkout.cwd;
     let workspaceCreatedAt: string | null = null;
     let workspaceUpdatedAt: string | null = null;
     for (const record of workspaceRecords) {
@@ -106,10 +107,10 @@ export async function bootstrapWorkspaceRegistries(options: {
       createPersistedWorkspaceRecord({
         workspaceId,
         projectId: placement.projectKey,
-        cwd: workspaceId,
+        cwd: workspaceCwd,
         kind: deriveWorkspaceKind(placement.checkout),
         displayName: deriveWorkspaceDisplayName({
-          cwd: workspaceId,
+          cwd: workspaceCwd,
           checkout: placement.checkout,
         }),
         createdAt,
@@ -129,7 +130,7 @@ export async function bootstrapWorkspaceRegistries(options: {
       createPersistedProjectRecord({
         projectId: placement.projectKey,
         rootPath: deriveProjectRootPath({
-          cwd: workspaceId,
+          cwd: workspaceCwd,
           checkout: placement.checkout,
         }),
         kind: deriveProjectKind(placement.checkout),

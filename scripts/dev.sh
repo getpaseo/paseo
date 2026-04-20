@@ -51,4 +51,4 @@ concurrently \
   --names "daemon,metro" \
   --prefix-colors "cyan,magenta" \
   "portless run --name daemon sh -c 'PASEO_LISTEN=0.0.0.0:\$PORT exec npm run dev:server'" \
-  "cd packages/app && BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON='${DAEMON_ENDPOINT}' portless run --name app npx expo start"
+  "cd packages/app && BROWSER=none APP_VARIANT=development EXPO_PUBLIC_LOCAL_DAEMON='${DAEMON_ENDPOINT}' portless run --name app npx expo start"

@@ -4,9 +4,16 @@ import { open as openFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
-import { findExecutable } from "./executable.js";
+import {
+  GitHubAuthenticationError,
+  GitHubCliMissingError,
+  createGitHubService,
+  resolveGitHubRepo,
+  type GitHubRepoRemoteUrlResolver,
+  type GitHubService,
+} from "../services/github-service.js";
+import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
-import { execCommand } from "./spawn.js";
 import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
 import { requirePaseoWorktreeBaseRefName } from "./worktree-metadata.js";
 const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
@@ -16,11 +23,20 @@ const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
 
 const DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS = 30_000;
 const PULL_REQUEST_STATUS_CACHE_MAX = 1_000;
+const DEFAULT_SHORTSTAT_CACHE_TTL_MS = 15_000;
+const SHORTSTAT_CACHE_MAX = 1_000;
 
 let pullRequestStatusCacheTtlMs = DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS;
 let pullRequestStatusCache = createPullRequestStatusCache(pullRequestStatusCacheTtlMs);
 const pullRequestStatusInFlight = new Map<string, Promise<PullRequestStatusResult>>();
-let cachedGhPath: string | null | undefined = undefined;
+let shortstatCacheTtlMs = DEFAULT_SHORTSTAT_CACHE_TTL_MS;
+let shortstatCache = createShortstatCache(shortstatCacheTtlMs);
+const shortstatInFlight = new Map<string, Promise<CheckoutShortstat | null>>();
+
+interface CheckoutReadCacheOptions {
+  force?: boolean;
+  reason?: string;
+}
 
 function createPullRequestStatusCache(ttlMs: number) {
   return new TTLCache<string, PullRequestStatusResult>({
@@ -30,7 +46,19 @@ function createPullRequestStatusCache(ttlMs: number) {
   });
 }
 
+function createShortstatCache(ttlMs: number) {
+  return new TTLCache<string, CheckoutShortstat | null>({
+    ttl: ttlMs,
+    max: SHORTSTAT_CACHE_MAX,
+    checkAgeOnGet: true,
+  });
+}
+
 function getPullRequestStatusCacheKey(cwd: string): string {
+  return resolve(cwd);
+}
+
+function getShortstatCacheKey(cwd: string): string {
   return resolve(cwd);
 }
 
@@ -50,12 +78,20 @@ export function __setPullRequestStatusCacheTtlForTests(ttlMs: number): void {
   pullRequestStatusInFlight.clear();
 }
 
-export function __resetGhPathCacheForTests(): void {
-  cachedGhPath = undefined;
+export function __resetCheckoutShortstatCacheForTests(): void {
+  shortstatCache.clear();
+  shortstatCache.cancelTimer();
+  shortstatCacheTtlMs = DEFAULT_SHORTSTAT_CACHE_TTL_MS;
+  shortstatCache = createShortstatCache(shortstatCacheTtlMs);
+  shortstatInFlight.clear();
 }
 
-export function __setGhPathForTests(path: string | null): void {
-  cachedGhPath = path;
+export function __setCheckoutShortstatCacheTtlForTests(ttlMs: number): void {
+  shortstatCache.clear();
+  shortstatCache.cancelTimer();
+  shortstatCacheTtlMs = ttlMs;
+  shortstatCache = createShortstatCache(ttlMs);
+  shortstatInFlight.clear();
 }
 
 type CheckoutFileChange = {
@@ -96,6 +132,13 @@ interface GitRef {
   committerDate: number;
 }
 
+export interface BranchSuggestion {
+  name: string;
+  committerDate: number;
+  hasLocal: boolean;
+  hasRemote: boolean;
+}
+
 async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
   const { stdout } = await runGitCommand(
     [
@@ -118,9 +161,15 @@ async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
     .filter((ref): ref is GitRef => ref !== null);
 }
 
+interface BranchSuggestionMeta {
+  committerDate: number;
+  hasLocal: boolean;
+  hasRemote: boolean;
+}
+
 function sortBranchSuggestions(
   branchNames: string[],
-  branchMeta: Map<string, { isLocal: boolean; committerDate: number }>,
+  branchMeta: Map<string, BranchSuggestionMeta>,
   query: string,
 ): string[] {
   const normalizedQuery = query.trim().toLowerCase();
@@ -149,7 +198,7 @@ function sortBranchSuggestions(
 export async function listBranchSuggestions(
   cwd: string,
   options?: { query?: string; limit?: number },
-): Promise<string[]> {
+): Promise<BranchSuggestion[]> {
   await requireGitRepo(cwd);
 
   const requestedLimit = options?.limit ?? 50;
@@ -161,14 +210,15 @@ export async function listBranchSuggestions(
     listGitRefs(cwd, "refs/remotes/origin"),
   ]);
 
-  const branchMeta = new Map<string, { isLocal: boolean; committerDate: number }>();
+  const branchMeta = new Map<string, BranchSuggestionMeta>();
 
   for (const ref of localRefs) {
     const normalized = normalizeBranchSuggestionName(ref.name);
     if (!normalized) continue;
     const existing = branchMeta.get(normalized);
     branchMeta.set(normalized, {
-      isLocal: true,
+      hasLocal: true,
+      hasRemote: existing?.hasRemote ?? false,
       committerDate: Math.max(ref.committerDate, existing?.committerDate ?? 0),
     });
   }
@@ -178,10 +228,15 @@ export async function listBranchSuggestions(
     if (!normalized) continue;
     const existing = branchMeta.get(normalized);
     if (!existing) {
-      branchMeta.set(normalized, { isLocal: false, committerDate: ref.committerDate });
+      branchMeta.set(normalized, {
+        hasLocal: false,
+        hasRemote: true,
+        committerDate: ref.committerDate,
+      });
     } else {
       branchMeta.set(normalized, {
         ...existing,
+        hasRemote: true,
         committerDate: Math.max(ref.committerDate, existing.committerDate),
       });
     }
@@ -195,7 +250,110 @@ export async function listBranchSuggestions(
   }
 
   const ordered = sortBranchSuggestions(filteredNames, branchMeta, query);
-  return ordered.slice(0, limit);
+  return ordered.slice(0, limit).map((name) => {
+    const meta = branchMeta.get(name);
+    return {
+      name,
+      committerDate: meta?.committerDate ?? 0,
+      hasLocal: meta?.hasLocal ?? false,
+      hasRemote: meta?.hasRemote ?? false,
+    };
+  });
+}
+
+export interface LocalBranchCheckoutResolution {
+  kind: "local";
+  name: string;
+}
+
+export interface RemoteOnlyBranchCheckoutResolution {
+  kind: "remote-only";
+  name: string;
+  remoteRef: string;
+}
+
+export interface NotFoundBranchCheckoutResolution {
+  kind: "not-found";
+}
+
+export type BranchCheckoutResolution =
+  | LocalBranchCheckoutResolution
+  | RemoteOnlyBranchCheckoutResolution
+  | NotFoundBranchCheckoutResolution;
+
+export async function resolveBranchCheckout(
+  cwd: string,
+  name: string,
+): Promise<BranchCheckoutResolution> {
+  await requireGitRepo(cwd);
+
+  const normalized = normalizeBranchSuggestionName(name);
+  if (!normalized) {
+    return { kind: "not-found" };
+  }
+
+  const localRef = `refs/heads/${normalized}`;
+  const localResult = await runGitCommand(["rev-parse", "--verify", "--quiet", localRef], {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+    acceptExitCodes: [0, 1],
+  });
+  const hasLocal = localResult.exitCode === 0;
+  if (hasLocal) {
+    return { kind: "local", name: normalized };
+  }
+
+  const remoteRef = `origin/${normalized}`;
+  const remoteRefPath = `refs/remotes/${remoteRef}`;
+  const remoteResult = await runGitCommand(["rev-parse", "--verify", "--quiet", remoteRefPath], {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+    acceptExitCodes: [0, 1],
+  });
+  const hasRemote = remoteResult.exitCode === 0;
+  if (hasRemote) {
+    return { kind: "remote-only", name: normalized, remoteRef };
+  }
+
+  return { kind: "not-found" };
+}
+
+export type BranchCheckoutSource = "local" | "remote";
+
+export interface CheckoutExistingBranchResult {
+  source: BranchCheckoutSource;
+}
+
+export interface CheckoutResolvedBranchInput {
+  cwd: string;
+  resolution: BranchCheckoutResolution;
+  requestedBranch?: string;
+}
+
+export async function checkoutResolvedBranch(
+  input: CheckoutResolvedBranchInput,
+): Promise<CheckoutExistingBranchResult> {
+  const { cwd, resolution } = input;
+
+  switch (resolution.kind) {
+    case "local": {
+      const { stdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+      const current = stdout.trim();
+      if (current === resolution.name) {
+        return { source: "local" };
+      }
+
+      await runGitCommand(["checkout", resolution.name], { cwd });
+      return { source: "local" };
+    }
+    case "remote-only":
+      await runGitCommand(["checkout", "-b", resolution.name, "--track", resolution.remoteRef], {
+        cwd,
+      });
+      return { source: "remote" };
+    case "not-found":
+      throw new Error(`Branch not found: ${input.requestedBranch ?? "unknown"}`);
+  }
 }
 
 async function listCheckoutFileChanges(
@@ -539,26 +697,25 @@ export async function getCurrentBranch(cwd: string): Promise<string | null> {
 
 async function getWorktreeRoot(cwd: string): Promise<string | null> {
   try {
-    const { stdout } = await runGitCommand(
-      ["rev-parse", "--path-format=absolute", "--show-toplevel"],
-      {
-        cwd,
-        env: READ_ONLY_GIT_ENV,
-      },
-    );
-    const root = stdout.trim();
-    return root.length > 0 ? root : null;
+    const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    return parseGitRevParsePath(stdout);
   } catch {
     return null;
   }
 }
 
 export async function getMainRepoRoot(cwd: string): Promise<string> {
-  const { stdout: commonDirOut } = await runGitCommand(
-    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    { cwd, env: READ_ONLY_GIT_ENV },
-  );
-  const commonDir = commonDirOut.trim();
+  const { stdout: commonDirOut } = await runGitCommand(["rev-parse", "--git-common-dir"], {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+  });
+  const commonDir = resolveGitRevParsePath(cwd, commonDirOut);
+  if (!commonDir) {
+    throw new Error("Not in a git repository");
+  }
   const normalized = realpathSync(commonDir);
 
   if (basename(normalized) === ".git") {
@@ -809,25 +966,59 @@ async function resolveBaseRef(repoRoot: string): Promise<string | null> {
 }
 
 function normalizeLocalBranchRefName(input: string): string {
-  return input.startsWith("origin/") ? input.slice("origin/".length) : input;
+  if (input.startsWith("refs/remotes/origin/")) {
+    return input.slice("refs/remotes/origin/".length);
+  }
+  if (input.startsWith("refs/heads/")) {
+    return input.slice("refs/heads/".length);
+  }
+  if (input.startsWith("origin/")) {
+    return input.slice("origin/".length);
+  }
+  return input;
+}
+
+interface ComparisonBaseRefName {
+  localName: string;
+  originRef: string;
+}
+
+function normalizeComparisonBaseRefName(input: string): ComparisonBaseRefName {
+  const localName = normalizeLocalBranchRefName(input);
+  return { localName, originRef: `origin/${localName}` };
 }
 
 async function doesGitRefExist(cwd: string, fullRef: string): Promise<boolean> {
-  try {
-    await runGitCommand(["show-ref", "--verify", "--quiet", fullRef], {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  const result = await runGitCommand(["show-ref", "--verify", "--quiet", fullRef], {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+    acceptExitCodes: [0, 1],
+  });
+  return result.exitCode === 0;
 }
 
-async function resolveBestComparisonBaseRef(
-  cwd: string,
-  normalizedBaseRef: string,
-): Promise<string> {
+async function resolveBestComparisonBaseRef(cwd: string, baseRef: string): Promise<string> {
+  const normalized = normalizeComparisonBaseRefName(baseRef);
+  const [hasLocal, hasOrigin] = await Promise.all([
+    doesGitRefExist(cwd, `refs/heads/${normalized.localName}`),
+    doesGitRefExist(cwd, `refs/remotes/origin/${normalized.localName}`),
+  ]);
+
+  if (hasOrigin) {
+    return normalized.originRef;
+  }
+  if (hasLocal) {
+    return normalized.localName;
+  }
+
+  const refName =
+    baseRef.startsWith("origin/") || baseRef.startsWith("refs/remotes/origin/")
+      ? normalized.originRef
+      : normalized.localName;
+  throw new Error(`Base branch not found locally or on origin: ${refName}`);
+}
+
+async function resolveMostAheadBaseRef(cwd: string, normalizedBaseRef: string): Promise<string> {
   const [hasLocal, hasOrigin] = await Promise.all([
     doesGitRefExist(cwd, `refs/heads/${normalizedBaseRef}`),
     doesGitRefExist(cwd, `refs/remotes/origin/${normalizedBaseRef}`),
@@ -843,20 +1034,18 @@ async function resolveBestComparisonBaseRef(
     throw new Error(`Base branch not found locally or on origin: ${normalizedBaseRef}`);
   }
 
-  // Both exist: choose the ref with more unique commits compared to the other.
-  try {
-    const { stdout } = await runGitCommand(
-      ["rev-list", "--left-right", "--count", `${normalizedBaseRef}...origin/${normalizedBaseRef}`],
-      { cwd, env: READ_ONLY_GIT_ENV },
-    );
-    const [localOnlyRaw, originOnlyRaw] = stdout.trim().split(/\s+/);
-    const localOnly = Number.parseInt(localOnlyRaw ?? "0", 10);
-    const originOnly = Number.parseInt(originOnlyRaw ?? "0", 10);
-    if (!Number.isNaN(localOnly) && !Number.isNaN(originOnly) && originOnly > localOnly) {
-      return `origin/${normalizedBaseRef}`;
-    }
-  } catch {
-    // ignore and fall back to local
+  const { stdout } = await runGitCommand(
+    ["rev-list", "--left-right", "--count", `${normalizedBaseRef}...origin/${normalizedBaseRef}`],
+    { cwd, env: READ_ONLY_GIT_ENV },
+  );
+  const [localOnlyRaw, originOnlyRaw] = stdout.trim().split(/\s+/);
+  const localOnly = Number.parseInt(localOnlyRaw ?? "0", 10);
+  const originOnly = Number.parseInt(originOnlyRaw ?? "0", 10);
+  if (Number.isNaN(localOnly) || Number.isNaN(originOnly)) {
+    return normalizedBaseRef;
+  }
+  if (originOnly > localOnly) {
+    return `origin/${normalizedBaseRef}`;
   }
 
   return normalizedBaseRef;
@@ -871,7 +1060,7 @@ async function getAheadBehind(
   if (!normalizedBaseRef || !currentBranch || normalizedBaseRef === currentBranch) {
     return null;
   }
-  const comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, normalizedBaseRef);
+  const comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
   const { stdout } = await runGitCommand(
     ["rev-list", "--left-right", "--count", `${comparisonBaseRef}...${currentBranch}`],
     { cwd, env: READ_ONLY_GIT_ENV },
@@ -1133,7 +1322,45 @@ export interface CheckoutShortstat {
   deletions: number;
 }
 
-export async function getCheckoutShortstat(
+function parseCheckoutShortstat(text: string): CheckoutShortstat | null {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let additions = 0;
+  let deletions = 0;
+  const addMatch = trimmed.match(/(\d+)\s+insertion/);
+  if (addMatch) {
+    additions = Number.parseInt(addMatch[1]!, 10);
+  }
+  const delMatch = trimmed.match(/(\d+)\s+deletion/);
+  if (delMatch) {
+    deletions = Number.parseInt(delMatch[1]!, 10);
+  }
+
+  if (additions === 0 && deletions === 0) {
+    return null;
+  }
+
+  return { additions, deletions };
+}
+
+function combineCheckoutShortstats(
+  first: CheckoutShortstat | null,
+  second: CheckoutShortstat | null,
+): CheckoutShortstat | null {
+  const additions = (first?.additions ?? 0) + (second?.additions ?? 0);
+  const deletions = (first?.deletions ?? 0) + (second?.deletions ?? 0);
+
+  if (additions === 0 && deletions === 0) {
+    return null;
+  }
+
+  return { additions, deletions };
+}
+
+async function getCheckoutShortstatUncached(
   cwd: string,
   context?: CheckoutContext,
 ): Promise<CheckoutShortstat | null> {
@@ -1147,69 +1374,130 @@ export async function getCheckoutShortstat(
   const localBaseRef = configured.baseRef ?? (await resolveBaseRef(cwd));
   const currentBranch = await getCurrentBranch(cwd);
 
-  let diffTarget: string;
+  let comparisonRef: string;
 
   if (currentBranch && localBaseRef && currentBranch !== localBaseRef) {
-    // Feature branch: diff against the merge-base with the base branch
-    const comparisonBaseRef = await resolveBestComparisonBaseRef(
-      cwd,
-      normalizeLocalBranchRefName(localBaseRef),
-    );
-
     try {
-      const { stdout } = await runGitCommand(["merge-base", "HEAD", comparisonBaseRef], {
-        cwd,
-        env: READ_ONLY_GIT_ENV,
-      });
-      const mergeBase = stdout.trim();
-      if (!mergeBase) {
-        return null;
-      }
-      diffTarget = mergeBase;
+      comparisonRef = await resolveBestComparisonBaseRef(cwd, localBaseRef);
     } catch {
       return null;
     }
   } else if (currentBranch) {
-    // On the base branch (or no base ref configured): diff against remote tracking branch
     const hasOrigin = await doesGitRefExist(cwd, `refs/remotes/origin/${currentBranch}`);
     if (!hasOrigin) {
       return null;
     }
-    diffTarget = `origin/${currentBranch}`;
+    comparisonRef = `origin/${currentBranch}`;
   } else {
     return null;
   }
 
   try {
-    // Omit HEAD so the diff includes uncommitted (staged + unstaged) changes
-    const { stdout } = await runGitCommand(["diff", "--shortstat", diffTarget], {
+    const { stdout: mergeBaseOut } = await runGitCommand(["merge-base", "HEAD", comparisonRef], {
       cwd,
       env: READ_ONLY_GIT_ENV,
     });
-    const text = stdout.trim();
-    if (!text) {
+    const mergeBase = mergeBaseOut.trim();
+    if (!mergeBase) {
       return null;
     }
 
-    let additions = 0;
-    let deletions = 0;
-    const addMatch = text.match(/(\d+)\s+insertion/);
-    if (addMatch) {
-      additions = Number.parseInt(addMatch[1]!, 10);
-    }
-    const delMatch = text.match(/(\d+)\s+deletion/);
-    if (delMatch) {
-      deletions = Number.parseInt(delMatch[1]!, 10);
-    }
-
-    if (additions === 0 && deletions === 0) {
+    const { stdout: aheadBehindOut } = await runGitCommand(
+      ["rev-list", "--left-right", "--count", `HEAD...${comparisonRef}`],
+      { cwd, env: READ_ONLY_GIT_ENV },
+    );
+    const [headOnlyRaw, comparisonOnlyRaw] = aheadBehindOut.trim().split(/\s+/);
+    const headOnly = Number.parseInt(headOnlyRaw ?? "0", 10);
+    const comparisonOnly = Number.parseInt(comparisonOnlyRaw ?? "0", 10);
+    if (Number.isNaN(headOnly) || Number.isNaN(comparisonOnly)) {
       return null;
     }
 
-    return { additions, deletions };
+    // Incoming uses a two-ref diff, so add the working tree diff separately.
+    const showIncoming = headOnly === 0 && comparisonOnly > 0;
+    const { stdout } = await runGitCommand(
+      ["diff", "--shortstat", mergeBase, ...(showIncoming ? [comparisonRef] : [])],
+      {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      },
+    );
+    const committedShortstat = parseCheckoutShortstat(stdout);
+
+    if (!showIncoming) {
+      return committedShortstat;
+    }
+
+    const { stdout: worktreeOut } = await runGitCommand(["diff", "--shortstat", "HEAD"], {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    return combineCheckoutShortstats(committedShortstat, parseCheckoutShortstat(worktreeOut));
   } catch {
     return null;
   }
+}
+
+function getOrLoadCheckoutShortstat(
+  cwd: string,
+  context?: CheckoutContext,
+  options?: CheckoutReadCacheOptions,
+): Promise<CheckoutShortstat | null> {
+  const cacheKey = getShortstatCacheKey(cwd);
+  if (!options?.force) {
+    const cached = shortstatCache.get(cacheKey);
+    if (cached !== undefined) {
+      return Promise.resolve(cached);
+    }
+
+    const existing = shortstatInFlight.get(cacheKey);
+    if (existing) {
+      return existing;
+    }
+  }
+
+  const load = getCheckoutShortstatUncached(cwd, context)
+    .then((shortstat) => {
+      shortstatCache.set(cacheKey, shortstat);
+      return shortstat;
+    })
+    .finally(() => {
+      shortstatInFlight.delete(cacheKey);
+    });
+
+  shortstatInFlight.set(cacheKey, load);
+  return load;
+}
+
+export async function getCheckoutShortstat(
+  cwd: string,
+  context?: CheckoutContext,
+  options?: CheckoutReadCacheOptions,
+): Promise<CheckoutShortstat | null> {
+  return getOrLoadCheckoutShortstat(cwd, context, options);
+}
+
+export function getCachedCheckoutShortstat(cwd: string): CheckoutShortstat | null | undefined {
+  return shortstatCache.get(getShortstatCacheKey(cwd));
+}
+
+export function warmCheckoutShortstatInBackground(
+  cwd: string,
+  context?: CheckoutContext,
+  onComplete?: () => void,
+): void {
+  const cacheKey = getShortstatCacheKey(cwd);
+  if (shortstatCache.get(cacheKey) !== undefined || shortstatInFlight.has(cacheKey)) {
+    return;
+  }
+
+  void getOrLoadCheckoutShortstat(cwd, context)
+    .then(() => {
+      onComplete?.();
+    })
+    .catch(() => {
+      // Non-critical: keep listing path resilient even if git commands fail.
+    });
 }
 
 export async function getCheckoutDiff(
@@ -1233,8 +1521,7 @@ export async function getCheckoutDiff(
       throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
     }
 
-    const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
-    const bestBaseRef = await resolveBestComparisonBaseRef(cwd, normalizedBaseRef);
+    const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
     refForDiff = (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef;
   }
 
@@ -1369,7 +1656,12 @@ export async function getCheckoutDiff(
       // `git diff -w --name-status` can still report a modified path even when the
       // whitespace-filtered patch and numstat are both empty. Skip emitting a
       // structured placeholder in that case so whitespace-only edits truly disappear.
-      if (ignoreWhitespace && !trackedDiffTruncated && stat === null) {
+      if (
+        ignoreWhitespace &&
+        !trackedDiffTruncated &&
+        change.status.startsWith("M") &&
+        (!stat || (!stat.isBinary && stat.additions === 0 && stat.deletions === 0))
+      ) {
         continue;
       }
 
@@ -1471,7 +1763,7 @@ export async function mergeToBase(
   cwd: string,
   options: MergeToBaseOptions = {},
   context?: CheckoutContext,
-): Promise<void> {
+): Promise<string> {
   await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   const configured = await getConfiguredBaseRefForCwd(cwd, context);
@@ -1487,11 +1779,11 @@ export async function mergeToBase(
   }
   let normalizedBaseRef = baseRef;
   normalizedBaseRef = normalizeLocalBranchRefName(normalizedBaseRef);
+  const currentWorktreeRoot = (await getWorktreeRoot(cwd)) ?? cwd;
   if (normalizedBaseRef === currentBranch) {
-    return;
+    return currentWorktreeRoot;
   }
 
-  const currentWorktreeRoot = (await getWorktreeRoot(cwd)) ?? cwd;
   const baseWorktree = await getWorktreePathForBranch(cwd, normalizedBaseRef);
   const operationCwd = baseWorktree ?? currentWorktreeRoot;
   const isSameCheckout = resolve(operationCwd) === resolve(currentWorktreeRoot);
@@ -1579,6 +1871,7 @@ export async function mergeToBase(
       }
     }
   }
+  return operationCwd;
 }
 
 export async function mergeFromBase(
@@ -1613,7 +1906,7 @@ export async function mergeFromBase(
   }
 
   const normalizedBaseRef = normalizeLocalBranchRefName(baseRef);
-  const bestBaseRef = await resolveBestComparisonBaseRef(cwd, normalizedBaseRef);
+  const bestBaseRef = await resolveMostAheadBaseRef(cwd, normalizedBaseRef);
   if (bestBaseRef === currentBranch) {
     return;
   }
@@ -1674,7 +1967,7 @@ export async function mergeFromBase(
   }
 }
 
-export async function pullCurrentBranch(cwd: string): Promise<void> {
+export async function pullCurrentBranch(cwd: string, github?: GitHubService): Promise<void> {
   await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch || currentBranch === "HEAD") {
@@ -1686,13 +1979,14 @@ export async function pullCurrentBranch(cwd: string): Promise<void> {
   }
   try {
     await runGitCommand(["pull"], { cwd, timeout: 120_000 });
+    github?.invalidate({ cwd });
   } catch (error) {
     await abortGitPullConflictState(cwd);
     throw error;
   }
 }
 
-export async function pushCurrentBranch(cwd: string): Promise<void> {
+export async function pushCurrentBranch(cwd: string, github?: GitHubService): Promise<void> {
   await requireGitRepo(cwd);
   const currentBranch = await getCurrentBranch(cwd);
   if (!currentBranch || currentBranch === "HEAD") {
@@ -1703,6 +1997,7 @@ export async function pushCurrentBranch(cwd: string): Promise<void> {
     throw new Error("Remote 'origin' is not configured.");
   }
   await runGitCommand(["push", "-u", "origin", currentBranch], { cwd, timeout: 120_000 });
+  github?.invalidate({ cwd });
 }
 
 export interface CreatePullRequestOptions {
@@ -1714,12 +2009,19 @@ export interface CreatePullRequestOptions {
 }
 
 export interface PullRequestStatus {
+  number?: number;
+  repoOwner?: string;
+  repoName?: string;
   url: string;
   title: string;
   state: string;
   baseRefName: string;
   headRefName: string;
   isMerged: boolean;
+  isDraft?: boolean;
+  checks?: PullRequestCheck[];
+  checksStatus?: ChecksStatus;
+  reviewDecision?: ReviewDecision;
 }
 
 export interface PullRequestStatusResult {
@@ -1727,83 +2029,26 @@ export interface PullRequestStatusResult {
   githubFeaturesEnabled: boolean;
 }
 
-export async function resolveGhPath(): Promise<string> {
-  if (cachedGhPath === undefined) {
-    cachedGhPath = await findExecutable("gh");
-  }
-  if (cachedGhPath === null) {
-    throw new Error("GitHub CLI (gh) is not installed or not in PATH");
-  }
-  return cachedGhPath;
-}
+export type PullRequestCheck = {
+  name: string;
+  status: "success" | "failure" | "pending" | "skipped" | "cancelled";
+  url: string | null;
+  workflow?: string;
+  duration?: string;
+};
 
-function getCommandErrorText(error: unknown): string {
-  if (!(error instanceof Error)) {
-    return String(error);
-  }
-  const stderr = typeof (error as any)?.stderr === "string" ? (error as any).stderr : "";
-  const stdout = typeof (error as any)?.stdout === "string" ? (error as any).stdout : "";
-  return `${error.message}\n${stderr}\n${stdout}`.toLowerCase();
-}
+export type ChecksStatus = "none" | "pending" | "success" | "failure";
 
-function isGhAuthError(error: unknown): boolean {
-  const text = getCommandErrorText(error);
-  return (
-    text.includes("gh auth login") ||
-    text.includes("not logged into any github hosts") ||
-    text.includes("authentication failed") ||
-    text.includes("authentication required") ||
-    text.includes("bad credentials") ||
-    text.includes("http 401")
-  );
-}
-
-async function resolveGitHubRepo(cwd: string): Promise<string | null> {
-  try {
-    const { stdout } = await runGitCommand(["config", "--get", "remote.origin.url"], {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    });
-    const url = stdout.trim();
-    if (!url) {
-      return null;
-    }
-    let cleaned = url;
-    if (cleaned.startsWith("git@github.com:")) {
-      cleaned = cleaned.slice("git@github.com:".length);
-    } else if (cleaned.startsWith("https://github.com/")) {
-      cleaned = cleaned.slice("https://github.com/".length);
-    } else if (cleaned.startsWith("http://github.com/")) {
-      cleaned = cleaned.slice("http://github.com/".length);
-    } else {
-      const marker = "github.com/";
-      const index = cleaned.indexOf(marker);
-      if (index !== -1) {
-        cleaned = cleaned.slice(index + marker.length);
-      } else {
-        return null;
-      }
-    }
-    if (cleaned.endsWith(".git")) {
-      cleaned = cleaned.slice(0, -".git".length);
-    }
-    if (!cleaned.includes("/")) {
-      return null;
-    }
-    return cleaned;
-  } catch {
-    // ignore
-  }
-  return null;
-}
+export type ReviewDecision = "approved" | "changes_requested" | "pending" | null;
 
 export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions,
+  github: GitHubService = createGitHubService(),
+  workspaceGitService: GitHubRepoRemoteUrlResolver,
 ): Promise<{ url: string; number: number }> {
   await requireGitRepo(cwd);
-  const ghPath = await resolveGhPath();
-  const repo = await resolveGitHubRepo(cwd);
+  const repo = await resolveGitHubRepo(cwd, { workspaceGitService });
   if (!repo) {
     throw new Error("Unable to determine GitHub repo from git remote");
   }
@@ -1824,34 +2069,37 @@ export async function createPullRequest(
 
   await runGitCommand(["push", "-u", "origin", head], { cwd, timeout: 120_000 });
 
-  const ghEnv: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
-  const args = ["api", "-X", "POST", `repos/${repo}/pulls`, "-f", `title=${options.title}`];
-  args.push("-f", `head=${head}`);
-  args.push("-f", `base=${normalizedBase}`);
-  if (options.body) {
-    args.push("-f", `body=${options.body}`);
-  }
-  const { stdout } = await execCommand(ghPath, args, { cwd, env: ghEnv });
-  const parsed = JSON.parse(stdout.trim());
-  if (!parsed?.url || !parsed?.number) {
-    throw new Error("GitHub CLI did not return PR url/number");
-  }
-  return { url: parsed.url, number: parsed.number };
+  const result = await github.createPullRequest({
+    cwd,
+    repo,
+    title: options.title,
+    body: options.body,
+    head,
+    base: normalizedBase,
+  });
+  github.invalidate({ cwd });
+  return result;
 }
 
-export async function getPullRequestStatus(cwd: string): Promise<PullRequestStatusResult> {
+export async function getPullRequestStatus(
+  cwd: string,
+  github: GitHubService = createGitHubService(),
+  options?: CheckoutReadCacheOptions,
+): Promise<PullRequestStatusResult> {
   const cacheKey = getPullRequestStatusCacheKey(cwd);
-  const cached = pullRequestStatusCache.get(cacheKey);
-  if (cached) {
-    return cached;
+  if (!options?.force) {
+    const cached = pullRequestStatusCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const existing = pullRequestStatusInFlight.get(cacheKey);
+    if (existing) {
+      return existing;
+    }
   }
 
-  const existing = pullRequestStatusInFlight.get(cacheKey);
-  if (existing) {
-    return existing;
-  }
-
-  const lookup = getPullRequestStatusUncached(cwd)
+  const lookup = getPullRequestStatusUncached(cwd, github, options)
     .then((status) => {
       pullRequestStatusCache.set(cacheKey, status);
       return status;
@@ -1864,7 +2112,11 @@ export async function getPullRequestStatus(cwd: string): Promise<PullRequestStat
   return lookup;
 }
 
-async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestStatusResult> {
+async function getPullRequestStatusUncached(
+  cwd: string,
+  github: GitHubService,
+  options?: CheckoutReadCacheOptions,
+): Promise<PullRequestStatusResult> {
   await requireGitRepo(cwd);
   const head = await getCurrentBranch(cwd);
   if (!head) {
@@ -1873,52 +2125,19 @@ async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestSta
       githubFeaturesEnabled: false,
     };
   }
-  let ghPath: string;
   try {
-    ghPath = await resolveGhPath();
-  } catch {
+    const status = await github.getCurrentPullRequestStatus({
+      cwd,
+      headRef: head,
+      reason: options?.reason,
+    });
     return {
-      status: null,
-      githubFeaturesEnabled: false,
-    };
-  }
-  try {
-    const { stdout } = await execCommand(
-      ghPath,
-      ["pr", "view", "--json", "url,title,state,baseRefName,headRefName,mergedAt"],
-      { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
-    );
-    const pr = JSON.parse(stdout.trim());
-    if (!pr || typeof pr !== "object" || !pr.url || !pr.title) {
-      return { status: null, githubFeaturesEnabled: true };
-    }
-    const mergedAt =
-      typeof pr.mergedAt === "string" && pr.mergedAt.trim().length > 0 ? pr.mergedAt : null;
-    const state =
-      mergedAt !== null
-        ? "merged"
-        : typeof pr.state === "string" && pr.state.trim().length > 0
-          ? pr.state.toLowerCase()
-          : "";
-    return {
-      status: {
-        url: pr.url,
-        title: pr.title,
-        state,
-        baseRefName: pr.baseRefName ?? "",
-        headRefName: pr.headRefName ?? head,
-        isMerged: mergedAt !== null,
-      },
+      status,
       githubFeaturesEnabled: true,
     };
   } catch (error) {
-    if (isGhAuthError(error)) {
+    if (error instanceof GitHubCliMissingError || error instanceof GitHubAuthenticationError) {
       return { status: null, githubFeaturesEnabled: false };
-    }
-    // gh pr view exits non-zero when no PR exists for the branch
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("no pull requests found") || message.includes("Could not resolve")) {
-      return { status: null, githubFeaturesEnabled: true };
     }
     throw error;
   }

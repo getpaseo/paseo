@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/expo-two-way-audio",
-  "version": "0.1.56",
+  "version": "0.1.60-rc.2",
   "description": "Native module for two way audio streaming",
   "main": "build/index.js",
   "types": "build/index.d.ts",

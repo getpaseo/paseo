@@ -1,5 +1,48 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@xterm/addon-clipboard", () => ({
+  ClipboardAddon: class ClipboardAddon {},
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class FitAddon {},
+}));
+
+vi.mock("@xterm/addon-image", () => ({
+  ImageAddon: class ImageAddon {},
+}));
+
+vi.mock("@xterm/addon-ligatures/lib/addon-ligatures.mjs", () => ({
+  LigaturesAddon: class LigaturesAddon {},
+}));
+
+vi.mock("@xterm/addon-search", () => ({
+  SearchAddon: class SearchAddon {},
+}));
+
+vi.mock("@xterm/addon-unicode11", () => ({
+  Unicode11Addon: class Unicode11Addon {},
+}));
+
+vi.mock("@xterm/addon-web-links", () => ({
+  WebLinksAddon: class WebLinksAddon {},
+}));
+
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: class WebglAddon {
+    onContextLoss(): void {}
+    dispose(): void {}
+  },
+}));
+
+vi.mock("@xterm/xterm", () => ({
+  Terminal: class Terminal {},
+}));
+
+vi.mock("@/utils/open-external-url", () => ({
+  openExternalUrl: vi.fn(),
+}));
+
 import { TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
 type StubTerminal = {

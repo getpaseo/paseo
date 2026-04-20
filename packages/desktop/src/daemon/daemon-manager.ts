@@ -1,7 +1,7 @@
 import { type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { app, ipcMain } from "electron";
+import { app, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
 import { resolvePaseoHome, spawnProcess } from "@getpaseo/server";
 import {
@@ -208,6 +208,8 @@ async function resolveStatus(): Promise<DesktopDaemonStatus> {
       error: null,
     };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logDesktopDaemonLifecycle("resolveStatus CLI command failed", { error: errorMessage });
     return {
       serverId: "",
       status: "stopped",
@@ -217,7 +219,7 @@ async function resolveStatus(): Promise<DesktopDaemonStatus> {
       home,
       version: null,
       desktopManaged: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage,
     };
   }
 }
@@ -230,6 +232,14 @@ function normalizeVersion(version: string | null): string | null {
 
 async function startDaemon(): Promise<DesktopDaemonStatus> {
   const current = await resolveStatus();
+  logDesktopDaemonLifecycle("initial status check before start", {
+    status: current.status,
+    pid: current.pid,
+    listen: current.listen,
+    serverId: current.serverId || null,
+    error: current.error,
+    desktopManaged: current.desktopManaged,
+  });
   if (current.status === "running") {
     const appVersion = normalizeVersion(resolveDesktopAppVersion());
     const daemonVersion = normalizeVersion(current.version);
@@ -263,7 +273,16 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   const child: ChildProcess = spawnProcess(invocation.command, invocation.args, {
     detached: true,
     env: { ...invocation.env, PASEO_DESKTOP_MANAGED: "1" },
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout!.on("data", (data: Buffer) => {
+    stdout += data.toString();
+  });
+  child.stderr!.on("data", (data: Buffer) => {
+    stderr += data.toString();
   });
 
   logDesktopDaemonLifecycle("detached spawn returned", {
@@ -274,41 +293,54 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
 
   child.unref();
 
-  // Wait for process to survive the grace period
-  const exitedEarly = await new Promise<boolean>((resolve) => {
+  type GraceResult =
+    | { exitedEarly: false }
+    | { exitedEarly: true; code: number | null; signal: string | null; error?: Error };
+
+  const result = await new Promise<GraceResult>((resolve) => {
     let settled = false;
-    const finish = (value: boolean) => {
+    const finish = (value: GraceResult) => {
       if (settled) return;
       settled = true;
       resolve(value);
     };
 
-    const timer = setTimeout(() => finish(false), DETACHED_STARTUP_GRACE_MS);
+    const timer = setTimeout(() => finish({ exitedEarly: false }), DETACHED_STARTUP_GRACE_MS);
 
-    child.once("error", () => {
-      logDesktopDaemonLifecycle("detached child emitted error during grace period", {
-        childPid: child.pid ?? null,
-      });
+    child.once("error", (error) => {
       clearTimeout(timer);
-      finish(true);
+      finish({ exitedEarly: true, code: null, signal: null, error });
     });
-    child.once("exit", () => {
-      logDesktopDaemonLifecycle("detached child emitted exit during grace period", {
-        childPid: child.pid ?? null,
-      });
+    child.once("exit", (code, signal) => {
       clearTimeout(timer);
-      finish(true);
+      finish({ exitedEarly: true, code, signal });
     });
   });
 
   logDesktopDaemonLifecycle("detached startup grace period completed", {
     childPid: child.pid ?? null,
-    exitedEarly,
+    exitedEarly: result.exitedEarly,
+    ...(result.exitedEarly
+      ? {
+          exitCode: result.code,
+          signal: result.signal,
+          error: result.error?.message ?? null,
+          stdout: stdout.slice(0, 2000),
+          stderr: stderr.slice(0, 2000),
+        }
+      : {}),
   });
 
-  if (exitedEarly) {
+  if (result.exitedEarly) {
+    const reason = result.error
+      ? result.error.message
+      : `exit code ${result.code ?? "unknown"}${result.signal ? ` (${result.signal})` : ""}`;
+    const parts = [`Daemon failed to start: ${reason}`];
+    if (stderr.trim()) parts.push(`stderr:\n${stderr.trim()}`);
+    if (stdout.trim()) parts.push(`stdout:\n${stdout.trim()}`);
     const logs = tailFile(logFilePath(), 15);
-    throw new Error(`Daemon failed to start.${logs ? `\n\nRecent logs:\n${logs}` : ""}`);
+    if (logs) parts.push(`Recent logs (${logFilePath()}):\n${logs}`);
+    throw new Error(parts.join("\n\n"));
   }
 
   // Poll for PID file with server ID
@@ -412,6 +444,10 @@ function resolveCurrentUpdateVersion(): string {
   return resolveDesktopAppVersion();
 }
 
+function getSystemIdleTimeMs(): number {
+  return powerMonitor.getSystemIdleTime() * 1000;
+}
+
 // ---------------------------------------------------------------------------
 // IPC registration
 // ---------------------------------------------------------------------------
@@ -424,6 +460,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
     desktop_daemon_pairing: () => getDaemonPairing(),
+    desktop_get_system_idle_time: () => getSystemIdleTimeMs(),
     cli_daemon_status: () => getCliDaemonStatus(),
     write_attachment_base64: (args) => writeAttachmentBase64(args ?? {}),
     copy_attachment_file: (args) => copyAttachmentFileToManagedStorage(args ?? {}),

@@ -4,6 +4,7 @@ import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import type { DiffLine, DiffSegment } from "@/utils/tool-call-parsers";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { getCodeInsets } from "./code-insets";
 import { isWeb } from "@/constants/platform";
 
@@ -23,6 +24,7 @@ export function DiffViewer({
   fillAvailableHeight = false,
 }: DiffViewerProps) {
   const [scrollViewWidth, setScrollViewWidth] = React.useState(0);
+  const webScrollbarStyle = useWebScrollbarStyle();
 
   if (!diffLines.length) {
     return (
@@ -38,6 +40,7 @@ export function DiffViewer({
         styles.verticalScroll,
         maxHeight !== undefined && { maxHeight },
         fillAvailableHeight && styles.fillHeight,
+        webScrollbarStyle,
       ]}
       contentContainerStyle={styles.verticalContent}
       nestedScrollEnabled
@@ -47,6 +50,7 @@ export function DiffViewer({
         horizontal
         nestedScrollEnabled
         showsHorizontalScrollIndicator
+        style={webScrollbarStyle}
         contentContainerStyle={styles.horizontalContent}
         onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
       >

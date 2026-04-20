@@ -8,7 +8,15 @@ appId: sh.paseo
 
 - eraseText
 - inputText: ${PAIRING_OFFER_URL}
-- tapOn: "Pair"
+
+# Prove the input received the URL intact. If this fails, iOS keyboard input
+# dropped characters and the controlled input path needs a source fix.
+- assertVisible:
+    id: "pair-link-input"
+    text: ${PAIRING_OFFER_URL}
+
+- tapOn:
+    id: "pair-link-submit"
 
 - extendedWaitUntil:
     visible: "New agent"

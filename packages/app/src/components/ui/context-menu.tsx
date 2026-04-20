@@ -33,6 +33,7 @@ import { Check, CheckCircle } from "lucide-react-native";
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isWeb, isNative } from "@/constants/platform";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 // Keep parity with dropdown-menu action statuses.
 export type ActionStatus = "idle" | "pending" | "success";
@@ -348,6 +349,8 @@ export function ContextMenuContent({
   testID?: string;
 }>): ReactElement | null {
   const context = useContextMenuContext("ContextMenuContent");
+  const { theme } = useUnistyles();
+  const webScrollbarStyle = useWebScrollbarStyle();
   const isMobile = useIsCompactFormFactor();
   const useMobileSheet = isMobile && mobileMode === "sheet";
   const { open, setOpen, triggerRef, anchorRect } = context;
@@ -473,8 +476,14 @@ export function ContextMenuContent({
           onChange={handleSheetChange}
           backdropComponent={renderSheetBackdrop}
           enablePanDownToClose
-          backgroundStyle={styles.sheetBackground}
-          handleIndicatorStyle={styles.sheetHandle}
+          backgroundStyle={[
+            styles.sheetBackground,
+            {
+              backgroundColor: theme.colors.surface0,
+              borderColor: theme.colors.border,
+            },
+          ]}
+          handleIndicatorStyle={[styles.sheetHandle, { backgroundColor: theme.colors.surface2 }]}
           keyboardBehavior="extend"
           keyboardBlurBehavior="restore"
         >
@@ -537,6 +546,7 @@ export function ContextMenuContent({
           <ScrollView
             bounces={false}
             showsVerticalScrollIndicator
+            style={webScrollbarStyle}
             contentContainerStyle={{ flexGrow: 1 }}
           >
             {children}

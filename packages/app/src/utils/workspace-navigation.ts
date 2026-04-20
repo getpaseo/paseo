@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { generateDraftId } from "@/stores/draft-keys";
 import {
@@ -11,6 +12,10 @@ interface PrepareWorkspaceTabInput {
   workspaceId: string;
   target: WorkspaceTabTarget;
   pin?: boolean;
+}
+
+interface NavigateToPreparedWorkspaceTabInput extends PrepareWorkspaceTabInput {
+  navigationMethod?: "navigate" | "replace";
 }
 
 function getPreparedTarget(target: WorkspaceTabTarget): WorkspaceTabTarget {
@@ -28,15 +33,21 @@ export function prepareWorkspaceTab(input: PrepareWorkspaceTabInput) {
       workspaceId: input.workspaceId,
     }) ?? "";
 
-  const tabId = useWorkspaceLayoutStore.getState().openTab(key, target);
-
-  if (tabId) {
-    useWorkspaceLayoutStore.getState().focusTab(key, tabId);
-  }
+  useWorkspaceLayoutStore.getState().openTabFocused(key, target);
 
   if (input.pin && target.kind === "agent") {
     useWorkspaceLayoutStore.getState().pinAgent(key, target.agentId);
   }
 
   return buildHostWorkspaceRoute(input.serverId, input.workspaceId);
+}
+
+export function navigateToPreparedWorkspaceTab(input: NavigateToPreparedWorkspaceTabInput): string {
+  const route = prepareWorkspaceTab(input);
+  if (input.navigationMethod === "replace") {
+    router.replace(route as any);
+  } else {
+    router.navigate(route as any);
+  }
+  return route;
 }

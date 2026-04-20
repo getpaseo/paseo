@@ -89,12 +89,8 @@ interface SplitContainerProps {
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
-  onSelectNewTabOption: (selection: {
-    optionId: "__new_tab_agent__" | "__new_tab_terminal__";
-    paneId?: string;
-  }) => void;
-  onNewTerminalTab: (input: { paneId?: string }) => void;
-  newTabAgentOptionId?: "__new_tab_agent__" | "__new_tab_terminal__";
+  onCreateDraftTab: (input: { paneId?: string }) => void;
+  onCreateTerminalTab: (input: { paneId?: string }) => void;
   buildPaneContentModel: (input: {
     paneId: string;
     isPaneFocused: boolean;
@@ -258,9 +254,8 @@ export function SplitContainer({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onSelectNewTabOption,
-  onNewTerminalTab,
-  newTabAgentOptionId = "__new_tab_agent__",
+  onCreateDraftTab,
+  onCreateTerminalTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -528,9 +523,8 @@ export function SplitContainer({
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
-        onSelectNewTabOption={onSelectNewTabOption}
-        onNewTerminalTab={onNewTerminalTab}
-        newTabAgentOptionId={newTabAgentOptionId}
+        onCreateDraftTab={onCreateDraftTab}
+        onCreateTerminalTab={onCreateTerminalTab}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
@@ -651,9 +645,8 @@ function SplitNodeView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onSelectNewTabOption,
-  onNewTerminalTab,
-  newTabAgentOptionId,
+  onCreateDraftTab,
+  onCreateTerminalTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -687,9 +680,8 @@ function SplitNodeView({
         onCloseTabsToLeft={onCloseTabsToLeft}
         onCloseTabsToRight={onCloseTabsToRight}
         onCloseOtherTabs={onCloseOtherTabs}
-        onSelectNewTabOption={onSelectNewTabOption}
-        onNewTerminalTab={onNewTerminalTab}
-        newTabAgentOptionId={newTabAgentOptionId}
+        onCreateDraftTab={onCreateDraftTab}
+        onCreateTerminalTab={onCreateTerminalTab}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
@@ -738,9 +730,8 @@ function SplitNodeView({
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
               onCloseOtherTabs={onCloseOtherTabs}
-              onSelectNewTabOption={onSelectNewTabOption}
-              onNewTerminalTab={onNewTerminalTab}
-              newTabAgentOptionId={newTabAgentOptionId}
+              onCreateDraftTab={onCreateDraftTab}
+              onCreateTerminalTab={onCreateTerminalTab}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
               onSplitPane={onSplitPane}
@@ -788,9 +779,8 @@ function SplitPaneView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  onSelectNewTabOption,
-  onNewTerminalTab,
-  newTabAgentOptionId,
+  onCreateDraftTab,
+  onCreateTerminalTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -895,9 +885,8 @@ function SplitPaneView({
           onCloseTabsToLeft={(tabId) => onCloseTabsToLeft(tabId, paneTabs)}
           onCloseTabsToRight={(tabId) => onCloseTabsToRight(tabId, paneTabs)}
           onCloseOtherTabs={(tabId) => onCloseOtherTabs(tabId, paneTabs)}
-          onSelectNewTabOption={onSelectNewTabOption}
-          onNewTerminalTab={onNewTerminalTab}
-          newTabAgentOptionId={newTabAgentOptionId ?? "__new_tab_agent__"}
+          onCreateDraftTab={onCreateDraftTab}
+          onCreateTerminalTab={onCreateTerminalTab}
           onReorderTabs={(nextTabs) => {
             onReorderTabsInPane(
               pane.id,

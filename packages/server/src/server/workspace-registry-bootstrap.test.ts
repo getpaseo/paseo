@@ -60,6 +60,7 @@ function createNoopWorkspaceGitService(): WorkspaceGitService {
         refreshedAt: null,
       },
     }),
+    resolveRepoRemoteUrl: async () => null,
     refresh: async () => {},
     requestWorkingTreeWatch: async () => ({
       repoRoot: null,

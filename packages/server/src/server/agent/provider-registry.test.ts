@@ -226,8 +226,8 @@ vi.mock("./providers/opencode-agent.js", () => ({
   },
 }));
 
-vi.mock("./providers/pi-acp-agent.js", () => ({
-  PiACPAgentClient: class PiACPAgentClient {
+vi.mock("./providers/pi-direct-agent.js", () => ({
+  PiDirectAgentClient: class PiDirectAgentClient {
     readonly capabilities = {
       supportsStreaming: true,
       supportsSessionPersistence: true,
@@ -330,6 +330,19 @@ describe("buildProviderRegistry", () => {
     const registry = buildProviderRegistry(logger);
 
     expect(Object.keys(registry)).toHaveLength(AGENT_PROVIDER_DEFINITIONS.length);
+  });
+
+  test("includes mock provider only for development builds", () => {
+    expect(buildProviderRegistry(logger).mock).toBeUndefined();
+    expect(buildProviderRegistry(logger, { isDev: false }).mock).toBeUndefined();
+
+    const registry = buildProviderRegistry(logger, { isDev: true });
+
+    expect(registry.mock).toMatchObject({
+      id: "mock",
+      label: "Mock Load Test",
+      defaultModeId: "load-test",
+    });
   });
 
   test("built-in override applies command", () => {
@@ -471,6 +484,52 @@ describe("buildProviderRegistry", () => {
 
     await expect(registry.claude.createClient(logger).isAvailable()).resolves.toBe(true);
     expect(mockState.isCommandAvailable).toHaveBeenCalledWith("claude");
+  });
+
+  test("disallowedTools flows through to runtime settings", () => {
+    buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          disallowedTools: ["WebSearch", "WebFetch"],
+        },
+      },
+    });
+
+    expect(mockState.constructorArgs.claude[0]).toEqual({
+      runtimeSettings: {
+        command: undefined,
+        env: undefined,
+        disallowedTools: ["WebSearch", "WebFetch"],
+      },
+    });
+  });
+
+  test("derived provider inherits and merges disallowedTools from base", () => {
+    buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          disallowedTools: ["WebSearch"],
+        },
+        zai: {
+          extends: "claude",
+          label: "ZAI",
+          disallowedTools: ["ComputerUse"],
+        },
+      },
+    });
+
+    const zaiArgs = mockState.constructorArgs.claude.find(
+      (entry) =>
+        Array.isArray((entry.runtimeSettings as { disallowedTools?: string[] })?.disallowedTools) &&
+        (entry.runtimeSettings as { disallowedTools: string[] }).disallowedTools.includes(
+          "ComputerUse",
+        ),
+    );
+    expect(zaiArgs).toBeDefined();
+    expect((zaiArgs!.runtimeSettings as { disallowedTools: string[] }).disallowedTools).toEqual([
+      "WebSearch",
+      "ComputerUse",
+    ]);
   });
 
   test("extension inherits base override — override claude command, zai extends claude gets overridden command", () => {

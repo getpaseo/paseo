@@ -1,7 +1,7 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { promisify } from "node:util";
 
-import { quoteWindowsArgument, quoteWindowsCommand } from "./executable.js";
+import { isWindowsCommandScript, quoteWindowsArgument, quoteWindowsCommand } from "./executable.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,13 +24,15 @@ export function spawnProcess(
   options?: SpawnOptions,
 ): ChildProcess {
   const isWindows = process.platform === "win32";
+  const shell = isWindowsCommandScript(command) ? true : (options?.shell ?? isWindows);
 
-  const resolvedCommand = isWindows ? quoteWindowsCommand(command) : command;
-  const resolvedArgs = isWindows ? args.map(quoteWindowsArgument) : args;
+  const shouldQuoteForShell = isWindows && shell !== false;
+  const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
+  const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
 
   return spawn(resolvedCommand, resolvedArgs, {
     ...options,
-    shell: options?.shell ?? isWindows,
+    shell,
     windowsHide: true,
   });
 }
@@ -41,8 +43,10 @@ export async function execCommand(
   options?: ExecCommandOptions,
 ): Promise<ExecCommandResult> {
   const isWindows = process.platform === "win32";
-  const resolvedCommand = isWindows ? quoteWindowsCommand(command) : command;
-  const resolvedArgs = isWindows ? args.map(quoteWindowsArgument) : args;
+  const shell = isWindowsCommandScript(command) ? true : isWindows;
+  const shouldQuoteForShell = isWindows && shell !== false;
+  const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
+  const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
 
   return execFileAsync(resolvedCommand, resolvedArgs, {
     cwd: options?.cwd,
@@ -50,7 +54,7 @@ export async function execCommand(
     encoding: options?.encoding ?? "utf8",
     timeout: options?.timeout,
     maxBuffer: options?.maxBuffer,
-    shell: isWindows,
+    shell,
     windowsHide: true,
   }) as Promise<ExecCommandResult>;
 }

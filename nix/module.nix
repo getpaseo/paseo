@@ -9,6 +9,10 @@ let
   cfg = config.services.paseo;
 in
 {
+  imports = [
+    (lib.mkRenamedOptionModule [ "services" "paseo" "allowedHosts" ] [ "services" "paseo" "hostnames" ])
+  ];
+
   options.services.paseo = {
     enable = lib.mkEnableOption "Paseo, a self-hosted daemon for AI coding agents";
 
@@ -58,12 +62,12 @@ in
       description = "Whether to open the firewall for the Paseo daemon port.";
     };
 
-    allowedHosts = lib.mkOption {
+    hostnames = lib.mkOption {
       type = lib.types.either (lib.types.enum [ true ]) (lib.types.listOf lib.types.str);
       default = [ ];
       example = [ ".example.com" "myhost.local" ];
       description = ''
-        Hosts allowed to connect to the Paseo daemon (DNS rebinding protection).
+        Hostnames the Paseo daemon accepts in the Host header (DNS rebinding protection).
         Localhost and IP addresses are always allowed by default.
 
         Use a leading dot to match a domain and all its subdomains
@@ -141,10 +145,10 @@ in
           "/run/wrappers/bin"
           "/nix/var/nix/profiles/default/bin"
         ]);
-      } // lib.optionalAttrs (cfg.allowedHosts == true) {
-        PASEO_ALLOWED_HOSTS = "true";
-      } // lib.optionalAttrs (lib.isList cfg.allowedHosts && cfg.allowedHosts != [ ]) {
-        PASEO_ALLOWED_HOSTS = lib.concatStringsSep "," cfg.allowedHosts;
+      } // lib.optionalAttrs (cfg.hostnames == true) {
+        PASEO_HOSTNAMES = "true";
+      } // lib.optionalAttrs (lib.isList cfg.hostnames && cfg.hostnames != [ ]) {
+        PASEO_HOSTNAMES = lib.concatStringsSep "," cfg.hostnames;
       } // cfg.environment;
 
       serviceConfig = {

@@ -12,6 +12,7 @@ import {
   HostRuntimeController,
   HostRuntimeStore,
   type HostRuntimeControllerDeps,
+  type HostRuntimeSnapshot,
 } from "./host-runtime";
 
 class FakeDaemonClient {
@@ -262,6 +263,27 @@ function clearProbeBackoff(controller: HostRuntimeController): void {
       connectionLastProbedAt: Map<string, number>;
     }
   ).connectionLastProbedAt.clear();
+}
+
+type HostRuntimeSnapshotPatch = Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">>;
+
+function updateControllerSnapshot(
+  controller: HostRuntimeController,
+  patch: HostRuntimeSnapshotPatch,
+): void {
+  (
+    controller as unknown as {
+      updateSnapshot: (patch: HostRuntimeSnapshotPatch) => void;
+    }
+  ).updateSnapshot(patch);
+}
+
+function makeProbeMap(
+  entries: Array<
+    [string, HostRuntimeSnapshot["probeByConnectionId"] extends Map<string, infer T> ? T : never]
+  >,
+): HostRuntimeSnapshot["probeByConnectionId"] {
+  return new Map(entries);
 }
 
 describe("HostRuntimeController", () => {
@@ -550,6 +572,39 @@ describe("HostRuntimeController", () => {
     expect(latest?.connectionStatus).toBe("error");
     expect(latest?.lastError).toBe("transport closed");
     unsubscribe();
+  });
+
+  it("preserves transport disconnect reasons on the runtime snapshot", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const clients: FakeDaemonClient[] = [];
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(
+        {
+          "direct:lan:6767": 12,
+        },
+        clients,
+      ),
+    });
+
+    await controller.start({ autoProbe: false });
+    clients[0]?.setConnectionState({
+      status: "disconnected",
+      reason: "transport closed",
+    });
+
+    expect(controller.getSnapshot()).toMatchObject({
+      connectionStatus: "error",
+      lastError: "transport closed",
+    });
   });
 
   it("does not emit legacy typed reason-code transition logs", async () => {
@@ -889,6 +944,134 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().client).toBe(activeClientBeforeProbes);
     expect(controller.getSnapshot().clientGeneration).toBe(generationBeforeProbes);
     expect(createdClients).toHaveLength(0);
+  });
+
+  it("does not notify or replace the snapshot for equal probe maps", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+    const firstProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+    const equalProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+
+    updateControllerSnapshot(controller, { probeByConnectionId: firstProbeMap });
+    const snapshotAfterFirstProbe = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, { probeByConnectionId: equalProbeMap });
+
+    expect(notifyCount).toBe(0);
+    expect(controller.getSnapshot()).toBe(snapshotAfterFirstProbe);
+    expect(controller.getSnapshot().probeByConnectionId).toBe(firstProbeMap);
+    unsubscribe();
+  });
+
+  it("does not notify or replace the snapshot when connection status is already equal", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+
+    updateControllerSnapshot(controller, { connectionStatus: "online" });
+    const snapshotAfterOnline = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, { connectionStatus: "online" });
+
+    expect(notifyCount).toBe(0);
+    expect(controller.getSnapshot()).toBe(snapshotAfterOnline);
+    unsubscribe();
+  });
+
+  it("does not notify or replace the snapshot when every patched field is equal", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+    const firstProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+    const equalProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+
+    updateControllerSnapshot(controller, {
+      connectionStatus: "online",
+      probeByConnectionId: firstProbeMap,
+    });
+    const snapshotAfterSetup = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, {
+      connectionStatus: "online",
+      probeByConnectionId: equalProbeMap,
+    });
+
+    expect(notifyCount).toBe(0);
+    expect(controller.getSnapshot()).toBe(snapshotAfterSetup);
+    expect(controller.getSnapshot().probeByConnectionId).toBe(firstProbeMap);
+    unsubscribe();
+  });
+
+  it("notifies once for a changed field while preserving equal field identity", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+    const firstProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+    const equalProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+
+    updateControllerSnapshot(controller, {
+      connectionStatus: "online",
+      probeByConnectionId: firstProbeMap,
+    });
+    const snapshotBeforeChange = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, {
+      connectionStatus: "offline",
+      probeByConnectionId: equalProbeMap,
+    });
+
+    expect(notifyCount).toBe(1);
+    expect(controller.getSnapshot()).not.toBe(snapshotBeforeChange);
+    expect(controller.getSnapshot().connectionStatus).toBe("offline");
+    expect(controller.getSnapshot().probeByConnectionId).toBe(firstProbeMap);
+    unsubscribe();
+  });
+
+  it("notifies once and replaces the probe map when probe contents change", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+    const firstProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+    const changedProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+      ["relay:relay.paseo.sh:443", { status: "unavailable", latencyMs: null }],
+    ]);
+
+    updateControllerSnapshot(controller, { probeByConnectionId: firstProbeMap });
+    const snapshotBeforeChange = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, { probeByConnectionId: changedProbeMap });
+
+    expect(notifyCount).toBe(1);
+    expect(controller.getSnapshot()).not.toBe(snapshotBeforeChange);
+    expect(controller.getSnapshot().probeByConnectionId).toBe(changedProbeMap);
+    expect(controller.getSnapshot().probeByConnectionId).not.toBe(firstProbeMap);
+    unsubscribe();
   });
 });
 

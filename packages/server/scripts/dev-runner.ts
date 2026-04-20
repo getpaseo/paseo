@@ -8,6 +8,14 @@ dotenv.config({
 });
 
 const daemonRunnerEntry = fileURLToPath(new URL("./supervisor-entrypoint.ts", import.meta.url));
+
+// The supervisor handles SIGINT/SIGTERM itself and needs time to drain the
+// worker gracefully. Ignore them here so spawnSync blocks until the supervisor
+// finishes shutting down, instead of the parent dying on Ctrl-C and releasing
+// the shell while the daemon is still logging.
+process.on("SIGINT", () => {});
+process.on("SIGTERM", () => {});
+
 const result = spawnSync(
   process.execPath,
   [

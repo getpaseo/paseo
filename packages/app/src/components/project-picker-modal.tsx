@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePathname } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { shortenPath } from "@/utils/shorten-path";
-import { useSessionStore } from "@/stores/session-store";
+import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import { useHosts, useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { parseServerIdFromPathname } from "@/utils/host-routes";
@@ -29,22 +29,13 @@ export function ProjectPickerModal() {
 
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
-  const workspaces = useSessionStore((state) =>
-    serverId ? state.sessions[serverId]?.workspaces : undefined,
-  );
+  const recommendedPaths = useRecommendedProjectPaths(serverId);
 
   const inputRef = useRef<TextInput>(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const openProject = useOpenProject(serverId);
-
-  const recommendedPaths = useMemo(() => {
-    if (!workspaces) return [];
-    return Array.from(workspaces.values()).map(
-      (workspace) => workspace.projectRootPath || workspace.id,
-    );
-  }, [workspaces]);
 
   const directorySuggestionsQuery = useQuery({
     queryKey: ["project-picker-directory-suggestions", serverId, query],

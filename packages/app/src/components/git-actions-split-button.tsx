@@ -16,9 +16,10 @@ import type { GitAction, GitActions } from "@/components/git-actions-policy";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
+  hideLabels?: boolean;
 }
 
-export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps) {
+export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSplitButtonProps) {
   const { theme } = useUnistyles();
   const toast = useToast();
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
@@ -68,9 +69,11 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
             ) : (
               <View style={styles.splitButtonContent}>
                 {gitActions.primary.icon}
-                <Text style={styles.splitButtonText}>
-                  {getActionDisplayLabel(gitActions.primary)}
-                </Text>
+                {!hideLabels && (
+                  <Text style={styles.splitButtonText}>
+                    {getActionDisplayLabel(gitActions.primary)}
+                  </Text>
+                )}
               </View>
             )}
           </Pressable>
