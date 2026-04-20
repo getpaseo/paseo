@@ -23,6 +23,7 @@ export interface UseOrgChatRoomResult {
   reactAdd: (payload: { messageId: string; emoji: string }) => void;
   reactRemove: (payload: { messageId: string; emoji: string }) => void;
   typing: (channelId: string, parentId?: string | null) => void;
+  setStatus: (status: "active" | "busy" | "offline") => void;
 }
 
 /**
@@ -73,6 +74,7 @@ export function useOrgChatRoom(
           if (!disposed) setState("idle");
         });
       } catch (err) {
+        console.error("[org-chat] join failed", err);
         if (!disposed) {
           setError(err instanceof Error ? err : new Error(String(err)));
           setState("error");
@@ -120,8 +122,37 @@ export function useOrgChatRoom(
   const typing: UseOrgChatRoomResult["typing"] = (channelId, parentId = null) => {
     roomRef.current?.send("typing", { channelId, parentId });
   };
+  const setStatus: UseOrgChatRoomResult["setStatus"] = (status) => {
+    roomRef.current?.send("presence_status", { status });
+  };
 
-  return { state, error, room: roomRef.current, send, edit, remove, reactAdd, reactRemove, typing };
+  // Broadcast current status to the room whenever it changes (or on connect).
+  useEffect(() => {
+    if (state !== "connected") return;
+    const broadcast = () => {
+      const s = useChatStore.getState().myStatus;
+      roomRef.current?.send("presence_status", { status: s });
+    };
+    broadcast();
+    const unsubscribe = useChatStore.subscribe(
+      (s) => s.myStatus,
+      () => broadcast(),
+    );
+    return () => unsubscribe();
+  }, [state]);
+
+  return {
+    state,
+    error,
+    room: roomRef.current,
+    send,
+    edit,
+    remove,
+    reactAdd,
+    reactRemove,
+    typing,
+    setStatus,
+  };
 }
 
 function wireRoomEvents(
@@ -209,7 +240,9 @@ function wireRoomEvents(
     console.warn("[org-chat] server error", payload);
   });
 
-  // Presence: colyseus state sync.
+  // Presence: colyseus state sync (best-effort; primary path is the
+  // `presence_list` broadcast below, since nested MapSchema onStateChange is
+  // unreliable in this @colyseus/schema version).
   const syncPresence = () => {
     const online = room.state?.online;
     if (!online) return;
@@ -218,17 +251,59 @@ function wireRoomEvents(
       username: string;
       avatarUrl: string;
       since: number;
+      status?: "active" | "busy" | "offline";
     }[] = [];
-    online.forEach((p: { userId: string; username: string; avatarUrl: string; since: number }) => {
-      list.push({
-        userId: p.userId,
-        username: p.username,
-        avatarUrl: p.avatarUrl,
-        since: p.since,
-      });
-    });
+    online.forEach(
+      (p: {
+        userId: string;
+        username: string;
+        avatarUrl: string;
+        since: number;
+        status?: string;
+      }) => {
+        const status =
+          p.status === "active" || p.status === "busy" || p.status === "offline"
+            ? p.status
+            : "active";
+        list.push({
+          userId: p.userId,
+          username: p.username,
+          avatarUrl: p.avatarUrl,
+          since: p.since,
+          status,
+        });
+      },
+    );
     useChatStore.getState().replacePresence(orgId, list);
   };
+
+  room.onMessage(
+    "presence_list",
+    (payload: {
+      participants: Array<{
+        userId: string;
+        username: string;
+        avatarUrl: string;
+        since: number;
+        status?: string;
+      }>;
+    }) => {
+      const list = (payload?.participants ?? []).map((p) => {
+        const status: "active" | "busy" | "offline" =
+          p.status === "active" || p.status === "busy" || p.status === "offline"
+            ? p.status
+            : "active";
+        return {
+          userId: p.userId,
+          username: p.username,
+          avatarUrl: p.avatarUrl,
+          since: p.since,
+          status,
+        };
+      });
+      useChatStore.getState().replacePresence(orgId, list);
+    },
+  );
 
   try {
     room.onStateChange(() => syncPresence());

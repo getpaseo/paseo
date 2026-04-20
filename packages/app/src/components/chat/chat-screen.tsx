@@ -139,6 +139,7 @@ export function ChatScreen() {
         avatarUrl: m.user.image,
         channel: existingByUserId.get(m.userId) ?? null,
         online: !!presenceByUser[m.userId],
+        status: resolveStatus(presenceByUser[m.userId]?.status, !!presenceByUser[m.userId]),
       });
     }
     // Fallback: surface any existing 1:1 DM whose peer didn't appear in the
@@ -151,6 +152,7 @@ export function ChatScreen() {
         avatarUrl: null,
         channel: chan,
         online: !!presenceByUser[peerId],
+        status: resolveStatus(presenceByUser[peerId]?.status, !!presenceByUser[peerId]),
       });
     }
     for (const c of groupDms) {
@@ -552,6 +554,16 @@ function SignInToChatEmpty({
       </View>
     </View>
   );
+}
+
+function resolveStatus(
+  reported: string | undefined,
+  present: boolean,
+): "active" | "busy" | "offline" {
+  if (reported === "busy") return "busy";
+  if (reported === "offline") return "offline";
+  if (reported === "active") return "active";
+  return present ? "active" : "offline";
 }
 
 function channelHeader(c: { name: string | null; kind: string }): string {

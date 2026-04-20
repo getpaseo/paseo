@@ -45,6 +45,7 @@ export interface DmEntry {
   avatarUrl?: string | null;
   channel: ChatChannel | null;
   online?: boolean;
+  status?: "active" | "busy" | "offline";
 }
 
 interface ChannelSidebarProps {
@@ -376,7 +377,7 @@ function RailAvatarBtn({
           name={entry.name}
           imageUrl={entry.avatarUrl ?? null}
           size={24}
-          online={entry.online}
+          status={entry.status ?? (entry.online ? "active" : "offline")}
         />
         {unread ? <View style={styles.railUnreadDot} /> : null}
       </Pressable>
@@ -413,7 +414,7 @@ const DmRow = memo(function DmRow({
             name={entry.name}
             imageUrl={entry.avatarUrl ?? null}
             size={20}
-            online={entry.online}
+            status={entry.status ?? (entry.online ? "active" : "offline")}
           />
           <Text
             style={[

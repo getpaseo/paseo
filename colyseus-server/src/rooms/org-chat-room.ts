@@ -1,6 +1,6 @@
 import { Room } from "@colyseus/core";
 import type { Client } from "@colyseus/core";
-import { Schema, type } from "@colyseus/schema";
+import { Schema, type, MapSchema } from "@colyseus/schema";
 import { ChatApiClient, ChatApiError } from "../services/chat-api.js";
 
 /**
@@ -13,11 +13,13 @@ export class OrgChatPresence extends Schema {
   @type("string") username = "";
   @type("string") avatarUrl = "";
   @type("number") since = 0;
+  /** User-chosen status: "active" | "busy" | "offline". Defaults to "active". */
+  @type("string") status = "active";
 }
 
 export class OrgChatState extends Schema {
   @type("string") orgId = "";
-  @type({ map: OrgChatPresence }) online = new Map<string, OrgChatPresence>();
+  @type({ map: OrgChatPresence }) online = new MapSchema<OrgChatPresence>();
 }
 
 interface OrgChatCreateOptions {
@@ -104,6 +106,40 @@ export class OrgChatRoom extends Room<OrgChatState> {
     this.onMessage("typing", (client, msg: TypingPayload) => {
       this.handleTyping(client, msg);
     });
+    this.onMessage("presence_status", (client, msg: { status?: string }) => {
+      this.handlePresenceStatus(client, msg);
+    });
+  }
+
+  private handlePresenceStatus(client: Client, msg: { status?: string }): void {
+    const auth = (client as Client & { auth?: OrgChatAuthData }).auth;
+    if (!auth) return;
+    const next = msg?.status;
+    if (next !== "active" && next !== "busy" && next !== "offline") return;
+    const current = this.state.online.get(auth.userId);
+    if (!current) return;
+    current.status = next;
+    this.broadcastPresenceList();
+  }
+
+  private broadcastPresenceList(): void {
+    const participants: Array<{
+      userId: string;
+      username: string;
+      avatarUrl: string;
+      since: number;
+      status: string;
+    }> = [];
+    this.state.online.forEach((p) => {
+      participants.push({
+        userId: p.userId,
+        username: p.username,
+        avatarUrl: p.avatarUrl,
+        since: p.since,
+        status: p.status,
+      });
+    });
+    this.broadcast("presence_list", { participants });
   }
 
   /**
@@ -144,6 +180,7 @@ export class OrgChatRoom extends Room<OrgChatState> {
     presence.avatarUrl = auth.avatarUrl;
     presence.since = Date.now();
     this.state.online.set(auth.userId, presence);
+    this.broadcastPresenceList();
   }
 
   onLeave(client: Client): void {
@@ -158,6 +195,7 @@ export class OrgChatRoom extends Room<OrgChatState> {
       this.state.online.delete(auth.userId);
     }
     this.membershipCache.delete(auth.userId);
+    if (!stillOnline) this.broadcastPresenceList();
   }
 
   private authOf(client: Client): OrgChatAuthData | null {

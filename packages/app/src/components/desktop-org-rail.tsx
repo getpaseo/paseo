@@ -24,6 +24,8 @@ import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { useOrganizations } from "@/desktop/hooks/use-organizations";
 import { setActiveOrgId, useActiveOrgId } from "@/stores/active-org-store";
 import { useWorkspaceTabsStore } from "@/stores/workspace-tabs-store";
+import { useChatStore } from "@/stores/chat-store";
+import { StatusPicker, StatusDot } from "@/components/status-picker";
 import { useIsInSharedSession, useIsSharedRecipient } from "@/stores/shared-session-store";
 
 /**
@@ -76,6 +78,8 @@ export function DesktopOrgRail() {
   const isInSharedSession = useIsSharedRecipient();
   const sharedSessionActive = useIsInSharedSession();
   const [modalOpen, setModalOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const myStatus = useChatStore((s) => s.myStatus);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
@@ -191,18 +195,24 @@ export function DesktopOrgRail() {
       />
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Account"
+        accessibilityLabel={`Set status (current: ${myStatus})`}
         style={({ hovered = false }) => [styles.avatarWrap, hovered && styles.itemHovered]}
-        onPress={() => router.push("/settings")}
+        onPress={() => setStatusOpen(true)}
       >
-        {user?.avatarUrl ? (
-          <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
-        ) : (
-          <View style={[styles.avatar, styles.avatarFallback]}>
-            <User size={16} color="rgba(255,255,255,0.85)" />
+        <View style={{ width: 32, height: 32 }}>
+          {user?.avatarUrl ? (
+            <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarFallback]}>
+              <User size={16} color="rgba(255,255,255,0.85)" />
+            </View>
+          )}
+          <View style={styles.statusDotWrap}>
+            <StatusDot status={myStatus} size={10} />
           </View>
-        )}
+        </View>
       </Pressable>
+      <StatusPicker visible={statusOpen} onClose={() => setStatusOpen(false)} />
 
       <View style={styles.divider} />
 
@@ -435,6 +445,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.lg,
+  },
+  statusDotWrap: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
   },
   avatar: {
     width: 32,

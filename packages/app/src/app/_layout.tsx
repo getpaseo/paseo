@@ -88,6 +88,8 @@ import {
   useSharedSessionStore,
 } from "@/stores/shared-session-store";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
+import { useActiveOrgId } from "@/stores/active-org-store";
+import { useOrgChatRoom } from "@/hooks/chat/use-org-chat-room";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { queryClient } from "@/query/query-client";
 import {
@@ -108,6 +110,7 @@ import {
 } from "@/utils/host-routes";
 import { syncNavigationActiveWorkspace } from "@/stores/navigation-active-workspace-store";
 import { isWeb, isNative } from "@/constants/platform";
+import { ImageLightbox } from "@/components/chat/image-lightbox";
 
 polyfillCrypto();
 
@@ -495,6 +498,7 @@ function AppContainer({
       <GlobalSharedSessionTopStrip />
       <SharedDrawOverlay />
       <ProjectRegistrySyncMount />
+      <GlobalPresenceMount />
       <View style={rowStyle}>
         {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && (
           <>
@@ -517,6 +521,7 @@ function AppContainer({
       <TeamProjectsModal />
       <KeyboardShortcutsDialog />
       <GlobalFloatingVideoPanel />
+      <ImageLightbox />
     </View>
   );
 
@@ -893,6 +898,22 @@ function FaviconStatusSync() {
 
 function ProjectRegistrySyncMount() {
   useProjectRegistrySync();
+  return null;
+}
+
+/**
+ * Keep a persistent connection to the active org's Colyseus chat room for the
+ * entire session. Without this mount, presence only populated while the user
+ * was viewing /chat — so peers appeared offline if they hadn't opened chat
+ * yet. Mounting here means "logged in + has an org" is enough to broadcast
+ * presence (and receive others'), matching Slack/Discord behavior.
+ */
+function GlobalPresenceMount() {
+  const { isAuthenticated, session, user } = useAuthSession();
+  const activeOrgId = useActiveOrgId();
+  const currentUserId = user?.userId ?? null;
+  const sessionToken = isAuthenticated ? (session?.sessionToken ?? "") : null;
+  useOrgChatRoom(activeOrgId, sessionToken, currentUserId);
   return null;
 }
 

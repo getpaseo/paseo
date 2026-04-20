@@ -8,11 +8,14 @@ import type { OrgMember } from "@/api/organizations";
 const PERSIST_MAX_MESSAGES_PER_CHANNEL = 60;
 const CHAT_STORE_VERSION = 1;
 
+export type UserStatus = "active" | "busy" | "offline";
+
 export interface ChatPresence {
   userId: string;
   username: string;
   avatarUrl: string;
   since: number;
+  status?: UserStatus;
 }
 
 export interface TypingIndicator {
@@ -45,6 +48,10 @@ interface ChatState {
   /** Currently-focused channel. Used to decide when to bump unread or not. */
   activeChannelId: string | null;
   setActiveChannelId: (id: string | null) => void;
+
+  /** User-chosen status for the current signed-in account. Persisted. */
+  myStatus: UserStatus;
+  setMyStatus: (status: UserStatus) => void;
 
   // Bulk initial loads (from REST)
   setMessages: (channelId: string, messages: ChatMessage[]) => void;
@@ -86,8 +93,10 @@ export const useChatStore = create<ChatState>()(
       dmsByOrg: {},
       orgMembersByOrg: {},
       activeChannelId: null,
+      myStatus: "active",
 
       setActiveChannelId: (id) => set({ activeChannelId: id }),
+      setMyStatus: (status) => set({ myStatus: status }),
 
       setChannelsForOrg: (orgId, channels) =>
         set((s) => ({ channelsByOrg: { ...s.channelsByOrg, [orgId]: channels } })),
@@ -329,6 +338,7 @@ export const useChatStore = create<ChatState>()(
           channelsByOrg: state.channelsByOrg,
           dmsByOrg: state.dmsByOrg,
           orgMembersByOrg: state.orgMembersByOrg,
+          myStatus: state.myStatus,
         } as Partial<ChatState>;
       },
     },

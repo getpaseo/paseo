@@ -18,6 +18,7 @@ import { ChatEmojiPicker } from "./emoji-picker.web";
 import type { EmojiPickerAnchor } from "./emoji-picker";
 import { preprocessMarkdown } from "./mentions";
 import { ReactionsRow } from "./reactions-row";
+import { openImageLightbox, openVideoLightbox } from "./image-lightbox";
 
 // Inject a Slack-style hover stylesheet once. We use a real CSS :hover rule
 // instead of React state so there is zero re-render and zero flicker: moving
@@ -350,7 +351,14 @@ function AttachmentView({ attachment }: { attachment: ChatMessage["attachments"]
   if (isImage) {
     return (
       <Pressable
-        onPress={() => void Linking.openURL(attachment.url)}
+        onPress={() =>
+          openImageLightbox({
+            url: attachment.url,
+            filename: attachment.filename,
+            width: attachment.width,
+            height: attachment.height,
+          })
+        }
         accessibilityRole="imagebutton"
         accessibilityLabel={attachment.filename}
       >
@@ -370,7 +378,14 @@ function AttachmentView({ attachment }: { attachment: ChatMessage["attachments"]
   if (isVideo) {
     return (
       <Pressable
-        onPress={() => void Linking.openURL(attachment.url)}
+        onPress={() =>
+          openVideoLightbox({
+            url: attachment.url,
+            filename: attachment.filename,
+            width: attachment.width,
+            height: attachment.height,
+          })
+        }
         style={styles.attachmentFileChip}
         accessibilityRole="button"
         accessibilityLabel={attachment.filename}

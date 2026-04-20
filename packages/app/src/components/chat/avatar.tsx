@@ -2,12 +2,16 @@ import { memo, useMemo } from "react";
 import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
+import type { UserStatus } from "@/stores/chat-store";
+
 interface AvatarProps {
   name: string;
   imageUrl?: string | null;
   size?: number;
   online?: boolean;
   offline?: boolean;
+  /** When set, draws a colored status dot (takes precedence over online/offline). */
+  status?: UserStatus;
 }
 
 const PALETTE = [
@@ -29,6 +33,7 @@ export const Avatar = memo(function Avatar({
   size = 28,
   online,
   offline,
+  status,
 }: AvatarProps) {
   const initials = useMemo(() => {
     const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -45,7 +50,17 @@ export const Avatar = memo(function Avatar({
     return PALETTE[Math.abs(hash) % PALETTE.length];
   }, [name]);
 
-  const dot = online ? styles.online : offline ? styles.offline : null;
+  const dot = status
+    ? status === "active"
+      ? styles.online
+      : status === "busy"
+        ? styles.busy
+        : styles.offline
+    : online
+      ? styles.online
+      : offline
+        ? styles.offline
+        : null;
 
   return (
     <View style={{ width: size, height: size }}>
@@ -102,6 +117,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   online: {
     backgroundColor: "#3ecf4f",
+  },
+  busy: {
+    backgroundColor: "#e05252",
   },
   offline: {
     backgroundColor: theme.colors.foregroundMuted,
