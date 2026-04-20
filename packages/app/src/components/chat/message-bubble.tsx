@@ -55,6 +55,7 @@ interface MessageBubbleProps {
   onEdit?: (messageId: string, content: string) => void;
   pinned?: boolean;
   replyCount?: number;
+  replyAuthorIds?: readonly string[];
   highlighted?: boolean;
   online?: boolean;
 }
@@ -73,6 +74,7 @@ export const MessageBubble = memo(function MessageBubble({
   onEdit,
   pinned,
   replyCount = 0,
+  replyAuthorIds,
   highlighted,
   online,
 }: MessageBubbleProps) {
@@ -239,7 +241,27 @@ export const MessageBubble = memo(function MessageBubble({
               replyCount === 1 ? "reply" : "replies"
             }`}
           >
-            <MessageSquare size={14} color={theme.colors.brandMagenta} />
+            {replyAuthorIds && replyAuthorIds.length > 0 ? (
+              <View style={styles.threadAvatarStack}>
+                {replyAuthorIds.slice(0, 3).map((uid, idx) => {
+                  const m = membersById.get(uid);
+                  return (
+                    <View
+                      key={uid}
+                      style={[
+                        styles.threadAvatarWrap,
+                        idx > 0 && { marginLeft: -6 },
+                        { zIndex: 10 - idx },
+                      ]}
+                    >
+                      <Avatar name={m?.name ?? "?"} imageUrl={m?.image ?? null} size={18} />
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <MessageSquare size={14} color={theme.colors.brandMagenta} />
+            )}
             <Text {...threadCountWebProps} style={styles.threadChipText}>
               {replyCount} {replyCount === 1 ? "reply" : "replies"}
             </Text>
@@ -580,6 +602,15 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 12,
     fontWeight: "500",
     color: theme.colors.foregroundMuted,
+  },
+  threadAvatarStack: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  threadAvatarWrap: {
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: theme.colors.surface0,
   },
   pinnedRow: {
     flexDirection: "row",

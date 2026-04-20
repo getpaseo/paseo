@@ -20,6 +20,7 @@ interface MessageListProps {
   presenceByUser?: Record<string, ChatPresence>;
   pinnedMessageIds?: ReadonlySet<string>;
   replyCountsByParent?: Readonly<Record<string, number>>;
+  replyAuthorsByParent?: Readonly<Record<string, readonly string[]>>;
   highlightedMessageId?: string | null;
   onLoadMore?: () => void;
   onOpenThread?: (message: ChatMessage) => void;
@@ -38,6 +39,7 @@ export function MessageList({
   presenceByUser,
   pinnedMessageIds,
   replyCountsByParent,
+  replyAuthorsByParent,
   highlightedMessageId,
   onLoadMore,
   onOpenThread,
@@ -75,6 +77,7 @@ export function MessageList({
         online={!!presenceByUser?.[item.userId]}
         pinned={pinnedMessageIds?.has(item.id) ?? false}
         replyCount={replyCountsByParent?.[item.id] ?? 0}
+        replyAuthorIds={replyAuthorsByParent?.[item.id]}
         highlighted={highlightedMessageId === item.id}
         onOpenThread={onOpenThread}
         onToggleReaction={onToggleReaction}
@@ -90,6 +93,7 @@ export function MessageList({
       presenceByUser,
       pinnedMessageIds,
       replyCountsByParent,
+      replyAuthorsByParent,
       highlightedMessageId,
       onOpenThread,
       onToggleReaction,
@@ -139,6 +143,7 @@ function MessageBubbleBridge({
   online,
   pinned,
   replyCount,
+  replyAuthorIds,
   highlighted,
   onOpenThread,
   onToggleReaction,
@@ -154,6 +159,7 @@ function MessageBubbleBridge({
   online?: boolean;
   pinned?: boolean;
   replyCount?: number;
+  replyAuthorIds?: readonly string[];
   highlighted?: boolean;
   onOpenThread?: (message: ChatMessage) => void;
   onToggleReaction?: (messageId: string, emoji: string, op: "add" | "remove") => void;
@@ -173,6 +179,7 @@ function MessageBubbleBridge({
       online={online}
       pinned={pinned}
       replyCount={replyCount}
+      replyAuthorIds={replyAuthorIds}
       highlighted={highlighted}
       onOpenThread={onOpenThread}
       onToggleReaction={onToggleReaction}

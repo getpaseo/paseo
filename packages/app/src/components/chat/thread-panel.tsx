@@ -25,6 +25,9 @@ interface ThreadPanelProps {
   currentUserId: string | null;
   chatRoom: ReturnType<typeof useOrgChatRoom>;
   onClose: () => void;
+  /** When the parent screen already renders a Back/title bar (e.g. compact
+   * mobile stack), pass true to avoid duplicating "Thread / #channel". */
+  hideHeader?: boolean;
 }
 
 export function ThreadPanel({
@@ -36,6 +39,7 @@ export function ThreadPanel({
   currentUserId,
   chatRoom,
   onClose,
+  hideHeader,
 }: ThreadPanelProps) {
   const { theme } = useUnistyles();
   const repliesQuery = useThreadRepliesQuery(parent.id, sessionToken);
@@ -88,22 +92,24 @@ export function ThreadPanel({
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.headerTitles}>
-          <Text style={styles.title}>Thread</Text>
-          <Text style={styles.subtitle} numberOfLines={1}>
-            #{channel.name ?? ""}
-          </Text>
+      {hideHeader ? null : (
+        <View style={styles.header}>
+          <View style={styles.headerTitles}>
+            <Text style={styles.title}>Thread</Text>
+            <Text style={styles.subtitle} numberOfLines={1}>
+              #{channel.name ?? ""}
+            </Text>
+          </View>
+          <Pressable
+            onPress={onClose}
+            style={styles.closeBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Close thread"
+          >
+            <X size={16} color={theme.colors.foregroundMuted} />
+          </Pressable>
         </View>
-        <Pressable
-          onPress={onClose}
-          style={styles.closeBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Close thread"
-        >
-          <X size={16} color={theme.colors.foregroundMuted} />
-        </Pressable>
-      </View>
+      )}
       <View style={styles.parentWrap}>
         <MessageBubble
           message={parent}

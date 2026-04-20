@@ -51,6 +51,12 @@ export interface ChatMessage {
    */
   replyCount?: number;
   /**
+   * Distinct user IDs who have replied to this message (up to a small cap),
+   * used to render the replier avatar stack on the thread chip before the
+   * thread is opened. Optional for backward compatibility.
+   */
+  replyUserIds?: string[];
+  /**
    * Reactions on this message, inlined by the server on initial load so the
    * client doesn't need a per-message query. Optional for backward compat.
    */

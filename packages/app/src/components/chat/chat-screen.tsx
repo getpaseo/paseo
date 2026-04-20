@@ -327,7 +327,10 @@ export function ChatScreen() {
       return (
         <Fragment>
           <View style={[styles.mobileWrap, { paddingTop: topOffset }]}>
-            <BackHeader onBack={() => setThreadParent(null)} label="Thread" />
+            <BackHeader
+              onBack={() => setThreadParent(null)}
+              label={`Thread · ${channelHeader(selectedChannel)}`}
+            />
             <ThreadPanel
               parent={threadParent}
               channel={selectedChannel}
@@ -341,6 +344,7 @@ export function ChatScreen() {
               currentUserId={currentUserId}
               chatRoom={chatRoom}
               onClose={() => setThreadParent(null)}
+              hideHeader
             />
           </View>
           {createModal}

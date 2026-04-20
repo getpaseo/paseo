@@ -95,6 +95,35 @@ export function ChannelMessages({
     }
     return counts;
   }, [allMessages]);
+  // Distinct replier userIds per parent — used to render a Slack-style avatar
+  // stack on the reply chip. Seed from the server-provided `replyUserIds` on
+  // each parent so the stack shows up before the thread is ever opened, then
+  // let locally-loaded replies override (authoritative once the thread loads).
+  const replyAuthorsByParent = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    for (const m of allMessages) {
+      if (m.parentId === null && m.replyUserIds && m.replyUserIds.length > 0) {
+        out[m.id] = [...m.replyUserIds];
+      }
+    }
+    const seenByParent = new Map<string, Set<string>>();
+    for (const m of allMessages) {
+      if (!m.parentId || m.deletedAt) continue;
+      let seen = seenByParent.get(m.parentId);
+      if (!seen) {
+        seen = new Set<string>();
+        seenByParent.set(m.parentId, seen);
+      }
+      if (!seen.has(m.userId)) {
+        seen.add(m.userId);
+      }
+    }
+    for (const [pid, set] of seenByParent) {
+      if (set.size === 0) continue;
+      out[pid] = Array.from(set);
+    }
+    return out;
+  }, [allMessages]);
   const typingByUser = useChatStore(selectTyping(channel.id));
   const presenceByUser = useChatStore(selectOrgPresence(channel.orgId));
 
@@ -225,6 +254,7 @@ export function ChannelMessages({
         presenceByUser={presenceByUser}
         pinnedMessageIds={pinnedIds}
         replyCountsByParent={replyCountsByParent}
+        replyAuthorsByParent={replyAuthorsByParent}
         highlightedMessageId={highlightedMessageId}
         onLoadMore={() => {
           if (messagesQuery.hasNextPage && !messagesQuery.isFetchingNextPage) {

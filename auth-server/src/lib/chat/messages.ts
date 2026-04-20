@@ -41,6 +41,9 @@ export interface MessageRow {
   }>;
   /** Number of non-deleted direct replies in this message's thread. 0 when not a thread parent. */
   replyCount: number;
+  /** Distinct replier user IDs (order of first reply, up to a small cap) so
+   * the client can render Slack-style avatar stacks on the thread chip. */
+  replyUserIds: string[];
   /**
    * Reactions aggregated per emoji. Empty array when none. Included inline so
    * clients don't need N+1 queries to hydrate reactions on load.
@@ -160,6 +163,7 @@ export async function sendMessage(db: DbLike, input: SendMessageInput): Promise<
     deletedAt: row.deletedAt,
     attachments: insertedAttachments,
     replyCount: 0,
+    replyUserIds: [],
     reactions: [],
   };
 }
@@ -188,6 +192,7 @@ export async function getMessageById(db: DbLike, messageId: string): Promise<Mes
       height: a.height,
     })),
     replyCount: await countReplies(db, m.id),
+    replyUserIds: await distinctReplyUserIds(db, m.id, 5),
     reactions: [],
   };
 }
@@ -198,6 +203,25 @@ async function countReplies(db: DbLike, parentId: string): Promise<number> {
     .from(message)
     .where(and(eq(message.parentId, parentId), isNull(message.deletedAt)));
   return Number(rows[0]?.c ?? 0);
+}
+
+async function distinctReplyUserIds(
+  db: DbLike,
+  parentId: string,
+  limit: number,
+): Promise<string[]> {
+  const rows = await db
+    .select({ userId: message.userId, createdAt: message.createdAt })
+    .from(message)
+    .where(and(eq(message.parentId, parentId), isNull(message.deletedAt)))
+    .orderBy(message.createdAt);
+  const seen: string[] = [];
+  for (const r of rows) {
+    if (seen.includes(r.userId)) continue;
+    if (seen.length >= limit) break;
+    seen.push(r.userId);
+  }
+  return seen;
 }
 
 export interface ListMessagesParams {
@@ -263,6 +287,7 @@ export async function listMessages(db: DbLike, params: ListMessagesParams): Prom
   const ids = rows.map((r) => r.id);
   const attsByMsg = new Map<string, MessageRow["attachments"]>();
   const replyCountByParent = new Map<string, number>();
+  const replyUsersByParent = new Map<string, string[]>();
   if (ids.length > 0) {
     const atts = await db.select().from(attachment).where(inArray(attachment.messageId, ids));
     for (const a of atts) {
@@ -289,6 +314,25 @@ export async function listMessages(db: DbLike, params: ListMessagesParams): Prom
       .groupBy(message.parentId);
     for (const row of counts) {
       if (row.parentId) replyCountByParent.set(row.parentId, Number(row.c));
+    }
+
+    // Distinct replier userIds per parent, oldest-reply-first, capped at 5.
+    const replyRows = await db
+      .select({
+        parentId: message.parentId,
+        userId: message.userId,
+        createdAt: message.createdAt,
+      })
+      .from(message)
+      .where(and(inArray(message.parentId, ids), isNull(message.deletedAt)))
+      .orderBy(message.createdAt);
+    for (const row of replyRows) {
+      if (!row.parentId) continue;
+      const seen = replyUsersByParent.get(row.parentId) ?? [];
+      if (seen.includes(row.userId)) continue;
+      if (seen.length >= 5) continue;
+      seen.push(row.userId);
+      replyUsersByParent.set(row.parentId, seen);
     }
   }
 
@@ -336,6 +380,7 @@ export async function listMessages(db: DbLike, params: ListMessagesParams): Prom
     deletedAt: m.deletedAt,
     attachments: attsByMsg.get(m.id) ?? [],
     replyCount: replyCountByParent.get(m.id) ?? 0,
+    replyUserIds: replyUsersByParent.get(m.id) ?? [],
     reactions: reactionsByMsg.get(m.id) ?? [],
   }));
   // Always return oldest → newest, regardless of query direction, so the
@@ -423,6 +468,7 @@ export async function listThreadReplies(
     deletedAt: m.deletedAt,
     attachments: attsByMsg.get(m.id) ?? [],
     replyCount: 0,
+    replyUserIds: [],
     reactions: reactionsByMsg.get(m.id) ?? [],
   }));
 }
