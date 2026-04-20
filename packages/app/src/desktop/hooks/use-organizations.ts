@@ -3,9 +3,14 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   desktopAuthGetOrganizations,
   desktopAuthCreateOrganization,
+  desktopAuthUpdateOrganization,
   type DesktopOrganization,
 } from "@/desktop/auth/desktop-auth";
-import { webCreateOrganization, webGetOrganizations } from "@/desktop/auth/web-auth-api";
+import {
+  webCreateOrganization,
+  webGetOrganizations,
+  webUpdateOrganization,
+} from "@/desktop/auth/web-auth-api";
 import { getIsElectron } from "@/constants/platform";
 import { useAuthSession } from "./use-auth-session";
 
@@ -33,6 +38,22 @@ export function useOrganizations() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({
+      orgId,
+      updates,
+    }: {
+      orgId: string;
+      updates: { name?: string; slug?: string; logo?: string | null };
+    }) =>
+      isElectron
+        ? desktopAuthUpdateOrganization(orgId, updates)
+        : webUpdateOrganization(orgId, updates),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ORGANIZATIONS_QUERY_KEY });
+    },
+  });
+
   const refetch = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ORGANIZATIONS_QUERY_KEY });
   }, [queryClient]);
@@ -44,6 +65,9 @@ export function useOrganizations() {
     createOrganization: createMutation.mutateAsync,
     isCreating: createMutation.isPending,
     createError: createMutation.error instanceof Error ? createMutation.error.message : null,
+    updateOrganization: updateMutation.mutateAsync,
+    isUpdating: updateMutation.isPending,
+    updateError: updateMutation.error instanceof Error ? updateMutation.error.message : null,
     refetch,
   };
 }

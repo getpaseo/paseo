@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Image as RNImage } from "react-native";
 import { useRouter } from "expo-router";
 import type { ColyseusRoom } from "@/hooks/sharing/colyseus-client";
 import type { ChatChannel, ChatMessage } from "@/api/chat";
@@ -7,6 +8,50 @@ import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { useChatStore } from "@/stores/chat-store";
 import { extractMentionUserIdsClient } from "@/lib/chat-mentions";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const hubcodeIcon = require("../../../assets/images/icon-hubcode-black.png");
+
+const HUBCODE_ICON_URI: string | null = (() => {
+  try {
+    return RNImage.resolveAssetSource(hubcodeIcon).uri ?? null;
+  } catch {
+    return null;
+  }
+})();
+
+// Short, pleasant two-tone chime synthesized on demand via WebAudio so we
+// don't ship an audio asset. Lazily created and reused.
+let sharedAudioCtx: AudioContext | null = null;
+function playNotificationChime(): void {
+  if (!isWeb || typeof window === "undefined") return;
+  const AC =
+    (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
+      .AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AC) return;
+  try {
+    if (!sharedAudioCtx) sharedAudioCtx = new AC();
+    const ctx = sharedAudioCtx;
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+    const now = ctx.currentTime;
+    const play = (freq: number, start: number, duration: number, peak: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + start);
+      gain.gain.exponentialRampToValueAtTime(peak, now + start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + duration);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now + start);
+      osc.stop(now + start + duration + 0.02);
+    };
+    play(880, 0, 0.18, 0.25);
+    play(1320, 0.12, 0.18, 0.2);
+  } catch {
+    // ignore — autoplay policy or unsupported context
+  }
+}
 
 interface Params {
   room: ColyseusRoom | null;
@@ -104,6 +149,9 @@ export function useChatNotifications(params: Params): void {
       // In-app toast.
       toast.show(toastMsg);
 
+      // Chime on web for every delivered notification.
+      if (isWeb) playNotificationChime();
+
       // OS notification on web/Electron when permission is granted.
       if (isWeb && typeof window !== "undefined") {
         const N = (window as unknown as { Notification?: typeof Notification }).Notification;
@@ -112,6 +160,9 @@ export function useChatNotifications(params: Params): void {
             const n = new N(channelLabel, {
               body: `${authorName}: ${preview}`,
               tag: `hubcode-chat-${msg.channelId}`,
+              ...(HUBCODE_ICON_URI
+                ? { icon: HUBCODE_ICON_URI, badge: HUBCODE_ICON_URI }
+                : {}),
             });
             n.onclick = () => {
               try {

@@ -84,7 +84,10 @@ export function CreateChannelModal({
       // Best-effort invite: failures on a single invite don't roll back the
       // channel — surface them collectively so the user knows.
       const failures: string[] = [];
-      for (const userId of selected) {
+      // Public channels: every org member is an implicit member, so we skip
+      // the explicit invite step entirely.
+      const inviteIds = kind === "public" ? [] : Array.from(selected);
+      for (const userId of inviteIds) {
         try {
           await addMemberMutation.mutateAsync({
             channelId: chan.id,
@@ -166,52 +169,54 @@ export function CreateChannelModal({
           </View>
         </Field>
 
-        <Field label={`Invite members${selected.size > 0 ? ` (${selected.size})` : ""}`}>
-          <AdaptiveTextInput
-            value={memberQuery}
-            onChangeText={setMemberQuery}
-            placeholder="Search org members…"
-            placeholderTextColor={theme.colors.foregroundMuted}
-            style={styles.input}
-            focusBorderColor={theme.colors.brandMagenta}
-          />
-          <ScrollView
-            style={styles.membersList}
-            keyboardShouldPersistTaps="handled"
-            nestedScrollEnabled
-          >
-            {orgMembersQuery.isLoading ? (
-              <Text style={styles.hint}>Loading org members…</Text>
-            ) : invitables.length === 0 ? (
-              <Text style={styles.hint}>
-                {memberQuery ? "No matches." : "No other members in this org yet."}
-              </Text>
-            ) : (
-              invitables.slice(0, 50).map((m) => {
-                if (!m.user) return null;
-                const picked = selected.has(m.userId);
-                return (
-                  <Pressable
-                    key={m.userId}
-                    onPress={() => toggleMember(m.userId)}
-                    style={styles.memberRow}
-                    accessibilityRole="checkbox"
-                    accessibilityState={{ checked: picked }}
-                  >
-                    <Avatar name={m.user.name} imageUrl={m.user.image} size={28} />
-                    <View style={styles.memberBody}>
-                      <Text style={styles.memberName}>{m.user.name}</Text>
-                      <Text style={styles.memberEmail}>{m.user.email}</Text>
-                    </View>
-                    <View style={[styles.checkbox, picked && styles.checkboxChecked]}>
-                      {picked ? <Check size={14} color="#ffffff" /> : null}
-                    </View>
-                  </Pressable>
-                );
-              })
-            )}
-          </ScrollView>
-        </Field>
+        {kind === "private" ? (
+          <Field label={`Invite members${selected.size > 0 ? ` (${selected.size})` : ""}`}>
+            <AdaptiveTextInput
+              value={memberQuery}
+              onChangeText={setMemberQuery}
+              placeholder="Search org members…"
+              placeholderTextColor={theme.colors.foregroundMuted}
+              style={styles.input}
+              focusBorderColor={theme.colors.brandMagenta}
+            />
+            <ScrollView
+              style={styles.membersList}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+            >
+              {orgMembersQuery.isLoading ? (
+                <Text style={styles.hint}>Loading org members…</Text>
+              ) : invitables.length === 0 ? (
+                <Text style={styles.hint}>
+                  {memberQuery ? "No matches." : "No other members in this org yet."}
+                </Text>
+              ) : (
+                invitables.slice(0, 50).map((m) => {
+                  if (!m.user) return null;
+                  const picked = selected.has(m.userId);
+                  return (
+                    <Pressable
+                      key={m.userId}
+                      onPress={() => toggleMember(m.userId)}
+                      style={styles.memberRow}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: picked }}
+                    >
+                      <Avatar name={m.user.name} imageUrl={m.user.image} size={28} />
+                      <View style={styles.memberBody}>
+                        <Text style={styles.memberName}>{m.user.name}</Text>
+                        <Text style={styles.memberEmail}>{m.user.email}</Text>
+                      </View>
+                      <View style={[styles.checkbox, picked && styles.checkboxChecked]}>
+                        {picked ? <Check size={14} color="#ffffff" /> : null}
+                      </View>
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+          </Field>
+        ) : null}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 

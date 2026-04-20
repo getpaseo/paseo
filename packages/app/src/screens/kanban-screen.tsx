@@ -29,6 +29,7 @@ import type { CliProviderId } from "@server/shared/cli-provider-registry";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 import { buildTaskAgentPrompt } from "@/lib/task-agent-prompt";
 import { useActiveOrgId } from "@/stores/active-org-store";
+import { SidebarMenuToggle } from "@/components/headers/menu-header";
 
 interface KanbanScreenProps {
   serverId: string;
@@ -224,8 +225,15 @@ export function KanbanScreen({ serverId, projectId }: KanbanScreenProps) {
   return (
     <View style={[screenStyles.container, { paddingTop: insets.top + headerPadding.top }]}>
       <View style={screenStyles.header}>
-        <Text style={screenStyles.title}>{projectName}</Text>
-        <Text style={screenStyles.subtitle}>Tasks</Text>
+        <View style={screenStyles.headerRow}>
+          <SidebarMenuToggle />
+          <View style={screenStyles.headerTextWrap}>
+            <Text style={screenStyles.title} numberOfLines={1}>
+              {projectName}
+            </Text>
+            <Text style={screenStyles.subtitle}>Tasks</Text>
+          </View>
+        </View>
       </View>
       <KanbanBoard
         serverId={serverId}
@@ -257,6 +265,15 @@ const screenStyles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[3],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.surface2,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  headerTextWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   title: {
     fontSize: theme.fontSize.xl,

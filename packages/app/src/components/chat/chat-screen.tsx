@@ -13,6 +13,7 @@ import {
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
+import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import {
   useChannelMembersQuery,
   useChannelsQuery,
@@ -94,6 +95,22 @@ export function ChatScreen() {
     }
   };
   const setActiveChannelId = useChatStore((s) => s.setActiveChannelId);
+  // Public channels don't populate channel-member rows, so `membersQuery`
+  // returns empty. Fall back to org-member rows (name + avatar) so the thread
+  // header can resolve the parent message author instead of showing "?".
+  const orgMemberFallback = useMemo(() => {
+    const list = orgMembersQuery.data ?? [];
+    return list
+      .filter((m) => m.user !== null)
+      .map((m) => ({
+        userId: m.userId,
+        role: m.role === "admin" ? ("admin" as const) : ("member" as const),
+        joinedAt: m.createdAt,
+        name: m.user?.name ?? "",
+        email: m.user?.email ?? "",
+        image: m.user?.image ?? null,
+      }));
+  }, [orgMembersQuery.data]);
   const presenceByUser = useChatStore(selectOrgPresence(orgId ?? ""));
 
   const dmEntries = useMemo<DmEntry[]>(() => {
@@ -212,11 +229,15 @@ export function ChatScreen() {
   const membersQuery = useChannelMembersQuery(selectedChannel?.id, sessionToken);
 
   useEffect(() => {
+    // On compact/mobile, the 3-step stack (list → messages → thread) relies
+    // on `selectedChannelId === null` to show the channel list. Auto-selecting
+    // the first channel here would immediately undo the user's Back tap.
+    if (isCompact) return;
     if (selectedChannelId) return;
     const firstPublic = channelsQuery.data?.find((c) => c.kind === "public");
     const firstAny = channelsQuery.data?.[0] ?? dmsQuery.data?.[0];
     setSelectedChannelId((firstPublic ?? firstAny)?.id ?? null);
-  }, [channelsQuery.data, dmsQuery.data, selectedChannelId]);
+  }, [channelsQuery.data, dmsQuery.data, selectedChannelId, isCompact]);
 
   // Close the thread drawer when switching channels.
   useEffect(() => {
@@ -310,7 +331,11 @@ export function ChatScreen() {
             <ThreadPanel
               parent={threadParent}
               channel={selectedChannel}
-              members={membersQuery.data ?? []}
+              members={
+                selectedChannel.kind === "public"
+                  ? orgMemberFallback
+                  : (membersQuery.data ?? [])
+              }
               channels={channelsQuery.data ?? []}
               sessionToken={sessionToken}
               currentUserId={currentUserId}
@@ -337,6 +362,7 @@ export function ChatScreen() {
               onOpenSearch={() => setSearchOpen(true)}
               onOpenMentions={() => setMentionsOpen(true)}
               onDeleteChannel={handleDeleteChannel}
+              leading={<SidebarMenuToggle />}
             />
           </View>
           {createModal}
@@ -404,7 +430,11 @@ export function ChatScreen() {
           <ThreadPanel
             parent={threadParent}
             channel={selectedChannel}
-            members={membersQuery.data ?? []}
+            members={
+              selectedChannel.kind === "public"
+                ? orgMemberFallback
+                : (membersQuery.data ?? [])
+            }
             channels={channelsQuery.data ?? []}
             sessionToken={sessionToken}
             currentUserId={currentUserId}
@@ -422,6 +452,7 @@ function BackHeader({ onBack, label }: { onBack: () => void; label: string }) {
   const { theme } = useUnistyles();
   return (
     <View style={styles.backHeader}>
+      <SidebarMenuToggle />
       <Pressable onPress={onBack} style={styles.backBtn} accessibilityRole="button">
         <ArrowLeft size={18} color={theme.colors.foreground} />
       </Pressable>

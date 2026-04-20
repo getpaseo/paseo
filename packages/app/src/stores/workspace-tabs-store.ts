@@ -160,6 +160,7 @@ type WorkspaceTabsState = {
   }) => string | null;
   reorderTabs: (input: { serverId: string; workspaceId: string; tabIds: string[] }) => void;
   getWorkspaceTabs: (input: { serverId: string; workspaceId: string }) => WorkspaceTab[];
+  resetAll: () => void;
 };
 
 export const useWorkspaceTabsStore = create<WorkspaceTabsState>()(
@@ -383,6 +384,13 @@ export const useWorkspaceTabsStore = create<WorkspaceTabsState>()(
               [key]: normalized,
             },
           };
+        });
+      },
+      resetAll: () => {
+        set({
+          uiTabsByWorkspace: {},
+          tabOrderByWorkspace: {},
+          focusedTabIdByWorkspace: {},
         });
       },
       getWorkspaceTabs: ({ serverId, workspaceId }) => {

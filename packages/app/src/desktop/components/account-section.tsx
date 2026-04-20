@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
@@ -11,7 +11,11 @@ import {
   RefreshCw,
   ArrowRight,
   ExternalLink,
+  ImagePlus,
+  Trash2,
 } from "lucide-react-native";
+import { isWeb } from "@/constants/platform";
+import { resizeImageToDataUrl } from "@/utils/resize-image-to-data-url";
 import { settingsStyles } from "@/styles/settings";
 import { Button } from "@/components/ui/button";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
@@ -265,6 +269,192 @@ function CreateOrganizationForm({ onDone }: { onDone: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+// Organization details editor (logo + name)
+// ---------------------------------------------------------------------------
+
+function OrgDetailsCard({ org }: { org: DesktopOrganization }) {
+  const { theme } = useUnistyles();
+  const { updateOrganization, isUpdating, updateError } = useOrganizations();
+  const [name, setName] = useState(org.name);
+  const [logoDataUrl, setLogoDataUrl] = useState<string | null>(org.logo);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Keep the form in sync when the parent list refetches after a save.
+  useEffect(() => {
+    setName(org.name);
+    setLogoDataUrl(org.logo);
+  }, [org.id, org.name, org.logo]);
+
+  const dirty = name.trim() !== org.name || logoDataUrl !== org.logo;
+
+  const handlePickLogo = useCallback(() => {
+    if (!isWeb || !fileInputRef.current) return;
+    fileInputRef.current.value = "";
+    fileInputRef.current.click();
+  }, []);
+
+  const handleLogoFileChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        const dataUrl = await resizeImageToDataUrl(file, { targetSize: 256 });
+        setLogoDataUrl(dataUrl);
+        setLocalError(null);
+      } catch (err) {
+        setLocalError(err instanceof Error ? err.message : "Failed to process image");
+      }
+    },
+    [],
+  );
+
+  const handleSave = async () => {
+    if (!name.trim()) {
+      setLocalError("Name cannot be empty");
+      return;
+    }
+    setLocalError(null);
+    try {
+      const updates: { name?: string; logo?: string | null } = {};
+      if (name.trim() !== org.name) updates.name = name.trim();
+      if (logoDataUrl !== org.logo) updates.logo = logoDataUrl;
+      if (Object.keys(updates).length === 0) return;
+      await updateOrganization({ orgId: org.id, updates });
+    } catch {
+      // surfaced via updateError
+    }
+  };
+
+  const errorMessage = localError ?? updateError;
+
+  return (
+    <View style={[settingsStyles.card, orgEditStyles.card]}>
+      <Text style={orgEditStyles.label}>Logo</Text>
+      <View style={orgEditStyles.logoRow}>
+        <Pressable
+          onPress={handlePickLogo}
+          style={[
+            orgEditStyles.logoButton,
+            { backgroundColor: theme.colors.surface1, borderColor: theme.colors.border },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Change organization logo"
+        >
+          {logoDataUrl ? (
+            <Image source={{ uri: logoDataUrl }} style={orgEditStyles.logoImage} />
+          ) : (
+            <ImagePlus size={22} color={theme.colors.foregroundMuted} />
+          )}
+        </Pressable>
+        <View style={orgEditStyles.logoActions}>
+          <Button variant="outline" size="sm" onPress={handlePickLogo}>
+            {logoDataUrl ? "Change" : "Upload"}
+          </Button>
+          {logoDataUrl ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={<Trash2 size={14} color={theme.colors.destructive} />}
+              onPress={() => setLogoDataUrl(null)}
+              textStyle={{ color: theme.colors.destructive }}
+            >
+              Remove
+            </Button>
+          ) : null}
+        </View>
+      </View>
+      {isWeb ? (
+        // eslint-disable-next-line react/forbid-elements
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={handleLogoFileChange}
+        />
+      ) : null}
+
+      <Text style={[orgEditStyles.label, { marginTop: theme.spacing[3] }]}>Name</Text>
+      <TextInput
+        value={name}
+        onChangeText={setName}
+        style={[orgEditStyles.input, { color: theme.colors.foreground, borderColor: theme.colors.border, backgroundColor: theme.colors.surface1 }]}
+        placeholder="Organization name"
+        placeholderTextColor={theme.colors.foregroundMuted}
+      />
+
+      {errorMessage ? <Text style={orgEditStyles.error}>{errorMessage}</Text> : null}
+
+      <View style={orgEditStyles.footer}>
+        <Button
+          variant="default"
+          size="sm"
+          onPress={handleSave}
+          disabled={!dirty || isUpdating}
+        >
+          {isUpdating ? "Saving…" : "Save changes"}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+const orgEditStyles = StyleSheet.create((theme) => ({
+  card: {
+    padding: theme.spacing[3],
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[3],
+  },
+  label: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    fontWeight: "600",
+  },
+  logoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+  },
+  logoButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  logoImage: {
+    width: 64,
+    height: 64,
+  },
+  logoActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    fontSize: theme.fontSize.base,
+  },
+  error: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+  },
+  footer: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: theme.spacing[2],
+  },
+}));
+
+// ---------------------------------------------------------------------------
 // Organization detail (members)
 // ---------------------------------------------------------------------------
 
@@ -314,6 +504,8 @@ function OrgMembersView({ org, onBack }: { org: DesktopOrganization; onBack: () 
         </Button>
         <Text style={styles.orgTitle}>{org.name}</Text>
       </View>
+
+      {canManage ? <OrgDetailsCard org={org} /> : null}
 
       <View style={settingsStyles.card}>
         {isLoading ? (

@@ -502,7 +502,7 @@ const modalStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
     borderWidth: 1,
-    borderColor: theme.colors.surface2,
+    borderColor: theme.colors.border,
   },
   textArea: {
     minHeight: 80,

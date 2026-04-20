@@ -312,7 +312,27 @@ async function getOrganizations(): Promise<unknown> {
     const body = await response.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? "Failed to fetch organizations.");
   }
-  return await response.json();
+  return await safeJson(response);
+}
+
+async function updateOrganization(args?: Record<string, unknown>): Promise<unknown> {
+  const orgId = args?.orgId as string;
+  if (!orgId) throw new Error("Organization ID is required.");
+  const payload: Record<string, unknown> = {};
+  if (typeof args?.name === "string") payload.name = args.name;
+  if (typeof args?.slug === "string") payload.slug = args.slug;
+  if (args?.logo === null) payload.logo = null;
+  else if (typeof args?.logo === "string") payload.logo = args.logo;
+  const response = await authFetch(`/api/organizations/${encodeURIComponent(orgId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const err = (body as { error?: string }).error;
+    throw new Error(err ?? `Failed to update organization (HTTP ${response.status}).`);
+  }
+  return await safeJson(response);
 }
 
 async function createOrganization(args?: Record<string, unknown>): Promise<unknown> {
@@ -333,7 +353,7 @@ async function createOrganization(args?: Record<string, unknown>): Promise<unkno
     const body = await response.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? "Failed to create organization.");
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 async function getOrgMembers(args?: Record<string, unknown>): Promise<unknown> {
@@ -345,9 +365,10 @@ async function getOrgMembers(args?: Record<string, unknown>): Promise<unknown> {
   const response = await authFetch(`/api/organizations/${encodeURIComponent(orgId)}/members`);
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? "Failed to fetch members.");
+    const err = (body as { error?: string }).error;
+    throw new Error(err ?? `Failed to fetch members (HTTP ${response.status}).`);
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 async function inviteMember(args?: Record<string, unknown>): Promise<unknown> {
@@ -368,7 +389,7 @@ async function inviteMember(args?: Record<string, unknown>): Promise<unknown> {
     const body = await response.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? "Failed to invite member.");
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 async function removeMember(args?: Record<string, unknown>): Promise<unknown> {
@@ -388,7 +409,7 @@ async function removeMember(args?: Record<string, unknown>): Promise<unknown> {
     const body = await response.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? "Failed to remove member.");
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 async function cancelInvitation(args?: Record<string, unknown>): Promise<unknown> {
@@ -408,7 +429,7 @@ async function cancelInvitation(args?: Record<string, unknown>): Promise<unknown
     const body = await response.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? "Failed to cancel invitation.");
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 async function resendInvitation(args?: Record<string, unknown>): Promise<unknown> {
@@ -428,7 +449,16 @@ async function resendInvitation(args?: Record<string, unknown>): Promise<unknown
     const body = await response.json().catch(() => ({}));
     throw new Error((body as { error?: string }).error ?? "Failed to resend invitation.");
   }
-  return await response.json();
+  return await safeJson(response);
+}
+
+async function safeJson(response: Response): Promise<unknown> {
+  // 204 and empty 200 bodies would crash response.json() with
+  // "Unexpected end of JSON input". Return null instead.
+  if (response.status === 204) return null;
+  const text = await response.text();
+  if (!text) return null;
+  return JSON.parse(text);
 }
 
 async function readErrorDetail(response: Response, fallback: string): Promise<string> {
@@ -454,7 +484,7 @@ async function createWorkspaceShare(args?: Record<string, unknown>): Promise<unk
   if (!response.ok) {
     throw new Error(await readErrorDetail(response, "Failed to share workspace"));
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 async function updateWorkspaceShare(args?: Record<string, unknown>): Promise<unknown> {
@@ -472,7 +502,7 @@ async function updateWorkspaceShare(args?: Record<string, unknown>): Promise<unk
   if (!response.ok) {
     throw new Error(await readErrorDetail(response, "Failed to update workspace share"));
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 async function revokeWorkspaceShare(args?: Record<string, unknown>): Promise<unknown> {
@@ -486,7 +516,7 @@ async function revokeWorkspaceShare(args?: Record<string, unknown>): Promise<unk
   if (!response.ok) {
     throw new Error(await readErrorDetail(response, "Failed to revoke workspace share"));
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 async function listWorkspaceShares(args?: Record<string, unknown>): Promise<unknown> {
@@ -498,7 +528,7 @@ async function listWorkspaceShares(args?: Record<string, unknown>): Promise<unkn
   if (!response.ok) {
     throw new Error(await readErrorDetail(response, "Failed to list workspace shares"));
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 async function listSharedWithMe(args?: Record<string, unknown>): Promise<unknown> {
@@ -512,7 +542,7 @@ async function listSharedWithMe(args?: Record<string, unknown>): Promise<unknown
   if (!response.ok) {
     throw new Error(await readErrorDetail(response, "Failed to list shared workspaces"));
   }
-  return await response.json();
+  return await safeJson(response);
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +556,7 @@ export function createAuthCommandHandlers(): Record<string, DesktopCommandHandle
     desktop_auth_get_session: () => getSession(),
     desktop_auth_get_organizations: () => getOrganizations(),
     desktop_auth_create_organization: (args) => createOrganization(args),
+    desktop_auth_update_organization: (args) => updateOrganization(args),
     desktop_auth_get_org_members: (args) => getOrgMembers(args),
     desktop_auth_invite_member: (args) => inviteMember(args),
     desktop_auth_remove_member: (args) => removeMember(args),

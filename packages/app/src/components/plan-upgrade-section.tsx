@@ -23,10 +23,20 @@ const PRO_FEATURES = [
   "API access",
 ];
 
+function normalizePlanSlug(planId: string | null | undefined): string {
+  return (planId ?? "").toLowerCase().replace(/^plan[_-]/, "").trim();
+}
+
 function isPaidPlan(planId: string | null | undefined): boolean {
-  if (!planId) return false;
-  const normalized = planId.toLowerCase();
-  return normalized !== "free";
+  const slug = normalizePlanSlug(planId);
+  if (!slug) return false;
+  return slug !== "free";
+}
+
+function formatPlanLabel(planId: string | null | undefined): string {
+  const slug = normalizePlanSlug(planId);
+  if (!slug) return "Free";
+  return slug.charAt(0).toUpperCase() + slug.slice(1);
 }
 
 export function PlanUpgradeSection() {
@@ -42,7 +52,7 @@ export function PlanUpgradeSection() {
   const planId = activeOrg?.planId ?? null;
   const subscriptionStatus = activeOrg?.subscriptionStatus ?? null;
   const isPro = isPaidPlan(planId);
-  const planLabel = isPro ? planId!.charAt(0).toUpperCase() + planId!.slice(1) : "Free";
+  const planLabel = formatPlanLabel(planId);
 
   return (
     <View style={settingsStyles.section}>
@@ -52,9 +62,7 @@ export function PlanUpgradeSection() {
           <View style={settingsStyles.rowContent}>
             <View style={styles.currentHeader}>
               {isPro ? <Crown size={14} color={theme.colors.accent} /> : null}
-              <Text style={settingsStyles.rowTitle}>
-                {isPro ? `${planLabel} plan` : "Free plan"}
-              </Text>
+              <Text style={settingsStyles.rowTitle}>{`${planLabel} plan`}</Text>
               {isPro && subscriptionStatus && subscriptionStatus !== "active" ? (
                 <Text style={styles.statusBadge}>{subscriptionStatus}</Text>
               ) : null}

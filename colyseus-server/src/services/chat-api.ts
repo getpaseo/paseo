@@ -126,6 +126,19 @@ export class ChatApiClient {
     return body.channels;
   }
 
+  async getChannel(channelId: string): Promise<ChannelMembership | null> {
+    try {
+      const body = await this.request<ChannelMembership>(
+        `/api/internal/chat/channels/${encodeURIComponent(channelId)}`,
+        { method: "GET", internal: true },
+      );
+      return body;
+    } catch (err) {
+      if (err instanceof ChatApiError && err.status === 404) return null;
+      throw err;
+    }
+  }
+
   async getChannelMembers(channelId: string): Promise<Array<{ userId: string; role: string }>> {
     const body = await this.request<{ members: Array<{ userId: string; role: string }> }>(
       `/api/internal/chat/channels/${encodeURIComponent(channelId)}/members`,

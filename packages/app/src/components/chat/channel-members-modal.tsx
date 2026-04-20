@@ -60,16 +60,33 @@ export function ChannelMembersModal({
     });
   }, [orgMembersQuery.data, currentIds, query]);
 
-  const current = useMemo(
-    () =>
-      [...(membersQuery.data ?? [])].sort((a, b) => {
-        const aOnline = !!presenceByUser[a.userId];
-        const bOnline = !!presenceByUser[b.userId];
-        if (aOnline !== bOnline) return aOnline ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      }),
-    [membersQuery.data, presenceByUser],
-  );
+  const current = useMemo(() => {
+    // Public channels: every org member is implicitly a member, so list the
+    // entire org roster here. For private/dm channels, stick to the explicit
+    // channel_members rows.
+    const base =
+      channel.kind === "public"
+        ? (orgMembersQuery.data ?? [])
+            .filter((m) => m.user !== null)
+            .map((m) => ({
+              userId: m.userId,
+              role:
+                m.role === "admin" || m.role === "owner"
+                  ? ("admin" as const)
+                  : ("member" as const),
+              joinedAt: m.createdAt,
+              name: m.user?.name ?? "",
+              email: m.user?.email ?? "",
+              image: m.user?.image ?? null,
+            }))
+        : (membersQuery.data ?? []);
+    return [...base].sort((a, b) => {
+      const aOnline = !!presenceByUser[a.userId];
+      const bOnline = !!presenceByUser[b.userId];
+      if (aOnline !== bOnline) return aOnline ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [channel.kind, membersQuery.data, orgMembersQuery.data, presenceByUser]);
 
   return (
     <AdaptiveModalSheet
@@ -156,7 +173,7 @@ export function ChannelMembersModal({
           })}
         </View>
 
-        {canManage && channel.kind !== "dm" ? (
+        {canManage && channel.kind === "private" ? (
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Invite from {channel.orgId}</Text>
             <AdaptiveTextInput

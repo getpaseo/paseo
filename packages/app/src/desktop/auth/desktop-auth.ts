@@ -239,6 +239,17 @@ export async function desktopAuthCreateOrganization(
   return parseOrganization(raw);
 }
 
+export async function desktopAuthUpdateOrganization(
+  orgId: string,
+  updates: { name?: string; slug?: string; logo?: string | null },
+): Promise<DesktopOrganization | null> {
+  const raw = await invokeDesktopCommand<unknown>("desktop_auth_update_organization", {
+    orgId,
+    ...updates,
+  });
+  return parseOrganization(raw);
+}
+
 export async function desktopAuthGetOrgMembers(
   orgId: string,
 ): Promise<{ members: DesktopOrgMember[]; invitations: DesktopInvitation[] }> {

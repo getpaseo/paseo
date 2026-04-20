@@ -23,16 +23,18 @@ const CHANNEL_RE = /<#([a-zA-Z0-9_-]+)>/g;
  * markdown emphasis so `react-native-markdown-display` shows them correctly.
  */
 export function expandMentions(content: string, maps: MentionMaps): string {
-  let out = content.replace(MENTION_RE, (match, userId: string) => {
+  let out = content.replace(MENTION_RE, (_match, userId: string) => {
+    // Prefer the resolved display name, but never leak the raw `<@id>` token
+    // to the user — if the members map is still loading or doesn't include
+    // this user (e.g. someone not in the explicit roster), fall back to a
+    // generic "@user" chip so the message reads naturally.
     const name = maps.membersById.get(userId)?.name;
-    if (!name) return match;
-    return `**@${name}**`;
+    return `**@${name ?? "user"}**`;
   });
-  out = out.replace(CHANNEL_RE, (match, channelId: string) => {
+  out = out.replace(CHANNEL_RE, (_match, channelId: string) => {
     const channel = maps.channelsById.get(channelId);
     const name = channel?.name;
-    if (!name) return match;
-    return `**#${name}**`;
+    return `**#${name ?? "channel"}**`;
   });
   return out;
 }

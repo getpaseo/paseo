@@ -55,6 +55,8 @@ interface ChatState {
   upsertMessage: (message: ChatMessage) => void;
   updateMessage: (message: ChatMessage) => void;
   removeMessage: (messageId: string) => void;
+  /** Hard-removes a row (used for optimistic placeholders). */
+  dropMessage: (messageId: string) => void;
   applyReaction: (
     op: "add" | "remove",
     payload: { messageId: string; userId: string; emoji: string },
@@ -66,6 +68,7 @@ interface ChatState {
   removePresence: (orgId: string, userId: string) => void;
   setTyping: (channelId: string, indicator: TypingIndicator) => void;
   clearStaleTyping: () => void;
+  clearTypingForUser: (channelId: string, userId: string) => void;
 
   reset: () => void;
 }
@@ -161,6 +164,21 @@ export const useChatStore = create<ChatState>()(
           };
         }),
 
+      dropMessage: (messageId) =>
+        set((s) => {
+          const patched: Record<string, ChatMessage[]> = {};
+          let changed = false;
+          for (const [cid, arr] of Object.entries(s.messagesByChannel)) {
+            const next = arr.filter((m) => m.id !== messageId);
+            if (next.length !== arr.length) {
+              patched[cid] = next;
+              changed = true;
+            }
+          }
+          if (!changed) return {};
+          return { messagesByChannel: { ...s.messagesByChannel, ...patched } };
+        }),
+
       removeMessage: (messageId) =>
         set((s) => {
           const patched: Record<string, ChatMessage[]> = {};
@@ -246,6 +264,14 @@ export const useChatStore = create<ChatState>()(
             },
           },
         })),
+
+      clearTypingForUser: (channelId, userId) =>
+        set((s) => {
+          const byUser = s.typingByChannel[channelId];
+          if (!byUser || !(userId in byUser)) return {};
+          const { [userId]: _gone, ...rest } = byUser;
+          return { typingByChannel: { ...s.typingByChannel, [channelId]: rest } };
+        }),
 
       clearStaleTyping: () =>
         set((s) => {

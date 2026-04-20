@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { useOrganizations } from "@/desktop/hooks/use-organizations";
 import { setActiveOrgId, useActiveOrgId } from "@/stores/active-org-store";
+import { useWorkspaceTabsStore } from "@/stores/workspace-tabs-store";
 import { useIsInSharedSession, useIsSharedRecipient } from "@/stores/shared-session-store";
 
 /**
@@ -136,7 +137,11 @@ export function DesktopOrgRail() {
       setName("");
       setSlug("");
       setLogoDataUrl(null);
-      if (created?.id) setActiveOrgId(created.id);
+      if (created?.id) {
+        useWorkspaceTabsStore.getState().resetAll();
+        setActiveOrgId(created.id);
+        router.replace("/welcome");
+      }
     } catch (err) {
       const raw = err instanceof Error ? err.message : "Failed to create organization";
       setError(cleanErrorMessage(raw));
@@ -209,7 +214,13 @@ export function DesktopOrgRail() {
               key={o.id}
               accessibilityRole="button"
               accessibilityLabel={`Select organization ${o.name}`}
-              onPress={() => setActiveOrgId(o.id)}
+              onPress={() => {
+                if (o.id !== activeOrgId) {
+                  useWorkspaceTabsStore.getState().resetAll();
+                  setActiveOrgId(o.id);
+                  router.replace("/welcome");
+                }
+              }}
               style={({ hovered = false }) => [
                 styles.orgTile,
                 active && styles.orgTileActive,

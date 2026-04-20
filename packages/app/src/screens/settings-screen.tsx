@@ -79,6 +79,7 @@ import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { isWeb } from "@/constants/platform";
 import { CliAgentsSection } from "@/screens/settings/cli-agents-section";
 import { AccountSection } from "@/desktop/components/account-section";
+import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { PlanUpgradeSection } from "@/components/plan-upgrade-section";
 
 // ---------------------------------------------------------------------------
@@ -107,7 +108,10 @@ interface SettingsSectionDef {
   icon: ComponentType<{ size: number; color: string }>;
 }
 
-function getSettingsSections(context: { isDesktopApp: boolean }): SettingsSectionDef[] {
+function getSettingsSections(context: {
+  isDesktopApp: boolean;
+  isAuthenticated: boolean;
+}): SettingsSectionDef[] {
   const sections: SettingsSectionDef[] = [
     { id: "hosts", label: "Hosts", icon: Server },
     { id: "general", label: "General", icon: Settings },
@@ -116,8 +120,14 @@ function getSettingsSections(context: { isDesktopApp: boolean }): SettingsSectio
     { id: "plan", label: "Plan", icon: Zap },
   ];
 
-  if (context.isDesktopApp) {
+  // Account management (org + member admin) should be available whenever the
+  // user is authenticated — desktop or mobile/web. Previously gated on
+  // Electron only, which hid the section on mobile web even when signed in.
+  if (context.isAuthenticated) {
     sections.unshift({ id: "account", label: "Account", icon: Shield });
+  }
+
+  if (context.isDesktopApp) {
     sections.push(
       { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
       { id: "integrations", label: "Integrations", icon: Puzzle },
@@ -733,7 +743,7 @@ function SettingsSectionContent({
 }: SettingsSectionContentProps) {
   switch (sectionId) {
     case "account":
-      return isDesktopApp ? <AccountSection /> : null;
+      return <AccountSection />;
     case "hosts":
       return <HostsSection {...hostsProps} />;
     case "general":
@@ -990,6 +1000,7 @@ export default function SettingsScreen() {
   const isMountedRef = useRef(true);
   const lastHandledEditHostRef = useRef<string | null>(null);
   const isDesktopApp = isElectronRuntime();
+  const { isAuthenticated } = useAuthSession();
   const isLocalDaemon = useIsLocalDaemon(routeServerId);
   const appVersion = resolveAppVersion();
   const appVersionText = formatVersionWithPrefix(appVersion);
@@ -1140,7 +1151,7 @@ export default function SettingsScreen() {
   }, [isPlaybackTestRunning, voiceAudioEngine]);
 
   const isCompactLayout = useIsCompactFormFactor();
-  const sections = getSettingsSections({ isDesktopApp });
+  const sections = getSettingsSections({ isDesktopApp, isAuthenticated });
 
   const hostsProps: HostsSectionProps = {
     daemons,

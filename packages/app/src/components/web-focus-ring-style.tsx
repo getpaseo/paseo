@@ -25,12 +25,20 @@ export function WebFocusRingStyle() {
       [role="button"]:focus-visible,
       button:focus-visible,
       a:focus-visible,
-      input:focus-visible,
-      textarea:focus-visible,
       [tabindex]:focus-visible {
         outline: 2px solid #C4198B !important;
         outline-offset: 2px !important;
         border-radius: 4px;
+      }
+      /* Text inputs and textareas: suppress the browser's focus ring and the
+         brand outline. Professional-looking text fields rely on the caret +
+         subtle background for focus cueing, not a colored ring. */
+      input:focus,
+      input:focus-visible,
+      textarea:focus,
+      textarea:focus-visible {
+        outline: none !important;
+        box-shadow: none !important;
       }
       [data-hubcode-no-focus-ring]:focus-visible {
         outline: none !important;

@@ -116,21 +116,33 @@ export function useChannelMessages(channelId: string | undefined, sessionToken: 
       return msgs;
     },
     getNextPageParam: (lastPage) => (lastPage.length === PAGE_SIZE ? lastPage[0]?.id : undefined),
-    staleTime: 10_000,
+    // Always refetch the newest page when the user (re)opens a channel so
+    // Slack-style auto-load feels instant: whatever is persisted in zustand
+    // is replaced by a fresh page from the server without the user having
+    // to manually pull-to-refresh.
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
+  const firstPage = query.data?.pages?.[0];
+  const pagesLength = query.data?.pages?.length ?? 0;
   useEffect(() => {
     if (!channelId) return;
     const pages = query.data?.pages ?? [];
     if (pages.length === 0) return;
     const first = pages[0] ?? [];
     if (pages.length === 1) {
+      // Replace with freshest page: also fires on every refetch because
+      // `firstPage` is a new array reference from react-query.
       setMessages(channelId, first);
       return;
     }
     const last = pages[pages.length - 1] ?? [];
     prependMessages(channelId, last);
-  }, [query.data?.pages?.length, channelId, setMessages, prependMessages]);
+    // Intentionally also depend on firstPage (not just length) so refetches
+    // that return the same page count still update the store.
+  }, [firstPage, pagesLength, channelId, setMessages, prependMessages, query.data?.pages]);
 
   return query;
 }
@@ -175,6 +187,20 @@ export function useCreateChannelMutation(sessionToken: string | null) {
         sessionToken,
       }),
     onSuccess: (chan) => {
+      // Optimistically merge the new channel into the react-query cache so
+      // the sidebar paints instantly. invalidate + refetch will reconcile
+      // with the authoritative server list shortly after.
+      qc.setQueryData<ChatChannel[]>(chatKeys.channels(chan.orgId), (prev) => {
+        if (!prev) return [chan];
+        return prev.some((c) => c.id === chan.id) ? prev : [...prev, chan];
+      });
+      useChatStore.getState().setChannelsForOrg(
+        chan.orgId,
+        (() => {
+          const current = useChatStore.getState().channelsByOrg[chan.orgId] ?? [];
+          return current.some((c) => c.id === chan.id) ? current : [...current, chan];
+        })(),
+      );
       qc.invalidateQueries({ queryKey: chatKeys.channels(chan.orgId) });
     },
   });

@@ -121,7 +121,11 @@ export function AdaptiveModalSheet({
   testID,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
-  const isMobile = useIsCompactFormFactor();
+  const isCompact = useIsCompactFormFactor();
+  // @gorhom/bottom-sheet's scroll internals crash on unmount under
+  // react-native-web (findNodeHandle on a null _scrollRef). Use the portal
+  // modal path on web for every form factor; native keeps the true sheet.
+  const isMobile = isCompact && !isWeb;
   const sheetRef = useRef<BottomSheetModal>(null);
   const dismissingForVisibilityRef = useRef(false);
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
@@ -261,13 +265,15 @@ type AdaptiveTextInputProps = TextInputProps & {
 };
 
 export const AdaptiveTextInput = forwardRef<TextInput, AdaptiveTextInputProps>(
-  function AdaptiveTextInput({ focusBorderColor, style, onFocus, onBlur, ...rest }, ref) {
-    const isMobile = useIsCompactFormFactor();
+  function AdaptiveTextInput({ focusBorderColor: _unused, style, onFocus, onBlur, ...rest }, ref) {
+    const isMobile = useIsCompactFormFactor() && !isWeb;
     const [focused, setFocused] = useState(false);
-    const mergedStyle = useMemo(
-      () => (focused && focusBorderColor ? [style, { borderColor: focusBorderColor }] : style),
-      [focused, focusBorderColor, style],
-    );
+    // Intentionally ignore focusBorderColor: professional apps keep a quiet
+    // border on focus (no brand ring) and rely on the caret + faint
+    // background shift to indicate focus. Callers may still pass the prop,
+    // but it's a no-op now.
+    const mergedStyle = style;
+    void focused;
     const handleFocus = useCallback<NonNullable<TextInputProps["onFocus"]>>(
       (e) => {
         setFocused(true);

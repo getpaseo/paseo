@@ -62,6 +62,8 @@ interface ChannelSidebarProps {
   onDeleteChannel?: (channel: ChatChannel) => void;
   /** When true, render as a narrow icon-only rail with tooltips. */
   collapsed?: boolean;
+  /** Optional node rendered before Search/Mentions in the quick-actions row. */
+  leading?: ReactNode;
 }
 
 export function ChannelSidebar({
@@ -76,6 +78,7 @@ export function ChannelSidebar({
   onOpenMentions,
   onDeleteChannel,
   collapsed,
+  leading,
 }: ChannelSidebarProps) {
   const { theme } = useUnistyles();
   const sorted = useMemo(
@@ -114,8 +117,9 @@ export function ChannelSidebar({
 
   return (
     <View style={styles.container}>
-      {(onOpenSearch || onOpenMentions) && (
+      {(leading || onOpenSearch || onOpenMentions) && (
         <View style={styles.quickRow}>
+          {leading}
           {onOpenSearch ? (
             <Pressable
               onPress={onOpenSearch}

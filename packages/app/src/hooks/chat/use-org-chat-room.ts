@@ -137,7 +137,21 @@ function wireRoomEvents(
   room.onMessage("message", (payload: { message: ChatMessage }) => {
     const msg = payload?.message;
     if (!msg) return;
+    // Dedupe an optimistic local placeholder if this real broadcast matches it
+    // (same author + channel + content + same parent). Placeholders use an id
+    // prefixed with "tmp_" so we can find them without tracking extra state.
+    const latest = useChatStore.getState().messagesByChannel[msg.channelId] ?? [];
+    const match = latest.find(
+      (m) =>
+        m.id.startsWith("tmp_") &&
+        m.userId === msg.userId &&
+        (m.parentId ?? null) === (msg.parentId ?? null) &&
+        m.content === msg.content,
+    );
+    if (match) store.dropMessage(match.id);
     store.upsertMessage(msg);
+    // A posted message supersedes any typing indicator from the same author.
+    store.clearTypingForUser(msg.channelId, msg.userId);
 
     // Don't bump unread on my own messages or when the channel is active.
     const self = ctx.currentUserId;

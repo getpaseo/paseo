@@ -76,6 +76,7 @@ import { useIsInSharedSession } from "@/stores/shared-session-store";
 import { isWeb, getIsElectron } from "@/constants/platform";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { UpgradeBanner } from "@/desktop/components/upgrade-banner";
+import { CompactOrgSwitcher } from "@/components/compact-org-switcher";
 import { useSharedWorkspaceScope } from "@/stores/shared-session-store";
 
 const MIN_CHAT_WIDTH = 400;
@@ -357,13 +358,16 @@ function HostSwitchOption({
   );
 }
 
-function ChatTabButton() {
+function ChatTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
   const isActive = pathname === "/chat" || pathname.startsWith("/chat/");
   return (
     <Pressable
-      onPress={() => router.push("/chat")}
+      onPress={() => {
+        router.push("/chat");
+        onNavigate?.();
+      }}
       style={({ hovered }) => [
         styles.newAgentButton,
         hovered && styles.newAgentButtonHovered,
@@ -614,12 +618,17 @@ function MobileSidebar({
         >
           <View style={[styles.sidebarContent, { pointerEvents: "auto" }]}>
             {!isScopedRecipient && (
-              <View style={styles.sidebarHeader}>
-                <View style={styles.sidebarHeaderRow}>
-                  <ChatTabButton />
-                  <SessionsButton onPress={handleViewMore} />
+              <>
+                <View style={styles.sidebarOrgSwitcher}>
+                  <CompactOrgSwitcher onAfterSwitch={() => closeToAgent()} />
                 </View>
-              </View>
+                <View style={styles.sidebarHeader}>
+                  <View style={styles.sidebarHeaderRow}>
+                    <ChatTabButton onNavigate={() => closeToAgent()} />
+                    <SessionsButton onPress={handleViewMore} />
+                  </View>
+                </View>
+              </>
             )}
 
             {isInitialLoad ? (
@@ -1375,6 +1384,11 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
     userSelect: "none",
+  },
+  sidebarOrgSwitcher: {
+    paddingHorizontal: theme.spacing[2],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
   },
   sidebarHeaderRow: {
     flexDirection: "row",

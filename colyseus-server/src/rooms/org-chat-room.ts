@@ -69,7 +69,15 @@ export class OrgChatRoom extends Room<OrgChatState> {
   // for every subsequent message/reaction event in that channel so we avoid a
   // REST round-trip per send. Short TTL keeps membership changes roughly fresh.
   private channelMembersCache = new Map<string, { userIds: Set<string>; fetchedAt: number }>();
+  // channelId → { kind, fetchedAt }. Cached to avoid a REST round-trip on every
+  // broadcast; used to short-circuit membership filtering for public channels
+  // (where all connected org members are implicit members).
+  private channelKindCache = new Map<
+    string,
+    { kind: "public" | "private" | "dm"; fetchedAt: number }
+  >();
   private static readonly CHANNEL_MEMBERS_TTL_MS = 30_000;
+  private static readonly CHANNEL_KIND_TTL_MS = 5 * 60_000;
 
   static deps: OrgChatRoomDeps = {};
 
@@ -273,15 +281,47 @@ export class OrgChatRoom extends Room<OrgChatState> {
     type: string,
     payload: Record<string, unknown>,
   ) {
+    const kind = await this.getChannelKind(channelId);
+    // Public channels: every connected client in this room is already an
+    // authenticated org member, so they're all implicit members. Skip the
+    // membership filter and fan out to everyone. This also ensures a user
+    // posting into a public channel they haven't explicitly joined sees
+    // their own message echoed back.
+    if (kind === "public") {
+      for (const c of this.clients) {
+        const auth = this.authOf(c);
+        if (!auth) continue;
+        auth.channelIds.add(channelId);
+        c.send(type, payload);
+      }
+      return;
+    }
     const targetUserIds = await this.getChannelMemberIds(channelId);
     for (const c of this.clients) {
       const auth = this.authOf(c);
       if (!auth) continue;
       if (targetUserIds.has(auth.userId) || auth.channelIds.has(channelId)) {
-        // Keep the channel membership cache in sync for this client
         auth.channelIds.add(channelId);
         c.send(type, payload);
       }
+    }
+  }
+
+  private async getChannelKind(
+    channelId: string,
+  ): Promise<"public" | "private" | "dm" | null> {
+    const cached = this.channelKindCache.get(channelId);
+    const now = Date.now();
+    if (cached && now - cached.fetchedAt < OrgChatRoom.CHANNEL_KIND_TTL_MS) {
+      return cached.kind;
+    }
+    try {
+      const chan = await this.api.getChannel(channelId);
+      if (!chan) return cached?.kind ?? null;
+      this.channelKindCache.set(channelId, { kind: chan.kind, fetchedAt: now });
+      return chan.kind;
+    } catch {
+      return cached?.kind ?? null;
     }
   }
 

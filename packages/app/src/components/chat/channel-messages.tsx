@@ -205,17 +205,20 @@ export function ChannelMessages({
         ) : null}
         {channel.kind !== "dm" ? (
           <ChannelHeaderMembers
-            members={membersQuery.data ?? []}
+            // Public channels: fan out to the full org roster so the avatar
+            // stack reflects actual reach, not just the creator. Private
+            // channels use explicit channel_members as before.
+            members={channel.kind === "public" ? orgMemberFallback : (membersQuery.data ?? [])}
             presenceByUser={presenceByUser}
             onOpenMembers={() => setMembersOpen(true)}
             onAddPeople={() => setMembersOpen(true)}
-            canAdd={canManage}
+            canAdd={canManage && channel.kind === "private"}
           />
         ) : null}
       </View>
       <MessageList
         messages={messages}
-        members={membersQuery.data ?? []}
+        members={channel.kind === "public" ? orgMemberFallback : (membersQuery.data ?? [])}
         fallbackAuthors={orgMemberFallback}
         channels={allChannelsQuery.data ?? []}
         currentUserId={currentUserId}
@@ -256,6 +259,23 @@ export function ChannelMessages({
         onSend={(raw, attachments) => {
           const result = applySlashCommand(raw);
           if (result.suppressed) return;
+          // Optimistic placeholder so the message appears instantly. The real
+          // broadcast replaces it in use-org-chat-room (matched by tmp_ prefix
+          // + same userId/channel/content).
+          if (currentUserId && (result.content.trim().length > 0 || (attachments?.length ?? 0) > 0)) {
+            const tmpId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            useChatStore.getState().upsertMessage({
+              id: tmpId,
+              channelId: channel.id,
+              userId: currentUserId,
+              parentId: null,
+              content: result.content,
+              createdAt: new Date().toISOString(),
+              editedAt: null,
+              deletedAt: null,
+              attachments: attachments ?? [],
+            });
+          }
           chatRoom.send({
             channelId: channel.id,
             content: result.content,
@@ -264,7 +284,7 @@ export function ChannelMessages({
           uploads.reset();
         }}
         onTyping={() => chatRoom.typing(channel.id)}
-        members={membersQuery.data ?? []}
+        members={channel.kind === "public" ? orgMemberFallback : (membersQuery.data ?? [])}
         channels={allChannelsQuery.data ?? []}
         pendingUploads={uploads.pending}
         onRemoveUpload={uploads.remove}

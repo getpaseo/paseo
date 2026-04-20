@@ -493,7 +493,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
   },
   inputFocused: {
-    borderColor: theme.colors.brandMagenta,
+    borderColor: theme.colors.border,
   },
   // Send button sits over the right edge of the input (absolute), so the
   // input + send read as a single surface instead of two disconnected rectangles.
