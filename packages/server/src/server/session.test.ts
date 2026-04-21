@@ -123,6 +123,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 function createSessionForTest(options?: {
+  agentManager?: Record<string, unknown>;
   github?: {
     invalidate: ReturnType<typeof vi.fn>;
     isAuthenticated?: ReturnType<typeof vi.fn>;
@@ -179,9 +180,11 @@ function createSessionForTest(options?: {
     downloadTokenStore: {} as any,
     pushTokenStore: {} as any,
     paseoHome: "/tmp/paseo-home",
-    agentManager: {
-      subscribe: vi.fn(() => () => {}),
-    } as any,
+    agentManager:
+      options?.agentManager ??
+      ({
+        subscribe: vi.fn(() => () => {}),
+      } as any),
     agentStorage: {} as any,
     projectRegistry: {} as any,
     workspaceRegistry:
@@ -1100,6 +1103,110 @@ describe("session branch validation", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("session agent creation", () => {
+  test("hydrates provider timeline after creating an agent", async () => {
+    const createdAt = new Date("2026-04-21T00:00:00.000Z");
+    const snapshot = {
+      id: "agent-1",
+      provider: "codex",
+      cwd: "/tmp/workspace",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: false,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      config: {
+        provider: "codex",
+        cwd: "/tmp/workspace",
+        modeId: "auto",
+      },
+      runtimeInfo: {
+        provider: "codex",
+        sessionId: "thread-1",
+        modeId: "auto",
+      },
+      createdAt,
+      updatedAt: createdAt,
+      availableModes: [],
+      currentModeId: "auto",
+      pendingPermissions: new Map(),
+      bufferedPermissionResolutions: new Map(),
+      inFlightPermissionResponses: new Set(),
+      pendingReplacement: false,
+      persistence: { provider: "codex", sessionId: "thread-1" },
+      historyPrimed: false,
+      lastUserMessageAt: null,
+      attention: {
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+      },
+      foregroundTurnWaiters: new Set(),
+      unsubscribeSession: null,
+      labels: {},
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+      session: null,
+    };
+    const agentManager = {
+      subscribe: vi.fn(() => () => {}),
+      createAgent: vi.fn().mockResolvedValue(snapshot),
+      hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
+    };
+    const workspaceRegistry = {
+      get: vi.fn().mockResolvedValue(null),
+    };
+    const session = createSessionForTest({
+      agentManager,
+      workspaceRegistry,
+    });
+
+    (session as any).buildAgentSessionConfig = vi.fn().mockResolvedValue({
+      sessionConfig: {
+        provider: "codex",
+        cwd: "/tmp/workspace",
+        modeId: "auto",
+        title: "Test Agent",
+      },
+      worktreeBootstrap: null,
+    });
+    (session as any).findWorkspaceByDirectory = vi.fn().mockResolvedValue({
+      workspaceId: "workspace-1",
+      cwd: "/tmp/workspace",
+    });
+    (session as any).forwardAgentUpdate = vi.fn().mockResolvedValue(undefined);
+
+    await (session as any).handleCreateAgentRequest({
+      type: "create_agent_request",
+      config: {
+        provider: "codex",
+        cwd: "/tmp/workspace",
+        modeId: "auto",
+        title: "Test Agent",
+      },
+      attachments: [],
+      labels: {},
+      requestId: "request-create-agent",
+    });
+
+    expect(agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "codex",
+        cwd: "/tmp/workspace",
+        modeId: "auto",
+      }),
+      undefined,
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+      }),
+    );
+    expect(agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith("agent-1");
   });
 });
 

@@ -1000,6 +1000,22 @@ function formatCodexQuestionPrompts(questions: CodexQuestionPrompt[]): string {
     .trim();
 }
 
+function formatCodexSkillWarningMessage(warnings: string[]): string {
+  const normalized = warnings
+    .map((warning) => warning.trim())
+    .filter((warning) => warning.length > 0);
+  if (normalized.length === 0) {
+    return "";
+  }
+  const count = normalized.length;
+  const noun = count === 1 ? "skill" : "skills";
+  const fileNoun = count === 1 ? "file" : "files";
+  return [
+    `Skipped loading ${count} ${noun} due to invalid SKILL.md ${fileNoun}.`,
+    ...normalized,
+  ].join("\n");
+}
+
 function mapCodexQuestionRequestToToolCall(params: {
   callId: string;
   questions: CodexQuestionPrompt[];
@@ -2497,6 +2513,7 @@ class CodexAppServerAgentSession implements AgentSession {
     name: string;
   } | null = null;
   private cachedSkills: Array<{ name: string; description: string; path: string }> = [];
+  private latestSkillWarningMessage: string | null = null;
 
   constructor(
     config: AgentSessionConfig,
@@ -2589,6 +2606,7 @@ class CodexAppServerAgentSession implements AgentSession {
       })) as { data?: Array<any> };
       const entries = Array.isArray(response?.data) ? response.data : [];
       const skills: Array<{ name: string; description: string; path: string }> = [];
+      const skillWarnings: string[] = [];
       for (const entry of entries) {
         const list = Array.isArray(entry.skills) ? entry.skills : [];
         for (const skill of list) {
@@ -2599,12 +2617,57 @@ class CodexAppServerAgentSession implements AgentSession {
             path: skill.path,
           });
         }
+        const errors = Array.isArray(entry.errors) ? entry.errors : [];
+        for (const error of errors) {
+          if (!error || typeof error !== "object") {
+            continue;
+          }
+          const record = error as { path?: unknown; message?: unknown };
+          const message = nonEmptyString(
+            typeof record.message === "string" ? record.message : undefined,
+          );
+          if (!message) {
+            continue;
+          }
+          const skillPath = nonEmptyString(
+            typeof record.path === "string" ? record.path : undefined,
+          );
+          skillWarnings.push(skillPath ? `${skillPath}: ${message}` : message);
+        }
       }
       this.cachedSkills = skills;
+      this.publishSkillWarnings(skillWarnings);
     } catch (error) {
       this.logger.trace({ error }, "Failed to load skills list");
       this.cachedSkills = [];
+      this.publishSkillWarnings([]);
     }
+  }
+
+  private publishSkillWarnings(warnings: string[]): void {
+    if (warnings.length === 0) {
+      this.latestSkillWarningMessage = null;
+      return;
+    }
+
+    const message = formatCodexSkillWarningMessage(warnings);
+    if (!message || message === this.latestSkillWarningMessage) {
+      return;
+    }
+
+    this.latestSkillWarningMessage = message;
+    const item: AgentTimelineItem = {
+      type: "error",
+      message,
+    };
+
+    if (this.connected) {
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
+      return;
+    }
+
+    this.persistedHistory.push(item);
+    this.historyPending = true;
   }
 
   private findCollaborationMode(target: "code" | "plan"): {
@@ -2793,7 +2856,7 @@ class CodexAppServerAgentSession implements AgentSession {
       const timeline = rolloutTimeline.length > 0 ? rolloutTimeline : threadTimeline;
 
       if (timeline.length > 0) {
-        this.persistedHistory = timeline;
+        this.persistedHistory = [...this.persistedHistory, ...timeline];
         this.historyPending = true;
       }
     } catch (error) {
