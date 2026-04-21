@@ -123,6 +123,8 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
+import { buildProxyEnv, setGlobalAgentEnv } from "./agent/provider-launch-config.js";
+import type { ProxyConfig } from "../shared/messages.js";
 import {
   ScriptRouteStore,
   createScriptProxyMiddleware,
@@ -178,6 +180,7 @@ export type PaseoDaemonConfig = {
   hostnames?: HostnamesConfig;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
+  proxy?: ProxyConfig;
   staticDir: string;
   mcpDebug: boolean;
   isDev?: boolean;
@@ -219,13 +222,29 @@ export async function createPaseoDaemon(
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = resolveDaemonVersion(import.meta.url);
+  const initialProxy: ProxyConfig | undefined = config.proxy
+    ? {
+        enabled: config.proxy.enabled,
+        httpUrl: config.proxy.httpUrl,
+        httpsUrl: config.proxy.httpsUrl,
+        noProxy: config.proxy.noProxy,
+      }
+    : undefined;
   const daemonConfigStore = new DaemonConfigStore(
     config.paseoHome,
     {
       mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
+      ...(initialProxy ? { network: { proxy: initialProxy } } : {}),
     },
     logger,
   );
+
+  // Seed the global agent env with the persisted proxy so every provider
+  // spawned after bootstrap inherits it.
+  setGlobalAgentEnv(buildProxyEnv(initialProxy));
+  daemonConfigStore.onFieldChange("network.proxy", (value) => {
+    setGlobalAgentEnv(buildProxyEnv(value as ProxyConfig | undefined));
+  });
 
   try {
     const serverId = getOrCreateServerId(config.paseoHome, { logger });

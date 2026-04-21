@@ -51,6 +51,23 @@ import {
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
 
+// All new fields stay optional so old clients talking to new daemons (and
+// vice versa) continue to parse successfully.
+export const ProxyConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    httpUrl: z.string().optional(),
+    httpsUrl: z.string().optional(),
+    noProxy: z.string().optional(),
+  })
+  .passthrough();
+
+export const NetworkConfigSchema = z
+  .object({
+    proxy: ProxyConfigSchema.optional(),
+  })
+  .passthrough();
+
 export const MutableDaemonConfigSchema = z
   .object({
     mcp: z
@@ -58,16 +75,25 @@ export const MutableDaemonConfigSchema = z
         injectIntoAgents: z.boolean(),
       })
       .passthrough(),
+    network: NetworkConfigSchema.optional(),
   })
   .passthrough();
 
 export const MutableDaemonConfigPatchSchema = z
   .object({
     mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
+    network: z
+      .object({
+        proxy: ProxyConfigSchema.partial().optional(),
+      })
+      .partial()
+      .passthrough()
+      .optional(),
   })
   .partial()
   .passthrough();
 
+export type ProxyConfig = z.infer<typeof ProxyConfigSchema>;
 export type MutableDaemonConfig = z.infer<typeof MutableDaemonConfigSchema>;
 export type MutableDaemonConfigPatch = z.infer<typeof MutableDaemonConfigPatchSchema>;
 import type { LiteralUnion } from "./literal-union.js";

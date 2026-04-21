@@ -148,6 +148,20 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   mutable: MutableDaemonConfig;
 }): PersistedConfig {
   const { persisted, mutable } = params;
+  const mutableProxy = mutable.network?.proxy;
+  const nextNetwork = mutableProxy
+    ? {
+        ...persisted.daemon?.network,
+        proxy: {
+          ...persisted.daemon?.network?.proxy,
+          enabled: mutableProxy.enabled,
+          httpUrl: mutableProxy.httpUrl,
+          httpsUrl: mutableProxy.httpsUrl,
+          noProxy: mutableProxy.noProxy,
+        },
+      }
+    : persisted.daemon?.network;
+
   return {
     ...persisted,
     daemon: {
@@ -156,6 +170,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         ...persisted.daemon?.mcp,
         injectIntoAgents: mutable.mcp.injectIntoAgents,
       },
+      ...(nextNetwork ? { network: nextNetwork } : {}),
     },
   };
 }

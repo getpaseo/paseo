@@ -149,6 +149,8 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
 
       <DaemonSection host={host} isLocalDaemon={isLocalDaemon} />
 
+      <NetworkSection serverId={serverId} />
+
       <ProvidersSection serverId={serverId} />
 
       <RemoveHostSection host={host} onRemoved={onHostRemoved} />
@@ -576,6 +578,161 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
   );
 }
 
+function NetworkSection({ serverId }: { serverId: string }) {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  if (!isConnected) return null;
+
+  return (
+    <SettingsSection title="Network">
+      <ProxyCard serverId={serverId} />
+    </SettingsSection>
+  );
+}
+
+function ProxyCard({ serverId }: { serverId: string }) {
+  const { theme } = useUnistyles();
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const proxy = config?.network?.proxy;
+  const enabled = proxy?.enabled ?? false;
+
+  const [httpsUrl, setHttpsUrl] = useState(proxy?.httpsUrl ?? "");
+  const [httpUrl, setHttpUrl] = useState(proxy?.httpUrl ?? "");
+  const [noProxy, setNoProxy] = useState(proxy?.noProxy ?? "");
+  const [isDirty, setIsDirty] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Re-sync when the daemon pushes a new config (e.g. another client saved)
+  // but not while the user is in the middle of editing locally.
+  useEffect(() => {
+    if (isDirty) return;
+    setHttpsUrl(proxy?.httpsUrl ?? "");
+    setHttpUrl(proxy?.httpUrl ?? "");
+    setNoProxy(proxy?.noProxy ?? "");
+  }, [proxy?.httpUrl, proxy?.httpsUrl, proxy?.noProxy, isDirty]);
+
+  const handleToggle = useCallback(
+    (value: string) => {
+      void patchConfig({
+        network: {
+          proxy: {
+            enabled: value === "on",
+            httpsUrl: httpsUrl.trim() || undefined,
+            httpUrl: httpUrl.trim() || undefined,
+            noProxy: noProxy.trim() || undefined,
+          },
+        },
+      });
+    },
+    [httpUrl, httpsUrl, noProxy, patchConfig],
+  );
+
+  const handleSave = useCallback(async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      await patchConfig({
+        network: {
+          proxy: {
+            enabled,
+            httpsUrl: httpsUrl.trim() || undefined,
+            httpUrl: httpUrl.trim() || undefined,
+            noProxy: noProxy.trim() || undefined,
+          },
+        },
+      });
+      setIsDirty(false);
+    } catch (error) {
+      console.error("[HostPage] Failed to save proxy config", error);
+      Alert.alert("Error", "Unable to save proxy settings");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [enabled, httpUrl, httpsUrl, isSaving, noProxy, patchConfig]);
+
+  const placeholderColor = theme.colors.foregroundMuted;
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-proxy-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Agent proxy</Text>
+          <Text style={settingsStyles.rowHint}>
+            Routes outbound traffic from every agent (Claude, Codex, OpenCode) through an HTTP/HTTPS
+            proxy. Restart running agents to pick up changes. Applies only to agent child processes,
+            not the daemon itself.
+          </Text>
+        </View>
+        <SegmentedControl
+          size="sm"
+          value={enabled ? "on" : "off"}
+          onValueChange={handleToggle}
+          options={[
+            { value: "on", label: "On" },
+            { value: "off", label: "Off" },
+          ]}
+        />
+      </View>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder, proxyStyles.formRow]}>
+        <Text style={proxyStyles.inputLabel}>HTTPS proxy URL</Text>
+        <TextInput
+          value={httpsUrl}
+          onChangeText={(value) => {
+            setHttpsUrl(value);
+            setIsDirty(true);
+          }}
+          placeholder="http://user:pass@127.0.0.1:7890"
+          placeholderTextColor={placeholderColor}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!isSaving}
+          style={proxyStyles.input}
+          testID="host-page-proxy-https-url"
+        />
+        <Text style={[proxyStyles.inputLabel, proxyStyles.inputLabelSpaced]}>HTTP proxy URL</Text>
+        <TextInput
+          value={httpUrl}
+          onChangeText={(value) => {
+            setHttpUrl(value);
+            setIsDirty(true);
+          }}
+          placeholder="http://user:pass@127.0.0.1:7890"
+          placeholderTextColor={placeholderColor}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!isSaving}
+          style={proxyStyles.input}
+          testID="host-page-proxy-http-url"
+        />
+        <Text style={[proxyStyles.inputLabel, proxyStyles.inputLabelSpaced]}>No proxy</Text>
+        <TextInput
+          value={noProxy}
+          onChangeText={(value) => {
+            setNoProxy(value);
+            setIsDirty(true);
+          }}
+          placeholder="localhost,127.0.0.1,.internal"
+          placeholderTextColor={placeholderColor}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!isSaving}
+          style={proxyStyles.input}
+          testID="host-page-proxy-no-proxy"
+        />
+        <View style={proxyStyles.actions}>
+          <Button
+            size="sm"
+            onPress={() => void handleSave()}
+            disabled={isSaving || !isDirty}
+            testID="host-page-proxy-save"
+          >
+            {isSaving ? "Saving..." : "Save"}
+          </Button>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function PairDeviceRow() {
   const { theme } = useUnistyles();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -779,5 +936,35 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+}));
+
+const proxyStyles = StyleSheet.create((theme) => ({
+  formRow: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: theme.spacing[1],
+  },
+  inputLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  inputLabelSpaced: {
+    marginTop: theme.spacing[3],
+  },
+  input: {
+    backgroundColor: theme.colors.surface0,
+    color: theme.colors.foreground,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    fontSize: theme.fontSize.sm,
+  },
+  actions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: theme.spacing[3],
   },
 }));

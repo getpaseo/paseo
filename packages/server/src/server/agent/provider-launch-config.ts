@@ -178,12 +178,62 @@ const PARENT_SESSION_ENV_VARS = [
   "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
 ];
 
+// Daemon-wide env injected into every agent child process (proxy config etc).
+// Lower precedence than per-provider overrides so users can still opt a single
+// provider out by setting its env.
+let globalAgentEnv: Record<string, string> = {};
+
+export function setGlobalAgentEnv(env: Record<string, string>): void {
+  globalAgentEnv = { ...env };
+}
+
+export function getGlobalAgentEnv(): Record<string, string> {
+  return { ...globalAgentEnv };
+}
+
+export interface ProxyEnvSource {
+  enabled: boolean;
+  httpUrl?: string;
+  httpsUrl?: string;
+  noProxy?: string;
+}
+
+export function buildProxyEnv(proxy: ProxyEnvSource | undefined): Record<string, string> {
+  if (!proxy || !proxy.enabled) {
+    return {};
+  }
+  const env: Record<string, string> = {};
+  const httpsUrl = proxy.httpsUrl?.trim();
+  const httpUrl = proxy.httpUrl?.trim();
+  const noProxy = proxy.noProxy?.trim();
+
+  // Mirror the convention used by curl / undici / Node fetch: both upper- and
+  // lower-case names are honored by different clients, so we set both.
+  if (httpsUrl) {
+    env.HTTPS_PROXY = httpsUrl;
+    env.https_proxy = httpsUrl;
+    // ALL_PROXY is used by some SOCKS-capable clients as a last-resort default.
+    env.ALL_PROXY = httpsUrl;
+    env.all_proxy = httpsUrl;
+  }
+  if (httpUrl) {
+    env.HTTP_PROXY = httpUrl;
+    env.http_proxy = httpUrl;
+  }
+  if (noProxy) {
+    env.NO_PROXY = noProxy;
+    env.no_proxy = noProxy;
+  }
+  return env;
+}
+
 export function applyProviderEnv(
   baseEnv: Record<string, string | undefined>,
   runtimeSettings?: ProviderRuntimeSettings,
 ): Record<string, string | undefined> {
   const merged: Record<string, string | undefined> = {
     ...baseEnv,
+    ...globalAgentEnv,
     ...(runtimeSettings?.env ?? {}),
   };
   for (const key of PARENT_SESSION_ENV_VARS) {
