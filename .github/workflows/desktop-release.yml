@@ -33,6 +33,9 @@ env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
   DESKTOP_WORKSPACE: '@getpaseo/desktop'
   DESKTOP_PACKAGE_PATH: 'packages/desktop'
+  RELEASE_REPOSITORY: ${{ github.repository }}
+  RELEASE_REPOSITORY_OWNER: ${{ github.repository_owner }}
+  RELEASE_REPOSITORY_NAME: ${{ github.event.repository.name }}
 
 jobs:
   create-release:
@@ -55,7 +58,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" > /dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists, skipping creation"
           else
             prerelease_flag=""
@@ -63,7 +66,7 @@ jobs:
               prerelease_flag="--prerelease"
             fi
             gh release create "$RELEASE_TAG" \
-              --repo "${{ github.repository }}" \
+              --repo "$RELEASE_REPOSITORY" \
               --title "Paseo $RELEASE_TAG" \
               --generate-notes \
               $prerelease_flag
@@ -145,6 +148,8 @@ jobs:
           if [[ "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
             publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            publish_args+=("-c.publish.owner=$RELEASE_REPOSITORY_OWNER")
+            publish_args+=("-c.publish.repo=$RELEASE_REPOSITORY_NAME")
           fi
 
           npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --mac --${{ matrix.electron_arch }} "${publish_args[@]}"
@@ -251,7 +256,7 @@ jobs:
         if: env.IS_SMOKE_TAG != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$RELEASE_TAG" latest-mac.yml --clobber --repo "${{ github.repository }}"
+        run: gh release upload "$RELEASE_TAG" latest-mac.yml --clobber --repo "$RELEASE_REPOSITORY"
 
   publish-linux:
     needs: [create-release]
@@ -316,6 +321,8 @@ jobs:
           if [[ "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
             publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            publish_args+=("-c.publish.owner=$RELEASE_REPOSITORY_OWNER")
+            publish_args+=("-c.publish.repo=$RELEASE_REPOSITORY_NAME")
           fi
 
           npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --linux --x64 "${publish_args[@]}"
@@ -391,6 +398,8 @@ jobs:
           if [[ "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
             publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            publish_args+=("-c.publish.owner=$RELEASE_REPOSITORY_OWNER")
+            publish_args+=("-c.publish.repo=$RELEASE_REPOSITORY_NAME")
           fi
 
           npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --win --x64 "${publish_args[@]}"
