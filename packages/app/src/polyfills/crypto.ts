@@ -8,9 +8,11 @@ declare global {
 }
 
 export function polyfillCrypto(): void {
+  console.log("[PD] polyfillCrypto starting");
   // Ensure TextEncoder/TextDecoder exist for shared E2EE code (tweetnacl + relay transport).
   // Hermes may not provide them in all configurations.
   if (typeof (globalThis as any).TextEncoder !== "function") {
+    console.log("[PD] polyfillCrypto: installing TextEncoder polyfill");
     class BufferTextEncoder {
       encode(input = ""): Uint8Array {
         return Uint8Array.from(Buffer.from(String(input), "utf8"));
@@ -20,6 +22,7 @@ export function polyfillCrypto(): void {
   }
 
   if (typeof (globalThis as any).TextDecoder !== "function") {
+    console.log("[PD] polyfillCrypto: installing TextDecoder polyfill");
     class BufferTextDecoder {
       constructor(_label?: string, _options?: unknown) {
         // no-op
@@ -54,11 +57,20 @@ export function polyfillCrypto(): void {
   }
 
   if (typeof (globalThis as any).crypto?.getRandomValues !== "function") {
+    console.log("[PD] polyfillCrypto: installing getRandomValues polyfill");
     if (!globalThis.crypto) {
       (globalThis as any).crypto = {} as Crypto;
     }
     globalThis.crypto.getRandomValues = <T extends ArrayBufferView>(array: T): T => {
       return ExpoCrypto.getRandomValues(array as any) as T;
     };
+  }
+
+  try {
+    const testArr = new Uint8Array(4);
+    globalThis.crypto.getRandomValues(testArr);
+    console.log("[PD] polyfillCrypto complete, getRandomValues works, sample=", testArr[0]);
+  } catch (e) {
+    console.error("[PD] polyfillCrypto VERIFICATION FAILED", e);
   }
 }

@@ -87,16 +87,38 @@ export async function createClientChannel(
   daemonPublicKeyB64: string,
   events: EncryptedChannelEvents = {},
 ): Promise<EncryptedChannel> {
-  const keyPair = generateKeyPair();
-  const daemonPublicKey = importPublicKey(daemonPublicKeyB64);
-  const sharedKey = deriveSharedKey(keyPair.secretKey, daemonPublicKey);
+  console.log("[PD] createClientChannel starting");
+  let keyPair: KeyPair;
+  try {
+    keyPair = generateKeyPair();
+    console.log("[PD] createClientChannel generateKeyPair ok, pubKey length=", keyPair.publicKey.byteLength);
+  } catch (e) {
+    console.error("[PD] createClientChannel generateKeyPair FAILED", e);
+    throw e;
+  }
+  let daemonPublicKey: Uint8Array;
+  try {
+    daemonPublicKey = importPublicKey(daemonPublicKeyB64);
+    console.log("[PD] createClientChannel importPublicKey ok, length=", daemonPublicKey.byteLength);
+  } catch (e) {
+    console.error("[PD] createClientChannel importPublicKey FAILED", e);
+    throw e;
+  }
+  let sharedKey: SharedKey;
+  try {
+    sharedKey = deriveSharedKey(keyPair.secretKey, daemonPublicKey);
+    console.log("[PD] createClientChannel deriveSharedKey ok, length=", sharedKey.byteLength);
+  } catch (e) {
+    console.error("[PD] createClientChannel deriveSharedKey FAILED", e);
+    throw e;
+  }
 
   const channel = new EncryptedChannel(transport, sharedKey, events);
 
-  // Send e2ee_hello with our public key
   const ourPublicKeyB64 = exportPublicKey(keyPair.publicKey);
   const hello: E2EEHelloMessage = { type: "e2ee_hello", key: ourPublicKeyB64 };
   const helloText = JSON.stringify(hello);
+  console.log("[PD] createClientChannel e2ee_hello prepared, keyB64 length=", ourPublicKeyB64.length);
 
   let retry: ReturnType<typeof setInterval> | null = null;
   const emitSendError = (error: unknown) => {
@@ -106,10 +128,10 @@ export async function createClientChannel(
   const sendHello = () => {
     try {
       transport.send(helloText);
+      console.log("[PD] createClientChannel e2ee_hello sent");
       return true;
     } catch (error) {
-      // This can happen during daemon restarts while the socket transitions
-      // through CLOSING/CLOSED states. Report it but do not throw from timers.
+      console.error("[PD] createClientChannel e2ee_hello send FAILED", error);
       emitSendError(error);
       return false;
     }
@@ -262,13 +284,16 @@ export class EncryptedChannel {
         const text = typeof data === "string" ? data : new TextDecoder().decode(data);
         const msg = JSON.parse(text) as Partial<E2EEReadyMessage>;
         if (msg.type === "e2ee_ready") {
+          console.log("[PD] EncryptedChannel received e2ee_ready, transitioning to open");
           this.state = "open";
           this.events.onopen?.();
           for (const cb of this.onOpenCallbacks) cb();
           await this.flushPendingSends();
+        } else {
+          console.log("[PD] EncryptedChannel handshaking received unexpected type=", msg.type);
         }
-      } catch {
-        // ignore non-ready handshake traffic
+      } catch (e) {
+        console.warn("[PD] EncryptedChannel handshaking non-ready message parse error", e);
       }
       return;
     }

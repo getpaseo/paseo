@@ -2019,8 +2019,8 @@ export const WorkspaceDescriptorPayloadSchema = z.object({
   id: z.string(),
   projectId: z.string(),
   projectDisplayName: z.string(),
-  projectRootPath: z.string(),
-  workspaceDirectory: z.string(),
+  projectRootPath: z.string().nullable().optional(),
+  workspaceDirectory: z.string().nullable().optional(),
   projectKind: z.enum(["git", "non_git", "directory"]),
   // COMPAT(workspaces): keep legacy directory workspace kind parseable.
   workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View, Share, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -55,6 +55,7 @@ import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
 import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
+import { getCollectedLogs, clearCollectedLogs } from "@/utils/log-collector";
 import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import { HostPage, HostRenameButton } from "@/screens/settings/host-page";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -227,6 +228,8 @@ interface DiagnosticsSectionProps {
   isPlaybackTestRunning: boolean;
   playbackTestResult: string | null;
   handlePlaybackTest: () => Promise<void>;
+  handleExportLogs: () => Promise<void>;
+  isExportingLogs: boolean;
 }
 
 function DiagnosticsSection({
@@ -234,6 +237,8 @@ function DiagnosticsSection({
   isPlaybackTestRunning,
   playbackTestResult,
   handlePlaybackTest,
+  handleExportLogs,
+  isExportingLogs,
 }: DiagnosticsSectionProps) {
   return (
     <SettingsSection title="Diagnostics">
@@ -252,6 +257,26 @@ function DiagnosticsSection({
             disabled={!voiceAudioEngine || isPlaybackTestRunning}
           >
             {isPlaybackTestRunning ? "Playing..." : "Play test"}
+          </Button>
+        </View>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>Export logs</Text>
+            <Text style={settingsStyles.rowHint}>
+              Collect all app logs for diagnostics
+            </Text>
+          </View>
+          <Button
+            variant="secondary"
+            size="sm"
+            onPress={() => void handleExportLogs()}
+            disabled={isExportingLogs}
+          >
+            {isExportingLogs ? (
+              <ActivityIndicator size="small" color="currentColor" />
+            ) : (
+              "Export"
+            )}
           </Button>
         </View>
       </View>
@@ -590,6 +615,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);
   const [isPlaybackTestRunning, setIsPlaybackTestRunning] = useState(false);
   const [playbackTestResult, setPlaybackTestResult] = useState<string | null>(null);
+  const [isExportingLogs, setIsExportingLogs] = useState(false);
   const isDesktopApp = isElectronRuntime();
   const appVersion = resolveAppVersion();
   const appVersionText = formatVersionWithPrefix(appVersion);
@@ -641,6 +667,27 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
       setIsPlaybackTestRunning(false);
     }
   }, [isPlaybackTestRunning, voiceAudioEngine]);
+
+  const handleExportLogs = useCallback(async () => {
+    setIsExportingLogs(true);
+    try {
+      const logs = getCollectedLogs();
+      const summary = `Paseo Diagnostic Logs\nVersion: ${appVersionText}\nExported: ${new Date().toISOString()}\nLines: ${logs.split('\n').length}\n${'─'.repeat(40)}\n\n${logs}`;
+      await Share.share({
+        title: "Paseo Diagnostic Logs",
+        message: summary,
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code !== "DismissedAction") {
+        Alert.alert(
+          "Export failed",
+          error instanceof Error ? error.message : "Could not share logs."
+        );
+      }
+    } finally {
+      setIsExportingLogs(false);
+    }
+  }, [appVersionText]);
 
   const closeAddConnectionFlow = useCallback(() => {
     setIsAddHostMethodVisible(false);
@@ -780,6 +827,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               isPlaybackTestRunning={isPlaybackTestRunning}
               playbackTestResult={playbackTestResult}
               handlePlaybackTest={handlePlaybackTest}
+              handleExportLogs={handleExportLogs}
+              isExportingLogs={isExportingLogs}
             />
           );
         case "about":
