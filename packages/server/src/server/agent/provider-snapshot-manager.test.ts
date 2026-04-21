@@ -588,6 +588,50 @@ describe("ProviderSnapshotManager", () => {
     manager.destroy();
   });
 
+  test("settings refresh invalidation self-heals workspace snapshots through the next read without force", async () => {
+    const fetchModels = vi
+      .fn<(cwd: string, force: boolean) => Promise<AgentModelDefinition[]>>()
+      .mockImplementation(async (cwd) => [createModel("codex", cwd)]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd, force) => fetchModels(cwd, force),
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+    });
+
+    await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+
+    expect(fetchModels.mock.calls.map(([cwd]) => cwd)).toEqual([projectCwd, homedir()]);
+    expect(fetchModels.mock.calls.map(([, force]) => force)).toEqual([false, true]);
+
+    const invalidatedSnapshot = manager.getSnapshot(projectCwd);
+
+    expect(getProviderEntry(invalidatedSnapshot, "codex")).toMatchObject({
+      provider: "codex",
+      status: "loading",
+    });
+
+    await vi.waitFor(() => {
+      expect(fetchModels).toHaveBeenCalledTimes(3);
+    });
+
+    expect(fetchModels.mock.calls[2]).toEqual([projectCwd, false]);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+    });
+
+    manager.destroy();
+  });
+
   test("refresh marks a slow provider as error after the timeout", async () => {
     const fetchModels = deferred<AgentModelDefinition[]>();
     const { registry } = createRegistry([

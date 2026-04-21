@@ -50,7 +50,7 @@ interface UseProvidersSnapshotResult {
   error: string | null;
   supportsSnapshot: boolean;
   refresh: (providers?: AgentProvider[]) => Promise<void>;
-  refetchIfStale: () => void;
+  refetchIfStale: (selectedProvider?: AgentProvider | null) => void;
 }
 
 interface UseProvidersSnapshotOptions {
@@ -118,6 +118,14 @@ export function useProvidersSnapshot(
         generatedAt: message.payload.generatedAt,
         requestId: "providers_snapshot_update",
       });
+      const shouldRefetch = message.payload.entries.some((entry) => entry.status === "loading");
+      if (shouldRefetch) {
+        void queryClient.invalidateQueries({
+          queryKey,
+          exact: true,
+          refetchType: "active",
+        });
+      }
     });
   }, [
     client,
@@ -143,9 +151,26 @@ export function useProvidersSnapshot(
     [client, normalizedCwd, queryClient, queryKey, refreshSnapshot],
   );
 
-  const refetchIfStale = useCallback(() => {
-    void queryClient.refetchQueries({ queryKey, type: "active", stale: true });
-  }, [queryClient, queryKey]);
+  const refetchIfStale = useCallback(
+    (selectedProvider?: AgentProvider | null) => {
+      if (!selectedProvider) {
+        void queryClient.refetchQueries({ queryKey, type: "active", stale: true });
+        return;
+      }
+
+      const selectedEntry = snapshotQuery.data?.entries.find(
+        (entry) => entry.provider === selectedProvider,
+      );
+
+      if (!selectedEntry || selectedEntry.status === "loading") {
+        void queryClient.refetchQueries({ queryKey, type: "active" });
+        return;
+      }
+
+      void queryClient.refetchQueries({ queryKey, type: "active", stale: true });
+    },
+    [queryClient, queryKey, snapshotQuery.data?.entries],
+  );
 
   return {
     entries: snapshotQuery.data?.entries ?? undefined,

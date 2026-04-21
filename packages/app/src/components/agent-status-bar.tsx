@@ -880,15 +880,15 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(serverId, agent?.cwd);
 
-  const snapshotModels = useMemo(() => {
+  const snapshotSelectedEntry = useMemo(() => {
     if (!snapshotEntries || !agent?.provider) {
       return null;
     }
-    const entry = snapshotEntries.find((e) => e.provider === agent.provider);
-    return entry?.models ?? null;
+    return snapshotEntries.find((e) => e.provider === agent.provider) ?? null;
   }, [snapshotEntries, agent?.provider]);
 
-  const models = snapshotModels;
+  const models = snapshotSelectedEntry?.models ?? null;
+  const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
 
   const agentProviderDefinitions = useMemo(() => {
     const definition = agent?.provider
@@ -899,11 +899,11 @@ export const AgentStatusBar = memo(function AgentStatusBar({
 
   const agentProviderModels = useMemo(() => {
     const map = new Map<string, AgentModelDefinition[]>();
-    if (agent?.provider && snapshotModels) {
-      map.set(agent.provider, snapshotModels);
+    if (agent?.provider && models) {
+      map.set(agent.provider, models);
     }
     return map;
-  }, [agent?.provider, snapshotModels]);
+  }, [agent?.provider, models]);
 
   const displayMode =
     availableModes.find((mode) => mode.id === agent?.currentModeId)?.label ||
@@ -1047,8 +1047,8 @@ export const AgentStatusBar = memo(function AgentStatusBar({
           toast.error(toErrorMessage(error));
         });
       }}
-      isModelLoading={snapshotIsLoading}
-      onModelSelectorOpen={refetchSnapshotIfStale}
+      isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
+      onModelSelectorOpen={() => refetchSnapshotIfStale(agent?.provider)}
       onDropdownClose={onDropdownClose}
       disabled={!client}
     />

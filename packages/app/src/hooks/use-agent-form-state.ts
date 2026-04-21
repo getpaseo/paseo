@@ -446,6 +446,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     [formState.provider, snapshotEntries],
   );
   const snapshotSelectedProviderModels = snapshotSelectedEntry?.models ?? null;
+  const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
   const snapshotSelectedProviderModes =
     snapshotSelectedEntry?.modes ??
     (formState.provider ? snapshotProviderDefinitionMap.get(formState.provider)?.modes : []) ??
@@ -456,7 +457,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const allProviderModels = snapshotAllProviderModels;
   const availableModels = snapshotSelectedProviderModels;
   const modeOptions = snapshotSelectedProviderModes;
-  const isAllModelsLoading = snapshotIsLoading;
+  const isAllModelsLoading = snapshotIsLoading || selectedProviderIsLoading;
 
   // Combine initialValues with initialServerId for resolution
   const combinedInitialValues = useMemo((): FormInitialValues | undefined => {
@@ -669,7 +670,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   }, [refreshSnapshot]);
 
   const refetchProviderModelsIfStale = useCallback(() => {
-    refetchSnapshotIfStale();
+    refetchSnapshotIfStale(formStateRef.current.provider);
   }, [refetchSnapshotIfStale]);
 
   const persistFormPreferences = useCallback(async () => {
@@ -712,7 +713,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
   const resolvedModelId = effectiveModel?.id ?? formState.model;
   const availableThinkingOptions = effectiveModel?.thinkingOptions ?? [];
-  const isModelLoading = snapshotIsLoading;
+  const isModelLoading = snapshotIsLoading || selectedProviderIsLoading;
   const modelError = snapshotError;
 
   const workingDirIsEmpty = !formState.workingDir.trim();

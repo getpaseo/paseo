@@ -63,6 +63,13 @@ export class ProviderSnapshotManager {
       this.resetSnapshotToLoading(resolvedCwd, missingProviders);
       void this.warmUp(resolvedCwd, missingProviders);
     }
+    const providerLoads = this.providerLoads.get(resolvedCwd);
+    const loadingProviders = Array.from(entries.values())
+      .filter((entry) => entry.status === "loading" && !providerLoads?.has(entry.provider))
+      .map((entry) => entry.provider);
+    if (loadingProviders.length > 0) {
+      void this.warmUp(resolvedCwd, loadingProviders);
+    }
     if (this.shouldRevalidate(resolvedCwd)) {
       void this.warmUp(resolvedCwd);
     }
@@ -392,10 +399,10 @@ export class ProviderSnapshotManager {
       }
 
       if (!options.providers) {
-        this.snapshots.delete(cwd);
+        this.resetSnapshotToLoading(cwd);
         this.lastCheckedAts.delete(cwd);
         this.providerLoads.delete(cwd);
-        this.events.emit("change", [], cwd);
+        this.emitChange(cwd);
         continue;
       }
 
@@ -405,9 +412,10 @@ export class ProviderSnapshotManager {
       }
       let changed = false;
       for (const provider of options.providers) {
-        changed = snapshot.delete(provider) || changed;
+        changed = snapshot.has(provider) || changed;
         this.providerLoads.get(cwd)?.delete(provider);
       }
+      this.resetSnapshotToLoading(cwd, options.providers);
       if (this.providerLoads.get(cwd)?.size === 0) {
         this.providerLoads.delete(cwd);
       }
