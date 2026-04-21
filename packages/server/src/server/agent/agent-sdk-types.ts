@@ -490,11 +490,13 @@ export interface AgentSession {
 }
 
 export interface ListModelsOptions {
-  cwd?: string;
+  cwd: string;
+  force: boolean;
 }
 
 export interface ListModesOptions {
-  cwd?: string;
+  cwd: string;
+  force: boolean;
 }
 
 export interface AgentClient {
@@ -509,8 +511,8 @@ export interface AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession>;
-  listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]>;
-  listModes?(options?: ListModesOptions): Promise<AgentMode[]>;
+  listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
+  listModes?(options: ListModesOptions): Promise<AgentMode[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
   /**
    * Check if this provider is available (CLI binary is installed).

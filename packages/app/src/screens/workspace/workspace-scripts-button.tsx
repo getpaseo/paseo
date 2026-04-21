@@ -1,14 +1,7 @@
-import { type ReactElement } from "react";
+import { Fragment, useMemo, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
-import {
-  ChevronDown,
-  ExternalLink,
-  Globe,
-  LoaderCircle,
-  Play,
-  SquareTerminal,
-} from "lucide-react-native";
+import { ChevronDown, ExternalLink, Globe, Play, SquareTerminal } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -16,44 +9,153 @@ import { useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
+import { isNative } from "@/constants/platform";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { resolveWorkspaceScriptLink } from "@/utils/workspace-script-links";
 
-type Script = WorkspaceDescriptor["scripts"][number];
-
-function getScriptHealthColor(
-  health: Script["health"],
-  theme: ReturnType<typeof useUnistyles>["theme"],
-): string {
-  if (health === "healthy") {
-    return theme.colors.palette.blue[500];
-  }
-  if (health === "unhealthy") {
-    return theme.colors.palette.red[500];
-  }
-  return theme.colors.foregroundMuted;
-}
+type ScriptActionIcon = "start" | "view";
 
 interface WorkspaceScriptsButtonProps {
   serverId: string;
   workspaceId: string;
   scripts: WorkspaceDescriptor["scripts"];
+  liveTerminalIds?: readonly string[];
+  onScriptTerminalStarted?: (terminalId: string) => void;
+  onViewTerminal?: (terminalId: string) => void;
   hideLabels?: boolean;
+}
+
+interface ScriptActionButtonProps {
+  accessibilityLabel: string;
+  disabled?: boolean;
+  icon: ScriptActionIcon;
+  label: string;
+  onPress: () => void;
+  testID: string;
+}
+
+function ScriptActionButton({
+  accessibilityLabel,
+  disabled,
+  icon,
+  label,
+  onPress,
+  testID,
+}: ScriptActionButtonProps): ReactElement {
+  const { theme } = useUnistyles();
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      testID={testID}
+      hitSlop={4}
+      disabled={disabled}
+      onPress={(event) => {
+        event.stopPropagation();
+        onPress();
+      }}
+      style={styles.actionButton}
+    >
+      {({ hovered }) => {
+        const color = hovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+        const iconProps = { size: 10, color };
+        let iconElement: ReactElement;
+        if (icon === "view") {
+          iconElement = <SquareTerminal {...iconProps} />;
+        } else {
+          iconElement = <Play {...iconProps} fill="transparent" />;
+        }
+
+        return (
+          <>
+            {iconElement}
+            <Text style={[styles.actionButtonLabel, { color }]}>{label}</Text>
+          </>
+        );
+      }}
+    </Pressable>
+  );
+}
+
+function stripUrlProtocol(url: string): string {
+  return url.replace(/^https?:\/\//, "");
+}
+
+interface HostLinkProps {
+  label: string;
+  url: string | null;
+  scriptName: string;
+}
+
+function HostLinkRow({ label, url, scriptName }: HostLinkProps): ReactElement {
+  const { theme } = useUnistyles();
+  const disabled = !url;
+
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={`Open ${scriptName} at ${label}`}
+      disabled={disabled}
+      hitSlop={2}
+      onPress={(event) => {
+        event.stopPropagation();
+        if (url) void openExternalUrl(url);
+      }}
+      style={styles.hostRow}
+    >
+      {({ hovered }) => {
+        const showIcon = !disabled && (hovered || isNative);
+        const color = hovered && !disabled ? theme.colors.foreground : theme.colors.foregroundMuted;
+        return (
+          <>
+            <Text style={[styles.hostLabel, { color }]} numberOfLines={1}>
+              {label}
+            </Text>
+            <View style={styles.hostIconSlot}>
+              {showIcon ? <ExternalLink size={10} color={color} /> : null}
+            </View>
+          </>
+        );
+      }}
+    </Pressable>
+  );
+}
+
+function ExitCodeBadge({ code }: { code: number }): ReactElement {
+  const { theme } = useUnistyles();
+  const color = code === 0 ? theme.colors.foregroundMuted : theme.colors.palette.red[300];
+  return (
+    <View style={styles.exitBadge}>
+      <Text style={[styles.exitBadgeText, { color }]}>exit {code}</Text>
+    </View>
+  );
+}
+
+interface HostLink {
+  key: string;
+  label: string;
+  url: string | null;
 }
 
 export function WorkspaceScriptsButton({
   serverId,
   workspaceId,
   scripts,
+  liveTerminalIds = [],
+  onScriptTerminalStarted,
+  onViewTerminal,
   hideLabels,
 }: WorkspaceScriptsButtonProps): ReactElement | null {
   const { theme } = useUnistyles();
   const toast = useToast();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
+  const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
 
   const startScriptMutation = useMutation({
     mutationFn: async (scriptName: string) => {
@@ -70,6 +172,11 @@ export function WorkspaceScriptsButton({
       toast.show(error instanceof Error ? error.message : `Failed to start ${scriptName}`, {
         variant: "error",
       });
+    },
+    onSuccess: (result) => {
+      if (result.terminalId) {
+        onScriptTerminalStarted?.(result.terminalId);
+      }
     },
   });
 
@@ -111,50 +218,90 @@ export function WorkspaceScriptsButton({
             testID="workspace-scripts-menu"
           >
             <View style={styles.scriptList}>
-              {scripts.map((script) => {
+              {scripts.map((script, index) => {
                 const isRunning = script.lifecycle === "running";
                 const isService = (script.type ?? "service") === "service";
-                const serviceLink = resolveWorkspaceScriptLink({ script, activeConnection });
-                const isLinkable = isService && isRunning && !!serviceLink.openUrl;
                 const exitCode = script.exitCode ?? null;
+                const serviceLink = resolveWorkspaceScriptLink({ script, activeConnection });
+                const serviceOpenUrl = isService && isRunning ? serviceLink.openUrl : null;
+                const liveTerminalId =
+                  script.terminalId && liveTerminalIdSet.has(script.terminalId)
+                    ? script.terminalId
+                    : null;
 
-                let dotColor: string;
+                const hostLinks: HostLink[] = [];
+                if (isService && isRunning) {
+                  const routedUrl = script.proxyUrl ?? serviceLink.labelUrl;
+                  if (routedUrl) {
+                    hostLinks.push({
+                      key: "proxy",
+                      label: stripUrlProtocol(routedUrl),
+                      url: serviceOpenUrl,
+                    });
+                  }
+                  if (script.port !== null) {
+                    const localhostLabel = `localhost:${script.port}`;
+                    const alreadyShown = hostLinks.some((l) => l.label === localhostLabel);
+                    if (!alreadyShown) {
+                      hostLinks.push({
+                        key: "localhost",
+                        label: localhostLabel,
+                        url: `http://localhost:${script.port}`,
+                      });
+                    }
+                  }
+                }
+
+                let iconColor = theme.colors.foregroundMuted;
                 if (isService) {
-                  dotColor = isRunning
-                    ? getScriptHealthColor(script.health, theme)
-                    : theme.colors.foregroundMuted;
+                  if (isRunning && script.health === "healthy") {
+                    iconColor = theme.colors.palette.green[500];
+                  } else if (isRunning && script.health === "unhealthy") {
+                    iconColor = theme.colors.palette.red[500];
+                  } else if (isRunning) {
+                    iconColor = theme.colors.palette.blue[500];
+                  }
                 } else if (isRunning) {
-                  dotColor = theme.colors.palette.blue[500];
-                } else if (exitCode === 0) {
-                  dotColor = theme.colors.palette.green[500];
-                } else if (exitCode !== null) {
-                  dotColor = theme.colors.palette.red[500];
-                } else {
-                  dotColor = theme.colors.foregroundMuted;
+                  iconColor = theme.colors.palette.blue[500];
+                }
+
+                const ScriptIcon = isService ? Globe : SquareTerminal;
+                const showExitBadge = !isRunning && exitCode !== null;
+
+                let primaryAction: ReactElement | null = null;
+                if (isRunning && liveTerminalId) {
+                  primaryAction = (
+                    <ScriptActionButton
+                      accessibilityLabel={`View ${script.scriptName} terminal`}
+                      testID={`workspace-scripts-view-${script.scriptName}`}
+                      icon="view"
+                      label="View"
+                      onPress={() => onViewTerminal?.(liveTerminalId)}
+                    />
+                  );
+                } else if (!isRunning) {
+                  primaryAction = (
+                    <ScriptActionButton
+                      accessibilityLabel={`Run ${script.scriptName} script`}
+                      testID={`workspace-scripts-start-${script.scriptName}`}
+                      disabled={startScriptMutation.isPending}
+                      icon="start"
+                      label="Run"
+                      onPress={() => startScriptMutation.mutate(script.scriptName)}
+                    />
+                  );
                 }
 
                 return (
-                  <Pressable
-                    key={script.scriptName}
-                    testID={`workspace-scripts-item-${script.scriptName}`}
-                    accessibilityRole={isLinkable ? "link" : undefined}
-                    accessibilityLabel={`${script.scriptName} script`}
-                    style={({ hovered }) => [
-                      styles.scriptRow,
-                      hovered && isLinkable && styles.scriptRowHovered,
-                    ]}
-                    onPress={
-                      isLinkable ? () => void openExternalUrl(serviceLink.openUrl!) : undefined
-                    }
-                    disabled={!isLinkable}
-                  >
-                    {({ hovered }) => (
-                      <>
-                        {isService ? (
-                          <Globe size={14} color={dotColor} style={styles.scriptIcon} />
-                        ) : (
-                          <SquareTerminal size={14} color={dotColor} style={styles.scriptIcon} />
-                        )}
+                  <Fragment key={script.scriptName}>
+                    {index > 0 ? <DropdownMenuSeparator /> : null}
+                    <View
+                      testID={`workspace-scripts-item-${script.scriptName}`}
+                      accessibilityLabel={`${script.scriptName} script`}
+                      style={styles.scriptItem}
+                    >
+                      <View style={styles.scriptHeader}>
+                        <ScriptIcon size={14} color={iconColor} style={styles.scriptIcon} />
                         <Text
                           style={[
                             styles.scriptName,
@@ -168,78 +315,24 @@ export function WorkspaceScriptsButton({
                         >
                           {script.scriptName}
                         </Text>
-                        {isService && isRunning && serviceLink.labelUrl ? (
-                          <Text style={styles.scriptUrl} numberOfLines={1}>
-                            {serviceLink.labelUrl.replace(/^https?:\/\//, "")}
-                          </Text>
-                        ) : !isService && !isRunning && exitCode !== null && exitCode !== 0 ? (
-                          <Text style={styles.scriptUrl} numberOfLines={1}>
-                            exit {exitCode}
-                          </Text>
-                        ) : (
-                          <View style={styles.spacer} />
-                        )}
-                        {isRunning ? (
-                          isLinkable && hovered ? (
-                            <View
-                              style={[
-                                styles.externalLinkOverlay,
-                                {
-                                  backgroundImage: `linear-gradient(to right, transparent, ${theme.colors.surface2} 40%)`,
-                                } as any,
-                              ]}
-                            >
-                              <ExternalLink size={12} color={theme.colors.foreground} />
-                            </View>
-                          ) : null
-                        ) : (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Run ${script.scriptName} script`}
-                            testID={`workspace-scripts-start-${script.scriptName}`}
-                            hitSlop={4}
-                            disabled={startScriptMutation.isPending}
-                            onPress={(event) => {
-                              event.stopPropagation();
-                              startScriptMutation.mutate(script.scriptName);
-                            }}
-                            style={styles.startButton}
-                          >
-                            {({ hovered: actionHovered }) =>
-                              startScriptMutation.isPending &&
-                              startScriptMutation.variables === script.scriptName ? (
-                                <LoaderCircle size={12} color={theme.colors.foregroundMuted} />
-                              ) : (
-                                <>
-                                  <Play
-                                    size={10}
-                                    color={
-                                      actionHovered
-                                        ? theme.colors.foreground
-                                        : theme.colors.foregroundMuted
-                                    }
-                                    fill="transparent"
-                                  />
-                                  <Text
-                                    style={[
-                                      styles.startButtonLabel,
-                                      {
-                                        color: actionHovered
-                                          ? theme.colors.foreground
-                                          : theme.colors.foregroundMuted,
-                                      },
-                                    ]}
-                                  >
-                                    Run
-                                  </Text>
-                                </>
-                              )
-                            }
-                          </Pressable>
-                        )}
-                      </>
-                    )}
-                  </Pressable>
+                        {showExitBadge ? <ExitCodeBadge code={exitCode} /> : null}
+                        <View style={styles.spacer} />
+                        {primaryAction}
+                      </View>
+                      {hostLinks.length > 0 ? (
+                        <View style={styles.hostList}>
+                          {hostLinks.map((link) => (
+                            <HostLinkRow
+                              key={link.key}
+                              label={link.label}
+                              url={link.url}
+                              scriptName={script.scriptName}
+                            />
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  </Fragment>
                 );
               })}
             </View>
@@ -270,11 +363,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
     justifyContent: "center",
   },
-  splitButtonPrimaryIconOnly: {
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
-    justifyContent: "center",
-  },
   splitButtonPrimaryHovered: {
     backgroundColor: theme.colors.surface2,
   },
@@ -293,16 +381,15 @@ const styles = StyleSheet.create((theme) => ({
   scriptList: {
     paddingVertical: theme.spacing[1],
   },
-  scriptRow: {
+  scriptItem: {
+    paddingVertical: 6,
+  },
+  scriptHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: 6,
-    minHeight: 28,
-  },
-  scriptRowHovered: {
-    backgroundColor: theme.colors.surface2,
+    minHeight: 24,
   },
   scriptIcon: {
     flexShrink: 0,
@@ -311,36 +398,53 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     lineHeight: 18,
-    flexShrink: 0,
-  },
-  scriptUrl: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 18,
-    flex: 1,
+    flexShrink: 1,
     minWidth: 0,
-    textAlign: "right",
   },
   spacer: {
     flex: 1,
     minWidth: 0,
   },
-  externalLinkOverlay: {
-    position: "absolute",
-    right: 0,
-    top: 0,
-    bottom: 0,
-    paddingLeft: theme.spacing[4],
-    paddingRight: theme.spacing[3],
+  hostList: {
+    marginTop: 2,
+    paddingHorizontal: theme.spacing[3],
+  },
+  hostRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    paddingVertical: 2,
+    minHeight: 18,
+  },
+  hostLabel: {
+    flexShrink: 1,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 14,
+  },
+  hostIconSlot: {
+    width: 10,
+    height: 10,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
-  startButton: {
+  exitBadge: {
+    paddingHorizontal: theme.spacing[1.5],
+    paddingVertical: 1,
+    borderRadius: 2,
+    backgroundColor: theme.colors.surface2,
+  },
+  exitBadgeText: {
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: theme.fontWeight.medium,
+  },
+  actionButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
   },
-  startButtonLabel: {
+  actionButtonLabel: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
   },

@@ -61,6 +61,7 @@ describe("normalizeWorkspaceDescriptor", () => {
         lifecycle: "running" as const,
         health: "healthy" as const,
         exitCode: null,
+        terminalId: null,
       },
     ];
     const workspace = normalizeWorkspaceDescriptor({
@@ -88,6 +89,7 @@ describe("normalizeWorkspaceDescriptor", () => {
         lifecycle: "running",
         health: "healthy",
         exitCode: null,
+        terminalId: null,
       },
     ]);
     expect(workspace.scripts).not.toBe(scripts);
@@ -137,6 +139,7 @@ describe("mergeWorkspaces", () => {
             lifecycle: "running",
             health: "healthy",
             exitCode: null,
+            terminalId: null,
           },
         ],
       }),
@@ -152,6 +155,7 @@ describe("mergeWorkspaces", () => {
         lifecycle: "running",
         health: "healthy",
         exitCode: null,
+        terminalId: null,
       },
     ]);
   });
@@ -263,6 +267,7 @@ describe("patchWorkspaceScripts", () => {
       lifecycle: "running" as const,
       health: "healthy" as const,
       exitCode: null,
+      terminalId: null,
     };
     const workspace = createWorkspace({ id: "/repo/main", scripts: [script] });
     const current = new Map([[workspace.id, workspace]]);

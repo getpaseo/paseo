@@ -143,6 +143,7 @@ function createTerminalManagerStub(options?: {
             }),
             subscribe: () => () => {},
             onExit: () => () => {},
+            onCommandFinished: () => () => {},
             onTitleChange: () => () => {},
             send: (message: { type: string; data: string }) => {
               if (message.type === "input") {

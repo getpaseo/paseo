@@ -906,7 +906,7 @@ class FakeAgentClient implements AgentClient {
     );
   }
 
-  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
     if (this.provider === "claude") {
       return [
         { provider: this.provider, id: "haiku", label: "Haiku", isDefault: true },

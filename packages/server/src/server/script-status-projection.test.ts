@@ -8,6 +8,7 @@ import {
   buildWorkspaceScriptPayloads,
   createScriptStatusEmitter,
 } from "./script-status-projection.js";
+import { WorkspaceScriptPayloadSchema } from "../shared/messages.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 
@@ -50,6 +51,21 @@ function buildPayloads(input: {
 }
 
 describe("script-status-projection", () => {
+  it("defaults omitted workspace script terminal ids to null", () => {
+    expect(
+      WorkspaceScriptPayloadSchema.parse({
+        scriptName: "typecheck",
+        type: "script",
+        hostname: "typecheck",
+        port: null,
+        proxyUrl: null,
+        lifecycle: "stopped",
+        health: null,
+        exitCode: 0,
+      }).terminalId,
+    ).toBeNull();
+  });
+
   it("projects plain scripts and services differently", () => {
     const workspaceId = "workspace-plain-and-service";
     const workspace = createWorkspaceRepo({
@@ -90,6 +106,7 @@ describe("script-status-projection", () => {
           lifecycle: "stopped",
           health: null,
           exitCode: 0,
+          terminalId: "term-script",
         },
         {
           scriptName: "web",
@@ -100,6 +117,7 @@ describe("script-status-projection", () => {
           lifecycle: "stopped",
           health: null,
           exitCode: null,
+          terminalId: null,
         },
       ]);
     } finally {
@@ -121,19 +139,19 @@ describe("script-status-projection", () => {
     const runtimeStore = new WorkspaceScriptRuntimeStore();
 
     try {
-      expect(
-        buildPayloads({
-          workspaceId,
-          workspaceDirectory: workspace.repoDir,
-          routeStore,
-          runtimeStore,
-          daemonPort: 6767,
-          gitMetadata: {
-            projectSlug: "service-provided",
-            currentBranch: "feature/from-service",
-          },
-        }),
-      ).toEqual([
+      const payloads = buildPayloads({
+        workspaceId,
+        workspaceDirectory: workspace.repoDir,
+        routeStore,
+        runtimeStore,
+        daemonPort: 6767,
+        gitMetadata: {
+          projectSlug: "service-provided",
+          currentBranch: "feature/from-service",
+        },
+      });
+
+      expect(payloads).toEqual([
         {
           scriptName: "web",
           type: "service",
@@ -143,6 +161,7 @@ describe("script-status-projection", () => {
           lifecycle: "stopped",
           health: null,
           exitCode: null,
+          terminalId: null,
         },
       ]);
     } finally {
@@ -198,6 +217,7 @@ describe("script-status-projection", () => {
           lifecycle: "running",
           health: "healthy",
           exitCode: null,
+          terminalId: "term-web",
         },
       ]);
     } finally {
@@ -252,6 +272,7 @@ describe("script-status-projection", () => {
           lifecycle: "running",
           health: null,
           exitCode: null,
+          terminalId: "term-web",
         },
       ]);
     } finally {
@@ -299,6 +320,7 @@ describe("script-status-projection", () => {
           lifecycle: "running",
           health: null,
           exitCode: null,
+          terminalId: "term-docs",
         },
       ]);
     } finally {
@@ -339,6 +361,7 @@ describe("script-status-projection", () => {
           lifecycle: "running",
           health: null,
           exitCode: null,
+          terminalId: "term-typecheck",
         },
       ]);
     } finally {
@@ -409,6 +432,7 @@ describe("script-status-projection", () => {
               lifecycle: "running",
               health: "healthy",
               exitCode: null,
+              terminalId: "term-api",
             },
             {
               scriptName: "typecheck",
@@ -419,6 +443,7 @@ describe("script-status-projection", () => {
               lifecycle: "stopped",
               health: null,
               exitCode: null,
+              terminalId: null,
             },
           ],
         },

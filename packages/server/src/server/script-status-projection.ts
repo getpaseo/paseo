@@ -103,6 +103,7 @@ export function buildWorkspaceScriptPayloads(
       lifecycle: runtimeEntry?.lifecycle ?? "stopped",
       health: type === "service" ? toWireHealth(options.resolveHealth?.(hostname) ?? null) : null,
       exitCode: runtimeEntry?.exitCode ?? null,
+      terminalId: runtimeEntry?.terminalId ?? null,
     });
   }
 
@@ -134,6 +135,7 @@ export function buildWorkspaceScriptPayloads(
           ? toWireHealth(options.resolveHealth?.(hostname) ?? null)
           : null,
       exitCode: runtimeEntry.exitCode,
+      terminalId: runtimeEntry.terminalId,
     });
   }
 

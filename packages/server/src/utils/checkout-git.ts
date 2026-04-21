@@ -103,6 +103,16 @@ type CheckoutFileChange = {
   isUntracked?: boolean;
 };
 
+type CheckoutDiffRefs = {
+  baseRef: string;
+  targetRef?: string;
+  includeUntracked: boolean;
+};
+
+function getCheckoutDiffRefArgs(refs: CheckoutDiffRefs): string[] {
+  return [refs.baseRef, ...(refs.targetRef ? [refs.targetRef] : [])];
+}
+
 function normalizeBranchSuggestionName(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) {
@@ -358,7 +368,7 @@ export async function checkoutResolvedBranch(
 
 async function listCheckoutFileChanges(
   cwd: string,
-  ref: string,
+  refs: CheckoutDiffRefs,
   ignoreWhitespace = false,
 ): Promise<CheckoutFileChange[]> {
   const changes: CheckoutFileChange[] = [];
@@ -366,7 +376,7 @@ async function listCheckoutFileChanges(
   const { stdout: nameStatusOut } = await runGitCommand(
     buildGitDiffArgs({
       ignoreWhitespace,
-      extra: ["--name-status", ref],
+      extra: ["--name-status", ...getCheckoutDiffRefArgs(refs)],
     }),
     { cwd, env: READ_ONLY_GIT_ENV },
   );
@@ -405,24 +415,26 @@ async function listCheckoutFileChanges(
     });
   }
 
-  const { stdout: untrackedOut } = await runGitCommand(
-    ["ls-files", "--others", "--exclude-standard"],
-    {
-      cwd,
-      env: READ_ONLY_GIT_ENV,
-    },
-  );
-  for (const file of untrackedOut
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
-    changes.push({
-      path: file,
-      status: "U",
-      isNew: true,
-      isDeleted: false,
-      isUntracked: true,
-    });
+  if (refs.includeUntracked) {
+    const { stdout: untrackedOut } = await runGitCommand(
+      ["ls-files", "--others", "--exclude-standard"],
+      {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      },
+    );
+    for (const file of untrackedOut
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)) {
+      changes.push({
+        path: file,
+        status: "U",
+        isNew: true,
+        isDeleted: false,
+        isUntracked: true,
+      });
+    }
   }
 
   // Deduplicate by path (prefer tracked status over untracked marker if both appear).
@@ -495,13 +507,13 @@ const TRACKED_MAX_CHANGED_LINES = 40_000;
 
 async function getTrackedNumstatByPath(
   cwd: string,
-  ref: string,
+  refs: CheckoutDiffRefs,
   ignoreWhitespace = false,
 ): Promise<Map<string, FileStat>> {
   const result = await runGitCommand(
     buildGitDiffArgs({
       ignoreWhitespace,
-      extra: ["--numstat", ref],
+      extra: ["--numstat", ...getCheckoutDiffRefArgs(refs)],
     }),
     {
       cwd,
@@ -1507,10 +1519,10 @@ export async function getCheckoutDiff(
 ): Promise<CheckoutDiffResult> {
   await requireGitRepo(cwd);
 
-  let refForDiff: string;
+  let refsForDiff: CheckoutDiffRefs;
 
   if (compare.mode === "uncommitted") {
-    refForDiff = "HEAD";
+    refsForDiff = { baseRef: "HEAD", includeUntracked: true };
   } else {
     const configured = await getConfiguredBaseRefForCwd(cwd, context);
     const baseRef = configured.baseRef ?? compare.baseRef ?? (await resolveBaseRef(cwd));
@@ -1522,11 +1534,15 @@ export async function getCheckoutDiff(
     }
 
     const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
-    refForDiff = (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef;
+    refsForDiff = {
+      baseRef: (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef,
+      targetRef: "HEAD",
+      includeUntracked: false,
+    };
   }
 
   const ignoreWhitespace = compare.ignoreWhitespace === true;
-  const changes = await listCheckoutFileChanges(cwd, refForDiff, ignoreWhitespace);
+  const changes = await listCheckoutFileChanges(cwd, refsForDiff, ignoreWhitespace);
   changes.sort((a, b) => {
     if (a.path === b.path) return 0;
     return a.path < b.path ? -1 : 1;
@@ -1557,7 +1573,7 @@ export async function getCheckoutDiff(
 
   const trackedNumstatByPath =
     trackedChanges.length > 0
-      ? await getTrackedNumstatByPath(cwd, refForDiff, ignoreWhitespace)
+      ? await getTrackedNumstatByPath(cwd, refsForDiff, ignoreWhitespace)
       : new Map<string, FileStat>();
   const trackedDiffPaths: string[] = [];
   const trackedPlaceholderByPath = new Map<
@@ -1584,7 +1600,7 @@ export async function getCheckoutDiff(
     const trackedDiffResult = await runGitCommand(
       buildGitDiffArgs({
         ignoreWhitespace,
-        extra: [refForDiff, "--", ...trackedDiffPaths],
+        extra: [...getCheckoutDiffRefArgs(refsForDiff), "--", ...trackedDiffPaths],
       }),
       {
         cwd,
@@ -1621,7 +1637,13 @@ export async function getCheckoutDiff(
                 return null;
               }
               const refPath = change.oldPath ?? change.path;
-              return readGitFileContentAtRef(cwd, refForDiff, refPath);
+              return readGitFileContentAtRef(cwd, refsForDiff.baseRef, refPath);
+            },
+            getNewFileContent: async (file) => {
+              if (!refsForDiff.targetRef) {
+                return null;
+              }
+              return readGitFileContentAtRef(cwd, refsForDiff.targetRef, file.path);
             },
           })
         : [];

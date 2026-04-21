@@ -152,7 +152,7 @@ type ACPAgentSessionOptions = {
   initialCommandsWaitTimeoutMs?: number;
 };
 
-type SpawnedACPProcess = {
+export type SpawnedACPProcess = {
   child: ChildProcessWithoutNullStreams;
   connection: ClientSideConnection;
   initialize: InitializeResponse;
@@ -394,8 +394,8 @@ export class ACPAgentClient implements AgentClient {
     return session;
   }
 
-  async listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const cwd = options?.cwd ?? process.cwd();
+  async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    const { cwd } = options;
     const probe = await this.spawnProcess(PROBE_ENV);
     try {
       const response = await probe.connection.newSession({
@@ -414,8 +414,8 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  async listModes(options?: ListModesOptions): Promise<AgentMode[]> {
-    const cwd = options?.cwd ?? process.cwd();
+  async listModes(options: ListModesOptions): Promise<AgentMode[]> {
+    const { cwd } = options;
     const probe = await this.spawnProcess(PROBE_ENV);
     try {
       const response = await probe.connection.newSession({

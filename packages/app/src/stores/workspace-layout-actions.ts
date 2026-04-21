@@ -203,6 +203,7 @@ export interface WorkspaceTabSnapshot {
   terminalsHydrated: boolean;
   activeAgentIds: Iterable<string>;
   knownAgentIds: Iterable<string>;
+  knownTerminalIds?: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
   hasActivePendingDraftCreate?: boolean;
 }
@@ -1454,6 +1455,9 @@ export function reconcileWorkspaceTabs(
   const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
   const knownAgentIds = normalizeStringSet(snapshot.knownAgentIds);
   const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
+  const knownTerminalIds = snapshot.knownTerminalIds
+    ? normalizeStringSet(snapshot.knownTerminalIds)
+    : standaloneTerminalIds;
   const visibleAgentIds = new Set(activeAgentIds);
   for (const agentId of pinnedAgentIds) {
     if (knownAgentIds.has(agentId)) {
@@ -1537,7 +1541,7 @@ export function reconcileWorkspaceTabs(
     if (
       isTerminalTab(tab) &&
       snapshot.terminalsHydrated &&
-      !standaloneTerminalIds.has(tab.target.terminalId)
+      !knownTerminalIds.has(tab.target.terminalId)
     ) {
       nextLayout =
         closeTabInLayout({

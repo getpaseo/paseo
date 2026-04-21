@@ -42,8 +42,8 @@ export { AGENT_PROVIDER_DEFINITIONS, getAgentProviderDefinition };
 
 export interface ProviderDefinition extends AgentProviderDefinition {
   createClient: (logger: Logger) => AgentClient;
-  fetchModels: (options?: ListModelsOptions) => Promise<AgentModelDefinition[]>;
-  fetchModes: (options?: ListModesOptions) => Promise<AgentMode[]>;
+  fetchModels: (options: ListModelsOptions) => Promise<AgentModelDefinition[]>;
+  fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
 }
 
 export type BuildProviderRegistryOptions = {
@@ -329,9 +329,9 @@ function createRegistryEntry(
       const inner = resolved.createBaseClient(providerLogger);
       return inner.provider === provider ? inner : wrapClientProvider(provider, inner);
     },
-    fetchModels: async (options?: ListModelsOptions) =>
+    fetchModels: async (options: ListModelsOptions) =>
       mergeModels(provider, resolved.profileModels, await modelClient.listModels(options)),
-    fetchModes: async (options?: ListModesOptions) => {
+    fetchModes: async (options: ListModesOptions) => {
       const modes = modelClient.listModes
         ? await modelClient.listModes(options)
         : resolved.definition.modes;

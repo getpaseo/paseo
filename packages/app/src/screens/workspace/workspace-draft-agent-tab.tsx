@@ -97,6 +97,9 @@ export function WorkspaceDraftAgentTab({
       if (composerState.providerDefinitions.length === 0) {
         return "No available providers on the selected host";
       }
+      if (!composerState.selectedProvider) {
+        return "Select a model";
+      }
       if (composerState.isModelLoading) {
         return "Model defaults are still loading";
       }
@@ -127,10 +130,14 @@ export function WorkspaceDraftAgentTab({
         composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
           ? composerState.selectedMode
           : null;
+      const provider = composerState.selectedProvider;
+      if (!provider) {
+        throw new Error("Select a model");
+      }
       return {
         serverId,
         id: tabId,
-        provider: composerState.selectedProvider,
+        provider,
         status: "running",
         createdAt: now,
         updatedAt: now,
@@ -141,7 +148,7 @@ export function WorkspaceDraftAgentTab({
         availableModes: [],
         pendingPermissions: [],
         persistence: null,
-        runtimeInfo: { provider: composerState.selectedProvider, sessionId: null, model, modeId },
+        runtimeInfo: { provider, sessionId: null, model, modeId },
         title: "Agent",
         cwd: workspaceDirectory,
         model,
@@ -157,8 +164,12 @@ export function WorkspaceDraftAgentTab({
         throw new Error("Host is not connected");
       }
 
+      const provider = composerState.selectedProvider;
+      if (!provider) {
+        throw new Error("Select a model");
+      }
       const config = buildWorkspaceDraftAgentConfig({
-        provider: composerState.selectedProvider,
+        provider,
         cwd: workspaceDirectory,
         ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
           ? { modeId: composerState.selectedMode }

@@ -8,8 +8,9 @@ $RootDir = (Resolve-Path "$DesktopDir\..\..").Path
 # Build the Electron main process
 npm run build:main
 
-# Get a random available port for Metro
-$env:EXPO_PORT = (npx get-port-cli).Trim()
+# Prefer Metro's stable default port so dev browser storage keeps the same
+# localhost origin across restarts. Fall back only when earlier ports are busy.
+$env:EXPO_PORT = (npx get-port-cli 8081 8082 8083 8084 8085).Trim()
 
 # Set EXPO_DEV_URL in the environment so Electron inherits it
 $env:EXPO_DEV_URL = "http://localhost:$($env:EXPO_PORT)"

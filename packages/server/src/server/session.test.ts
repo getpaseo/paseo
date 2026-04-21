@@ -1,12 +1,21 @@
 import { execSync } from "child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { CheckoutPrStatusSchema } from "../shared/messages.js";
 import { normalizeCheckoutPrStatusPayload, Session } from "./session.js";
+import type {
+  AgentClient,
+  AgentMode,
+  AgentModelDefinition,
+  ListModesOptions,
+  ListModelsOptions,
+} from "./agent/agent-sdk-types.js";
+import type { ProviderDefinition } from "./agent/provider-registry.js";
+import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 
 const checkoutGitMocks = vi.hoisted(() => ({
   checkoutResolvedBranch: vi.fn(),
@@ -35,6 +44,31 @@ const spawnMocks = vi.hoisted(() => ({
 const paseoWorktreeServiceMocks = vi.hoisted(() => ({
   createPaseoWorktree: vi.fn(),
 }));
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+};
+
+const TEST_CAPABILITIES = {
+  supportsStreaming: false,
+  supportsSessionPersistence: false,
+  supportsDynamicModes: false,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: false,
+} as const;
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 vi.mock("../utils/checkout-git.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../utils/checkout-git.js")>();
@@ -113,6 +147,7 @@ function createSessionForTest(options?: {
   scriptRuntimeStore?: unknown;
   getDaemonTcpPort?: () => number | null;
   getDaemonTcpHost?: () => string | null;
+  providerSnapshotManager?: ProviderSnapshotManager;
   messages?: unknown[];
 }): Session {
   const logger = pino({ level: "silent" });
@@ -165,6 +200,7 @@ function createSessionForTest(options?: {
     stt: null,
     tts: null,
     terminalManager: (options?.terminalManager ?? null) as any,
+    providerSnapshotManager: options?.providerSnapshotManager,
     scriptRouteStore: options?.scriptRouteStore as any,
     scriptRuntimeStore: options?.scriptRuntimeStore as any,
     getDaemonTcpPort: options?.getDaemonTcpPort,
@@ -207,6 +243,20 @@ function createWorkspaceGitSnapshot(
   };
 }
 
+function createProviderSnapshotManagerStub(): ProviderSnapshotManager {
+  const stub = {
+    getSnapshot: vi.fn(() => []),
+    refreshSnapshotForCwd: vi.fn(async () => {}),
+    refreshSettingsSnapshot: vi.fn(async () => {}),
+    warmUpSnapshotForCwd: vi.fn(async () => {}),
+    on: vi.fn(),
+    off: vi.fn(),
+  };
+  stub.on.mockImplementation(() => stub);
+  stub.off.mockImplementation(() => stub);
+  return stub as unknown as ProviderSnapshotManager;
+}
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -240,6 +290,159 @@ describe("session PR status payload normalization", () => {
     expect(payload).toHaveProperty("repoOwner", "internal-owner");
     expect(payload).toHaveProperty("repoName", "internal-repo");
     expect(CheckoutPrStatusSchema.parse(payload)).toEqual(payload);
+  });
+});
+
+describe("session provider refresh cwd routing", () => {
+  test("routes no-cwd provider snapshot refreshes through settings refresh", async () => {
+    const providerSnapshotManager = createProviderSnapshotManagerStub();
+    const session = createSessionForTest({ providerSnapshotManager });
+
+    await session.handleMessage({
+      type: "refresh_providers_snapshot_request",
+      providers: ["codex"],
+      requestId: "refresh-settings",
+    });
+
+    expect(providerSnapshotManager.refreshSettingsSnapshot).toHaveBeenCalledWith({
+      providers: ["codex"],
+    });
+    expect(providerSnapshotManager.refreshSnapshotForCwd).not.toHaveBeenCalled();
+  });
+
+  test("routes cwd provider snapshot refreshes through workspace refresh", async () => {
+    const providerSnapshotManager = createProviderSnapshotManagerStub();
+    const session = createSessionForTest({ providerSnapshotManager });
+
+    await session.handleMessage({
+      type: "refresh_providers_snapshot_request",
+      cwd: "/tmp/workspace-refresh",
+      providers: ["codex"],
+      requestId: "refresh-workspace",
+    });
+
+    expect(providerSnapshotManager.refreshSnapshotForCwd).toHaveBeenCalledWith({
+      cwd: "/tmp/workspace-refresh",
+      providers: ["codex"],
+    });
+    expect(providerSnapshotManager.refreshSettingsSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("normalizes legacy model and mode list requests without cwd to home", async () => {
+    const messages: unknown[] = [];
+    const session = createSessionForTest({ messages });
+    const fetchModels = vi.fn(async () => []);
+    const fetchModes = vi.fn(async () => []);
+    (session as unknown as { providerRegistry: unknown }).providerRegistry = {
+      codex: {
+        fetchModels,
+        fetchModes,
+      },
+    };
+
+    await session.handleMessage({
+      type: "list_provider_models_request",
+      provider: "codex",
+      requestId: "models-home",
+    });
+    await session.handleMessage({
+      type: "list_provider_modes_request",
+      provider: "codex",
+      requestId: "modes-home",
+    });
+
+    expect(fetchModels).toHaveBeenCalledWith({ cwd: homedir(), force: false });
+    expect(fetchModes).toHaveBeenCalledWith({ cwd: homedir(), force: false });
+  });
+
+  test("legacy model list request without cwd awaits loading snapshot without forced discovery", async () => {
+    const messages: unknown[] = [];
+    const models = deferred<AgentModelDefinition[]>();
+    const fetchModels = vi.fn(
+      async (options: ListModelsOptions): Promise<AgentModelDefinition[]> => {
+        expect(options.cwd).toBe(homedir());
+        return models.promise;
+      },
+    );
+    const fetchModes = vi.fn(async (_options: ListModesOptions): Promise<AgentMode[]> => []);
+    const providerDefinition: ProviderDefinition = {
+      id: "codex",
+      label: "Codex",
+      description: "Codex test provider",
+      defaultModeId: null,
+      modes: [],
+      createClient: () =>
+        ({
+          provider: "codex",
+          capabilities: TEST_CAPABILITIES,
+          async createSession() {
+            throw new Error("not implemented");
+          },
+          async resumeSession() {
+            throw new Error("not implemented");
+          },
+          async listModels(options: ListModelsOptions) {
+            return fetchModels(options);
+          },
+          async isAvailable() {
+            return true;
+          },
+        }) satisfies AgentClient,
+      fetchModels,
+      fetchModes,
+    };
+    const providerSnapshotManager = new ProviderSnapshotManager(
+      { codex: providerDefinition },
+      pino({ level: "silent" }),
+    );
+    const session = createSessionForTest({ messages, providerSnapshotManager });
+
+    providerSnapshotManager.getSnapshot();
+    await vi.waitFor(() => {
+      expect(fetchModels).toHaveBeenCalledTimes(1);
+    });
+
+    const responsePromise = session.handleMessage({
+      type: "list_provider_models_request",
+      provider: "codex",
+      requestId: "models-loading-home",
+    });
+
+    await Promise.resolve();
+
+    expect(fetchModels).toHaveBeenCalledTimes(1);
+    expect(fetchModels).toHaveBeenCalledWith({ cwd: homedir(), force: false });
+    expect(fetchModels).not.toHaveBeenCalledWith({ cwd: homedir(), force: true });
+
+    models.resolve([
+      {
+        provider: "codex",
+        id: "gpt-5.4",
+        label: "GPT-5.4",
+      },
+    ]);
+    await responsePromise;
+
+    expect(fetchModels).toHaveBeenCalledTimes(1);
+    expect(fetchModels).not.toHaveBeenCalledWith({ cwd: homedir(), force: true });
+    expect(messages).toContainEqual({
+      type: "list_provider_models_response",
+      payload: {
+        provider: "codex",
+        models: [
+          {
+            provider: "codex",
+            id: "gpt-5.4",
+            label: "GPT-5.4",
+          },
+        ],
+        error: null,
+        fetchedAt: expect.any(String),
+        requestId: "models-loading-home",
+      },
+    });
+
+    providerSnapshotManager.destroy();
   });
 });
 

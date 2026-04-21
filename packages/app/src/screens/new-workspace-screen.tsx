@@ -326,6 +326,9 @@ export function NewWorkspaceScreen({
         if (!composerState) {
           throw new Error("Composer state is required");
         }
+        if (!composerState.selectedProvider) {
+          throw new Error("Select a model");
+        }
 
         const initialPrompt = text.trim();
         const encodedImages = await encodeImages(images);

@@ -179,6 +179,9 @@ export function WorkspaceSetupDialog() {
         if (!composerState) {
           throw new Error("Workspace setup composer state is required");
         }
+        if (!composerState.selectedProvider) {
+          throw new Error("Select a model");
+        }
 
         const wirePayload = splitComposerAttachmentsForSubmit(attachments);
         const encodedImages = await encodeImages(wirePayload.images);

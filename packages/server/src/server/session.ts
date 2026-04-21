@@ -86,7 +86,7 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
-import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
@@ -805,7 +805,7 @@ export class Session {
       );
     }
     if (this.providerSnapshotManager) {
-      const handleProviderSnapshotChange = (entries: ProviderSnapshotEntry[], cwd?: string) => {
+      const handleProviderSnapshotChange = (entries: ProviderSnapshotEntry[], cwd: string) => {
         // COMPAT(providersSnapshot): keep provider visibility gating for older clients.
         const visibleEntries = entries.filter((entry) =>
           this.isProviderVisibleToClient(entry.provider),
@@ -3071,13 +3071,16 @@ export class Session {
   private async handleListProviderModelsRequest(
     msg: Extract<SessionInboundMessage, { type: "list_provider_models_request" }>,
   ): Promise<void> {
-    const cwd = msg.cwd ? expandTilde(msg.cwd) : undefined;
+    const cwd = resolveSnapshotCwd(msg.cwd ? expandTilde(msg.cwd) : undefined);
     const fetchedAt = new Date().toISOString();
     const manager = this.providerSnapshotManager;
 
     if (!manager) {
       try {
-        const models = await this.providerRegistry[msg.provider].fetchModels({ cwd });
+        const models = await this.providerRegistry[msg.provider].fetchModels({
+          cwd,
+          force: false,
+        });
         this.emit({
           type: "list_provider_models_response",
           payload: {
@@ -3106,16 +3109,7 @@ export class Session {
       return;
     }
 
-    const findEntry = () =>
-      manager.getSnapshot(cwd).find((candidate) => candidate.provider === msg.provider);
-
-    let entry = findEntry();
-    if (!entry || entry.status === "loading") {
-      // Awaits the in-flight warmup (deduped per-cwd) so old clients still get
-      // a resolved answer rather than a loading placeholder.
-      await manager.refresh({ cwd, providers: [msg.provider] });
-      entry = findEntry();
-    }
+    const entry = await this.getProviderSnapshotEntryForRead(cwd, msg.provider);
 
     if (!entry) {
       this.emit({
@@ -3164,9 +3158,60 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "list_provider_modes_request" }>,
   ): Promise<void> {
     const fetchedAt = new Date().toISOString();
+    const cwd = resolveSnapshotCwd(msg.cwd ? expandTilde(msg.cwd) : undefined);
+    const manager = this.providerSnapshotManager;
+
+    if (manager) {
+      const entry = await this.getProviderSnapshotEntryForRead(cwd, msg.provider);
+
+      if (!entry) {
+        this.emit({
+          type: "list_provider_modes_response",
+          payload: {
+            provider: msg.provider,
+            error: `Unknown provider: ${msg.provider}`,
+            fetchedAt,
+            requestId: msg.requestId,
+          },
+        });
+        return;
+      }
+
+      if (entry.status === "ready") {
+        this.emit({
+          type: "list_provider_modes_response",
+          payload: {
+            provider: msg.provider,
+            modes: entry.modes ?? [],
+            error: null,
+            fetchedAt: entry.fetchedAt ?? fetchedAt,
+            requestId: msg.requestId,
+          },
+        });
+        return;
+      }
+
+      const errorMessage =
+        entry.status === "error"
+          ? (entry.error ?? `Failed to list modes for ${msg.provider}`)
+          : `Provider ${msg.provider} is not available`;
+
+      this.emit({
+        type: "list_provider_modes_response",
+        payload: {
+          provider: msg.provider,
+          error: errorMessage,
+          fetchedAt,
+          requestId: msg.requestId,
+        },
+      });
+      return;
+    }
+
     try {
       const modes = await this.providerRegistry[msg.provider].fetchModes({
-        cwd: msg.cwd ? expandTilde(msg.cwd) : undefined,
+        cwd,
+        force: false,
       });
       this.emit({
         type: "list_provider_modes_response",
@@ -3193,6 +3238,28 @@ export class Session {
         },
       });
     }
+  }
+
+  private async getProviderSnapshotEntryForRead(
+    cwd: string,
+    provider: AgentProvider,
+  ): Promise<ProviderSnapshotEntry | undefined> {
+    const manager = this.providerSnapshotManager;
+    if (!manager) {
+      return undefined;
+    }
+
+    const findEntry = () =>
+      manager.getSnapshot(cwd).find((candidate) => candidate.provider === provider);
+
+    let entry = findEntry();
+    if (!entry || entry.status === "loading") {
+      // Awaits the in-flight warmup (deduped per-cwd) so old clients still get
+      // a resolved answer rather than a loading placeholder.
+      await manager.warmUpSnapshotForCwd({ cwd, providers: [provider] });
+      entry = findEntry();
+    }
+    return entry;
   }
 
   private buildDraftAgentSessionConfig(draftConfig: {
@@ -3301,10 +3368,16 @@ export class Session {
   private async handleRefreshProvidersSnapshotRequest(
     msg: Extract<SessionInboundMessage, { type: "refresh_providers_snapshot_request" }>,
   ): Promise<void> {
-    await this.providerSnapshotManager?.refresh({
-      cwd: msg.cwd ? expandTilde(msg.cwd) : undefined,
-      providers: msg.providers,
-    });
+    if (msg.cwd) {
+      await this.providerSnapshotManager?.refreshSnapshotForCwd({
+        cwd: expandTilde(msg.cwd),
+        providers: msg.providers,
+      });
+    } else {
+      await this.providerSnapshotManager?.refreshSettingsSnapshot({
+        providers: msg.providers,
+      });
+    }
     this.emit({
       type: "refresh_providers_snapshot_response",
       payload: {

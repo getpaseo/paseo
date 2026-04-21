@@ -578,7 +578,10 @@ describe("buildProviderRegistry", () => {
         },
       });
 
-      const models = await registry.claude.fetchModels();
+      const models = await registry.claude.fetchModels({
+        cwd: "/tmp/registry-models",
+        force: false,
+      });
 
       expect(models.map((model) => model.id)).toEqual(["profile-fast"]);
     });
@@ -610,7 +613,10 @@ describe("buildProviderRegistry", () => {
         },
       });
 
-      const models = await registry.claude.fetchModels();
+      const models = await registry.claude.fetchModels({
+        cwd: "/tmp/registry-models",
+        force: false,
+      });
 
       expect(models).toEqual([
         {
@@ -645,7 +651,10 @@ describe("buildProviderRegistry", () => {
         },
       });
 
-      const models = await registry.claude.fetchModels();
+      const models = await registry.claude.fetchModels({
+        cwd: "/tmp/registry-models",
+        force: false,
+      });
 
       expect(models).toEqual([
         {
@@ -668,7 +677,10 @@ describe("buildProviderRegistry", () => {
       ]);
 
       const registry = buildProviderRegistry(logger);
-      const models = await registry.claude.fetchModels();
+      const models = await registry.claude.fetchModels({
+        cwd: "/tmp/registry-models",
+        force: false,
+      });
 
       expect(models).toEqual([
         {

@@ -21,6 +21,7 @@ export interface TerminalManager {
     id?: string;
     cwd: string;
     name?: string;
+    title?: string;
     env?: Record<string, string>;
     command?: string;
     args?: string[];
@@ -160,6 +161,7 @@ export function createTerminalManager(): TerminalManager {
       id?: string;
       cwd: string;
       name?: string;
+      title?: string;
       env?: Record<string, string>;
       command?: string;
       args?: string[];
@@ -178,6 +180,7 @@ export function createTerminalManager(): TerminalManager {
           ...(options.id ? { id: options.id } : {}),
           cwd: options.cwd,
           name: options.name ?? defaultName,
+          ...(options.title ? { title: options.title } : {}),
           ...(options.command ? { command: options.command } : {}),
           ...(options.args ? { args: options.args } : {}),
           ...(mergedEnv ? { env: mergedEnv } : {}),

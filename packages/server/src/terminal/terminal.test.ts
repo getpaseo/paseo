@@ -443,6 +443,87 @@ describe("Terminal", () => {
       unsubscribeTitle();
     });
 
+    it("keeps preset titles instead of applying OSC title updates", async () => {
+      const session = trackSession(
+        await createTerminal({
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+          title: "typecheck",
+        }),
+      );
+
+      await waitForLines(session, ["$"]);
+      session.send({ type: "input", data: "printf '\\033]0;Build Log\\007'\r" });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(session.getTitle()).toBe("typecheck");
+      expect(session.getState().title).toBe("typecheck");
+    });
+
+    it("emits command completion from VS Code OSC 633 without visible output", async () => {
+      const packageRoot = mkdtempSync(join(tmpdir(), "terminal-command-finished-"));
+      temporaryDirs.push(packageRoot);
+      const scriptPath = join(packageRoot, "emit-command-finished.sh");
+      writeFileSync(scriptPath, "#!/bin/sh\nprintf '\\033]633;D;7\\007'\n");
+      chmodSync(scriptPath, 0o755);
+
+      const session = trackSession(
+        await createTerminal({
+          cwd: packageRoot,
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+      const commandCompletions: Array<number | null> = [];
+      const unsubscribeCommandFinished = session.onCommandFinished((info) => {
+        commandCompletions.push(info.exitCode);
+      });
+
+      await waitForLines(session, ["$"]);
+      session.send({ type: "input", data: "./emit-command-finished.sh\r" });
+
+      await waitForState(session, () => commandCompletions.length === 1);
+
+      expect(commandCompletions).toEqual([7]);
+      expect(getLines(session.getState()).join("\n")).not.toContain("633;D;7");
+
+      unsubscribeCommandFinished();
+    });
+
+    it("ignores malformed VS Code OSC 633 command completion payloads", async () => {
+      const packageRoot = mkdtempSync(join(tmpdir(), "terminal-command-finished-malformed-"));
+      temporaryDirs.push(packageRoot);
+      const scriptPath = join(packageRoot, "emit-malformed-command-finished.sh");
+      writeFileSync(
+        scriptPath,
+        "#!/bin/sh\nprintf '\\033]633;D;garbage\\007\\033]633;D;8;extra\\007\\033]633;D;3\\007'\n",
+      );
+      chmodSync(scriptPath, 0o755);
+
+      const session = trackSession(
+        await createTerminal({
+          cwd: packageRoot,
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+        }),
+      );
+      const commandCompletions: Array<number | null> = [];
+      const unsubscribeCommandFinished = session.onCommandFinished((info) => {
+        commandCompletions.push(info.exitCode);
+      });
+
+      await waitForLines(session, ["$"]);
+      session.send({ type: "input", data: "./emit-malformed-command-finished.sh\r" });
+
+      await waitForState(session, () => commandCompletions.length === 1);
+
+      expect(commandCompletions).toEqual([3]);
+      expect(getLines(session.getState()).join("\n")).not.toContain("633;D;garbage");
+
+      unsubscribeCommandFinished();
+    });
+
     it("debounces rapid title changes and emits only the final title", async () => {
       const session = trackSession(
         await createTerminal({
@@ -505,6 +586,42 @@ describe("Terminal", () => {
 
       await waitForTitle(session, (title) => title === "sleep 1");
       await waitForTitle(session, (title) => title === "~/dev/faro", 4000);
+    });
+
+    it.skipIf(!hasZsh)("emits zsh shell integration command completion", async () => {
+      const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-command-finished-home-"));
+      temporaryDirs.push(homeDir);
+      const realZdotdir = join(homeDir, ".config", "zsh");
+      const workingDir = join(homeDir, "dev", "faro");
+      mkdirSync(realZdotdir, { recursive: true });
+      mkdirSync(workingDir, { recursive: true });
+      writeFileSync(join(realZdotdir, ".zshenv"), "");
+      writeFileSync(join(realZdotdir, ".zshrc"), "PS1='$ '\n");
+
+      const session = trackSession(
+        await createTerminal({
+          cwd: workingDir,
+          shell: "/bin/zsh",
+          env: {
+            HOME: homeDir,
+            ZDOTDIR: realZdotdir,
+          },
+        }),
+      );
+      const commandCompletions: Array<number | null> = [];
+      const unsubscribeCommandFinished = session.onCommandFinished((info) => {
+        commandCompletions.push(info.exitCode);
+      });
+
+      await waitForLines(session, ["$"]);
+      session.send({ type: "input", data: "false\r" });
+
+      await waitForState(session, () => commandCompletions.includes(1));
+
+      expect(commandCompletions).toEqual([1]);
+      expect(getLines(session.getState()).join("\n")).not.toContain("633;D;1");
+
+      unsubscribeCommandFinished();
     });
   });
 

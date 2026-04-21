@@ -568,10 +568,14 @@ export function CombinedModelSelector({
     [onSelect],
   );
 
-  const ProviderIcon = getProviderIcon(selectedProvider);
+  const hasSelectedProvider = selectedProvider.trim().length > 0;
+  const ProviderIcon = hasSelectedProvider ? getProviderIcon(selectedProvider) : null;
 
   const selectedModelLabel = useMemo(() => {
     if (!selectedModel) {
+      if (!hasSelectedProvider) {
+        return "Select model";
+      }
       return isLoading ? "Loading..." : "Select model";
     }
     const models = allProviderModels.get(selectedProvider);
@@ -580,7 +584,7 @@ export function CombinedModelSelector({
     }
     const model = models.find((entry) => entry.id === selectedModel);
     return model?.label ?? resolveDefaultModelLabel(models);
-  }, [allProviderModels, isLoading, selectedModel, selectedProvider]);
+  }, [allProviderModels, hasSelectedProvider, isLoading, selectedModel, selectedProvider]);
 
   const desktopFixedHeight = useMemo(() => {
     if (view.kind !== "provider") {
@@ -643,7 +647,9 @@ export function CombinedModelSelector({
           })
         ) : (
           <>
-            <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+            {ProviderIcon ? (
+              <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+            ) : null}
             <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
               {triggerLabel}
             </Text>

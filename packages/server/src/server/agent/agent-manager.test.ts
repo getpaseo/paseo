@@ -462,6 +462,140 @@ describe("AgentManager", () => {
     expect(reloaded.currentModeId).toBe("full-access");
   });
 
+  test("reloadAgentSession completes when the previous session close hangs", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-timeout-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class HangingCloseSession extends TestAgentSession {
+      closeCalled = false;
+
+      override async close(): Promise<void> {
+        this.closeCalled = true;
+        await new Promise(() => {});
+      }
+    }
+
+    class HangingCloseClient extends TestAgentClient {
+      readonly firstSession = new HangingCloseSession({
+        provider: "codex",
+        cwd: workdir,
+      });
+      resumeSessionCalls = 0;
+
+      override async createSession(): Promise<AgentSession> {
+        return this.firstSession;
+      }
+
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ): Promise<AgentSession> {
+        this.resumeSessionCalls += 1;
+        return new TestAgentSession({
+          provider: "codex",
+          cwd: config?.cwd ?? workdir,
+        });
+      }
+    }
+
+    const client = new HangingCloseClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
+      },
+      registry: storage,
+      logger,
+      rescueTimeouts: { reloadSessionCloseMs: 10 },
+      idFactory: () => "00000000-0000-4000-8000-000000000302",
+    });
+
+    try {
+      const snapshot = await manager.createAgent({
+        provider: "codex",
+        cwd: workdir,
+      });
+
+      const reloaded = await manager.reloadAgentSession(snapshot.id);
+
+      expect(reloaded.id).toBe(snapshot.id);
+      expect(client.firstSession.closeCalled).toBe(true);
+      expect(client.resumeSessionCalls).toBe(1);
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("cancelAgentRun completes when provider interrupt hangs", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-interrupt-timeout-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+
+    class HangingInterruptSession extends TestAgentSession {
+      interruptCalled = false;
+
+      override async interrupt(): Promise<void> {
+        this.interruptCalled = true;
+        await new Promise(() => {});
+      }
+    }
+
+    class HangingInterruptClient extends TestAgentClient {
+      readonly session = new HangingInterruptSession({
+        provider: "codex",
+        cwd: workdir,
+      });
+
+      override async createSession(): Promise<AgentSession> {
+        return this.session;
+      }
+    }
+
+    const client = new HangingInterruptClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
+      },
+      registry: storage,
+      logger,
+      rescueTimeouts: { interruptSessionMs: 10 },
+      idFactory: () => "00000000-0000-4000-8000-000000000303",
+    });
+
+    try {
+      const snapshot = await manager.createAgent({
+        provider: "codex",
+        cwd: workdir,
+      });
+
+      await new Promise<void>((resolve) => {
+        const unsubscribe = manager.subscribe(
+          (event) => {
+            if (
+              event.type === "agent_state" &&
+              event.agent.id === snapshot.id &&
+              event.agent.lifecycle === "running"
+            ) {
+              unsubscribe();
+              resolve();
+            }
+          },
+          { agentId: snapshot.id, replayState: false },
+        );
+        client.session.pushEvent({
+          type: "turn_started",
+          provider: "codex",
+          turnId: "hanging-interrupt-turn",
+        });
+      });
+
+      await expect(manager.cancelAgentRun(snapshot.id)).resolves.toBe(true);
+      expect(client.session.interruptCalled).toBe(true);
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
   test("listProviderAvailability uses registered client keys, including custom providers", async () => {
     const customClient: AgentClient = {
       provider: "zai",

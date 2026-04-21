@@ -806,6 +806,9 @@ function DraftAgentScreenContent({
       if (providerDefinitions.length === 0) {
         return "No available providers on the selected host";
       }
+      if (!composerState.selectedProvider) {
+        return "Select a model";
+      }
       if (gitBlockingError) {
         return gitBlockingError;
       }
@@ -846,6 +849,9 @@ function DraftAgentScreenContent({
         (isAttachWorktree && selectedWorktreePath ? selectedWorktreePath : workingDir).trim() ||
         ".";
       const provider = composerState.selectedProvider;
+      if (!provider) {
+        throw new Error("Select a model");
+      }
       const model = effectiveModelId || null;
       const thinkingOptionId = effectiveThinkingOptionId || null;
       const modeId =
@@ -889,8 +895,12 @@ function DraftAgentScreenContent({
         composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
           ? composerState.selectedMode
           : undefined;
+      const provider = composerState.selectedProvider;
+      if (!provider) {
+        throw new Error("Select a model");
+      }
       const config: AgentSessionConfig = {
-        provider: composerState.selectedProvider,
+        provider,
         cwd: resolvedWorkingDir,
         ...(modeId ? { modeId } : {}),
         ...(effectiveModelId ? { model: effectiveModelId } : {}),

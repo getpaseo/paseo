@@ -185,7 +185,7 @@ export const LeftSidebar = memo(function LeftSidebar({
     enabled: isCompactLayout || isOpen,
   });
   const { collapsedProjectKeys, shortcutIndexByWorkspaceKey, toggleProjectCollapsed } =
-    useSidebarShortcutModel(projects);
+    useSidebarShortcutModel({ projects, isInitialLoad });
 
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 

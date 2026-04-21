@@ -686,11 +686,6 @@ export interface WorktreeScriptResult {
   terminalId: string;
 }
 
-interface WorkspaceServiceDeclaration {
-  scriptName: string;
-  port?: number;
-}
-
 interface SpawnWorkspaceScriptOptions {
   repoRoot: string;
   workspaceId: string;
@@ -730,26 +725,28 @@ export async function spawnWorkspaceScript(
   }
 
   const serviceScript = isServiceScript(config);
+  const scriptType = serviceScript ? "service" : "script";
   let hostname: string | null = null;
   let port: number | null = null;
-  let terminal: TerminalSession | null = null;
   let runtimeRegistered = false;
   let routeRegistered = false;
+  let disposeLifecycleListeners: (() => void) | null = null;
 
   try {
     if (runtimeStore.isRunning({ workspaceId, scriptName })) {
       throw new Error(`Script '${scriptName}' is already running`);
     }
 
+    const existingRuntimeEntry = runtimeStore.get({ workspaceId, scriptName });
     let env: Record<string, string> | undefined;
     if (serviceScript) {
-      const serviceHostname = buildScriptHostname({
+      hostname = buildScriptHostname({
         projectSlug,
         branchName,
         scriptName,
       });
-      hostname = serviceHostname;
-      const serviceDeclarations: WorkspaceServiceDeclaration[] = [];
+
+      const serviceDeclarations: Array<{ scriptName: string; port?: number }> = [];
       for (const [configuredScriptName, scriptConfig] of scriptConfigs) {
         if (isServiceScript(scriptConfig)) {
           serviceDeclarations.push({
@@ -767,8 +764,7 @@ export async function spawnWorkspaceScript(
         services: serviceDeclarations,
         allocatePort: findFreePort,
       });
-      const existingRuntimeEntry = runtimeStore.get({ workspaceId, scriptName });
-      const servicePort =
+      port =
         existingRuntimeEntry?.lifecycle === "stopped"
           ? await refreshWorkspaceServicePort({
               workspaceId,
@@ -777,13 +773,11 @@ export async function spawnWorkspaceScript(
             })
           : requirePlannedWorkspaceServicePort(plannedPorts, scriptName);
 
-      port = servicePort;
-
       const peers: WorkspaceServicePeer[] = [];
       for (const [peerScriptName, peerPort] of plannedPorts) {
         peers.push({
           scriptName: peerScriptName,
-          port: peerScriptName === scriptName ? servicePort : peerPort,
+          port: peerScriptName === scriptName ? port : peerPort,
         });
       }
 
@@ -797,8 +791,8 @@ export async function spawnWorkspaceScript(
       });
 
       routeStore.registerRoute({
-        hostname: serviceHostname,
-        port: servicePort,
+        hostname,
+        port,
         workspaceId,
         projectSlug,
         scriptName,
@@ -806,47 +800,82 @@ export async function spawnWorkspaceScript(
       routeRegistered = true;
     }
 
-    const createdTerminal = await terminalManager.createTerminal({
-      cwd: repoRoot,
-      name: scriptName,
-      env,
-    });
-    terminal = createdTerminal;
+    let reusableTerminal: TerminalSession | null = null;
+    if (!serviceScript && existingRuntimeEntry?.terminalId) {
+      reusableTerminal = terminalManager.getTerminal(existingRuntimeEntry.terminalId) ?? null;
+    }
+    const terminal =
+      reusableTerminal ??
+      (await terminalManager.createTerminal({
+        cwd: repoRoot,
+        name: scriptName,
+        title: scriptName,
+        env,
+      }));
+
     runtimeStore.set({
       workspaceId,
       scriptName,
-      type: serviceScript ? "service" : "script",
+      type: scriptType,
       lifecycle: "running",
-      terminalId: createdTerminal.id,
+      terminalId: terminal.id,
       exitCode: null,
     });
     runtimeRegistered = true;
 
-    terminal.onExit((info) => {
-      if (hostname) {
+    const stopRuntimeIfCurrent = (input: { exitCode: number | null; removeRoute: boolean }) => {
+      const current = runtimeStore.get({ workspaceId, scriptName });
+      if (current?.terminalId !== terminal.id || current.lifecycle !== "running") {
+        return;
+      }
+
+      disposeLifecycleListeners?.();
+      disposeLifecycleListeners = null;
+
+      if (input.removeRoute && hostname) {
         routeStore.removeRouteForWorkspaceScript({ workspaceId, scriptName });
       }
       runtimeStore.set({
         workspaceId,
         scriptName,
-        type: serviceScript ? "service" : "script",
+        type: scriptType,
         lifecycle: "stopped",
-        terminalId: createdTerminal.id,
-        exitCode: info.exitCode,
+        terminalId: terminal.id,
+        exitCode: input.exitCode,
       });
       onLifecycleChanged?.();
       logger?.info(
         {
           scriptName,
           hostname,
-          exitCode: info.exitCode,
-          terminalId: createdTerminal.id,
+          exitCode: input.exitCode,
+          terminalId: terminal.id,
         },
         "Stopped worktree script",
       );
+    };
+
+    const unsubscribeExit = terminal.onExit((info) => {
+      stopRuntimeIfCurrent({
+        exitCode: info.exitCode,
+        removeRoute: true,
+      });
     });
 
-    await waitForTerminalBootstrapReadiness(terminal);
+    let unsubscribeCommandFinished: (() => void) | null = null;
+    if (!serviceScript) {
+      unsubscribeCommandFinished = terminal.onCommandFinished((info) => {
+        stopRuntimeIfCurrent({ exitCode: info.exitCode, removeRoute: false });
+      });
+    }
+    disposeLifecycleListeners = () => {
+      unsubscribeExit();
+      unsubscribeCommandFinished?.();
+    };
+
+    if (!reusableTerminal) {
+      await waitForTerminalBootstrapReadiness(terminal);
+    }
     terminal.send({ type: "input", data: `${config.command}\r` });
 
     logger?.info(
@@ -855,7 +884,7 @@ export async function spawnWorkspaceScript(
         hostname,
         port,
         terminalId: terminal.id,
-        type: serviceScript ? "service" : "script",
+        type: scriptType,
       },
       serviceScript
         ? `Registered script proxy: ${hostname} -> 127.0.0.1:${port}`
@@ -870,6 +899,7 @@ export async function spawnWorkspaceScript(
       terminalId: terminal.id,
     };
   } catch (error) {
+    disposeLifecycleListeners?.();
     if (routeRegistered && hostname) {
       routeStore.removeRoute(hostname);
     }

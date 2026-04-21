@@ -21,6 +21,10 @@ export interface TerminalExitInfo {
   lastOutputLines: string[];
 }
 
+export interface TerminalCommandFinishedInfo {
+  exitCode: number | null;
+}
+
 export type ClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number }
@@ -38,6 +42,7 @@ export interface TerminalSession {
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
+  onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
   onTitleChange(listener: (title?: string) => void): () => void;
   getSize(): { rows: number; cols: number };
   getState(): TerminalState;
@@ -45,6 +50,23 @@ export interface TerminalSession {
   getExitInfo(): TerminalExitInfo | null;
   kill(): void;
   killAndWait(options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number }): Promise<void>;
+}
+
+function parseCommandFinishedOsc(data: string): TerminalCommandFinishedInfo | null {
+  // OSC 633 is terminal control traffic, but a foreground command can still
+  // print arbitrary control bytes. Keep this boundary to the exact VS Code
+  // command-finished shape emitted by our shell integration.
+  const parts = data.split(";");
+  if (parts[0] !== "D") {
+    return null;
+  }
+  if (parts.length === 1) {
+    return { exitCode: null };
+  }
+  if (parts.length !== 2 || !/^-?\d+$/.test(parts[1])) {
+    return null;
+  }
+  return { exitCode: Number(parts[1]) };
 }
 
 export interface CreateTerminalOptions {
@@ -55,6 +77,7 @@ export interface CreateTerminalOptions {
   rows?: number;
   cols?: number;
   name?: string;
+  title?: string;
   command?: string;
   args?: string[];
 }
@@ -516,6 +539,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     rows = 24,
     cols = 80,
     name = "Terminal",
+    title: presetTitle,
     command,
     args = [],
   } = options;
@@ -524,6 +548,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   const id = options.id ?? randomUUID();
   const listeners = new Set<(msg: ServerMessage) => void>();
   const exitListeners = new Set<(info: TerminalExitInfo) => void>();
+  const commandFinishedListeners = new Set<(info: TerminalCommandFinishedInfo) => void>();
   const titleChangeListeners = new Set<(title?: string) => void>();
   let killed = false;
   let disposed = false;
@@ -578,10 +603,12 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
   }
 
-  const initialTitle = command
-    ? (humanizeProcessTitle([command, ...args].join(" ")) ??
-      normalizeProcessTitle([command, ...args].join(" ")))
-    : undefined;
+  const lockedTitle = presetTitle?.trim() || undefined;
+  const processTitle = command ? [command, ...args].join(" ") : null;
+  let initialTitle = lockedTitle;
+  if (!initialTitle && processTitle) {
+    initialTitle = humanizeProcessTitle(processTitle) ?? normalizeProcessTitle(processTitle);
+  }
   emitTitleChange(initialTitle);
 
   // Respond to DA1 queries (CSI c or CSI 0 c) — apps like nvim query terminal capabilities
@@ -593,18 +620,37 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     return false;
   });
 
-  const disposeTitleChangeSubscription = terminal.onTitleChange((nextTitle) => {
-    if (disposed || killed) {
-      return;
+  let disposeTitleChangeSubscription: { dispose(): void } | null = null;
+  if (!lockedTitle) {
+    disposeTitleChangeSubscription = terminal.onTitleChange((nextTitle) => {
+      if (disposed || killed) {
+        return;
+      }
+      pendingTitle = nextTitle.trim().length > 0 ? nextTitle : undefined;
+      if (titleDebounceTimer) {
+        clearTimeout(titleDebounceTimer);
+      }
+      titleDebounceTimer = setTimeout(() => {
+        titleDebounceTimer = null;
+        emitTitleChange(pendingTitle);
+      }, TERMINAL_TITLE_DEBOUNCE_MS);
+    });
+  }
+
+  const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
+    const commandFinished = parseCommandFinishedOsc(data);
+    if (!commandFinished) {
+      return true;
     }
-    pendingTitle = nextTitle.trim().length > 0 ? nextTitle : undefined;
-    if (titleDebounceTimer) {
-      clearTimeout(titleDebounceTimer);
+
+    for (const listener of Array.from(commandFinishedListeners)) {
+      try {
+        listener(commandFinished);
+      } catch {
+        // no-op
+      }
     }
-    titleDebounceTimer = setTimeout(() => {
-      titleDebounceTimer = null;
-      emitTitleChange(pendingTitle);
-    }, TERMINAL_TITLE_DEBOUNCE_MS);
+    return true;
   });
 
   function buildExitInfo(input?: {
@@ -647,10 +693,12 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       clearTimeout(titleDebounceTimer);
       titleDebounceTimer = null;
     }
-    disposeTitleChangeSubscription.dispose();
+    disposeTitleChangeSubscription?.dispose();
+    disposeCommandLifecycleSubscription.dispose();
     terminal.dispose();
     listeners.clear();
     exitListeners.clear();
+    commandFinishedListeners.clear();
     titleChangeListeners.clear();
   }
 
@@ -759,6 +807,13 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     };
   }
 
+  function onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void {
+    commandFinishedListeners.add(listener);
+    return () => {
+      commandFinishedListeners.delete(listener);
+    };
+  }
+
   function onTitleChange(listener: (title?: string) => void): () => void {
     titleChangeListeners.add(listener);
     if (title !== undefined) {
@@ -854,6 +909,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     send,
     subscribe,
     onExit,
+    onCommandFinished,
     onTitleChange,
     getSize,
     getState,

@@ -222,21 +222,26 @@ describe("Codex app-server provider (e2e)", () => {
     "lists models and runs a simple prompt",
     async () => {
       const client = new CodexAppServerAgentClient(createTestLogger());
-      const models = await client.listModels();
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-e2e-"));
+      const models = await client.listModels({ cwd, force: false });
       expect(models.some((m) => m.id.includes("gpt-5.1-codex"))).toBe(true);
 
       const session = await client.createSession({
         provider: "codex",
-        cwd: mkdtempSync(path.join(os.tmpdir(), "codex-app-server-e2e-")),
+        cwd,
         modeId: "auto",
         model: CODEX_TEST_MODEL,
         thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
       });
-      expect(session.features?.some((feature) => feature.id === "plan_mode")).toBe(true);
+      try {
+        expect(session.features?.some((feature) => feature.id === "plan_mode")).toBe(true);
 
-      const result = await session.run("Say hello in one sentence.");
-      expect(result.finalText.length).toBeGreaterThan(0);
-      await session.close();
+        const result = await session.run("Say hello in one sentence.");
+        expect(result.finalText.length).toBeGreaterThan(0);
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
     },
     30000,
   );

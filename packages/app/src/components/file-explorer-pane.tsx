@@ -8,18 +8,8 @@ import {
   Text,
   View,
 } from "react-native";
-import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import Animated, {
-  cancelAnimation,
-  Easing,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -34,6 +24,7 @@ import {
   X,
 } from "lucide-react-native";
 import { getFileIconSvg } from "@/components/material-file-icons";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentFileExplorerState, ExplorerEntry } from "@/stores/session-store";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
@@ -312,48 +303,6 @@ export function FileExplorerPane({
   const handleRefresh = useCallback(() => {
     void refetchExplorer();
   }, [refetchExplorer]);
-  const refreshIconRotation = useSharedValue(0);
-
-  useEffect(() => {
-    if (isRefreshFetching) {
-      refreshIconRotation.value = 0;
-      refreshIconRotation.value = withRepeat(
-        withTiming(360, {
-          duration: 700,
-          easing: Easing.linear,
-        }),
-        -1,
-        false,
-      );
-      return;
-    }
-
-    cancelAnimation(refreshIconRotation);
-    const remainder = refreshIconRotation.value % 360;
-    if (Math.abs(remainder) < 0.001) {
-      refreshIconRotation.value = 0;
-      return;
-    }
-
-    const remaining = 360 - remainder;
-    const duration = Math.max(80, Math.round((remaining / 360) * 700));
-    refreshIconRotation.value = withTiming(
-      360,
-      {
-        duration,
-        easing: Easing.linear,
-      },
-      (finished) => {
-        if (finished) {
-          refreshIconRotation.value = 0;
-        }
-      },
-    );
-  }, [isRefreshFetching, refreshIconRotation]);
-
-  const refreshIconAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${refreshIconRotation.value}deg` }],
-  }));
 
   const currentSortLabel = SORT_OPTIONS.find((opt) => opt.value === sortOption)?.label ?? "Name";
 
@@ -563,11 +512,15 @@ export function FileExplorerPane({
                 (hovered || pressed) && styles.iconButtonHovered,
               ]}
               accessibilityRole="button"
-              accessibilityLabel="Refresh files"
+              accessibilityLabel={isRefreshFetching ? "Refreshing files" : "Refresh files"}
             >
-              <Animated.View style={[styles.refreshIcon, refreshIconAnimatedStyle]}>
-                <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </Animated.View>
+              <View style={styles.refreshIcon}>
+                {isRefreshFetching ? (
+                  <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                ) : (
+                  <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                )}
+              </View>
             </Pressable>
           </View>
           <FlatList

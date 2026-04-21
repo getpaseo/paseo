@@ -337,7 +337,7 @@ describe("ClaudeAgentClient.listModels", () => {
 
   test("returns hardcoded claude models", async () => {
     const client = new ClaudeAgentClient({ logger });
-    const models = await client.listModels();
+    const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
 
     expect(models.map((m) => m.id)).toEqual([
       "claude-opus-4-7[1m]",

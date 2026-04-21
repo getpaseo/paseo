@@ -1,4 +1,4 @@
-import type { AgentSnapshotPayload } from "../messages.js";
+import type { AgentListItemPayload, AgentSnapshotPayload } from "../messages.js";
 import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentCapabilityFlags,
@@ -29,6 +29,17 @@ function normalizeThinkingOptionId(value: string | null | undefined): string | n
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeLabels(labels: Record<string, unknown> | undefined): Record<string, string> {
+  if (!labels) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(labels).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 }
 
 export function resolveEffectiveThinkingOptionId(options: {
@@ -198,7 +209,29 @@ export function buildStoredAgentPayload(
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
-    labels: record.labels,
+    labels: normalizeLabels(record.labels),
+  };
+}
+
+export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListItemPayload {
+  return {
+    id: agent.id,
+    shortId: agent.id.slice(0, 7),
+    title: agent.title,
+    provider: agent.provider,
+    model: agent.runtimeInfo?.model ?? agent.model,
+    thinkingOptionId: agent.thinkingOptionId,
+    effectiveThinkingOptionId: agent.effectiveThinkingOptionId,
+    status: agent.status,
+    cwd: agent.cwd,
+    createdAt: agent.createdAt,
+    updatedAt: agent.updatedAt,
+    lastUserMessageAt: agent.lastUserMessageAt,
+    archivedAt: agent.archivedAt ?? null,
+    requiresAttention: agent.requiresAttention ?? false,
+    attentionReason: agent.attentionReason ?? null,
+    attentionTimestamp: agent.attentionTimestamp ?? null,
+    labels: agent.labels,
   };
 }
 

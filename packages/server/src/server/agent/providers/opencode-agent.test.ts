@@ -103,7 +103,7 @@ const hasOpenCode = isBinaryInstalled("opencode");
     logger.info("beforeAll: Starting model selection");
 
     const client = new OpenCodeAgentClient(logger);
-    const models = await client.listModels();
+    const models = await client.listModels({ cwd: os.homedir(), force: false });
 
     logger.info(
       { modelCount: models.length, elapsed: Date.now() - startTime },
@@ -182,7 +182,7 @@ const hasOpenCode = isBinaryInstalled("opencode");
 
   test("listModels returns models with required fields", async () => {
     const client = new OpenCodeAgentClient(logger);
-    const models = await client.listModels();
+    const models = await client.listModels({ cwd: os.homedir(), force: false });
 
     // HARD ASSERT: Returns an array
     expect(Array.isArray(models)).toBe(true);

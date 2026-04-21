@@ -10,6 +10,7 @@ import {
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
 import { useDraftStore } from "@/stores/draft-store";
 import type { AgentModelDefinition } from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 
 type AttachmentUpdater =
   | ComposerAttachment[]
@@ -113,7 +114,7 @@ function resolveEffectiveComposerThinkingOptionId(input: {
 }
 
 function buildDraftComposerCommandConfig(input: {
-  provider: DraftAgentStatusBarProps["selectedProvider"];
+  provider: AgentProvider | null;
   cwd: string;
   modeOptions: DraftAgentStatusBarProps["modeOptions"];
   selectedMode: string;
@@ -122,7 +123,7 @@ function buildDraftComposerCommandConfig(input: {
   featureValues?: Record<string, unknown>;
 }): DraftCommandConfig | undefined {
   const cwd = input.cwd.trim();
-  if (!cwd) {
+  if (!input.provider || !cwd) {
     return undefined;
   }
 

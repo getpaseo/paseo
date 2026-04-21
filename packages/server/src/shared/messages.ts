@@ -397,7 +397,7 @@ const ToolCallBasePayloadSchema = z
     callId: z.string(),
     name: z.string(),
     detail: ToolCallDetailPayloadSchema,
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -534,7 +534,7 @@ const AgentPersistenceHandleSchema: z.ZodType<AgentPersistenceHandle | null> = z
     provider: AgentProviderSchema,
     sessionId: z.string(),
     nativeHandle: z.string().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .nullable();
 
@@ -544,7 +544,7 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
   model: z.string().nullable().optional(),
   thinkingOptionId: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
-  extra: z.record(z.unknown()).optional(),
+  extra: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const AgentSnapshotPayloadSchema = z.object({
@@ -568,7 +568,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
-  labels: z.record(z.string()).default({}),
+  labels: z.record(z.string(), z.string()).default({}),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -576,6 +576,28 @@ export const AgentSnapshotPayloadSchema = z.object({
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
+
+export const AgentListItemPayloadSchema = z.object({
+  id: z.string(),
+  shortId: z.string(),
+  title: z.string().nullable(),
+  provider: AgentProviderSchema,
+  model: z.string().nullable(),
+  thinkingOptionId: z.string().nullable().optional(),
+  effectiveThinkingOptionId: z.string().nullable().optional(),
+  status: AgentStatusSchema,
+  cwd: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  lastUserMessageAt: z.string().nullable(),
+  archivedAt: z.string().nullable().optional(),
+  requiresAttention: z.boolean().optional(),
+  attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
+  attentionTimestamp: z.string().nullable().optional(),
+  labels: z.record(z.string(), z.string()).default({}),
+});
+
+export type AgentListItemPayload = z.infer<typeof AgentListItemPayloadSchema>;
 
 export type AgentStreamEventPayload = z.infer<typeof AgentStreamEventPayloadSchema>;
 
@@ -1969,6 +1991,7 @@ export const WorkspaceScriptPayloadSchema = z.object({
   lifecycle: WorkspaceScriptLifecycleSchema,
   health: WorkspaceScriptHealthSchema.nullable(),
   exitCode: z.number().nullable().optional().default(null),
+  terminalId: z.string().nullable().optional().default(null),
 });
 
 const WorkspaceGitRuntimePayloadSchema = z

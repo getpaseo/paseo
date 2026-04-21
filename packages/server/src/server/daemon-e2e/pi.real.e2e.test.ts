@@ -451,15 +451,20 @@ describe(
       "PiDirectAgentClient.listModels returns non-empty Pi model definitions",
       async () => {
         const client = createPiClient();
-        const models = await client.listModels();
+        const cwd = tmpCwd("pi-list-models-");
+        try {
+          const models = await client.listModels({ cwd, force: false });
 
-        expect(models.length).toBeGreaterThan(0);
-        for (const model of models) {
-          expect(model.provider).toBe("pi");
-          expect(typeof model.id).toBe("string");
-          expect(model.id.length).toBeGreaterThan(0);
-          expect(typeof model.label).toBe("string");
-          expect(model.label.length).toBeGreaterThan(0);
+          expect(models.length).toBeGreaterThan(0);
+          for (const model of models) {
+            expect(model.provider).toBe("pi");
+            expect(typeof model.id).toBe("string");
+            expect(model.id.length).toBeGreaterThan(0);
+            expect(typeof model.label).toBe("string");
+            expect(model.label.length).toBeGreaterThan(0);
+          }
+        } finally {
+          rmSync(cwd, { recursive: true, force: true });
         }
       },
       PI_TEST_TIMEOUT_MS,

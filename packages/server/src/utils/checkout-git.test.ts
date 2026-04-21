@@ -615,6 +615,41 @@ const x = 1;
     expect(diff.diff).toContain("feature.txt");
   });
 
+  it("does not include dirty working tree changes in base mode", async () => {
+    writeFileSync(join(repoDir, "file.txt"), "dirty\n");
+    writeFileSync(join(repoDir, "untracked.txt"), "untracked\n");
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "base",
+      baseRef: "main",
+      includeStructured: true,
+    });
+
+    expect(diff.diff).toBe("");
+    expect(diff.structured).toEqual([]);
+  });
+
+  it("shows committed branch changes without dirty working tree changes in base mode", async () => {
+    execSync("git checkout -b feature", { cwd: repoDir });
+    writeFileSync(join(repoDir, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", { cwd: repoDir });
+
+    writeFileSync(join(repoDir, "file.txt"), "dirty\n");
+    writeFileSync(join(repoDir, "untracked.txt"), "untracked\n");
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "base",
+      baseRef: "main",
+      includeStructured: true,
+    });
+
+    expect(diff.diff).toContain("feature.txt");
+    expect(diff.diff).not.toContain("file.txt");
+    expect(diff.diff).not.toContain("untracked.txt");
+    expect(diff.structured?.map((file) => file.path)).toEqual(["feature.txt"]);
+  });
+
   it("warms shortstat cache in the background without blocking listing callers", async () => {
     expect(getCachedCheckoutShortstat(repoDir)).toBeUndefined();
 
@@ -1522,6 +1557,36 @@ const x = 1;
     const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome });
     expect(baseDiff.diff).toContain("feature.txt");
     expect(baseDiff.diff).not.toContain("file.txt");
+  });
+
+  it("excludes dirty working tree changes from Paseo worktree base diffs", async () => {
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "dirty-feature",
+      paseoHome,
+    });
+
+    writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: worktree.worktreePath });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", {
+      cwd: worktree.worktreePath,
+    });
+
+    writeFileSync(join(worktree.worktreePath, "file.txt"), "dirty\n");
+    writeFileSync(join(worktree.worktreePath, "untracked.txt"), "untracked\n");
+
+    const baseDiff = await getCheckoutDiff(
+      worktree.worktreePath,
+      { mode: "base", includeStructured: true },
+      { paseoHome },
+    );
+
+    expect(baseDiff.diff).toContain("feature.txt");
+    expect(baseDiff.diff).not.toContain("file.txt");
+    expect(baseDiff.diff).not.toContain("untracked.txt");
+    expect(baseDiff.structured?.map((file) => file.path)).toEqual(["feature.txt"]);
   });
 
   it("resolves the repository default branch from origin HEAD", async () => {

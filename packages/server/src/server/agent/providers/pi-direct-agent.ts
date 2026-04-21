@@ -45,6 +45,7 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   AgentUsage,
+  ListModesOptions,
   ListModelsOptions,
   ToolCallDetail,
 } from "../agent-sdk-types.js";
@@ -1448,7 +1449,8 @@ export class PiDirectAgentClient implements AgentClient {
     return new PiDirectAgentSession(session, this.getModelRegistry(), mergedConfig);
   }
 
-  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    // Pi Direct uses an in-process global registry; cwd/force are intentionally irrelevant.
     const models = this.getModelRegistry()
       .getAll()
       .map((model) => ({
@@ -1467,7 +1469,7 @@ export class PiDirectAgentClient implements AgentClient {
     return transformPiModels(models);
   }
 
-  async listModes(): Promise<AgentMode[]> {
+  async listModes(_options: ListModesOptions): Promise<AgentMode[]> {
     return [];
   }
 
@@ -1504,7 +1506,7 @@ export class PiDirectAgentClient implements AgentClient {
 
       if (available) {
         try {
-          const models = await this.listModels();
+          const models = await this.listModels({ cwd: homedir(), force: false });
           modelsValue = String(models.length);
         } catch (error) {
           modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;

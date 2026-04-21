@@ -427,6 +427,11 @@ describe("runAsyncWorktreeBootstrap", () => {
               };
             },
             onExit: () => () => {},
+            onCommandFinished: () => () => {},
+            onTitleChange: () => () => {},
+            getSize: () => ({ rows: 0, cols: 0 }),
+            getTitle: () => undefined,
+            getExitInfo: () => null,
             getState: () => ({
               rows: 0,
               cols: 0,
@@ -435,6 +440,7 @@ describe("runAsyncWorktreeBootstrap", () => {
               cursor: { row: 0, col: 0 },
             }),
             kill: () => {},
+            killAndWait: async () => {},
           };
         },
         registerCwdEnv() {},
@@ -442,6 +448,7 @@ describe("runAsyncWorktreeBootstrap", () => {
           return undefined;
         },
         killTerminal() {},
+        async killTerminalAndWait() {},
         listDirectories() {
           return [];
         },
@@ -508,6 +515,11 @@ describe("runAsyncWorktreeBootstrap", () => {
             send: () => {},
             subscribe: () => () => {},
             onExit: () => () => {},
+            onCommandFinished: () => () => {},
+            onTitleChange: () => () => {},
+            getSize: () => ({ rows: 1, cols: 1 }),
+            getTitle: () => undefined,
+            getExitInfo: () => null,
             getState: () => ({
               rows: 1,
               cols: 1,
@@ -516,6 +528,7 @@ describe("runAsyncWorktreeBootstrap", () => {
               cursor: { row: 0, col: 0 },
             }),
             kill: () => {},
+            killAndWait: async () => {},
           };
         },
         registerCwdEnv(options) {
@@ -525,6 +538,7 @@ describe("runAsyncWorktreeBootstrap", () => {
           return undefined;
         },
         killTerminal() {},
+        async killTerminalAndWait() {},
         listDirectories() {
           return [];
         },
@@ -563,11 +577,15 @@ describe("runAsyncWorktreeBootstrap", () => {
   interface CreateTerminalCall {
     cwd: string;
     name?: string;
+    title?: string;
     env?: Record<string, string>;
   }
 
   interface StubTerminalRecord {
+    id: string;
     triggerExit: (exitCode: number) => void;
+    triggerCommandFinished: (exitCode: number) => void;
+    sentInputs: string[];
   }
 
   function createStubTerminalManager(
@@ -575,6 +593,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     terminalRecords: StubTerminalRecord[] = [],
   ): TerminalManager {
     let terminalCounter = 0;
+    const sessionsById = new Map<string, TerminalSession>();
 
     return {
       async getTerminals() {
@@ -583,9 +602,16 @@ describe("runAsyncWorktreeBootstrap", () => {
       async createTerminal(options: CreateTerminalCall): Promise<TerminalSession> {
         createTerminalCalls.push(options);
         terminalCounter += 1;
-        const terminalId = `term-service-${terminalCounter}`;
+        const terminalId = `term-${terminalCounter}`;
         let exitHandler: ((info: { exitCode: number | null }) => void) | null = null;
+        let commandFinishedHandler: ((info: { exitCode: number | null }) => void) | null = null;
+        const sentInputs: string[] = [];
         terminalRecords.push({
+          id: terminalId,
+          sentInputs,
+          triggerCommandFinished: (exitCode) => {
+            commandFinishedHandler?.({ exitCode });
+          },
           triggerExit: (exitCode) => {
             if (exitHandler) {
               exitHandler({ exitCode });
@@ -593,17 +619,29 @@ describe("runAsyncWorktreeBootstrap", () => {
           },
         });
 
-        return {
+        const session: TerminalSession = {
           id: terminalId,
           name: options.name ?? "Terminal",
           cwd: options.cwd,
-          send: () => {},
+          send: (message) => {
+            if (message.type === "input") {
+              sentInputs.push(message.data);
+            }
+          },
           subscribe: () => () => {},
           onExit: (handler) => {
             exitHandler = handler;
             return () => {
               if (exitHandler === handler) {
                 exitHandler = null;
+              }
+            };
+          },
+          onCommandFinished: (handler) => {
+            commandFinishedHandler = handler;
+            return () => {
+              if (commandFinishedHandler === handler) {
+                commandFinishedHandler = null;
               }
             };
           },
@@ -621,10 +659,12 @@ describe("runAsyncWorktreeBootstrap", () => {
           getExitInfo: () => null,
           killAndWait: async () => {},
         };
+        sessionsById.set(terminalId, session);
+        return session;
       },
       registerCwdEnv() {},
-      getTerminal() {
-        return undefined;
+      getTerminal(id) {
+        return sessionsById.get(id);
       },
       killTerminal() {},
       async killTerminalAndWait() {},
@@ -653,26 +693,29 @@ describe("runAsyncWorktreeBootstrap", () => {
     return env;
   }
 
-  it("spawns plain scripts without env injection or routes", async () => {
-    writeFileSync(
-      join(repoDir, "paseo.json"),
-      JSON.stringify({
-        scripts: {
-          web: {
-            command: "npm run dev",
-          },
-        },
-      }),
-    );
+  function commitPaseoScripts(
+    scripts: Record<string, { command: string; type?: "script" | "service" }>,
+    message = "add script config",
+  ): void {
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify({ scripts }));
     execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add script config'", {
+    execSync(`git -c commit.gpgsign=false commit -m ${JSON.stringify(message)}`, {
       cwd: repoDir,
       stdio: "pipe",
+    });
+  }
+
+  it("spawns plain scripts in persistent shell terminals without env injection or routes", async () => {
+    commitPaseoScripts({
+      web: {
+        command: "npm run dev",
+      },
     });
 
     const routeStore = new ScriptRouteStore();
     const runtimeStore = new WorkspaceScriptRuntimeStore();
     const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
 
     const results = await spawnWorktreeScripts({
       repoRoot: repoDir,
@@ -681,7 +724,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       daemonPort: null,
       routeStore,
       runtimeStore,
-      terminalManager: createStubTerminalManager(createTerminalCalls),
+      terminalManager: createStubTerminalManager(createTerminalCalls, terminalRecords),
     });
 
     expect(results).toHaveLength(1);
@@ -689,40 +732,277 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(createTerminalCalls).toHaveLength(1);
     expect(createTerminalCalls[0]?.cwd).toBe(repoDir);
     expect(createTerminalCalls[0]?.name).toBe("web");
+    expect(createTerminalCalls[0]?.title).toBe("web");
     expect(createTerminalCalls[0]?.env).toBeUndefined();
+    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run dev\r"]);
     expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "web" })).toMatchObject({
       type: "script",
       lifecycle: "running",
       exitCode: null,
-      terminalId: "term-service-1",
+      terminalId: "term-1",
     });
   });
 
-  it("spawns services with route registration and injected peer service env vars", async () => {
-    writeFileSync(
-      join(repoDir, "paseo.json"),
-      JSON.stringify({
-        scripts: {
-          api: {
-            type: "service",
-            command: "npm run api",
-          },
-          "app-server": {
-            type: "service",
-            command: "npm run app",
-          },
+  it("records plain script exit codes from shell command completion without terminal exit", async () => {
+    commitPaseoScripts(
+      {
+        typecheck: {
+          command: 'node -e "process.exit(7)"',
         },
-      }),
+      },
+      "add one-off script config",
     );
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
-    execSync("git -c commit.gpgsign=false commit -m 'add service script config'", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
 
     const routeStore = new ScriptRouteStore();
     const runtimeStore = new WorkspaceScriptRuntimeStore();
     const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords);
+
+    const result = await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-script-exit",
+      scriptName: "typecheck",
+      daemonPort: null,
+      routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    expect(createTerminalCalls).toHaveLength(1);
+    terminalRecords[0]?.triggerCommandFinished(7);
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "typecheck" })).toMatchObject({
+      type: "script",
+      lifecycle: "stopped",
+      terminalId: result.terminalId,
+      exitCode: 7,
+    });
+    expect(terminalRecords[0]?.sentInputs).toEqual(['node -e "process.exit(7)"\r']);
+  });
+
+  it("reuses a live terminal when rerunning after plain script completion", async () => {
+    commitPaseoScripts(
+      {
+        typecheck: {
+          command: "npm run typecheck",
+        },
+      },
+      "add one-off script config",
+    );
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords);
+
+    const firstResult = await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-script-rerun",
+      scriptName: "typecheck",
+      daemonPort: null,
+      routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    terminalRecords[0]?.triggerCommandFinished(7);
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "typecheck" })).toMatchObject({
+      type: "script",
+      lifecycle: "stopped",
+      terminalId: firstResult.terminalId,
+      exitCode: 7,
+    });
+
+    const secondResult = await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-script-rerun",
+      scriptName: "typecheck",
+      daemonPort: null,
+      routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    expect(secondResult.terminalId).toBe(firstResult.terminalId);
+    expect(createTerminalCalls).toHaveLength(1);
+    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run typecheck\r", "npm run typecheck\r"]);
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "typecheck" })).toMatchObject({
+      type: "script",
+      lifecycle: "running",
+      terminalId: firstResult.terminalId,
+      exitCode: null,
+    });
+    terminalRecords[0]?.triggerCommandFinished(0);
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "typecheck" })).toMatchObject({
+      type: "script",
+      lifecycle: "stopped",
+      terminalId: firstResult.terminalId,
+      exitCode: 0,
+    });
+  });
+
+  it("tracks command completion when reusing a live terminal from a stopped plain script entry", async () => {
+    commitPaseoScripts(
+      {
+        typecheck: {
+          command: "npm run typecheck",
+        },
+      },
+      "add one-off script config",
+    );
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords);
+    const existingTerminal = await terminalManager.createTerminal({
+      cwd: repoDir,
+      name: "typecheck",
+      title: "typecheck",
+    });
+    runtimeStore.set({
+      workspaceId: repoDir,
+      scriptName: "typecheck",
+      type: "script",
+      lifecycle: "stopped",
+      terminalId: existingTerminal.id,
+      exitCode: 1,
+    });
+
+    const result = await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-script-existing-terminal",
+      scriptName: "typecheck",
+      daemonPort: null,
+      routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    expect(result.terminalId).toBe(existingTerminal.id);
+    expect(createTerminalCalls).toHaveLength(1);
+    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run typecheck\r"]);
+
+    terminalRecords[0]?.triggerCommandFinished(0);
+
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "typecheck" })).toMatchObject({
+      type: "script",
+      lifecycle: "stopped",
+      terminalId: existingTerminal.id,
+      exitCode: 0,
+    });
+  });
+
+  it("uses terminal exit as a fallback before shell command completion", async () => {
+    commitPaseoScripts(
+      {
+        typecheck: {
+          command: "npm run typecheck",
+        },
+      },
+      "add one-off script config",
+    );
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls, terminalRecords);
+
+    const result = await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-script-terminal-exit",
+      scriptName: "typecheck",
+      daemonPort: null,
+      routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    terminalRecords[0]?.triggerExit(9);
+
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "typecheck" })).toMatchObject({
+      type: "script",
+      lifecycle: "stopped",
+      terminalId: result.terminalId,
+      exitCode: 9,
+    });
+  });
+
+  it("rejects duplicate plain script starts while running", async () => {
+    commitPaseoScripts(
+      {
+        typecheck: {
+          command: 'node -e "setTimeout(() => {}, 30000)"',
+        },
+      },
+      "add long-running one-off script",
+    );
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalManager = createStubTerminalManager(createTerminalCalls);
+
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-script-duplicate",
+      scriptName: "typecheck",
+      daemonPort: null,
+      routeStore,
+      runtimeStore,
+      terminalManager,
+    });
+
+    await expect(
+      spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: repoDir,
+        projectSlug: "repo",
+        branchName: "feature-script-duplicate",
+        scriptName: "typecheck",
+        daemonPort: null,
+        routeStore,
+        runtimeStore,
+        terminalManager,
+      }),
+    ).rejects.toThrow("Script 'typecheck' is already running");
+    expect(createTerminalCalls).toHaveLength(1);
+  });
+
+  it("spawns services with route registration and injected peer service env vars", async () => {
+    commitPaseoScripts(
+      {
+        api: {
+          type: "service",
+          command: "npm run api",
+        },
+        "app-server": {
+          type: "service",
+          command: "npm run app",
+        },
+      },
+      "add service script config",
+    );
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
 
     const result = await spawnWorkspaceScript({
       repoRoot: repoDir,
@@ -733,7 +1013,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       daemonPort: 6767,
       routeStore,
       runtimeStore,
-      terminalManager: createStubTerminalManager(createTerminalCalls),
+      terminalManager: createStubTerminalManager(createTerminalCalls, terminalRecords),
     });
 
     expect(result.scriptName).toBe("api");
@@ -749,6 +1029,7 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(createTerminalCalls).toHaveLength(1);
     expect(createTerminalCalls[0]?.cwd).toBe(repoDir);
     expect(createTerminalCalls[0]?.name).toBe("api");
+    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run api\r"]);
     expect(createTerminalCalls[0]?.env).not.toHaveProperty("PORT");
     expect(createTerminalCalls[0]?.env?.PASEO_PORT).toEqual(expect.any(String));
     expect(createTerminalCalls[0]?.env?.HOST).toBe("127.0.0.1");

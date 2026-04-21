@@ -1,8 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 
 import type {
   AgentLaunchContext,
@@ -46,6 +49,31 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}) {
 }
 
 describe("Codex app-server provider", () => {
+  test("disposes an unresponsive app-server child with SIGKILL", async () => {
+    vi.useFakeTimers();
+    const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+    child.stdin = new PassThrough() as ChildProcessWithoutNullStreams["stdin"];
+    child.stdout = new PassThrough() as ChildProcessWithoutNullStreams["stdout"];
+    child.stderr = new PassThrough() as ChildProcessWithoutNullStreams["stderr"];
+    child.exitCode = null;
+    child.signalCode = null;
+    child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+    const client = new __codexAppServerInternals.CodexAppServerClient(child, createTestLogger());
+
+    try {
+      const disposePromise = client.dispose();
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(disposePromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), "codex-skills-"));
     const cwd = path.join(tempDir, "repo", "packages", "app");

@@ -118,6 +118,26 @@ function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
 
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_ID = "paseo-toolcall-shimmer-keyframes";
 const WEB_TOOLCALL_SHIMMER_ANIMATION_NAME = "paseo-toolcall-shimmer";
+const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
+  "data:image/png;base64",
+  "data:image/gif;base64",
+  "data:image/jpeg;base64",
+  "https://",
+  "http://",
+] as const;
+const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
+
+type MarkdownWithStableRendererProps = {
+  children: ReactNode;
+  style: ReturnType<typeof createMarkdownStyles>;
+  rules: RenderRules;
+  markdownit: MarkdownIt;
+  onLinkPress: (url: string) => boolean;
+  allowedImageHandlers: readonly string[];
+  topLevelMaxExceededItem: ReactNode;
+};
+
+const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_CSS = `
   @keyframes ${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} {
     0% {
@@ -947,9 +967,16 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
   return (
-    <Markdown style={styles} rules={rules} markdownit={parser} onLinkPress={onLinkPress}>
+    <MarkdownWithStableRenderer
+      style={styles}
+      rules={rules}
+      markdownit={parser}
+      onLinkPress={onLinkPress}
+      allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
+      topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
+    >
       {text}
-    </Markdown>
+    </MarkdownWithStableRenderer>
   );
 });
 

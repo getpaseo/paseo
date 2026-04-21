@@ -4,7 +4,11 @@ import { buildSidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { isSidebarProjectFlattened } from "@/utils/sidebar-project-row-model";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 
-export function useSidebarShortcutModel(projects: SidebarProjectEntry[]) {
+export function useSidebarShortcutModel(input: {
+  projects: SidebarProjectEntry[];
+  isInitialLoad: boolean;
+}) {
+  const { projects, isInitialLoad } = input;
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
   );
@@ -25,6 +29,10 @@ export function useSidebarShortcutModel(projects: SidebarProjectEntry[]) {
   );
 
   useEffect(() => {
+    if (isInitialLoad || projects.length === 0) {
+      return;
+    }
+
     const collapsibleProjectKeys = new Set(
       projects
         .filter((project) => !isSidebarProjectFlattened(project))
@@ -35,7 +43,7 @@ export function useSidebarShortcutModel(projects: SidebarProjectEntry[]) {
         setProjectCollapsed(key, false);
       }
     }
-  }, [collapsedProjectKeys, projects, setProjectCollapsed]);
+  }, [collapsedProjectKeys, isInitialLoad, projects, setProjectCollapsed]);
 
   return {
     collapsedProjectKeys,

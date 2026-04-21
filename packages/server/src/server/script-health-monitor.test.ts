@@ -57,6 +57,7 @@ function createStubTerminalManager(
         send: () => {},
         subscribe: () => () => {},
         onExit: () => () => {},
+        onCommandFinished: () => () => {},
         getState: () => ({
           rows: 1,
           cols: 1,
@@ -69,6 +70,7 @@ function createStubTerminalManager(
         getSize: () => ({ rows: 1, cols: 1 }),
         getTitle: () => undefined,
         getExitInfo: () => null,
+        killAndWait: async () => {},
       };
     },
     registerCwdEnv() {},
@@ -76,6 +78,7 @@ function createStubTerminalManager(
       return undefined;
     },
     killTerminal() {},
+    async killTerminalAndWait() {},
     listDirectories() {
       return [];
     },

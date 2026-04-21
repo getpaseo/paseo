@@ -7,9 +7,10 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ProviderDiagnosticSheet } from "@/components/provider-diagnostic-sheet";
-import { SpinningRefreshIcon } from "@/components/spinning-refresh-icon";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { SettingsSection } from "@/screens/settings/settings-section";
+import { RotateCw } from "lucide-react-native";
 
 export interface ProvidersSectionProps {
   serverId: string;
@@ -33,13 +34,13 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         hitSlop={8}
         style={settingsStyles.sectionHeaderLink}
         accessibilityRole="button"
-        accessibilityLabel="Refresh providers"
+        accessibilityLabel={providerRefreshInFlight ? "Refreshing providers" : "Refresh providers"}
       >
-        <SpinningRefreshIcon
-          spinning={providerRefreshInFlight}
-          size={theme.iconSize.sm}
-          color={theme.colors.foregroundMuted}
-        />
+        {providerRefreshInFlight ? (
+          <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        ) : (
+          <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        )}
       </Pressable>
     ) : undefined;
 

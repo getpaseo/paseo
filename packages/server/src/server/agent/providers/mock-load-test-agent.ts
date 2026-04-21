@@ -20,6 +20,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  ListModesOptions,
   ListModelsOptions,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
@@ -197,11 +198,11 @@ export class MockLoadTestAgentClient implements AgentClient {
     });
   }
 
-  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
     return MODELS;
   }
 
-  async listModes(): Promise<AgentMode[]> {
+  async listModes(_options: ListModesOptions): Promise<AgentMode[]> {
     return getAgentProviderDefinition(MOCK_LOAD_TEST_PROVIDER_ID).modes;
   }
 

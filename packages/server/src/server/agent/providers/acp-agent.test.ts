@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   ACPAgentClient,
   ACPAgentSession,
+  type SpawnedACPProcess,
   type SessionStateResponse,
   deriveModelDefinitionsFromACP,
   deriveModesFromACP,
@@ -218,7 +219,7 @@ describe("deriveModelDefinitionsFromACP", () => {
 describe("ACPAgentClient modelTransformer", () => {
   test("applies modelTransformer after deriving ACP models", async () => {
     class TestACPAgentClient extends ACPAgentClient {
-      protected override async spawnProcess(): Promise<any> {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
         return {
           child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
           connection: {
@@ -237,7 +238,7 @@ describe("ACPAgentClient modelTransformer", () => {
             }),
           },
           initialize: { agentCapabilities: {} },
-        };
+        } as unknown as SpawnedACPProcess;
       }
 
       protected override async closeProbe(): Promise<void> {}
@@ -250,7 +251,7 @@ describe("ACPAgentClient modelTransformer", () => {
       modelTransformer: transformPiModels,
     });
 
-    await expect(client.listModels()).resolves.toEqual([
+    await expect(client.listModels({ cwd: "/tmp/acp-models", force: false })).resolves.toEqual([
       {
         provider: "pi",
         id: "openrouter/openai/gpt-4.1-mini",
@@ -266,7 +267,7 @@ describe("ACPAgentClient modelTransformer", () => {
 
 describe("ACPAgentClient sessionResponseTransformer", () => {
   class TestACPAgentClient extends ACPAgentClient {
-    protected override async spawnProcess(): Promise<any> {
+    protected override async spawnProcess(): Promise<SpawnedACPProcess> {
       const response: SessionStateResponse = {
         sessionId: "session-1",
         modes: {
@@ -283,7 +284,7 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
           newSession: vi.fn().mockResolvedValue(response),
         },
         initialize: { agentCapabilities: {} },
-      };
+      } as unknown as SpawnedACPProcess;
     }
 
     protected override async closeProbe(): Promise<void> {}
@@ -304,7 +305,7 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
       }),
     });
 
-    await expect(client.listModes()).resolves.toEqual([
+    await expect(client.listModes({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual([
       {
         id: "review",
         label: "Review",
@@ -315,9 +316,44 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
 });
 
 describe("ACPAgentClient listModes", () => {
+  test("passes the requested cwd to list model and mode probes", async () => {
+    const newSession = vi.fn().mockResolvedValue({ modes: null, models: null, configOptions: [] });
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: { newSession },
+          initialize: { agentCapabilities: {} },
+        } as unknown as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "pi",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+      defaultModes: [],
+    });
+
+    await client.listModels({ cwd: "/tmp/acp-model-cwd", force: false });
+    await client.listModes({ cwd: "/tmp/acp-mode-cwd", force: false });
+
+    expect(newSession).toHaveBeenNthCalledWith(1, {
+      cwd: "/tmp/acp-model-cwd",
+      mcpServers: [],
+    });
+    expect(newSession).toHaveBeenNthCalledWith(2, {
+      cwd: "/tmp/acp-mode-cwd",
+      mcpServers: [],
+    });
+  });
+
   test("returns an empty array when no ACP modes are reported and fallback modes are empty", async () => {
     class TestACPAgentClient extends ACPAgentClient {
-      protected override async spawnProcess(): Promise<any> {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
         return {
           child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
           connection: {
@@ -340,7 +376,7 @@ describe("ACPAgentClient listModes", () => {
             }),
           },
           initialize: { agentCapabilities: {} },
-        };
+        } as unknown as SpawnedACPProcess;
       }
 
       protected override async closeProbe(): Promise<void> {}
@@ -353,7 +389,7 @@ describe("ACPAgentClient listModes", () => {
       defaultModes: [],
     });
 
-    await expect(client.listModes()).resolves.toEqual([]);
+    await expect(client.listModes({ cwd: "/tmp/acp-modes", force: false })).resolves.toEqual([]);
   });
 });
 

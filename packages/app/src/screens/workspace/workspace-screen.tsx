@@ -697,6 +697,55 @@ function WorkspaceScreenContent({
     staleTime: TERMINALS_QUERY_STALE_TIME,
   });
   const terminals = terminalsQuery.data?.terminals ?? [];
+  const liveTerminalIds = useMemo(() => terminals.map((terminal) => terminal.id), [terminals]);
+  const [pendingScriptTerminalIds, setPendingScriptTerminalIds] = useState<Map<string, number>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    setPendingScriptTerminalIds(new Map());
+  }, [normalizedServerId, normalizedWorkspaceId]);
+  useEffect(() => {
+    setPendingScriptTerminalIds((pendingTerminalIds) => {
+      if (pendingTerminalIds.size === 0) {
+        return pendingTerminalIds;
+      }
+
+      const liveIds = new Set(liveTerminalIds);
+      let changed = false;
+      const nextTerminalIds = new Map<string, number>();
+      for (const [terminalId, listedAt] of pendingTerminalIds) {
+        if (liveIds.has(terminalId) || terminalsQuery.dataUpdatedAt > listedAt) {
+          changed = true;
+          continue;
+        }
+        nextTerminalIds.set(terminalId, listedAt);
+      }
+      return changed ? nextTerminalIds : pendingTerminalIds;
+    });
+  }, [liveTerminalIds, terminalsQuery.dataUpdatedAt]);
+  const knownTerminalIds = useMemo(() => {
+    const terminalIds = new Set(liveTerminalIds);
+    for (const terminalId of pendingScriptTerminalIds.keys()) {
+      terminalIds.add(terminalId);
+    }
+    return Array.from(terminalIds);
+  }, [liveTerminalIds, pendingScriptTerminalIds]);
+  const scriptTerminalIds = useMemo(() => {
+    const terminalIds = new Set(pendingScriptTerminalIds.keys());
+    for (const script of workspaceDescriptor?.scripts ?? []) {
+      if (script.terminalId) {
+        terminalIds.add(script.terminalId);
+      }
+    }
+    return terminalIds;
+  }, [pendingScriptTerminalIds, workspaceDescriptor?.scripts]);
+  const standaloneTerminalIds = useMemo(
+    () =>
+      terminals
+        .filter((terminal) => !scriptTerminalIds.has(terminal.id))
+        .map((terminal) => terminal.id),
+    [scriptTerminalIds, terminals],
+  );
   const createTerminalMutation = useMutation({
     mutationFn: async (input?: { paneId?: string }) => {
       if (!client || !workspaceDirectory) {
@@ -948,6 +997,38 @@ function WorkspaceScreenContent({
   const splitWorkspacePaneEmpty = useWorkspaceLayoutStore((state) => state.splitPaneEmpty);
   const moveWorkspaceTabToPane = useWorkspaceLayoutStore((state) => state.moveTabToPane);
   const focusWorkspacePane = useWorkspaceLayoutStore((state) => state.focusPane);
+  const handleScriptTerminalStarted = useCallback(
+    (terminalId: string) => {
+      setPendingScriptTerminalIds((pendingTerminalIds) => {
+        if (pendingTerminalIds.get(terminalId) === terminalsQuery.dataUpdatedAt) {
+          return pendingTerminalIds;
+        }
+        const nextTerminalIds = new Map(pendingTerminalIds);
+        nextTerminalIds.set(terminalId, terminalsQuery.dataUpdatedAt);
+        return nextTerminalIds;
+      });
+      if (persistenceKey) {
+        openWorkspaceTabFocused(persistenceKey, { kind: "terminal", terminalId });
+      }
+      void queryClient.invalidateQueries({ queryKey: terminalsQueryKey });
+    },
+    [
+      openWorkspaceTabFocused,
+      persistenceKey,
+      queryClient,
+      terminalsQuery.dataUpdatedAt,
+      terminalsQueryKey,
+    ],
+  );
+  const handleViewScriptTerminal = useCallback(
+    (terminalId: string) => {
+      if (!persistenceKey) {
+        return;
+      }
+      openWorkspaceTabFocused(persistenceKey, { kind: "terminal", terminalId });
+    },
+    [openWorkspaceTabFocused, persistenceKey],
+  );
   const paneFocusSuppressedRef = useRef(false);
   const resizeWorkspaceSplit = useWorkspaceLayoutStore((state) => state.resizeSplit);
   const reorderWorkspaceTabsInPane = useWorkspaceLayoutStore((state) => state.reorderTabsInPane);
@@ -1065,7 +1146,8 @@ function WorkspaceScreenContent({
       terminalsHydrated: terminalsQuery.isSuccess,
       activeAgentIds: Array.from(workspaceAgentVisibility.activeAgentIds),
       knownAgentIds: Array.from(workspaceAgentVisibility.knownAgentIds),
-      standaloneTerminalIds: terminals.map((terminal) => terminal.id),
+      knownTerminalIds,
+      standaloneTerminalIds,
       hasActivePendingDraftCreate: hasActivePendingDraftCreateInWorkspace,
     });
   }, [
@@ -1074,7 +1156,8 @@ function WorkspaceScreenContent({
     pendingByDraftId,
     persistenceKey,
     reconcileWorkspaceTabs,
-    terminals,
+    knownTerminalIds,
+    standaloneTerminalIds,
     terminalsQuery.isSuccess,
     uiTabs,
     workspaceAgentVisibility,
@@ -2195,6 +2278,9 @@ function WorkspaceScreenContent({
                       serverId={normalizedServerId}
                       workspaceId={normalizedWorkspaceId}
                       scripts={workspaceDescriptor.scripts}
+                      liveTerminalIds={liveTerminalIds}
+                      onScriptTerminalStarted={handleScriptTerminalStarted}
+                      onViewTerminal={handleViewScriptTerminal}
                       hideLabels={showCompactButtonLabels}
                     />
                   ) : null}

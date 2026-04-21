@@ -12,6 +12,7 @@ const runningService: WorkspaceScriptPayload = {
   lifecycle: "running",
   health: "healthy",
   exitCode: null,
+  terminalId: null,
 };
 
 function resolveLink(activeConnection: ActiveConnection | null) {

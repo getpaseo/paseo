@@ -50,6 +50,17 @@ import {
 } from "./agent-stream-coalescer.js";
 import { getAgentProviderDefinition } from "./provider-manifest.js";
 
+const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
+const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+
+type TimeoutResult = "completed" | "timed_out";
+
+type TimeoutOptions = {
+  operation: Promise<void>;
+  timeoutMs: number;
+  onLateError?: (error: unknown) => void;
+};
+
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 export type {
   AgentTimelineCursor,
@@ -93,6 +104,11 @@ export type ProviderAvailability = {
   error: string | null;
 };
 
+type AgentManagerRescueTimeouts = {
+  reloadSessionCloseMs?: number;
+  interruptSessionMs?: number;
+};
+
 export type AgentManagerOptions = {
   clients?: Partial<Record<AgentProvider, AgentClient>>;
   idFactory?: () => string;
@@ -102,6 +118,7 @@ export type AgentManagerOptions = {
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
   agentStreamCoalesceWindowMs?: number;
+  rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
 };
 
@@ -319,6 +336,7 @@ export class AgentManager {
   private mcpBaseUrl: string | null;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
+  private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
 
   constructor(options: AgentManagerOptions) {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
@@ -327,6 +345,12 @@ export class AgentManager {
     this.onAgentAttention = options?.onAgentAttention;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
+    this.rescueTimeouts = {
+      reloadSessionCloseMs:
+        options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
+      interruptSessionMs:
+        options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
+    };
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
@@ -725,11 +749,7 @@ export class AgentManager {
     }
     existing.foregroundTurnWaiters.clear();
     this.settlePendingForegroundRun(agentId);
-    try {
-      await existing.session.close();
-    } catch (error) {
-      this.logger.warn({ err: error, agentId }, "Failed to close previous session during refresh");
-    }
+    await this.closeReloadedSession(existing.session, agentId);
 
     // Preserve existing labels and timeline during reload.
     return this.registerSession(session, normalizedConfig, agentId, {
@@ -742,6 +762,60 @@ export class AgentManager {
       lastError: preservedLastError,
       attention: preservedAttention,
     });
+  }
+
+  private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
+    try {
+      const result = await this.waitWithTimeout({
+        operation: session.close(),
+        timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+        onLateError: (error) => {
+          this.logger.warn(
+            { err: error, agentId },
+            "Previous session close failed after refresh timeout",
+          );
+        },
+      });
+
+      if (result === "timed_out") {
+        this.logger.warn(
+          { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+          "Timed out closing previous session during refresh",
+        );
+      }
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "Failed to close previous session during refresh");
+    }
+  }
+
+  private async waitWithTimeout(options: TimeoutOptions): Promise<TimeoutResult> {
+    let didTimeOut = false;
+    let timer: NodeJS.Timeout | null = null;
+    const operation = options.operation
+      .then((): TimeoutResult => "completed")
+      .catch((error) => {
+        if (didTimeOut) {
+          options.onLateError?.(error);
+          return "timed_out" as const;
+        }
+        throw error;
+      });
+
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<TimeoutResult>((resolve) => {
+          timer = setTimeout(() => {
+            didTimeOut = true;
+            resolve("timed_out");
+          }, options.timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
   }
 
   async closeAgent(agentId: string): Promise<void> {
@@ -1454,11 +1528,7 @@ export class AgentManager {
       return false;
     }
 
-    try {
-      await agent.session.interrupt();
-    } catch (error) {
-      this.logger.error({ err: error, agentId }, "Failed to interrupt session");
-    }
+    await this.interruptSession(agent.session, agentId);
 
     // The interrupt will produce a turn_canceled/turn_failed event via subscribe(),
     // which flows through the session event dispatcher and settles the foreground turn waiter.
@@ -1540,6 +1610,30 @@ export class AgentManager {
     }
 
     return true;
+  }
+
+  private async interruptSession(session: AgentSession, agentId: string): Promise<void> {
+    try {
+      const result = await this.waitWithTimeout({
+        operation: session.interrupt(),
+        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+        onLateError: (error) => {
+          this.logger.warn(
+            { err: error, agentId },
+            "Session interrupt failed after timeout during cancel",
+          );
+        },
+      });
+
+      if (result === "timed_out") {
+        this.logger.warn(
+          { agentId, timeoutMs: this.rescueTimeouts.interruptSessionMs },
+          "Timed out interrupting session during cancel",
+        );
+      }
+    } catch (error) {
+      this.logger.error({ err: error, agentId }, "Failed to interrupt session");
+    }
   }
 
   getPendingPermissions(agentId: string): AgentPermissionRequest[] {
@@ -2745,7 +2839,7 @@ export class AgentManager {
       const client = this.clients.get(normalized.provider);
       if (client) {
         try {
-          const models = await client.listModels();
+          const models = await client.listModels({ cwd: normalized.cwd, force: false });
           const defaultModel = models.find((model) => model.isDefault) ?? models[0];
           if (defaultModel) {
             normalized.model = defaultModel.id;
