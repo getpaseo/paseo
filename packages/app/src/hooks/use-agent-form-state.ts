@@ -64,7 +64,7 @@ type UseAgentFormStateOptions = {
   onlineServerIds?: string[];
 };
 
-type UseAgentFormStateResult = {
+export type UseAgentFormStateResult = {
   selectedServerId: string | null;
   setSelectedServerId: (value: string | null) => void;
   setSelectedServerIdFromUser: (value: string | null) => void;
@@ -91,7 +91,7 @@ type UseAgentFormStateResult = {
   isModelLoading: boolean;
   modelError: string | null;
   refreshProviderModels: () => void;
-  invalidateProviderModels: () => void;
+  refetchProviderModelsIfStale: () => void;
   setProviderAndModelFromUser: (provider: AgentProvider, modelId: string) => void;
   workingDirIsEmpty: boolean;
   persistFormPreferences: () => Promise<void>;
@@ -130,7 +130,7 @@ function resolveEffectiveModel(
   }
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId) {
-    return resolveDefaultModel(availableModels);
+    return null;
   }
   return (
     availableModels.find((model) => model.id === normalizedModelId) ??
@@ -235,8 +235,6 @@ function resolveFormState(
       } else {
         result.model = defaultModelId;
       }
-    } else if (defaultModelId) {
-      result.model = defaultModelId;
     } else {
       result.model = "";
     }
@@ -362,11 +360,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const {
     entries: snapshotEntries,
     isLoading: snapshotIsLoading,
-    isFetching: snapshotIsFetching,
     error: snapshotError,
     refresh: refreshSnapshot,
-    invalidate: invalidateSnapshot,
-  } = useProvidersSnapshot(formState.serverId);
+    refetchIfStale: refetchSnapshotIfStale,
+  } = useProvidersSnapshot(formState.serverId, formState.workingDir);
 
   const allProviderEntries = useMemo(() => snapshotEntries ?? [], [snapshotEntries]);
   const snapshotProviderDefinitions = useMemo(
@@ -415,7 +412,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const allProviderModels = snapshotAllProviderModels;
   const availableModels = snapshotSelectedProviderModels;
   const modeOptions = snapshotSelectedProviderModes;
-  const isAllModelsLoading = snapshotIsLoading || snapshotIsFetching;
+  const isAllModelsLoading = snapshotIsLoading;
 
   // Combine initialValues with initialServerId for resolution
   const combinedInitialValues = useMemo((): FormInitialValues | undefined => {
@@ -627,9 +624,9 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     refreshSnapshot();
   }, [refreshSnapshot]);
 
-  const invalidateProviderModels = useCallback(() => {
-    invalidateSnapshot();
-  }, [invalidateSnapshot]);
+  const refetchProviderModelsIfStale = useCallback(() => {
+    refetchSnapshotIfStale();
+  }, [refetchSnapshotIfStale]);
 
   const persistFormPreferences = useCallback(async () => {
     const resolvedModel = resolveEffectiveModel(availableModels, formState.model);
@@ -664,7 +661,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
   const resolvedModelId = effectiveModel?.id ?? formState.model;
   const availableThinkingOptions = effectiveModel?.thinkingOptions ?? [];
-  const isModelLoading = snapshotIsLoading || snapshotIsFetching;
+  const isModelLoading = snapshotIsLoading;
   const modelError = snapshotError;
 
   const workingDirIsEmpty = !formState.workingDir.trim();
@@ -697,7 +694,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       isModelLoading,
       modelError,
       refreshProviderModels,
-      invalidateProviderModels,
+      refetchProviderModelsIfStale,
       setProviderAndModelFromUser,
       workingDirIsEmpty,
       persistFormPreferences,
@@ -729,7 +726,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       isModelLoading,
       modelError,
       refreshProviderModels,
-      invalidateProviderModels,
+      refetchProviderModelsIfStale,
       setProviderAndModelFromUser,
       workingDirIsEmpty,
       persistFormPreferences,

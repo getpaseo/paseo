@@ -81,6 +81,9 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "draft") {
     return `workspace-draft-close-${tab.target.draftId}`;
   }
+  if (tab.target.kind === "setup") {
+    return `workspace-setup-close-${encodeFilePathForPathSegment(tab.target.workspaceId)}`;
+  }
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 

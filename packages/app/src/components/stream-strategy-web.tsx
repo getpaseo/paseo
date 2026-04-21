@@ -1,4 +1,4 @@
-import {
+import React, {
   Fragment,
   type CSSProperties,
   useCallback,
@@ -126,6 +126,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const lastTouchClientYRef = useRef<number | null>(null);
   const pendingAutoScrollFrameRef = useRef<number | null>(null);
   const pendingAutoScrollTimeoutRef = useRef<number | null>(null);
+  const pendingVirtualRowMeasureFramesRef = useRef(new Map<Element, number>());
   const showDesktopWebScrollbar = !isMobileBreakpoint;
   const scrollbarOverlay = useWebElementScrollbar(scrollContainerRef, {
     enabled: showDesktopWebScrollbar,
@@ -180,6 +181,38 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [rowVirtualizer]);
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualTotalSize = rowVirtualizer.getTotalSize();
+
+  const measureVirtualizedRowElement = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) {
+        rowVirtualizer.measureElement(null);
+        return;
+      }
+      const pendingFrames = pendingVirtualRowMeasureFramesRef.current;
+      const existingFrame = pendingFrames.get(node);
+      if (existingFrame !== undefined) {
+        window.cancelAnimationFrame(existingFrame);
+      }
+      const frame = window.requestAnimationFrame(() => {
+        pendingFrames.delete(node);
+        if (node.isConnected) {
+          rowVirtualizer.measureElement(node);
+        }
+      });
+      pendingFrames.set(node, frame);
+    },
+    [rowVirtualizer],
+  );
+
+  useEffect(() => {
+    const pendingFrames = pendingVirtualRowMeasureFramesRef.current;
+    return () => {
+      for (const frame of pendingFrames.values()) {
+        window.cancelAnimationFrame(frame);
+      }
+      pendingFrames.clear();
+    };
+  }, []);
 
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
@@ -696,7 +729,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                   <div
                     key={virtualRow.key}
                     data-index={virtualRow.index}
-                    ref={rowVirtualizer.measureElement}
+                    ref={measureVirtualizedRowElement}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >
                     {renderHistoryVirtualizedRow(

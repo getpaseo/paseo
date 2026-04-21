@@ -29,7 +29,6 @@ function shortcutContext(
     isDesktop: false,
     focusScope: "other",
     commandCenterOpen: false,
-    hasSelectedAgent: true,
     ...overrides,
   };
 }
@@ -477,10 +476,11 @@ describe("keyboard-shortcut help sections", () => {
       },
     },
     {
-      name: "uses mod+b as non-mac left sidebar shortcut",
+      name: "uses mod+b for the left sidebar and mod+period for both sidebars on non-mac",
       context: { isMac: false, isDesktop: false },
       expectedKeys: {
         "toggle-left-sidebar": ["mod", "B"],
+        "toggle-both-sidebars": ["mod", "."],
       },
     },
   ];

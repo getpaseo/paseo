@@ -1,5 +1,6 @@
-export function isImeComposingKeyboardEvent(
-  event: Pick<KeyboardEvent, "isComposing" | "keyCode">,
-): boolean {
-  return event.isComposing || event.keyCode === 229;
+export function isImeComposingKeyboardEvent(event: {
+  isComposing?: boolean;
+  keyCode?: number;
+}): boolean {
+  return Boolean(event.isComposing) || event.keyCode === 229;
 }

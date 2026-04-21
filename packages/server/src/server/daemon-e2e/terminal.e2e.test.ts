@@ -462,6 +462,39 @@ describe("daemon E2E terminal", () => {
     rmSync(cwd, { recursive: true, force: true });
   }, 30000);
 
+  test("propagates debounced terminal titles through list responses and snapshots", async () => {
+    const cwd = tmpCwd();
+    const created = await ctx.client.createTerminal(cwd, undefined, undefined, {
+      command: "/bin/sh",
+      args: ["-lc", "printf '\\033]0;Build Output\\007'; sleep 2"],
+    });
+    const terminalId = created.terminal!.id;
+
+    let listedTitle: string | undefined;
+    const start = Date.now();
+    while (Date.now() - start < 10000) {
+      const list = await ctx.client.listTerminals(cwd);
+      listedTitle = list.terminals.find((terminal) => terminal.id === terminalId)?.title;
+      if (listedTitle === "Build Output") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(listedTitle).toBe("Build Output");
+
+    const snapshotPromise = waitForTerminalSnapshot(
+      ctx.client,
+      terminalId,
+      (state) => state.title === "Build Output",
+    );
+    await ctx.client.subscribeTerminal(terminalId);
+    const snapshot = await snapshotPromise;
+
+    expect(snapshot.title).toBe("Build Output");
+
+    rmSync(cwd, { recursive: true, force: true });
+  }, 30000);
+
   test("subscribe response is sent before the initial snapshot frame", async () => {
     const cwd = tmpCwd();
     const created = await ctx.client.createTerminal(cwd);

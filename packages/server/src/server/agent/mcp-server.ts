@@ -14,24 +14,23 @@ import {
 } from "../messages.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
 import { curateAgentActivity } from "./activity-curator.js";
-import { AgentStorage } from "./agent-storage.js";
+import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
 } from "./timeline-append.js";
-import { type WorktreeConfig } from "../../utils/worktree.js";
+import { deletePaseoWorktree, type WorktreeConfig } from "../../utils/worktree.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
 import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { captureTerminalLines } from "../../terminal/terminal.js";
-import { createAgentWorktree, runAsyncWorktreeBootstrap } from "../worktree-bootstrap.js";
+import { runAsyncWorktreeBootstrap } from "../worktree-bootstrap.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
-import { deletePaseoWorktree, listPaseoWorktrees } from "../../utils/worktree.js";
 import {
   AgentModelSchema,
   AgentProviderEnum,
@@ -40,19 +39,32 @@ import {
   parseDurationString,
   resolveProviderAndModel,
   sanitizePermissionRequest,
+  sendPromptToAgent,
   setupFinishNotification,
   serializeSnapshotWithMetadata,
   startAgentRun,
   toScheduleSummary,
   waitForAgentWithTimeout,
 } from "./mcp-shared.js";
+import type { GitHubService } from "../../services/github-service.js";
+import type { WorkspaceGitService } from "../workspace-git-service.js";
+import type {
+  CreatePaseoWorktreeFn,
+  CreatePaseoWorktreeInput,
+  CreatePaseoWorktreeResult,
+} from "../paseo-worktree-service.js";
+import { toWorktreeRequestError } from "../worktree-errors.js";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager?: TerminalManager | null;
+  getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
+  github?: GitHubService;
+  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+  createPaseoWorktree?: CreatePaseoWorktreeFn;
   paseoHome?: string;
   /**
    * ID of the agent that is connecting to this MCP server.
@@ -380,6 +392,17 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       .string()
       .optional()
       .describe("Required when worktreeName is set: the base branch to diff/merge against."),
+    refName: z.string().min(1).optional().describe("Optional source ref for worktree creation."),
+    action: z
+      .enum(["branch-off", "checkout"])
+      .optional()
+      .describe("Optional worktree creation action."),
+    githubPrNumber: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Optional GitHub pull request number to checkout."),
     background: z
       .boolean()
       .optional()
@@ -480,6 +503,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       let resolvedCwd: string;
       let resolvedMode: string | undefined;
       let worktreeConfig: WorktreeConfig | undefined;
+      let shouldBootstrapWorktree: boolean | undefined;
 
       if (callerAgentId) {
         const callerArgs = agentToAgentCreateAgentArgsSchema.parse(args);
@@ -516,23 +540,33 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         thinking = topLevelArgs.thinking;
         labels = topLevelArgs.labels;
         notifyOnFinish = topLevelArgs.notifyOnFinish ?? false;
-        const { cwd, mode, worktreeName, baseBranch } = topLevelArgs;
+        const { cwd, mode, worktreeName, baseBranch, refName, action, githubPrNumber } =
+          topLevelArgs;
 
         resolvedCwd = expandUserPath(cwd);
 
         if (worktreeName) {
-          if (!baseBranch) {
+          if (!baseBranch && !refName && !action && githubPrNumber === undefined) {
             throw new Error("baseBranch is required when creating a worktree");
           }
-          const worktree = await createAgentWorktree({
-            branchName: worktreeName,
-            cwd: resolvedCwd,
-            baseBranch,
-            worktreeSlug: worktreeName,
-            paseoHome: options.paseoHome,
+          const createdWorktree = await createMcpWorktree({
+            input: {
+              cwd: resolvedCwd,
+              worktreeSlug: worktreeName,
+              refName,
+              action,
+              githubPrNumber,
+              runSetup: false,
+              paseoHome: options.paseoHome,
+            },
+            createPaseoWorktree: options.createPaseoWorktree,
+            resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
+            workspaceGitService: options.workspaceGitService,
+            logger: options.logger,
           });
-          resolvedCwd = worktree.worktreePath;
-          worktreeConfig = worktree;
+          resolvedCwd = createdWorktree.worktree.worktreePath;
+          worktreeConfig = createdWorktree.worktree;
+          shouldBootstrapWorktree = createdWorktree.created;
         }
 
         resolvedMode = mode;
@@ -561,6 +595,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         void runAsyncWorktreeBootstrap({
           agentId: snapshot.id,
           worktree: worktreeConfig,
+          shouldBootstrap: shouldBootstrapWorktree,
           terminalManager: terminalManager ?? null,
           appendTimelineItem: (item) =>
             appendTimelineItemIfAgentKnown({
@@ -587,6 +622,11 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         explicitTitle: snapshot.config.title,
         paseoHome: options.paseoHome,
         logger: childLogger,
+        deps: options.workspaceGitService
+          ? {
+              workspaceGitService: options.workspaceGitService,
+            }
+          : undefined,
       });
 
       try {
@@ -768,30 +808,20 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ agentId, prompt, sessionMode, background = false, notifyOnFinish = false }) => {
-      const snapshot = agentManager.getAgent(agentId);
-      if (!snapshot) {
-        throw new Error(`Agent ${agentId} not found`);
-      }
-
       if (agentManager.hasInFlightRun(agentId)) {
         waitTracker.cancel(agentId, "Agent run interrupted by new prompt");
       }
 
-      if (sessionMode) {
-        await agentManager.setAgentMode(agentId, sessionMode);
-      }
-
-      try {
-        agentManager.recordUserMessage(agentId, prompt, {
-          emitState: false,
-        });
-      } catch (error) {
-        childLogger.error({ err: error, agentId }, "Failed to record user message");
-      }
-
-      startAgentRun(agentManager, agentId, prompt, childLogger, {
-        replaceRunning: true,
+      await sendPromptToAgent({
+        agentManager,
+        agentStorage,
+        agentId,
+        userMessageText: prompt,
+        prompt,
+        sessionMode,
+        logger: childLogger,
       });
+
       if (notifyOnFinish && callerAgentId) {
         setupFinishNotification({
           agentManager,
@@ -1496,9 +1526,11 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
     async ({ cwd }) => {
       const resolvedCwd = resolveScopedCwd(cwd, { required: true });
-      const worktrees = await listPaseoWorktrees({
-        cwd: resolvedCwd,
-        paseoHome: options.paseoHome,
+      if (!options.workspaceGitService) {
+        throw new Error("WorkspaceGitService is required to list worktrees");
+      }
+      const worktrees = await options.workspaceGitService.listWorktrees(resolvedCwd, {
+        reason: "mcp:list-worktrees",
       });
 
       return {
@@ -1518,27 +1550,43 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           .string()
           .optional()
           .describe("Optional repository cwd. Defaults to the caller agent cwd."),
-        branchName: z.string(),
-        baseBranch: z.string(),
+        branchName: z.string().optional(),
+        baseBranch: z.string().optional(),
+        refName: z.string().min(1).optional(),
+        action: z.enum(["branch-off", "checkout"]).optional(),
+        githubPrNumber: z.number().int().positive().optional(),
       },
       outputSchema: {
         branchName: z.string(),
         worktreePath: z.string(),
       },
     },
-    async ({ cwd, branchName, baseBranch }) => {
-      const worktree = await createAgentWorktree({
-        branchName,
-        cwd: resolveScopedCwd(cwd, { required: true }),
-        baseBranch,
-        worktreeSlug: branchName,
-        paseoHome: options.paseoHome,
+    async ({ cwd, branchName, baseBranch, refName, action, githubPrNumber }) => {
+      if (!branchName && !refName && githubPrNumber === undefined) {
+        throw new Error("create_worktree requires branchName, refName, or githubPrNumber");
+      }
+      const repoRoot = resolveScopedCwd(cwd, { required: true });
+      const createdWorktree = await createMcpWorktree({
+        input: {
+          cwd: repoRoot,
+          worktreeSlug: branchName,
+          refName,
+          action,
+          githubPrNumber,
+          runSetup: false,
+          paseoHome: options.paseoHome,
+        },
+        createPaseoWorktree: options.createPaseoWorktree,
+        resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
+        workspaceGitService: options.workspaceGitService,
+        logger: options.logger,
       });
+      const { worktree } = createdWorktree;
 
       return {
         content: [],
         structuredContent: ensureValidJson({
-          branchName,
+          branchName: worktree.branchName,
           worktreePath: worktree.worktreePath,
         }),
       };
@@ -1563,12 +1611,25 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async ({ cwd, worktreePath, worktreeSlug }) => {
+      const repoRoot = resolveScopedCwd(cwd, { required: true });
       await deletePaseoWorktree({
-        cwd: resolveScopedCwd(cwd, { required: true }),
+        cwd: repoRoot,
         worktreePath,
         worktreeSlug,
         paseoHome: options.paseoHome,
       });
+      options.github?.invalidate({ cwd: repoRoot });
+      try {
+        await options.workspaceGitService?.getSnapshot(repoRoot, {
+          force: true,
+          reason: "archive-worktree",
+        });
+      } catch (error) {
+        options.logger.warn(
+          { err: error, cwd: repoRoot },
+          "Failed to force-refresh workspace git snapshot after archiving worktree",
+        );
+      }
 
       return {
         content: [],
@@ -1715,4 +1776,52 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   );
 
   return server;
+}
+
+interface CreateMcpWorktreeOptions {
+  input: CreatePaseoWorktreeInput;
+  createPaseoWorktree: CreatePaseoWorktreeFn | undefined;
+  resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
+  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot">;
+  logger: Logger;
+}
+
+async function createMcpWorktree(
+  options: CreateMcpWorktreeOptions,
+): Promise<CreatePaseoWorktreeResult> {
+  try {
+    if (!options.createPaseoWorktree) {
+      throw new Error("Paseo worktree service is not configured");
+    }
+    const result = await options.createPaseoWorktree(options.input, {
+      resolveDefaultBranch: options.resolveDefaultBranch,
+    });
+    if (options.workspaceGitService) {
+      const refreshResults = await Promise.allSettled([
+        options.workspaceGitService.getSnapshot(options.input.cwd, {
+          force: true,
+          reason: "create-worktree",
+        }),
+        options.workspaceGitService.getSnapshot(result.worktree.worktreePath, {
+          force: true,
+          reason: "create-worktree",
+        }),
+      ]);
+      for (const [index, refreshResult] of refreshResults.entries()) {
+        if (refreshResult.status === "fulfilled") {
+          continue;
+        }
+        options.logger.warn(
+          {
+            err: refreshResult.reason,
+            cwd: index === 0 ? options.input.cwd : result.worktree.worktreePath,
+          },
+          "Failed to force-refresh workspace git snapshot after creating worktree",
+        );
+      }
+    }
+    return result;
+  } catch (error) {
+    throw toWorktreeRequestError(error);
+  }
 }

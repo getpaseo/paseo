@@ -32,7 +32,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { router, usePathname } from "expo-router";
-import { usePanelStore, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from "@/stores/panel-store";
+import {
+  usePanelStore,
+  selectIsAgentListOpen,
+  MIN_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+} from "@/stores/panel-store";
+import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { useSidebarShortcutModel } from "@/hooks/use-sidebar-shortcut-model";
@@ -46,19 +52,15 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { useHostRuntimeSnapshot, useHosts } from "@/runtime/host-runtime";
 import { formatConnectionStatus } from "@/utils/daemons";
-import {
-  HEADER_INNER_HEIGHT,
-  HEADER_INNER_HEIGHT_MOBILE,
-  useIsCompactFormFactor,
-} from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   buildHostSessionsRoute,
-  buildHostSettingsRoute,
+  buildSettingsRoute,
   mapPathnameToServer,
-  parseServerIdFromPathname,
 } from "@/utils/host-routes";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { isWeb } from "@/constants/platform";
+import { resolveActiveHost } from "@/utils/active-host";
 
 const MIN_CHAT_WIDTH = 400;
 
@@ -119,24 +121,16 @@ export const LeftSidebar = memo(function LeftSidebar({
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isCompactLayout = useIsCompactFormFactor();
-  const mobileView = usePanelStore((state) => state.mobileView);
-  const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
-  const closeToAgent = usePanelStore((state) => state.closeToAgent);
+  const isOpen = usePanelStore((state) =>
+    selectIsAgentListOpen(state, { isCompact: isCompactLayout }),
+  );
+  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const pathname = usePathname();
   const daemons = useHosts();
-  const activeServerIdFromPath = useMemo(() => parseServerIdFromPathname(pathname), [pathname]);
-  const activeDaemon = useMemo(() => {
-    if (daemons.length === 0) {
-      return null;
-    }
-    if (activeServerIdFromPath) {
-      const routeMatch = daemons.find((entry) => entry.serverId === activeServerIdFromPath);
-      if (routeMatch) {
-        return routeMatch;
-      }
-    }
-    return daemons[0] ?? null;
-  }, [activeServerIdFromPath, daemons]);
+  const activeDaemon = useMemo(
+    () => resolveActiveHost({ hosts: daemons, pathname }),
+    [daemons, pathname],
+  );
   const activeServerId = activeDaemon?.serverId ?? null;
   const activeHostLabel = useMemo(() => {
     if (!activeDaemon) return "No host";
@@ -186,11 +180,9 @@ export const LeftSidebar = memo(function LeftSidebar({
   const hostTriggerRef = useRef<View | null>(null);
   const [isHostPickerOpen, setIsHostPickerOpen] = useState(false);
 
-  const isOpen = isCompactLayout ? mobileView === "agent-list" : desktopAgentListOpen;
-
   const { projects, isInitialLoad, isRevalidating, refreshAll } = useSidebarWorkspacesList({
     serverId: activeServerId,
-    enabled: isOpen,
+    enabled: isCompactLayout || isOpen,
   });
   const { collapsedProjectKeys, shortcutIndexByWorkspaceKey, toggleProjectCollapsed } =
     useSidebarShortcutModel(projects);
@@ -211,28 +203,22 @@ export const LeftSidebar = memo(function LeftSidebar({
   const openProjectPicker = useOpenProjectPicker(activeServerId);
 
   const handleOpenProjectMobile = useCallback(() => {
-    closeToAgent();
+    showMobileAgent();
     void openProjectPicker();
-  }, [closeToAgent, openProjectPicker]);
+  }, [showMobileAgent, openProjectPicker]);
 
   const handleOpenProjectDesktop = useCallback(() => {
     void openProjectPicker();
   }, [openProjectPicker]);
 
   const handleSettingsMobile = useCallback(() => {
-    if (!activeServerId) {
-      return;
-    }
-    closeToAgent();
-    router.push(buildHostSettingsRoute(activeServerId));
-  }, [activeServerId, closeToAgent]);
+    showMobileAgent();
+    router.push(buildSettingsRoute());
+  }, [showMobileAgent]);
 
   const handleSettingsDesktop = useCallback(() => {
-    if (!activeServerId) {
-      return;
-    }
-    router.push(buildHostSettingsRoute(activeServerId));
-  }, [activeServerId]);
+    router.push(buildSettingsRoute());
+  }, []);
 
   const handleViewMoreNavigate = useCallback(() => {
     if (!activeServerId) {
@@ -281,7 +267,7 @@ export const LeftSidebar = memo(function LeftSidebar({
         insetsTop={insets.top}
         insetsBottom={insets.bottom}
         isOpen={isOpen}
-        closeToAgent={closeToAgent}
+        closeToAgent={showMobileAgent}
         handleOpenProject={handleOpenProjectMobile}
         handleSettings={handleSettingsMobile}
         handleViewMoreNavigate={handleViewMoreNavigate}
@@ -328,44 +314,6 @@ function HostSwitchOption({
   );
 }
 
-function SessionsButton({ onPress }: { onPress: () => void }) {
-  const { theme } = useUnistyles();
-  const pathname = usePathname();
-  const isActive = pathname.includes("/sessions");
-
-  return (
-    <Pressable
-      style={({ hovered }) => [
-        styles.newAgentButton,
-        hovered && styles.newAgentButtonHovered,
-        isActive && styles.newAgentButtonActive,
-      ]}
-      testID="sidebar-sessions"
-      accessible
-      accessibilityRole="button"
-      accessibilityLabel="Sessions"
-      onPress={onPress}
-    >
-      {({ hovered }) => (
-        <>
-          <MessagesSquare
-            size={theme.iconSize.md}
-            color={hovered || isActive ? theme.colors.foreground : theme.colors.foregroundMuted}
-          />
-          <Text
-            style={[
-              styles.newAgentButtonText,
-              (hovered || isActive) && styles.newAgentButtonTextHovered,
-            ]}
-          >
-            Sessions
-          </Text>
-        </>
-      )}
-    </Pressable>
-  );
-}
-
 function MobileSidebar({
   theme,
   activeServerId,
@@ -394,6 +342,8 @@ function MobileSidebar({
   handleViewMoreNavigate,
 }: MobileSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
+  const pathname = usePathname();
+  const isSessionsActive = pathname.includes("/sessions");
   const {
     translateX,
     backdropOpacity,
@@ -544,11 +494,13 @@ function MobileSidebar({
           pointerEvents="auto"
         >
           <View style={styles.sidebarContent} pointerEvents="auto">
-            <View style={styles.sidebarHeader}>
-              <View style={styles.sidebarHeaderRow}>
-                <SessionsButton onPress={handleViewMore} />
-              </View>
-            </View>
+            <SidebarHeaderRow
+              icon={MessagesSquare}
+              label="Sessions"
+              onPress={handleViewMore}
+              isActive={isSessionsActive}
+              testID="sidebar-sessions"
+            />
 
             {isInitialLoad ? (
               <SidebarAgentListSkeleton />
@@ -676,6 +628,8 @@ function DesktopSidebar({
   handleViewMore,
 }: DesktopSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
+  const pathname = usePathname();
+  const isSessionsActive = pathname.includes("/sessions");
   const padding = useWindowControlsPadding("sidebar");
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
@@ -732,11 +686,13 @@ function DesktopSidebar({
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
           {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
-          <View style={styles.sidebarHeader}>
-            <View style={styles.sidebarHeaderRow}>
-              <SessionsButton onPress={handleViewMore} />
-            </View>
-          </View>
+          <SidebarHeaderRow
+            icon={MessagesSquare}
+            label="Sessions"
+            onPress={handleViewMore}
+            isActive={isSessionsActive}
+            testID="sidebar-sessions"
+          />
         </View>
 
         {isInitialLoad ? (
@@ -880,46 +836,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarDragArea: {
     position: "relative",
-  },
-  sidebarHeader: {
-    height: {
-      xs: HEADER_INNER_HEIGHT_MOBILE,
-      md: HEADER_INNER_HEIGHT,
-    },
-    paddingHorizontal: theme.spacing[2],
-    justifyContent: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    userSelect: "none",
-  },
-  sidebarHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-  },
-  newAgentButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
-  },
-  newAgentButtonText: {
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.foregroundMuted,
-  },
-  newAgentButtonTextHovered: {
-    color: theme.colors.foreground,
-  },
-  newAgentButtonHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-  },
-  newAgentButtonActive: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   hostTrigger: {
     flexDirection: "row",

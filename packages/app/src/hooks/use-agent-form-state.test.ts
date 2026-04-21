@@ -161,7 +161,7 @@ describe("useAgentFormState", () => {
       },
     ];
 
-    it("auto-selects the model's default thinking option when none is configured", () => {
+    it("does not auto-select a model on fresh drafts without preferences", () => {
       const resolved = __private__.resolveFormState(
         undefined,
         { provider: "codex" },
@@ -186,14 +186,14 @@ describe("useAgentFormState", () => {
         codexProviderMap,
       );
 
-      expect(resolved.model).toBe("gpt-5.3-codex");
-      expect(resolved.thinkingOptionId).toBe("xhigh");
+      expect(resolved.model).toBe("");
+      expect(resolved.thinkingOptionId).toBe("");
     });
 
-    it("prefers provider defaults on fresh drafts", () => {
+    it("auto-selects the model's default thinking option when model is preferred but thinking is not", () => {
       const resolved = __private__.resolveFormState(
         undefined,
-        { provider: "codex" },
+        { provider: "codex", providerPreferences: { codex: { model: "gpt-5.3-codex" } } },
         codexModels,
         {
           serverId: false,
@@ -222,7 +222,7 @@ describe("useAgentFormState", () => {
     it("falls back to model default when saved thinking preference is invalid", () => {
       const resolved = __private__.resolveFormState(
         undefined,
-        { provider: "codex" },
+        { provider: "codex", providerPreferences: { codex: { model: "gpt-5.3-codex" } } },
         codexModels,
         {
           serverId: false,
@@ -305,7 +305,7 @@ describe("useAgentFormState", () => {
 
     it("keeps an explicit initial thinking option when it is valid", () => {
       const resolved = __private__.resolveFormState(
-        { thinkingOptionId: "low" },
+        { model: "gpt-5.3-codex", thinkingOptionId: "low" },
         { provider: "codex" },
         codexModels,
         {
@@ -348,7 +348,7 @@ describe("useAgentFormState", () => {
 
       const resolved = __private__.resolveFormState(
         undefined,
-        { provider: "claude" },
+        { provider: "claude", providerPreferences: { claude: { model: "default" } } },
         claudeModels,
         {
           serverId: false,

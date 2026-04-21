@@ -3,7 +3,7 @@ import { useQuery, type QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@server/client/daemon-client";
 import type { ComboboxOption } from "@/components/ui/combobox";
 import type { ToastApi } from "@/components/toast-host";
-import { checkoutStatusQueryKey } from "@/hooks/use-checkout-status-query";
+import { invalidateCheckoutGitQueriesForClient } from "@/stores/checkout-git-actions-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
 interface UseBranchSwitcherInput {
@@ -70,8 +70,9 @@ export function useBranchSwitcher({
   const invalidateStashAndCheckout = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: stashListQueryKey }),
-      queryClient.invalidateQueries({
-        queryKey: checkoutStatusQueryKey(normalizedServerId, normalizedWorkspaceId),
+      invalidateCheckoutGitQueriesForClient(queryClient, {
+        serverId: normalizedServerId,
+        cwd: normalizedWorkspaceId,
       }),
     ]);
   }, [queryClient, stashListQueryKey, normalizedServerId, normalizedWorkspaceId]);

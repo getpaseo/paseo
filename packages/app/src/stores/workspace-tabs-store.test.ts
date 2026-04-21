@@ -23,6 +23,17 @@ import {
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "/repo/worktree";
 
+describe("buildWorkspaceTabPersistenceKey", () => {
+  it("preserves opaque workspace ids instead of normalizing them like paths", () => {
+    expect(
+      buildWorkspaceTabPersistenceKey({
+        serverId: SERVER_ID,
+        workspaceId: "  setup\\workspace\\  ",
+      }),
+    ).toBe("server-1:setup\\workspace\\");
+  });
+});
+
 describe("workspace-tabs-store retargetTab", () => {
   beforeEach(() => {
     useWorkspaceTabsStore.setState({
@@ -140,6 +151,40 @@ describe("workspace-tabs-store retargetTab", () => {
     expect(order).toEqual([draftTabId]);
   });
 
+  it("openDraftTab creates a draft tab and deduplicates by draftId", () => {
+    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
+    expect(key).toBeTruthy();
+    const workspaceKey = key as string;
+
+    const firstTabId = useWorkspaceTabsStore.getState().openDraftTab({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      draftId: "draft-1",
+    });
+    const secondTabId = useWorkspaceTabsStore.getState().openDraftTab({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      draftId: "draft-2",
+    });
+
+    const state = useWorkspaceTabsStore.getState();
+    expect(firstTabId).toBe("draft-1");
+    expect(secondTabId).toBe("draft-2");
+    expect(state.tabOrderByWorkspace[workspaceKey]).toEqual([firstTabId, secondTabId]);
+    expect(state.uiTabsByWorkspace[workspaceKey]).toEqual([
+      {
+        tabId: "draft-1",
+        target: { kind: "draft", draftId: "draft-1" },
+        createdAt: expect.any(Number),
+      },
+      {
+        tabId: "draft-2",
+        target: { kind: "draft", draftId: "draft-2" },
+        createdAt: expect.any(Number),
+      },
+    ]);
+  });
+
   it("retargeting a background draft keeps the currently focused tab focused", () => {
     const draftTabId = "draft_background";
     const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
@@ -199,5 +244,20 @@ describe("workspace-tabs-store retargetTab", () => {
 
     expect(reopenedFileTabId).toBe(fileTabId);
     expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBe(fileTabId);
+  });
+
+  it("builds a deterministic setup tab keyed by workspace id", () => {
+    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
+    expect(key).toBeTruthy();
+    const workspaceKey = key as string;
+
+    const tabId = useWorkspaceTabsStore.getState().openOrFocusTab({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "setup", workspaceId: WORKSPACE_ID },
+    });
+
+    expect(tabId).toBe(`setup_${WORKSPACE_ID}`);
+    expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBe(tabId);
   });
 });

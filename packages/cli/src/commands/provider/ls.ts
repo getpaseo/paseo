@@ -17,8 +17,8 @@ const PROVIDERS: ProviderListItem[] = AGENT_PROVIDER_DEFINITIONS.map((def) => ({
   provider: def.id,
   label: def.label,
   status: "available",
-  defaultMode: def.defaultModeId ?? "default",
-  modes: def.modes.map((m) => m.label).join(", "),
+  defaultMode: def.defaultModeId ?? "-",
+  modes: def.modes.length > 0 ? def.modes.map((m) => m.label).join(", ") : "-",
 }));
 
 function getStaticProviders(): ProviderListItem[] {

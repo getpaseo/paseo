@@ -14,7 +14,6 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
-  BottomSheetModal,
   BottomSheetScrollView,
   BottomSheetBackdrop,
   BottomSheetTextInput,
@@ -38,6 +37,10 @@ import {
 } from "./combobox-options";
 import type { ComboboxOptionModel } from "./combobox-options";
 import { isWeb } from "@/constants/platform";
+import {
+  IsolatedBottomSheetModal,
+  useIsolatedBottomSheetVisibility,
+} from "./isolated-bottom-sheet-modal";
 
 const IS_WEB = isWeb;
 
@@ -66,8 +69,6 @@ export interface ComboboxProps {
   title?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  enableDismissOnClose?: boolean;
-  stackBehavior?: "push" | "switch" | "replace";
   desktopPlacement?: "top-start" | "bottom-start";
   /**
    * Prevents an initial frame at 0,0 by hiding desktop content until floating
@@ -81,6 +82,8 @@ export interface ComboboxProps {
   desktopFixedHeight?: number;
   /** Content rendered above the scroll area on desktop (sticky header). */
   stickyHeader?: ReactNode;
+  /** When true, selecting an option does not close the picker (multi-select mode). */
+  keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
   children?: ReactNode;
 }
@@ -99,7 +102,21 @@ function toNumericStyleValue(value: unknown): number | null {
 }
 
 function ComboboxSheetBackground({ style }: BottomSheetBackgroundProps) {
-  return <Animated.View pointerEvents="none" style={[style, styles.bottomSheetBackground]} />;
+  const { theme } = useUnistyles();
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        style,
+        {
+          backgroundColor: theme.colors.surface0,
+          borderTopLeftRadius: theme.borderRadius["2xl"],
+          borderTopRightRadius: theme.borderRadius["2xl"],
+        },
+      ]}
+    />
+  );
 }
 
 export interface SearchInputProps {
@@ -255,22 +272,21 @@ export function Combobox({
   title = "Select",
   open,
   onOpenChange,
-  enableDismissOnClose,
-  stackBehavior,
   desktopPlacement = "top-start",
   desktopPreventInitialFlash = true,
   desktopMinWidth,
   desktopFixedHeight,
   stickyHeader,
+  keepOpenOnSelect = false,
   anchorRef,
   children,
 }: ComboboxProps): ReactElement {
+  const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
+  const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = isMobile ? "below-search" : optionsPosition;
   const isDesktopAboveSearch = !isMobile && isWeb && effectiveOptionsPosition === "above-search";
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
-  const bottomSheetRef = useRef<BottomSheetModal>(null);
-  const hasPresentedBottomSheetRef = useRef(false);
   const snapPoints = useMemo(() => ["60%", "90%"], []);
   const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(
     null,
@@ -440,7 +456,7 @@ export function Combobox({
         ? clampedMeasuredTopStartLeft !== null && measuredTopStartBottom !== null
         : floatingLeft !== null &&
           floatingTop !== null &&
-          (hasNonZeroFloatingPosition || !referenceAtOrigin));
+          (hasNonZeroFloatingPosition || referenceAtOrigin));
   const shouldHideDesktopContent = desktopPreventInitialFlash && !hasResolvedDesktopPosition;
   const shouldUseDesktopFade = !desktopPreventInitialFlash;
 
@@ -456,32 +472,11 @@ export function Combobox({
         }
       : floatingStyles;
 
-  useEffect(() => {
-    if (!isMobile) return;
-    if (isOpen) {
-      if (enableDismissOnClose === false && hasPresentedBottomSheetRef.current) {
-        bottomSheetRef.current?.snapToIndex(0);
-      } else {
-        hasPresentedBottomSheetRef.current = true;
-        bottomSheetRef.current?.present();
-      }
-    } else {
-      if (enableDismissOnClose === false) {
-        bottomSheetRef.current?.close();
-      } else {
-        bottomSheetRef.current?.dismiss();
-      }
-    }
-  }, [enableDismissOnClose, isOpen, isMobile]);
-
-  const handleSheetChange = useCallback(
-    (index: number) => {
-      if (index === -1) {
-        handleClose();
-      }
-    },
-    [handleClose],
-  );
+  const { sheetRef: bottomSheetRef, handleSheetChange } = useIsolatedBottomSheetVisibility({
+    visible: isOpen,
+    isEnabled: isMobile,
+    onClose: handleClose,
+  });
 
   const renderBackdrop = useCallback(
     (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
@@ -587,9 +582,11 @@ export function Combobox({
   const handleSelect = useCallback(
     (id: string) => {
       onSelect(id);
-      handleClose();
+      if (!keepOpenOnSelect) {
+        handleClose();
+      }
     },
-    [handleClose, onSelect],
+    [handleClose, keepOpenOnSelect, onSelect],
   );
 
   const handleSubmitSearch = useCallback(() => {
@@ -698,7 +695,7 @@ export function Combobox({
 
   if (isMobile) {
     return (
-      <BottomSheetModal
+      <IsolatedBottomSheetModal
         ref={bottomSheetRef}
         snapPoints={snapPoints}
         index={0}
@@ -706,15 +703,15 @@ export function Combobox({
         onChange={handleSheetChange}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
-        enableDismissOnClose={enableDismissOnClose}
-        stackBehavior={stackBehavior}
         backgroundComponent={ComboboxSheetBackground}
-        handleIndicatorStyle={styles.bottomSheetHandle}
+        handleIndicatorStyle={{ backgroundColor: theme.colors.palette.zinc[600] }}
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
       >
         <View style={styles.bottomSheetHeader}>
-          <Text style={styles.comboboxTitle}>{title}</Text>
+          <Text key={titleColor} style={[styles.comboboxTitle, { color: titleColor }]}>
+            {title}
+          </Text>
         </View>
         {stickyHeader}
         {!children && searchable ? searchInput : null}
@@ -725,7 +722,7 @@ export function Combobox({
         >
           {content}
         </BottomSheetScrollView>
-      </BottomSheetModal>
+      </IsolatedBottomSheetModal>
     );
   }
 
@@ -779,6 +776,7 @@ export function Combobox({
             </>
           ) : (
             <>
+              {stickyHeader}
               {searchable ? searchInput : null}
               {effectiveOptionsPosition === "above-search" ? (
                 <ScrollView
@@ -903,14 +901,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
-  bottomSheetBackground: {
-    backgroundColor: theme.colors.surface0,
-    borderTopLeftRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius["2xl"],
-  },
-  bottomSheetHandle: {
-    backgroundColor: theme.colors.palette.zinc[600],
-  },
   bottomSheetHeader: {
     paddingHorizontal: theme.spacing[6],
     paddingBottom: theme.spacing[2],
@@ -918,7 +908,6 @@ const styles = StyleSheet.create((theme) => ({
   comboboxTitle: {
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foreground,
     textAlign: "left",
   },
   comboboxScrollContent: {

@@ -342,6 +342,8 @@ describe("daemon client E2E", () => {
       expect(archivedResult).not.toBeNull();
       expect(archivedResult?.agent.archivedAt).toBeTruthy();
       expect(archivedResult?.agent.status).not.toBe("running");
+      expect(archivedResult?.agent.requiresAttention).toBe(false);
+      expect(archivedResult?.agent.attentionReason).toBeNull();
       expect(archivedResult?.project).not.toBeNull();
       expect(archivedResult?.project?.checkout.cwd).toBe(cwd);
 
@@ -454,6 +456,42 @@ describe("daemon client E2E", () => {
       if (resumed.id !== created.id) {
         await ctx.client.deleteAgent(resumed.id);
       }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 180000);
+
+  test("update_agent persists unloaded title and labels across auto-unarchive", async () => {
+    const cwd = tmpCwd();
+    try {
+      const created = await ctx.client.createAgent({
+        config: {
+          ...getFullAccessConfig("codex"),
+          cwd,
+        },
+      });
+
+      await ctx.client.archiveAgent(created.id);
+      await ctx.client.updateAgent(created.id, {
+        name: "Pinned Title",
+        labels: { lane: "phase-1a" },
+      });
+
+      const archived = await ctx.client.fetchAgent(created.id);
+      expect(archived).not.toBeNull();
+      expect(archived?.agent.archivedAt).toBeTruthy();
+      expect(archived?.agent.title).toBe("Pinned Title");
+      expect(archived?.agent.labels).toMatchObject({ lane: "phase-1a" });
+
+      await ctx.client.sendMessage(created.id, "Say hello and nothing else");
+      const finalState = await ctx.client.waitForFinish(created.id, 120000);
+      expect(finalState.status).toBe("idle");
+
+      const unarchived = await ctx.client.fetchAgent(created.id);
+      expect(unarchived).not.toBeNull();
+      expect(unarchived?.agent.archivedAt).toBeNull();
+      expect(unarchived?.agent.title).toBe("Pinned Title");
+      expect(unarchived?.agent.labels).toMatchObject({ lane: "phase-1a" });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -679,7 +717,6 @@ describe("daemon client E2E", () => {
     const timelineResult = await ctx.client.fetchAgentTimeline(agent.id, {
       direction: "tail",
       limit: 1,
-      projection: "projected",
     });
     expect(timelineResult.agentId).toBe(agent.id);
 
@@ -906,7 +943,6 @@ describe("daemon client E2E", () => {
     const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
       direction: "tail",
       limit: 0,
-      projection: "projected",
     });
     expect(timeline.entries.length).toBeGreaterThan(0);
 

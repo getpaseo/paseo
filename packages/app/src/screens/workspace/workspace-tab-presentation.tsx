@@ -49,7 +49,7 @@ export function WorkspaceTabPresentationResolver({
 
   return (
     <WorkspaceTabPresentationResolverInner
-      key={tab.kind}
+      key={`${tab.key}:${tab.kind}`}
       registration={registration}
       tab={tab}
       serverId={serverId}

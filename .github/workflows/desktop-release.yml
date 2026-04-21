@@ -66,7 +66,9 @@ jobs:
               --repo "${{ github.repository }}" \
               --title "Paseo $RELEASE_TAG" \
               --generate-notes \
-              $prerelease_flag
+              $prerelease_flag || {
+                echo "Release creation raced with another workflow; continuing."
+              }
           fi
 
   publish-macos:
@@ -145,6 +147,7 @@ jobs:
           if [[ "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
             publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            publish_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           fi
 
           npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --mac --${{ matrix.electron_arch }} "${publish_args[@]}"
@@ -154,7 +157,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mac-manifest-${{ matrix.electron_arch }}
-          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/latest-mac.yml
+          path: ${{ env.DESKTOP_PACKAGE_PATH }}/release/${{ env.RELEASE_CHANNEL }}-mac.yml
           retention-days: 1
 
   finalize-mac-manifest:
@@ -227,8 +230,9 @@ jobs:
             return out;
           }
 
-          const arm64Text = fs.readFileSync('mac-manifest-arm64/latest-mac.yml', 'utf8');
-          const x64Text = fs.readFileSync('mac-manifest-x64/latest-mac.yml', 'utf8');
+          const manifestName = `${process.env.RELEASE_CHANNEL}-mac.yml`;
+          const arm64Text = fs.readFileSync(`mac-manifest-arm64/${manifestName}`, 'utf8');
+          const x64Text = fs.readFileSync(`mac-manifest-x64/${manifestName}`, 'utf8');
 
           const arm64 = parseManifest(arm64Text);
           const x64 = parseManifest(x64Text);
@@ -243,7 +247,7 @@ jobs:
           };
 
           const output = toYaml(merged);
-          fs.writeFileSync('latest-mac.yml', output);
+          fs.writeFileSync(manifestName, output);
           console.log('Merged manifest:\n' + output);
           NODE
 
@@ -251,7 +255,7 @@ jobs:
         if: env.IS_SMOKE_TAG != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$RELEASE_TAG" latest-mac.yml --clobber --repo "${{ github.repository }}"
+        run: gh release upload "$RELEASE_TAG" "$RELEASE_CHANNEL-mac.yml" --clobber --repo "${{ github.repository }}"
 
   publish-linux:
     needs: [create-release]
@@ -316,6 +320,7 @@ jobs:
           if [[ "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
             publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            publish_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           fi
 
           npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --linux --x64 "${publish_args[@]}"
@@ -391,6 +396,7 @@ jobs:
           if [[ "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
             publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            publish_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           fi
 
           npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --win --x64 "${publish_args[@]}"

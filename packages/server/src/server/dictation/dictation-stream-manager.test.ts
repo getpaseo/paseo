@@ -334,6 +334,8 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
 
   it("drops dangling uncommitted non-final transcripts when finishing after silence tail clear", async () => {
     vi.useFakeTimers();
+    const previousDebug = process.env.PASEO_DICTATION_DEBUG;
+    process.env.PASEO_DICTATION_DEBUG = "false";
     try {
       const session = new FakeRealtimeSession();
       const emitted: Array<{ type: string; payload: any }> = [];
@@ -367,6 +369,7 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
       await manager.handleFinish("d-clear-tail", 1);
       await tick();
       await vi.advanceTimersByTimeAsync(5_100);
+      await tick();
 
       const final = emitted.find((msg) => msg.type === "dictation_stream_final");
       const error = emitted.find((msg) => msg.type === "dictation_stream_error");
@@ -374,6 +377,7 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
       expect(error).toBeUndefined();
       expect(final?.payload.text).toBe("hello");
     } finally {
+      process.env.PASEO_DICTATION_DEBUG = previousDebug;
       vi.useRealTimers();
     }
   });

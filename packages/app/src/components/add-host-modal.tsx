@@ -132,7 +132,6 @@ function buildConnectionFailureCopy(
 export interface AddHostModalProps {
   visible: boolean;
   onClose: () => void;
-  targetServerId?: string;
   onCancel?: () => void;
   onSaved?: (result: {
     profile: HostProfile;
@@ -142,42 +141,41 @@ export interface AddHostModalProps {
   }) => void;
 }
 
-export function AddHostModal({
-  visible,
-  onClose,
-  onCancel,
-  onSaved,
-  targetServerId,
-}: AddHostModalProps) {
+export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostModalProps) {
   const { theme } = useUnistyles();
   const daemons = useHosts();
   const { upsertDirectConnection } = useHostMutations();
   const isMobile = useIsCompactFormFactor();
 
   const hostInputRef = useRef<TextInput>(null);
+  const endpointRawRef = useRef("");
 
-  const [endpointRaw, setEndpointRaw] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  const clearInput = useCallback(() => {
+    endpointRawRef.current = "";
+    hostInputRef.current?.clear();
+  }, []);
+
   const handleClose = useCallback(() => {
     if (isSaving) return;
-    setEndpointRaw("");
+    clearInput();
     setErrorMessage("");
     onClose();
-  }, [isSaving, onClose]);
+  }, [isSaving, clearInput, onClose]);
 
   const handleCancel = useCallback(() => {
     if (isSaving) return;
-    setEndpointRaw("");
+    clearInput();
     setErrorMessage("");
     (onCancel ?? onClose)();
-  }, [isSaving, onCancel, onClose]);
+  }, [isSaving, clearInput, onCancel, onClose]);
 
   const handleSave = useCallback(async () => {
     if (isSaving) return;
 
-    const raw = endpointRaw.trim();
+    const raw = endpointRawRef.current.trim();
     if (!raw) {
       setErrorMessage("Host is required");
       return;
@@ -206,15 +204,6 @@ export function AddHostModal({
         endpoint,
       });
       await client.close().catch(() => undefined);
-      if (targetServerId && serverId !== targetServerId) {
-        const message = `That endpoint belongs to ${serverId}, not ${targetServerId}.`;
-        setErrorMessage(message);
-        if (!isMobile) {
-          Alert.alert("Wrong daemon", message);
-        }
-        return;
-      }
-
       const isNewHost = !daemons.some((daemon) => daemon.serverId === serverId);
       const profile = await upsertDirectConnection({
         serverId,
@@ -240,16 +229,7 @@ export function AddHostModal({
     } finally {
       setIsSaving(false);
     }
-  }, [
-    daemons,
-    endpointRaw,
-    handleClose,
-    isMobile,
-    isSaving,
-    onSaved,
-    targetServerId,
-    upsertDirectConnection,
-  ]);
+  }, [daemons, handleClose, isMobile, isSaving, onSaved, upsertDirectConnection]);
 
   return (
     <AdaptiveModalSheet
@@ -264,8 +244,12 @@ export function AddHostModal({
         <Text style={styles.label}>Host</Text>
         <AdaptiveTextInput
           ref={hostInputRef}
-          value={endpointRaw}
-          onChangeText={setEndpointRaw}
+          testID="direct-host-input"
+          nativeID="direct-host-input"
+          accessibilityLabel="direct-host-input"
+          onChangeText={(next) => {
+            endpointRawRef.current = next;
+          }}
           placeholder="hostname:port"
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
@@ -289,6 +273,7 @@ export function AddHostModal({
           onPress={() => void handleSave()}
           disabled={isSaving}
           leftIcon={<Link2 size={16} color={theme.colors.palette.white} />}
+          testID="direct-host-submit"
         >
           {isSaving ? "Connecting..." : "Connect"}
         </Button>

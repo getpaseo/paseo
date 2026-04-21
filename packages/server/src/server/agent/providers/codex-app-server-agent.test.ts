@@ -1,5 +1,8 @@
 import { describe, expect, test, vi } from "vitest";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import type {
   AgentLaunchContext,
@@ -43,6 +46,34 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}) {
 }
 
 describe("Codex app-server provider", () => {
+  test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-skills-"));
+    const cwd = path.join(tempDir, "repo", "packages", "app");
+    const repoSkillDir = path.join(tempDir, "repo", ".codex", "skills", "shipper");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(repoSkillDir, { recursive: true });
+    writeFileSync(
+      path.join(repoSkillDir, "SKILL.md"),
+      "---\nname: shipper\ndescription: Ship changes carefully.\n---\n",
+    );
+    const workspaceGitService = {
+      resolveRepoRoot: vi.fn().mockResolvedValue(path.join(tempDir, "repo")),
+    };
+
+    try {
+      await expect(
+        __codexAppServerInternals.listCodexSkills(cwd, workspaceGitService),
+      ).resolves.toContainEqual({
+        name: "shipper",
+        description: "Ship changes carefully.",
+        argumentHint: "",
+      });
+      expect(workspaceGitService.resolveRepoRoot).toHaveBeenCalledWith(cwd);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   const logger = createTestLogger();
 
   test("extracts context window usage from snake_case token payloads", () => {
@@ -238,6 +269,31 @@ describe("Codex app-server provider", () => {
       expect(existsSync(localImage.path)).toBe(true);
       rmSync(localImage.path, { force: true });
     }
+  });
+
+  test("maps github_pr prompt attachments to Codex text input", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        {
+          type: "github_pr",
+          mimeType: "application/github-pr",
+          number: 123,
+          title: "Fix race in worktree setup",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          body: "Review body",
+          baseRefName: "main",
+          headRefName: "fix/worktree-race",
+        },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      {
+        type: "text",
+        text: expect.stringContaining("GitHub PR #123: Fix race in worktree setup"),
+      },
+    ]);
   });
 
   test("maps patch notifications with array-style changes and alias diff keys", () => {

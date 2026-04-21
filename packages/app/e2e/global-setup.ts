@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess, execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
@@ -182,6 +182,7 @@ async function isOpenAiApiKeyUsable(apiKey: string | undefined): Promise<boolean
 let daemonProcess: ChildProcess | null = null;
 let metroProcess: ChildProcess | null = null;
 let paseoHome: string | null = null;
+let fakeGhBinDir: string | null = null;
 let relayProcess: ChildProcess | null = null;
 
 type OfferPayload = {
@@ -190,6 +191,47 @@ type OfferPayload = {
   daemonPublicKeyB64: string;
   relay: { endpoint: string };
 };
+
+async function createFakeGhBin(): Promise<string> {
+  const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-gh-bin-"));
+  const ghPath = path.join(binDir, "gh");
+  await writeFile(
+    ghPath,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+
+if (args[0] === "auth" && args[1] === "status") {
+  process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "list") {
+  console.log(JSON.stringify([
+    {
+      number: 515,
+      title: "Review selected start ref",
+      url: "https://github.com/getpaseo/paseo/pull/515",
+      state: "OPEN",
+      body: "Fixture pull request for app e2e.",
+      labels: [],
+      baseRefName: "main",
+      headRefName: "feature/start-from-pr"
+    }
+  ]));
+  process.exit(0);
+}
+
+if (args[0] === "issue" && args[1] === "list") {
+  console.log("[]");
+  process.exit(0);
+}
+
+console.error("Unsupported fake gh invocation: " + args.join(" "));
+process.exit(1);
+`,
+  );
+  await chmod(ghPath, 0o755);
+  return binDir;
+}
 
 function stripAnsi(input: string): string {
   return input.replace(/\u001b\[[0-9;]*m/g, "");
@@ -281,6 +323,7 @@ export default async function globalSetup() {
   let relayPort = 0;
   const metroPort = await getAvailablePort();
   paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-e2e-home-"));
+  fakeGhBinDir = await createFakeGhBin();
   let relayLineBuffer = createLineBuffer();
   const metroLineBuffer = createLineBuffer();
   const daemonLineBuffer = createLineBuffer();
@@ -297,6 +340,10 @@ export default async function globalSetup() {
     if (paseoHome) {
       await rm(paseoHome, { recursive: true, force: true });
       paseoHome = null;
+    }
+    if (fakeGhBinDir) {
+      await rm(fakeGhBinDir, { recursive: true, force: true });
+      fakeGhBinDir = null;
     }
   };
 
@@ -482,6 +529,7 @@ export default async function globalSetup() {
       cwd: serverDir,
       env: {
         ...process.env,
+        PATH: `${fakeGhBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
         PASEO_HOME: paseoHome,
         PASEO_SERVER_ID: "srv_e2e_test_daemon",
         PASEO_LISTEN: `0.0.0.0:${port}`,

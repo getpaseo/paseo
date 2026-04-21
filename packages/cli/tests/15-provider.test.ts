@@ -32,6 +32,16 @@ type ProviderModel = {
 
 const EXPECTED_CLAUDE_MODELS = [
   {
+    id: "claude-opus-4-7[1m]",
+    model: "Opus 4.7 1M",
+    descriptionFragment: "1M context window",
+  },
+  {
+    id: "claude-opus-4-7",
+    model: "Opus 4.7",
+    descriptionFragment: "Latest release",
+  },
+  {
     id: "claude-opus-4-6[1m]",
     model: "Opus 4.6 1M",
     descriptionFragment: "1M context window",

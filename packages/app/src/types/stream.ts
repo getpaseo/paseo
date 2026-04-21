@@ -336,7 +336,36 @@ function mergeUnknownValue(existing: unknown | null, incoming: unknown | null): 
   return incoming;
 }
 
-function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail): ToolCallDetail {
+function hasSameIncomingFields<T extends Record<string, unknown>>(
+  existing: T,
+  incoming: T,
+): boolean {
+  return Object.entries(incoming).every(([key, value]) => existing[key] === value);
+}
+
+function mergeToolCallMetadata(
+  existing: Record<string, unknown> | undefined,
+  incoming: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!incoming) {
+    return existing;
+  }
+
+  if (!existing) {
+    return incoming;
+  }
+
+  if (hasSameIncomingFields(existing, incoming)) {
+    return existing;
+  }
+
+  return { ...existing, ...incoming };
+}
+
+export function mergeToolCallDetail(
+  existing: ToolCallDetail,
+  incoming: ToolCallDetail,
+): ToolCallDetail {
   if (existing.type === "unknown" && incoming.type !== "unknown") {
     return incoming;
   }
@@ -346,14 +375,24 @@ function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail)
   }
 
   if (existing.type === "unknown" && incoming.type === "unknown") {
+    const input = mergeUnknownValue(existing.input, incoming.input);
+    const output = mergeUnknownValue(existing.output, incoming.output);
+    if (input === existing.input && output === existing.output) {
+      return existing;
+    }
+
     return {
       type: "unknown",
-      input: mergeUnknownValue(existing.input, incoming.input),
-      output: mergeUnknownValue(existing.output, incoming.output),
+      input,
+      output,
     };
   }
 
   if (existing.type === incoming.type) {
+    if (hasSameIncomingFields(existing, incoming)) {
+      return existing;
+    }
+
     return { ...existing, ...incoming } as ToolCallDetail;
   }
 
@@ -391,8 +430,7 @@ function appendAgentToolCall(
   const existingIndex = findExistingAgentToolCallIndex(state, data.callId);
 
   if (existingIndex >= 0) {
-    const next = [...state];
-    const existing = next[existingIndex];
+    const existing = state[existingIndex];
     if (!existing || !isAgentToolCallItem(existing)) {
       return state;
     }
@@ -401,12 +439,22 @@ function appendAgentToolCall(
       mergedStatus === "failed"
         ? (data.error ?? existing.payload.data.error ?? { message: "Tool call failed" })
         : null;
-    const mergedMetadata =
-      data.metadata || existing.payload.data.metadata
-        ? { ...existing.payload.data.metadata, ...data.metadata }
-        : undefined;
+    const mergedMetadata = mergeToolCallMetadata(existing.payload.data.metadata, data.metadata);
     const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
 
+    if (
+      data.provider === existing.payload.data.provider &&
+      data.callId === existing.payload.data.callId &&
+      data.name === existing.payload.data.name &&
+      mergedStatus === existing.payload.data.status &&
+      mergedError === existing.payload.data.error &&
+      mergedDetail === existing.payload.data.detail &&
+      mergedMetadata === existing.payload.data.metadata
+    ) {
+      return state;
+    }
+
+    const next = [...state];
     next[existingIndex] = {
       ...existing,
       timestamp,

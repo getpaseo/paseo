@@ -96,6 +96,7 @@ describe("tool-call-display", () => {
             index: 1,
             command: "npm install",
             cwd: "/tmp/repo/.paseo/worktrees/repo/branch",
+            log: "",
             status: "running",
             exitCode: null,
           },
