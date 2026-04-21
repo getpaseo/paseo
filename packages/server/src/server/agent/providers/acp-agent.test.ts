@@ -5,6 +5,7 @@ import {
   ACPAgentSession,
   type SpawnedACPProcess,
   type SessionStateResponse,
+  createLoggedNdJsonStream,
   deriveModelDefinitionsFromACP,
   deriveModesFromACP,
   mapACPUsage,
@@ -34,6 +35,46 @@ function createSession(): ACPAgentSession {
     },
   );
 }
+
+describe("createLoggedNdJsonStream", () => {
+  test("routes malformed ACP stdout through the provider logger instead of console.error", async () => {
+    const input = new TransformStream<Uint8Array, Uint8Array>();
+    const output = new TransformStream<Uint8Array, Uint8Array>();
+    const logger = {
+      warn: vi.fn(),
+    };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const stream = createLoggedNdJsonStream(output.writable, input.readable, {
+      logger: logger as unknown as ReturnType<typeof createTestLogger>,
+      provider: "gemini",
+    });
+    const reader = stream.readable.getReader();
+    const writer = input.writable.getWriter();
+
+    await writer.write(
+      new TextEncoder().encode(
+        'Please visit the following URL to authorize the application:\n{"jsonrpc":"2.0","method":"ok","params":{}}\n',
+      ),
+    );
+
+    const parsed = await reader.read();
+
+    expect(parsed.value).toEqual({ jsonrpc: "2.0", method: "ok", params: {} });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "gemini",
+        linePreview: "Please visit the following URL to authorize the application:",
+      }),
+      "ACP agent emitted non-JSON stdout; ignoring line",
+    );
+    expect(consoleError).not.toHaveBeenCalled();
+
+    await writer.close();
+    reader.releaseLock();
+    consoleError.mockRestore();
+  });
+});
 
 describe("mapACPUsage", () => {
   test("maps ACP usage fields into Paseo usage", () => {

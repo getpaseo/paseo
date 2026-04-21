@@ -6,8 +6,8 @@ import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
   PROTOCOL_VERSION,
-  ndJsonStream,
   type AgentCapabilities as ACPAgentCapabilities,
+  type AnyMessage,
   type Client as ACPClient,
   type ClientCapabilities as ACPClientCapabilities,
   type ConfigOptionUpdate,
@@ -46,6 +46,7 @@ import {
   type UsageUpdate,
   type WaitForTerminalExitRequest,
   type WriteTextFileRequest,
+  type Stream as ACPStream,
 } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 
@@ -111,6 +112,75 @@ const COPILOT_AUTOPILOT_MODE = "https://agentclientprotocol.com/protocol/session
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
+
+export function createLoggedNdJsonStream(
+  output: WritableStream<Uint8Array>,
+  input: ReadableStream<Uint8Array>,
+  options: { logger: Logger; provider: string },
+): ACPStream {
+  const textEncoder = new TextEncoder();
+  const textDecoder = new TextDecoder();
+
+  const readable = new ReadableStream<AnyMessage>({
+    async start(controller) {
+      let content = "";
+      const reader = input.getReader();
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          if (!value) {
+            continue;
+          }
+
+          content += textDecoder.decode(value, { stream: true });
+          const lines = content.split("\n");
+          content = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (!trimmedLine) {
+              continue;
+            }
+
+            try {
+              const message = JSON.parse(trimmedLine) as AnyMessage;
+              controller.enqueue(message);
+            } catch (error) {
+              options.logger.warn(
+                {
+                  err: error,
+                  provider: options.provider,
+                  linePreview:
+                    trimmedLine.length > 500 ? `${trimmedLine.slice(0, 500)}...` : trimmedLine,
+                },
+                "ACP agent emitted non-JSON stdout; ignoring line",
+              );
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+        controller.close();
+      }
+    },
+  });
+
+  const writable = new WritableStream<AnyMessage>({
+    async write(message) {
+      const writer = output.getWriter();
+      try {
+        await writer.write(textEncoder.encode(`${JSON.stringify(message)}\n`));
+      } finally {
+        writer.releaseLock();
+      }
+    },
+  });
+
+  return { readable, writable };
+}
 
 type ACPAgentClientOptions = {
   provider: string;
@@ -517,9 +587,10 @@ export class ACPAgentClient implements AgentClient {
       throw new Error(`${this.provider} ACP process did not expose stdio pipes`);
     }
 
-    const stream = ndJsonStream(
+    const stream = createLoggedNdJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+      { logger: this.logger, provider: this.provider },
     );
     const connection = new ClientSideConnection(() => this.buildProbeClient(), stream);
     const initialize = (await Promise.race([
@@ -1371,9 +1442,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`${this.provider} ACP process did not expose stdio pipes`);
     }
 
-    const stream = ndJsonStream(
+    const stream = createLoggedNdJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+      { logger: this.logger, provider: this.provider },
     );
     const connection = new ClientSideConnection(() => this, stream);
     const initialize = await connection.initialize({
