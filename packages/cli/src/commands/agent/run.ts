@@ -18,6 +18,8 @@ import { parseDuration } from "../../utils/duration.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import { resolveProviderAndModel } from "../../utils/provider-model.js";
 
+export { resolveProviderAndModel } from "../../utils/provider-model.js";
+
 export function addRunOptions(cmd: Command): Command {
   return cmd
     .description("Create and start an agent with a task")
@@ -191,7 +193,6 @@ export async function resolveStructuredResponseMessage(options: {
   try {
     const timeline = await options.client.fetchAgentTimeline(options.agentId, {
       direction: "tail",
-      projection: "projected",
       limit: 200,
     });
     for (let index = timeline.entries.length - 1; index >= 0; index -= 1) {

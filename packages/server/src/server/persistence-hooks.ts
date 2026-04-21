@@ -53,6 +53,9 @@ export function attachAgentStoragePersistence(
     if (event.type !== "agent_state") {
       return;
     }
+    if (event.agent.lifecycle === "closed") {
+      return;
+    }
     void storage.applySnapshot(event.agent).catch((error) => {
       log.error({ err: error, agentId: event.agent.id }, "Failed to persist agent snapshot");
     });
@@ -167,7 +170,7 @@ export function toAgentPersistenceHandle(
   return {
     provider,
     sessionId: handle.sessionId,
-    nativeHandle: handle.nativeHandle,
-    metadata: handle.metadata,
+    ...(handle.nativeHandle !== undefined ? { nativeHandle: handle.nativeHandle } : {}),
+    ...(handle.metadata !== undefined ? { metadata: handle.metadata } : {}),
   } satisfies AgentPersistenceHandle;
 }

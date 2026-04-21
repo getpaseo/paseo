@@ -95,6 +95,37 @@ Two reusable flows handle Expo dev client screens after launch:
 - `flows/launch.yaml` — handles dev launcher, dismisses dev menu, asserts "Welcome to Paseo"
 - `flows/dev-client.yaml` — same but without asserting a particular app route
 
+### Reach the composer
+
+`flows/land-in-chat.yaml` is the canonical "get into a chat" primitive. It `clearState`s, runs `launch.yaml`, taps the welcome screen's direct-connection option, types `127.0.0.1:6767`, submits, and waits for `message-input-root`. Compose any composer-level fixture on top of it:
+
+```yaml
+appId: sh.paseo
+---
+- runFlow: flows/land-in-chat.yaml
+# ...your scenario here, starting from a ready composer
+```
+
+See `image-picker-repro.yaml` for an example.
+
+**Prefer direct connection over relay pairing for local E2E.** Relay needs a 400+ character pairing URL typed into an input; direct needs `127.0.0.1:6767`. The daemon listens on 6767 and the simulator can reach it directly.
+
+### Inputs that Maestro types into
+
+Maestro `inputText` fires one character at a time. React Native's **controlled** `TextInput` re-renders per keystroke; if a controlled input's state update lags or re-mounts mid-type, characters are dropped silently — the final value on screen is a truncated/scrambled version of what was "typed."
+
+For inputs that E2E flows type into (host endpoint, pairing URL, etc.), use an **uncontrolled ref-backed input**: `defaultValue` + `onChangeText` writes into a `useRef`, reads via the ref on submit. No per-keystroke re-render, no dropped characters.
+
+See `add-host-modal.tsx` and `pair-link-modal.tsx` for the pattern. Always pair the source change with a Maestro `assertVisible` on the input's `id + text` after `inputText`, so regressions are caught immediately.
+
+### Dropdowns that launch native presenters (iOS)
+
+On iOS, when a dropdown menu (`DropdownMenu` / RN `Modal`) item needs to launch a native presenter like `PHPickerViewController` (image picker) or a `UIDocumentPicker`, the callback **must not fire while the `Modal` is still dismissing**. UIKit dismissal completion spans multiple frames beyond React unmount; launching a native presenter mid-dismissal leaves an invisible backdrop mounted that traps every subsequent touch.
+
+`DropdownMenu` handles this by deferring the selected item's `onSelect` until `Modal.onDismiss` fires (UIKit-level dismissal complete), then adds a small extra buffer before invoking it. See `components/ui/dropdown-menu.tsx`'s `selectItem` / `flushPendingSelect`.
+
+When building a new component that composes a dropdown with a native presenter, reuse this dropdown — do not invent a new timing shim.
+
 ## Self-verification loops
 
 Maestro can only interact with the app UI — it can't toggle iOS appearance, change locale, or simulate network conditions. For bugs that depend on system-level state, wrap Maestro in a bash script that handles the system changes between Maestro runs.

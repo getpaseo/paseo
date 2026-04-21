@@ -43,6 +43,9 @@ jobs:
       - name: Build relay dependency
         run: npm run build --workspace=@getpaseo/relay
 
+      - name: Build server dependency
+        run: npm run build --workspace=@getpaseo/server
+
       - name: Typecheck all packages
         run: npm run typecheck
 
@@ -99,7 +102,22 @@ jobs:
 
       - name: Run Windows-critical server tests
         working-directory: packages/server
-        run: npx vitest run src/utils/executable.test.ts src/utils/spawn.test.ts src/utils/run-git-command.test.ts src/server/agent/provider-registry.test.ts src/server/agent/provider-launch-config.test.ts src/server/agent/provider-snapshot-manager.test.ts src/server/persisted-config.test.ts
+        run: >
+          npx vitest run
+          src/utils/executable.test.ts
+          src/utils/spawn.launch-regression.test.ts
+          src/utils/spawn.test.ts
+          src/utils/run-git-command.test.ts
+          src/utils/checkout-git-rev-parse.test.ts
+          src/server/agent/provider-registry.test.ts
+          src/server/agent/provider-launch-config.test.ts
+          src/server/agent/provider-snapshot-manager.test.ts
+          src/server/agent/providers/claude-agent.spawn.test.ts
+          src/server/agent/providers/provider-windows-launch.test.ts
+          src/server/agent/providers/provider-availability.test.ts
+          src/server/workspace-registry-model.test.ts
+          src/server/persisted-config.test.ts
+          src/server/bootstrap-provider-availability.test.ts
 
   app-tests:
     runs-on: ubuntu-latest

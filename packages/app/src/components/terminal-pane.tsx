@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -27,7 +26,9 @@ interface TerminalPaneProps {
   serverId: string;
   cwd: string;
   terminalId: string;
+  isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
+  onOpenFileExplorer: () => void;
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
@@ -82,15 +83,20 @@ function terminalScopeKey(input: { serverId: string; cwd: string }): string {
   return `${input.serverId}:${input.cwd}`;
 }
 
-export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: TerminalPaneProps) {
-  const isScreenFocused = useIsFocused();
+export function TerminalPane({
+  serverId,
+  cwd,
+  terminalId,
+  isWorkspaceFocused,
+  isPaneFocused,
+  onOpenFileExplorer,
+}: TerminalPaneProps) {
   const isAppVisible = useAppVisible();
   const { theme } = useUnistyles();
-  const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme.colors.terminal]);
+  const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
   const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
-  const openAgentList = usePanelStore((state) => state.openAgentList);
-  const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
+  const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const swipeGesturesEnabled = isMobile && mobileView === "agent";
   const { shift: keyboardShift, style: keyboardPaddingStyle } = useKeyboardShiftStyle({
     mode: "padding",
@@ -131,7 +137,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
   }, []);
 
   useEffect(() => {
-    if (isMobile || !isScreenFocused || !isPaneFocused || !terminalId) {
+    if (isMobile || !isWorkspaceFocused || !isPaneFocused || !terminalId) {
       lastAutoFocusKeyRef.current = null;
       return;
     }
@@ -143,14 +149,14 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
 
     lastAutoFocusKeyRef.current = nextFocusKey;
     requestTerminalFocus();
-  }, [isMobile, isPaneFocused, isScreenFocused, requestTerminalFocus, scopeKey, terminalId]);
+  }, [isMobile, isPaneFocused, isWorkspaceFocused, requestTerminalFocus, scopeKey, terminalId]);
 
   useEffect(() => {
-    if (isPaneFocused && isScreenFocused && isAppVisible && terminalId) {
+    if (isPaneFocused && isWorkspaceFocused && isAppVisible && terminalId) {
       lastReportedSizeRef.current = null;
       requestTerminalReflow();
     }
-  }, [isAppVisible, isPaneFocused, isScreenFocused, requestTerminalReflow, terminalId]);
+  }, [isAppVisible, isPaneFocused, isWorkspaceFocused, requestTerminalReflow, terminalId]);
 
   const clearKeyboardRefitTimeouts = useCallback(() => {
     if (keyboardRefitTimeoutsRef.current.length === 0) {
@@ -187,29 +193,27 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
     [pulseKeyboardRefits],
   );
 
-  useFocusEffect(
-    useCallback(() => {
-      if (!terminalId) {
-        return;
-      }
-      // Navigation transitions can temporarily report stale dimensions.
-      // Pulse forced refits so xterm fills the pane when returning to an agent.
-      const timeoutHandles = TERMINAL_REFIT_DELAYS_MS.map((delayMs) =>
-        setTimeout(() => {
-          requestTerminalReflow();
-        }, delayMs),
-      );
+  useEffect(() => {
+    if (!isWorkspaceFocused || !terminalId) {
+      return;
+    }
+    // Focus transitions can temporarily report stale dimensions.
+    // Pulse forced refits so xterm fills the pane when returning to a terminal.
+    const timeoutHandles = TERMINAL_REFIT_DELAYS_MS.map((delayMs) =>
+      setTimeout(() => {
+        requestTerminalReflow();
+      }, delayMs),
+    );
 
-      return () => {
-        for (const handle of timeoutHandles) {
-          clearTimeout(handle);
-        }
-      };
-    }, [requestTerminalReflow, terminalId]),
-  );
+    return () => {
+      for (const handle of timeoutHandles) {
+        clearTimeout(handle);
+      }
+    };
+  }, [isWorkspaceFocused, requestTerminalReflow, terminalId]);
 
   useEffect(() => {
-    if (!client || !isConnected || !isScreenFocused) {
+    if (!client || !isConnected || !isWorkspaceFocused) {
       return;
     }
 
@@ -232,7 +236,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
       });
       setModifiers({ ...EMPTY_MODIFIERS });
     });
-  }, [client, isConnected, workspaceTerminalSession.snapshots]);
+  }, [client, isConnected, isWorkspaceFocused, workspaceTerminalSession.snapshots]);
 
   useEffect(() => {
     lastReportedSizeRef.current = null;
@@ -257,14 +261,14 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
       client,
       getPreferredSize: () => lastReportedSizeRef.current,
       onOutput: ({ terminalId, text }) => {
-        if (!isScreenFocused || terminalIdRef.current !== terminalId) {
+        if (!isWorkspaceFocused || terminalIdRef.current !== terminalId) {
           return;
         }
         emulatorRef.current?.writeOutput(text);
       },
       onSnapshot: ({ terminalId, state }) => {
         workspaceTerminalSession.snapshots.set({ terminalId, state });
-        if (!isScreenFocused || terminalIdRef.current !== terminalId) {
+        if (!isWorkspaceFocused || terminalIdRef.current !== terminalId) {
           return;
         }
         emulatorRef.current?.renderSnapshot(state);
@@ -274,7 +278,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
 
     streamControllerRef.current = controller;
     controller.setTerminal({
-      terminalId: isScreenFocused ? terminalIdRef.current : null,
+      terminalId: isWorkspaceFocused ? terminalIdRef.current : null,
     });
 
     return () => {
@@ -287,17 +291,17 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
     client,
     handleStreamControllerStatus,
     isConnected,
-    isScreenFocused,
+    isWorkspaceFocused,
     workspaceTerminalSession.snapshots,
   ]);
 
   useEffect(() => {
     pendingTerminalInputRef.current = [];
-    const nextTerminalId = isScreenFocused ? terminalId : null;
+    const nextTerminalId = isWorkspaceFocused ? terminalId : null;
     streamControllerRef.current?.setTerminal({
       terminalId: nextTerminalId,
     });
-  }, [isScreenFocused, terminalId]);
+  }, [isWorkspaceFocused, terminalId]);
 
   const enqueuePendingTerminalInput = useCallback((entry: PendingTerminalInput) => {
     const queue = pendingTerminalInputRef.current;
@@ -477,7 +481,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
       !client ||
       !terminalId ||
       !isPaneFocused ||
-      !isScreenFocused ||
+      !isWorkspaceFocused ||
       !isAppVisible ||
       rows <= 0 ||
       cols <= 0
@@ -550,7 +554,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
   return (
     <Animated.View style={[styles.container, keyboardPaddingStyle]}>
       <View style={styles.outputContainer}>
-        {isScreenFocused ? (
+        {isWorkspaceFocused ? (
           <View style={styles.terminalGestureContainer}>
             <TerminalEmulator
               ref={emulatorRef}
@@ -573,13 +577,13 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
                 if (!swipeGesturesEnabled) {
                   return;
                 }
-                openAgentList();
+                showMobileAgentList();
               }}
               onSwipeLeft={() => {
                 if (!swipeGesturesEnabled) {
                   return;
                 }
-                openFileExplorer();
+                onOpenFileExplorer();
               }}
               onInput={handleTerminalData}
               onResize={handleTerminalResize}
@@ -594,7 +598,7 @@ export function TerminalPane({ serverId, cwd, terminalId, isPaneFocused }: Termi
           <View style={styles.terminalGestureContainer} />
         )}
 
-        {isAttaching && isScreenFocused ? (
+        {isAttaching && isWorkspaceFocused ? (
           <View style={styles.attachOverlay} pointerEvents="none" testID="terminal-attach-loading">
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           </View>

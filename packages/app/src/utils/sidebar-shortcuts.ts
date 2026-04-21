@@ -10,7 +10,6 @@ export interface SidebarShortcutWorkspaceTarget {
 }
 
 export interface SidebarShortcutModel {
-  visibleTargets: SidebarShortcutWorkspaceTarget[];
   shortcutTargets: SidebarShortcutWorkspaceTarget[];
   shortcutIndexByWorkspaceKey: Map<string, number>;
 }
@@ -28,7 +27,6 @@ export function buildSidebarShortcutModel(input: {
   shortcutLimit?: number;
 }): SidebarShortcutModel {
   const maxShortcuts = Math.max(0, Math.floor(input.shortcutLimit ?? 9));
-  const visibleTargets: SidebarShortcutWorkspaceTarget[] = [];
   const shortcutTargets: SidebarShortcutWorkspaceTarget[] = [];
   const shortcutIndexByWorkspaceKey = new Map<string, number>();
 
@@ -38,8 +36,6 @@ export function buildSidebarShortcutModel(input: {
     }
 
     for (const workspace of project.workspaces) {
-      visibleTargets.push(createShortcutTarget(workspace));
-
       if (shortcutTargets.length >= maxShortcuts) {
         continue;
       }
@@ -50,5 +46,32 @@ export function buildSidebarShortcutModel(input: {
     }
   }
 
-  return { visibleTargets, shortcutTargets, shortcutIndexByWorkspaceKey };
+  return { shortcutTargets, shortcutIndexByWorkspaceKey };
+}
+
+export function getRelativeSidebarShortcutTarget(input: {
+  targets: readonly SidebarShortcutWorkspaceTarget[];
+  currentTarget: SidebarShortcutWorkspaceTarget | null;
+  delta: 1 | -1;
+}): SidebarShortcutWorkspaceTarget | null {
+  if (input.targets.length === 0) {
+    return null;
+  }
+
+  if (!input.currentTarget) {
+    return input.targets[input.delta > 0 ? 0 : input.targets.length - 1] ?? null;
+  }
+
+  const currentTarget = input.currentTarget;
+  const currentIndex = input.targets.findIndex(
+    (target) =>
+      target.serverId === currentTarget.serverId &&
+      target.workspaceId === currentTarget.workspaceId,
+  );
+  if (currentIndex < 0) {
+    return input.targets[input.delta > 0 ? 0 : input.targets.length - 1] ?? null;
+  }
+
+  const nextIndex = (currentIndex + input.delta + input.targets.length) % input.targets.length;
+  return input.targets[nextIndex] ?? null;
 }

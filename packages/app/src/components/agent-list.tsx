@@ -17,6 +17,9 @@ import { shortenPath } from "@/utils/shorten-path";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { Archive } from "lucide-react-native";
+import { getProviderIcon } from "@/components/provider-icons";
+import { buildHostAgentDetailRoute } from "@/utils/host-routes";
+import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 
 interface AgentListProps {
@@ -131,6 +134,7 @@ function SessionRow({
   const isSelected = selectedAgentId === agentKey;
   const statusLabel = formatStatusLabel(agent.status);
   const projectPath = shortenPath(agent.cwd);
+  const ProviderIcon = getProviderIcon(agent.provider);
 
   return (
     <Pressable
@@ -146,6 +150,9 @@ function SessionRow({
     >
       <View style={styles.rowContent}>
         <View style={styles.rowTitleRow}>
+          <View style={styles.providerIconWrap}>
+            <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </View>
           <Text
             style={[styles.sessionTitle, isSelected && styles.sessionTitleHighlighted]}
             numberOfLines={1}
@@ -232,12 +239,21 @@ export function AgentList({
 
       const serverId = agent.serverId;
       const agentId = agent.id;
+      const workspaceId = resolveWorkspaceIdByExecutionDirectory({
+        workspaces: useSessionStore.getState().sessions[serverId]?.workspaces?.values(),
+        workspaceDirectory: agent.cwd,
+      });
 
       onAgentSelect?.();
 
+      if (!workspaceId) {
+        router.navigate(buildHostAgentDetailRoute(serverId, agentId) as any);
+        return;
+      }
+
       const route = prepareWorkspaceTab({
         serverId,
-        workspaceId: agent.cwd,
+        workspaceId,
         target: { kind: "agent", agentId },
         pin: Boolean(agent.archivedAt),
       });
@@ -247,7 +263,18 @@ export function AgentList({
   );
 
   const handleAgentLongPress = useCallback((agent: AggregatedAgent) => {
-    setActionAgent(agent);
+    const isRunning = agent.status === "running" || agent.status === "initializing";
+    if (isRunning) {
+      setActionAgent(agent);
+      return;
+    }
+
+    const client = useSessionStore.getState().sessions[agent.serverId]?.client ?? null;
+    if (!client) {
+      setActionAgent(agent);
+      return;
+    }
+    void client.archiveAgent(agent.id);
   }, []);
 
   const handleCloseActionSheet = useCallback(() => {
@@ -351,7 +378,9 @@ export function AgentList({
           >
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>
-              {isActionDaemonUnavailable ? "Host offline" : "Archive this session?"}
+              {isActionDaemonUnavailable
+                ? "Host offline"
+                : "This agent is still running. Archiving it will stop the agent."}
             </Text>
             <View style={styles.sheetButtonRow}>
               <Pressable
@@ -434,6 +463,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     flexWrap: "wrap",
     gap: theme.spacing[2],
+  },
+  providerIconWrap: {
+    width: theme.iconSize.md,
+    alignItems: "center",
+    justifyContent: "center",
   },
   rowMetaRow: {
     flexDirection: "row",

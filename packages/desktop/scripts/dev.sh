@@ -25,7 +25,7 @@ echo "  Metro:     http://localhost:${EXPO_PORT}"
 echo "══════════════════════════════════════════════════════"
 
 # Launch Metro + Electron together, kill both on exit
-"$ROOT_DIR/node_modules/.bin/concurrently" \
+exec "$ROOT_DIR/node_modules/.bin/concurrently" \
   --kill-others \
   --names "metro,electron" \
   --prefix-colors "magenta,cyan" \

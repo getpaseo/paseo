@@ -4,12 +4,19 @@
       "npm ci",
       "npm run build:daemon",
       "cp \"$PASEO_SOURCE_CHECKOUT_PATH/packages/server/.env\" \"$PASEO_WORKTREE_PATH/packages/server/.env\""
-    ],
-    "terminals": [
-      {
-        "name": "dev",
-        "command": "npm run dev"
-      }
     ]
+  },
+  "scripts": {
+    "daemon": {
+      "type": "service",
+      "command": "PASEO_LISTEN=0.0.0.0:$PASEO_PORT npm run dev:server"
+    },
+    "app": {
+      "type": "service",
+      "command": "cd packages/app && BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON=\"${PASEO_SERVICE_DAEMON_URL#http://}\" npx expo start --port $PASEO_PORT"
+    },
+    "typecheck": {
+      "command": "npm run typecheck"
+    }
   }
 }

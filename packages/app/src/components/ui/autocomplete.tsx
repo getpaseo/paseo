@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { ScrollView, Text, View, Pressable, type LayoutChangeEvent } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { File, Folder } from "lucide-react-native";
-import { Theme } from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
 import { getAutocompleteScrollOffset } from "./autocomplete-utils";
 
 export interface AutocompleteOption {

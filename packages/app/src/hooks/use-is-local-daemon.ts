@@ -15,8 +15,7 @@ async function loadDesktopDaemonServerId(): Promise<DesktopDaemonServerIdResult>
   };
 }
 
-export function useIsLocalDaemon(serverId: string): boolean {
-  const normalizedServerId = serverId.trim();
+export function useLocalDaemonServerId(): string | null {
   const isDesktopApp = shouldUseDesktopDaemon();
 
   const query = useQuery({
@@ -32,9 +31,20 @@ export function useIsLocalDaemon(serverId: string): boolean {
     retry: false,
   });
 
-  if (!isDesktopApp || normalizedServerId.length === 0) {
+  if (!isDesktopApp) {
+    return null;
+  }
+
+  return query.data?.serverId ?? null;
+}
+
+export function useIsLocalDaemon(serverId: string): boolean {
+  const normalizedServerId = serverId.trim();
+  const localServerId = useLocalDaemonServerId();
+
+  if (localServerId === null || normalizedServerId.length === 0) {
     return false;
   }
 
-  return query.data?.serverId === normalizedServerId;
+  return localServerId === normalizedServerId;
 }

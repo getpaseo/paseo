@@ -54,6 +54,7 @@ npm run build --workspace=@getpaseo/relay
 $env:PASEO_CORS_ORIGINS = "*"
 
 # Configure the app to auto-connect to this daemon on localhost
+$env:APP_VARIANT = "development"
 $env:EXPO_PUBLIC_LOCAL_DAEMON = "localhost:6767"
 $env:BROWSER = "none"
 

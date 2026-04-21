@@ -6,6 +6,17 @@ export async function openNewAgentComposer(page: Page): Promise<void> {
   await gotoHome(page);
 }
 
+/**
+ * Wait for the sidebar to show at least one project row, indicating that the
+ * WebSocket connection is up and workspace hydration has completed.
+ */
+export async function waitForSidebarHydration(page: Page, timeout = 60_000): Promise<void> {
+  await page
+    .locator('[data-testid^="sidebar-project-row-"]')
+    .first()
+    .waitFor({ state: "visible", timeout });
+}
+
 export function workspaceLabelFromPath(value: string): string {
   const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = normalized.split("/").filter(Boolean);
@@ -35,6 +46,29 @@ function workspaceRowLocator(page: Page, serverId: string, workspacePath: string
   return page.locator(ids.join(",")).first();
 }
 
+export async function expectSidebarWorkspaceSelected(input: {
+  page: Page;
+  serverId: string;
+  workspaceId: string;
+  selected?: boolean;
+}): Promise<void> {
+  const row = workspaceRowLocator(input.page, input.serverId, input.workspaceId);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  const expected = input.selected === false ? "false" : "true";
+
+  const hasDataSelected = await row.getAttribute("data-selected");
+  if (hasDataSelected !== null) {
+    await expect(row).toHaveAttribute("data-selected", expected, {
+      timeout: 30_000,
+    });
+    return;
+  }
+
+  await expect(row).toHaveAttribute("aria-selected", expected, {
+    timeout: 30_000,
+  });
+}
+
 export async function switchWorkspaceViaSidebar(input: {
   page: Page;
   serverId: string;
@@ -50,12 +84,27 @@ export async function switchWorkspaceViaSidebar(input: {
   });
 }
 
+/**
+ * Wait for a workspace's sidebar row to appear, confirming the workspace
+ * descriptor has been hydrated into the session store.
+ */
+export async function waitForWorkspaceInSidebar(
+  page: Page,
+  input: { serverId: string; workspaceId: string },
+): Promise<void> {
+  const candidates = candidateWorkspaceIds(input.workspaceId);
+  const selector = candidates
+    .map((id) => `[data-testid="sidebar-workspace-row-${input.serverId}:${id}"]`)
+    .join(",");
+  await page.locator(selector).first().waitFor({ state: "visible", timeout: 60_000 });
+}
+
 export async function expectWorkspaceHeader(
   page: Page,
   input: { title: string; subtitle: string },
 ): Promise<void> {
-  const titleLocator = page.getByTestId("workspace-header-title");
-  const subtitleLocator = page.getByTestId("workspace-header-subtitle");
+  const titleLocator = page.getByTestId("workspace-header-title").filter({ visible: true });
+  const subtitleLocator = page.getByTestId("workspace-header-subtitle").filter({ visible: true });
 
   await expect(titleLocator.first()).toHaveText(input.title, {
     timeout: 30_000,

@@ -9,19 +9,23 @@ const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 
 export type SendBehavior = "interrupt" | "queue";
+export type ReleaseChannel = "stable" | "beta";
 
 const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
+const VALID_RELEASE_CHANNELS = new Set<string>(["stable", "beta"]);
 
 export interface AppSettings {
   theme: ThemeName | "auto";
   manageBuiltInDaemon: boolean;
   sendBehavior: SendBehavior;
+  releaseChannel: ReleaseChannel;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: "auto",
   manageBuiltInDaemon: true,
   sendBehavior: "interrupt",
+  releaseChannel: "stable",
 };
 
 export interface UseAppSettingsReturn {
@@ -85,6 +89,9 @@ export async function loadSettingsFromStorage(): Promise<AppSettings> {
       if (parsed.theme && !VALID_THEMES.has(parsed.theme)) {
         parsed.theme = DEFAULT_APP_SETTINGS.theme;
       }
+      if (parsed.releaseChannel && !VALID_RELEASE_CHANNELS.has(parsed.releaseChannel)) {
+        parsed.releaseChannel = DEFAULT_APP_SETTINGS.releaseChannel;
+      }
       return { ...DEFAULT_APP_SETTINGS, ...parsed };
     }
 
@@ -114,6 +121,9 @@ function pickAppSettingsFromLegacy(legacy: Record<string, unknown>): Partial<App
   }
   if (typeof legacy.manageBuiltInDaemon === "boolean") {
     result.manageBuiltInDaemon = legacy.manageBuiltInDaemon;
+  }
+  if (legacy.releaseChannel === "stable" || legacy.releaseChannel === "beta") {
+    result.releaseChannel = legacy.releaseChannel;
   }
   return result;
 }

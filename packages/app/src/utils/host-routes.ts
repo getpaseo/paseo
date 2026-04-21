@@ -1,6 +1,7 @@
 import { Buffer } from "buffer";
 
 type NullableString = string | null | undefined;
+const BASE64_WORKSPACE_ID_PREFIX = "b64_";
 
 function stripSearchAndHash(pathname: string): string {
   const hashIndex = pathname.indexOf("#");
@@ -87,19 +88,24 @@ function tryDecodeBase64UrlNoPadUtf8(input: string): string | null {
   return decoded;
 }
 
-function isPathLikeWorkspaceIdentity(value: string): boolean {
-  return value.includes("/") || value.includes("\\") || /^[A-Za-z]:[\\/]/.test(value);
+function normalizeWorkspaceId(value: string): string {
+  return value.trim();
 }
 
-function normalizeWorkspaceId(value: string): string {
-  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+function isUrlSafeWorkspaceId(value: string): boolean {
+  return /^[A-Za-z0-9._~-]+$/.test(value);
+}
+
+function isLegacyPathLikeWorkspaceValue(value: string): boolean {
+  return value.includes("/") || value.includes("\\") || /^[A-Za-z]:[\\/]/.test(value);
 }
 
 export type WorkspaceOpenIntent =
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "file"; path: string }
-  | { kind: "draft"; draftId: string };
+  | { kind: "draft"; draftId: string }
+  | { kind: "setup"; workspaceId: string };
 
 export function parseWorkspaceOpenIntent(
   value: string | null | undefined,
@@ -136,6 +142,13 @@ export function parseWorkspaceOpenIntent(
     }
     return { kind: "file", path: decodedPath };
   }
+  if (kind === "setup") {
+    const workspaceId = decodeWorkspaceIdFromPathSegment(payload);
+    if (!workspaceId) {
+      return null;
+    }
+    return { kind: "setup", workspaceId };
+  }
 
   return null;
 }
@@ -155,7 +168,11 @@ export function encodeWorkspaceIdForPathSegment(workspaceId: string): string {
   if (!normalized) {
     return "";
   }
-  return toBase64UrlNoPad(normalizeWorkspaceId(normalized));
+  const id = normalizeWorkspaceId(normalized);
+  if (isUrlSafeWorkspaceId(id)) {
+    return id;
+  }
+  return `${BASE64_WORKSPACE_ID_PREFIX}${toBase64UrlNoPad(id)}`;
 }
 
 export function decodeWorkspaceIdFromPathSegment(workspaceIdSegment: string): string | null {
@@ -164,26 +181,25 @@ export function decodeWorkspaceIdFromPathSegment(workspaceIdSegment: string): st
     return null;
   }
 
-  // Decode %2F etc first (legacy scheme), but keep the raw segment to decide if base64 applies.
   const decoded = trimNonEmpty(decodeSegment(normalizedSegment));
   if (!decoded) {
     return null;
   }
 
-  // Legacy: if it already looks like a path after decoding, keep it.
-  if (decoded.includes("/") || decoded.includes("\\")) {
-    return normalizeWorkspaceId(decoded);
+  if (decoded.startsWith(BASE64_WORKSPACE_ID_PREFIX)) {
+    const encodedPayload = decoded.slice(BASE64_WORKSPACE_ID_PREFIX.length);
+    const prefixedDecoded =
+      tryDecodeBase64UrlNoPadUtf8(encodedPayload) ?? decodeBase64UrlNoPadUtf8(encodedPayload);
+    return prefixedDecoded ? normalizeWorkspaceId(prefixedDecoded) : null;
   }
 
   const base64Decoded = tryDecodeBase64UrlNoPadUtf8(decoded);
-  if (base64Decoded) {
+  if (base64Decoded && isLegacyPathLikeWorkspaceValue(base64Decoded)) {
     return normalizeWorkspaceId(base64Decoded);
   }
 
-  // Some older links use non-canonical base64url (non-zero pad bits). Accept
-  // decoded values only when they clearly represent filesystem paths.
   const relaxedBase64Decoded = decodeBase64UrlNoPadUtf8(decoded);
-  if (relaxedBase64Decoded && isPathLikeWorkspaceIdentity(relaxedBase64Decoded)) {
+  if (relaxedBase64Decoded && isLegacyPathLikeWorkspaceValue(relaxedBase64Decoded)) {
     return normalizeWorkspaceId(relaxedBase64Decoded);
   }
 
@@ -281,6 +297,19 @@ export function buildHostWorkspaceRoute(serverId: string, workspaceId: string) {
   return `/h/${encodeSegment(normalizedServerId)}/workspace/${encodeSegment(encodedWorkspaceId)}` as const;
 }
 
+export function buildHostWorkspaceOpenRoute(
+  serverId: string,
+  workspaceId: string,
+  openIntent: string,
+) {
+  const base = buildHostWorkspaceRoute(serverId, workspaceId);
+  const normalizedOpenIntent = trimNonEmpty(openIntent);
+  if (base === "/" || !normalizedOpenIntent) {
+    return base;
+  }
+  return `${base}?open=${encodeURIComponent(normalizedOpenIntent)}` as const;
+}
+
 export function buildHostAgentDetailRoute(serverId: string, agentId: string, workspaceId?: string) {
   const normalizedWorkspaceId = trimNonEmpty(workspaceId);
   if (normalizedWorkspaceId) {
@@ -288,11 +317,11 @@ export function buildHostAgentDetailRoute(serverId: string, agentId: string, wor
     if (!normalizedAgentId) {
       return "/" as const;
     }
-    const base = buildHostWorkspaceRoute(serverId, normalizedWorkspaceId);
-    if (base === "/") {
-      return "/" as const;
-    }
-    return `${base}?open=${encodeURIComponent(`agent:${normalizedAgentId}`)}` as const;
+    return buildHostWorkspaceOpenRoute(
+      serverId,
+      normalizedWorkspaceId,
+      `agent:${normalizedAgentId}`,
+    );
   }
   const normalizedServerId = trimNonEmpty(serverId);
   const normalizedAgentId = trimNonEmpty(agentId);
@@ -326,12 +355,52 @@ export function buildHostOpenProjectRoute(serverId: string) {
   return `${base}/open-project` as const;
 }
 
-export function buildHostSettingsRoute(serverId: string) {
+export function buildHostNewWorkspaceRoute(
+  serverId: string,
+  sourceDirectory: string,
+  options?: { displayName?: string },
+) {
   const base = buildHostRootRoute(serverId);
   if (base === "/") {
     return "/" as const;
   }
-  return `${base}/settings` as const;
+  const params = new URLSearchParams();
+  params.set("dir", sourceDirectory);
+  if (options?.displayName) {
+    params.set("name", options.displayName);
+  }
+  return `${base}/new?${params.toString()}` as const;
+}
+
+export const SETTINGS_SECTION_SLUGS = [
+  "general",
+  "shortcuts",
+  "integrations",
+  "permissions",
+  "diagnostics",
+  "about",
+] as const;
+
+export type SettingsSectionSlug = (typeof SETTINGS_SECTION_SLUGS)[number];
+
+export function isSettingsSectionSlug(value: string): value is SettingsSectionSlug {
+  return (SETTINGS_SECTION_SLUGS as readonly string[]).includes(value);
+}
+
+export function buildSettingsRoute() {
+  return "/settings" as const;
+}
+
+export function buildSettingsSectionRoute(section: SettingsSectionSlug) {
+  return `/settings/${section}` as const;
+}
+
+export function buildSettingsHostRoute(serverId: string) {
+  const normalized = trimNonEmpty(serverId);
+  if (!normalized) {
+    throw new Error("buildSettingsHostRoute requires a non-empty serverId");
+  }
+  return `/settings/hosts/${encodeSegment(normalized)}` as const;
 }
 
 export function mapPathnameToServer(pathname: string, nextServerId: string) {
@@ -343,7 +412,7 @@ export function mapPathnameToServer(pathname: string, nextServerId: string) {
   const suffix = pathname.replace(/^\/h\/[^/]+\/?/, "");
   const base = buildHostRootRoute(normalized);
   if (suffix.startsWith("settings")) {
-    return `${base}/settings` as const;
+    return buildSettingsHostRoute(normalized);
   }
   if (suffix.startsWith("sessions")) {
     return `${base}/sessions` as const;

@@ -10,7 +10,6 @@ import {
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { GestureHandlerRootView, Gesture, GestureDetector } from "react-native-gesture-handler";
-import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { PortalProvider } from "@gorhom/portal";
 import { VoiceProvider } from "@/contexts/voice-context";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -62,8 +61,14 @@ import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout
 import { CommandCenter } from "@/components/command-center";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
+import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
+import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
+import { resolveActiveHost } from "@/utils/active-host";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
+import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import { queryClient } from "@/query/query-client";
+import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import {
   WEB_NOTIFICATION_CLICK_EVENT,
   type WebNotificationClickDetail,
@@ -79,8 +84,12 @@ import {
   parseServerIdFromPathname,
   parseHostAgentRouteFromPathname,
   parseWorkspaceOpenIntent,
+  decodeWorkspaceIdFromPathSegment,
 } from "@/utils/host-routes";
-import { syncNavigationActiveWorkspace } from "@/stores/navigation-active-workspace-store";
+import {
+  addBrowserActiveWorkspaceLocationListener,
+  syncNavigationActiveWorkspace,
+} from "@/stores/navigation-active-workspace-store";
 import { isWeb, isNative } from "@/constants/platform";
 
 polyfillCrypto();
@@ -385,9 +394,11 @@ function AppContainer({
   const { theme } = useUnistyles();
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
-  const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
-  const toggleFileExplorer = usePanelStore((state) => state.toggleFileExplorer);
-  const toggleBothSidebars = usePanelStore((state) => state.toggleBothSidebars);
+  const toggleMobileAgentList = usePanelStore((state) => state.toggleMobileAgentList);
+  const toggleDesktopAgentList = usePanelStore((state) => state.toggleDesktopAgentList);
+  const openDesktopAgentList = usePanelStore((state) => state.openDesktopAgentList);
+  const closeDesktopAgentList = usePanelStore((state) => state.closeDesktopAgentList);
+  const closeDesktopFileExplorer = usePanelStore((state) => state.closeDesktopFileExplorer);
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
   const agentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
@@ -401,6 +412,32 @@ function AppContainer({
 
   const isCompactLayout = useIsCompactFormFactor();
   const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
+  const pathname = usePathname();
+  const activeServerId = useMemo(
+    () => resolveActiveHost({ hosts: daemons, pathname })?.serverId ?? null,
+    [daemons, pathname],
+  );
+  const toggleAgentList = isCompactLayout ? toggleMobileAgentList : toggleDesktopAgentList;
+  const toggleDesktopSidebars = useCallback(() => {
+    const { desktop } = usePanelStore.getState();
+    toggleDesktopSidebarsWithCheckoutIntent({
+      isAgentListOpen: desktop.agentListOpen,
+      isFileExplorerOpen: desktop.fileExplorerOpen,
+      openAgentList: openDesktopAgentList,
+      closeAgentList: closeDesktopAgentList,
+      closeFileExplorer: closeDesktopFileExplorer,
+      toggleFocusedFileExplorer: () =>
+        keyboardActionDispatcher.dispatch({
+          id: "sidebar.toggle.right",
+          scope: "sidebar",
+        }),
+    });
+  }, [closeDesktopAgentList, closeDesktopFileExplorer, openDesktopAgentList]);
+  // TODO: stop matching pathname here as a branch. `chromeEnabled` should not
+  // conflate workspace/project-specific chrome (sidebar, mobile gesture) with
+  // global concerns like keyboard shortcuts. Split those out so settings (and
+  // other non-workspace routes) don't need a special-case to keep shortcuts alive.
+  const keyboardShortcutsEnabled = chromeEnabled || pathname.startsWith("/settings");
 
   useEffect(() => {
     const bp = UnistylesRuntime.breakpoint;
@@ -432,15 +469,15 @@ function AppContainer({
   }, [isCompactLayout, chromeEnabled, isFocusModeEnabled, agentListOpen, sidebarWidth]);
 
   useKeyboardShortcuts({
-    enabled: chromeEnabled,
+    enabled: keyboardShortcutsEnabled,
     isMobile: isCompactLayout,
     toggleAgentList,
-    selectedAgentId,
-    toggleFileExplorer,
-    toggleBothSidebars,
+    toggleBothSidebars: toggleDesktopSidebars,
     toggleFocusMode,
     cycleTheme,
   });
+
+  useActiveWorktreeNewAction();
 
   const containerStyle = useMemo(
     () => ({ flex: 1 as const, backgroundColor: theme.colors.surface0 }),
@@ -460,6 +497,11 @@ function AppContainer({
       <UpdateBanner />
       <CommandCenter />
       <ProjectPickerModal />
+      <WorkspaceShortcutTargetsSubscriber
+        enabled={keyboardShortcutsEnabled}
+        serverId={activeServerId}
+      />
+      <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
     </View>
   );
@@ -479,7 +521,7 @@ function MobileGestureWrapper({
   chromeEnabled: boolean;
 }) {
   const mobileView = usePanelStore((state) => state.mobileView);
-  const openAgentList = usePanelStore((state) => state.openAgentList);
+  const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const horizontalScroll = useHorizontalScrollOptional();
   const {
     translateX,
@@ -496,8 +538,8 @@ function MobileGestureWrapper({
 
   const handleGestureOpen = useCallback(() => {
     gestureAnimatingRef.current = true;
-    openAgentList();
-  }, [openAgentList, gestureAnimatingRef]);
+    showMobileAgentList();
+  }, [showMobileAgentList, gestureAnimatingRef]);
 
   const openGesture = useMemo(
     () =>
@@ -788,7 +830,6 @@ function FaviconStatusSync() {
 function RootStack() {
   const storeReady = useStoreReady();
   const { theme } = useUnistyles();
-
   return (
     <Stack
       screenOptions={{
@@ -801,23 +842,25 @@ function RootStack() {
     >
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
-        <Stack.Screen name="settings" />
+        <Stack.Screen name="settings/index" />
+        <Stack.Screen name="settings/[section]" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
-      <Stack.Screen
-        name="h/[serverId]/workspace/[workspaceId]"
-        getId={({ params }) => {
-          const serverId = getRouteParamValue(params?.serverId);
-          const workspaceId = getRouteParamValue(params?.workspaceId);
-          return serverId && workspaceId ? `${serverId}:${workspaceId}` : undefined;
-        }}
-      />
+      {/*
+        Do not add getId or dangerouslySingular back to the workspace route.
+        Expo Router maps dangerouslySingular to React Navigation getId, and
+        getId repeatedly breaks Android native-stack/Fabric by reordering an
+        already-mounted workspace screen. Keep workspace identity/retention
+        outside this route-level native-stack API.
+      */}
+      <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
       <Stack.Screen name="h/[serverId]/agent/[agentId]" options={{ gestureEnabled: false }} />
       <Stack.Screen name="h/[serverId]/index" />
       <Stack.Screen name="h/[serverId]/sessions" />
       <Stack.Screen name="h/[serverId]/open-project" />
       <Stack.Screen name="h/[serverId]/settings" />
       <Stack.Screen name="index" />
+      <Stack.Screen name="settings/hosts/[serverId]" />
     </Stack>
   );
 }
@@ -827,6 +870,7 @@ function NavigationActiveWorkspaceObserver() {
 
   useEffect(() => {
     syncNavigationActiveWorkspace(navigationRef);
+    const unsubscribeBrowserLocation = addBrowserActiveWorkspaceLocationListener();
     const unsubscribeState = navigationRef.addListener("state", () => {
       syncNavigationActiveWorkspace(navigationRef);
     });
@@ -834,6 +878,7 @@ function NavigationActiveWorkspaceObserver() {
       syncNavigationActiveWorkspace(navigationRef);
     });
     return () => {
+      unsubscribeBrowserLocation();
       unsubscribeState();
       unsubscribeReady();
     };
@@ -852,23 +897,21 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <KeyboardProvider>
             <QueryProvider>
-              <BottomSheetModalProvider>
-                <HostRuntimeBootstrapProvider>
-                  <PushNotificationRouter />
+              <HostRuntimeBootstrapProvider>
+                <PushNotificationRouter />
+                <ToastProvider>
                   <ProvidersWrapper>
                     <SidebarAnimationProvider>
                       <HorizontalScrollProvider>
-                        <ToastProvider>
-                          <OpenProjectListener />
-                          <AppWithSidebar>
-                            <RootStack />
-                          </AppWithSidebar>
-                        </ToastProvider>
+                        <OpenProjectListener />
+                        <AppWithSidebar>
+                          <RootStack />
+                        </AppWithSidebar>
                       </HorizontalScrollProvider>
                     </SidebarAnimationProvider>
                   </ProvidersWrapper>
-                </HostRuntimeBootstrapProvider>
-              </BottomSheetModalProvider>
+                </ToastProvider>
+              </HostRuntimeBootstrapProvider>
             </QueryProvider>
           </KeyboardProvider>
         </SafeAreaProvider>

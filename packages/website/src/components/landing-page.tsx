@@ -65,6 +65,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
           <div className="space-y-24">
             <MultiProviderSection />
             <SelfHostedSection />
+            <ServiceProxySection />
             <ShortcutsSection />
             <LocalVoiceSection />
             <CLISection />
@@ -608,6 +609,57 @@ function SelfHostedSection() {
       description="Run agents on your laptop, a VM, or a dev server. Control them from any device with a direct connection or an E2E encrypted relay."
     >
       <SelfHostedDiagram />
+    </FeatureSection>
+  );
+}
+
+function ServiceProxySection() {
+  const workspaces = [
+    { name: "fix-auth", url: "web.fix-auth.my-app.localhost" },
+    { name: "add-search", url: "web.add-search.my-app.localhost" },
+    { name: "upgrade-deps", url: "web.upgrade-deps.my-app.localhost" },
+  ];
+
+  return (
+    <FeatureSection
+      title="Forget about ports"
+      description="When agents work in parallel, they all run dev servers. Paseo gives each one a URL based on the branch name, no port conflicts, no guessing."
+    >
+      <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
+        <div className="px-5 py-4 space-y-3">
+          {/* Project */}
+          <div className="flex items-center gap-2.5">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="text-white/40"
+            >
+              <path d="M3 7V17C3 18.1046 3.89543 19 5 19H19C20.1046 19 21 18.1046 21 17V9C21 7.89543 20.1046 7 19 7H13L11 5H5C3.89543 5 3 5.89543 3 7Z" />
+            </svg>
+            <span className="text-sm font-medium text-white/60">my-app</span>
+          </div>
+
+          {/* Workspaces indented */}
+          <div className="pl-6 space-y-2">
+            {workspaces.map((ws) => (
+              <div key={ws.name} className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span className="text-sm text-white/80">{ws.name}</span>
+                  <span className="text-xs text-white/25 font-mono">npm run dev</span>
+                </div>
+                <span className="text-xs font-mono text-white/30">{ws.url}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </FeatureSection>
   );
 }

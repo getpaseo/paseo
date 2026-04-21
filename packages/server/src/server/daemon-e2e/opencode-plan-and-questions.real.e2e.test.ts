@@ -129,12 +129,15 @@ describe("daemon E2E (real opencode) - plan mode and clarifying questions", () =
         limit: 0,
         projection: "projected",
       });
+      const toolCalls = timeline.entries.filter((entry) => entry.item.type === "tool_call");
       const assistantText = timeline.entries
         .filter((entry) => entry.item.type === "assistant_message")
         .map((entry) => entry.item.text)
-        .join(" ");
+        .join(" ")
+        .trim();
 
-      expect(assistantText.toLowerCase()).toContain("plan");
+      expect(toolCalls).toHaveLength(0);
+      expect(assistantText.length).toBeGreaterThan(0);
     } finally {
       await client.close().catch(() => undefined);
       await daemon.close();

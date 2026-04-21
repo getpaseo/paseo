@@ -19,58 +19,66 @@ type RawWindowControlsPadding = {
 
 type WindowControlsPaddingRole = "sidebar" | "header" | "tabRow" | "explorerSidebar";
 
+// Module-level cache so hook remounts (e.g., on navigation) don't briefly
+// fall back to the default `false` while the async fullscreen check resolves.
+// Without this, in fullscreen the sidebar flashes with traffic-light padding
+// on first frame and then snaps to 0 once the async read completes.
+let cachedIsFullscreen = false;
+const fullscreenSubscribers = new Set<(value: boolean) => void>();
+let fullscreenSubscriptionStarted = false;
+
+function setCachedFullscreen(value: boolean) {
+  if (cachedIsFullscreen === value) return;
+  cachedIsFullscreen = value;
+  for (const sub of fullscreenSubscribers) {
+    sub(value);
+  }
+}
+
+function startFullscreenSubscription() {
+  if (fullscreenSubscriptionStarted) return;
+  if (isNative || !getIsElectronRuntime()) return;
+  fullscreenSubscriptionStarted = true;
+
+  void (async () => {
+    const win = getDesktopWindow();
+    if (!win) return;
+
+    if (typeof win.isFullscreen === "function") {
+      try {
+        setCachedFullscreen(await win.isFullscreen());
+      } catch (error) {
+        console.warn("[DesktopWindow] Failed to read fullscreen state", error);
+      }
+    }
+
+    if (typeof win.onResized !== "function") return;
+
+    try {
+      await win.onResized(async () => {
+        if (typeof win.isFullscreen !== "function") return;
+        try {
+          setCachedFullscreen(await win.isFullscreen());
+        } catch (error) {
+          console.warn("[DesktopWindow] Failed to read fullscreen state", error);
+        }
+      });
+    } catch (error) {
+      console.warn("[DesktopWindow] Failed to subscribe to resize", error);
+    }
+  })();
+}
+
 function useRawWindowControlsPadding(): RawWindowControlsPadding {
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(cachedIsFullscreen);
 
   useEffect(() => {
-    if (isNative || !getIsElectronRuntime()) return;
-
-    let disposed = false;
-    let cleanup: (() => void) | undefined;
-    let didCleanup = false;
-
-    function runCleanup() {
-      if (!cleanup || didCleanup) return;
-      didCleanup = true;
-      try {
-        void Promise.resolve(cleanup()).catch((error) => {
-          console.warn("[DesktopWindow] Failed to remove resize listener", error);
-        });
-      } catch (error) {
-        console.warn("[DesktopWindow] Failed to remove resize listener", error);
-      }
-    }
-
-    async function setup() {
-      const win = getDesktopWindow();
-      if (!win) return;
-
-      const fullscreen = typeof win.isFullscreen === "function" ? await win.isFullscreen() : false;
-      if (disposed) return;
-      setIsFullscreen(fullscreen);
-
-      if (typeof win.onResized !== "function") {
-        return;
-      }
-
-      const unlisten = await win.onResized(async () => {
-        if (disposed) return;
-        const fs = typeof win.isFullscreen === "function" ? await win.isFullscreen() : false;
-        if (disposed) return;
-        setIsFullscreen(fs);
-      });
-
-      cleanup = unlisten;
-      if (disposed) {
-        runCleanup();
-      }
-    }
-
-    void setup();
-
+    startFullscreenSubscription();
+    // Sync to any value that resolved between render and effect.
+    setIsFullscreen(cachedIsFullscreen);
+    fullscreenSubscribers.add(setIsFullscreen);
     return () => {
-      disposed = true;
-      runCleanup();
+      fullscreenSubscribers.delete(setIsFullscreen);
     };
   }, []);
 

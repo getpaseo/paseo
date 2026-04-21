@@ -51,7 +51,7 @@ export function HeaderToggleButton({
         onPress={(e) => {
           onPress(e);
         }}
-        style={[styles.button, style]}
+        style={[headerIconSlotStyle.slot, style]}
       >
         {typeof children === "function"
           ? (state: { pressed: boolean; hovered?: boolean }) =>
@@ -68,14 +68,17 @@ export function HeaderToggleButton({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  button: {
+export const headerIconSlotStyle = StyleSheet.create((theme) => ({
+  slot: {
     padding: {
       xs: theme.spacing[3],
       md: theme.spacing[2],
     },
     borderRadius: theme.borderRadius.lg,
   },
+}));
+
+const styles = StyleSheet.create((theme) => ({
   tooltipRow: {
     flexDirection: "row",
     alignItems: "center",

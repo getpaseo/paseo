@@ -61,6 +61,7 @@ import {
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -671,6 +672,10 @@ function buildOpenCodePromptParts(
       output.push({ type: "text", text: part.text });
       continue;
     }
+    if (part.type === "github_pr" || part.type === "github_issue") {
+      output.push({ type: "text", text: renderPromptAttachmentAsText(part) });
+      continue;
+    }
     attachmentOrdinal += 1;
     const normalized = toOpenCodeDataUrl(part.mimeType, part.data);
     output.push({
@@ -1101,7 +1106,7 @@ export class OpenCodeAgentClient implements AgentClient {
     if (command?.mode === "replace") {
       return await isCommandAvailable(command.argv[0]);
     }
-    return true;
+    return await isCommandAvailable("opencode");
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {

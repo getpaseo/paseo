@@ -6,7 +6,6 @@ import type {
 export interface SidebarProjectWorkspaceLinkRowModel {
   kind: "workspace_link";
   workspace: SidebarWorkspaceEntry;
-  selected: boolean;
   chevron: null;
   trailingAction: "new_worktree" | "none";
 }
@@ -28,23 +27,15 @@ export function isSidebarProjectFlattened(project: SidebarProjectEntry): boolean
 export function buildSidebarProjectRowModel(input: {
   project: SidebarProjectEntry;
   collapsed: boolean;
-  serverId?: string | null;
-  activeWorkspaceSelection?: { serverId: string; workspaceId: string } | null;
 }): SidebarProjectRowModel {
   const flattenedWorkspace = isSidebarProjectFlattened(input.project)
     ? (input.project.workspaces[0] ?? null)
     : null;
-  const selected =
-    flattenedWorkspace !== null &&
-    Boolean(input.serverId) &&
-    input.activeWorkspaceSelection?.serverId === input.serverId &&
-    input.activeWorkspaceSelection?.workspaceId === flattenedWorkspace.workspaceId;
 
   if (flattenedWorkspace) {
     return {
       kind: "workspace_link",
       workspace: flattenedWorkspace,
-      selected,
       chevron: null,
       trailingAction: input.project.projectKind === "git" ? "new_worktree" : "none",
     };

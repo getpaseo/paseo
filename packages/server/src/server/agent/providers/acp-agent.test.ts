@@ -8,7 +8,7 @@ import {
   deriveModesFromACP,
   mapACPUsage,
 } from "./acp-agent.js";
-import { transformPiModels, transformPiSessionResponse, wrapPiSession } from "./pi-acp-agent.js";
+import { transformPiModels } from "./pi-direct-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 function createSession(): ACPAgentSession {
@@ -246,7 +246,7 @@ describe("ACPAgentClient modelTransformer", () => {
     const client = new TestACPAgentClient({
       provider: "pi",
       logger: createTestLogger(),
-      defaultCommand: ["pi-acp"],
+      defaultCommand: ["test-acp"],
       modelTransformer: transformPiModels,
     });
 
@@ -270,23 +270,10 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
       const response: SessionStateResponse = {
         sessionId: "session-1",
         modes: {
-          availableModes: [
-            { id: "off", name: "Thinking: Off", description: "No extra reasoning" },
-            { id: "medium", name: "Thinking: Medium", description: "Balanced reasoning" },
-            { id: "high", name: "Thinking: High", description: "Deeper reasoning" },
-          ],
-          currentModeId: "medium",
+          availableModes: [{ id: "raw", name: "Raw", description: "Before transform" }],
+          currentModeId: "raw",
         },
-        models: {
-          availableModels: [
-            {
-              modelId: "openrouter/openai/gpt-4.1-mini",
-              name: "openrouter/openai/gpt-4.1-mini",
-              description: null,
-            },
-          ],
-          currentModelId: "openrouter/openai/gpt-4.1-mini",
-        },
+        models: null,
         configOptions: [],
       };
 
@@ -302,48 +289,26 @@ describe("ACPAgentClient sessionResponseTransformer", () => {
     protected override async closeProbe(): Promise<void> {}
   }
 
-  test("remaps Pi thinking modes into thinking options for list probes", async () => {
+  test("applies sessionResponseTransformer before deriving list probe modes", async () => {
     const client = new TestACPAgentClient({
-      provider: "pi",
+      provider: "claude-acp",
       logger: createTestLogger(),
-      defaultCommand: ["pi-acp"],
+      defaultCommand: ["claude", "--acp"],
       defaultModes: [],
-      modelTransformer: transformPiModels,
-      sessionResponseTransformer: transformPiSessionResponse,
+      sessionResponseTransformer: (response) => ({
+        ...response,
+        modes: {
+          availableModes: [{ id: "review", name: "Review", description: "After transform" }],
+          currentModeId: "review",
+        },
+      }),
     });
 
-    await expect(client.listModes()).resolves.toEqual([]);
-    await expect(client.listModels()).resolves.toEqual([
+    await expect(client.listModes()).resolves.toEqual([
       {
-        provider: "pi",
-        id: "openrouter/openai/gpt-4.1-mini",
-        label: "gpt-4.1-mini",
-        description: "openrouter/openai/gpt-4.1-mini",
-        isDefault: true,
-        thinkingOptions: [
-          {
-            id: "off",
-            label: "Off",
-            description: "No extra reasoning",
-            isDefault: false,
-            metadata: undefined,
-          },
-          {
-            id: "medium",
-            label: "Medium",
-            description: "Balanced reasoning",
-            isDefault: true,
-            metadata: undefined,
-          },
-          {
-            id: "high",
-            label: "High",
-            description: "Deeper reasoning",
-            isDefault: false,
-            metadata: undefined,
-          },
-        ],
-        defaultThinkingOptionId: "medium",
+        id: "review",
+        label: "Review",
+        description: "After transform",
       },
     ]);
   });
@@ -384,7 +349,7 @@ describe("ACPAgentClient listModes", () => {
     const client = new TestACPAgentClient({
       provider: "pi",
       logger: createTestLogger(),
-      defaultCommand: ["pi-acp"],
+      defaultCommand: ["test-acp"],
       defaultModes: [],
     });
 
@@ -456,21 +421,19 @@ describe("ACPAgentSession slash commands", () => {
   test("waits for async available_commands_update when enabled", async () => {
     const session = new ACPAgentSession(
       {
-        provider: "pi",
+        provider: "claude-acp",
         cwd: "/tmp/paseo-acp-test",
       },
       {
-        provider: "pi",
+        provider: "claude-acp",
         logger: createTestLogger(),
-        defaultCommand: ["pi-acp"],
+        defaultCommand: ["claude", "--acp"],
         defaultModes: [],
-        modelTransformer: transformPiModels,
-        sessionResponseTransformer: transformPiSessionResponse,
         capabilities: {
           supportsStreaming: true,
           supportsSessionPersistence: true,
           supportsDynamicModes: true,
-          supportsMcpServers: false,
+          supportsMcpServers: true,
           supportsReasoningStream: true,
           supportsToolInvocations: true,
         },
@@ -524,158 +487,6 @@ describe("ACPAgentSession slash commands", () => {
 });
 
 describe("ACPAgentSession", () => {
-  test("applies sessionResponseTransformer before deriving modes and thinking state", () => {
-    const session = new ACPAgentSession(
-      {
-        provider: "pi",
-        cwd: "/tmp/paseo-acp-test",
-      },
-      {
-        provider: "pi",
-        logger: createTestLogger(),
-        defaultCommand: ["pi-acp"],
-        defaultModes: [],
-        modelTransformer: transformPiModels,
-        sessionResponseTransformer: transformPiSessionResponse,
-        capabilities: {
-          supportsStreaming: true,
-          supportsSessionPersistence: true,
-          supportsDynamicModes: true,
-          supportsMcpServers: false,
-          supportsReasoningStream: true,
-          supportsToolInvocations: true,
-        },
-      },
-    );
-
-    (session as any).applySessionState({
-      sessionId: "session-1",
-      modes: {
-        availableModes: [
-          { id: "low", name: "Thinking: Low", description: "Faster" },
-          { id: "medium", name: "Thinking: Medium", description: "Balanced" },
-        ],
-        currentModeId: "medium",
-      },
-      models: {
-        availableModels: [
-          {
-            modelId: "openrouter/openai/gpt-4.1-mini",
-            name: "openrouter/openai/gpt-4.1-mini",
-            description: null,
-          },
-        ],
-        currentModelId: "openrouter/openai/gpt-4.1-mini",
-      },
-      configOptions: [],
-    } satisfies SessionStateResponse);
-
-    expect((session as any).availableModes).toEqual([]);
-    expect((session as any).thinkingOptionId).toBe("medium");
-    expect((session as any).availableModels).toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-4.1-mini",
-        label: "gpt-4.1-mini",
-        description: "openrouter/openai/gpt-4.1-mini",
-        isDefault: true,
-        thinkingOptions: [
-          {
-            id: "low",
-            label: "Low",
-            description: "Faster",
-            isDefault: false,
-            metadata: undefined,
-          },
-          {
-            id: "medium",
-            label: "Medium",
-            description: "Balanced",
-            isDefault: true,
-            metadata: undefined,
-          },
-        ],
-        defaultThinkingOptionId: "medium",
-      },
-    ]);
-  });
-
-  test("Pi session wrapper hides synthetic modes and exposes them as thinking", async () => {
-    const wrapped = wrapPiSession(
-      {
-        provider: "pi",
-        id: "session-1",
-        capabilities: {
-          supportsStreaming: true,
-          supportsSessionPersistence: true,
-          supportsDynamicModes: true,
-          supportsMcpServers: false,
-          supportsReasoningStream: true,
-          supportsToolInvocations: true,
-        },
-        features: [
-          {
-            type: "select",
-            id: "thought_level",
-            label: "Thinking",
-            value: "medium",
-            options: [
-              { id: "low", label: "Low" },
-              { id: "medium", label: "Medium" },
-            ],
-          },
-        ],
-        run: vi.fn(),
-        startTurn: vi.fn(),
-        subscribe: vi.fn(() => () => {}),
-        streamHistory: async function* () {},
-        getRuntimeInfo: vi.fn(async () => ({
-          provider: "pi",
-          sessionId: "session-1",
-          model: "gpt-4.1-mini",
-          thinkingOptionId: null,
-          modeId: "xhigh",
-        })),
-        getAvailableModes: vi.fn(async () => [{ id: "xhigh", label: "xhigh" }]),
-        getCurrentMode: vi.fn(async () => "xhigh"),
-        setMode: vi.fn(),
-        getPendingPermissions: vi.fn(() => []),
-        respondToPermission: vi.fn(),
-        describePersistence: vi.fn(() => null),
-        interrupt: vi.fn(),
-        close: vi.fn(),
-        setThinkingOption: vi.fn(),
-      },
-      {
-        provider: "pi",
-        cwd: "/tmp/paseo-acp-test",
-        thinkingOptionId: "medium",
-      },
-    );
-
-    await expect(wrapped.getAvailableModes()).resolves.toEqual([]);
-    await expect(wrapped.getCurrentMode()).resolves.toBeNull();
-    await expect(wrapped.getRuntimeInfo()).resolves.toEqual({
-      provider: "pi",
-      sessionId: "session-1",
-      model: "gpt-4.1-mini",
-      thinkingOptionId: "xhigh",
-      modeId: null,
-    });
-    expect(wrapped.features).toEqual([
-      {
-        type: "select",
-        id: "thought_level",
-        label: "Thinking",
-        value: "xhigh",
-        options: [
-          { id: "low", label: "Low" },
-          { id: "medium", label: "Medium" },
-        ],
-      },
-    ]);
-  });
-
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {
     const session = createSession();
     const events: Array<{ type: string; item?: { type: string; text?: string } }> = [];
@@ -818,56 +629,5 @@ describe("ACPAgentSession", () => {
       error: "prompt failed",
     });
     expect((session as any).activeForegroundTurnId).toBeNull();
-  });
-
-  test("auto-approves Copilot ACP permissions in autopilot mode without emitting prompt events", async () => {
-    const session = new ACPAgentSession(
-      {
-        provider: "copilot",
-        cwd: "/tmp/paseo-acp-test",
-        modeId: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
-      },
-      {
-        provider: "copilot",
-        logger: createTestLogger(),
-        defaultCommand: ["copilot", "--acp"],
-        defaultModes: [],
-        capabilities: {
-          supportsStreaming: true,
-          supportsSessionPersistence: true,
-          supportsDynamicModes: true,
-          supportsMcpServers: true,
-          supportsReasoningStream: true,
-          supportsToolInvocations: true,
-        },
-      },
-    );
-
-    const events: Array<{ type: string }> = [];
-    session.subscribe((event) => {
-      events.push(event as { type: string });
-    });
-
-    const response = await session.requestPermission({
-      toolCall: {
-        toolCallId: "tool-1",
-        title: "Edit file",
-        kind: "edit",
-        status: "pending",
-      } as any,
-      options: [
-        { optionId: "allow-once", name: "Allow Once", kind: "allow_once" },
-        { optionId: "reject-once", name: "Reject Once", kind: "reject_once" },
-      ],
-    } as any);
-
-    expect(response).toEqual({
-      outcome: {
-        outcome: "selected",
-        optionId: "allow-once",
-      },
-    });
-    expect(session.getPendingPermissions()).toEqual([]);
-    expect(events.find((event) => event.type === "permission_requested")).toBeUndefined();
   });
 });

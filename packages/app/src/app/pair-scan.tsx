@@ -5,34 +5,18 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { BarcodeScanningResult } from "expo-camera";
-import { useHosts, useHostMutations } from "@/runtime/host-runtime";
+import { useHostMutations } from "@/runtime/host-runtime";
 import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { ConnectionOfferSchema } from "@server/shared/connection-offer";
-import { buildHostRootRoute, buildHostSettingsRoute } from "@/utils/host-routes";
+import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { isWeb } from "@/constants/platform";
+import { BackHeader } from "@/components/headers/back-header";
 
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
-  },
-  header: {
-    paddingHorizontal: theme.spacing[6],
-    paddingBottom: theme.spacing[4],
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  headerTitle: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  headerButtonText: {
-    color: theme.colors.palette.blue[400],
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
   },
   body: {
     flex: 1,
@@ -140,63 +124,32 @@ export default function PairScanScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
     source?: string;
-    sourceServerId?: string;
-    targetServerId?: string;
   }>();
   const source = typeof params.source === "string" ? params.source : "settings";
-  const sourceServerId = typeof params.sourceServerId === "string" ? params.sourceServerId : null;
-  const targetServerId = typeof params.targetServerId === "string" ? params.targetServerId : null;
-  const daemons = useHosts();
   const { upsertConnectionFromOfferUrl: upsertDaemonFromOfferUrl } = useHostMutations();
 
   const [permission, requestPermission] = useCameraPermissions();
   const [isPairing, setIsPairing] = useState(false);
   const lastScannedRef = useRef<string | null>(null);
 
-  const returnToSource = useCallback(
+  const navigateToPairedHost = useCallback(
     (serverId: string) => {
       if (source === "onboarding") {
         router.replace(buildHostRootRoute(serverId));
         return;
       }
-      if (source === "editHost" && targetServerId) {
-        const settingsServerId = sourceServerId ?? targetServerId;
-        router.replace({
-          pathname: buildHostSettingsRoute(settingsServerId),
-          params: { editHost: targetServerId },
-        } as any);
-        return;
-      }
-      // settings (default): return to previous screen
-      try {
-        router.back();
-      } catch {
-        const settingsServerId = sourceServerId ?? serverId;
-        router.replace(buildHostSettingsRoute(settingsServerId));
-      }
+      router.replace(buildSettingsHostRoute(serverId));
     },
-    [router, source, sourceServerId, targetServerId],
+    [router, source],
   );
 
   const closeToSource = useCallback(() => {
-    if (source === "editHost" && targetServerId) {
-      const settingsServerId = sourceServerId ?? targetServerId;
-      router.replace({
-        pathname: buildHostSettingsRoute(settingsServerId),
-        params: { editHost: targetServerId },
-      } as any);
-      return;
-    }
     try {
       router.back();
     } catch {
-      if (sourceServerId) {
-        router.replace(buildHostSettingsRoute(sourceServerId));
-        return;
-      }
       router.replace("/" as any);
     }
-  }, [router, source, sourceServerId, targetServerId]);
+  }, [router]);
 
   useEffect(() => {
     if (isWeb) return;
@@ -220,15 +173,6 @@ export default function PairScanScreen() {
         const offerPayload = decodeOfferFragmentPayload(encoded);
         const offer = ConnectionOfferSchema.parse(offerPayload);
 
-        if (targetServerId && offer.serverId !== targetServerId) {
-          lastScannedRef.current = null;
-          Alert.alert(
-            "Wrong daemon",
-            `That QR code belongs to ${offer.serverId}, not ${targetServerId}.`,
-          );
-          return;
-        }
-
         const { client, hostname } = await connectToDaemon(
           {
             id: "probe",
@@ -242,7 +186,7 @@ export default function PairScanScreen() {
 
         const profile = await upsertDaemonFromOfferUrl(offerUrl, hostname ?? undefined);
 
-        returnToSource(profile.serverId);
+        navigateToPairedHost(profile.serverId);
       } catch (error) {
         lastScannedRef.current = null;
         const message = error instanceof Error ? error.message : "Unable to pair host";
@@ -251,18 +195,13 @@ export default function PairScanScreen() {
         setIsPairing(false);
       }
     },
-    [daemons, isPairing, returnToSource, targetServerId, upsertDaemonFromOfferUrl],
+    [isPairing, navigateToPairedHost, upsertDaemonFromOfferUrl],
   );
 
   if (isWeb) {
     return (
       <View style={styles.container}>
-        <View style={[styles.header, { paddingTop: insets.top + theme.spacing[2] }]}>
-          <Text style={styles.headerTitle}>Scan QR</Text>
-          <Pressable onPress={() => router.back()}>
-            <Text style={styles.headerButtonText}>Close</Text>
-          </Pressable>
-        </View>
+        <BackHeader title="Scan QR" onBack={() => router.back()} />
         <View style={[styles.body, { paddingBottom: insets.bottom + theme.spacing[6] }]}>
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>Not available on web</Text>
@@ -282,12 +221,7 @@ export default function PairScanScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + theme.spacing[2] }]}>
-        <Text style={styles.headerTitle}>Scan QR</Text>
-        <Pressable onPress={closeToSource}>
-          <Text style={styles.headerButtonText}>Close</Text>
-        </Pressable>
-      </View>
+      <BackHeader title="Scan QR" onBack={closeToSource} />
 
       <View style={[styles.body, { paddingBottom: insets.bottom + theme.spacing[6] }]}>
         {!granted ? (

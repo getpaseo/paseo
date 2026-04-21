@@ -20,6 +20,8 @@ export type AppUpdateInstallResult = {
   message: string;
 };
 
+export type AppReleaseChannel = "stable" | "beta";
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -28,18 +30,29 @@ let cachedUpdateInfo: UpdateInfo | null = null;
 let downloadedUpdateVersion: string | null = null;
 let downloading = false;
 let autoUpdaterConfigured = false;
+let configuredReleaseChannel: AppReleaseChannel | null = null;
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
-function configureAutoUpdater(): void {
+function configureAutoUpdater(releaseChannel: AppReleaseChannel): void {
   // Download updates in the background and only prompt once they are ready to install.
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
   // Suppress built-in dialogs; the renderer handles UI.
   autoUpdater.autoRunAppAfterInstall = true;
+  autoUpdater.allowPrerelease = releaseChannel === "beta";
+  autoUpdater.channel = releaseChannel === "beta" ? "beta" : "latest";
+  autoUpdater.allowDowngrade = false;
+
+  if (configuredReleaseChannel !== releaseChannel) {
+    cachedUpdateInfo = null;
+    downloadedUpdateVersion = null;
+    downloading = false;
+    configuredReleaseChannel = releaseChannel;
+  }
 
   if (autoUpdaterConfigured) {
     return;
@@ -109,7 +122,13 @@ function scheduleQuitAndInstall(onBeforeQuit?: () => Promise<void>): void {
 // Public API
 // ---------------------------------------------------------------------------
 
-export async function checkForAppUpdate(currentVersion: string): Promise<AppUpdateCheckResult> {
+export async function checkForAppUpdate({
+  currentVersion,
+  releaseChannel,
+}: {
+  currentVersion: string;
+  releaseChannel: AppReleaseChannel;
+}): Promise<AppUpdateCheckResult> {
   if (!app.isPackaged) {
     return buildCheckResult({
       currentVersion,
@@ -118,7 +137,7 @@ export async function checkForAppUpdate(currentVersion: string): Promise<AppUpda
     });
   }
 
-  configureAutoUpdater();
+  configureAutoUpdater(releaseChannel);
 
   const cachedVersion = cachedUpdateInfo?.version ?? null;
   if (cachedVersion && cachedVersion !== currentVersion) {
@@ -176,7 +195,13 @@ export async function checkForAppUpdate(currentVersion: string): Promise<AppUpda
 }
 
 export async function downloadAndInstallUpdate(
-  currentVersion: string,
+  {
+    currentVersion,
+    releaseChannel,
+  }: {
+    currentVersion: string;
+    releaseChannel: AppReleaseChannel;
+  },
   onBeforeQuit?: () => Promise<void>,
 ): Promise<AppUpdateInstallResult> {
   if (!app.isPackaged) {
@@ -195,7 +220,7 @@ export async function downloadAndInstallUpdate(
     };
   }
 
-  configureAutoUpdater();
+  configureAutoUpdater(releaseChannel);
 
   const readyVersion = cachedUpdateInfo.version;
   if (isReadyToInstallVersion(readyVersion)) {

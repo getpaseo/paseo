@@ -6,8 +6,6 @@ import type {
   BottomAnchorLocalRequest,
   BottomAnchorRouteRequest,
 } from "./use-bottom-anchor-controller";
-import { createNativeStreamStrategy } from "./stream-strategy-native";
-import { createWebStreamStrategy } from "./stream-strategy-web";
 
 type EdgeSlot = "header" | "footer";
 type NeighborRelation = "above" | "below";
@@ -181,17 +179,6 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
     shouldAnimateManualScrollToBottom: () => config.animateManualScrollToBottom,
     shouldUseVirtualizedList: () => config.useVirtualizedList,
   };
-}
-
-export function resolveStreamRenderStrategy(
-  input: ResolveStreamRenderStrategyInput,
-): StreamStrategy {
-  if (input.platform === "web") {
-    return createWebStreamStrategy({
-      isMobileBreakpoint: input.isMobileBreakpoint,
-    });
-  }
-  return createNativeStreamStrategy();
 }
 
 export function resolveBottomAnchorTransportBehavior(input: {
