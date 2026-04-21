@@ -118,6 +118,25 @@ const FeatureVoiceModeSchema = z
   })
   .strict();
 
+const WeChatChannelSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    autoStart: z.boolean().optional(),
+    provider: z.string().min(1).optional(),
+    cwd: z.string().min(1).optional(),
+    modeId: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    systemPrompt: z.string().min(1).optional(),
+    approvalPolicy: z.string().min(1).optional(),
+    sandboxMode: z.string().min(1).optional(),
+    networkAccess: z.boolean().optional(),
+    webSearch: z.boolean().optional(),
+    qrApiBaseUrl: z.string().min(1).optional(),
+    apiBaseUrl: z.string().min(1).optional(),
+    pollTimeoutMs: z.number().int().positive().optional(),
+  })
+  .strict();
+
 const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi"] as const;
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
 
@@ -267,6 +286,12 @@ export const PersistedConfigSchema = z
       .optional(),
 
     providers: ProvidersSchema.optional(),
+    channels: z
+      .object({
+        wechat: WeChatChannelSchema.optional(),
+      })
+      .strict()
+      .optional(),
     agents: z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),

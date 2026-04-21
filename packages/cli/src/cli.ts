@@ -9,6 +9,8 @@ import { createProviderCommand } from "./commands/provider/index.js";
 import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
 import { createTerminalCommand } from "./commands/terminal/index.js";
+import { addWeChatLoginOptions, createWeChatCommand } from "./commands/wechat/index.js";
+import { runWeChatLoginCommand } from "./commands/wechat/login.js";
 import { createWorktreeCommand } from "./commands/worktree/index.js";
 import { startCommand as daemonStartCommand } from "./commands/daemon/start.js";
 import { runStatusCommand as runDaemonStatusCommand } from "./commands/daemon/status.js";
@@ -172,6 +174,26 @@ export function createCli(): Command {
 
   // Speech model commands
   program.addCommand(createSpeechCommand());
+
+  // WeChat direct channel commands
+  program.addCommand(createWeChatCommand());
+  addWeChatLoginOptions(
+    program
+      .command("wechat-login")
+      .description('Show a WeChat QR code in the terminal (alias for "paseo wechat login")'),
+  ).action((options, command) => {
+    const commandWithGlobals = command as Command & {
+      optsWithGlobals?: () => Record<string, unknown>;
+    };
+    const mergedOptions =
+      typeof commandWithGlobals.optsWithGlobals === "function"
+        ? {
+            ...commandWithGlobals.optsWithGlobals(),
+            ...options,
+          }
+        : options;
+    return runWeChatLoginCommand(mergedOptions, command);
+  });
 
   // Worktree commands
   program.addCommand(createWorktreeCommand());

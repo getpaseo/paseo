@@ -11,6 +11,7 @@ import {
 } from "../bootstrap.js";
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
+import type { PaseoWeChatConfig } from "../wechat/types.js";
 
 type TestPaseoDaemonOptions = {
   downloadTokenTtlMs?: number;
@@ -29,6 +30,7 @@ type TestPaseoDaemonOptions = {
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
+  wechat?: PaseoWeChatConfig;
 };
 
 export type TestPaseoDaemon = {
@@ -101,6 +103,7 @@ export async function createTestPaseoDaemon(
       voiceLlmModel: options.voiceLlmModel ?? null,
       dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
       downloadTokenTtlMs: options.downloadTokenTtlMs,
+      wechat: options.wechat,
     };
 
     const logger = options.logger ?? pino({ level: "silent" });

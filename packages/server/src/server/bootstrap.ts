@@ -132,6 +132,8 @@ import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
+import { PaseoWeChatService } from "./wechat/service.js";
+import type { PaseoWeChatConfig } from "./wechat/types.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -196,6 +198,7 @@ export type PaseoDaemonConfig = {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
+  wechat?: PaseoWeChatConfig;
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
 };
 
@@ -433,6 +436,15 @@ export async function createPaseoDaemon(
       registry: agentStorage,
       logger,
     });
+    const wechatService = config.wechat
+      ? new PaseoWeChatService({
+          paseoHome: config.paseoHome,
+          config: config.wechat,
+          agentManager,
+          agentStorage,
+          logger,
+        })
+      : null;
     const providerRegistry = buildProviderRegistry(logger, {
       runtimeSettings: config.agentProviderSettings,
       providerOverrides: config.providerOverrides,
@@ -458,6 +470,15 @@ export async function createPaseoDaemon(
     logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
     await chatService.initialize();
     logger.info({ elapsed: elapsed() }, "Chat service initialized");
+    await wechatService?.initialize();
+    if (wechatService) {
+      app.get("/api/wechat/accounts", wechatService.listAccountsHandler());
+      app.get("/api/wechat/sessions", wechatService.listSessionsHandler());
+      app.post("/api/wechat/login/start", wechatService.startLoginHandler());
+      app.post("/api/wechat/login/wait", wechatService.waitLoginHandler());
+      logger.info("WeChat HTTP endpoints mounted on main app");
+      logger.info({ elapsed: elapsed() }, "WeChat service initialized");
+    }
     const checkoutDiffManager = new CheckoutDiffManager({
       logger,
       paseoHome: config.paseoHome,
@@ -789,10 +810,12 @@ export async function createPaseoDaemon(
       // model loading doesn't block the server from accepting connections.
       speechService.start();
       scriptHealthMonitor.start();
+      await wechatService?.start();
     };
 
     const stop = async () => {
       scriptHealthMonitor.stop();
+      await wechatService?.stop().catch(() => undefined);
       await closeAllAgents(logger, agentManager);
       await agentManager.flush().catch(() => undefined);
       detachAgentStoragePersistence();
