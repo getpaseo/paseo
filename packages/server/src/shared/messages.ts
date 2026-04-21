@@ -1780,6 +1780,132 @@ export const BrowserCommandResultSchema = z.object({
   error: z.string().optional(),
 });
 
+// ─── Library sync (Skills/MCP marketplace, PR7) ────────────────────────────
+// Additive only. Old daemons just ignore this message; old clients never send
+// it. All inner fields are optional or have transformed defaults so a 6-month-
+// old client/daemon pair keeps parsing across both directions.
+
+const LibrarySyncTargetSchema = z.enum([
+  "claude-code",
+  "codex",
+  "opencode",
+  "cursor",
+  "amp",
+  "gemini",
+  "qwen",
+  "copilot",
+  "droid",
+  "hermes",
+  "crush",
+  "auggie",
+  "goose",
+  "kimi",
+  "kilocode",
+  "kiro",
+  "rovodev",
+  "cline",
+  "continue",
+  "codebuff",
+  "vibe",
+  "pi",
+  "autohand",
+  "forge",
+]);
+
+const LibrarySyncMcpEntrySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  payload: z.discriminatedUnion("transport", [
+    z.object({
+      transport: z.literal("stdio"),
+      command: z.string(),
+      args: z.array(z.string()).optional(),
+      env: z.record(z.string()).optional(),
+    }),
+    z.object({
+      transport: z.enum(["http", "sse"]),
+      url: z.string(),
+      headers: z.record(z.string()).optional(),
+      env: z.record(z.string()).optional(),
+    }),
+  ]),
+  syncTargets: z.array(LibrarySyncTargetSchema).default([]),
+});
+
+const LibrarySyncSkillEntrySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  displayName: z.string().optional(),
+  description: z.string().optional(),
+  payload: z
+    .object({
+      instructionsInline: z.string().optional(),
+      instructionsUrl: z.string().optional(),
+      examplePrompt: z.string().optional(),
+    })
+    .passthrough(),
+  syncTargets: z.array(LibrarySyncTargetSchema).default([]),
+});
+
+export const LibrarySyncRequestSchema = z.object({
+  type: z.literal("library_sync_request"),
+  requestId: z.string(),
+  mcps: z.array(LibrarySyncMcpEntrySchema).default([]),
+  skills: z.array(LibrarySyncSkillEntrySchema).default([]),
+});
+
+export const LibrarySyncResponseSchema = z.object({
+  type: z.literal("library_sync_response"),
+  requestId: z.string(),
+  ok: z.boolean(),
+  error: z.string().optional(),
+  // Per-target counts. Open-ended record so adding agents in a later daemon
+  // release doesn't break old clients (old schema required 3 fixed keys).
+  counts: z
+    .record(z.object({ mcp: z.number(), skill: z.number() }))
+    .optional(),
+  /** Agent ids currently running — surface for the "restart agents?" prompt. */
+  runningAgentIds: z.array(z.string()).default([]),
+});
+
+export type LibrarySyncRequest = z.infer<typeof LibrarySyncRequestSchema>;
+export type LibrarySyncResponse = z.infer<typeof LibrarySyncResponseSchema>;
+
+// Lists the agent integrations and which ones are installed on the daemon
+// host. Used by the UI to show only tools the user actually has on PATH.
+export const LibraryAgentsRequestSchema = z.object({
+  type: z.literal("library_agents_request"),
+  requestId: z.string(),
+});
+
+export const LibraryAgentsResponseSchema = z.object({
+  type: z.literal("library_agents_response"),
+  requestId: z.string(),
+  /**
+   * Every integration the daemon knows about (id + label + flags). Old
+   * clients can safely ignore unknown ids.
+   */
+  agents: z
+    .array(
+      z
+        .object({
+          id: z.string(),
+          label: z.string(),
+          bin: z.string(),
+          installHint: z.string().optional(),
+          supportsMcp: z.boolean(),
+          supportsSkills: z.boolean(),
+        })
+        .passthrough(),
+    )
+    .default([]),
+  /** Subset of `agents[*].id` the daemon found on PATH. */
+  installedIds: z.array(z.string()).default([]),
+});
+
+export type LibraryAgentsRequest = z.infer<typeof LibraryAgentsRequestSchema>;
+export type LibraryAgentsResponse = z.infer<typeof LibraryAgentsResponseSchema>;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const _sessionInboundRaw: any = z.union([
   VoiceAudioChunkMessageSchema,
@@ -1901,6 +2027,9 @@ const _sessionInboundRaw: any = z.union([
   BrowserGoForwardRequestSchema,
   BrowserCloseRequestSchema,
   BrowserResizeRequestSchema,
+  // Library sync (additive, optional for old clients)
+  LibrarySyncRequestSchema,
+  LibraryAgentsRequestSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 115-member union
 export type SessionInboundMessage =
@@ -2021,7 +2150,9 @@ export type SessionInboundMessage =
   | BrowserGoBackRequest
   | BrowserGoForwardRequest
   | BrowserCloseRequest
-  | BrowserResizeRequest;
+  | BrowserResizeRequest
+  | LibrarySyncRequest
+  | LibraryAgentsRequest;
 export const SessionInboundMessageSchema: z.ZodType<SessionInboundMessage> =
   _sessionInboundRaw as z.ZodType<SessionInboundMessage>;
 
@@ -3519,6 +3650,9 @@ const _sessionOutboundRaw: any = z.union([
   BrowserLaunchedEventSchema,
   BrowserStateUpdateSchema,
   BrowserCommandSchema,
+  // Library sync response (additive)
+  LibrarySyncResponseSchema,
+  LibraryAgentsResponseSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 118-member union
 export type SessionOutboundMessage =
@@ -3643,7 +3777,9 @@ export type SessionOutboundMessage =
   | BrowserResizeResponse
   | BrowserLaunchedEvent
   | BrowserStateUpdate
-  | BrowserCommand;
+  | BrowserCommand
+  | LibrarySyncResponse
+  | LibraryAgentsResponse;
 export const SessionOutboundMessageSchema: z.ZodType<SessionOutboundMessage> =
   _sessionOutboundRaw as z.ZodType<SessionOutboundMessage>;
 

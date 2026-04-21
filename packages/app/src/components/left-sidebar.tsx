@@ -29,12 +29,17 @@ import Animated, {
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
+  Boxes,
+  ChevronDown,
+  ChevronRight,
   Folder,
   MessageSquare,
   MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Plug,
   Plus,
+  Puzzle,
   Settings,
   Share2,
   Users,
@@ -435,6 +440,143 @@ function SessionsButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+/**
+ * Library row — visually subordinate to the Messages/Sessions header tabs.
+ * Single full-width row, icon-left, lighter background, matches the
+ * sidebar's project-row aesthetic.
+ */
+function LibraryRow({
+  label,
+  icon,
+  active,
+  onPress,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ hovered, pressed }) => [
+        styles.libraryRow,
+        hovered && styles.libraryRowHovered,
+        pressed && styles.libraryRowPressed,
+        active && styles.libraryRowActive,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      {icon}
+      <Text style={[styles.libraryRowText, active && styles.libraryRowTextActive]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+/**
+ * Collapsible "Projects" section. Mirrors the Shared Workspaces header —
+ * chevron + icon + label + count on the left, `+` on the right — so the
+ * sidebar reads as a coherent stack of groups.
+ */
+function ProjectsSection({
+  count,
+  onAdd,
+  children,
+}: {
+  count: number;
+  onAdd?: () => void;
+  children: React.ReactNode;
+}) {
+  const { theme } = useUnistyles();
+  const [collapsed, setCollapsed] = useState(false);
+  if (count === 0) return <>{children}</>;
+  return (
+    <>
+      <View style={styles.projectsSectionHeaderRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={collapsed ? "Expand projects" : "Collapse projects"}
+          onPress={() => setCollapsed((prev) => !prev)}
+          style={({ hovered = false }) => [
+            styles.projectsSectionToggle,
+            hovered && styles.projectsSectionHeaderHovered,
+          ]}
+        >
+          {collapsed ? (
+            <ChevronRight size={12} color={theme.colors.foregroundMuted} />
+          ) : (
+            <ChevronDown size={12} color={theme.colors.foregroundMuted} />
+          )}
+          <Boxes size={12} color={theme.colors.foregroundMuted} />
+          <Text style={styles.projectsSectionText}>Projects</Text>
+          <Text style={styles.projectsSectionCount}>{count}</Text>
+        </Pressable>
+        {onAdd ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Add project"
+            onPress={onAdd}
+            style={({ hovered = false }) => [
+              styles.projectsSectionAdd,
+              hovered && styles.projectsSectionHeaderHovered,
+            ]}
+          >
+            <Plus size={12} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        ) : null}
+      </View>
+      {!collapsed ? children : null}
+    </>
+  );
+}
+
+function SkillsTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
+  const { theme } = useUnistyles();
+  const pathname = usePathname();
+  const isActive = pathname === "/library/skills" || pathname.startsWith("/library/skills/");
+  return (
+    <LibraryRow
+      label="Skills"
+      icon={
+        <Puzzle
+          size={theme.iconSize.md}
+          color={isActive ? theme.colors.foreground : theme.colors.foregroundMuted}
+        />
+      }
+      active={isActive}
+      onPress={() => {
+        router.push("/library/skills" as never);
+        onNavigate?.();
+      }}
+    />
+  );
+}
+
+function McpTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
+  const { theme } = useUnistyles();
+  const pathname = usePathname();
+  const isActive = pathname === "/library/mcp" || pathname.startsWith("/library/mcp/");
+  return (
+    <LibraryRow
+      label="MCP"
+      icon={
+        <Plug
+          size={theme.iconSize.md}
+          color={isActive ? theme.colors.foreground : theme.colors.foregroundMuted}
+        />
+      }
+      active={isActive}
+      onPress={() => {
+        router.push("/library/mcp" as never);
+        onNavigate?.();
+      }}
+    />
+  );
+}
+
 function MobileSidebar({
   theme,
   activeServerId,
@@ -628,6 +770,10 @@ function MobileSidebar({
                     <SessionsButton onPress={handleViewMore} />
                   </View>
                 </View>
+                <View style={styles.libraryGroup}>
+                  <SkillsTabButton onNavigate={() => closeToAgent()} />
+                  <McpTabButton onNavigate={() => closeToAgent()} />
+                </View>
               </>
             )}
 
@@ -641,18 +787,23 @@ function MobileSidebar({
                     onWorkspacePress={() => closeToAgent()}
                   />
                 )}
-                <SidebarWorkspaceList
-                  serverId={activeServerId}
-                  collapsedProjectKeys={collapsedProjectKeys}
-                  onToggleProjectCollapsed={toggleProjectCollapsed}
-                  shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-                  projects={projects}
-                  isRefreshing={isManualRefresh && isRevalidating}
-                  onRefresh={handleRefresh}
-                  onWorkspacePress={() => closeToAgent()}
-                  onAddProject={isScopedRecipient ? undefined : handleOpenProject}
-                  parentGestureRef={closeGestureRef}
-                />
+                <ProjectsSection
+                  count={projects.length}
+                  onAdd={isScopedRecipient ? undefined : handleOpenProject}
+                >
+                  <SidebarWorkspaceList
+                    serverId={activeServerId}
+                    collapsedProjectKeys={collapsedProjectKeys}
+                    onToggleProjectCollapsed={toggleProjectCollapsed}
+                    shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+                    projects={projects}
+                    isRefreshing={isManualRefresh && isRevalidating}
+                    onRefresh={handleRefresh}
+                    onWorkspacePress={() => closeToAgent()}
+                    onAddProject={isScopedRecipient ? undefined : handleOpenProject}
+                    parentGestureRef={closeGestureRef}
+                  />
+                </ProjectsSection>
               </>
             )}
 
@@ -1133,12 +1284,18 @@ function DesktopSidebar({
             }}
           />
           {!isScopedRecipient && (
-            <View style={styles.sidebarHeader}>
-              <View style={styles.sidebarHeaderRow}>
-                <ChatTabButton />
-                <SessionsButton onPress={handleViewMore} />
+            <>
+              <View style={styles.sidebarHeader}>
+                <View style={styles.sidebarHeaderRow}>
+                  <ChatTabButton />
+                  <SessionsButton onPress={handleViewMore} />
+                </View>
               </View>
-            </View>
+              <View style={styles.libraryGroup}>
+                <SkillsTabButton />
+                <McpTabButton />
+              </View>
+            </>
           )}
         </View>
 
@@ -1147,16 +1304,21 @@ function DesktopSidebar({
         ) : (
           <>
             {!isScopedRecipient && <SidebarSharedWorkspaces serverId={activeServerId} />}
-            <SidebarWorkspaceList
-              serverId={activeServerId}
-              collapsedProjectKeys={collapsedProjectKeys}
-              onToggleProjectCollapsed={toggleProjectCollapsed}
-              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-              projects={projects}
-              isRefreshing={isManualRefresh && isRevalidating}
-              onRefresh={handleRefresh}
-              onAddProject={isScopedRecipient ? undefined : handleOpenProject}
-            />
+            <ProjectsSection
+              count={projects.length}
+              onAdd={isScopedRecipient ? undefined : handleOpenProject}
+            >
+              <SidebarWorkspaceList
+                serverId={activeServerId}
+                collapsedProjectKeys={collapsedProjectKeys}
+                onToggleProjectCollapsed={toggleProjectCollapsed}
+                shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+                projects={projects}
+                isRefreshing={isManualRefresh && isRevalidating}
+                onRefresh={handleRefresh}
+                onAddProject={isScopedRecipient ? undefined : handleOpenProject}
+              />
+            </ProjectsSection>
           </>
         )}
 
@@ -1396,6 +1558,80 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: theme.spacing[2],
   },
+  libraryGroup: {
+    paddingHorizontal: theme.spacing[2],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+    marginBottom: theme.spacing[1],
+    gap: 2,
+    // Visually split the Skills/MCP group from the workspace sections below.
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  projectsSectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    marginHorizontal: theme.spacing[2],
+    marginTop: theme.spacing[2],
+  },
+  projectsSectionToggle: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1] + 2,
+    borderRadius: theme.borderRadius.base,
+  },
+  projectsSectionAdd: {
+    width: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.base,
+  },
+  projectsSectionHeaderHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  projectsSectionText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  projectsSectionCount: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  libraryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: 6,
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    minHeight: 32,
+  },
+  libraryRowHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  libraryRowPressed: {
+    backgroundColor: theme.colors.rowPressed,
+  },
+  libraryRowActive: {
+    backgroundColor: theme.colors.rowSelected,
+  },
+  libraryRowText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foregroundMuted,
+  },
+  libraryRowTextActive: {
+    color: theme.colors.foreground,
+    fontWeight: theme.fontWeight.semibold,
+  },
   newAgentButton: {
     flex: 1,
     flexDirection: "row",
@@ -1451,6 +1687,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[3],
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
+    // Anchor the host/settings strip at the bottom of the sidebar column
+    // regardless of how much content (projects / shared workspaces) is
+    // expanded above it.
+    marginTop: "auto",
   },
   footerHostSlot: {
     flexGrow: 0,

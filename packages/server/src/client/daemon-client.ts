@@ -4385,6 +4385,67 @@ export class DaemonClient {
       timeout: 5000,
     });
   }
+
+  // ============================================================================
+  // Library Sync (PR7)
+  // ============================================================================
+
+  async syncLibrary(input: {
+    mcps: import("../shared/messages.js").LibrarySyncRequest["mcps"];
+    skills: import("../shared/messages.js").LibrarySyncRequest["skills"];
+    requestId?: string;
+    timeoutMs?: number;
+  }): Promise<{
+    counts: NonNullable<import("../shared/messages.js").LibrarySyncResponse["counts"]>;
+    runningAgentIds: string[];
+  }> {
+    const requestId = this.createRequestId(input.requestId);
+    return this.sendRequest({
+      requestId,
+      message: {
+        type: "library_sync_request",
+        requestId,
+        mcps: input.mcps,
+        skills: input.skills,
+      },
+      timeout: input.timeoutMs ?? 30_000,
+      select: (msg) => {
+        if (msg.type !== "library_sync_response") return null;
+        if (msg.requestId !== requestId) return null;
+        if (!msg.ok) {
+          throw new Error(msg.error ?? "Library sync failed");
+        }
+        return {
+          counts: msg.counts ?? {
+            "claude-code": { mcp: 0, skill: 0 },
+            codex: { mcp: 0, skill: 0 },
+            opencode: { mcp: 0, skill: 0 },
+          },
+          runningAgentIds: msg.runningAgentIds,
+        };
+      },
+    });
+  }
+
+  async listLibraryAgents(params?: {
+    requestId?: string;
+    timeoutMs?: number;
+  }): Promise<{
+    agents: import("../shared/messages.js").LibraryAgentsResponse["agents"];
+    installedIds: string[];
+  }> {
+    const requestId = this.createRequestId(params?.requestId);
+    return this.sendRequest({
+      requestId,
+      message: { type: "library_agents_request", requestId },
+      timeout: params?.timeoutMs ?? 5000,
+      select: (msg) => {
+        if (msg.type !== "library_agents_response") return null;
+        if (msg.requestId !== requestId) return null;
+        return { agents: msg.agents, installedIds: msg.installedIds };
+      },
+    });
+  }
 }
 
 function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionConfig {

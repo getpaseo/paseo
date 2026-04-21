@@ -90,6 +90,7 @@ import type {
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
+import { LibraryStore } from "./library/library-store.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
   AgentTimelineCursor,
@@ -584,6 +585,7 @@ export class Session {
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private readonly sessionLogger: pino.Logger;
   private readonly hubcodeHome: string;
+  private readonly libraryStore = new LibraryStore();
 
   // State machine
   private abortController: AbortController;
@@ -2406,6 +2408,16 @@ export class Session {
           case "browser_command_result":
             this.handleBrowserCommandResult(msg);
             break;
+
+          // Library sync (PR7) — apply user's activated MCP/Skill entries to
+          // the local CLI configs (~/.claude.json, ~/.codex/config.toml,
+          // ~/.config/opencode/opencode.json, ~/.agentskills/).
+          case "library_sync_request":
+            await this.handleLibrarySyncRequest(msg);
+            break;
+          case "library_agents_request":
+            await this.handleLibraryAgentsRequest(msg);
+            break;
         }
       } catch (error: any) {
         const err = error instanceof Error ? error : new Error(String(error));
@@ -3300,9 +3312,21 @@ export class Session {
         configTitle: config.title,
         initialPrompt: trimmedPrompt,
       });
+      const mergedMcpServers = this.libraryStore.mcpServersForProvider(
+        config.provider,
+        config.mcpServers,
+      );
+      const mergedSystemPrompt = this.libraryStore.skillsInstructionsForProvider(
+        config.provider,
+        config.systemPrompt,
+      );
       const resolvedConfig: AgentSessionConfig = {
         ...config,
         ...(provisionalTitle ? { title: provisionalTitle } : {}),
+        ...(mergedMcpServers ? { mcpServers: mergedMcpServers } : {}),
+        ...(mergedSystemPrompt !== config.systemPrompt
+          ? { systemPrompt: mergedSystemPrompt }
+          : {}),
       };
 
       const { sessionConfig, worktreeConfig } = await this.buildAgentSessionConfig(
@@ -8638,6 +8662,63 @@ export class Session {
       result: msg.result,
       error: msg.error,
     });
+  }
+
+  private async handleLibraryAgentsRequest(
+    msg: Extract<SessionInboundMessage, { type: "library_agents_request" }>,
+  ): Promise<void> {
+    const { detectInstalledAgents, agentMetaForClient } = await import(
+      "./library/detect-installed.js"
+    );
+    const agents = agentMetaForClient();
+    let installedIds: string[] = [];
+    try {
+      installedIds = await detectInstalledAgents();
+    } catch (err) {
+      this.sessionLogger.warn({ err }, "library_agents_request detection failed");
+    }
+    this.emit({
+      type: "library_agents_response",
+      requestId: msg.requestId,
+      agents,
+      installedIds,
+    });
+  }
+
+  private async handleLibrarySyncRequest(
+    msg: Extract<SessionInboundMessage, { type: "library_sync_request" }>,
+  ): Promise<void> {
+    try {
+      const { syncLibraryToTargets } = await import("./library/sync-writers.js");
+      this.libraryStore.setMcps(msg.mcps);
+      this.libraryStore.setSkills(msg.skills);
+      const report = await syncLibraryToTargets({
+        hubcodeHome: this.hubcodeHome,
+        mcps: msg.mcps,
+        skills: msg.skills,
+      });
+      const runningAgentIds = this.agentManager
+        .listAgents()
+        .filter((a) => a.lifecycle === "running" || a.lifecycle === "initializing")
+        .map((a) => a.id);
+      this.emit({
+        type: "library_sync_response",
+        requestId: msg.requestId,
+        ok: true,
+        counts: report.counts,
+        runningAgentIds,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sessionLogger.error({ err }, "library_sync_request failed");
+      this.emit({
+        type: "library_sync_response",
+        requestId: msg.requestId,
+        ok: false,
+        error: message,
+        runningAgentIds: [],
+      });
+    }
   }
 
   private async handleUpdateWorkspaceMetadata(

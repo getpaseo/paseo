@@ -432,3 +432,112 @@ export const pin = pgTable(
     index("pin_channel_idx").on(t.channelId),
   ],
 );
+
+// ─── Library (MCP servers + Skills marketplace) ──────────────────────────────
+// Persists user-authored MCP server configs and skill modules. Each entry has
+// two independent axes:
+//   - scope: where the entry applies ("user" | "org" | "project")
+//   - visibility: who can discover it ("private" | "shared")
+// Shared entries in org/project scope show up as recommendations to other
+// members, who opt in individually via `libraryActivation` (per-user row with
+// per-agent sync targets). Global entries have visibility pinned to private.
+
+export const libraryEntry = pgTable(
+  "library_entry",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(), // 'mcp' | 'skill'
+    name: text("name").notNull(), // slug-like id, unique within (scope, scopeId, kind)
+    displayName: text("display_name").notNull(),
+    description: text("description"),
+    // Catalog payload: for MCP `{ transport, command?, args?, env?, url?, headers? }`,
+    // for skill `{ instructionsPath?, instructionsInline?, examplePrompt? }`.
+    // Kept as jsonb to stay forward-compatible with new transports/fields.
+    payload: jsonb("payload").notNull(),
+    // Icon either a remote URL (we proxy/cache in catalog_icon_cache) or a
+    // one-letter fallback glyph the client renders when no icon is available.
+    iconUrl: text("icon_url"),
+    // Source: "custom" when user-authored, "catalog" when pulled from the
+    // PulseMCP / skills catalog. Stored so the UI can show "Installed from X".
+    source: text("source").notNull().default("custom"), // 'custom' | 'catalog'
+    catalogId: text("catalog_id"), // upstream id when source='catalog'
+    scope: text("scope").notNull(), // 'user' | 'org' | 'project'
+    // For scope='user': null (creator is implicit). For 'org': organization.id.
+    // For 'project': project_registry.id.
+    scopeId: text("scope_id"),
+    visibility: text("visibility").notNull().default("private"), // 'private' | 'shared'
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at"),
+  },
+  (t) => [
+    // Lookup by (scope, scopeId) is the hot path for listing entries visible
+    // to a user — org members scan their orgs, project members scan their
+    // projects, and everyone scans their own user scope.
+    index("library_entry_scope_idx").on(t.scope, t.scopeId, t.kind),
+    index("library_entry_created_by_idx").on(t.createdBy),
+    // Prevent duplicate names within the same scope/kind. Two members in the
+    // same org cannot both name an entry "linear" under that org.
+    uniqueIndex("library_entry_scope_name_unique").on(
+      t.scope,
+      t.scopeId,
+      t.kind,
+      t.name,
+    ),
+  ],
+);
+
+export const libraryActivation = pgTable(
+  "library_activation",
+  {
+    entryId: text("entry_id")
+      .notNull()
+      .references(() => libraryEntry.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    active: boolean("active").notNull().default(true),
+    // Which external agent CLIs this user wants synced. Subset of
+    // ['claude-code', 'codex', 'opencode']. Server enforces valid transport
+    // per target on write.
+    syncTargets: jsonb("sync_targets").notNull().default(sql`'[]'::jsonb`),
+    activatedAt: timestamp("activated_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.entryId, t.userId] }),
+    index("library_activation_user_idx").on(t.userId),
+  ],
+);
+
+// Catalog cache keyed by (source, query). `query` lets us cache paginated
+// searches separately from the unfiltered recommended set. A background
+// refresh job re-fetches expired rows; clients never hit upstream directly.
+export const catalogCache = pgTable(
+  "catalog_cache",
+  {
+    source: text("source").notNull(), // 'pulsemcp' | 'anthropic-skills' | 'openai-skills' | 'skills-sh'
+    queryKey: text("query_key").notNull().default(""), // '' for "recommended"
+    data: jsonb("data").notNull(),
+    fetchedAt: timestamp("fetched_at").notNull().defaultNow(),
+    expiresAt: timestamp("expires_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.source, t.queryKey] })],
+);
+
+// Remote icons cached as bytes so we never 404 if upstream moves them and so
+// clients don't hit a third-party host on every render. Keyed by SHA-256 of
+// the original URL.
+export const catalogIconCache = pgTable(
+  "catalog_icon_cache",
+  {
+    hash: text("hash").primaryKey(), // sha256 of source url
+    sourceUrl: text("source_url").notNull(),
+    mimeType: text("mime_type").notNull(),
+    bytes: text("bytes").notNull(), // base64-encoded payload
+    fetchedAt: timestamp("fetched_at").notNull().defaultNow(),
+  },
+);

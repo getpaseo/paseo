@@ -81,3 +81,21 @@ export type {
   AgentStreamEventPayload,
   AgentStreamMessage,
 } from "../shared/messages.js";
+
+// Library sync (Claude / Codex / OpenCode external config writers)
+export {
+  syncLibraryToTargets,
+  defaultSyncPaths,
+  type SyncInput,
+  type SyncReport,
+  type SyncTargetPaths,
+} from "./library/sync-writers.js";
+export type {
+  MaterializedMcpEntry,
+  MaterializedSkillEntry,
+  LibrarySyncTarget,
+  McpTransport,
+  McpPayload,
+  SkillPayload,
+} from "./library/types.js";
+export { redactSecrets, redactAuthorizationHeader } from "./library/redact.js";

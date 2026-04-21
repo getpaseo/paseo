@@ -6,6 +6,9 @@ import { createChatCommand } from "./commands/chat/index.js";
 import { createLoopCommand } from "./commands/loop/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
+import { createMcpCommand } from "./commands/mcp/index.js";
+import { createSkillsCommand } from "./commands/skills/index.js";
+import { createLibraryCommand } from "./commands/library/index.js";
 import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
 import { createTerminalCommand } from "./commands/terminal/index.js";
@@ -152,6 +155,11 @@ export function createCli(): Command {
 
   // Provider commands
   program.addCommand(createProviderCommand());
+
+  // Library commands (MCP servers + Skills)
+  program.addCommand(createMcpCommand());
+  program.addCommand(createSkillsCommand());
+  program.addCommand(createLibraryCommand());
 
   // Speech model commands
   program.addCommand(createSpeechCommand());

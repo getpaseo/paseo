@@ -10,7 +10,7 @@
  * raw `Response` so they can handle 4xx bodies however they want.
  */
 
-function authServerBaseUrl(): string {
+export function authServerBaseUrl(): string {
   if (typeof __DEV__ !== "undefined" && __DEV__) {
     return "http://localhost:3002";
   }
