@@ -22,6 +22,11 @@
       "types": "./dist/server/utils/tool-call-parsers.d.ts",
       "source": "./src/utils/tool-call-parsers.ts",
       "default": "./dist/server/utils/tool-call-parsers.js"
+    },
+    "./utils/branch-slug": {
+      "types": "./dist/server/utils/branch-slug.d.ts",
+      "source": "./src/utils/branch-slug.ts",
+      "default": "./dist/server/utils/branch-slug.js"
     }
   },
   "publishConfig": {

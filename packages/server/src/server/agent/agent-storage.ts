@@ -115,6 +115,10 @@ export class AgentStorage {
 
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
+    await this.queueRecordWrite(record);
+  }
+
+  private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
     const agentId = record.id;
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
@@ -122,37 +126,39 @@ export class AgentStorage {
         return;
       }
 
-      const nextPath = this.buildRecordPath(record);
-      const previousPath = this.pathById.get(agentId);
-
-      await fs.mkdir(path.dirname(nextPath), { recursive: true });
-      await writeFileAtomically(nextPath, JSON.stringify(record, null, 2));
-      this.addIndexedPath(agentId, nextPath);
-
-      if (previousPath && previousPath !== nextPath) {
-        try {
-          await fs.unlink(previousPath);
-        } catch {
-          // ignore cleanup errors
-        }
-        this.removeIndexedPath(agentId, previousPath);
-      }
-
-      this.cache.set(agentId, record);
-      this.pathById.set(agentId, nextPath);
-      return;
+      await this.writeRecord(record);
     });
 
-    this.pendingWrites.set(
-      agentId,
-      next.finally(() => {
-        if (this.pendingWrites.get(agentId) === next) {
-          this.pendingWrites.delete(agentId);
-        }
-      }),
-    );
+    const tracked = next.finally(() => {
+      if (this.pendingWrites.get(agentId) === tracked) {
+        this.pendingWrites.delete(agentId);
+      }
+    });
 
-    await next;
+    this.pendingWrites.set(agentId, tracked);
+    return tracked;
+  }
+
+  private async writeRecord(record: StoredAgentRecord): Promise<void> {
+    const agentId = record.id;
+    const nextPath = this.buildRecordPath(record);
+    const previousPath = this.pathById.get(agentId);
+
+    await fs.mkdir(path.dirname(nextPath), { recursive: true });
+    await writeFileAtomically(nextPath, JSON.stringify(record, null, 2));
+    this.addIndexedPath(agentId, nextPath);
+
+    if (previousPath && previousPath !== nextPath) {
+      try {
+        await fs.unlink(previousPath);
+      } catch {
+        // ignore cleanup errors
+      }
+      this.removeIndexedPath(agentId, previousPath);
+    }
+
+    this.cache.set(agentId, record);
+    this.pathById.set(agentId, nextPath);
   }
 
   beginDelete(agentId: string): void {
@@ -224,6 +230,42 @@ export class AgentStorage {
     }
     await this.upsert({ ...record, title });
   }
+
+  async setGeneratedTitleIfUnset(
+    agentId: string,
+    title: string,
+  ): Promise<StoredAgentRecord | null> {
+    await this.load();
+    await this.waitForPendingWrite(agentId);
+    const record = this.cache.get(agentId) ?? null;
+    if (!record) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+    if (record.title) {
+      return null;
+    }
+
+    await this.beforeGeneratedTitleIfUnsetWrite(agentId);
+    await this.waitForPendingWrite(agentId);
+
+    const latestRecord = this.cache.get(agentId) ?? null;
+    if (!latestRecord) {
+      throw new Error(`Agent ${agentId} not found`);
+    }
+    if (latestRecord.title) {
+      return null;
+    }
+
+    const nextRecord = {
+      ...latestRecord,
+      title,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.queueRecordWrite(nextRecord);
+    return nextRecord;
+  }
+
+  protected async beforeGeneratedTitleIfUnsetWrite(_agentId: string): Promise<void> {}
 
   async flush(): Promise<void> {
     await this.load().catch(() => undefined);

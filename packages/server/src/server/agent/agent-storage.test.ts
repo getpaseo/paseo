@@ -27,6 +27,22 @@ type ManagedAgentOverrides = Omit<
   attention?: ManagedAgent["attention"];
 };
 
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function buildManagedAgentConfig(
   provider: AgentProvider,
   cwd: string,
@@ -127,6 +143,30 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,
   };
+}
+
+class InterleavingGeneratedTitleStorage extends AgentStorage {
+  private pausedAgentId: string | null = null;
+  private pause = deferred<void>();
+  readonly reachedGeneratedTitleWrite = deferred<void>();
+
+  pauseNextGeneratedTitleWrite(agentId: string): void {
+    this.pausedAgentId = agentId;
+  }
+
+  releaseGeneratedTitleWrite(): void {
+    this.pause.resolve();
+  }
+
+  protected override async beforeGeneratedTitleIfUnsetWrite(agentId: string): Promise<void> {
+    if (this.pausedAgentId !== agentId) {
+      return;
+    }
+
+    this.pausedAgentId = null;
+    this.reachedGeneratedTitleWrite.resolve();
+    await this.pause.promise;
+  }
 }
 
 describe("AgentStorage", () => {
@@ -319,6 +359,39 @@ describe("AgentStorage", () => {
     await expect(storage.setTitle("missing-agent", "Impossible")).rejects.toThrow(
       "Agent missing-agent not found",
     );
+  });
+
+  test("setGeneratedTitleIfUnset does not overwrite a user title that lands while generation is in flight", async () => {
+    const interleavingStorage = new InterleavingGeneratedTitleStorage(storagePath, logger);
+    const agentId = "agent-generated-title-race";
+    await interleavingStorage.applySnapshot(createManagedAgent({ id: agentId }));
+    interleavingStorage.pauseNextGeneratedTitleWrite(agentId);
+
+    const generatedTitlePromise = interleavingStorage.setGeneratedTitleIfUnset(
+      agentId,
+      "Generated title",
+    );
+    await interleavingStorage.reachedGeneratedTitleWrite.promise;
+
+    await interleavingStorage.setTitle(agentId, "User title");
+    interleavingStorage.releaseGeneratedTitleWrite();
+
+    const generatedTitleResult = await generatedTitlePromise;
+    const record = await interleavingStorage.get(agentId);
+
+    expect(generatedTitleResult).toBeNull();
+    expect(record?.title).toBe("User title");
+  });
+
+  test("setGeneratedTitleIfUnset writes the generated title only when title is empty", async () => {
+    const agentId = "agent-generated-title-empty";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+
+    const written = await storage.setGeneratedTitleIfUnset(agentId, "Generated title");
+
+    expect(written?.title).toBe("Generated title");
+    const record = await storage.get(agentId);
+    expect(record?.title).toBe("Generated title");
   });
 
   test("applySnapshot accepts explicit title overrides", async () => {

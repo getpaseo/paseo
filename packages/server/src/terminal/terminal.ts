@@ -57,6 +57,7 @@ export interface TerminalSession {
   getStateSnapshot(): TerminalStateSnapshot;
   getReplayPreamble(): string;
   getTitle(): string | undefined;
+  setTitle(title: string): void;
   getExitInfo(): TerminalExitInfo | null;
   kill(): void;
   killAndWait(options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number }): Promise<void>;
@@ -549,12 +550,14 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   let exitInfo: TerminalExitInfo | null = null;
   let recentOutputText = "";
   let title: string | undefined;
+  let titleMode: "auto" | "manual" = presetTitle?.trim() ? "manual" : "auto";
   let pendingTitle: string | undefined;
   let titleDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingInput = "";
   let inputFlushImmediate: ReturnType<typeof setImmediate> | null = null;
   let stateRevision = 0;
   const inputModeTracker = new TerminalInputModeTracker();
+  let titleChangeSubscription: { dispose(): void } | null = null;
 
   // Create xterm.js headless terminal
   const terminal = new Terminal({
@@ -598,14 +601,40 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
   }
 
-  const lockedTitle = presetTitle?.trim() || undefined;
+  function clearPendingTitleChange(): void {
+    pendingTitle = undefined;
+    if (titleDebounceTimer) {
+      clearTimeout(titleDebounceTimer);
+      titleDebounceTimer = null;
+    }
+  }
+
+  function disposeTitleChangeSubscription(): void {
+    titleChangeSubscription?.dispose();
+    titleChangeSubscription = null;
+  }
+
+  function setTitle(nextTitle: string): void {
+    const manualTitle = nextTitle.trim();
+    if (!manualTitle) {
+      return;
+    }
+
+    titleMode = "manual";
+    disposeTitleChangeSubscription();
+    clearPendingTitleChange();
+    emitTitleChange(manualTitle);
+  }
+
+  const initialManualTitle = presetTitle?.trim() || undefined;
   const processTitle = command ? [command, ...args].join(" ") : null;
-  let initialTitle = lockedTitle;
+  let initialTitle = initialManualTitle;
   if (!initialTitle && processTitle) {
     initialTitle = humanizeProcessTitle(processTitle) ?? normalizeProcessTitle(processTitle);
   }
   emitTitleChange(initialTitle);
 
+  // Respond to DA1 queries (CSI c or CSI 0 c) — apps like nvim query terminal capabilities
   terminal.parser.registerCsiHandler({ final: "c" }, (params) => {
     if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
       ptyProcess.write("\x1b[?62;4;22c");
@@ -637,22 +666,20 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     return true;
   });
 
-  let disposeTitleChangeSubscription: { dispose(): void } | null = null;
-  if (!lockedTitle) {
-    disposeTitleChangeSubscription = terminal.onTitleChange((nextTitle) => {
-      if (disposed || killed) {
-        return;
-      }
-      pendingTitle = nextTitle.trim().length > 0 ? nextTitle : undefined;
-      if (titleDebounceTimer) {
-        clearTimeout(titleDebounceTimer);
-      }
-      titleDebounceTimer = setTimeout(() => {
-        titleDebounceTimer = null;
-        emitTitleChange(pendingTitle);
-      }, TERMINAL_TITLE_DEBOUNCE_MS);
-    });
-  }
+  titleChangeSubscription = terminal.onTitleChange((nextTitle) => {
+    if (disposed || killed || titleMode === "manual") {
+      return;
+    }
+    pendingTitle = nextTitle.trim().length > 0 ? nextTitle : undefined;
+    if (titleDebounceTimer) {
+      clearTimeout(titleDebounceTimer);
+    }
+    titleDebounceTimer = setTimeout(() => {
+      titleDebounceTimer = null;
+      emitTitleChange(pendingTitle);
+      pendingTitle = undefined;
+    }, TERMINAL_TITLE_DEBOUNCE_MS);
+  });
 
   const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
     const commandFinished = parseCommandFinishedOsc(data);
@@ -712,11 +739,8 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       clearImmediate(inputFlushImmediate);
       inputFlushImmediate = null;
     }
-    if (titleDebounceTimer) {
-      clearTimeout(titleDebounceTimer);
-      titleDebounceTimer = null;
-    }
-    disposeTitleChangeSubscription?.dispose();
+    clearPendingTitleChange();
+    disposeTitleChangeSubscription();
     disposeCommandLifecycleSubscription.dispose();
     terminal.dispose();
     listeners.clear();
@@ -1049,6 +1073,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     getStateSnapshot,
     getReplayPreamble,
     getTitle,
+    setTitle,
     getExitInfo,
     kill,
     killAndWait,
