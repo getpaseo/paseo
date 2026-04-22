@@ -12,6 +12,7 @@ import {
   HostRuntimeController,
   HostRuntimeStore,
   type HostRuntimeControllerDeps,
+  type HostRuntimeSnapshot,
 } from "./host-runtime";
 
 class FakeDaemonClient {
@@ -262,6 +263,27 @@ function clearProbeBackoff(controller: HostRuntimeController): void {
       connectionLastProbedAt: Map<string, number>;
     }
   ).connectionLastProbedAt.clear();
+}
+
+type HostRuntimeSnapshotPatch = Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">>;
+
+function updateControllerSnapshot(
+  controller: HostRuntimeController,
+  patch: HostRuntimeSnapshotPatch,
+): void {
+  (
+    controller as unknown as {
+      updateSnapshot: (patch: HostRuntimeSnapshotPatch) => void;
+    }
+  ).updateSnapshot(patch);
+}
+
+function makeProbeMap(
+  entries: Array<
+    [string, HostRuntimeSnapshot["probeByConnectionId"] extends Map<string, infer T> ? T : never]
+  >,
+): HostRuntimeSnapshot["probeByConnectionId"] {
+  return new Map(entries);
 }
 
 describe("HostRuntimeController", () => {
@@ -550,6 +572,39 @@ describe("HostRuntimeController", () => {
     expect(latest?.connectionStatus).toBe("error");
     expect(latest?.lastError).toBe("transport closed");
     unsubscribe();
+  });
+
+  it("preserves transport disconnect reasons on the runtime snapshot", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const clients: FakeDaemonClient[] = [];
+    const controller = new HostRuntimeController({
+      host,
+      deps: makeDeps(
+        {
+          "direct:lan:6767": 12,
+        },
+        clients,
+      ),
+    });
+
+    await controller.start({ autoProbe: false });
+    clients[0]?.setConnectionState({
+      status: "disconnected",
+      reason: "transport closed",
+    });
+
+    expect(controller.getSnapshot()).toMatchObject({
+      connectionStatus: "error",
+      lastError: "transport closed",
+    });
   });
 
   it("does not emit legacy typed reason-code transition logs", async () => {
@@ -890,6 +945,134 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().clientGeneration).toBe(generationBeforeProbes);
     expect(createdClients).toHaveLength(0);
   });
+
+  it("does not notify or replace the snapshot for equal probe maps", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+    const firstProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+    const equalProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+
+    updateControllerSnapshot(controller, { probeByConnectionId: firstProbeMap });
+    const snapshotAfterFirstProbe = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, { probeByConnectionId: equalProbeMap });
+
+    expect(notifyCount).toBe(0);
+    expect(controller.getSnapshot()).toBe(snapshotAfterFirstProbe);
+    expect(controller.getSnapshot().probeByConnectionId).toBe(firstProbeMap);
+    unsubscribe();
+  });
+
+  it("does not notify or replace the snapshot when connection status is already equal", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+
+    updateControllerSnapshot(controller, { connectionStatus: "online" });
+    const snapshotAfterOnline = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, { connectionStatus: "online" });
+
+    expect(notifyCount).toBe(0);
+    expect(controller.getSnapshot()).toBe(snapshotAfterOnline);
+    unsubscribe();
+  });
+
+  it("does not notify or replace the snapshot when every patched field is equal", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+    const firstProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+    const equalProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+
+    updateControllerSnapshot(controller, {
+      connectionStatus: "online",
+      probeByConnectionId: firstProbeMap,
+    });
+    const snapshotAfterSetup = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, {
+      connectionStatus: "online",
+      probeByConnectionId: equalProbeMap,
+    });
+
+    expect(notifyCount).toBe(0);
+    expect(controller.getSnapshot()).toBe(snapshotAfterSetup);
+    expect(controller.getSnapshot().probeByConnectionId).toBe(firstProbeMap);
+    unsubscribe();
+  });
+
+  it("notifies once for a changed field while preserving equal field identity", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+    const firstProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+    const equalProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+
+    updateControllerSnapshot(controller, {
+      connectionStatus: "online",
+      probeByConnectionId: firstProbeMap,
+    });
+    const snapshotBeforeChange = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, {
+      connectionStatus: "offline",
+      probeByConnectionId: equalProbeMap,
+    });
+
+    expect(notifyCount).toBe(1);
+    expect(controller.getSnapshot()).not.toBe(snapshotBeforeChange);
+    expect(controller.getSnapshot().connectionStatus).toBe("offline");
+    expect(controller.getSnapshot().probeByConnectionId).toBe(firstProbeMap);
+    unsubscribe();
+  });
+
+  it("notifies once and replaces the probe map when probe contents change", () => {
+    const controller = new HostRuntimeController({ host: makeHost() });
+    const firstProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+    ]);
+    const changedProbeMap = makeProbeMap([
+      ["direct:lan:6767", { status: "available", latencyMs: 12 }],
+      ["relay:relay.paseo.sh:443", { status: "unavailable", latencyMs: null }],
+    ]);
+
+    updateControllerSnapshot(controller, { probeByConnectionId: firstProbeMap });
+    const snapshotBeforeChange = controller.getSnapshot();
+    let notifyCount = 0;
+    const unsubscribe = controller.subscribe(() => {
+      notifyCount += 1;
+    });
+
+    updateControllerSnapshot(controller, { probeByConnectionId: changedProbeMap });
+
+    expect(notifyCount).toBe(1);
+    expect(controller.getSnapshot()).not.toBe(snapshotBeforeChange);
+    expect(controller.getSnapshot().probeByConnectionId).toBe(changedProbeMap);
+    expect(controller.getSnapshot().probeByConnectionId).not.toBe(firstProbeMap);
+    unsubscribe();
+  });
 });
 
 describe("HostRuntimeStore", () => {
@@ -929,7 +1112,7 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
-      filter: { includeArchived: true },
+      scope: "active",
       sort: [{ key: "updated_at", direction: "desc" }],
       subscribe: { subscriptionId: "app:srv_test" },
       page: { limit: 200 },
@@ -977,7 +1160,7 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.fetchAgentsCalls).toHaveLength(1);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
-      filter: { includeArchived: true },
+      scope: "active",
       sort: [{ key: "updated_at", direction: "desc" }],
       subscribe: { subscriptionId: "app:srv_no_session" },
       page: { limit: 200 },
@@ -986,7 +1169,7 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
-  it("fetches all pages during bootstrap so older workspace agents are present", async () => {
+  it("fetches all pages during bootstrap within the active agent scope", async () => {
     const host = makeHost({
       serverId: "srv_paged",
       connections: [
@@ -1051,13 +1234,13 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.fetchAgentsCalls).toHaveLength(2);
     expect(fakeClient.fetchAgentsCalls[0]).toEqual({
-      filter: { includeArchived: true },
+      scope: "active",
       sort: [{ key: "updated_at", direction: "desc" }],
       subscribe: { subscriptionId: "app:srv_paged" },
       page: { limit: 200 },
     });
     expect(fakeClient.fetchAgentsCalls[1]).toEqual({
-      filter: { includeArchived: true },
+      scope: "active",
       sort: [{ key: "updated_at", direction: "desc" }],
       page: { limit: 200, cursor: "cursor-page-2" },
     });
@@ -1131,13 +1314,13 @@ describe("HostRuntimeStore", () => {
 
     expect(fakeClient.fetchAgentsCalls).toEqual([
       {
-        filter: { includeArchived: true },
+        scope: "active",
         sort: [{ key: "updated_at", direction: "desc" }],
         subscribe: { subscriptionId: "app:srv_resubscribe" },
         page: { limit: 200 },
       },
       {
-        filter: { includeArchived: true },
+        scope: "active",
         sort: [{ key: "updated_at", direction: "desc" }],
         subscribe: { subscriptionId: "app:srv_resubscribe" },
         page: { limit: 200 },
@@ -1148,7 +1331,7 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
-  it("rehydrates archived agents over stale active session state after reconnect bootstrap", async () => {
+  it("replaces stale active session state when active bootstrap omits an agent", async () => {
     const host = makeHost({
       serverId: "srv_archived_rehydrate",
       connections: [
@@ -1163,15 +1346,7 @@ describe("HostRuntimeStore", () => {
     fakeClient.setConnectionState({ status: "connected" });
     fakeClient.fetchAgentsResponses.push(
       makeFetchAgentsPayload({
-        entries: [
-          makeFetchAgentsEntry({
-            id: "agent-archived",
-            cwd: "/Users/moboudra/dev/paseo",
-            updatedAt: "2026-03-30T15:30:00.000Z",
-            archivedAt: "2026-03-30T15:31:00.000Z",
-            title: "Archived remotely",
-          }),
-        ],
+        entries: [],
         subscriptionId: "app:srv_archived_rehydrate",
       }),
     );
@@ -1214,17 +1389,16 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([host]);
 
     const timeoutAt = Date.now() + 300;
-    let archivedAt =
-      useSessionStore.getState().sessions[host.serverId]?.agents.get("agent-archived")
-        ?.archivedAt ?? null;
-    while (!archivedAt && Date.now() < timeoutAt) {
+    while (
+      useSessionStore.getState().sessions[host.serverId]?.agents.has("agent-archived") &&
+      Date.now() < timeoutAt
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 0));
-      archivedAt =
-        useSessionStore.getState().sessions[host.serverId]?.agents.get("agent-archived")
-          ?.archivedAt ?? null;
     }
 
-    expect(archivedAt?.toISOString()).toBe("2026-03-30T15:31:00.000Z");
+    expect(useSessionStore.getState().sessions[host.serverId]?.agents.has("agent-archived")).toBe(
+      false,
+    );
 
     store.syncHosts([]);
     useSessionStore.getState().clearSession(host.serverId);

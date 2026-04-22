@@ -1,10 +1,13 @@
 import { useEffect, useRef, useCallback } from "react";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { detectBrowserDeviceTypeFromNavigator } from "@/utils/browser-device-type";
+import { getIsElectron, isNative } from "@/constants/platform";
+import { getDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const ACTIVITY_HEARTBEAT_THROTTLE_MS = 5_000;
+const DESKTOP_IDLE_POLL_INTERVAL_MS = 5_000;
 
 interface ClientActivityOptions {
   client: DaemonClient;
@@ -33,7 +36,7 @@ export function useClientActivity({
   const prevFocusedAgentIdRef = useRef<string | null>(focusedAgentId);
   const lastImmediateHeartbeatAtRef = useRef<number>(0);
 
-  const deviceType = Platform.OS === "web" ? detectBrowserDeviceTypeFromNavigator() : "mobile";
+  const deviceType = isNative ? "mobile" : detectBrowserDeviceTypeFromNavigator();
 
   const recordUserActivity = useCallback(() => {
     lastActivityAtRef.current = new Date();
@@ -97,7 +100,7 @@ export function useClientActivity({
 
   // Track user activity on web for accurate staleness.
   useEffect(() => {
-    if (Platform.OS !== "web") return;
+    if (isNative) return;
     if (typeof document === "undefined") return;
 
     const handleUserActivity = () => {
@@ -129,6 +132,30 @@ export function useClientActivity({
       window.removeEventListener("touchstart", handleUserActivity);
     };
   }, [maybeSendImmediateHeartbeat, recordUserActivity, setAppVisible]);
+
+  useEffect(() => {
+    if (!getIsElectron()) return;
+
+    let disposed = false;
+    const pollSystemIdleTime = async () => {
+      const systemIdleMs = await getDesktopSystemIdleTimeMs();
+      if (disposed || systemIdleMs === null) return;
+
+      const systemLastActivityAtMs = Date.now() - systemIdleMs;
+      if (systemLastActivityAtMs > lastActivityAtRef.current.getTime()) {
+        lastActivityAtRef.current = new Date(systemLastActivityAtMs);
+      }
+    };
+
+    const interval = setInterval(() => {
+      void pollSystemIdleTime();
+    }, DESKTOP_IDLE_POLL_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   // Send heartbeat on focused agent change
   useEffect(() => {

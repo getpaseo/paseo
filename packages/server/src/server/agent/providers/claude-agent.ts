@@ -1,5 +1,4 @@
-import { execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { promisify } from "node:util";
+import { type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -43,6 +42,7 @@ import {
   formatProviderDiagnosticError,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 
 import type {
   AgentPermissionAction,
@@ -73,12 +73,12 @@ import type {
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
-import { findExecutable } from "../../../utils/executable.js";
-import { spawnProcess } from "../../../utils/spawn.js";
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { withTimeout } from "../../../utils/promise-timeout.js";
+import { execCommand, spawnProcess } from "../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
-const execFileAsync = promisify(execFile);
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
 type TurnState = "idle" | "foreground" | "autonomous";
@@ -173,7 +173,7 @@ type ClaudeAgentSessionOptions = {
   queryFactory?: typeof query;
 };
 
-type ClaudeThinkingEffort = "low" | "medium" | "high" | "max";
+type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 function resolveClaudeSpawnCommand(
   spawnOptions: SpawnOptions,
@@ -240,7 +240,17 @@ function applyRuntimeSettingsToClaudeOptions(
 }
 
 function isClaudeThinkingEffort(value: string | null | undefined): value is ClaudeThinkingEffort {
-  return value === "low" || value === "medium" || value === "high" || value === "max";
+  return (
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "max"
+  );
+}
+
+function sanitizeClaudeProjectPath(cwd: string): string {
+  return cwd.replace(/[\\/._:]/g, "-");
 }
 
 type ClaudeOptionsLogSummary = {
@@ -769,7 +779,7 @@ class TimelineAssembler {
     runId: string | null,
     messageIdHint: string | null,
   ): AgentTimelineItem[] {
-    const event = message.event as Record<string, unknown>;
+    const event = message.event as unknown as Record<string, unknown>;
     const eventType = readTrimmedString(event.type);
     const streamEventMessageId = this.readMessageIdFromStreamEvent(event) ?? messageIdHint;
 
@@ -1098,7 +1108,8 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    // Claude exposes a static catalog here; cwd/force are intentionally irrelevant.
     return getClaudeModels();
   }
 
@@ -1130,8 +1141,10 @@ export class ClaudeAgentClient implements AgentClient {
   async isAvailable(): Promise<boolean> {
     const command = this.runtimeSettings?.command;
     if (command?.mode === "replace") {
-      return fs.existsSync(command.argv[0]);
+      return await isCommandAvailable(command.argv[0]);
     }
+    // Default mode uses @anthropic-ai/claude-agent-sdk's bundled cli.js run
+    // via process.execPath. No external `claude` binary is required.
     return true;
   }
 
@@ -1140,12 +1153,13 @@ export class ClaudeAgentClient implements AgentClient {
       const resolvedBinary = (await findExecutable("claude")) ?? "not found";
       const available = await this.isAvailable();
       const version = await resolveClaudeVersion(this.runtimeSettings);
+      const auth = available ? await resolveClaudeAuth(this.runtimeSettings) : null;
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
       if (available) {
         try {
-          const models = await this.listModels();
+          const models = await this.listModels({ cwd: os.homedir(), force: false });
           modelsValue = String(models.length);
         } catch (error) {
           modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
@@ -1160,6 +1174,7 @@ export class ClaudeAgentClient implements AgentClient {
         diagnostic: formatProviderDiagnostic("Claude Code", [
           { label: "Binary", value: resolvedBinary },
           ...(version ? [{ label: "Version", value: version }] : []),
+          ...(auth ? [{ label: "Auth", value: auth }] : []),
           { label: "Models", value: modelsValue },
           { label: "Status", value: status },
         ]),
@@ -1186,14 +1201,10 @@ async function resolveClaudeVersion(
 
   try {
     if (command?.mode === "replace") {
-      const { stdout } = await execFileAsync(
+      const { stdout } = await execCommand(
         command.argv[0]!,
         [...command.argv.slice(1), "--version"],
-        {
-          encoding: "utf8",
-          timeout: 5_000,
-          windowsHide: true,
-        },
+        { timeout: 5_000 },
       );
       return stdout.trim() || null;
     }
@@ -1203,12 +1214,50 @@ async function resolveClaudeVersion(
       return null;
     }
 
-    const { stdout } = await execFileAsync(executable, ["--version"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      windowsHide: true,
-    });
+    const { stdout } = await execCommand(executable, ["--version"], { timeout: 5_000 });
     return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveClaudeAuth(
+  runtimeSettings?: ProviderRuntimeSettings,
+): Promise<string | null> {
+  const command = runtimeSettings?.command;
+
+  const run = async (
+    executable: string,
+    args: string[],
+  ): Promise<{ stdout: string; stderr: string }> => {
+    try {
+      return await execCommand(executable, args, { timeout: 5_000 });
+    } catch (error) {
+      const err = error as { stdout?: string; stderr?: string; message?: string };
+      return {
+        stdout: err.stdout ?? "",
+        stderr: err.stderr ?? err.message ?? "",
+      };
+    }
+  };
+
+  try {
+    let result: { stdout: string; stderr: string };
+    if (command?.mode === "replace") {
+      result = await run(command.argv[0]!, [...command.argv.slice(1), "auth", "status"]);
+    } else {
+      const executable = await findExecutable("claude");
+      if (!executable) {
+        return null;
+      }
+      result = await run(executable, ["auth", "status"]);
+    }
+
+    const combined = [result.stdout, result.stderr]
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .join("\n");
+    return combined || null;
   } catch {
     return null;
   }
@@ -2050,12 +2099,7 @@ class ClaudeAgentSession implements AgentSession {
     const startedAt = Date.now();
     this.logger.trace({ label }, "Claude query operation wait start");
     try {
-      await Promise.race([
-        promise,
-        new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error("timeout")), 3_000);
-        }),
-      ]);
+      await withTimeout(promise, 3_000, "timeout");
       this.logger.trace(
         { label, durationMs: Date.now() - startedAt },
         "Claude query operation settled",
@@ -2074,7 +2118,9 @@ class ClaudeAgentSession implements AgentSession {
     let effort: ClaudeOptions["effort"];
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
       thinking = { type: "adaptive" };
-      effort = thinkingOptionId;
+      // SDK 0.2.71 types `effort` as 'low' | 'medium' | 'high' | 'max'; Opus 4.7
+      // adds 'xhigh' which the binary accepts but the typings don't yet expose.
+      effort = thinkingOptionId as ClaudeOptions["effort"];
     }
 
     const appendedSystemPrompt = [
@@ -2151,6 +2197,12 @@ class ClaudeAgentSession implements AgentSession {
     if (this.claudeSessionId) {
       base.resume = this.claudeSessionId;
     }
+    if (this.runtimeSettings?.disallowedTools?.length) {
+      base.disallowedTools = [
+        ...(base.disallowedTools ?? []),
+        ...this.runtimeSettings.disallowedTools,
+      ];
+    }
     return this.applyRuntimeSettings(base);
   }
 
@@ -2171,7 +2223,14 @@ class ClaudeAgentSession implements AgentSession {
   private toSdkUserMessage(prompt: AgentPromptInput): SDKUserMessage {
     const content: Array<
       | { type: "text"; text: string }
-      | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+      | {
+          type: "image";
+          source: {
+            type: "base64";
+            media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+            data: string;
+          };
+        }
     > = [];
     if (Array.isArray(prompt)) {
       for (const chunk of prompt) {
@@ -2182,10 +2241,12 @@ class ClaudeAgentSession implements AgentSession {
             type: "image",
             source: {
               type: "base64",
-              media_type: chunk.mimeType,
+              media_type: chunk.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
               data: chunk.data,
             },
           });
+        } else if (chunk.type === "github_pr" || chunk.type === "github_issue") {
+          content.push({ type: "text", text: renderPromptAttachmentAsText(chunk) });
         }
       }
     } else {
@@ -3270,8 +3331,7 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    // Match Claude CLI's path sanitization: replace slashes, dots, and underscores with dashes
-    const sanitized = cwd.replace(/[\\/\.]/g, "-").replace(/_/g, "-");
+    const sanitized = sanitizeClaudeProjectPath(cwd);
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     const dir = path.join(configDir, "projects", sanitized);
     return path.join(dir, `${sessionId}.jsonl`);

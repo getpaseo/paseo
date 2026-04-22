@@ -7,20 +7,9 @@ import {
   Pressable,
   Text,
   View,
-  Platform,
 } from "react-native";
-import { Gesture } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import Animated, {
-  cancelAnimation,
-  Easing,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -35,6 +24,7 @@ import {
   X,
 } from "lucide-react-native";
 import { getFileIconSvg } from "@/components/material-file-icons";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { AgentFileExplorerState, ExplorerEntry } from "@/stores/session-store";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
@@ -52,6 +42,7 @@ import { usePanelStore, type SortOption } from "@/stores/panel-store";
 import { formatTimeAgo } from "@/utils/time";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
+import { isWeb } from "@/constants/platform";
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name", label: "Name" },
@@ -91,7 +82,7 @@ export function FileExplorerPane({
 }: FileExplorerPaneProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
-  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
+  const showDesktopWebScrollbar = isWeb && !isMobile;
 
   const daemons = useHosts();
   const daemonProfile = useMemo(
@@ -167,53 +158,33 @@ export function FileExplorerPane({
     if (hasInitializedRef.current) {
       return;
     }
+    // Mark initialized eagerly so concurrent effect re-runs don't double-fetch.
+    // If the root listing fails (e.g. client not yet connected), we reset the
+    // flag so the next time requestDirectoryListing is recreated (when client
+    // becomes available) this effect retries automatically.
     hasInitializedRef.current = true;
     void requestDirectoryListing(".", {
       recordHistory: false,
       setCurrentPath: false,
-    });
-    const persistedPaths =
-      usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
-    if (persistedPaths) {
-      for (const path of persistedPaths) {
-        if (path !== ".") {
-          void requestDirectoryListing(path, {
-            recordHistory: false,
-            setCurrentPath: false,
-          });
+    }).then((succeeded) => {
+      if (!succeeded) {
+        hasInitializedRef.current = false;
+        return;
+      }
+      const persistedPaths =
+        usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
+      if (persistedPaths) {
+        for (const path of persistedPaths) {
+          if (path !== ".") {
+            void requestDirectoryListing(path, {
+              recordHistory: false,
+              setCurrentPath: false,
+            });
+          }
         }
       }
-    }
-  }, [hasWorkspaceScope, requestDirectoryListing, workspaceStateKey]);
-
-  // Expand ancestor directories when a file is selected (e.g., from an inline path click)
-  useEffect(() => {
-    if (!selectedEntryPath || !workspaceStateKey) {
-      return;
-    }
-    const parentDir = getParentDirectory(selectedEntryPath);
-    const ancestors = getAncestorDirectories(parentDir);
-    const newPaths = ancestors.filter((path) => !expandedPaths.has(path));
-    if (newPaths.length === 0) {
-      return;
-    }
-    setExpandedPathsForWorkspace(workspaceStateKey, [...Array.from(expandedPaths), ...newPaths]);
-    newPaths.forEach((path) => {
-      if (!directories.has(path)) {
-        void requestDirectoryListing(path, {
-          recordHistory: false,
-          setCurrentPath: false,
-        });
-      }
     });
-  }, [
-    directories,
-    workspaceStateKey,
-    expandedPaths,
-    requestDirectoryListing,
-    selectedEntryPath,
-    setExpandedPathsForWorkspace,
-  ]);
+  }, [hasWorkspaceScope, requestDirectoryListing, workspaceStateKey]);
 
   const handleToggleDirectory = useCallback(
     (entry: ExplorerEntry) => {
@@ -332,48 +303,6 @@ export function FileExplorerPane({
   const handleRefresh = useCallback(() => {
     void refetchExplorer();
   }, [refetchExplorer]);
-  const refreshIconRotation = useSharedValue(0);
-
-  useEffect(() => {
-    if (isRefreshFetching) {
-      refreshIconRotation.value = 0;
-      refreshIconRotation.value = withRepeat(
-        withTiming(360, {
-          duration: 700,
-          easing: Easing.linear,
-        }),
-        -1,
-        false,
-      );
-      return;
-    }
-
-    cancelAnimation(refreshIconRotation);
-    const remainder = refreshIconRotation.value % 360;
-    if (Math.abs(remainder) < 0.001) {
-      refreshIconRotation.value = 0;
-      return;
-    }
-
-    const remaining = 360 - remainder;
-    const duration = Math.max(80, Math.round((remaining / 360) * 700));
-    refreshIconRotation.value = withTiming(
-      360,
-      {
-        duration,
-        easing: Easing.linear,
-      },
-      (finished) => {
-        if (finished) {
-          refreshIconRotation.value = 0;
-        }
-      },
-    );
-  }, [isRefreshFetching, refreshIconRotation]);
-
-  const refreshIconAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${refreshIconRotation.value}deg` }],
-  }));
 
   const currentSortLabel = SORT_OPTIONS.find((opt) => opt.value === sortOption)?.label ?? "Name";
 
@@ -583,11 +512,15 @@ export function FileExplorerPane({
                 (hovered || pressed) && styles.iconButtonHovered,
               ]}
               accessibilityRole="button"
-              accessibilityLabel="Refresh files"
+              accessibilityLabel={isRefreshFetching ? "Refreshing files" : "Refresh files"}
             >
-              <Animated.View style={[styles.refreshIcon, refreshIconAnimatedStyle]}>
-                <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </Animated.View>
+              <View style={styles.refreshIcon}>
+                {isRefreshFetching ? (
+                  <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                ) : (
+                  <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                )}
+              </View>
             </Pressable>
           </View>
           <FlatList
@@ -671,35 +604,6 @@ function buildTreeRows({
   }
 
   return rows;
-}
-
-function getParentDirectory(path: string): string {
-  const normalized = path.replace(/\/+$/, "");
-  if (!normalized || normalized === ".") {
-    return ".";
-  }
-  const lastSlash = normalized.lastIndexOf("/");
-  if (lastSlash === -1) {
-    return ".";
-  }
-  const dir = normalized.slice(0, lastSlash);
-  return dir.length > 0 ? dir : ".";
-}
-
-function getAncestorDirectories(directory: string): string[] {
-  const trimmed = directory.replace(/^\.\/+/, "").replace(/\/+$/, "");
-  if (!trimmed || trimmed === ".") {
-    return ["."];
-  }
-
-  const parts = trimmed.split("/").filter(Boolean);
-  const ancestors: string[] = ["."];
-  let acc = "";
-  for (const part of parts) {
-    acc = acc ? `${acc}/${part}` : part;
-    ancestors.push(acc);
-  }
-  return ancestors;
 }
 
 function getErrorRecoveryPath(state: AgentFileExplorerState | undefined): string {

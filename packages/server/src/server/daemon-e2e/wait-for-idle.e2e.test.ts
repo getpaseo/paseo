@@ -128,6 +128,10 @@ describe("waitForFinish edge cases", () => {
 
   test("waitForFinish resolves first idle edge even if a new run starts immediately after", async () => {
     const cwd = tmpCwd();
+    const secondary = new DaemonClient({ url: `ws://127.0.0.1:${ctx.daemon.port}/ws` });
+
+    await secondary.connect();
+    await secondary.fetchAgents({ subscribe: { subscriptionId: "wait-for-idle-secondary" } });
 
     const agent = await ctx.client.createAgent({
       provider: "codex",
@@ -153,14 +157,9 @@ describe("waitForFinish edge cases", () => {
         }
 
         spawnedSecondRun = true;
-        const stream = ctx.daemon.daemon.agentManager.streamAgent(
-          agent.id,
-          "Use your shell tool to run sleep 1 and then reply done.",
-        );
         secondRunDrain = (async () => {
-          for await (const _event of stream) {
-            // Drain second run so manager can settle.
-          }
+          await secondary.sendMessage(agent.id, "Reply with exactly: done.");
+          await secondary.waitForFinish(agent.id, 5_000);
         })();
       },
       { agentId: agent.id, replayState: false },
@@ -177,6 +176,7 @@ describe("waitForFinish edge cases", () => {
     } finally {
       unsubscribe();
       await secondRunDrain;
+      await secondary.close();
       await ctx.client.deleteAgent(agent.id);
       rmSync(cwd, { recursive: true, force: true });
     }

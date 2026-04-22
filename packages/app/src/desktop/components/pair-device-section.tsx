@@ -45,7 +45,7 @@ export function PairDeviceSection() {
   if (!showSection) return null;
 
   return (
-    <View style={settingsStyles.section}>
+    <View style={settingsStyles.section} testID="host-page-pair-device-card">
       <Text style={settingsStyles.sectionTitle}>Connect another device</Text>
       <View style={settingsStyles.card}>
         {pairingQuery.isPending ? (

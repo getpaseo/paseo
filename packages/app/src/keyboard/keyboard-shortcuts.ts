@@ -16,7 +16,6 @@ export type KeyboardShortcutContext = {
   isDesktop: boolean;
   focusScope: KeyboardFocusScope;
   commandCenterOpen: boolean;
-  hasSelectedAgent: boolean;
 };
 
 export type KeyboardShortcutMatch = {
@@ -57,8 +56,6 @@ interface ShortcutWhen {
   terminal?: false;
   /** false = disabled when command center is open */
   commandCenter?: false;
-  /** true = requires a selected agent */
-  hasSelectedAgent?: true;
   /** Exact focus scope match */
   focusScope?: KeyboardFocusScope;
 }
@@ -198,7 +195,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "workspace-tab-new",
       section: "tabs-panes",
-      label: "New agent tab",
+      label: "New tab",
       keys: ["mod", "T"],
     },
   },
@@ -210,7 +207,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "workspace-tab-new",
       section: "tabs-panes",
-      label: "New agent tab",
+      label: "New tab",
       keys: ["mod", "T"],
     },
   },
@@ -659,7 +656,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "sidebar-toggle-right-cmd-e-mac",
     action: "sidebar.toggle.right",
     combo: "Cmd+E",
-    when: { mac: true, hasSelectedAgent: true, commandCenter: false },
+    when: { mac: true, commandCenter: false },
     help: {
       id: "toggle-right-sidebar",
       section: "panels",
@@ -671,7 +668,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "sidebar-toggle-right-ctrl-e-non-mac",
     action: "sidebar.toggle.right",
     combo: "Ctrl+E",
-    when: { mac: false, hasSelectedAgent: true, commandCenter: false, terminal: false },
+    when: { mac: false, commandCenter: false, terminal: false },
     help: {
       id: "toggle-right-sidebar",
       section: "panels",
@@ -683,7 +680,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "sidebar-toggle-right-ctrl-backquote",
     action: "sidebar.toggle.right",
     combo: "Ctrl+`",
-    when: { hasSelectedAgent: true, commandCenter: false },
+    when: { commandCenter: false },
   },
 
   // --- Toggle both sidebars ---
@@ -712,12 +709,38 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
 
+  // --- Settings toggle ---
+  {
+    id: "settings-toggle-cmd-comma-mac",
+    action: "settings.toggle",
+    combo: "Cmd+,",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "toggle-settings",
+      section: "panels",
+      label: "Toggle settings",
+      keys: ["mod", ","],
+    },
+  },
+  {
+    id: "settings-toggle-ctrl-comma-non-mac",
+    action: "settings.toggle",
+    combo: "Ctrl+,",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "toggle-settings",
+      section: "panels",
+      label: "Toggle settings",
+      keys: ["mod", ","],
+    },
+  },
+
   // --- Focus mode ---
   {
     id: "view-toggle-focus-cmd-shift-f-mac",
     action: "view.toggle.focus",
     combo: "Cmd+Shift+F",
-    when: { mac: true, hasSelectedAgent: true, commandCenter: false },
+    when: { mac: true, commandCenter: false },
     help: {
       id: "toggle-focus",
       section: "panels",
@@ -729,7 +752,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "view-toggle-focus-ctrl-shift-f-non-mac",
     action: "view.toggle.focus",
     combo: "Ctrl+Shift+F",
-    when: { mac: false, hasSelectedAgent: true, commandCenter: false, terminal: false },
+    when: { mac: false, commandCenter: false, terminal: false },
     help: {
       id: "toggle-focus",
       section: "panels",
@@ -765,6 +788,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 
   // --- Message input ---
+  {
+    id: "message-input-focus-cmd-l-mac",
+    action: "message-input.action",
+    combo: "Cmd+L",
+    when: { mac: true, commandCenter: false },
+    payload: { type: "message-input", kind: "focus" },
+    help: {
+      id: "focus-message-input",
+      section: "agent-input",
+      label: "Focus message input",
+      keys: ["mod", "L"],
+    },
+  },
+  {
+    id: "message-input-focus-ctrl-l-non-mac",
+    action: "message-input.action",
+    combo: "Ctrl+L",
+    when: { mac: false, commandCenter: false, terminal: false },
+    payload: { type: "message-input", kind: "focus" },
+    help: {
+      id: "focus-message-input",
+      section: "agent-input",
+      label: "Focus message input",
+      keys: ["mod", "L"],
+    },
+  },
   {
     id: "message-input-voice-toggle-cmd-shift-d-mac",
     action: "message-input.action",
@@ -989,7 +1038,6 @@ function matchesWhen(when: ShortcutWhen | undefined, context: KeyboardShortcutCo
   if (when.desktop !== undefined && when.desktop !== context.isDesktop) return false;
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;
-  if (when.hasSelectedAgent === true && !context.hasSelectedAgent) return false;
   if (when.focusScope !== undefined && context.focusScope !== when.focusScope) return false;
   return true;
 }

@@ -13,6 +13,7 @@ import {
   deriveWorkspaceKind,
   normalizeWorkspaceId,
 } from "./workspace-registry-model.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -53,6 +54,7 @@ export async function bootstrapWorkspaceRegistries(options: {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  workspaceGitService: WorkspaceGitService;
   logger: Logger;
 }): Promise<void> {
   const [projectsExists, workspacesExists] = await Promise.all([
@@ -79,7 +81,7 @@ export async function bootstrapWorkspaceRegistries(options: {
     const normalizedCwd = normalizeWorkspaceId(record.cwd);
     const placement = await buildProjectPlacementForCwd({
       cwd: normalizedCwd,
-      paseoHome: options.paseoHome,
+      workspaceGitService: options.workspaceGitService,
     });
     const workspaceId = deriveWorkspaceId(normalizedCwd, placement.checkout);
     const existing = recordsByWorkspaceId.get(workspaceId) ?? { placement, records: [] };
@@ -91,6 +93,7 @@ export async function bootstrapWorkspaceRegistries(options: {
 
   for (const [workspaceId, entry] of recordsByWorkspaceId.entries()) {
     const { placement, records: workspaceRecords } = entry;
+    const workspaceCwd = placement.checkout.cwd;
     let workspaceCreatedAt: string | null = null;
     let workspaceUpdatedAt: string | null = null;
     for (const record of workspaceRecords) {
@@ -104,10 +107,10 @@ export async function bootstrapWorkspaceRegistries(options: {
       createPersistedWorkspaceRecord({
         workspaceId,
         projectId: placement.projectKey,
-        cwd: workspaceId,
+        cwd: workspaceCwd,
         kind: deriveWorkspaceKind(placement.checkout),
         displayName: deriveWorkspaceDisplayName({
-          cwd: workspaceId,
+          cwd: workspaceCwd,
           checkout: placement.checkout,
         }),
         createdAt,
@@ -127,7 +130,7 @@ export async function bootstrapWorkspaceRegistries(options: {
       createPersistedProjectRecord({
         projectId: placement.projectKey,
         rootPath: deriveProjectRootPath({
-          cwd: workspaceId,
+          cwd: workspaceCwd,
           checkout: placement.checkout,
         }),
         kind: deriveProjectKind(placement.checkout),

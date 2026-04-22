@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -6,6 +8,8 @@ import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
+  ListModesOptions,
+  ListModelsOptions,
   ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
@@ -19,9 +23,12 @@ type Deferred<T> = {
 
 type MockProviderOptions = {
   provider: AgentProvider;
+  label?: string;
+  description?: string;
+  defaultModeId?: string | null;
   isAvailable?: () => Promise<boolean>;
-  fetchModels?: (cwd?: string) => Promise<AgentModelDefinition[]>;
-  fetchModes?: (cwd?: string) => Promise<AgentMode[]>;
+  fetchModels?: (cwd: string, force: boolean) => Promise<AgentModelDefinition[]>;
+  fetchModes?: (cwd: string, force: boolean) => Promise<AgentMode[]>;
 };
 
 type MockProviderHandle = {
@@ -41,6 +48,11 @@ const TEST_CAPABILITIES = {
 } as const;
 
 describe("ProviderSnapshotManager", () => {
+  const ttlMs = 5 * 60 * 1_000;
+  const projectCwd = resolve("/tmp/project");
+  const projectACwd = resolve("/tmp/project-a");
+  const projectBCwd = resolve("/tmp/project-b");
+
   test("getSnapshot returns all providers in loading state initially and triggers warmUp", async () => {
     const codexModels = deferred<AgentModelDefinition[]>();
     const claudeModels = deferred<AgentModelDefinition[]>();
@@ -56,12 +68,23 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    const snapshot = manager.getSnapshot("/tmp/project");
+    const snapshot = manager.getSnapshot(projectCwd);
 
-    expect(snapshot).toEqual([
-      { provider: "claude", status: "loading" },
-      { provider: "codex", status: "loading" },
-    ]);
+    expect(snapshot.map((entry) => entry.provider)).toEqual(["codex", "claude"]);
+    expect(getProviderEntry(snapshot, "claude")).toMatchObject({
+      provider: "claude",
+      status: "loading",
+      label: "claude",
+      description: "claude test provider",
+      defaultModeId: null,
+    });
+    expect(getProviderEntry(snapshot, "codex")).toMatchObject({
+      provider: "codex",
+      status: "loading",
+      label: "codex",
+      description: "codex test provider",
+      defaultModeId: null,
+    });
 
     await vi.waitFor(() => {
       expect(handles.claude?.isAvailable).toHaveBeenCalledTimes(1);
@@ -88,25 +111,31 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "claude")?.status).toBe("ready");
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
     });
 
-    const snapshot = manager.getSnapshot("/tmp/project");
+    const snapshot = manager.getSnapshot(projectCwd);
     expect(getProviderEntry(snapshot, "codex")).toMatchObject({
       provider: "codex",
       status: "ready",
       models: [createModel("codex", "gpt-5.2")],
       modes: [createMode("auto")],
+      label: "codex",
+      description: "codex test provider",
+      defaultModeId: null,
     });
     expect(getProviderEntry(snapshot, "claude")).toMatchObject({
       provider: "claude",
       status: "ready",
       models: [createModel("claude", "sonnet")],
       modes: [createMode("default")],
+      label: "claude",
+      description: "claude test provider",
+      defaultModeId: null,
     });
     expect(getProviderEntry(snapshot, "codex")?.fetchedAt).toEqual(expect.any(String));
 
@@ -122,11 +151,17 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(manager.getSnapshot("/tmp/project")).toEqual([
-        { provider: "codex", status: "unavailable" },
+      expect(manager.getSnapshot(projectCwd)).toEqual([
+        {
+          provider: "codex",
+          status: "unavailable",
+          label: "codex",
+          description: "codex test provider",
+          defaultModeId: null,
+        },
       ]);
     });
 
@@ -147,14 +182,17 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(manager.getSnapshot("/tmp/project")).toEqual([
+      expect(manager.getSnapshot(projectCwd)).toEqual([
         {
           provider: "codex",
           status: "error",
           error: "model lookup failed",
+          label: "codex",
+          description: "codex test provider",
+          defaultModeId: null,
         },
       ]);
     });
@@ -186,7 +224,7 @@ describe("ProviderSnapshotManager", () => {
     };
     manager.on("change", listener);
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     claudeModels.resolve([createModel("claude", "sonnet")]);
     claudeModes.resolve([createMode("default")]);
@@ -195,7 +233,7 @@ describe("ProviderSnapshotManager", () => {
       expect(changes).toHaveLength(1);
     });
 
-    expect(changes[0]?.cwd).toBe("/tmp/project");
+    expect(changes[0]?.cwd).toBe(homedir());
     expect(getProviderEntry(changes[0]?.entries ?? [], "claude")?.status).toBe("ready");
     expect(getProviderEntry(changes[0]?.entries ?? [], "codex")?.status).toBe("loading");
 
@@ -227,19 +265,27 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.models?.[0]?.id).toBe(
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
         "gpt-5.1",
       );
     });
 
-    manager.refresh("/tmp/project");
-    expect(manager.getSnapshot("/tmp/project")).toEqual([{ provider: "codex", status: "loading" }]);
+    manager.refresh({ cwd: projectCwd });
+    expect(manager.getSnapshot(projectCwd)).toEqual([
+      {
+        provider: "codex",
+        status: "loading",
+        label: "codex",
+        description: "codex test provider",
+        defaultModeId: null,
+      },
+    ]);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.models?.[0]?.id).toBe(
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
         "gpt-5.2",
       );
     });
@@ -249,36 +295,197 @@ describe("ProviderSnapshotManager", () => {
     manager.destroy();
   });
 
-  test("refresh during an in-flight refresh is a no-op", async () => {
-    const fetchModels = deferred<AgentModelDefinition[]>();
-    const fetchModes = deferred<AgentMode[]>();
-    const { registry, handles } = createRegistry([
+  test("refresh with providers only re-fetches matching providers", async () => {
+    const codexFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.1")])
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.2")]);
+    const claudeFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("claude", "sonnet-4")]);
+    const { registry } = createRegistry([
       createMockProvider({
         provider: "codex",
-        fetchModels: async () => fetchModels.promise,
-        fetchModes: async () => fetchModes.promise,
+        fetchModels: codexFetchModels,
+        fetchModes: async () => [createMode("auto")],
+      }),
+      createMockProvider({
+        provider: "claude",
+        fetchModels: claudeFetchModels,
+        fetchModes: async () => [createMode("default")],
       }),
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
-    const changes: ProviderSnapshotEntry[][] = [];
-    manager.on("change", (entries) => changes.push(entries));
 
-    manager.refresh("/tmp/project");
-
-    expect(manager.getSnapshot("/tmp/project")).toEqual([{ provider: "codex", status: "loading" }]);
-
-    manager.refresh("/tmp/project");
-    manager.refresh("/tmp/project");
-    manager.refresh("/tmp/project");
-
-    expect(changes).toHaveLength(1);
-    expect(handles.codex?.isAvailable).toHaveBeenCalledTimes(1);
-
-    fetchModels.resolve([createModel("codex", "gpt-5.2")]);
-    fetchModes.resolve([createMode("auto")]);
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")).toMatchObject({
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.1",
+      );
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.models?.[0]?.id).toBe(
+        "sonnet-4",
+      );
+    });
+
+    manager.refresh({ cwd: projectCwd, providers: ["codex"] });
+
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("loading");
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")).toMatchObject({
+      provider: "claude",
+      status: "ready",
+      models: [createModel("claude", "sonnet-4")],
+    });
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.2",
+      );
+    });
+
+    expect(codexFetchModels).toHaveBeenCalledTimes(2);
+    expect(claudeFetchModels).toHaveBeenCalledTimes(1);
+
+    manager.destroy();
+  });
+
+  test("refresh treats an empty providers list as a full refresh", async () => {
+    const codexFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.1")])
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.2")]);
+    const claudeFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("claude", "sonnet-4")])
+      .mockResolvedValueOnce([createModel("claude", "sonnet-4.5")]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: codexFetchModels,
+        fetchModes: async () => [createMode("auto")],
+      }),
+      createMockProvider({
+        provider: "claude",
+        fetchModels: claudeFetchModels,
+        fetchModes: async () => [createMode("default")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.status).toBe("ready");
+    });
+
+    manager.refresh({ cwd: projectCwd, providers: [] });
+
+    expect(manager.getSnapshot(projectCwd)).toEqual([
+      {
+        provider: "codex",
+        status: "loading",
+        label: "codex",
+        description: "codex test provider",
+        defaultModeId: null,
+      },
+      {
+        provider: "claude",
+        status: "loading",
+        label: "claude",
+        description: "claude test provider",
+        defaultModeId: null,
+      },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.2",
+      );
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.models?.[0]?.id).toBe(
+        "sonnet-4.5",
+      );
+    });
+
+    expect(codexFetchModels).toHaveBeenCalledTimes(2);
+    expect(claudeFetchModels).toHaveBeenCalledTimes(2);
+
+    manager.destroy();
+  });
+
+  test("refresh ignores provider filters that are not in the registry", async () => {
+    const codexFetchModels = vi
+      .fn<() => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.1")]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: codexFetchModels,
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+    });
+
+    manager.refresh({ cwd: projectCwd, providers: ["zai"] });
+
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")).toMatchObject({
+      provider: "codex",
+      status: "ready",
+      models: [createModel("codex", "gpt-5.1")],
+    });
+    expect(codexFetchModels).toHaveBeenCalledTimes(1);
+
+    manager.destroy();
+  });
+
+  test("explicit refresh bypasses an in-flight background warm-up", async () => {
+    const initialFetchModels = deferred<AgentModelDefinition[]>();
+    const explicitFetchModels = deferred<AgentModelDefinition[]>();
+    const { registry, handles } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: vi
+          .fn<() => Promise<AgentModelDefinition[]>>()
+          .mockImplementationOnce(async () => initialFetchModels.promise)
+          .mockImplementationOnce(async () => explicitFetchModels.promise),
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    expect(manager.getSnapshot(projectCwd)).toEqual([
+      {
+        provider: "codex",
+        status: "loading",
+        label: "codex",
+        description: "codex test provider",
+        defaultModeId: null,
+      },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(1);
+    });
+
+    const refreshPromise = manager.refresh({ cwd: projectCwd, providers: ["codex"] });
+
+    await vi.waitFor(() => {
+      expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(2);
+    });
+
+    explicitFetchModels.resolve([createModel("codex", "gpt-5.2")]);
+    await refreshPromise;
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")).toMatchObject({
         provider: "codex",
         status: "ready",
         models: [createModel("codex", "gpt-5.2")],
@@ -286,8 +493,404 @@ describe("ProviderSnapshotManager", () => {
       });
     });
 
+    initialFetchModels.resolve([createModel("codex", "stale-background-model")]);
+
+    await Promise.resolve();
+
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+      "gpt-5.2",
+    );
+    expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(2);
+    expect(handles.codex?.fetchModes).toHaveBeenCalledTimes(2);
+
+    manager.destroy();
+  });
+
+  test("warmUpSnapshotForCwd awaits an in-flight loading provider without force", async () => {
+    const loadingFetchModels = deferred<AgentModelDefinition[]>();
+    const fetchModels = vi
+      .fn<(cwd: string, force: boolean) => Promise<AgentModelDefinition[]>>()
+      .mockImplementation(async (_cwd, _force) => loadingFetchModels.promise);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd, force) => fetchModels(cwd, force),
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(fetchModels).toHaveBeenCalledTimes(1);
+    });
+
+    const warmUpPromise = manager.warmUpSnapshotForCwd({
+      cwd: projectCwd,
+      providers: ["codex"],
+    });
+
+    await Promise.resolve();
+
+    expect(fetchModels).toHaveBeenCalledTimes(1);
+    expect(fetchModels).toHaveBeenCalledWith(homedir(), false);
+    expect(fetchModels).not.toHaveBeenCalledWith(homedir(), true);
+
+    loadingFetchModels.resolve([createModel("codex", "gpt-5.4")]);
+    await warmUpPromise;
+
+    expect(fetchModels).toHaveBeenCalledTimes(1);
+    expect(fetchModels).not.toHaveBeenCalledWith(homedir(), true);
+
+    manager.destroy();
+  });
+
+  test("settings refresh refreshes the single global provider state once", async () => {
+    const fetchModels = vi
+      .fn<(cwd: string, force: boolean) => Promise<AgentModelDefinition[]>>()
+      .mockImplementation(async (_cwd, force) => [
+        createModel("codex", force ? "refreshed" : "initial"),
+      ]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd, force) => fetchModels(cwd, force),
+        fetchModes: async () => [createMode("auto")],
+      }),
+      createMockProvider({
+        provider: "claude",
+        fetchModels: async (cwd) => [createModel("claude", cwd)],
+        fetchModes: async () => [createMode("default")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectACwd);
+    manager.getSnapshot(projectBCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectACwd), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectBCwd), "codex")?.status).toBe("ready");
+    });
+
+    await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+
+    expect(fetchModels.mock.calls).toEqual([
+      [homedir(), false],
+      [homedir(), true],
+    ]);
+
+    const projectASnapshot = manager.getSnapshot(projectACwd);
+    expect(getProviderEntry(projectASnapshot, "codex")).toMatchObject({
+      provider: "codex",
+      status: "ready",
+      models: [createModel("codex", "refreshed")],
+    });
+    expect(getProviderEntry(projectASnapshot, "claude")?.status).toBe("ready");
+
+    manager.destroy();
+  });
+
+  test("settings refresh updates workspace reads through the shared global provider state", async () => {
+    const fetchModels = vi
+      .fn<(cwd: string, force: boolean) => Promise<AgentModelDefinition[]>>()
+      .mockImplementation(async (_cwd, force) => [
+        createModel("codex", force ? "refreshed" : "initial"),
+      ]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd, force) => fetchModels(cwd, force),
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+    });
+
+    await manager.refreshSettingsSnapshot({ providers: ["codex"] });
+
+    expect(fetchModels.mock.calls).toEqual([
+      [homedir(), false],
+      [homedir(), true],
+    ]);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "refreshed",
+      );
+    });
+
+    manager.destroy();
+  });
+
+  test("refresh marks a slow provider as error after the timeout", async () => {
+    const fetchModels = deferred<AgentModelDefinition[]>();
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async () => fetchModels.promise,
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger(), {
+      refreshTimeoutMs: 5,
+    });
+
+    await manager.refresh({ cwd: projectCwd, providers: ["codex"] });
+
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")).toMatchObject({
+      provider: "codex",
+      status: "error",
+      error: "Timed out refreshing codex after 5ms",
+    });
+
+    manager.destroy();
+    fetchModels.resolve([createModel("codex", "gpt-5.2")]);
+  });
+
+  test("getSnapshot returns stale ready entries and starts background warm-up when snapshot is older than TTL", async () => {
+    let now = 1_000;
+    const fetchModels = vi
+      .fn<(cwd?: string) => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.1")])
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.2")]);
+    const { registry, handles } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd) => fetchModels(cwd),
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger(), {
+      ttlMs,
+      now: () => now,
+    });
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.1",
+      );
+    });
+
+    now += ttlMs + 1;
+
+    const staleSnapshot = manager.getSnapshot(projectCwd);
+
+    expect(getProviderEntry(staleSnapshot, "codex")).toMatchObject({
+      provider: "codex",
+      status: "ready",
+      models: [createModel("codex", "gpt-5.1")],
+      modes: [createMode("auto")],
+    });
+
+    await vi.waitFor(() => {
+      expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(2);
+    });
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.2",
+      );
+    });
+
+    manager.destroy();
+  });
+
+  test("getSnapshot does not trigger a second warm-up while a stale re-warm is already in flight", async () => {
+    let now = 2_000;
+    const staleRefreshModels = deferred<AgentModelDefinition[]>();
+    const fetchModels = vi
+      .fn<(cwd?: string) => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.1")])
+      .mockImplementationOnce(async () => staleRefreshModels.promise);
+    const { registry, handles } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd) => fetchModels(cwd),
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger(), {
+      ttlMs,
+      now: () => now,
+    });
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.1",
+      );
+    });
+
+    now += ttlMs + 1;
+
+    const firstStaleSnapshot = manager.getSnapshot(projectCwd);
+    const secondStaleSnapshot = manager.getSnapshot(projectCwd);
+
+    expect(getProviderEntry(firstStaleSnapshot, "codex")?.models?.[0]?.id).toBe("gpt-5.1");
+    expect(getProviderEntry(secondStaleSnapshot, "codex")?.models?.[0]?.id).toBe("gpt-5.1");
+
+    await vi.waitFor(() => {
+      expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(2);
+    });
+
+    staleRefreshModels.resolve([createModel("codex", "gpt-5.2")]);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.2",
+      );
+    });
+
+    expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(2);
+
+    manager.destroy();
+  });
+
+  test("getSnapshot does not re-warm when the cached snapshot is still fresh", async () => {
+    let now = 3_000;
+    const { registry, handles } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async () => [createModel("codex", "gpt-5.1")],
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger(), {
+      ttlMs,
+      now: () => now,
+    });
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+    });
+
+    now += ttlMs - 1;
+
+    const freshSnapshot = manager.getSnapshot(projectCwd);
+
+    expect(getProviderEntry(freshSnapshot, "codex")?.models?.[0]?.id).toBe("gpt-5.1");
     expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(1);
-    expect(handles.codex?.fetchModes).toHaveBeenCalledTimes(1);
+
+    manager.destroy();
+  });
+
+  test("getSnapshot re-warms snapshots in error and unavailable states after TTL", async () => {
+    let now = 4_000;
+    const unavailableFetchModels = vi
+      .fn<(cwd?: string) => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValue([createModel("codex", "gpt-5.2")]);
+    const unavailableIsAvailable = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const errorFetchModels = vi
+      .fn<(cwd?: string) => Promise<AgentModelDefinition[]>>()
+      .mockRejectedValueOnce(new Error("model lookup failed"))
+      .mockResolvedValueOnce([createModel("claude", "sonnet")]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        isAvailable: unavailableIsAvailable,
+        fetchModels: async (cwd) => unavailableFetchModels(cwd),
+        fetchModes: async () => [createMode("auto")],
+      }),
+      createMockProvider({
+        provider: "claude",
+        fetchModels: async (cwd) => errorFetchModels(cwd),
+        fetchModes: async () => [createMode("default")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger(), {
+      ttlMs,
+      now: () => now,
+    });
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe(
+        "unavailable",
+      );
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.status).toBe("error");
+    });
+
+    now += ttlMs + 1;
+
+    const staleSnapshot = manager.getSnapshot(projectCwd);
+
+    expect(getProviderEntry(staleSnapshot, "codex")?.status).toBe("unavailable");
+    expect(getProviderEntry(staleSnapshot, "claude")?.status).toBe("error");
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.status).toBe("ready");
+    });
+
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+      "gpt-5.2",
+    );
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.models?.[0]?.id).toBe(
+      "sonnet",
+    );
+
+    manager.destroy();
+  });
+
+  test("getSnapshot respects an injected TTL", async () => {
+    let now = 5_000;
+    const customTtlMs = 100;
+    const fetchModels = vi
+      .fn<(cwd?: string) => Promise<AgentModelDefinition[]>>()
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.1")])
+      .mockResolvedValueOnce([createModel("codex", "gpt-5.2")]);
+    const { registry, handles } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd) => fetchModels(cwd),
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger(), {
+      ttlMs: customTtlMs,
+      now: () => now,
+    });
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.1",
+      );
+    });
+
+    now += customTtlMs - 1;
+    manager.getSnapshot(projectCwd);
+    expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(1);
+
+    now += 2;
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(2);
+    });
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.models?.[0]?.id).toBe(
+        "gpt-5.2",
+      );
+    });
 
     manager.destroy();
   });
@@ -306,9 +909,9 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project");
-    manager.getSnapshot("/tmp/project");
-    manager.getSnapshot("/tmp/project");
+    manager.getSnapshot(projectCwd);
+    manager.getSnapshot(projectCwd);
+    manager.getSnapshot(projectCwd);
 
     await vi.waitFor(() => {
       expect(handles.codex?.isAvailable).toHaveBeenCalledTimes(1);
@@ -320,13 +923,13 @@ describe("ProviderSnapshotManager", () => {
     codexModels.resolve([createModel("codex", "gpt-5.2")]);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project"), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
     });
 
     manager.destroy();
   });
 
-  test("different cwd keys get independent snapshots", async () => {
+  test("different cwd keys share the same global provider snapshot state", async () => {
     const seenCwds: string[] = [];
     const { registry } = createRegistry([
       createMockProvider({
@@ -339,25 +942,190 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("/tmp/project-a");
-    manager.getSnapshot("/tmp/project-b");
+    manager.getSnapshot(projectACwd);
+    manager.getSnapshot(projectBCwd);
 
     await vi.waitFor(() => {
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project-a"), "codex")?.status).toBe(
-        "ready",
-      );
-      expect(getProviderEntry(manager.getSnapshot("/tmp/project-b"), "codex")?.status).toBe(
-        "ready",
-      );
+      expect(getProviderEntry(manager.getSnapshot(projectACwd), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectBCwd), "codex")?.status).toBe("ready");
     });
 
-    expect(getProviderEntry(manager.getSnapshot("/tmp/project-a"), "codex")?.models?.[0]?.id).toBe(
-      "model:/tmp/project-a",
+    expect(getProviderEntry(manager.getSnapshot(projectACwd), "codex")?.models?.[0]?.id).toBe(
+      `model:${homedir()}`,
     );
-    expect(getProviderEntry(manager.getSnapshot("/tmp/project-b"), "codex")?.models?.[0]?.id).toBe(
-      "model:/tmp/project-b",
+    expect(getProviderEntry(manager.getSnapshot(projectBCwd), "codex")?.models?.[0]?.id).toBe(
+      `model:${homedir()}`,
     );
-    expect(seenCwds).toEqual(["/tmp/project-a", "/tmp/project-b"]);
+    expect(seenCwds).toEqual([homedir()]);
+
+    manager.destroy();
+  });
+
+  test("missing cwd resolves to home and shares the explicit home cache entry", async () => {
+    const seenCwds: string[] = [];
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd) => {
+          seenCwds.push(cwd);
+          return [createModel("codex", cwd)];
+        },
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot();
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(homedir()), "codex")?.status).toBe("ready");
+    });
+
+    manager.getSnapshot("   ");
+
+    expect(seenCwds).toEqual([homedir()]);
+    expect(getProviderEntry(manager.getSnapshot(), "codex")?.models?.[0]?.id).toBe(homedir());
+
+    manager.destroy();
+  });
+
+  test("workspace cwd does not affect global provider model fetching", async () => {
+    const seenCwds: string[] = [];
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd) => {
+          seenCwds.push(cwd);
+          return [createModel("codex", cwd)];
+        },
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot("~/paseo-provider-test/../paseo-provider-test/");
+    manager.getSnapshot("relative-provider-test/..");
+
+    await vi.waitFor(() => {
+      expect(seenCwds).toHaveLength(1);
+    });
+
+    expect(seenCwds).toEqual([homedir()]);
+
+    manager.destroy();
+  });
+
+  test("workspace refresh refreshes the shared global provider state with force true", async () => {
+    const fetchModels = vi
+      .fn<(cwd: string, force: boolean) => Promise<AgentModelDefinition[]>>()
+      .mockImplementation(async (_cwd, force) => [
+        createModel("codex", force ? "refreshed" : "initial"),
+      ]);
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async (cwd, force) => fetchModels(cwd, force),
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectACwd);
+    manager.getSnapshot(projectBCwd);
+
+    await vi.waitFor(() => {
+      expect(fetchModels).toHaveBeenCalledTimes(1);
+    });
+
+    await manager.refreshSnapshotForCwd({ cwd: projectACwd, providers: ["codex"] });
+
+    expect(fetchModels.mock.calls).toEqual([
+      [homedir(), false],
+      [homedir(), true],
+    ]);
+    expect(getProviderEntry(manager.getSnapshot(projectBCwd), "codex")?.models?.[0]?.id).toBe(
+      "refreshed",
+    );
+
+    manager.destroy();
+  });
+
+  test("snapshot includes user-defined providers from the registry", async () => {
+    const { registry } = createRegistry([
+      createMockProvider({ provider: "claude" }),
+      createMockProvider({
+        provider: "zai",
+        label: "ZAI",
+        description: "Custom Claude profile",
+        defaultModeId: "default",
+        fetchModes: async () => [createMode("default")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "zai")?.status).toBe("ready");
+    });
+
+    expect(getProviderEntry(manager.getSnapshot(projectCwd), "zai")).toMatchObject({
+      provider: "zai",
+      status: "ready",
+      label: "ZAI",
+      description: "Custom Claude profile",
+      defaultModeId: "default",
+    });
+
+    manager.destroy();
+  });
+
+  test("enabled false providers are omitted when absent from the registry", () => {
+    const { registry } = createRegistry([createMockProvider({ provider: "claude" })]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    const snapshot = manager.getSnapshot(projectCwd);
+
+    expect(snapshot.map((entry) => entry.provider)).toEqual(["claude"]);
+    expect(getProviderEntry(snapshot, "zai")).toBeUndefined();
+
+    manager.destroy();
+  });
+
+  test("snapshot entries include label and description from the registry", async () => {
+    const models = deferred<AgentModelDefinition[]>();
+    const modes = deferred<AgentMode[]>();
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "zai",
+        label: "ZAI",
+        description: "Custom Claude profile",
+        defaultModeId: "plan",
+        fetchModels: async () => models.promise,
+        fetchModes: async () => modes.promise,
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    expect(manager.getSnapshot(projectCwd)).toEqual([
+      {
+        provider: "zai",
+        status: "loading",
+        label: "ZAI",
+        description: "Custom Claude profile",
+        defaultModeId: "plan",
+      },
+    ]);
+
+    models.resolve([createModel("zai", "zai-fast")]);
+    modes.resolve([createMode("plan")]);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "zai")).toMatchObject({
+        provider: "zai",
+        status: "ready",
+        label: "ZAI",
+        description: "Custom Claude profile",
+        defaultModeId: "plan",
+      });
+    });
 
     manager.destroy();
   });
@@ -391,21 +1159,23 @@ function createRegistry(handles: MockProviderHandle[]): {
 function createMockProvider(options: MockProviderOptions): MockProviderHandle {
   const isAvailable = vi.fn(async () => options.isAvailable?.() ?? true);
   const fetchModels = vi.fn(
-    async (listOptions?: { cwd?: string }) =>
-      options.fetchModels?.(listOptions?.cwd) ?? [
+    async (listOptions: ListModelsOptions) =>
+      options.fetchModels?.(listOptions.cwd, listOptions.force) ?? [
         createModel(options.provider, `${options.provider}-default`),
       ],
   );
   const fetchModes = vi.fn(
-    async (listOptions?: { cwd?: string }) =>
-      options.fetchModes?.(listOptions?.cwd) ?? [createMode(`${options.provider}-mode`)],
+    async (listOptions: ListModesOptions) =>
+      options.fetchModes?.(listOptions.cwd, listOptions.force) ?? [
+        createMode(`${options.provider}-mode`),
+      ],
   );
 
   const definition: ProviderDefinition = {
     id: options.provider,
-    label: options.provider,
-    description: `${options.provider} test provider`,
-    defaultModeId: null,
+    label: options.label ?? options.provider,
+    description: options.description ?? `${options.provider} test provider`,
+    defaultModeId: options.defaultModeId ?? null,
     modes: [],
     createClient: () =>
       ({
@@ -417,7 +1187,7 @@ function createMockProvider(options: MockProviderOptions): MockProviderHandle {
         async resumeSession() {
           throw new Error("not implemented");
         },
-        async listModels() {
+        async listModels(_options: ListModelsOptions) {
           return [];
         },
         async isAvailable() {

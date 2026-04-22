@@ -35,12 +35,13 @@ export function SegmentedControl<T extends string>({
   testID,
 }: SegmentedControlProps<T>) {
   const { theme } = useUnistyles();
+  const containerSizeStyle = size === "sm" ? styles.containerSm : styles.containerMd;
   const segmentSizeStyle = size === "sm" ? styles.segmentSm : styles.segmentMd;
   const labelSizeStyle = size === "sm" ? styles.labelSm : styles.labelMd;
   const iconSize = size === "sm" ? theme.iconSize.sm : theme.iconSize.md;
 
   return (
-    <View style={[styles.container, style]} testID={testID}>
+    <View style={[styles.container, containerSizeStyle, style]} testID={testID}>
       {options.map((option) => {
         const isSelected = option.value === value;
         const iconColor = isSelected ? theme.colors.foreground : theme.colors.foregroundMuted;
@@ -89,39 +90,46 @@ export function SegmentedControl<T extends string>({
 const styles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "stretch",
     maxWidth: "100%",
-    gap: 4,
+    backgroundColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.lg,
+  },
+  containerSm: {
+    padding: 2,
+  },
+  containerMd: {
+    padding: 3,
   },
   segment: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-    borderColor: "transparent",
+    borderRadius: theme.borderRadius.lg,
     gap: theme.spacing[1],
   },
   segmentSm: {
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
   },
   segmentMd: {
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
+    paddingHorizontal: theme.spacing[6],
   },
   segmentSelected: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
   },
   segmentHover: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.borderAccent,
+    backgroundColor: theme.colors.surface1,
   },
   segmentPressed: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.borderAccent,
+    backgroundColor: theme.colors.surface1,
   },
   segmentDisabled: {
     opacity: theme.opacity[50],
@@ -135,10 +143,10 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
   },
   labelSm: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   labelMd: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   labelSelected: {
     color: theme.colors.foreground,

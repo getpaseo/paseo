@@ -10,17 +10,14 @@ import {
   generateStructuredAgentResponseWithFallback,
 } from "./agent-response-loop.js";
 import { validateBranchSlug } from "../../utils/worktree.js";
-import {
-  getCheckoutStatus,
-  renameCurrentBranch,
-  type CheckoutStatusResult,
-} from "../../utils/checkout-git.js";
+import { renameCurrentBranch } from "../../utils/checkout-git.js";
 import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
+import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "../workspace-git-service.js";
 
 export type AgentMetadataGeneratorDeps = {
   generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
-  getCheckoutStatus?: typeof getCheckoutStatus;
   renameCurrentBranch?: typeof renameCurrentBranch;
+  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot">;
 };
 
 export type AgentMetadataGenerationOptions = {
@@ -54,26 +51,29 @@ function normalizeAutoTitle(title: string): string | null {
 
 async function canRenameBranch(
   cwd: string,
-  paseoHome: string | undefined,
-  getCheckoutStatusImpl: typeof getCheckoutStatus,
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot"> | undefined,
 ): Promise<boolean> {
-  let status: CheckoutStatusResult;
+  if (!workspaceGitService) {
+    return false;
+  }
+
+  let snapshot: WorkspaceGitRuntimeSnapshot;
   try {
-    status = await getCheckoutStatusImpl(cwd, { paseoHome });
+    snapshot = await workspaceGitService.getSnapshot(cwd);
   } catch {
     return false;
   }
 
-  if (!status.isGit || !status.isPaseoOwnedWorktree) {
+  if (!snapshot.git.isGit || !snapshot.git.isPaseoOwnedWorktree) {
     return false;
   }
 
-  if (!status.currentBranch) {
+  if (!snapshot.git.currentBranch || !snapshot.git.repoRoot) {
     return false;
   }
 
-  const worktreeDirName = basename(status.repoRoot);
-  return status.currentBranch === worktreeDirName;
+  const worktreeDirName = basename(snapshot.git.repoRoot);
+  return snapshot.git.currentBranch === worktreeDirName;
 }
 
 export async function determineAgentMetadataNeeds(
@@ -88,8 +88,7 @@ export async function determineAgentMetadataNeeds(
   }
 
   const needsTitle = !hasExplicitTitle(options.explicitTitle);
-  const getCheckoutStatusImpl = options.deps?.getCheckoutStatus ?? getCheckoutStatus;
-  const needsBranch = await canRenameBranch(options.cwd, options.paseoHome, getCheckoutStatusImpl);
+  const needsBranch = await canRenameBranch(options.cwd, options.deps?.workspaceGitService);
 
   return {
     prompt,
@@ -155,7 +154,6 @@ export async function generateAndApplyAgentMetadata(
   const generator =
     options.deps?.generateStructuredAgentResponseWithFallback ??
     generateStructuredAgentResponseWithFallback;
-  const getCheckoutStatusImpl = options.deps?.getCheckoutStatus ?? getCheckoutStatus;
   const renameCurrentBranchImpl = options.deps?.renameCurrentBranch ?? renameCurrentBranch;
 
   let result: { title?: string; branch?: string };
@@ -210,9 +208,14 @@ export async function generateAndApplyAgentMetadata(
       return;
     }
 
-    let status: CheckoutStatusResult;
+    const workspaceGitService = options.deps?.workspaceGitService;
+    if (!workspaceGitService) {
+      return;
+    }
+
+    let snapshot: WorkspaceGitRuntimeSnapshot;
     try {
-      status = await getCheckoutStatusImpl(options.cwd, { paseoHome: options.paseoHome });
+      snapshot = await workspaceGitService.getSnapshot(options.cwd);
     } catch (error) {
       options.logger.warn(
         { err: error, agentId: options.agentId },
@@ -221,18 +224,30 @@ export async function generateAndApplyAgentMetadata(
       return;
     }
 
-    if (!status.isGit || !status.isPaseoOwnedWorktree || !status.currentBranch) {
+    if (!snapshot.git.isGit || !snapshot.git.isPaseoOwnedWorktree || !snapshot.git.currentBranch) {
       return;
     }
 
-    const worktreeDirName = basename(status.repoRoot);
-    if (status.currentBranch !== worktreeDirName) {
+    const worktreeDirName = snapshot.git.repoRoot ? basename(snapshot.git.repoRoot) : null;
+    if (snapshot.git.currentBranch !== worktreeDirName) {
       return;
     }
 
     try {
       await renameCurrentBranchImpl(options.cwd, normalizedBranch);
+      try {
+        await workspaceGitService.getSnapshot(options.cwd, {
+          force: true,
+          reason: "rename-branch",
+        });
+      } catch (error) {
+        options.logger.warn(
+          { err: error, agentId: options.agentId, cwd: options.cwd },
+          "Failed to force-refresh workspace git snapshot after branch rename",
+        );
+      }
       options.agentManager.notifyAgentState(options.agentId);
+      await options.agentManager.flush();
     } catch (error) {
       options.logger.warn(
         { err: error, agentId: options.agentId, branch: normalizedBranch },

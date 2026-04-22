@@ -8,6 +8,7 @@ import { Writable } from "node:stream";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
 function createCapturingLogger() {
@@ -22,18 +23,25 @@ function createCapturingLogger() {
   return { logger, lines };
 }
 
-function parseOfferUrlFromLogs(lines: string[]): string {
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line) as { msg?: string; url?: string };
-      if (obj.msg === "pairing_offer" && typeof obj.url === "string") {
-        return obj.url;
-      }
-    } catch {
-      // ignore non-JSON lines
-    }
+async function getPairingOfferUrl(args: {
+  paseoHome: string;
+  relayEnabled?: boolean;
+  relayEndpoint?: string;
+  relayPublicEndpoint?: string;
+  appBaseUrl?: string;
+}): Promise<string> {
+  const pairing = await generateLocalPairingOffer({
+    paseoHome: args.paseoHome,
+    relayEnabled: args.relayEnabled,
+    relayEndpoint: args.relayEndpoint,
+    relayPublicEndpoint: args.relayPublicEndpoint,
+    appBaseUrl: args.appBaseUrl,
+    includeQr: false,
+  });
+  if (!pairing.url) {
+    throw new Error("Expected relay pairing URL to be available");
   }
-  throw new Error(`pairing_offer log not found. saw ${lines.length} lines`);
+  return pairing.url;
 }
 
 function decodeOfferFromFragmentUrl(url: string): unknown {
@@ -72,7 +80,7 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
   test("emits relay-only offer URL with stable serverId", async () => {
     process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
 
-    const { logger, lines } = createCapturingLogger();
+    const { logger } = createCapturingLogger();
 
     const daemon = await createTestPaseoDaemon({
       listen: "0.0.0.0",
@@ -81,7 +89,13 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
     });
 
     try {
-      const offerUrl = parseOfferUrlFromLogs(lines);
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: daemon.config.relayEnabled,
+        relayEndpoint: daemon.config.relayEndpoint,
+        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+        appBaseUrl: daemon.config.appBaseUrl,
+      });
       expect(offerUrl.startsWith("https://app.paseo.sh/#offer=")).toBe(true);
 
       const offer = decodeOfferFromFragmentUrl(offerUrl) as {
@@ -111,7 +125,7 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
 
     const tempHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-offer-home-"));
 
-    const { logger: logger1, lines: lines1 } = createCapturingLogger();
+    const { logger: logger1 } = createCapturingLogger();
     const daemon1 = await createTestPaseoDaemon({
       listen: "0.0.0.0",
       logger: logger1,
@@ -124,7 +138,13 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
     let staticDir2: string | null = null;
 
     try {
-      const offerUrl1 = parseOfferUrlFromLogs(lines1);
+      const offerUrl1 = await getPairingOfferUrl({
+        paseoHome: daemon1.paseoHome,
+        relayEnabled: daemon1.config.relayEnabled,
+        relayEndpoint: daemon1.config.relayEndpoint,
+        relayPublicEndpoint: daemon1.config.relayPublicEndpoint,
+        appBaseUrl: daemon1.config.appBaseUrl,
+      });
       const offer1 = decodeOfferFromFragmentUrl(offerUrl1) as {
         serverId: string;
         daemonPublicKeyB64: string;
@@ -133,7 +153,7 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
 
       await daemon1.close();
 
-      const { logger: logger2, lines: lines2 } = createCapturingLogger();
+      const { logger: logger2 } = createCapturingLogger();
       const daemon2 = await createTestPaseoDaemon({
         listen: "0.0.0.0",
         logger: logger2,
@@ -144,7 +164,13 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
       staticDir2 = daemon2.staticDir;
 
       try {
-        const offerUrl2 = parseOfferUrlFromLogs(lines2);
+        const offerUrl2 = await getPairingOfferUrl({
+          paseoHome: daemon2.paseoHome,
+          relayEnabled: daemon2.config.relayEnabled,
+          relayEndpoint: daemon2.config.relayEndpoint,
+          relayPublicEndpoint: daemon2.config.relayPublicEndpoint,
+          appBaseUrl: daemon2.config.appBaseUrl,
+        });
         const offer2 = decodeOfferFromFragmentUrl(offerUrl2) as {
           serverId: string;
           daemonPublicKeyB64: string;
@@ -207,12 +233,6 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
           stdoutLines.push(text);
           for (const line of text.split("\n")) {
             if (!line.trim()) continue;
-            if (line.includes("pairing_offer")) {
-              clearTimeout(timeout);
-              reject(new Error("unexpected pairing_offer log when --no-relay is set"));
-              return;
-            }
-
             try {
               const parsed = JSON.parse(line) as { msg?: string };
               if (parsed.msg !== `Server listening on http://0.0.0.0:${port}`) continue;

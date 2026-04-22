@@ -1,4 +1,4 @@
-import type { AgentSnapshotPayload } from "../messages.js";
+import type { AgentListItemPayload, AgentSnapshotPayload } from "../messages.js";
 import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentCapabilityFlags,
@@ -13,6 +13,9 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
+import type { Logger } from "pino";
+import { buildProviderRegistry } from "./provider-registry.js";
+import { coerceAgentProvider, toAgentPersistenceHandle } from "../persistence-hooks.js";
 
 export type { ManagedAgent };
 
@@ -26,6 +29,17 @@ function normalizeThinkingOptionId(value: string | null | undefined): string | n
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeLabels(labels: Record<string, unknown> | undefined): Record<string, string> {
+  if (!labels) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(labels).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 }
 
 export function resolveEffectiveThinkingOptionId(options: {
@@ -64,6 +78,7 @@ export function toStoredAgentRecord(
     runtimeInfo,
     features: normalizeFeatures(agent.features),
     persistence,
+    lastError: agent.lastError ?? undefined,
     requiresAttention: agent.attention.requiresAttention,
     attentionReason: agent.attention.requiresAttention ? agent.attention.attentionReason : null,
     attentionTimestamp: agent.attention.requiresAttention
@@ -91,7 +106,7 @@ export function toAgentPayload(
     model: agent.config.model ?? null,
     thinkingOptionId,
     effectiveThinkingOptionId,
-    runtimeInfo,
+    ...(runtimeInfo ? { runtimeInfo } : {}),
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
@@ -126,6 +141,115 @@ export function toAgentPayload(
   }
 
   return payload;
+}
+
+export function buildStoredAgentPayload(
+  record: StoredAgentRecord,
+  providerRegistry: ReturnType<typeof buildProviderRegistry>,
+  logger: Logger,
+): AgentSnapshotPayload {
+  const defaultCapabilities = {
+    supportsStreaming: false,
+    supportsSessionPersistence: true,
+    supportsDynamicModes: false,
+    supportsMcpServers: false,
+    supportsReasoningStream: false,
+    supportsToolInvocations: true,
+  } as const;
+
+  const createdAt = new Date(record.createdAt);
+  const updatedAt = new Date(resolveStoredAgentPayloadUpdatedAt(record));
+  const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
+
+  const provider = coerceAgentProvider(logger, providerRegistry, record.provider, record.id);
+  const runtimeInfo = record.runtimeInfo
+    ? {
+        provider: coerceAgentProvider(
+          logger,
+          providerRegistry,
+          record.runtimeInfo.provider,
+          record.id,
+        ),
+        sessionId: record.runtimeInfo.sessionId,
+        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "model")
+          ? { model: record.runtimeInfo.model ?? null }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "thinkingOptionId")
+          ? { thinkingOptionId: record.runtimeInfo.thinkingOptionId ?? null }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "modeId")
+          ? { modeId: record.runtimeInfo.modeId ?? null }
+          : {}),
+        ...(record.runtimeInfo.extra ? { extra: record.runtimeInfo.extra } : {}),
+      }
+    : undefined;
+
+  return {
+    id: record.id,
+    provider,
+    cwd: record.cwd,
+    model: record.config?.model ?? null,
+    thinkingOptionId: record.config?.thinkingOptionId ?? null,
+    effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
+      runtimeInfo,
+      configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
+    }),
+    ...(runtimeInfo ? { runtimeInfo } : {}),
+    createdAt: createdAt.toISOString(),
+    updatedAt: updatedAt.toISOString(),
+    lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
+    status: record.lastStatus,
+    capabilities: defaultCapabilities,
+    currentModeId: record.lastModeId ?? null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: toAgentPersistenceHandle(logger, providerRegistry, record.persistence),
+    title: record.title ?? record.config?.title ?? null,
+    requiresAttention: record.requiresAttention ?? false,
+    attentionReason: record.attentionReason ?? null,
+    attentionTimestamp: record.attentionTimestamp ?? null,
+    archivedAt: record.archivedAt ?? null,
+    labels: normalizeLabels(record.labels),
+  };
+}
+
+export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListItemPayload {
+  return {
+    id: agent.id,
+    shortId: agent.id.slice(0, 7),
+    title: agent.title,
+    provider: agent.provider,
+    model: agent.runtimeInfo?.model ?? agent.model,
+    thinkingOptionId: agent.thinkingOptionId,
+    effectiveThinkingOptionId: agent.effectiveThinkingOptionId,
+    status: agent.status,
+    cwd: agent.cwd,
+    createdAt: agent.createdAt,
+    updatedAt: agent.updatedAt,
+    lastUserMessageAt: agent.lastUserMessageAt,
+    archivedAt: agent.archivedAt ?? null,
+    requiresAttention: agent.requiresAttention ?? false,
+    attentionReason: agent.attentionReason ?? null,
+    attentionTimestamp: agent.attentionTimestamp ?? null,
+    labels: agent.labels,
+  };
+}
+
+export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): string {
+  const timestamps = [record.updatedAt, record.lastActivityAt]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .map((value) => ({
+      raw: value,
+      parsed: Date.parse(value),
+    }))
+    .filter((value) => !Number.isNaN(value.parsed));
+
+  if (timestamps.length === 0) {
+    return record.updatedAt;
+  }
+
+  timestamps.sort((a, b) => b.parsed - a.parsed);
+  return timestamps[0].raw;
 }
 
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {

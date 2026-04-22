@@ -1,8 +1,10 @@
 import { useSyncExternalStore, useCallback, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import equal from "fast-deep-equal/es6";
 import {
   DaemonClient,
   type ConnectionState,
+  type FetchAgentsEntry,
   type FetchAgentsOptions,
 } from "@server/client/daemon-client";
 import {
@@ -29,8 +31,9 @@ import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
-import { applyFetchedAgentDirectory } from "@/utils/agent-directory-sync";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { isDev } from "@/constants/platform";
+import { replaceFetchedAgentDirectory } from "@/utils/agent-directory-sync";
+import { useSessionStore } from "@/stores/session-store";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 
@@ -66,6 +69,16 @@ export type HostRuntimeSnapshot = {
   probeByConnectionId: Map<string, ConnectionProbeState>;
   clientGeneration: number;
 };
+
+type HostRuntimeSnapshotPatch = Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">>;
+
+function setSnapshotPatchField<Key extends keyof HostRuntimeSnapshotPatch>(
+  patch: HostRuntimeSnapshotPatch,
+  key: Key,
+  value: HostRuntimeSnapshot[Key],
+): void {
+  patch[key] = value;
+}
 
 export function isHostRuntimeConnected(snapshot: HostRuntimeSnapshot | null): boolean {
   return snapshot?.connectionStatus === "online";
@@ -422,6 +435,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         clientType: "browser" as const,
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
+        ...(isDev ? { runtimeMetricsIntervalMs: 10_000 } : {}),
       };
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
@@ -831,15 +845,25 @@ export class HostRuntimeController {
     });
   }
 
-  private updateSnapshot(
-    patch: Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">>,
-  ): void {
-    const next: HostRuntimeSnapshot = {
+  private updateSnapshot(patch: HostRuntimeSnapshotPatch): void {
+    const preservedPatch: HostRuntimeSnapshotPatch = { ...patch };
+    let hasChanged = this.host.serverId !== this.snapshot.serverId;
+    for (const key of Object.keys(patch) as Array<keyof HostRuntimeSnapshotPatch>) {
+      const incomingValue = patch[key];
+      if (equal(this.snapshot[key], incomingValue)) {
+        setSnapshotPatchField(preservedPatch, key, this.snapshot[key]);
+        continue;
+      }
+      hasChanged = true;
+    }
+    if (!hasChanged) {
+      return;
+    }
+    this.snapshot = {
       ...this.snapshot,
-      ...patch,
+      ...preservedPatch,
       serverId: this.host.serverId,
     };
-    this.snapshot = next;
     for (const listener of this.listeners) {
       listener();
     }
@@ -1021,7 +1045,7 @@ export class HostRuntimeController {
         state,
         lastError: client.lastError,
       });
-      const patch: Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">> = {
+      const patch: HostRuntimeSnapshotPatch = {
         ...toSnapshotConnectionPatch(this.connectionMachineState),
       };
 
@@ -1736,7 +1760,7 @@ export class HostRuntimeStore {
     subscribe?: FetchAgentsOptions["subscribe"];
     page?: FetchAgentsOptions["page"];
   }): Promise<{
-    agents: ReturnType<typeof applyFetchedAgentDirectory>["agents"];
+    agents: ReturnType<typeof replaceFetchedAgentDirectory>["agents"];
     subscriptionId: string | null;
   }> {
     const controller = this.controllers.get(input.serverId);
@@ -1755,23 +1779,18 @@ export class HostRuntimeStore {
       let cursor = input.page?.cursor ?? null;
       let includeSubscribe = true;
       let subscriptionId: string | null = null;
-      const allAgents = new Map<string, Agent>();
+      const allEntries: FetchAgentsEntry[] = [];
 
       while (true) {
         const payload = await client.fetchAgents({
-          filter: input.filter ?? { includeArchived: true },
+          scope: input.filter ? undefined : "active",
+          ...(input.filter ? { filter: input.filter } : {}),
           sort: DEFAULT_AGENT_DIRECTORY_SORT,
           ...(includeSubscribe && input.subscribe ? { subscribe: input.subscribe } : {}),
           page: cursor ? { limit: pageLimit, cursor } : { limit: pageLimit },
         });
 
-        const pageAgents = applyFetchedAgentDirectory({
-          serverId: input.serverId,
-          entries: payload.entries,
-        }).agents;
-        for (const [agentId, agent] of pageAgents) {
-          allAgents.set(agentId, agent);
-        }
+        allEntries.push(...payload.entries);
 
         subscriptionId = subscriptionId ?? payload.subscriptionId ?? null;
         includeSubscribe = false;
@@ -1787,9 +1806,14 @@ export class HostRuntimeStore {
         cursor = nextCursor;
       }
 
+      const { agents } = replaceFetchedAgentDirectory({
+        serverId: input.serverId,
+        entries: allEntries,
+      });
+
       controller.markAgentDirectorySyncReady();
       return {
-        agents: allAgents,
+        agents,
         subscriptionId,
       };
     } catch (error) {

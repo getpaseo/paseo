@@ -1,28 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execSync } from "child_process";
-import {
-  existsSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-  readFileSync,
-  realpathSync,
-  mkdirSync,
-  symlinkSync,
-} from "fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync, realpathSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
-  __resetGhPathCacheForTests,
+  __resetCheckoutShortstatCacheForTests,
   __resetPullRequestStatusCacheForTests,
-  __setGhPathForTests,
   __setPullRequestStatusCacheTtlForTests,
   commitAll,
+  getCachedCheckoutShortstat,
+  getCurrentBranch,
   getCheckoutDiff,
   getCheckoutShortstat,
   getPullRequestStatus,
   getCheckoutStatus,
-  getCheckoutStatusLite,
+  checkoutResolvedBranch,
   listBranchSuggestions,
   mergeToBase,
   mergeFromBase,
@@ -31,12 +23,52 @@ import {
   NotGitRepoError,
   pullCurrentBranch,
   pushCurrentBranch,
+  resolveBranchCheckout,
   resolveRepositoryDefaultBranch,
   parseWorktreeList,
   isPaseoWorktreePath,
   isDescendantPath,
+  warmCheckoutShortstatInBackground,
 } from "./checkout-git.js";
-import { createWorktree } from "./worktree.js";
+import {
+  GitHubCliMissingError,
+  type GitHubCurrentPullRequestStatus,
+  type GitHubService,
+} from "../services/github-service.js";
+import {
+  createWorktree as createWorktreePrimitive,
+  type CreateWorktreeOptions,
+  type WorktreeConfig,
+} from "./worktree.js";
+
+interface LegacyCreateWorktreeTestOptions {
+  branchName: string;
+  cwd: string;
+  baseBranch: string;
+  worktreeSlug: string;
+  runSetup?: boolean;
+  paseoHome?: string;
+}
+
+function createLegacyWorktreeForTest(
+  options: CreateWorktreeOptions | LegacyCreateWorktreeTestOptions,
+): Promise<WorktreeConfig> {
+  if ("source" in options) {
+    return createWorktreePrimitive(options);
+  }
+
+  return createWorktreePrimitive({
+    cwd: options.cwd,
+    worktreeSlug: options.worktreeSlug,
+    source: {
+      kind: "branch-off",
+      baseBranch: options.baseBranch,
+      newBranchName: options.branchName,
+    },
+    runSetup: options.runSetup ?? true,
+    paseoHome: options.paseoHome,
+  });
+}
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 
 function initRepo(): { tempDir: string; repoDir: string } {
@@ -56,6 +88,74 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function createGitHubServiceForStatus(
+  status: GitHubCurrentPullRequestStatus | null,
+  options?: { onStatus?: () => void },
+): GitHubService {
+  return {
+    listPullRequests: async () => [],
+    listIssues: async () => [],
+    searchIssuesAndPrs: async () => ({ items: [], githubFeaturesEnabled: true }),
+    getPullRequest: async () => ({
+      number: 1,
+      title: "PR",
+      url: "https://github.com/getpaseo/paseo/pull/1",
+      state: "OPEN",
+      body: null,
+      baseRefName: "main",
+      headRefName: "feature",
+      labels: [],
+    }),
+    getPullRequestHeadRef: async () => "feature",
+    getCurrentPullRequestStatus: async () => {
+      options?.onStatus?.();
+      return status;
+    },
+    createPullRequest: async () => ({
+      url: "https://github.com/getpaseo/paseo/pull/1",
+      number: 1,
+    }),
+    isAuthenticated: async () => true,
+    invalidate: () => {},
+  };
+}
+
+function createPullRequestStatus(overrides?: Partial<GitHubCurrentPullRequestStatus>) {
+  return {
+    url: "https://github.com/getpaseo/paseo/pull/123",
+    title: "Ship feature",
+    state: "open",
+    baseRefName: "main",
+    headRefName: "feature",
+    isMerged: false,
+    checks: [],
+    checksStatus: "none" as const,
+    reviewDecision: null,
+    ...overrides,
+  };
+}
+
+function setupRemoteTrackingMain(
+  repoDir: string,
+  tempDir: string,
+): { remoteDir: string; cloneDir: string } {
+  const remoteDir = join(tempDir, "remote.git");
+  const cloneDir = join(tempDir, "upstream-clone");
+  execSync(`git init --bare -b main ${remoteDir}`);
+  execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+  execSync("git push -u origin main", { cwd: repoDir });
+  execSync(`git clone ${remoteDir} ${cloneDir}`);
+  execSync("git config user.email 'test@test.com'", { cwd: cloneDir });
+  execSync("git config user.name 'Test'", { cwd: cloneDir });
+  return { remoteDir, cloneDir };
+}
+
+function commitFile(cwd: string, path: string, content: string, message: string): void {
+  writeFileSync(join(cwd, path), content);
+  execSync(`git add ${path}`, { cwd });
+  execSync(`git -c commit.gpgsign=false commit -m '${message}'`, { cwd });
+}
+
 describe("checkout git utilities", () => {
   let tempDir: string;
   let repoDir: string;
@@ -66,12 +166,12 @@ describe("checkout git utilities", () => {
     tempDir = setup.tempDir;
     repoDir = setup.repoDir;
     paseoHome = join(tempDir, "paseo-home");
-    __resetGhPathCacheForTests();
+    __resetCheckoutShortstatCacheForTests();
     __resetPullRequestStatusCacheForTests();
   });
 
   afterEach(() => {
-    __resetGhPathCacheForTests();
+    __resetCheckoutShortstatCacheForTests();
     __resetPullRequestStatusCacheForTests();
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -83,6 +183,15 @@ describe("checkout git utilities", () => {
     await expect(getCheckoutDiff(nonGitDir, { mode: "uncommitted" })).rejects.toBeInstanceOf(
       NotGitRepoError,
     );
+  });
+
+  it("returns null for getCurrentBranch in a repo with no commits", async () => {
+    const emptyRepo = join(tempDir, "empty-repo");
+    execSync(`mkdir -p ${emptyRepo}`);
+    execSync("git init -b main", { cwd: emptyRepo });
+
+    const branch = await getCurrentBranch(emptyRepo);
+    expect(branch).toBeNull();
   });
 
   it("handles status/diff/commit in a normal repo", async () => {
@@ -164,13 +273,16 @@ const x = 1;
     expect(removedLine?.tokens).toEqual([{ text: "old comment line", style: "comment" }]);
   });
 
-  it("returns lightweight checkout status for normal repos", async () => {
-    const status = await getCheckoutStatusLite(repoDir);
+  it("returns checkout root metadata for normal repos", async () => {
+    const status = await getCheckoutStatus(repoDir);
     expect(status.isGit).toBe(true);
+    if (!status.isGit) {
+      return;
+    }
     expect(status.currentBranch).toBe("main");
-    expect(status.worktreeRoot).toBe(repoDir);
+    expect(status.repoRoot).toBe(repoDir);
     expect(status.isPaseoOwnedWorktree).toBe(false);
-    expect(status.mainRepoRoot).toBeNull();
+    expect(status.mainRepoRoot ?? null).toBeNull();
   });
 
   it("exposes hasRemote when origin is configured", async () => {
@@ -222,6 +334,164 @@ const x = 1;
     expect(divergedStatus.behindOfOrigin).toBe(1);
   });
 
+  it("does not report incoming additions when the base branch is behind its remote", async () => {
+    const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    commitFile(cloneDir, "file.txt", "remote one\nremote two\n", "remote update");
+    execSync("git push", { cwd: cloneDir });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toBeNull();
+  });
+
+  it("does not report incoming deletions when the base branch is behind its remote", async () => {
+    const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    commitFile(cloneDir, "file.txt", "", "remote deletion");
+    execSync("git push", { cwd: cloneDir });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toBeNull();
+  });
+
+  it("reports outgoing changes when the base branch is ahead of its remote", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    commitFile(repoDir, "file.txt", "local one\nlocal two\n", "local update");
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 2, deletions: 1 });
+  });
+
+  it("uses the merge-base for shortstat when the base branch diverged from its remote", async () => {
+    const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    commitFile(cloneDir, "file.txt", "remote one\nremote two\n", "remote update");
+    execSync("git push", { cwd: cloneDir });
+    execSync("git fetch origin", { cwd: repoDir });
+    commitFile(repoDir, "local.txt", "local\n", "local update");
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("keeps base branch divergence pointed at local work when the remote has more commits", async () => {
+    const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    commitFile(cloneDir, "remote-one.txt", "remote one\n", "remote update one");
+    commitFile(cloneDir, "remote-two.txt", "remote two\n", "remote update two");
+    execSync("git push", { cwd: cloneDir });
+    execSync("git fetch origin", { cwd: repoDir });
+    commitFile(repoDir, "local.txt", "local\n", "local update");
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("reports only working tree changes when the base branch is behind", async () => {
+    commitFile(repoDir, "tracked.txt", "tracked base\n", "add tracked file");
+    const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    commitFile(cloneDir, "incoming.txt", "incoming\n", "remote incoming");
+    execSync("git push", { cwd: cloneDir });
+    execSync("git fetch origin", { cwd: repoDir });
+    writeFileSync(join(repoDir, "tracked.txt"), "local one\nlocal two\n");
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 2, deletions: 1 });
+  });
+
+  it("keeps feature shortstat scoped to feature changes when the base remote is ahead", async () => {
+    const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    execSync("git checkout -b feature", { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature update");
+    execSync("git checkout main", { cwd: cloneDir });
+    commitFile(cloneDir, "base.txt", "base\n", "base update");
+    execSync("git push", { cwd: cloneDir });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("does not report incoming base changes when a feature branch has no local work beyond merge-base", async () => {
+    const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    execSync("git checkout -b feature", { cwd: repoDir });
+    execSync("git checkout main", { cwd: cloneDir });
+    commitFile(cloneDir, "incoming.txt", "incoming\n", "remote incoming");
+    execSync("git push", { cwd: cloneDir });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toBeNull();
+  });
+
+  it("reports feature shortstat ahead of the comparison merge-base", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execSync("git checkout -b feature", { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature update");
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("uses the merge-base for shortstat when a feature branch diverged from its tracked remote", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execSync("git checkout -b feature", { cwd: repoDir });
+    execSync("git push -u origin feature", { cwd: repoDir });
+    const featureCloneDir = join(tempDir, "feature-clone");
+    execSync(`git clone ${join(tempDir, "remote.git")} ${featureCloneDir}`);
+    execSync("git config user.email 'test@test.com'", { cwd: featureCloneDir });
+    execSync("git config user.name 'Test'", { cwd: featureCloneDir });
+    execSync("git checkout feature", { cwd: featureCloneDir });
+    commitFile(featureCloneDir, "remote-feature.txt", "remote feature\n", "remote feature update");
+    execSync("git push", { cwd: featureCloneDir });
+    commitFile(repoDir, "local-feature.txt", "local feature\n", "local feature update");
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("uses the remote-only base branch as the feature shortstat comparison", async () => {
+    const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
+    execSync("git remote set-head origin main", { cwd: repoDir });
+    execSync("git checkout -b feature", { cwd: repoDir });
+    commitFile(repoDir, "feature.txt", "feature\n", "feature update");
+    execSync("git branch -D main", { cwd: repoDir });
+    commitFile(cloneDir, "base.txt", "base\n", "base update");
+    execSync("git push", { cwd: cloneDir });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("returns no shortstat for a clean base branch that is up to date with its remote", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toBeNull();
+  });
+
+  it("reports working tree changes when the base branch has no ahead commits", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    writeFileSync(join(repoDir, "file.txt"), "local one\nlocal two\n");
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+
+    expect(shortstat).toEqual({ additions: 2, deletions: 1 });
+  });
+
   it("uses the freshest comparison base for status and shortstat when local main is stale", async () => {
     const remoteDir = join(tempDir, "remote.git");
     const cloneDir = join(tempDir, "clone");
@@ -253,6 +523,149 @@ const x = 1;
 
     const shortstat = await getCheckoutShortstat(repoDir);
     expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("does not count origin base commits as feature changes when local main is stale", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    const otherClone = join(tempDir, "other-clone");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    execSync(`git clone ${remoteDir} ${otherClone}`);
+    execSync("git config user.email 'test@test.com'", { cwd: otherClone });
+    execSync("git config user.name 'Test'", { cwd: otherClone });
+    writeFileSync(join(otherClone, "already-on-origin.txt"), "origin\n");
+    execSync("git add already-on-origin.txt", { cwd: otherClone });
+    execSync("git -c commit.gpgsign=false commit -m 'origin base commit'", { cwd: otherClone });
+    execSync("git push", { cwd: otherClone });
+
+    writeFileSync(join(repoDir, "local-only-base.txt"), "local\n");
+    execSync("git add local-only-base.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'local base drift'", { cwd: repoDir });
+    execSync("git fetch origin", { cwd: repoDir });
+    execSync("git checkout -b feature origin/main", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+    expect(shortstat).toBeNull();
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "base",
+      baseRef: "main",
+      includeStructured: true,
+    });
+    expect(diff.diff).toBe("");
+    expect(diff.structured).toEqual([]);
+  });
+
+  it("falls back to the local base branch when origin is absent", async () => {
+    execSync("git checkout -b feature", { cwd: repoDir });
+    writeFileSync(join(repoDir, "local-feature.txt"), "feature\n");
+    execSync("git add local-feature.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'local feature'", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "base", baseRef: "main" });
+    expect(diff.diff).toContain("local-feature.txt");
+  });
+
+  it("keeps an explicit origin base ref instead of stripping it to a stale local branch", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    const otherClone = join(tempDir, "other-clone");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    execSync(`git clone ${remoteDir} ${otherClone}`);
+    execSync("git config user.email 'test@test.com'", { cwd: otherClone });
+    execSync("git config user.name 'Test'", { cwd: otherClone });
+    writeFileSync(join(otherClone, "origin-base.txt"), "origin\n");
+    execSync("git add origin-base.txt", { cwd: otherClone });
+    execSync("git -c commit.gpgsign=false commit -m 'origin base'", { cwd: otherClone });
+    execSync("git push", { cwd: otherClone });
+
+    writeFileSync(join(repoDir, "local-drift.txt"), "local\n");
+    execSync("git add local-drift.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'local drift'", { cwd: repoDir });
+    execSync("git fetch origin", { cwd: repoDir });
+    execSync("git checkout -b feature origin/main", { cwd: repoDir });
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "base", baseRef: "origin/main" });
+    expect(diff.diff).toBe("");
+  });
+
+  it("shows feature commits when the local and origin base branches are up to date", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    execSync("git checkout -b feature", { cwd: repoDir });
+    writeFileSync(join(repoDir, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", { cwd: repoDir });
+
+    const shortstat = await getCheckoutShortstat(repoDir);
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+
+    const diff = await getCheckoutDiff(repoDir, { mode: "base", baseRef: "main" });
+    expect(diff.diff).toContain("feature.txt");
+  });
+
+  it("does not include dirty working tree changes in base mode", async () => {
+    writeFileSync(join(repoDir, "file.txt"), "dirty\n");
+    writeFileSync(join(repoDir, "untracked.txt"), "untracked\n");
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "base",
+      baseRef: "main",
+      includeStructured: true,
+    });
+
+    expect(diff.diff).toBe("");
+    expect(diff.structured).toEqual([]);
+  });
+
+  it("shows committed branch changes without dirty working tree changes in base mode", async () => {
+    execSync("git checkout -b feature", { cwd: repoDir });
+    writeFileSync(join(repoDir, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", { cwd: repoDir });
+
+    writeFileSync(join(repoDir, "file.txt"), "dirty\n");
+    writeFileSync(join(repoDir, "untracked.txt"), "untracked\n");
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "base",
+      baseRef: "main",
+      includeStructured: true,
+    });
+
+    expect(diff.diff).toContain("feature.txt");
+    expect(diff.diff).not.toContain("file.txt");
+    expect(diff.diff).not.toContain("untracked.txt");
+    expect(diff.structured?.map((file) => file.path)).toEqual(["feature.txt"]);
+  });
+
+  it("warms shortstat cache in the background without blocking listing callers", async () => {
+    expect(getCachedCheckoutShortstat(repoDir)).toBeUndefined();
+
+    warmCheckoutShortstatInBackground(repoDir);
+
+    // A repo with no origin/main computes to null, but null should still be cached.
+    for (let attempts = 0; attempts < 20; attempts += 1) {
+      const cached = getCachedCheckoutShortstat(repoDir);
+      if (cached !== undefined) {
+        expect(cached).toBeNull();
+        return;
+      }
+      await sleep(25);
+    }
+
+    throw new Error("shortstat background warm did not populate cache in time");
   });
 
   it("commits messages with quotes safely", async () => {
@@ -347,7 +760,7 @@ const x = 1;
   });
 
   it("handles status/diff/commit in a .paseo worktree", async () => {
-    const result = await createWorktree({
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -380,8 +793,8 @@ const x = 1;
     expect(message).toBe("worktree update");
   });
 
-  it("returns lightweight checkout status for .paseo worktrees", async () => {
-    const result = await createWorktree({
+  it("returns checkout root metadata for .paseo worktrees", async () => {
+    const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -389,9 +802,12 @@ const x = 1;
       paseoHome,
     });
 
-    const status = await getCheckoutStatusLite(result.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
     expect(status.isGit).toBe(true);
-    expect(status.worktreeRoot).toBe(result.worktreePath);
+    if (!status.isGit) {
+      return;
+    }
+    expect(status.repoRoot).toBe(result.worktreePath);
     expect(status.isPaseoOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(repoDir);
   });
@@ -405,7 +821,7 @@ const x = 1;
     execSync("git config user.email 'test@test.com'", { cwd: mainCheckoutDir });
     execSync("git config user.name 'Test'", { cwd: mainCheckoutDir });
 
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",
       cwd: mainCheckoutDir,
       baseBranch: "main",
@@ -420,7 +836,7 @@ const x = 1;
   });
 
   it("merges the current branch into base from a worktree checkout", async () => {
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
@@ -458,6 +874,36 @@ const x = 1;
       .toString()
       .trim();
     expect(currentBranch).toBe("feature");
+  });
+
+  it("reports the base worktree cwd when merge-to-base mutates a separate checkout", async () => {
+    execSync("git checkout -b develop", { cwd: repoDir });
+    writeFileSync(join(repoDir, "develop.txt"), "develop\n");
+    execSync("git add develop.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'develop commit'", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+
+    const baseWorktreePath = join(tempDir, "base-worktree");
+    execSync(`git worktree add ${baseWorktreePath} develop`, { cwd: repoDir });
+
+    const featureWorktree = await createLegacyWorktreeForTest({
+      branchName: "feature",
+      cwd: repoDir,
+      baseBranch: "develop",
+      worktreeSlug: "feature-worktree",
+      paseoHome,
+    });
+
+    writeFileSync(join(featureWorktree.worktreePath, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: featureWorktree.worktreePath });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", {
+      cwd: featureWorktree.worktreePath,
+    });
+
+    const mutatedCwd = await mergeToBase(featureWorktree.worktreePath, {}, { paseoHome });
+
+    expect(mutatedCwd).toBe(baseWorktreePath);
+    expect(mutatedCwd).not.toBe(featureWorktree.worktreePath);
   });
 
   it("merges from the most-ahead base ref (origin/main when it is ahead)", async () => {
@@ -558,6 +1004,23 @@ const x = 1;
     expect(readFileSync(join(repoDir, "pulled.txt"), "utf8")).toBe("remote\n");
   });
 
+  it("invalidates GitHub cache after successful local git mutation paths", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    const invalidatedCwds: string[] = [];
+    const github = createGitHubServiceForStatus(null);
+    github.invalidate = ({ cwd }) => {
+      invalidatedCwds.push(cwd);
+    };
+
+    await pullCurrentBranch(repoDir, github);
+
+    expect(invalidatedCwds).toEqual([repoDir]);
+  });
+
   it("aborts pull on merge conflicts and leaves no merge in progress", async () => {
     const remoteDir = join(tempDir, "remote.git");
     execSync(`git init --bare -b main ${remoteDir}`);
@@ -633,33 +1096,218 @@ const x = 1;
     execSync(`git --git-dir ${remoteDir} show-ref --verify refs/heads/feature`);
   });
 
-  it("lists merged local and remote branch suggestions without duplicates", async () => {
+  it("lists merged local and remote branch suggestions with provenance", async () => {
     const remoteDir = join(tempDir, "remote.git");
     execSync(`git init --bare -b main ${remoteDir}`);
     execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
     execSync("git push -u origin main", { cwd: repoDir });
 
-    execSync("git checkout -b local-only", { cwd: repoDir });
+    execSync("git checkout -b feature/local-only", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+    execSync("git checkout -b feature/shared", { cwd: repoDir });
+    writeFileSync(join(repoDir, "shared.txt"), "shared\n");
+    execSync("git add shared.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'shared branch'", { cwd: repoDir });
+    execSync("git push -u origin feature/shared", { cwd: repoDir });
     execSync("git checkout main", { cwd: repoDir });
 
     const otherClone = join(tempDir, "other-clone");
     execSync(`git clone ${remoteDir} ${otherClone}`);
     execSync("git config user.email 'test@test.com'", { cwd: otherClone });
     execSync("git config user.name 'Test'", { cwd: otherClone });
-    execSync("git checkout -b remote-only", { cwd: otherClone });
+    execSync("git checkout -b feature/remote-only", { cwd: otherClone });
     writeFileSync(join(otherClone, "remote-only.txt"), "remote-only\n");
     execSync("git add remote-only.txt", { cwd: otherClone });
     execSync("git -c commit.gpgsign=false commit -m 'remote only branch'", { cwd: otherClone });
-    execSync("git push -u origin remote-only", { cwd: otherClone });
+    execSync("git push -u origin feature/remote-only", { cwd: otherClone });
     execSync("git fetch origin", { cwd: repoDir });
 
     const branches = await listBranchSuggestions(repoDir, { limit: 50 });
-    expect(branches).toContain("main");
-    expect(branches).toContain("local-only");
-    expect(branches).toContain("remote-only");
-    expect(branches.filter((name) => name === "main")).toHaveLength(1);
-    expect(branches).not.toContain("HEAD");
-    expect(branches.some((name) => name.startsWith("origin/"))).toBe(false);
+    const branchNames = branches.map((branch) => branch.name);
+    expect(branchNames).toContain("main");
+    expect(branchNames).toContain("feature/local-only");
+    expect(branchNames).toContain("feature/remote-only");
+    expect(branchNames).toContain("feature/shared");
+    expect(branchNames.filter((name) => name === "main")).toHaveLength(1);
+    expect(branchNames).not.toContain("HEAD");
+    expect(branchNames.some((name) => name.startsWith("origin/"))).toBe(false);
+    expect(branches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "main",
+          committerDate: expect.any(Number),
+        }),
+      ]),
+    );
+    expect(branches.find((branch) => branch.name === "feature/local-only")).toMatchObject({
+      hasLocal: true,
+      hasRemote: false,
+    });
+    expect(branches.find((branch) => branch.name === "feature/remote-only")).toMatchObject({
+      hasLocal: false,
+      hasRemote: true,
+    });
+    expect(branches.find((branch) => branch.name === "feature/shared")).toMatchObject({
+      hasLocal: true,
+      hasRemote: true,
+    });
+  });
+
+  it("resolves branch checkout targets with local precedence and origin normalization", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    execSync("git checkout -b feature/local", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+    execSync("git checkout -b feature/shared", { cwd: repoDir });
+    writeFileSync(join(repoDir, "shared.txt"), "shared\n");
+    execSync("git add shared.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'shared branch'", { cwd: repoDir });
+    execSync("git push -u origin feature/shared", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+
+    const otherClone = join(tempDir, "other-clone");
+    execSync(`git clone ${remoteDir} ${otherClone}`);
+    execSync("git config user.email 'test@test.com'", { cwd: otherClone });
+    execSync("git config user.name 'Test'", { cwd: otherClone });
+    execSync("git checkout -b feature/remote-only", { cwd: otherClone });
+    writeFileSync(join(otherClone, "remote-only.txt"), "remote-only\n");
+    execSync("git add remote-only.txt", { cwd: otherClone });
+    execSync("git -c commit.gpgsign=false commit -m 'remote only branch'", { cwd: otherClone });
+    execSync("git push -u origin feature/remote-only", { cwd: otherClone });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    await expect(resolveBranchCheckout(repoDir, "feature/local")).resolves.toEqual({
+      kind: "local",
+      name: "feature/local",
+    });
+    await expect(resolveBranchCheckout(repoDir, "feature/remote-only")).resolves.toEqual({
+      kind: "remote-only",
+      name: "feature/remote-only",
+      remoteRef: "origin/feature/remote-only",
+    });
+    await expect(resolveBranchCheckout(repoDir, "origin/feature/remote-only")).resolves.toEqual({
+      kind: "remote-only",
+      name: "feature/remote-only",
+      remoteRef: "origin/feature/remote-only",
+    });
+    await expect(resolveBranchCheckout(repoDir, "feature/shared")).resolves.toEqual({
+      kind: "local",
+      name: "feature/shared",
+    });
+    await expect(resolveBranchCheckout(repoDir, "feature/unknown")).resolves.toEqual({
+      kind: "not-found",
+    });
+  });
+
+  it("does not resolve tags as branch checkout targets", async () => {
+    execSync("git checkout -b feature/a", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+    execSync("git tag v1", { cwd: repoDir });
+
+    await expect(resolveBranchCheckout(repoDir, "v1")).resolves.toEqual({
+      kind: "not-found",
+    });
+  });
+
+  it("checks out a remote-only branch as a local tracking branch", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    const otherClone = join(tempDir, "other-clone");
+    execSync(`git clone ${remoteDir} ${otherClone}`);
+    execSync("git config user.email 'test@test.com'", { cwd: otherClone });
+    execSync("git config user.name 'Test'", { cwd: otherClone });
+    execSync("git checkout -b feature/remote-only", { cwd: otherClone });
+    writeFileSync(join(otherClone, "remote-only.txt"), "remote-only\n");
+    execSync("git add remote-only.txt", { cwd: otherClone });
+    execSync("git -c commit.gpgsign=false commit -m 'remote only branch'", { cwd: otherClone });
+    execSync("git push -u origin feature/remote-only", { cwd: otherClone });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const resolution = await resolveBranchCheckout(repoDir, "feature/remote-only");
+    await expect(checkoutResolvedBranch({ cwd: repoDir, resolution })).resolves.toEqual({
+      source: "remote",
+    });
+
+    expect(execSync("git symbolic-ref --short HEAD", { cwd: repoDir }).toString().trim()).toBe(
+      "feature/remote-only",
+    );
+    execSync("git symbolic-ref -q HEAD", { cwd: repoDir });
+    expect(
+      execSync("git rev-parse --abbrev-ref --symbolic-full-name @{u}", { cwd: repoDir })
+        .toString()
+        .trim(),
+    ).toBe("origin/feature/remote-only");
+  });
+
+  it("normalizes explicit origin input when checking out a remote-only branch", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+
+    const otherClone = join(tempDir, "other-clone");
+    execSync(`git clone ${remoteDir} ${otherClone}`);
+    execSync("git config user.email 'test@test.com'", { cwd: otherClone });
+    execSync("git config user.name 'Test'", { cwd: otherClone });
+    execSync("git checkout -b feature/remote-only", { cwd: otherClone });
+    writeFileSync(join(otherClone, "remote-only.txt"), "remote-only\n");
+    execSync("git add remote-only.txt", { cwd: otherClone });
+    execSync("git -c commit.gpgsign=false commit -m 'remote only branch'", { cwd: otherClone });
+    execSync("git push -u origin feature/remote-only", { cwd: otherClone });
+    execSync("git fetch origin", { cwd: repoDir });
+
+    const resolution = await resolveBranchCheckout(repoDir, "origin/feature/remote-only");
+    await expect(checkoutResolvedBranch({ cwd: repoDir, resolution })).resolves.toEqual({
+      source: "remote",
+    });
+
+    expect(execSync("git symbolic-ref --short HEAD", { cwd: repoDir }).toString().trim()).toBe(
+      "feature/remote-only",
+    );
+    execSync("git symbolic-ref -q HEAD", { cwd: repoDir });
+    expect(
+      execSync("git rev-parse --abbrev-ref --symbolic-full-name @{u}", { cwd: repoDir })
+        .toString()
+        .trim(),
+    ).toBe("origin/feature/remote-only");
+  });
+
+  it("checks out the local branch when local and remote branches share a name", async () => {
+    const remoteDir = join(tempDir, "remote.git");
+    execSync(`git init --bare -b main ${remoteDir}`);
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoDir });
+    execSync("git push -u origin main", { cwd: repoDir });
+    execSync("git checkout -b feature/shared", { cwd: repoDir });
+    writeFileSync(join(repoDir, "shared.txt"), "shared\n");
+    execSync("git add shared.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'shared branch'", { cwd: repoDir });
+    execSync("git push -u origin feature/shared", { cwd: repoDir });
+    execSync("git checkout main", { cwd: repoDir });
+
+    const resolution = await resolveBranchCheckout(repoDir, "feature/shared");
+    await expect(checkoutResolvedBranch({ cwd: repoDir, resolution })).resolves.toEqual({
+      source: "local",
+    });
+
+    expect(execSync("git symbolic-ref --short HEAD", { cwd: repoDir }).toString().trim()).toBe(
+      "feature/shared",
+    );
+  });
+
+  it("throws the existing branch-not-found message for unknown checkout targets", async () => {
+    await expect(
+      checkoutResolvedBranch({
+        cwd: repoDir,
+        resolution: { kind: "not-found" },
+        requestedBranch: "missing-branch",
+      }),
+    ).rejects.toThrow(/^Branch not found: missing-branch$/);
   });
 
   it("filters branch suggestions by query and enforces result limit", async () => {
@@ -675,215 +1323,158 @@ const x = 1;
       limit: 1,
     });
     expect(branches).toHaveLength(1);
-    expect(branches[0]?.toLowerCase()).toContain("feature/");
+    expect(branches[0]?.name.toLowerCase()).toContain("feature/");
+    expect(branches[0]?.committerDate).toEqual(expect.any(Number));
   });
 
   it("disables GitHub features when gh is unavailable", async () => {
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-
-    try {
-      __setGhPathForTests(null);
-      const status = await getPullRequestStatus(repoDir);
-      expect(status.githubFeaturesEnabled).toBe(false);
-      expect(status.status).toBeNull();
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+    const github = createGitHubServiceForStatus(null);
+    github.getCurrentPullRequestStatus = async () => {
+      throw new GitHubCliMissingError();
+    };
+    const status = await getPullRequestStatus(repoDir, github);
+    expect(status.githubFeaturesEnabled).toBe(false);
+    expect(status.status).toBeNull();
   });
 
   it("returns merged PR status when no open PR exists for the current branch", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-merged");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/123","title":"Ship feature","state":"closed","baseRefName":"main","headRefName":"feature","mergedAt":"2026-02-18T00:00:00Z"}\'',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
+    const status = await getPullRequestStatus(
+      repoDir,
+      createGitHubServiceForStatus(
+        createPullRequestStatus({
+          state: "merged",
+          isMerged: true,
+        }),
+      ),
     );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
+    expect(status.githubFeaturesEnabled).toBe(true);
+    expect(status.status).not.toBeNull();
+    expect(status.status?.url).toContain("/pull/123");
+    expect(status.status?.baseRefName).toBe("main");
+    expect(status.status?.headRefName).toBe("feature");
+    expect(status.status?.isMerged).toBe(true);
+    expect(status.status?.state).toBe("merged");
+  });
 
-    try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const status = await getPullRequestStatus(repoDir);
-      expect(status.githubFeaturesEnabled).toBe(true);
-      expect(status.status).not.toBeNull();
-      expect(status.status?.url).toContain("/pull/123");
-      expect(status.status?.baseRefName).toBe("main");
-      expect(status.status?.headRefName).toBe("feature");
-      expect(status.status?.isMerged).toBe(true);
-      expect(status.status?.state).toBe("merged");
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+  it("propagates S1 PR metadata and check display fields through checkout PR status", async () => {
+    execSync("git checkout -b feature", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+
+    const status = await getPullRequestStatus(
+      repoDir,
+      createGitHubServiceForStatus(
+        createPullRequestStatus({
+          number: 123,
+          isDraft: true,
+          checks: [
+            {
+              name: "server-tests",
+              status: "success",
+              url: "https://github.com/getpaseo/paseo/actions/runs/123",
+              workflow: "Server CI",
+              duration: "2m 14s",
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(status).toEqual({
+      githubFeaturesEnabled: true,
+      status: {
+        number: 123,
+        url: "https://github.com/getpaseo/paseo/pull/123",
+        title: "Ship feature",
+        state: "open",
+        baseRefName: "main",
+        headRefName: "feature",
+        isMerged: false,
+        isDraft: true,
+        checks: [
+          {
+            name: "server-tests",
+            status: "success",
+            url: "https://github.com/getpaseo/paseo/actions/runs/123",
+            workflow: "Server CI",
+            duration: "2m 14s",
+          },
+        ],
+        checksStatus: "none",
+        reviewDecision: null,
+      },
+    });
   });
 
   it("returns closed-unmerged PR status without marking it as merged", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-closed");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/999","title":"Closed without merge","state":"closed","baseRefName":"main","headRefName":"feature","mergedAt":null}\'',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
+    const status = await getPullRequestStatus(
+      repoDir,
+      createGitHubServiceForStatus(
+        createPullRequestStatus({
+          url: "https://github.com/getpaseo/paseo/pull/999",
+          title: "Closed without merge",
+          state: "closed",
+        }),
+      ),
     );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
-
-    try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const status = await getPullRequestStatus(repoDir);
-      expect(status.githubFeaturesEnabled).toBe(true);
-      expect(status.status).not.toBeNull();
-      expect(status.status?.url).toContain("/pull/999");
-      expect(status.status?.baseRefName).toBe("main");
-      expect(status.status?.headRefName).toBe("feature");
-      expect(status.status?.isMerged).toBe(false);
-      expect(status.status?.state).toBe("closed");
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+    expect(status.githubFeaturesEnabled).toBe(true);
+    expect(status.status).not.toBeNull();
+    expect(status.status?.url).toContain("/pull/999");
+    expect(status.status?.baseRefName).toBe("main");
+    expect(status.status?.headRefName).toBe("feature");
+    expect(status.status?.isMerged).toBe(false);
+    expect(status.status?.state).toBe("closed");
   });
 
   it("caches PR status results for duplicate lookups", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-cache-hit");
-    const callCountPath = join(tempDir, "gh-call-count.txt");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(callCountPath, "0\n");
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `count_file=${JSON.stringify(callCountPath)}`,
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  count="$(cat "$count_file")"',
-        '  printf "%s\\n" "$((count + 1))" > "$count_file"',
-        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/123","title":"Ship feature","state":"OPEN","baseRefName":"main","headRefName":"feature","mergedAt":null}\'',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
-
-    try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const first = await getPullRequestStatus(repoDir);
-      const second = await getPullRequestStatus(repoDir);
-      expect(first).toEqual(second);
-      expect(first.status?.url).toContain("/pull/123");
-      expect(readFileSync(callCountPath, "utf8").trim()).toBe("1");
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+    let callCount = 0;
+    const github = createGitHubServiceForStatus(createPullRequestStatus(), {
+      onStatus: () => {
+        callCount += 1;
+      },
+    });
+    const first = await getPullRequestStatus(repoDir, github);
+    const second = await getPullRequestStatus(repoDir, github);
+    expect(first).toEqual(second);
+    expect(first.status?.url).toContain("/pull/123");
+    expect(callCount).toBe(1);
   });
 
   it("expires cached PR status after the TTL", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-cache-expiry");
-    const callCountPath = join(tempDir, "gh-call-count-expiry.txt");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(callCountPath, "0\n");
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `count_file=${JSON.stringify(callCountPath)}`,
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  count="$(cat "$count_file")"',
-        '  next="$((count + 1))"',
-        '  printf "%s\\n" "$next" > "$count_file"',
-        '  printf \'{"url":"https://github.com/getpaseo/paseo/pull/%s","title":"Ship feature","state":"OPEN","baseRefName":"main","headRefName":"feature","mergedAt":null}\\n\' "$next"',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
-
     __setPullRequestStatusCacheTtlForTests(50);
     try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const first = await getPullRequestStatus(repoDir);
+      let callCount = 0;
+      const github = createGitHubServiceForStatus(null, {
+        onStatus: () => {
+          callCount += 1;
+        },
+      });
+      github.getCurrentPullRequestStatus = async () => {
+        callCount += 1;
+        return createPullRequestStatus({
+          url: `https://github.com/getpaseo/paseo/pull/${callCount}`,
+        });
+      };
+      const first = await getPullRequestStatus(repoDir, github);
       await sleep(80);
-      const second = await getPullRequestStatus(repoDir);
+      const second = await getPullRequestStatus(repoDir, github);
       expect(first.status?.url).toContain("/pull/1");
       expect(second.status?.url).toContain("/pull/2");
-      expect(readFileSync(callCountPath, "utf8").trim()).toBe("2");
+      expect(callCount).toBe(2);
     } finally {
-      __resetGhPathCacheForTests();
       __resetPullRequestStatusCacheForTests();
     }
   });
@@ -892,50 +1483,18 @@ const x = 1;
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
 
-    const fakeBinDir = join(tempDir, "fake-bin-gh-cache-concurrent");
-    const callCountPath = join(tempDir, "gh-call-count-concurrent.txt");
-    mkdirSync(fakeBinDir);
-    const gitPath = execSync("command -v git", { stdio: "pipe" }).toString().trim();
-    symlinkSync(gitPath, join(fakeBinDir, "git"));
-    writeFileSync(callCountPath, "0\n");
-    writeFileSync(
-      join(fakeBinDir, "gh"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `count_file=${JSON.stringify(callCountPath)}`,
-        'if [[ "${1-}" == "--version" ]]; then',
-        '  echo "gh version 2.0.0"',
-        "  exit 0",
-        "fi",
-        'args="$*"',
-        'if [[ "$args" == "pr view --json url,title,state,baseRefName,headRefName,mergedAt" ]]; then',
-        '  count="$(cat "$count_file")"',
-        '  printf "%s\\n" "$((count + 1))" > "$count_file"',
-        "  sleep 0.2",
-        '  echo \'{"url":"https://github.com/getpaseo/paseo/pull/123","title":"Ship feature","state":"OPEN","baseRefName":"main","headRefName":"feature","mergedAt":null}\'',
-        "  exit 0",
-        "fi",
-        'echo "unexpected gh args: $args" >&2',
-        "exit 1",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    execSync(`chmod +x ${join(fakeBinDir, "gh")}`);
-
-    try {
-      __setGhPathForTests(join(fakeBinDir, "gh"));
-      const [first, second] = await Promise.all([
-        getPullRequestStatus(repoDir),
-        getPullRequestStatus(repoDir),
-      ]);
-      expect(first).toEqual(second);
-      expect(readFileSync(callCountPath, "utf8").trim()).toBe("1");
-    } finally {
-      __resetGhPathCacheForTests();
-      __resetPullRequestStatusCacheForTests();
-    }
+    let callCount = 0;
+    const github = createGitHubServiceForStatus(createPullRequestStatus(), {
+      onStatus: () => {
+        callCount += 1;
+      },
+    });
+    const [first, second] = await Promise.all([
+      getPullRequestStatus(repoDir, github),
+      getPullRequestStatus(repoDir, github),
+    ]);
+    expect(first).toEqual(second);
+    expect(callCount).toBe(1);
   });
 
   it("returns typed MergeConflictError on merge conflicts", async () => {
@@ -976,7 +1535,7 @@ const x = 1;
     execSync("git checkout main", { cwd: repoDir });
 
     // Create a worktree/branch based on develop, but keep main as the repo default.
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",
       cwd: repoDir,
       baseBranch: "develop",
@@ -998,6 +1557,36 @@ const x = 1;
     const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome });
     expect(baseDiff.diff).toContain("feature.txt");
     expect(baseDiff.diff).not.toContain("file.txt");
+  });
+
+  it("excludes dirty working tree changes from Paseo worktree base diffs", async () => {
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "dirty-feature",
+      paseoHome,
+    });
+
+    writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: worktree.worktreePath });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", {
+      cwd: worktree.worktreePath,
+    });
+
+    writeFileSync(join(worktree.worktreePath, "file.txt"), "dirty\n");
+    writeFileSync(join(worktree.worktreePath, "untracked.txt"), "untracked\n");
+
+    const baseDiff = await getCheckoutDiff(
+      worktree.worktreePath,
+      { mode: "base", includeStructured: true },
+      { paseoHome },
+    );
+
+    expect(baseDiff.diff).toContain("feature.txt");
+    expect(baseDiff.diff).not.toContain("file.txt");
+    expect(baseDiff.diff).not.toContain("untracked.txt");
+    expect(baseDiff.structured?.map((file) => file.path)).toEqual(["feature.txt"]);
   });
 
   it("resolves the repository default branch from origin HEAD", async () => {
@@ -1022,7 +1611,7 @@ const x = 1;
     execSync("git checkout main", { cwd: repoDir });
 
     // Create a Paseo worktree configured to use develop as base.
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",
       cwd: repoDir,
       baseBranch: "develop",
@@ -1055,7 +1644,7 @@ const x = 1;
   });
 
   it("throws if Paseo worktree base metadata is missing", async () => {
-    const worktree = await createWorktree({
+    const worktree = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",

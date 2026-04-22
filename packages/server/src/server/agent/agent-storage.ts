@@ -58,6 +58,7 @@ const STORED_AGENT_SCHEMA = z.object({
     .optional(),
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
+  lastError: z.string().nullable().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
@@ -78,6 +79,9 @@ export type SerializableAgentConfig = Pick<
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
+export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
+  return STORED_AGENT_SCHEMA.parse(value);
+}
 
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
@@ -177,19 +181,23 @@ export class AgentStorage {
 
   async applySnapshot(
     agent: ManagedAgent,
+    workspaceIdOrOptions?: string | { title?: string | null; internal?: boolean },
     options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
+    const nextOptions = typeof workspaceIdOrOptions === "string" ? options : workspaceIdOrOptions;
     await this.load();
     await this.waitForPendingWrite(agent.id);
     const existing = (await this.get(agent.id)) ?? null;
     const hasTitleOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
+      nextOptions !== undefined && Object.prototype.hasOwnProperty.call(nextOptions, "title");
     const hasInternalOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
+      nextOptions !== undefined && Object.prototype.hasOwnProperty.call(nextOptions, "internal");
     const record = toStoredAgentRecord(agent, {
-      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+      title: hasTitleOverride ? (nextOptions?.title ?? null) : (existing?.title ?? null),
       createdAt: existing?.createdAt,
-      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+      internal: hasInternalOverride
+        ? nextOptions?.internal
+        : (agent.internal ?? existing?.internal),
     });
 
     // Preserve soft-delete/archive status across snapshot flushes.
@@ -309,7 +317,7 @@ export class AgentStorage {
     try {
       const content = await fs.readFile(filePath, "utf8");
       const parsed = JSON.parse(content);
-      return STORED_AGENT_SCHEMA.parse(parsed);
+      return parseStoredAgentRecord(parsed);
     } catch (error) {
       this.logger.error({ err: error, filePath }, "Skipping invalid agent record");
       return null;

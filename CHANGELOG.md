@@ -1,5 +1,98 @@
 # Changelog
 
+## 0.1.60-beta.1 - 2026-04-20
+
+### Added
+- Scripts and services per worktree — define named commands in `paseo.json`, and long-running services get supervised with their own ports and nice proxy URLs like `http://web.my-app.localhost:6767`. See the [worktrees guide](https://paseo.sh/docs/worktrees).
+- Launch scripts and services for a worktree directly from the workspace header.
+- New Setup tab in every workspace showing setup, teardown, and script progress live.
+- GitHub checks and PR reviews in the explorer sidebar, with a hover card for the full breakdown.
+- New worktree creation flow lets you pick a base branch or check out an existing GitHub pull request.
+- Attach GitHub issues and pull requests to an agent as part of its prompt context.
+- Pull request pane in the workspace sidebar.
+- Redesigned Settings screen with modular section navigation.
+- Per-host provider configuration — set providers, models, and credentials independently on each remote host.
+- Direct Pi integration replaces the ACP bridge, with faster streaming and fewer hiccups.
+- Beta release channel — opt in from Settings to receive beta desktop builds before they are promoted to stable.
+- New-workspace picker ranks branches by recency with fast search.
+
+### Improved
+- Workspace and tab switching are dramatically faster on desktop and mobile — you can keep many workspaces open in parallel without lag.
+- Provider refresh is reliable and no longer stalls on transient failures.
+- Git and GitHub state stay in sync with local changes like commits, branch switches, and pushes.
+- Composer attachments redesigned with a cleaner pill layout and an image lightbox.
+- In-app notifications route to whichever surface you're actually looking at.
+- Keyboard shortcuts keep working while Settings is open.
+
+### Fixed
+- Composer textarea shrinks back down after sending on web.
+- Branch switcher title no longer overflows on narrow rows.
+- iOS image picker no longer leaves the screen unresponsive after cancelling.
+- Archiving a worktree recovers cleanly if a previous attempt was interrupted.
+- Images in agent messages with `~`-prefixed paths load instead of spinning forever.
+
+## 0.1.59 - 2026-04-16
+
+### Added
+- Opus 4.7 in the Claude model picker, with a 1M-context variant.
+- Extra High reasoning effort for Opus 4.7, between High and Max.
+
+## 0.1.58 - 2026-04-16
+
+### Added
+- Markdown files render as formatted markdown in the file pane. ([#427](https://github.com/getpaseo/paseo/pull/427) by [@aaronflorey](https://github.com/aaronflorey))
+- Cmd+L (Ctrl+L on Windows/Linux) focuses the agent message input.
+- Provider models refresh on a freshness TTL; Settings shows last-updated time and any fetch errors. ([#426](https://github.com/getpaseo/paseo/pull/426))
+- `disallowedTools` option in provider config to block specific tools from an agent.
+
+### Improved
+- Windows: agents launch reliably from npm `.cmd` shims, paths with spaces, and JSON config args — fixes `spawn EINVAL` startup errors. ([#454](https://github.com/getpaseo/paseo/pull/454))
+- OpenCode permission prompts include the requesting tool's context. ([#398](https://github.com/getpaseo/paseo/pull/398) by [@aaronflorey](https://github.com/aaronflorey))
+- OpenCode todo and compaction events render in the timeline. ([#429](https://github.com/getpaseo/paseo/pull/429) by [@aaronflorey](https://github.com/aaronflorey))
+- OpenCode sessions archive cleanly when closed. ([#408](https://github.com/getpaseo/paseo/pull/408) by [@aaronflorey](https://github.com/aaronflorey))
+- OpenCode slash commands recover from SSE timeouts. ([#407](https://github.com/getpaseo/paseo/pull/407) by [@aaronflorey](https://github.com/aaronflorey))
+- Paseo MCP tools work against archived agents, matching the CLI. ([#423](https://github.com/getpaseo/paseo/pull/423))
+- Native scrollbars match the active theme across all web views. ([#399](https://github.com/getpaseo/paseo/pull/399) by [@ethersh](https://github.com/ethersh))
+
+### Fixed
+- Code file previews can be selected and copied on iOS. ([#447](https://github.com/getpaseo/paseo/pull/447) by [@muzhi1991](https://github.com/muzhi1991))
+- File preview no longer shows stale content when reopening the same file. ([#411](https://github.com/getpaseo/paseo/pull/411) by [@muzhi1991](https://github.com/muzhi1991))
+- File explorer reinitialises when the client reconnects after a page refresh. ([#442](https://github.com/getpaseo/paseo/pull/442) by [@1996fanrui](https://github.com/1996fanrui))
+- Generic ACP providers no longer receive duplicated command arguments. ([#444](https://github.com/getpaseo/paseo/pull/444) by [@edvardchen](https://github.com/edvardchen))
+- Workspace headers no longer show a branch icon for non-git workspaces.
+- Branch switcher layout is stable on mobile.
+- Model names no longer truncate mid-word in the picker rows.
+- Messages appear in the correct order after reconnecting on mobile.
+- Clearing agent attention no longer throws on timeout.
+
+## 0.1.56 - 2026-04-14
+
+### Fixed
+- Projects with empty git repositories (no commits yet) no longer crash the app on startup.
+- A single problematic project can no longer prevent the rest of your workspaces from loading.
+
+## 0.1.55 - 2026-04-14
+
+### Added
+- Provider profiles — define custom providers in your Paseo config that appear alongside built-ins. Override a built-in's binary, env, or models, or create entirely new providers. See the [configuration guide](https://github.com/getpaseo/paseo/blob/main/docs/CUSTOM-PROVIDERS.md).
+- ACP agent support — add any ACP-compatible agent to Paseo with `extends: "acp"` in your provider config. No code changes needed.
+- Choose provider and model when creating scheduled agents.
+- Max reasoning effort option for Opus 4.6 models.
+- Cmd+, (Ctrl+, on Windows/Linux) opens settings.
+
+### Improved
+- Git operations are dramatically faster — workspace status, PR checks, and branch data all use a shared cached snapshot service instead of shelling out to git on every request. Running 20+ workspaces simultaneously is now smooth.
+- Windows support — the daemon and CLI run natively on Windows with proper shell quoting, executable resolution, and path handling.
+- iPad and tablet layouts work correctly across all screen sizes.
+- IME composition (Chinese, Japanese, Korean input) no longer submits prematurely when pressing Enter.
+
+### Fixed
+- Creating a worktree no longer briefly flashes it as a standalone project before placing it under the correct repository.
+- Worktree creation spinner stays visible throughout the process instead of disappearing on mouse-out.
+- Workspace navigation updates correctly when switching between workspaces in the same project.
+- Desktop workspace header alignment and model selector no longer overflow on narrow windows.
+- Loading indicators are visible in light mode.
+
 ## 0.1.54 - 2026-04-12
 
 ### Added

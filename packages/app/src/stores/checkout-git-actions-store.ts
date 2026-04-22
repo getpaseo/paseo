@@ -1,6 +1,12 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
+import { queryClient as appQueryClient } from "@/query/query-client";
+import {
+  buildWorkspaceTabPersistenceKey,
+  useWorkspaceLayoutStore,
+} from "@/stores/workspace-layout-store";
 import { useSessionStore } from "@/stores/session-store";
-import { queryClient } from "@/query/query-client";
+import { useWorkspaceTabsStore } from "@/stores/workspace-tabs-store";
 
 const SUCCESS_DISPLAY_MS = 1000;
 
@@ -54,34 +60,54 @@ function setStatus(
   });
 }
 
+export async function invalidateCheckoutGitQueriesForClient(
+  queryClient: QueryClient,
+  { serverId, cwd }: { serverId: string; cwd: string },
+) {
+  await Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: ["checkoutStatus", serverId, cwd],
+    }),
+    queryClient.invalidateQueries({
+      predicate: (query) => {
+        const key = query.queryKey;
+        return (
+          Array.isArray(key) && key[0] === "checkoutDiff" && key[1] === serverId && key[2] === cwd
+        );
+      },
+    }),
+    queryClient.invalidateQueries({
+      predicate: (query) => {
+        const key = query.queryKey;
+        return (
+          Array.isArray(key) &&
+          key[0] === "checkoutPrStatus" &&
+          key[1] === serverId &&
+          key[2] === cwd
+        );
+      },
+    }),
+    queryClient.invalidateQueries({
+      predicate: (query) => {
+        const key = query.queryKey;
+        return (
+          Array.isArray(key) && key[0] === "prPaneTimeline" && key[1] === serverId && key[2] === cwd
+        );
+      },
+    }),
+  ]);
+}
+
 function invalidateCheckoutGitQueries(serverId: string, cwd: string) {
-  void queryClient.invalidateQueries({
-    queryKey: ["checkoutStatus", serverId, cwd],
-  });
-  void queryClient.invalidateQueries({
-    predicate: (query) => {
-      const key = query.queryKey;
-      return (
-        Array.isArray(key) && key[0] === "checkoutDiff" && key[1] === serverId && key[2] === cwd
-      );
-    },
-  });
-  void queryClient.invalidateQueries({
-    predicate: (query) => {
-      const key = query.queryKey;
-      return (
-        Array.isArray(key) && key[0] === "checkoutPrStatus" && key[1] === serverId && key[2] === cwd
-      );
-    },
-  });
+  return invalidateCheckoutGitQueriesForClient(appQueryClient, { serverId, cwd });
 }
 
 function invalidateWorktreeList() {
-  void queryClient.invalidateQueries({
+  void appQueryClient.invalidateQueries({
     predicate: (query) =>
       Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
   });
-  void queryClient.invalidateQueries({
+  void appQueryClient.invalidateQueries({
     predicate: (query) =>
       Array.isArray(query.queryKey) && query.queryKey[0] === "sidebarPaseoWorktreeList",
   });
@@ -102,7 +128,7 @@ function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: 
     return filtered.length === current.length ? current : filtered;
   };
 
-  queryClient.setQueriesData(
+  appQueryClient.setQueriesData(
     {
       predicate: (query) =>
         Array.isArray(query.queryKey) &&
@@ -112,7 +138,7 @@ function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: 
     removeFromList,
   );
 
-  queryClient.setQueriesData(
+  appQueryClient.setQueriesData(
     {
       predicate: (query) =>
         Array.isArray(query.queryKey) &&
@@ -121,6 +147,19 @@ function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: 
     },
     removeFromList,
   );
+}
+
+function purgeArchivedWorkspaceState(input: { serverId: string; worktreePath: string }): void {
+  const serverId = input.serverId.trim();
+  const workspaceId = input.worktreePath.trim();
+  if (!serverId || !workspaceId) {
+    return;
+  }
+  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+  if (workspaceKey) {
+    useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
+  }
+  useWorkspaceTabsStore.getState().purgeWorkspace({ serverId, workspaceId });
 }
 
 const successTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -183,7 +222,7 @@ async function runCheckoutAction({
   const promise = (async () => {
     try {
       await run();
-      invalidateCheckoutGitQueries(serverId, cwd);
+      await invalidateCheckoutGitQueries(serverId, cwd);
       setStatus(key, actionId, "success");
       const timer = setTimeout(() => {
         setStatus(key, actionId, "idle");
@@ -320,6 +359,7 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
         }
         removeWorktreeFromCachedLists({ serverId, worktreePath });
         invalidateWorktreeList();
+        purgeArchivedWorkspaceState({ serverId, worktreePath });
       },
     });
   },

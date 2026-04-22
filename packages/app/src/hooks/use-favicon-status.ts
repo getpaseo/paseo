@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Platform } from "react-native";
-import { useShallow } from "zustand/shallow";
 import { getIsElectronRuntimeMac } from "@/constants/layout";
 import { useAggregatedAgents } from "./use-aggregated-agents";
 import { getDesktopHost } from "@/desktop/host";
-import { useSessionStore } from "@/stores/session-store";
-import {
-  deriveMacDockBadgeCountFromWorkspaceStatuses,
-  type DesktopBadgeWorkspaceStatus,
-} from "@/utils/desktop-badge-state";
+import { useWorkspaceStatusesForBadges } from "@/stores/session-store-hooks";
+import { deriveMacDockBadgeCountFromWorkspaceStatuses } from "@/utils/desktop-badge-state";
+import { isNative } from "@/constants/platform";
 
 type FaviconStatus = "none" | "running" | "attention";
 type ColorScheme = "dark" | "light";
@@ -76,18 +72,14 @@ function updateFavicon(status: FaviconStatus, colorScheme: ColorScheme) {
 }
 
 function getSystemColorScheme(): ColorScheme {
-  if (
-    Platform.OS !== "web" ||
-    typeof window === "undefined" ||
-    typeof window.matchMedia !== "function"
-  ) {
+  if (isNative || typeof window === "undefined" || typeof window.matchMedia !== "function") {
     return "dark";
   }
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 async function updateMacDockBadge(count?: number) {
-  if (Platform.OS !== "web" || !getIsElectronRuntimeMac()) return;
+  if (isNative || !getIsElectronRuntimeMac()) return;
 
   const desktopWindow = getDesktopHost()?.window?.getCurrentWindow?.();
   if (!desktopWindow || typeof desktopWindow.setBadgeCount !== "function") {
@@ -103,23 +95,13 @@ async function updateMacDockBadge(count?: number) {
 
 export function useFaviconStatus() {
   const { agents } = useAggregatedAgents();
-  const workspaceStatuses = useSessionStore(
-    useShallow((state) => {
-      const statuses: DesktopBadgeWorkspaceStatus[] = [];
-      for (const session of Object.values(state.sessions)) {
-        for (const workspace of session.workspaces.values()) {
-          statuses.push(workspace.status);
-        }
-      }
-      return statuses;
-    }),
-  );
+  const workspaceStatuses = useWorkspaceStatusesForBadges();
   const [colorScheme, setColorScheme] = useState<ColorScheme>(getSystemColorScheme);
   const lastDockBadgeCountRef = useRef<number | undefined>(undefined);
 
   // Listen for system color scheme changes
   useEffect(() => {
-    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    if (isNative || typeof window === "undefined") return;
 
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = (e: MediaQueryListEvent) => {
@@ -132,7 +114,7 @@ export function useFaviconStatus() {
 
   // Update favicon when agents or color scheme changes
   useEffect(() => {
-    if (Platform.OS !== "web") return;
+    if (isNative) return;
 
     const status = deriveFaviconStatus(agents);
     updateFavicon(status, colorScheme);

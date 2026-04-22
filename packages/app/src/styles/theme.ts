@@ -83,6 +83,7 @@ export const baseColors = {
   // Amber scale
   amber: {
     500: "#f59e0b",
+    700: "#b45309",
   },
 
   // Yellow scale
@@ -114,6 +115,23 @@ const lightDiffColors = {
 const darkDiffColors = {
   diffAddition: "#4ade80", // green-400
   diffDeletion: "#ef4444", // red-500
+};
+
+// Status colors — semantic signals for success/danger/warning/merged. Used by
+// check statuses, PR states, and review decisions. Kept a step darker than the
+// raw palette so they read as signals, not neon.
+const lightStatusColors = {
+  statusSuccess: "#15803d", // green-700
+  statusDanger: "#b91c1c", // red-700
+  statusWarning: "#d97706", // amber-600
+  statusMerged: "#7c3aed", // purple-600
+};
+
+const darkStatusColors = {
+  statusSuccess: "#16a34a", // green-600
+  statusDanger: "#dc2626", // red-600
+  statusWarning: "#f59e0b", // amber-500
+  statusMerged: "#9333ea", // purple-600
 };
 
 // Semantic color tokens - Layer-based system
@@ -166,6 +184,7 @@ const lightSemanticColors = {
   ring: "#18181b",
 
   ...lightDiffColors,
+  ...lightStatusColors,
 
   terminal: {
     background: "#ffffff",
@@ -277,6 +296,7 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     ring: "#d4d4d8",
 
     ...darkDiffColors,
+    ...darkStatusColors,
 
     terminal: {
       background: tint.surface0,
@@ -390,6 +410,7 @@ const commonTheme = {
   spacing: {
     0: 0,
     1: 4,
+    1.5: 6,
     2: 8,
     3: 12,
     4: 16,

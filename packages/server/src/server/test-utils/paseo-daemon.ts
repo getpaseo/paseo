@@ -85,7 +85,7 @@ export async function createTestPaseoDaemon(
       listen: `${listenHost}:0`,
       paseoHome,
       corsAllowedOrigins: options.corsAllowedOrigins ?? [],
-      allowedHosts: true,
+      hostnames: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,

@@ -7,7 +7,6 @@ import {
   type LayoutChangeEvent,
   StyleProp,
   ViewStyle,
-  Platform,
 } from "react-native";
 import * as React from "react";
 import {
@@ -54,7 +53,6 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
-import { theme } from "@/styles/theme";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -86,6 +84,7 @@ import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import type { DaemonClient } from "@server/client/daemon-client";
+import { isWeb, isNative } from "@/constants/platform";
 
 interface UserMessageProps {
   message: string;
@@ -119,6 +118,26 @@ function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
 
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_ID = "paseo-toolcall-shimmer-keyframes";
 const WEB_TOOLCALL_SHIMMER_ANIMATION_NAME = "paseo-toolcall-shimmer";
+const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
+  "data:image/png;base64",
+  "data:image/gif;base64",
+  "data:image/jpeg;base64",
+  "https://",
+  "http://",
+] as const;
+const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
+
+type MarkdownWithStableRendererProps = {
+  children: ReactNode;
+  style: ReturnType<typeof createMarkdownStyles>;
+  rules: RenderRules;
+  markdownit: MarkdownIt;
+  onLinkPress: (url: string) => boolean;
+  allowedImageHandlers: readonly string[];
+  topLevelMaxExceededItem: ReactNode;
+};
+
+const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_CSS = `
   @keyframes ${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} {
     0% {
@@ -134,7 +153,7 @@ const SCROLL_EDGE_EPSILON = 0.5;
 type ScrollAxis = "x" | "y";
 
 function ensureWebToolCallShimmerKeyframes() {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return;
   }
   if (typeof document === "undefined") {
@@ -264,6 +283,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   content: {
     alignItems: "flex-end",
     maxWidth: "100%",
+    cursor: "auto",
   },
   containerSpacing: {
     marginBottom: theme.spacing[1],
@@ -341,12 +361,14 @@ export const UserMessage = memo(function UserMessage({
   isLastInGroup = true,
   disableOuterSpacing,
 }: UserMessageProps) {
+  const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const [messageHovered, setMessageHovered] = useState(false);
   const [copyButtonHovered, setCopyButtonHovered] = useState(false);
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
-  const showCopyButton = hasText && (Platform.OS !== "web" || messageHovered || copyButtonHovered);
+  const showCopyButton = hasText && (isCompact || messageHovered || copyButtonHovered);
 
   return (
     <View
@@ -361,8 +383,8 @@ export const UserMessage = memo(function UserMessage({
     >
       <Pressable
         style={userMessageStylesheet.content}
-        onHoverIn={Platform.OS === "web" ? () => setMessageHovered(true) : undefined}
-        onHoverOut={Platform.OS === "web" ? () => setMessageHovered(false) : undefined}
+        onHoverIn={() => setMessageHovered(true)}
+        onHoverOut={() => setMessageHovered(false)}
       >
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
@@ -434,7 +456,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontFamily: Fonts.mono,
     fontSize: 13,
-    userSelect: Platform.OS === "web" ? "text" : "auto",
+    userSelect: isWeb ? "text" : "auto",
   },
   imageFrame: {
     width: "100%",
@@ -657,7 +679,7 @@ function MarkdownLink({
   children: ReactNode;
 }) {
   const [hovered, setHovered] = useState(false);
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return (
       <Text accessibilityRole="link" onPress={() => onPress(href)} style={style}>
         {children}
@@ -779,8 +801,8 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   return (
     <Pressable
       onPress={handleCopy}
-      onHoverIn={Platform.OS === "web" ? () => onHoverChange?.(true) : undefined}
-      onHoverOut={Platform.OS === "web" ? () => onHoverChange?.(false) : undefined}
+      onHoverIn={() => onHoverChange?.(true)}
+      onHoverOut={() => onHoverChange?.(false)}
       style={[turnCopyButtonStylesheet.container, containerStyle]}
       accessibilityRole="button"
       accessibilityLabel={
@@ -946,9 +968,16 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
   return (
-    <Markdown style={styles} rules={rules} markdownit={parser} onLinkPress={onLinkPress}>
+    <MarkdownWithStableRenderer
+      style={styles}
+      rules={rules}
+      markdownit={parser}
+      onLinkPress={onLinkPress}
+      allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
+      topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
+    >
       {text}
-    </Markdown>
+    </MarkdownWithStableRenderer>
   );
 });
 
@@ -961,10 +990,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   disableOuterSpacing,
 }: AssistantMessageProps) {
-  const { theme, rt } = useUnistyles();
+  const { theme } = useUnistyles();
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
 
-  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [rt.themeName]);
+  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
   const markdownParser = useMemo(() => {
     const parser = MarkdownIt({ typographer: true, linkify: true });
@@ -1060,7 +1089,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             <Text
               key={node.key}
               onPress={() => parsed && onInlinePathPress?.(parsed)}
-              selectable={Platform.OS === "web" ? undefined : false}
+              selectable={isWeb ? undefined : false}
               style={[assistantMessageStylesheet.pathChip, assistantMessageStylesheet.pathChipText]}
             >
               {content}
@@ -1653,9 +1682,9 @@ const ExpandableBadge = memo(function ExpandableBadge({
     32,
     Math.min(120, labelRowWidth > 0 ? labelRowWidth * 0.28 : 0),
   );
-  const isWebShimmer = isLoading && Platform.OS === "web";
+  const isWebShimmer = isLoading && isWeb;
   const shouldMeasureWebShimmer = isWebShimmer;
-  const shouldMeasureNativeShimmer = isLoading && Platform.OS !== "web";
+  const shouldMeasureNativeShimmer = isLoading && isNative;
   const isNativeShimmer = shouldMeasureNativeShimmer && labelRowWidth > 0 && labelRowHeight > 0;
   const webShimmerSpanStartX = labelOffsetX;
   const webShimmerSpanEndX = secondaryLabel
@@ -1732,7 +1761,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
   }, [isNativeShimmer, labelRowWidth, nativeShimmerPeakWidth, shimmerDuration, shimmerTranslateX]);
 
   useEffect(() => {
-    if (Platform.OS !== "web" || !isExpanded || !hasDetailContent) {
+    if (isNative || !isExpanded || !hasDetailContent) {
       return;
     }
 

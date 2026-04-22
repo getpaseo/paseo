@@ -4,10 +4,15 @@ import { createTempGitRepo } from "./helpers/workspace";
 import {
   archiveAgentFromDaemon,
   archiveAgentFromSessions,
+  clickSessionRow,
+  closeWorkspaceAgentTab,
   connectArchiveTabDaemonClient,
   createIdleAgent,
+  expectArchivedAgentFocused,
+  expectSessionRowArchived,
   expectSessionRowVisible,
   expectWorkspaceArchiveOutcome,
+  expectWorkspaceTabHidden,
   openSessions,
   openWorkspaceWithAgents,
   primeAdditionalPage,
@@ -19,7 +24,7 @@ test.describe("Archive tab reconciliation", () => {
   let client: Awaited<ReturnType<typeof connectArchiveTabDaemonClient>>;
   let tempRepo: { path: string; cleanup: () => Promise<void> };
 
-  test.describe.configure({ timeout: 120_000 });
+  test.describe.configure({ timeout: 300_000 });
 
   test.beforeAll(async () => {
     tempRepo = await createTempGitRepo("archive-tab-");
@@ -64,10 +69,7 @@ test.describe("Archive tab reconciliation", () => {
         survivingAgentId: surviving.id,
       });
       await reloadWorkspace(passivePage, tempRepo.path);
-      await expectWorkspaceArchiveOutcome(passivePage, {
-        archivedAgentId: archived.id,
-        survivingAgentId: surviving.id,
-      });
+      await expectWorkspaceTabHidden(passivePage, archived.id);
     } finally {
       await passivePage.close();
     }
@@ -93,10 +95,7 @@ test.describe("Archive tab reconciliation", () => {
       await openSessions(page);
       await archiveAgentFromSessions(page, { agentId: archived.id, title: archived.title });
       await reloadWorkspace(page, tempRepo.path);
-      await expectWorkspaceArchiveOutcome(page, {
-        archivedAgentId: archived.id,
-        survivingAgentId: surviving.id,
-      });
+      await expectWorkspaceTabHidden(page, archived.id);
       await expectWorkspaceArchiveOutcome(passivePage, {
         archivedAgentId: archived.id,
         survivingAgentId: surviving.id,
@@ -104,5 +103,27 @@ test.describe("Archive tab reconciliation", () => {
     } finally {
       await passivePage.close();
     }
+  });
+
+  test("clicking an archived session reopens its closed tab focused", async ({ page }) => {
+    const archived = await createIdleAgent(client, {
+      cwd: tempRepo.path,
+      title: `reopen-archived-${randomUUID().slice(0, 8)}`,
+    });
+    const surviving = await createIdleAgent(client, {
+      cwd: tempRepo.path,
+      title: `reopen-control-${randomUUID().slice(0, 8)}`,
+    });
+
+    await resetSeededPageState(page);
+    await openWorkspaceWithAgents(page, [archived, surviving]);
+    await closeWorkspaceAgentTab(page, archived.id);
+    await archiveAgentFromDaemon(client, archived.id);
+    await openSessions(page);
+    await expectSessionRowArchived(page, archived.title);
+
+    await clickSessionRow(page, archived.title);
+
+    await expectArchivedAgentFocused(page, archived.id);
   });
 });

@@ -1,7 +1,7 @@
 import { Asset } from "expo-asset";
-import { Platform } from "react-native";
 import { getDesktopHost } from "@/desktop/host";
 import { buildNotificationRoute, resolveNotificationTarget } from "./notification-routing";
+import { isNative } from "@/constants/platform";
 
 type OsNotificationPayload = {
   title: string;
@@ -80,7 +80,7 @@ async function ensureNotificationPermission(): Promise<boolean> {
 }
 
 export async function ensureOsNotificationPermission(): Promise<boolean> {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return false;
   }
   return await ensureNotificationPermission();
@@ -154,7 +154,7 @@ function attachWebClickHandler(
 
 export async function sendOsNotification(payload: OsNotificationPayload): Promise<boolean> {
   // Mobile/native notifications should be remote push only.
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return false;
   }
 

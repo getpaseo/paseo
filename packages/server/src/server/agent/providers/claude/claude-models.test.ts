@@ -6,6 +6,8 @@ describe("getClaudeModels", () => {
   it("returns all claude models", () => {
     const models = getClaudeModels();
     expect(models.map((m) => m.id)).toEqual([
+      "claude-opus-4-7[1m]",
+      "claude-opus-4-7",
       "claude-opus-4-6[1m]",
       "claude-opus-4-6",
       "claude-sonnet-4-6",

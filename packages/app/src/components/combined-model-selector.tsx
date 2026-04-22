@@ -4,17 +4,17 @@ import {
   Text,
   TextInput,
   Pressable,
-  Platform,
   ActivityIndicator,
   type GestureResponderEvent,
 } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isWeb as platformIsWeb } from "@/constants/platform";
 import { ArrowLeft, ChevronDown, ChevronRight, Search, Star } from "lucide-react-native";
 import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = platformIsWeb;
 
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -349,7 +349,7 @@ function ProviderSearchInput({
   const InputComponent = isMobile ? BottomSheetTextInput : TextInput;
 
   useEffect(() => {
-    if (autoFocus && Platform.OS === "web" && inputRef.current) {
+    if (autoFocus && platformIsWeb && inputRef.current) {
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
@@ -363,7 +363,7 @@ function ProviderSearchInput({
       <InputComponent
         ref={inputRef as any}
         // @ts-expect-error - outlineStyle is web-only
-        style={[styles.providerSearchInput, Platform.OS === "web" && { outlineStyle: "none" }]}
+        style={[styles.providerSearchInput, platformIsWeb && { outlineStyle: "none" }]}
         placeholder="Search models..."
         placeholderTextColor={theme.colors.foregroundMuted}
         value={value}
@@ -518,10 +518,9 @@ export function CombinedModelSelector({
   disabled = false,
 }: CombinedModelSelectorProps) {
   const { theme } = useUnistyles();
-  const isWeb = Platform.OS === "web";
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [isContentReady, setIsContentReady] = useState(isWeb);
+  const [isContentReady, setIsContentReady] = useState(platformIsWeb);
   const [view, setView] = useState<SelectorView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -534,10 +533,22 @@ export function CombinedModelSelector({
     return { kind: "provider", providerId, providerLabel: label };
   }, [allProviderModels, providerDefinitions]);
 
+  const computeInitialView = useCallback((): SelectorView => {
+    if (singleProviderView) return singleProviderView;
+
+    const selectedFavoriteKey = `${selectedProvider}:${selectedModel}`;
+    if (selectedProvider && selectedModel && !favoriteKeys.has(selectedFavoriteKey)) {
+      const label = resolveProviderLabel(providerDefinitions, selectedProvider);
+      return { kind: "provider", providerId: selectedProvider, providerLabel: label };
+    }
+
+    return { kind: "all" };
+  }, [singleProviderView, selectedProvider, selectedModel, favoriteKeys, providerDefinitions]);
+
   const handleOpenChange = useCallback(
     (open: boolean) => {
       setIsOpen(open);
-      setView(singleProviderView ?? { kind: "all" });
+      setView(computeInitialView());
       if (open) {
         onOpen?.();
       } else {
@@ -545,33 +556,35 @@ export function CombinedModelSelector({
         onClose?.();
       }
     },
-    [onOpen, onClose, singleProviderView],
+    [onOpen, onClose, computeInitialView],
   );
 
   const handleSelect = useCallback(
     (provider: string, modelId: string) => {
       onSelect(provider as AgentProvider, modelId);
       setIsOpen(false);
-      setView(singleProviderView ?? { kind: "all" });
       setSearchQuery("");
     },
-    [onSelect, singleProviderView],
+    [onSelect],
   );
 
-  const ProviderIcon = getProviderIcon(selectedProvider);
-  const selectedProviderLabel = useMemo(
-    () => resolveProviderLabel(providerDefinitions, selectedProvider),
-    [providerDefinitions, selectedProvider],
-  );
+  const hasSelectedProvider = selectedProvider.trim().length > 0;
+  const ProviderIcon = hasSelectedProvider ? getProviderIcon(selectedProvider) : null;
 
   const selectedModelLabel = useMemo(() => {
+    if (!selectedModel) {
+      if (!hasSelectedProvider) {
+        return "Select model";
+      }
+      return isLoading ? "Loading..." : "Select model";
+    }
     const models = allProviderModels.get(selectedProvider);
     if (!models) {
       return isLoading ? "Loading..." : "Select model";
     }
     const model = models.find((entry) => entry.id === selectedModel);
     return model?.label ?? resolveDefaultModelLabel(models);
-  }, [allProviderModels, isLoading, selectedModel, selectedProvider]);
+  }, [allProviderModels, hasSelectedProvider, isLoading, selectedModel, selectedProvider]);
 
   const desktopFixedHeight = useMemo(() => {
     if (view.kind !== "provider") {
@@ -587,11 +600,11 @@ export function CombinedModelSelector({
       return selectedModelLabel;
     }
 
-    return buildSelectedTriggerLabel(selectedProviderLabel, selectedModelLabel);
-  }, [selectedModelLabel, selectedProviderLabel]);
+    return buildSelectedTriggerLabel(selectedModelLabel);
+  }, [selectedModelLabel]);
 
   useEffect(() => {
-    if (isWeb) {
+    if (platformIsWeb) {
       return;
     }
 
@@ -605,7 +618,7 @@ export function CombinedModelSelector({
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [isOpen, isWeb]);
+  }, [isOpen, platformIsWeb]);
 
   return (
     <>
@@ -634,8 +647,12 @@ export function CombinedModelSelector({
           })
         ) : (
           <>
-            <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-            <Text style={styles.triggerText}>{triggerLabel}</Text>
+            {ProviderIcon ? (
+              <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+            ) : null}
+            <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+              {triggerLabel}
+            </Text>
             <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           </>
         )}
@@ -646,7 +663,6 @@ export function CombinedModelSelector({
         onSelect={() => {}}
         open={isOpen}
         onOpenChange={handleOpenChange}
-        stackBehavior="push"
         anchorRef={anchorRef}
         desktopPlacement="top-start"
         desktopMinWidth={360}
@@ -668,7 +684,7 @@ export function CombinedModelSelector({
               <ProviderSearchInput
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                autoFocus={Platform.OS === "web"}
+                autoFocus={platformIsWeb}
               />
             </View>
           ) : undefined
@@ -705,6 +721,8 @@ export function CombinedModelSelector({
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     height: 28,
+    minWidth: 0,
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
@@ -722,6 +740,8 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.5,
   },
   triggerText: {
+    minWidth: 0,
+    flexShrink: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
@@ -783,11 +803,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
-  level2Header: {
-    backgroundColor: theme.colors.surface1,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
+  level2Header: {},
   backButton: {
     flexDirection: "row",
     alignItems: "center",

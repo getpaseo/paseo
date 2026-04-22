@@ -15,9 +15,10 @@ import { useGitActions } from "@/hooks/use-git-actions";
 interface WorkspaceGitActionsProps {
   serverId: string;
   cwd: string;
+  hideLabels?: boolean;
 }
 
-export function WorkspaceGitActions({ serverId, cwd }: WorkspaceGitActionsProps) {
+export function WorkspaceGitActions({ serverId, cwd, hideLabels }: WorkspaceGitActionsProps) {
   const { theme } = useUnistyles();
 
   const icons = useMemo(
@@ -40,5 +41,5 @@ export function WorkspaceGitActions({ serverId, cwd }: WorkspaceGitActionsProps)
     return null;
   }
 
-  return <GitActionsSplitButton gitActions={gitActions} />;
+  return <GitActionsSplitButton gitActions={gitActions} hideLabels={hideLabels} />;
 }

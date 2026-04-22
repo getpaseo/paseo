@@ -121,7 +121,7 @@ describe("MCP parity end-to-end", () => {
     const payload = await callToolStructured(topLevelClient, "create_agent", {
       cwd,
       title: "Parity agent",
-      provider: "claude",
+      provider: "claude/claude-test-model",
       initialPrompt: "say done and stop",
       mode: "bypassPermissions",
       background: true,
@@ -133,7 +133,7 @@ describe("MCP parity end-to-end", () => {
   async function createChildAgent(args?: Partial<StructuredContent>): Promise<string> {
     const payload = await callToolStructured(agentScopedClient, "create_agent", {
       title: "Parity child",
-      provider: "claude",
+      provider: "claude/claude-test-model",
       initialPrompt: "say done and stop",
       background: true,
       ...args,
@@ -207,7 +207,7 @@ describe("MCP parity end-to-end", () => {
     const parentPayload = await callToolStructured(topLevelClient, "create_agent", {
       cwd: parentAgentCwd,
       title: "MCP parity parent",
-      provider: "claude",
+      provider: "claude/claude-test-model",
       initialPrompt: "say done and stop",
       mode: "bypassPermissions",
       background: true,
@@ -294,10 +294,10 @@ describe("MCP parity end-to-end", () => {
       }
     });
 
-    test("create_agent accepts model param", async () => {
+    test("create_agent accepts provider/model syntax", async () => {
       let agentId: string | null = null;
       try {
-        agentId = await createTopLevelAgent({ model: "claude-test-model" });
+        agentId = await createTopLevelAgent({ provider: "claude/claude-test-model" });
         const snapshot = daemonHandle.daemon.agentManager.getAgent(agentId);
         expect(snapshot?.config.model).toBe("claude-test-model");
       } finally {
@@ -478,6 +478,28 @@ describe("MCP parity end-to-end", () => {
       }
     });
 
+    test("create_schedule accepts provider/model syntax", async () => {
+      let scheduleId: string | null = null;
+      try {
+        const created = await callToolStructured(topLevelClient, "create_schedule", {
+          prompt: "say hello",
+          every: "5m",
+          name: "Parity provider schedule",
+          provider: "codex/gpt-5.4",
+        });
+        scheduleId = created.id as string;
+        expect(created.target).toMatchObject({
+          type: "new-agent",
+          config: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
+        });
+      } finally {
+        await deleteScheduleIfPresent(scheduleId);
+      }
+    });
+
     test("inspect_schedule returns details", async () => {
       let scheduleId: string | null = null;
       try {
@@ -562,6 +584,27 @@ describe("MCP parity end-to-end", () => {
         expect(created.target).toMatchObject({
           type: "agent",
           agentId: parentAgentId,
+        });
+      } finally {
+        await deleteScheduleIfPresent(scheduleId);
+      }
+    });
+
+    test("create_schedule on agent MCP accepts provider/model override for new-agent", async () => {
+      let scheduleId: string | null = null;
+      try {
+        const created = await callToolStructured(agentScopedClient, "create_schedule", {
+          prompt: "say hello",
+          every: "5m",
+          provider: "codex/gpt-5.4",
+        });
+        scheduleId = created.id as string;
+        expect(created.target).toMatchObject({
+          type: "new-agent",
+          config: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
         });
       } finally {
         await deleteScheduleIfPresent(scheduleId);

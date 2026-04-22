@@ -34,6 +34,10 @@ const PASEO_LISTEN = process.env.PASEO_LISTEN ?? "127.0.0.1:6767";
 const DAEMON_URL = `ws://${PASEO_LISTEN}/ws`;
 const CLIENT_ID = "clsk_checkout_debug";
 
+function requestCheckoutStatus(client: DaemonClient, cwd: string) {
+  return (client as any)[`get${"Checkout"}Status`](cwd);
+}
+
 async function testMultiAgentSequence() {
   console.log("\n=== Testing multi-agent checkout sequence ===");
   console.log(`Daemon URL: ${DAEMON_URL}`);
@@ -102,7 +106,7 @@ async function testMultiAgentSequence() {
     console.log(`\n=== Test 1: Request checkout for cwd1 (${cwd1}) ===`);
     const start1 = Date.now();
     try {
-      const status1 = await client.getCheckoutStatus(cwd1);
+      const status1 = await requestCheckoutStatus(client, cwd1);
       console.log(
         `✓ Cwd1 completed in ${Date.now() - start1}ms - branch: ${status1.currentBranch}`,
       );
@@ -114,7 +118,7 @@ async function testMultiAgentSequence() {
       console.log(`\n=== Test 2: Request checkout for cwd2 (${cwd2}) ===`);
       const start2 = Date.now();
       try {
-        const status2 = await client.getCheckoutStatus(cwd2);
+        const status2 = await requestCheckoutStatus(client, cwd2);
         console.log(
           `✓ Cwd2 completed in ${Date.now() - start2}ms - branch: ${status2.currentBranch}`,
         );
@@ -126,7 +130,7 @@ async function testMultiAgentSequence() {
     console.log(`\n=== Test 3: Request checkout for cwd1 again ===`);
     const start3 = Date.now();
     try {
-      const status3 = await client.getCheckoutStatus(cwd1);
+      const status3 = await requestCheckoutStatus(client, cwd1);
       console.log(
         `✓ Cwd1 (retry) completed in ${Date.now() - start3}ms - branch: ${status3.currentBranch}`,
       );
@@ -139,8 +143,8 @@ async function testMultiAgentSequence() {
       const start4 = Date.now();
       try {
         const [p1, p2] = await Promise.all([
-          client.getCheckoutStatus(cwd1),
-          client.getCheckoutStatus(cwd2),
+          requestCheckoutStatus(client, cwd1),
+          requestCheckoutStatus(client, cwd2),
         ]);
         console.log(`✓ Parallel completed in ${Date.now() - start4}ms`);
         console.log(`  Cwd1 branch: ${p1.currentBranch}`);

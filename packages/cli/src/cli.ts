@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { createRequire } from "node:module";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
@@ -124,10 +124,27 @@ export function createCli(): Command {
     .option("--no-relay", "Disable relay on restarted daemon")
     .option("--no-mcp", "Disable Agent MCP on restarted daemon")
     .option(
-      "--allowed-hosts <hosts>",
-      'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")',
+      "--hostnames <hosts>",
+      'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',
     )
-    .action(withOutput(runDaemonRestartCommand));
+    .addOption(new Option("--allowed-hosts <hosts>").hideHelp())
+    .action(
+      withOutput((...args) => {
+        const [options, command] = args.slice(-2) as [(typeof args)[number], Command];
+        return runDaemonRestartCommand(
+          {
+            ...options,
+            hostnames:
+              typeof options.hostnames === "string"
+                ? options.hostnames
+                : typeof options.allowedHosts === "string"
+                  ? options.allowedHosts
+                  : undefined,
+          },
+          command,
+        );
+      }),
+    );
 
   // Advanced agent commands (less common operations)
   program.addCommand(createAgentCommand());

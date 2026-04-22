@@ -14,7 +14,6 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
-  BottomSheetModal,
   BottomSheetScrollView,
   BottomSheetBackdrop,
   BottomSheetTextInput,
@@ -37,8 +36,13 @@ import {
   shouldShowCustomComboboxOption,
 } from "./combobox-options";
 import type { ComboboxOptionModel } from "./combobox-options";
+import { isWeb } from "@/constants/platform";
+import {
+  IsolatedBottomSheetModal,
+  useIsolatedBottomSheetVisibility,
+} from "./isolated-bottom-sheet-modal";
 
-const IS_WEB = Platform.OS === "web";
+const IS_WEB = isWeb;
 
 export type ComboboxOption = ComboboxOptionModel;
 
@@ -65,8 +69,6 @@ export interface ComboboxProps {
   title?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  enableDismissOnClose?: boolean;
-  stackBehavior?: "push" | "switch" | "replace";
   desktopPlacement?: "top-start" | "bottom-start";
   /**
    * Prevents an initial frame at 0,0 by hiding desktop content until floating
@@ -80,6 +82,8 @@ export interface ComboboxProps {
   desktopFixedHeight?: number;
   /** Content rendered above the scroll area on desktop (sticky header). */
   stickyHeader?: ReactNode;
+  /** When true, selecting an option does not close the picker (multi-select mode). */
+  keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
   children?: ReactNode;
 }
@@ -98,7 +102,21 @@ function toNumericStyleValue(value: unknown): number | null {
 }
 
 function ComboboxSheetBackground({ style }: BottomSheetBackgroundProps) {
-  return <Animated.View pointerEvents="none" style={[style, styles.bottomSheetBackground]} />;
+  const { theme } = useUnistyles();
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        style,
+        {
+          backgroundColor: theme.colors.surface0,
+          borderTopLeftRadius: theme.borderRadius["2xl"],
+          borderTopRightRadius: theme.borderRadius["2xl"],
+        },
+      ]}
+    />
+  );
 }
 
 export interface SearchInputProps {
@@ -107,6 +125,7 @@ export interface SearchInputProps {
   onChangeText: (text: string) => void;
   onSubmitEditing?: () => void;
   autoFocus?: boolean;
+  useBottomSheetInput?: boolean;
 }
 
 export function SearchInput({
@@ -115,10 +134,11 @@ export function SearchInput({
   onChangeText,
   onSubmitEditing,
   autoFocus = false,
+  useBottomSheetInput = false,
 }: SearchInputProps): ReactElement {
   const { theme } = useUnistyles();
   const inputRef = useRef<TextInput>(null);
-  const InputComponent = Platform.OS === "web" ? TextInput : BottomSheetTextInput;
+  const InputComponent = useBottomSheetInput ? BottomSheetTextInput : TextInput;
 
   useEffect(() => {
     if (autoFocus && IS_WEB && inputRef.current) {
@@ -252,33 +272,33 @@ export function Combobox({
   title = "Select",
   open,
   onOpenChange,
-  enableDismissOnClose,
-  stackBehavior,
   desktopPlacement = "top-start",
   desktopPreventInitialFlash = true,
   desktopMinWidth,
   desktopFixedHeight,
   stickyHeader,
+  keepOpenOnSelect = false,
   anchorRef,
   children,
 }: ComboboxProps): ReactElement {
+  const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
+  const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = isMobile ? "below-search" : optionsPosition;
-  const isDesktopAboveSearch =
-    !isMobile && Platform.OS === "web" && effectiveOptionsPosition === "above-search";
-  const { height: windowHeight } = useWindowDimensions();
-  const bottomSheetRef = useRef<BottomSheetModal>(null);
-  const hasPresentedBottomSheetRef = useRef(false);
+  const isDesktopAboveSearch = !isMobile && isWeb && effectiveOptionsPosition === "above-search";
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const snapPoints = useMemo(() => ["60%", "90%"], []);
   const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(
     null,
   );
   const [referenceWidth, setReferenceWidth] = useState<number | null>(null);
+  const [referenceLeft, setReferenceLeft] = useState<number | null>(null);
   const [referenceTop, setReferenceTop] = useState<number | null>(null);
   const [referenceAtOrigin, setReferenceAtOrigin] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number>(-1);
   const desktopOptionsScrollRef = useRef<ScrollView>(null);
+  const [desktopContentWidth, setDesktopContentWidth] = useState<number | null>(null);
 
   const isControlled = typeof open === "boolean";
   const [internalOpen, setInternalOpen] = useState(false);
@@ -322,8 +342,8 @@ export function Combobox({
 
   const middleware = useMemo(
     () => [
-      floatingOffset(Platform.OS === "web" ? 0 : 4),
-      ...(Platform.OS === "web" ? [] : [flip({ padding: collisionPadding })]),
+      floatingOffset(isWeb ? 5 : 4),
+      ...(isWeb ? [] : [flip({ padding: collisionPadding })]),
       ...(isDesktopAboveSearch ? [] : [shift({ padding: collisionPadding })]),
       floatingSize({
         padding: collisionPadding,
@@ -336,6 +356,9 @@ export function Combobox({
           });
           setReferenceWidth((prev) => {
             const next = rects.reference.width;
+            if (!(next > 0)) {
+              return prev;
+            }
             if (prev === next) return prev;
             return next;
           });
@@ -346,7 +369,7 @@ export function Combobox({
   );
 
   const { refs, floatingStyles, update } = useFloating({
-    placement: Platform.OS === "web" ? desktopPlacement : "bottom-start",
+    placement: isWeb ? desktopPlacement : "bottom-start",
     middleware,
     sameScrollView: false,
     elements: {
@@ -357,15 +380,18 @@ export function Combobox({
   useEffect(() => {
     if (!isOpen || isMobile) {
       setAvailableSize(null);
+      setDesktopContentWidth(null);
+      setReferenceLeft(null);
       setReferenceWidth(null);
       return;
     }
     const raf = requestAnimationFrame(() => void update());
     return () => cancelAnimationFrame(raf);
-  }, [desktopPlacement, isMobile, update, isOpen]);
+  }, [desktopPlacement, isMobile, isOpen, update]);
 
   useEffect(() => {
     if (!isOpen || isMobile) {
+      setReferenceLeft(null);
       setReferenceAtOrigin(false);
       setReferenceTop(null);
       return;
@@ -379,9 +405,16 @@ export function Combobox({
     }
 
     const measure = () => {
-      referenceEl.measureInWindow((x, y) => {
+      referenceEl.measureInWindow((x, y, width, height) => {
+        setReferenceLeft((prev) => (prev === x ? prev : x));
         setReferenceAtOrigin(Math.abs(x) <= 1 && Math.abs(y) <= 1);
         setReferenceTop((prev) => (prev === y ? prev : y));
+        setReferenceWidth((prev) => {
+          if (!(width > 0)) {
+            return prev;
+          }
+          return prev === width ? prev : width;
+        });
       });
     };
 
@@ -396,61 +429,54 @@ export function Combobox({
     isDesktopAboveSearch && referenceTop !== null
       ? Math.max(windowHeight - referenceTop, collisionPadding)
       : null;
-  const hasResolvedDesktopPosition =
-    referenceWidth !== null &&
-    floatingLeft !== null &&
-    (isDesktopAboveSearch ? desktopAboveSearchBottom !== null : floatingTop !== null) &&
-    ((floatingTop ?? 0) !== 0 || floatingLeft !== 0 || referenceAtOrigin);
-  const shouldHideDesktopContent = desktopPreventInitialFlash && !hasResolvedDesktopPosition;
-  const shouldUseDesktopFade = !desktopPreventInitialFlash;
-  // For top-placed popups: once position resolves, use bottom-based CSS positioning
-  // so height changes grow upward naturally without floating-ui needing to reposition.
-  const useStableBottom =
+  const hasNonZeroFloatingPosition = (floatingTop ?? 0) !== 0 || floatingLeft !== 0;
+  const useMeasuredTopStartPosition =
     !isDesktopAboveSearch &&
     IS_WEB &&
     !isMobile &&
-    hasResolvedDesktopPosition &&
-    desktopPlacement.startsWith("top") &&
-    referenceTop !== null;
+    desktopPlacement === "top-start" &&
+    referenceTop !== null &&
+    referenceLeft !== null &&
+    desktopContentWidth !== null;
+  const clampedMeasuredTopStartLeft = useMeasuredTopStartPosition
+    ? Math.max(
+        collisionPadding,
+        Math.min(windowWidth - desktopContentWidth - collisionPadding, referenceLeft),
+      )
+    : null;
+  const measuredTopStartBottom = useMeasuredTopStartPosition
+    ? Math.max(windowHeight - referenceTop + 5, collisionPadding)
+    : null;
+  const hasResolvedDesktopPosition =
+    referenceWidth !== null &&
+    referenceWidth > 0 &&
+    (isDesktopAboveSearch
+      ? floatingLeft !== null && desktopAboveSearchBottom !== null
+      : useMeasuredTopStartPosition
+        ? clampedMeasuredTopStartLeft !== null && measuredTopStartBottom !== null
+        : floatingLeft !== null &&
+          floatingTop !== null &&
+          (hasNonZeroFloatingPosition || referenceAtOrigin));
+  const shouldHideDesktopContent = desktopPreventInitialFlash && !hasResolvedDesktopPosition;
+  const shouldUseDesktopFade = !desktopPreventInitialFlash;
 
   const desktopPositionStyle = isDesktopAboveSearch
     ? {
         left: floatingLeft ?? 0,
         bottom: desktopAboveSearchBottom ?? 0,
       }
-    : useStableBottom
+    : useMeasuredTopStartPosition
       ? {
-          left: floatingLeft ?? 0,
-          bottom: Math.max(windowHeight - referenceTop!, collisionPadding),
+          left: clampedMeasuredTopStartLeft ?? 0,
+          bottom: measuredTopStartBottom ?? 0,
         }
       : floatingStyles;
 
-  useEffect(() => {
-    if (!isMobile) return;
-    if (isOpen) {
-      if (enableDismissOnClose === false && hasPresentedBottomSheetRef.current) {
-        bottomSheetRef.current?.snapToIndex(0);
-      } else {
-        hasPresentedBottomSheetRef.current = true;
-        bottomSheetRef.current?.present();
-      }
-    } else {
-      if (enableDismissOnClose === false) {
-        bottomSheetRef.current?.close();
-      } else {
-        bottomSheetRef.current?.dismiss();
-      }
-    }
-  }, [enableDismissOnClose, isOpen, isMobile]);
-
-  const handleSheetChange = useCallback(
-    (index: number) => {
-      if (index === -1) {
-        handleClose();
-      }
-    },
-    [handleClose],
-  );
+  const { sheetRef: bottomSheetRef, handleSheetChange } = useIsolatedBottomSheetVisibility({
+    visible: isOpen,
+    isEnabled: isMobile,
+    onClose: handleClose,
+  });
 
   const renderBackdrop = useCallback(
     (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
@@ -556,9 +582,11 @@ export function Combobox({
   const handleSelect = useCallback(
     (id: string) => {
       onSelect(id);
-      handleClose();
+      if (!keepOpenOnSelect) {
+        handleClose();
+      }
     },
-    [handleClose, onSelect],
+    [handleClose, keepOpenOnSelect, onSelect],
   );
 
   const handleSubmitSearch = useCallback(() => {
@@ -626,6 +654,7 @@ export function Combobox({
       onChangeText={setSearchQueryWithCallback}
       onSubmitEditing={handleSubmitSearch}
       autoFocus={!isMobile}
+      useBottomSheetInput={isMobile}
     />
   );
 
@@ -666,7 +695,7 @@ export function Combobox({
 
   if (isMobile) {
     return (
-      <BottomSheetModal
+      <IsolatedBottomSheetModal
         ref={bottomSheetRef}
         snapPoints={snapPoints}
         index={0}
@@ -674,15 +703,15 @@ export function Combobox({
         onChange={handleSheetChange}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
-        enableDismissOnClose={enableDismissOnClose}
-        stackBehavior={stackBehavior}
         backgroundComponent={ComboboxSheetBackground}
-        handleIndicatorStyle={styles.bottomSheetHandle}
+        handleIndicatorStyle={{ backgroundColor: theme.colors.palette.zinc[600] }}
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
       >
         <View style={styles.bottomSheetHeader}>
-          <Text style={styles.comboboxTitle}>{title}</Text>
+          <Text key={titleColor} style={[styles.comboboxTitle, { color: titleColor }]}>
+            {title}
+          </Text>
         </View>
         {stickyHeader}
         {!children && searchable ? searchInput : null}
@@ -693,7 +722,7 @@ export function Combobox({
         >
           {content}
         </BottomSheetScrollView>
-      </BottomSheetModal>
+      </IsolatedBottomSheetModal>
     );
   }
 
@@ -725,7 +754,13 @@ export function Combobox({
           ]}
           ref={refs.setFloating}
           collapsable={false}
-          onLayout={() => update()}
+          onLayout={(event) => {
+            const { width, height } = event.nativeEvent.layout;
+            setDesktopContentWidth((prev) => (prev === width ? prev : width));
+            if (!useMeasuredTopStartPosition || !hasResolvedDesktopPosition) {
+              void update();
+            }
+          }}
         >
           {children ? (
             <>
@@ -741,6 +776,7 @@ export function Combobox({
             </>
           ) : (
             <>
+              {stickyHeader}
               {searchable ? searchInput : null}
               {effectiveOptionsPosition === "above-search" ? (
                 <ScrollView
@@ -852,6 +888,7 @@ const styles = StyleSheet.create((theme) => ({
   comboboxItemLabel: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+    flexShrink: 0,
   },
   comboboxItemDescription: {
     fontSize: theme.fontSize.xs,
@@ -864,14 +901,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
-  bottomSheetBackground: {
-    backgroundColor: theme.colors.surface0,
-    borderTopLeftRadius: theme.borderRadius["2xl"],
-    borderTopRightRadius: theme.borderRadius["2xl"],
-  },
-  bottomSheetHandle: {
-    backgroundColor: theme.colors.palette.zinc[600],
-  },
   bottomSheetHeader: {
     paddingHorizontal: theme.spacing[6],
     paddingBottom: theme.spacing[2],
@@ -879,7 +908,6 @@ const styles = StyleSheet.create((theme) => ({
   comboboxTitle: {
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foreground,
     textAlign: "left",
   },
   comboboxScrollContent: {

@@ -1,4 +1,5 @@
 import { ScrollView, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 interface DiffScrollProps {
   children: React.ReactNode;
@@ -14,12 +15,14 @@ export function DiffScroll({
   style,
   contentContainerStyle,
 }: DiffScrollProps) {
+  const webScrollbarStyle = useWebScrollbarStyle();
+
   return (
     <ScrollView
       horizontal
       nestedScrollEnabled
       showsHorizontalScrollIndicator
-      style={style}
+      style={[style, webScrollbarStyle]}
       contentContainerStyle={contentContainerStyle}
       onLayout={(e: LayoutChangeEvent) => onScrollViewWidthChange(e.nativeEvent.layout.width)}
     >

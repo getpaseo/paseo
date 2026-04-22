@@ -1,0 +1,17 @@
+# NOTE: Render through the workspace-create shell scripts before running when
+# using ${PASEO_MAESTRO_*}. Maestro does not substitute environment vars.
+appId: ${PASEO_MAESTRO_APP_ID}
+---
+# Start from an open Android sidebar with ${PASEO_MAESTRO_PROJECT_NAME}
+# visible. Ends on the New Workspace screen.
+
+- assertVisible:
+    id: "sidebar-project-list"
+
+- assertVisible: ${PASEO_MAESTRO_PROJECT_NAME}
+
+- tapOn: "Create a new workspace for ${PASEO_MAESTRO_PROJECT_NAME}"
+
+- extendedWaitUntil:
+    visible: "New workspace"
+    timeout: 30000

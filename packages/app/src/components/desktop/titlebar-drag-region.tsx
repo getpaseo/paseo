@@ -1,5 +1,5 @@
-import { Platform } from "react-native";
 import { getIsElectronRuntime } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 
 /**
  * VS Code-style titlebar drag region for Electron.
@@ -22,7 +22,7 @@ import { getIsElectronRuntime } from "@/constants/layout";
  * Place as FIRST child of any positioned container that should be draggable.
  */
 export function TitlebarDragRegion() {
-  if (Platform.OS !== "web" || !getIsElectronRuntime()) {
+  if (isNative || !getIsElectronRuntime()) {
     return null;
   }
 

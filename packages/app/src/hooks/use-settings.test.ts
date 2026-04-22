@@ -40,6 +40,16 @@ describe("use-settings", () => {
     expect(result.theme).toBe("auto");
   });
 
+  it("defaults release channel to stable when storage is empty", async () => {
+    asyncStorageMock.getItem.mockResolvedValue(null);
+    asyncStorageMock.setItem.mockResolvedValue();
+
+    const mod = await import("./use-settings");
+    const result = await mod.loadSettingsFromStorage();
+
+    expect(result.releaseChannel).toBe("stable");
+  });
+
   it("loads persisted built-in daemon management state", async () => {
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
       if (key === "@paseo:app-settings") {
@@ -58,7 +68,24 @@ describe("use-settings", () => {
       theme: "light",
       manageBuiltInDaemon: false,
       sendBehavior: "interrupt",
+      releaseChannel: "stable",
     });
     expect(asyncStorageMock.setItem).not.toHaveBeenCalled();
+  });
+
+  it("loads persisted beta release channel", async () => {
+    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
+      if (key === "@paseo:app-settings") {
+        return JSON.stringify({
+          releaseChannel: "beta",
+        });
+      }
+      return null;
+    });
+
+    const mod = await import("./use-settings");
+    const result = await mod.loadSettingsFromStorage();
+
+    expect(result.releaseChannel).toBe("beta");
   });
 });

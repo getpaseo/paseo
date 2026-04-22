@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { ActivityIndicator, Platform, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -15,13 +15,19 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
 import { isAbsolutePath } from "@/utils/path";
+import { isWeb } from "@/constants/platform";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
   cwd: string;
+  hideLabels?: boolean;
 }
 
-export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEditorButtonProps) {
+export function WorkspaceOpenInEditorButton({
+  serverId,
+  cwd,
+  hideLabels,
+}: WorkspaceOpenInEditorButtonProps) {
   const { theme } = useUnistyles();
   const toast = useToast();
   const client = useHostRuntimeClient(serverId);
@@ -29,10 +35,7 @@ export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEd
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
 
   const shouldLoadEditors =
-    Platform.OS === "web" &&
-    Boolean(client && isConnected) &&
-    cwd.trim().length > 0 &&
-    isAbsolutePath(cwd);
+    isWeb && Boolean(client && isConnected) && cwd.trim().length > 0 && isAbsolutePath(cwd);
 
   const availableEditorsQuery = useQuery<EditorTargetDescriptorPayload[]>({
     queryKey: ["available-editors", serverId],
@@ -129,7 +132,7 @@ export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEd
                 size={16}
                 color={theme.colors.foregroundMuted}
               />
-              <Text style={styles.splitButtonText}>Open</Text>
+              {!hideLabels && <Text style={styles.splitButtonText}>Open</Text>}
             </View>
           )}
         </Pressable>
@@ -198,7 +201,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitButtonPrimary: {
     paddingLeft: theme.spacing[3],
-    paddingRight: 10,
+    paddingRight: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    justifyContent: "center",
+    position: "relative",
+  },
+  splitButtonPrimaryIconOnly: {
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     justifyContent: "center",
     position: "relative",

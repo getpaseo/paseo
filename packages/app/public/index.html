@@ -51,6 +51,17 @@
       [contenteditable='true'] {
         -webkit-app-region: no-drag !important;
       }
+
+      /* Suppress the browser's default focus outline — it appears on mouse
+         clicks and looks out of place against our themed surfaces. Keep a
+         themed ring for keyboard users via :focus-visible. */
+      *:focus {
+        outline: none;
+      }
+      *:focus-visible {
+        outline: 2px solid #20744A;
+        outline-offset: 2px;
+      }
     </style>
   </head>
   <body>

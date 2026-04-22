@@ -16,7 +16,7 @@ const DOT_COUNT = DOT_SEQUENCE.length;
 const GRID_ROWS = 3;
 const GRID_COLUMNS = 2;
 const SNAKE_SEGMENT_OFFSETS = [0, -1, -2, -3, -4] as const;
-const SNAKE_OPACITIES = [1, 0.72, 0.46, 0.22, 0] as const;
+const SNAKE_OPACITIES = [1, 0.78, 0.56, 0.34, 0] as const;
 const sharedStepProgress = makeMutable(0);
 let sharedLoopStarted = false;
 

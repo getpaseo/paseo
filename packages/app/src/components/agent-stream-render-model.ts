@@ -8,8 +8,8 @@ import {
 import {
   orderHeadForStreamRenderStrategy,
   orderTailForStreamRenderStrategy,
-  resolveStreamRenderStrategy,
 } from "./stream-strategy";
+import { resolveStreamRenderStrategy } from "./stream-strategy-resolver";
 
 export type StreamRenderSegments = {
   historyVirtualized: StreamItem[];

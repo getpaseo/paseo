@@ -1,11 +1,12 @@
-import { spawn, type ChildProcess, execSync } from "node:child_process";
+import { spawn, type ChildProcess, execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { Buffer } from "node:buffer";
 import dotenv from "dotenv";
+import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./helpers/paseo-home-fork";
 
 type WaitForServerOptions = {
   host?: string;
@@ -182,7 +183,19 @@ async function isOpenAiApiKeyUsable(apiKey: string | undefined): Promise<boolean
 let daemonProcess: ChildProcess | null = null;
 let metroProcess: ChildProcess | null = null;
 let paseoHome: string | null = null;
+let fakeGhBinDir: string | null = null;
 let relayProcess: ChildProcess | null = null;
+
+function resolveOptionalPaseoHomeEnv(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed === "current") {
+    return resolvePaseoHomePath("~/.paseo");
+  }
+  return resolvePaseoHomePath(trimmed);
+}
 
 type OfferPayload = {
   v: 2;
@@ -190,6 +203,52 @@ type OfferPayload = {
   daemonPublicKeyB64: string;
   relay: { endpoint: string };
 };
+
+async function createFakeGhBin(): Promise<string> {
+  const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-gh-bin-"));
+  const ghPath = path.join(binDir, "gh");
+  await writeFile(
+    ghPath,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+
+if (args[0] === "auth" && args[1] === "status") {
+  process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "list") {
+  console.log(JSON.stringify([
+    {
+      number: 515,
+      title: "Review selected start ref",
+      url: "https://github.com/getpaseo/paseo/pull/515",
+      state: "OPEN",
+      body: "Fixture pull request for app e2e.",
+      labels: [],
+      baseRefName: "main",
+      headRefName: "feature/start-from-pr"
+    }
+  ]));
+  process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "view" && args[2] === "--json" && args[3]) {
+  console.error("no pull requests found for branch");
+  process.exit(1);
+}
+
+if (args[0] === "issue" && args[1] === "list") {
+  console.log("[]");
+  process.exit(0);
+}
+
+console.error("Unsupported fake gh invocation: " + args.join(" "));
+process.exit(1);
+`,
+  );
+  await chmod(ghPath, 0o755);
+  return binDir;
+}
 
 function stripAnsi(input: string): string {
   return input.replace(/\u001b\[[0-9;]*m/g, "");
@@ -224,6 +283,51 @@ function decodeOfferFromFragmentUrl(url: string): OfferPayload {
   return offer as OfferPayload;
 }
 
+function loadPairingOfferFromCli(repoRoot: string, paseoHomePath: string): OfferPayload {
+  const stdout = execFileSync(
+    process.execPath,
+    ["--import", "tsx", "packages/cli/src/index.ts", "daemon", "pair", "--json"],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PASEO_HOME: paseoHomePath,
+      },
+      encoding: "utf8",
+    },
+  );
+  const payload = JSON.parse(stdout) as { relayEnabled?: boolean; url?: string | null };
+  if (payload.relayEnabled !== true || typeof payload.url !== "string") {
+    throw new Error(`Unexpected daemon pair response: ${stdout}`);
+  }
+  return decodeOfferFromFragmentUrl(payload.url);
+}
+
+async function waitForPairingOfferFromCli(args: {
+  repoRoot: string;
+  paseoHome: string;
+  timeoutMs?: number;
+}): Promise<OfferPayload> {
+  const timeoutMs = args.timeoutMs ?? 15000;
+  const start = Date.now();
+  let lastError: unknown = null;
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      return loadPairingOfferFromCli(args.repoRoot, args.paseoHome);
+    } catch (error) {
+      lastError = error;
+      await sleep(100);
+    }
+  }
+
+  throw new Error(
+    `Timed out waiting for \`paseo daemon pair --json\` to produce a pairing offer: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
 export default async function globalSetup() {
   const repoRoot = path.resolve(__dirname, "../../..");
   ensureRelayBuildArtifact(repoRoot);
@@ -235,10 +339,35 @@ export default async function globalSetup() {
   const port = await getAvailablePort();
   let relayPort = 0;
   const metroPort = await getAvailablePort();
-  paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-e2e-home-"));
+  const requestedPaseoHome = resolveOptionalPaseoHomeEnv(process.env.E2E_PASEO_HOME);
+  const shouldRemovePaseoHome = !requestedPaseoHome && process.env.E2E_KEEP_PASEO_HOME !== "1";
+  paseoHome = requestedPaseoHome ?? (await mkdtemp(path.join(tmpdir(), "paseo-e2e-home-")));
+  fakeGhBinDir = await createFakeGhBin();
   let relayLineBuffer = createLineBuffer();
   const metroLineBuffer = createLineBuffer();
   const daemonLineBuffer = createLineBuffer();
+
+  const forkSourceHome = resolveOptionalPaseoHomeEnv(process.env.E2E_FORK_PASEO_HOME_FROM);
+  if (forkSourceHome) {
+    const forkResult = await forkPaseoHomeMetadata({
+      sourceHome: forkSourceHome,
+      targetHome: paseoHome,
+    });
+    process.env.E2E_FORK_SOURCE_PASEO_HOME = forkResult.sourceHome;
+    process.env.E2E_FORK_TARGET_PASEO_HOME = forkResult.targetHome;
+    process.env.E2E_FORK_COPIED_FILES = String(forkResult.copiedFiles);
+    process.env.E2E_FORK_COPIED_BYTES = String(forkResult.copiedBytes);
+    console.log(
+      `[e2e] Forked Paseo metadata from ${forkResult.sourceHome} to ${forkResult.targetHome} ` +
+        `(${forkResult.agentFiles} agent files, ${forkResult.projectFiles} project registry files, ` +
+        `${forkResult.copiedBytes} bytes)`,
+    );
+    if (forkResult.skippedMissing.length > 0) {
+      console.warn(
+        `[e2e] Paseo metadata fork skipped missing paths: ${forkResult.skippedMissing.join(", ")}`,
+      );
+    }
+  }
 
   const cleanup = async () => {
     await Promise.all([
@@ -249,9 +378,15 @@ export default async function globalSetup() {
     daemonProcess = null;
     metroProcess = null;
     relayProcess = null;
-    if (paseoHome) {
+    if (paseoHome && shouldRemovePaseoHome) {
       await rm(paseoHome, { recursive: true, force: true });
       paseoHome = null;
+    } else if (paseoHome) {
+      console.log(`[e2e] Preserving PASEO_HOME: ${paseoHome}`);
+    }
+    if (fakeGhBinDir) {
+      await rm(fakeGhBinDir, { recursive: true, force: true });
+      fakeGhBinDir = null;
     }
   };
 
@@ -433,16 +568,11 @@ export default async function globalSetup() {
     const serverDir = path.resolve(__dirname, "../../..", "packages/server");
     const tsxBin = execSync("which tsx").toString().trim();
 
-    let offerPayload: OfferPayload | null = null;
-    let offerResolve: (() => void) | null = null;
-    const offerPromise = new Promise<void>((resolve) => {
-      offerResolve = resolve;
-    });
-
     daemonProcess = spawn(tsxBin, ["src/server/index.ts"], {
       cwd: serverDir,
       env: {
         ...process.env,
+        PATH: `${fakeGhBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
         PASEO_HOME: paseoHome,
         PASEO_SERVER_ID: "srv_e2e_test_daemon",
         PASEO_LISTEN: `0.0.0.0:${port}`,
@@ -473,26 +603,6 @@ export default async function globalSetup() {
         const trimmed = line.trim();
         if (!trimmed) continue;
         daemonLineBuffer.add(`[stdout] ${trimmed}`);
-        if (!offerPayload) {
-          const clean = stripAnsi(trimmed);
-          try {
-            const obj = JSON.parse(clean) as { msg?: string; url?: string };
-            if (obj.msg === "pairing_offer" && typeof obj.url === "string") {
-              offerPayload = decodeOfferFromFragmentUrl(obj.url);
-              offerResolve?.();
-            }
-          } catch {
-            const match = clean.match(/https?:\/\/[^\s"]+#offer=[A-Za-z0-9_-]+/);
-            if (match && clean.includes("pairing_offer")) {
-              try {
-                offerPayload = decodeOfferFromFragmentUrl(match[0]);
-                offerResolve?.();
-              } catch {
-                // ignore parsing failures
-              }
-            }
-          }
-        }
         console.log(`[daemon] ${trimmed}`);
       }
     });
@@ -523,17 +633,10 @@ export default async function globalSetup() {
       }),
     ]);
 
-    // Wait for daemon to emit a pairing offer (includes relay session ID).
-    await Promise.race([
-      offerPromise,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Timed out waiting for pairing_offer log")), 15000),
-      ),
-    ]);
-    if (!offerPayload) {
-      throw new Error("pairing_offer was not parsed from daemon logs");
-    }
-    const offer = offerPayload as OfferPayload;
+    const offer = await waitForPairingOfferFromCli({
+      repoRoot,
+      paseoHome,
+    });
 
     process.env.E2E_DAEMON_PORT = String(port);
     process.env.E2E_RELAY_PORT = String(relayPort);

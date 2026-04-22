@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { DesktopPermissionRow } from "@/desktop/components/desktop-permission-row";
 import { useDesktopPermissions } from "@/desktop/permissions/use-desktop-permissions";
 import { settingsStyles } from "@/styles/settings";
+import { SettingsSection } from "@/screens/settings/settings-section";
 
 export function DesktopPermissionsSection() {
   const { theme } = useUnistyles();
@@ -27,23 +28,23 @@ export function DesktopPermissionsSection() {
   const isBusy = isRefreshing || requestingPermission !== null;
   const notificationsGranted = snapshot?.notifications.state === "granted";
 
+  const refreshButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      leftIcon={<RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
+      onPress={() => {
+        void refreshPermissions();
+      }}
+      disabled={isBusy}
+      accessibilityLabel="Refresh desktop permissions"
+    >
+      {isRefreshing ? "Refreshing..." : "Refresh"}
+    </Button>
+  );
+
   return (
-    <View style={settingsStyles.section}>
-      <View style={styles.permissionSectionHeader}>
-        <Text style={settingsStyles.sectionTitle}>Desktop Permissions</Text>
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={<RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
-          onPress={() => {
-            void refreshPermissions();
-          }}
-          disabled={isBusy}
-          accessibilityLabel="Refresh desktop permissions"
-        >
-          {isRefreshing ? "Refreshing..." : "Refresh"}
-        </Button>
-      </View>
+    <SettingsSection title="Permissions" trailing={refreshButton}>
       <View style={settingsStyles.card}>
         <DesktopPermissionRow
           title="Notifications"
@@ -74,18 +75,11 @@ export function DesktopPermissionsSection() {
           }}
         />
       </View>
-    </View>
+    </SettingsSection>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  permissionSectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: theme.spacing[2],
-    marginBottom: theme.spacing[3],
-  },
   errorText: {
     fontSize: theme.fontSize.xs,
     paddingHorizontal: theme.spacing[4],

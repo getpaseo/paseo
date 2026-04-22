@@ -1,6 +1,6 @@
-import { Platform } from "react-native";
 import { isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import { isWeb } from "@/constants/platform";
 
 export interface DesktopAppUpdateCheckResult {
   hasUpdate: boolean;
@@ -16,6 +16,8 @@ export interface DesktopAppUpdateInstallResult {
   version: string | null;
   message: string;
 }
+
+export type DesktopReleaseChannel = "stable" | "beta";
 
 export interface LocalDaemonUpdateResult {
   exitCode: number;
@@ -50,7 +52,7 @@ function toNumberOr(defaultValue: number, value: unknown): number {
 }
 
 export function shouldShowDesktopUpdateSection(): boolean {
-  return Platform.OS === "web" && isElectronRuntime();
+  return isWeb && isElectronRuntime();
 }
 
 export function parseLocalDaemonVersionResult(raw: unknown): LocalDaemonVersionResult {
@@ -69,8 +71,12 @@ export async function getLocalDaemonVersion(): Promise<LocalDaemonVersionResult>
   return parseLocalDaemonVersionResult(result);
 }
 
-export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResult> {
-  const result = await invokeDesktopCommand<unknown>("check_app_update");
+export async function checkDesktopAppUpdate({
+  releaseChannel,
+}: {
+  releaseChannel: DesktopReleaseChannel;
+}): Promise<DesktopAppUpdateCheckResult> {
+  const result = await invokeDesktopCommand<unknown>("check_app_update", { releaseChannel });
   if (!isRecord(result)) {
     throw new Error("Unexpected response while checking desktop updates.");
   }
@@ -85,8 +91,12 @@ export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResu
   };
 }
 
-export async function installDesktopAppUpdate(): Promise<DesktopAppUpdateInstallResult> {
-  const result = await invokeDesktopCommand<unknown>("install_app_update");
+export async function installDesktopAppUpdate({
+  releaseChannel,
+}: {
+  releaseChannel: DesktopReleaseChannel;
+}): Promise<DesktopAppUpdateInstallResult> {
+  const result = await invokeDesktopCommand<unknown>("install_app_update", { releaseChannel });
   if (!isRecord(result)) {
     throw new Error("Unexpected response while installing desktop update.");
   }

@@ -9,7 +9,7 @@ export interface AgentModeVisuals {
   colorTier: AgentModeColorTier;
 }
 
-export interface AgentProviderModeDefinition extends AgentMode, AgentModeVisuals {}
+export type AgentProviderModeDefinition = Omit<AgentMode, "icon" | "colorTier"> & AgentModeVisuals;
 
 // TODO: `modes` should not be static. Providers (especially ACP) report their
 // own modes at runtime via session/new. We should fetch modes from the provider
@@ -116,6 +116,16 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const MOCK_LOAD_TEST_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "load-test",
+    label: "Load Test",
+    description: "Streams repeated markdown, reasoning, and tool calls for app stress testing",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+  },
+];
+
 export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   {
     id: "claude",
@@ -168,24 +178,49 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   },
 ];
 
-export function getAgentProviderDefinition(provider: string): AgentProviderDefinition {
-  const definition = AGENT_PROVIDER_DEFINITIONS.find((entry) => entry.id === provider);
+export const DEV_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
+  {
+    id: "mock",
+    label: "Mock Load Test",
+    description:
+      "Development-only provider that emits synthetic agent traffic for performance tests",
+    defaultModeId: "load-test",
+    modes: MOCK_LOAD_TEST_MODES,
+  },
+];
+
+export function getAgentProviderDefinition(
+  provider: string,
+  definitions: AgentProviderDefinition[] = [
+    ...AGENT_PROVIDER_DEFINITIONS,
+    ...DEV_AGENT_PROVIDER_DEFINITIONS,
+  ],
+): AgentProviderDefinition {
+  const definition = definitions.find((entry) => entry.id === provider);
   if (!definition) {
     throw new Error(`Unknown agent provider: ${provider}`);
   }
   return definition;
 }
 
-export const AGENT_PROVIDER_IDS = AGENT_PROVIDER_DEFINITIONS.map((d) => d.id);
+export const BUILTIN_PROVIDER_IDS = AGENT_PROVIDER_DEFINITIONS.map((d) => d.id);
+export const AGENT_PROVIDER_IDS = BUILTIN_PROVIDER_IDS;
 
 export const AgentProviderSchema = z.string();
 
-export function isValidAgentProvider(value: string): boolean {
-  return AGENT_PROVIDER_IDS.includes(value);
+export function isValidAgentProvider(
+  value: string,
+  validIds: Iterable<string> = BUILTIN_PROVIDER_IDS,
+): boolean {
+  return Array.isArray(validIds) ? validIds.includes(value) : new Set(validIds).has(value);
 }
 
-export function getModeVisuals(provider: string, modeId: string): AgentModeVisuals | undefined {
-  const definition = AGENT_PROVIDER_DEFINITIONS.find((entry) => entry.id === provider);
+export function getModeVisuals(
+  provider: string,
+  modeId: string,
+  definitions: AgentProviderDefinition[],
+): AgentModeVisuals | undefined {
+  const definition = definitions.find((entry) => entry.id === provider);
   const mode = definition?.modes.find((m) => m.id === modeId);
   if (!mode) return undefined;
   return { icon: mode.icon, colorTier: mode.colorTier };

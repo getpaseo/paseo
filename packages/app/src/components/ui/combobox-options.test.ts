@@ -88,6 +88,39 @@ describe("filterAndRankComboboxOptions", () => {
   it("returns empty when nothing matches", () => {
     expect(filterAndRankComboboxOptions(options, "zzz")).toEqual([]);
   });
+
+  it("ranks word-boundary matches above mid-word substring matches", () => {
+    const items = [
+      { id: "happy", label: "happy" },
+      { id: "a/py", label: "a/py" },
+    ];
+    const result = filterAndRankComboboxOptions(items, "py");
+    expect(result.map((o) => o.id)).toEqual(["a/py", "happy"]);
+  });
+
+  it("interleaves mixed branches and PRs by match quality", () => {
+    const items = [
+      { id: "branch:feat/api-login", label: "feat/api-login" },
+      { id: "branch:feat/pi-direct-sdk", label: "feat/pi-direct-sdk" },
+      { id: "github-pr:202", label: "#202 feat(server): replace Pi ACP with direct SDK provider" },
+      { id: "github-pr:355", label: "#355 feat: add LaTeX math formula rendering" },
+    ];
+    const result = filterAndRankComboboxOptions(items, "pi");
+    expect(result.map((o) => o.id)).toEqual([
+      "branch:feat/pi-direct-sdk",
+      "github-pr:202",
+      "branch:feat/api-login",
+    ]);
+  });
+
+  it("ranks PR-number matches via word-boundary on #", () => {
+    const items = [
+      { id: "github-pr:202", label: "#202 some title" },
+      { id: "github-pr:1202", label: "#1202 another title" },
+    ];
+    const result = filterAndRankComboboxOptions(items, "202");
+    expect(result.map((o) => o.id)).toEqual(["github-pr:202", "github-pr:1202"]);
+  });
 });
 
 describe("combobox above-search ordering", () => {

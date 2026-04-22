@@ -436,6 +436,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       clearTimeout(cue.timeout);
       cue.timeout = null;
     }
+    cue.playing = false;
     if (hadActive) {
       deps.engine.stop();
       deps.engine.clearQueue();
@@ -865,6 +866,8 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       }
 
       if (state.turnInProgress) {
+        patchSnapshot((prev) => ({ ...prev, phase: "waiting" }));
+        reconcileCue();
         return;
       }
 
@@ -897,9 +900,15 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       state.serverSpeechDetected = isSpeaking;
       state.serverSpeechStartedAt = isSpeaking ? (state.serverSpeechStartedAt ?? Date.now()) : null;
       if (isSpeaking) {
+        const shouldInterruptPlayback =
+          state.snapshot.phase === "playing" || playback.groups.size > 0;
+        const hadCue = cue.active || cue.timeout !== null || cue.playing;
         resetPlaybackState();
-        deps.engine.stop();
-        deps.engine.clearQueue();
+        stopCue();
+        if (shouldInterruptPlayback && !hadCue) {
+          deps.engine.stop();
+          deps.engine.clearQueue();
+        }
         getActiveSession()?.adapter.setAssistantAudioPlaying(false);
       }
       patchTelemetry((prev) => ({

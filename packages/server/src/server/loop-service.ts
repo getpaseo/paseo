@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { z } from "zod";
 import type { Logger } from "pino";
 import { curateAgentActivity } from "./agent/activity-curator.js";
@@ -15,8 +13,8 @@ import type {
   AgentTimelineItem,
   AgentProvider,
 } from "./agent/agent-sdk-types.js";
+import { execCommand, platformShell } from "../utils/spawn.js";
 
-const execFileAsync = promisify(execFile);
 const LOOP_ID_LENGTH = 8;
 const DEFAULT_LOOP_PROVIDER: AgentProvider = "claude";
 const MAX_VERIFY_OUTPUT_BYTES = 64 * 1024;
@@ -256,7 +254,8 @@ async function runVerifyCheck(options: {
 }): Promise<LoopVerifyCheckResult> {
   const startedAt = nowIso();
   try {
-    const result = await execFileAsync("/bin/sh", ["-lc", options.command], {
+    const shell = platformShell();
+    const result = await execCommand(shell.command, [...shell.flag, options.command], {
       cwd: options.cwd,
       maxBuffer: MAX_VERIFY_OUTPUT_BYTES,
     });

@@ -132,4 +132,26 @@ describe("useArchiveAgent", () => {
       entries: [{ agent: { id: "agent-2" } }],
     });
   });
+
+  it("can apply archived agent close results without invalidating cached lists", () => {
+    const queryClient = new QueryClient();
+    useSessionStore.getState().initializeSession("server-a", {} as DaemonClient);
+    useSessionStore.getState().setAgents("server-a", new Map([["agent-1", makeAgent()]]));
+    queryClient.setQueryData(["sidebarAgentsList", "server-a"], {
+      entries: [{ agent: { id: "agent-1" } }, { agent: { id: "agent-2" } }],
+    });
+    queryClient.setQueryData(["allAgents", "server-a"], {
+      entries: [{ agent: { id: "agent-1" } }, { agent: { id: "agent-2" } }],
+    });
+
+    applyArchivedAgentCloseResults({
+      queryClient,
+      serverId: "server-a",
+      results: [{ agentId: "agent-1", archivedAt: "2026-04-01T04:00:00.000Z" }],
+      invalidateQueries: false,
+    });
+
+    expect(queryClient.getQueryState(["sidebarAgentsList", "server-a"])?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(["allAgents", "server-a"])?.isInvalidated).toBe(false);
+  });
 });

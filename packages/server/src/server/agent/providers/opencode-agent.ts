@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -37,6 +37,7 @@ import type {
   ListPersistedAgentsOptions,
   McpServerConfig,
   PersistedAgentDescriptor,
+  ToolCallDetail,
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
@@ -44,7 +45,8 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
-import { findExecutable } from "../../../utils/executable.js";
+import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { withTimeout } from "../../../utils/promise-timeout.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
@@ -54,6 +56,7 @@ import {
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -107,6 +110,12 @@ const OPENCODE_FATAL_RETRY_MESSAGE_TOKENS = [
   "unknown model",
   "does not exist",
   "unsupported model",
+] as const;
+const OPENCODE_HEADERS_TIMEOUT_TOKENS = [
+  "headers timeout",
+  "headers timeout error",
+  "headers_timeout",
+  "und_err_headers_timeout",
 ] as const;
 
 const OpencodeToolStateSchema = z
@@ -232,12 +241,122 @@ function normalizeTurnFailureError(error: unknown): string {
   return normalized.length > 0 ? normalized : "Unknown error";
 }
 
+function isOpenCodeNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "NotFoundError"
+  );
+}
+
+async function reconcileOpenCodeSessionClose(params: {
+  client: Pick<OpencodeClient, "session">;
+  sessionId: string;
+  directory: string;
+  logger: Logger;
+}): Promise<void> {
+  const { client, sessionId, directory, logger } = params;
+
+  try {
+    const response = await client.session.abort({
+      sessionID: sessionId,
+      directory,
+    });
+    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+      logger.warn(
+        {
+          sessionId,
+          error: normalizeTurnFailureError(response.error),
+        },
+        "Failed to abort OpenCode session during close",
+      );
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        sessionId,
+        error: normalizeTurnFailureError(error),
+      },
+      "Failed to abort OpenCode session during close",
+    );
+  }
+
+  try {
+    const response = await client.session.update({
+      sessionID: sessionId,
+      directory,
+      time: { archived: Date.now() },
+    });
+    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+      logger.warn(
+        {
+          sessionId,
+          error: normalizeTurnFailureError(response.error),
+        },
+        "Failed to archive OpenCode session during close",
+      );
+    }
+  } catch (error) {
+    logger.warn(
+      {
+        sessionId,
+        error: normalizeTurnFailureError(error),
+      },
+      "Failed to archive OpenCode session during close",
+    );
+  }
+}
+
 function isFatalOpenCodeRetryMessage(message: string | null | undefined): boolean {
   const normalized = typeof message === "string" ? message.trim().toLowerCase() : "";
   if (!normalized) {
     return false;
   }
   return OPENCODE_FATAL_RETRY_MESSAGE_TOKENS.some((token) => normalized.includes(token));
+}
+
+function isOpenCodeHeadersTimeoutFailure(error: unknown): boolean {
+  const diagnostics = new Set<string>();
+  const queue: unknown[] = [error];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    const normalized = stringifyUnknownError(current).trim().toLowerCase();
+    if (normalized) {
+      diagnostics.add(normalized);
+    }
+
+    if (typeof current === "object") {
+      const record = current as {
+        message?: unknown;
+        code?: unknown;
+        name?: unknown;
+        cause?: unknown;
+      };
+
+      for (const value of [record.message, record.code, record.name]) {
+        if (typeof value === "string") {
+          const diagnostic = value.trim().toLowerCase();
+          if (diagnostic) {
+            diagnostics.add(diagnostic);
+          }
+        }
+      }
+
+      if (record.cause) {
+        queue.push(record.cause);
+      }
+    }
+  }
+
+  return [...diagnostics].some((diagnostic) =>
+    OPENCODE_HEADERS_TIMEOUT_TOKENS.some((token) => diagnostic.includes(token)),
+  );
 }
 
 function isAlreadyPresentMcpError(error: unknown): boolean {
@@ -548,6 +667,10 @@ function buildOpenCodePromptParts(
       output.push({ type: "text", text: part.text });
       continue;
     }
+    if (part.type === "github_pr" || part.type === "github_issue") {
+      output.push({ type: "text", text: renderPromptAttachmentAsText(part) });
+      continue;
+    }
     attachmentOrdinal += 1;
     const normalized = toOpenCodeDataUrl(part.mimeType, part.data);
     output.push({
@@ -571,6 +694,7 @@ export const __openCodeInternals = {
   hasNormalizedOpenCodeUsage,
   mergeOpenCodeStepFinishUsage,
   parseOpenCodeModelLookupKey,
+  reconcileOpenCodeSessionClose,
   resolveOpenCodeModelLookupKeyFromAssistantMessage,
   resolveOpenCodeSelectedModelContextWindow,
 };
@@ -578,9 +702,10 @@ export const __openCodeInternals = {
 export class OpenCodeServerManager {
   private static instance: OpenCodeServerManager | null = null;
   private static exitHandlerRegistered = false;
-  private server: ChildProcess | null = null;
-  private port: number | null = null;
-  private startPromise: Promise<{ port: number; url: string }> | null = null;
+  private currentServer: OpenCodeServerGeneration | null = null;
+  private retiredServers = new Set<OpenCodeServerGeneration>();
+  private startPromise: Promise<OpenCodeServerGeneration> | null = null;
+  private forcedRefreshPromise: Promise<OpenCodeServerGeneration> | null = null;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
@@ -619,9 +744,7 @@ export class OpenCodeServerManager {
 
     const cleanup = () => {
       const instance = OpenCodeServerManager.instance;
-      if (instance?.server && !instance.server.killed) {
-        instance.server.kill("SIGTERM");
-      }
+      void instance?.shutdown();
     };
 
     process.on("exit", cleanup);
@@ -630,35 +753,99 @@ export class OpenCodeServerManager {
   }
 
   async ensureRunning(): Promise<{ port: number; url: string }> {
+    const acquisition = await this.acquire({ force: false });
+    acquisition.release();
+    return acquisition.server;
+  }
+
+  async acquire(options: { force: boolean }): Promise<{
+    server: { port: number; url: string };
+    release: () => void;
+  }> {
+    const server = options.force
+      ? await this.getForcedRefreshServer()
+      : await this.getCurrentServer();
+    server.refCount += 1;
+    let released = false;
+    return {
+      server: { port: server.port, url: server.url },
+      release: () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        server.refCount -= 1;
+        this.cleanupRetiredServers();
+      },
+    };
+  }
+
+  private async getForcedRefreshServer(): Promise<OpenCodeServerGeneration> {
+    if (this.forcedRefreshPromise) {
+      return this.forcedRefreshPromise;
+    }
+
+    this.forcedRefreshPromise = Promise.resolve()
+      .then(async () => {
+        await this.rotateCurrentServer();
+        return this.getCurrentServer();
+      })
+      .finally(() => {
+        this.forcedRefreshPromise = null;
+      });
+    return this.forcedRefreshPromise;
+  }
+
+  private async getCurrentServer(): Promise<OpenCodeServerGeneration> {
     if (this.startPromise) {
       return this.startPromise;
     }
 
-    if (this.server && this.port && !this.server.killed) {
-      return { port: this.port, url: `http://127.0.0.1:${this.port}` };
+    if (this.currentServer && !this.currentServer.process.killed) {
+      return this.currentServer;
     }
 
     this.startPromise = this.startServer();
     try {
       const result = await this.startPromise;
+      if (!result.retired) {
+        this.currentServer = result;
+      }
       return result;
     } finally {
       this.startPromise = null;
     }
   }
 
-  private async startServer(): Promise<{ port: number; url: string }> {
-    this.port = await findAvailablePort();
-    const url = `http://127.0.0.1:${this.port}`;
+  private async rotateCurrentServer(): Promise<void> {
+    const existing = this.currentServer;
+    if (existing) {
+      existing.retired = true;
+      this.retiredServers.add(existing);
+      this.currentServer = null;
+      this.cleanupRetiredServers();
+    }
+    if (this.startPromise) {
+      const pending = await this.startPromise;
+      pending.retired = true;
+      this.retiredServers.add(pending);
+      this.currentServer = null;
+      this.cleanupRetiredServers();
+    }
+  }
+
+  private async startServer(): Promise<OpenCodeServerGeneration> {
+    const port = await findAvailablePort();
+    const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await resolveProviderCommandPrefix(
       this.runtimeSettings?.command,
       resolveOpenCodeBinary,
     );
 
     return new Promise((resolve, reject) => {
-      this.server = spawnProcess(
+      const serverProcess = spawnProcess(
         launchPrefix.command,
-        [...launchPrefix.args, "serve", "--port", String(this.port)],
+        [...launchPrefix.args, "serve", "--port", String(port)],
         {
           stdio: ["ignore", "pipe", "pipe"],
           env: applyProviderEnv(process.env, this.runtimeSettings),
@@ -672,53 +859,93 @@ export class OpenCodeServerManager {
         }
       }, 30_000);
 
-      this.server.stdout?.on("data", (data: Buffer) => {
+      serverProcess.stdout?.on("data", (data: Buffer) => {
         const output = data.toString();
         if (output.includes("listening on") && !started) {
           started = true;
           clearTimeout(timeout);
-          resolve({ port: this.port!, url });
+          resolve({
+            process: serverProcess,
+            port,
+            url,
+            refCount: 0,
+            retired: false,
+          });
         }
       });
 
-      this.server.stderr?.on("data", (data: Buffer) => {
+      serverProcess.stderr?.on("data", (data: Buffer) => {
         this.logger.error({ stderr: data.toString().trim() }, "OpenCode server stderr");
       });
 
-      this.server.on("error", (error) => {
+      serverProcess.on("error", (error) => {
         clearTimeout(timeout);
         reject(error);
       });
 
-      this.server.on("exit", (code) => {
+      serverProcess.on("exit", (code) => {
         if (!started) {
           clearTimeout(timeout);
           reject(new Error(`OpenCode server exited with code ${code}`));
         }
-        this.server = null;
-        this.port = null;
+        if (this.currentServer?.process === serverProcess) {
+          this.currentServer = null;
+        }
+        for (const retired of Array.from(this.retiredServers)) {
+          if (retired.process === serverProcess) {
+            this.retiredServers.delete(retired);
+          }
+        }
       });
     });
   }
 
   async shutdown(): Promise<void> {
-    if (this.server && !this.server.killed) {
-      this.server.kill("SIGTERM");
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => {
-          this.server?.kill("SIGKILL");
-          resolve();
-        }, 5000);
-        this.server?.on("exit", () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
+    const servers = [
+      ...(this.currentServer ? [this.currentServer] : []),
+      ...Array.from(this.retiredServers),
+    ];
+    for (const server of servers) {
+      await this.killServer(server);
     }
-    this.server = null;
-    this.port = null;
+    this.currentServer = null;
+    this.retiredServers.clear();
+  }
+
+  private cleanupRetiredServers(): void {
+    for (const server of Array.from(this.retiredServers)) {
+      if (server.refCount === 0) {
+        this.retiredServers.delete(server);
+        void this.killServer(server);
+      }
+    }
+  }
+
+  private async killServer(server: OpenCodeServerGeneration): Promise<void> {
+    if (server.process.killed) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        server.process.kill("SIGKILL");
+        resolve();
+      }, 5000);
+      server.process.on("exit", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      server.process.kill("SIGTERM");
+    });
   }
 }
+
+type OpenCodeServerGeneration = {
+  process: ChildProcess;
+  port: number;
+  url: string;
+  refCount: number;
+  retired: boolean;
+};
 
 export class OpenCodeAgentClient implements AgentClient {
   readonly provider: "opencode" = "opencode";
@@ -740,40 +967,43 @@ export class OpenCodeAgentClient implements AgentClient {
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
-    const { url } = await this.serverManager.ensureRunning();
+    const acquisition = await this.serverManager.acquire({ force: false });
+    const { url } = acquisition.server;
     const client = createOpencodeClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
     });
 
-    // Set a timeout for session creation to fail fast
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("OpenCode session.create timed out after 10s")), 10_000);
-    });
+    try {
+      const response = await withTimeout(
+        client.session.create({ directory: openCodeConfig.cwd }),
+        10_000,
+        "OpenCode session.create timed out after 10s",
+      );
 
-    const response = await Promise.race([
-      client.session.create({ directory: openCodeConfig.cwd }),
-      timeoutPromise,
-    ]);
+      if (response.error) {
+        throw new Error(`Failed to create OpenCode session: ${JSON.stringify(response.error)}`);
+      }
 
-    if (response.error) {
-      throw new Error(`Failed to create OpenCode session: ${JSON.stringify(response.error)}`);
+      const session = response.data;
+      if (!session) {
+        throw new Error("OpenCode session creation returned no data");
+      }
+
+      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+
+      return new OpenCodeAgentSession(
+        openCodeConfig,
+        client,
+        session.id,
+        this.logger,
+        new Map(this.modelContextWindows),
+        acquisition.release,
+      );
+    } catch (error) {
+      acquisition.release();
+      throw error;
     }
-
-    const session = response.data;
-    if (!session) {
-      throw new Error("OpenCode session creation returned no data");
-    }
-
-    await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
-
-    return new OpenCodeAgentSession(
-      openCodeConfig,
-      client,
-      session.id,
-      this.logger,
-      new Map(this.modelContextWindows),
-    );
   }
 
   async resumeSession(
@@ -792,119 +1022,125 @@ export class OpenCodeAgentClient implements AgentClient {
       ...overrides,
     };
     const openCodeConfig = this.assertConfig(config);
-    const { url } = await this.serverManager.ensureRunning();
+    const acquisition = await this.serverManager.acquire({ force: false });
+    const { url } = acquisition.server;
     const client = createOpencodeClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
     });
 
-    await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+    try {
+      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
 
-    return new OpenCodeAgentSession(
-      openCodeConfig,
-      client,
-      handle.sessionId,
-      this.logger,
-      new Map(this.modelContextWindows),
-    );
+      return new OpenCodeAgentSession(
+        openCodeConfig,
+        client,
+        handle.sessionId,
+        this.logger,
+        new Map(this.modelContextWindows),
+        acquisition.release,
+      );
+    } catch (error) {
+      acquisition.release();
+      throw error;
+    }
   }
 
-  async listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const { url } = await this.serverManager.ensureRunning();
+  async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    const acquisition = await this.serverManager.acquire({ force: options.force });
+    const { url } = acquisition.server;
     const client = createOpencodeClient({
       baseUrl: url,
-      directory: options?.cwd ?? process.cwd(),
+      directory: options.cwd,
     });
 
-    // Background model discovery can be legitimately slow while OpenCode refreshes
-    // provider state, so allow longer than turn execution paths.
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () =>
-          reject(
-            new Error(
-              `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
-            ),
-          ),
+    try {
+      // Background model discovery can be legitimately slow while OpenCode refreshes
+      // provider state, so allow longer than turn execution paths.
+      const response = await withTimeout(
+        client.provider.list({ directory: options.cwd }),
         OPENCODE_PROVIDER_LIST_TIMEOUT_MS,
+        `OpenCode provider.list timed out after ${OPENCODE_PROVIDER_LIST_TIMEOUT_MS / 1000}s - server may not be authenticated or connected to any providers`,
       );
-    });
 
-    const response = await Promise.race([
-      client.provider.list({ directory: options?.cwd ?? process.cwd() }),
-      timeoutPromise,
-    ]);
-
-    if (response.error) {
-      throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
-    }
-
-    const providers = response.data;
-    if (!providers) {
-      return [];
-    }
-
-    // Only include models from connected providers (ones that are actually available)
-    const connectedProviderIds = new Set(providers.connected);
-
-    // Fail fast if no providers are connected
-    if (connectedProviderIds.size === 0) {
-      throw new Error(
-        "OpenCode has no connected providers. Please authenticate with at least one provider (e.g., openai, anthropic) or set appropriate environment variables (e.g., OPENAI_API_KEY).",
-      );
-    }
-
-    const models: AgentModelDefinition[] = [];
-    this.modelContextWindows.clear();
-    for (const provider of providers.all) {
-      // Skip providers that aren't connected/configured
-      if (!connectedProviderIds.has(provider.id)) {
-        continue;
+      if (response.error) {
+        throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
       }
 
-      for (const [modelId, model] of Object.entries(provider.models)) {
-        const definition = buildOpenCodeModelDefinition(provider, modelId, model);
-        const contextWindowMaxTokens = extractOpenCodeModelContextWindow(model);
-        if (contextWindowMaxTokens !== undefined) {
-          this.modelContextWindows.set(
-            buildOpenCodeModelLookupKey(provider.id, modelId),
-            contextWindowMaxTokens,
-          );
+      const providers = response.data;
+      if (!providers) {
+        return [];
+      }
+
+      // Only include models from connected providers (ones that are actually available)
+      const connectedProviderIds = new Set(providers.connected);
+
+      // Fail fast if no providers are connected
+      if (connectedProviderIds.size === 0) {
+        throw new Error(
+          "OpenCode has no connected providers. Please authenticate with at least one provider (e.g., openai, anthropic) or set appropriate environment variables (e.g., OPENAI_API_KEY).",
+        );
+      }
+
+      const models: AgentModelDefinition[] = [];
+      this.modelContextWindows.clear();
+      for (const provider of providers.all) {
+        // Skip providers that aren't connected/configured
+        if (!connectedProviderIds.has(provider.id)) {
+          continue;
         }
-        models.push(definition);
-      }
-    }
 
-    return models;
+        for (const [modelId, model] of Object.entries(provider.models)) {
+          const definition = buildOpenCodeModelDefinition(provider, modelId, model);
+          const contextWindowMaxTokens = extractOpenCodeModelContextWindow(model);
+          if (contextWindowMaxTokens !== undefined) {
+            this.modelContextWindows.set(
+              buildOpenCodeModelLookupKey(provider.id, modelId),
+              contextWindowMaxTokens,
+            );
+          }
+          models.push(definition);
+        }
+      }
+
+      return models;
+    } finally {
+      acquisition.release();
+    }
   }
 
-  async listModes(options?: ListModesOptions): Promise<AgentMode[]> {
-    const { url } = await this.serverManager.ensureRunning();
-    const directory = options?.cwd ?? process.cwd();
+  async listModes(options: ListModesOptions): Promise<AgentMode[]> {
+    const acquisition = await this.serverManager.acquire({ force: options.force });
+    const { url } = acquisition.server;
+    const directory = options.cwd;
     const client = createOpencodeClient({ baseUrl: url, directory });
 
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("OpenCode app.agents timed out after 10s")), 10_000);
-    });
+    try {
+      const response = await withTimeout(
+        client.app.agents({ directory }),
+        10_000,
+        "OpenCode app.agents timed out after 10s",
+      );
 
-    const response = await Promise.race([client.app.agents({ directory }), timeoutPromise]);
+      if (response.error || !response.data) {
+        return DEFAULT_MODES;
+      }
 
-    if (response.error || !response.data) {
-      return DEFAULT_MODES;
+      const discovered = response.data
+        .filter((agent) => agent.mode === "primary" && agent.hidden !== true)
+        .map((agent) => ({
+          id: agent.name,
+          label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+          description:
+            typeof agent.description === "string" && agent.description.trim().length > 0
+              ? agent.description.trim()
+              : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
+        }));
+
+      return discovered.length > 0 ? sortOpenCodeModes(discovered) : DEFAULT_MODES;
+    } finally {
+      acquisition.release();
     }
-
-    const discovered = response.data
-      .filter((agent) => agent.mode === "primary" && agent.hidden !== true)
-      .map((agent) => ({
-        id: agent.name,
-        label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
-        description:
-          typeof agent.description === "string" && agent.description.trim().length > 0
-            ? agent.description.trim()
-            : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
-      }));
-
-    return discovered.length > 0 ? sortOpenCodeModes(discovered) : DEFAULT_MODES;
   }
 
   async listPersistedAgents(
@@ -917,9 +1153,9 @@ export class OpenCodeAgentClient implements AgentClient {
   async isAvailable(): Promise<boolean> {
     const command = this.runtimeSettings?.command;
     if (command?.mode === "replace") {
-      return existsSync(command.argv[0]);
+      return await isCommandAvailable(command.argv[0]);
     }
-    return true;
+    return await isCommandAvailable("opencode");
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
@@ -939,7 +1175,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
       if (available) {
         try {
-          const models = await this.listModels();
+          const models = await this.listModels({ cwd: homedir(), force: false });
           modelsValue = String(models.length);
         } catch (error) {
           modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
@@ -951,7 +1187,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
         if (!modelsValue.startsWith("Error -")) {
           try {
-            await this.listModes();
+            await this.listModes({ cwd: homedir(), force: false });
           } catch (error) {
             status = formatDiagnosticStatus(available, {
               source: "mode fetch",
@@ -1041,6 +1277,150 @@ function readOpenCodeRecord(value: unknown): Record<string, unknown> | null {
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function mapOpenCodeTodosToTimelineItems(
+  todos: Array<{ content?: string | null; status?: string | null }>,
+): Extract<AgentTimelineItem, { type: "todo" }> {
+  return {
+    type: "todo",
+    items: todos.flatMap((todo) => {
+      const text = readNonEmptyString(todo.content);
+      if (!text) {
+        return [];
+      }
+
+      return [
+        {
+          text,
+          completed: todo.status === "completed",
+        },
+      ];
+    }),
+  };
+}
+
+function createCompactionTimelineItem(
+  status: Extract<AgentTimelineItem, { type: "compaction" }>["status"],
+  trigger?: Extract<AgentTimelineItem, { type: "compaction" }>["trigger"],
+): Extract<AgentTimelineItem, { type: "compaction" }> {
+  return {
+    type: "compaction",
+    status,
+    ...(trigger ? { trigger } : {}),
+  };
+}
+
+const PERMISSION_COMMAND_KEYS = ["command", "cmd", "shellCommand"] as const;
+const PERMISSION_CWD_KEYS = ["cwd", "directory", "path", "workdir"] as const;
+const PERMISSION_REASON_KEYS = ["reason", "purpose", "description", "message"] as const;
+const PERMISSION_TITLE_BY_NAME: Record<string, string> = {
+  external_directory: "Access external directory",
+  bash: "Run shell command",
+  read: "Read files",
+  read_file: "Read files",
+  write: "Write files",
+  write_file: "Write files",
+  create_file: "Write files",
+  edit: "Edit files",
+  apply_patch: "Edit files",
+  apply_diff: "Edit files",
+};
+
+function toHumanReadablePermissionTitle(permission: string): string {
+  const mapped = PERMISSION_TITLE_BY_NAME[permission];
+  if (mapped) {
+    return mapped;
+  }
+
+  const normalized = permission
+    .split(/[\s_-]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+  return normalized.length > 0 ? normalized : "Permission request";
+}
+
+function readFirstStringFromRecord(
+  record: Record<string, unknown> | null,
+  keys: readonly string[],
+): string | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = readNonEmptyString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readPermissionField(
+  metadata: Record<string, unknown> | null,
+  keys: readonly string[],
+): string | null {
+  const direct = readFirstStringFromRecord(metadata, keys);
+  if (direct) {
+    return direct;
+  }
+
+  const nestedInput = readOpenCodeRecord(metadata?.input);
+  return readFirstStringFromRecord(nestedInput, keys);
+}
+
+function buildOpenCodePermissionInput(params: {
+  patterns: string[];
+  metadata: Record<string, unknown> | null;
+  tool: Record<string, unknown> | null;
+  command: string | null;
+}): Record<string, unknown> {
+  return {
+    ...(params.patterns.length > 0 ? { patterns: params.patterns } : {}),
+    ...(params.metadata ? { metadata: params.metadata } : {}),
+    ...(params.tool ? { tool: params.tool } : {}),
+    ...(params.command ? { command: params.command } : {}),
+  };
+}
+
+function buildOpenCodePermissionDetail(params: {
+  permission: string;
+  input: Record<string, unknown>;
+  command: string | null;
+  cwd: string | null;
+}): ToolCallDetail {
+  if (params.command) {
+    return {
+      type: "shell",
+      command: params.command,
+      ...(params.cwd ? { cwd: params.cwd } : {}),
+    };
+  }
+
+  return {
+    type: "unknown",
+    input: {
+      permission: params.permission,
+      ...params.input,
+    },
+    output: null,
+  };
+}
+
+function buildOpenCodePermissionDescription(params: {
+  reason: string | null;
+  patterns: string[];
+}): string | undefined {
+  const parts: string[] = [];
+  if (params.reason) {
+    parts.push(params.reason);
+  }
+  if (params.patterns.length > 0) {
+    parts.push(`Scope: ${params.patterns.join(", ")}`);
+  }
+  return parts.length > 0 ? parts.join(" - ") : undefined;
 }
 
 export function translateOpenCodeEvent(
@@ -1142,6 +1522,12 @@ export function translateOpenCodeEvent(
             item: parsedToolPart.data,
           });
         }
+      } else if (part.type === "compaction") {
+        events.push({
+          type: "timeline",
+          provider: "opencode",
+          item: createCompactionTimelineItem("loading", part.auto ? "auto" : "manual"),
+        });
       } else if (part.type === "step-finish") {
         mergeOpenCodeStepFinishUsage(state.accumulatedUsage, part);
         if (hasNormalizedOpenCodeUsage(state.accumulatedUsage)) {
@@ -1199,6 +1585,31 @@ export function translateOpenCodeEvent(
         break;
       }
 
+      const metadata = readOpenCodeRecord(event.properties.metadata);
+      const tool = readOpenCodeRecord(event.properties.tool);
+      const patterns = Array.isArray(event.properties.patterns)
+        ? event.properties.patterns.filter((value): value is string => typeof value === "string")
+        : [];
+      const command = readPermissionField(metadata, PERMISSION_COMMAND_KEYS);
+      const cwd = readPermissionField(metadata, PERMISSION_CWD_KEYS);
+      const reason = readPermissionField(metadata, PERMISSION_REASON_KEYS);
+      const input = buildOpenCodePermissionInput({
+        patterns,
+        metadata,
+        tool,
+        command,
+      });
+      const detail = buildOpenCodePermissionDetail({
+        permission: event.properties.permission,
+        input,
+        command,
+        cwd,
+      });
+      const description = buildOpenCodePermissionDescription({
+        reason,
+        patterns,
+      });
+
       events.push({
         type: "permission_requested",
         provider: "opencode",
@@ -1207,9 +1618,10 @@ export function translateOpenCodeEvent(
           provider: "opencode",
           name: event.properties.permission,
           kind: "tool",
-          title: event.properties.permission,
-          description: event.properties.patterns?.join(", "),
-          input: event.properties.metadata,
+          title: toHumanReadablePermissionTitle(event.properties.permission),
+          ...(description ? { description } : {}),
+          input,
+          detail,
         },
       });
       break;
@@ -1258,6 +1670,32 @@ export function translateOpenCodeEvent(
             ...(event.properties.tool ?? {}),
           },
         },
+      });
+      break;
+    }
+
+    case "todo.updated": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "timeline",
+        provider: "opencode",
+        item: mapOpenCodeTodosToTimelineItems(event.properties.todos),
+      });
+      break;
+    }
+
+    case "session.compacted": {
+      if (event.properties.sessionID !== state.sessionId) {
+        break;
+      }
+
+      events.push({
+        type: "timeline",
+        provider: "opencode",
+        item: createCompactionTimelineItem("completed"),
       });
       break;
     }
@@ -1347,12 +1785,14 @@ class OpenCodeAgentSession implements AgentSession {
   private activeForegroundTurnId: string | null = null;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private selectedModelContextWindowMaxTokens: number | undefined;
+  private releaseServer: (() => void) | null;
   constructor(
     config: OpenCodeAgentConfig,
     client: OpencodeClient,
     sessionId: string,
     logger: Logger,
     modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
+    releaseServer?: () => void,
   ) {
     this.config = config;
     this.client = client;
@@ -1360,6 +1800,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.logger = logger;
     this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
+    this.releaseServer = releaseServer ?? null;
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       config.model,
     );
@@ -1531,6 +1972,17 @@ class OpenCodeAgentSession implements AgentSession {
         })
         .then((response) => {
           if (response.error) {
+            if (isOpenCodeHeadersTimeoutFailure(response.error)) {
+              this.logger.warn(
+                {
+                  err: response.error,
+                  commandName: slashCommand.commandName,
+                  turnId,
+                },
+                "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+              );
+              return;
+            }
             const errorMsg = normalizeTurnFailureError(response.error);
             this.finishForegroundTurn(
               { type: "turn_failed", provider: "opencode", error: errorMsg },
@@ -1544,6 +1996,17 @@ class OpenCodeAgentSession implements AgentSession {
           }
         })
         .catch((err) => {
+          if (isOpenCodeHeadersTimeoutFailure(err)) {
+            this.logger.warn(
+              {
+                err,
+                commandName: slashCommand.commandName,
+                turnId,
+              },
+              "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+            );
+            return;
+          }
           this.finishForegroundTurn(
             { type: "turn_failed", provider: "opencode", error: normalizeTurnFailureError(err) },
             turnId,
@@ -1932,9 +2395,20 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
-    this.abortController?.abort();
-    this.subscribers.clear();
-    this.activeForegroundTurnId = null;
+    try {
+      this.abortController?.abort();
+      await reconcileOpenCodeSessionClose({
+        client: this.client,
+        sessionId: this.sessionId,
+        directory: this.config.cwd,
+        logger: this.logger,
+      });
+      this.subscribers.clear();
+      this.activeForegroundTurnId = null;
+    } finally {
+      this.releaseServer?.();
+      this.releaseServer = null;
+    }
   }
 
   private parseSlashCommandInput(text: string): { commandName: string; args?: string } | null {

@@ -1,12 +1,14 @@
 import { useRef } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, GitBranch } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { useBranchSwitcher } from "@/hooks/use-branch-switcher";
+import { ScreenTitle } from "@/components/headers/screen-title";
 
 interface BranchSwitcherProps {
   currentBranchName: string | null;
@@ -24,6 +26,7 @@ export function BranchSwitcher({
   isGitCheckout,
 }: BranchSwitcherProps) {
   const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const anchorRef = useRef<View>(null);
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -41,12 +44,15 @@ export function BranchSwitcher({
     queryClient,
   });
 
+  const titleContent = (
+    <View style={styles.titleRow}>
+      {isGitCheckout ? <GitBranch size={14} color={theme.colors.foregroundMuted} /> : null}
+      <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
+    </View>
+  );
+
   if (!currentBranchName) {
-    return (
-      <Text testID="workspace-header-title" style={styles.headerTitle} numberOfLines={1}>
-        {title}
-      </Text>
-    );
+    return <View style={styles.branchSwitcherTrigger}>{titleContent}</View>;
   }
 
   return (
@@ -61,11 +67,8 @@ export function BranchSwitcher({
         accessibilityRole="button"
         accessibilityLabel={`Current branch: ${currentBranchName}. Press to switch branch.`}
       >
-        <GitBranch size={14} color={theme.colors.foregroundMuted} />
-        <Text testID="workspace-header-title" style={styles.headerTitle} numberOfLines={1}>
-          {title}
-        </Text>
-        <ChevronDown size={12} color={theme.colors.foregroundMuted} />
+        {titleContent}
+        {!isCompact ? <ChevronDown size={12} color={theme.colors.foregroundMuted} /> : null}
       </Pressable>
       <Combobox
         options={branchOptions}
@@ -98,26 +101,31 @@ export function BranchSwitcher({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  headerTitle: {
-    fontSize: theme.fontSize.base,
-    fontWeight: {
-      xs: "400",
-      md: "300",
-    },
-    color: theme.colors.foreground,
-    flexShrink: 1,
-  },
   branchSwitcherTrigger: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    paddingVertical: theme.spacing[1],
+    minWidth: 0,
+    marginLeft: {
+      xs: -theme.spacing[2],
+      md: 0,
+    },
+    paddingVertical: {
+      xs: 0,
+      md: theme.spacing[1],
+    },
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
     flexShrink: 1,
-    minWidth: 0,
   },
   branchSwitcherTriggerHovered: {
     backgroundColor: theme.colors.surface1,
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    minWidth: 0,
+    overflow: "hidden",
   },
 }));

@@ -1,12 +1,12 @@
 import { useState, useCallback, useEffect, useMemo, useRef, memo, type ReactElement } from "react";
 import { useRouter } from "expo-router";
+import { DiffStat } from "@/components/diff-stat";
 import {
   View,
   Text,
   ActivityIndicator,
   Pressable,
   FlatList,
-  Platform,
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -79,6 +79,7 @@ import {
   formatDiffGutterText,
   hasVisibleDiffTokens,
 } from "@/utils/diff-rendering";
+import { isWeb, isNative } from "@/constants/platform";
 
 export type { GitActionId, GitAction, GitActions } from "@/components/git-actions-policy";
 
@@ -99,7 +100,7 @@ type WrappedWebTextStyle = TextStyle & {
 };
 
 function getWrappedTextStyle(wrapLines: boolean): WrappedWebTextStyle | undefined {
-  if (Platform.OS !== "web") {
+  if (isNative) {
     return undefined;
   }
   return wrapLines
@@ -453,7 +454,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
         }}
         onPressOut={(event) => {
           if (
-            Platform.OS !== "web" &&
+            isNative &&
             !pressHandledRef.current &&
             layoutYRef.current === 0 &&
             pressInRef.current
@@ -488,8 +489,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
           )}
         </View>
         <View style={styles.fileHeaderRight}>
-          <Text style={styles.additions}>+{file.additions}</Text>
-          <Text style={styles.deletions}>-{file.deletions}</Text>
+          <DiffStat additions={file.additions} deletions={file.deletions} />
         </View>
       </Pressable>
     </View>
@@ -632,8 +632,8 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const { theme } = useUnistyles();
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
-  const showDesktopWebScrollbar = Platform.OS === "web" && !isMobile;
-  const canUseSplitLayout = Platform.OS === "web" && !isMobile;
+  const showDesktopWebScrollbar = isWeb && !isMobile;
+  const canUseSplitLayout = isWeb && !isMobile;
   const router = useRouter();
   const [diffModeOverride, setDiffModeOverride] = useState<"uncommitted" | "base" | null>(null);
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
@@ -661,10 +661,8 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const {
     status,
     isLoading: isStatusLoading,
-    isFetching: isStatusFetching,
     isError: isStatusError,
     error: statusError,
-    refresh: refreshStatus,
   } = useCheckoutStatusQuery({ serverId, cwd });
   const gitStatus = status && status.isGit ? status : null;
   const isGit = Boolean(gitStatus);
@@ -683,10 +681,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     files,
     payloadError: diffPayloadError,
     isLoading: isDiffLoading,
-    isFetching: isDiffFetching,
-    isError: isDiffError,
-    error: diffError,
-    refresh: refreshDiff,
   } = useCheckoutDiffQuery({
     serverId,
     cwd,
@@ -699,14 +693,11 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     status: prStatus,
     githubFeaturesEnabled,
     payloadError: prPayloadError,
-    refresh: refreshPrStatus,
   } = useCheckoutPrStatusQuery({
     serverId,
     cwd,
     enabled: isGit,
   });
-  // Track user-initiated refresh to avoid iOS RefreshControl animation on background fetches
-  const [isManualRefresh, setIsManualRefresh] = useState(false);
   const normalizedWorkspaceRoot = useMemo(() => cwd.trim(), [cwd]);
   const workspaceStateKey = useMemo(
     () =>
@@ -732,13 +723,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const headerHeightByPathRef = useRef<Record<string, number>>({});
   const bodyHeightByPathRef = useRef<Record<string, number>>({});
   const defaultHeaderHeightRef = useRef<number>(44);
-  const handleRefresh = useCallback(() => {
-    setIsManualRefresh(true);
-    void refreshDiff();
-    void refreshStatus();
-    void refreshPrStatus();
-  }, [refreshDiff, refreshStatus, refreshPrStatus]);
-
   const shipDefaultStorageKey = useMemo(() => {
     if (!gitStatus?.repoRoot) {
       return null;
@@ -900,13 +884,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       );
     }
   }, [allExpanded, files, setDiffExpandedPathsForWorkspace, workspaceStateKey]);
-
-  // Reset manual refresh flag when fetch completes
-  useEffect(() => {
-    if (!(isDiffFetching || isStatusFetching) && isManualRefresh) {
-      setIsManualRefresh(false);
-    }
-  }, [isDiffFetching, isStatusFetching, isManualRefresh]);
 
   // Clear diff mode override when auto mode changes (e.g., after commit)
   useEffect(() => {
@@ -1092,9 +1069,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   );
 
   const hasChanges = files.length > 0;
-  const diffErrorMessage =
-    diffPayloadError?.message ??
-    (isDiffError && diffError instanceof Error ? diffError.message : null);
+  const diffErrorMessage = diffPayloadError?.message ?? null;
   const prErrorMessage = githubFeaturesEnabled ? (prPayloadError?.message ?? null) : null;
   const branchLabel =
     gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD"
@@ -1199,8 +1174,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         onContentSizeChange={scrollbar.onContentSizeChange}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={!showDesktopWebScrollbar}
-        onRefresh={handleRefresh}
-        refreshing={isManualRefresh && isDiffFetching}
         // Mixed-height rows (header + potentially very large body) are prone to clipping artifacts.
         // Keep a larger render window and disable clipping to avoid bodies disappearing mid-scroll.
         removeClippedSubviews={false}

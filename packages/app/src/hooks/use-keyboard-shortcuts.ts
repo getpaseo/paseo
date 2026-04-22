@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Platform } from "react-native";
-import { usePathname } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
-import { useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import {
+  buildSettingsRoute,
   parseHostAgentRouteFromPathname,
-  parseServerIdFromPathname,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
@@ -15,7 +13,6 @@ import {
   type MessageInputKeyboardActionKind,
   type KeyboardShortcutPayload,
 } from "@/keyboard/actions";
-import { canToggleFileExplorerShortcut } from "@/keyboard/keyboard-shortcut-routing";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
   type ChordState,
@@ -26,13 +23,16 @@ import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
+import { isNative } from "@/constants/platform";
+import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
+import { getRelativeSidebarShortcutTarget } from "@/utils/sidebar-shortcuts";
+import { useActiveServerId } from "@/hooks/use-active-server-id";
+import { getNavigationActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 
 export function useKeyboardShortcuts({
   enabled,
   isMobile,
   toggleAgentList,
-  selectedAgentId,
-  toggleFileExplorer,
   toggleBothSidebars,
   toggleFocusMode,
   cycleTheme,
@@ -40,14 +40,12 @@ export function useKeyboardShortcuts({
   enabled: boolean;
   isMobile: boolean;
   toggleAgentList: () => void;
-  selectedAgentId?: string;
-  toggleFileExplorer?: () => void;
   toggleBothSidebars?: () => void;
   toggleFocusMode?: () => void;
   cycleTheme?: () => void;
 }) {
   const pathname = usePathname();
-  const hosts = useHosts();
+  const router = useRouter();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
@@ -56,16 +54,12 @@ export function useKeyboardShortcuts({
     step: 0,
     timeoutId: null,
   });
-  const activeServerIdFromPath = parseServerIdFromPathname(pathname);
-  const activeServerId =
-    hosts.find((host) => host.serverId === activeServerIdFromPath)?.serverId ??
-    hosts[0]?.serverId ??
-    null;
+  const activeServerId = useActiveServerId();
   const openProjectPickerAction = useOpenProjectPicker(activeServerId);
 
   useEffect(() => {
     if (!enabled) return;
-    if (Platform.OS !== "web") return;
+    if (isNative) return;
     if (isMobile) return;
 
     const isDesktopApp = getIsElectronRuntime();
@@ -84,38 +78,32 @@ export function useKeyboardShortcuts({
         return false;
       }
 
-      navigateToWorkspace(target.serverId, target.workspaceId);
+      navigateToWorkspace(target.serverId, target.workspaceId, { currentPathname: pathname });
       return true;
     };
     const navigateRelativeWorkspace = (delta: 1 | -1): boolean => {
       const state = useKeyboardShortcutsStore.getState();
-      const targets = state.visibleWorkspaceTargets;
+      const targets = state.sidebarShortcutWorkspaceTargets;
       if (targets.length === 0) {
         return false;
       }
 
-      const workspaceRoute = parseHostWorkspaceRouteFromPathname(pathname);
-      if (!workspaceRoute) {
-        const fallback = targets[delta > 0 ? 0 : targets.length - 1] ?? null;
-        if (!fallback) {
-          return false;
-        }
-        navigateToWorkspace(fallback.serverId, fallback.workspaceId);
-        return true;
-      }
-
-      const currentIndex = targets.findIndex(
-        (target) =>
-          target.serverId === workspaceRoute.serverId &&
-          target.workspaceId === workspaceRoute.workspaceId,
-      );
-      const fromIndex = currentIndex >= 0 ? currentIndex : delta > 0 ? -1 : 0;
-      const nextIndex = (fromIndex + delta + targets.length) % targets.length;
-      const target = targets[nextIndex] ?? null;
+      const workspaceRoute =
+        getNavigationActiveWorkspaceSelection() ?? parseHostWorkspaceRouteFromPathname(pathname);
+      const target = getRelativeSidebarShortcutTarget({
+        targets,
+        currentTarget: workspaceRoute
+          ? {
+              serverId: workspaceRoute.serverId,
+              workspaceId: workspaceRoute.workspaceId,
+            }
+          : null,
+        delta,
+      });
       if (!target) {
         return false;
       }
-      navigateToWorkspace(target.serverId, target.workspaceId);
+      navigateToWorkspace(target.serverId, target.workspaceId, { currentPathname: pathname });
       return true;
     };
 
@@ -244,26 +232,23 @@ export function useKeyboardShortcuts({
         case "sidebar.toggle.left":
           toggleAgentList();
           return true;
+        case "settings.toggle":
+          if (pathname.startsWith("/settings")) {
+            router.back();
+            return true;
+          }
+          router.push(buildSettingsRoute());
+          return true;
         case "sidebar.toggle.both":
           if (toggleBothSidebars) {
             toggleBothSidebars();
           }
           return true;
         case "sidebar.toggle.right":
-          if (!toggleFileExplorer) {
-            return false;
-          }
-          if (
-            !canToggleFileExplorerShortcut({
-              selectedAgentId,
-              pathname,
-              toggleFileExplorer,
-            })
-          ) {
-            return false;
-          }
-          toggleFileExplorer();
-          return true;
+          return keyboardActionDispatcher.dispatch({
+            id: "sidebar.toggle.right",
+            scope: "sidebar",
+          });
         case "view.toggle.focus":
           if (toggleFocusMode) {
             toggleFocusMode();
@@ -311,6 +296,12 @@ export function useKeyboardShortcuts({
         return;
       }
 
+      // During IME composition, Enter confirms the candidate selection and must
+      // not route through global shortcuts like message send.
+      if (isImeComposingKeyboardEvent(event)) {
+        return;
+      }
+
       const store = useKeyboardShortcutsStore.getState();
       if (store.capturingShortcut) {
         return;
@@ -341,11 +332,6 @@ export function useKeyboardShortcuts({
           isDesktop: isDesktopApp,
           focusScope,
           commandCenterOpen: store.commandCenterOpen,
-          hasSelectedAgent: canToggleFileExplorerShortcut({
-            selectedAgentId,
-            pathname,
-            toggleFileExplorer,
-          }),
         },
         chordState: chordStateRef.current,
         onChordReset: () => {
@@ -426,9 +412,7 @@ export function useKeyboardShortcuts({
     openProjectPickerAction,
     pathname,
     resetModifiers,
-    selectedAgentId,
     toggleAgentList,
-    toggleFileExplorer,
     toggleFocusMode,
   ]);
 }

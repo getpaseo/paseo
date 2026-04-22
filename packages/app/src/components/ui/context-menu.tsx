@@ -30,8 +30,14 @@ import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { Check, CheckCircle } from "lucide-react-native";
-import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import { BottomSheetBackdrop, BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  IsolatedBottomSheetModal,
+  useIsolatedBottomSheetVisibility,
+} from "@/components/ui/isolated-bottom-sheet-modal";
+import { isWeb, isNative } from "@/constants/platform";
+import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
 // Keep parity with dropdown-menu action statuses.
 export type ActionStatus = "idle" | "pending" | "success";
@@ -254,8 +260,7 @@ export function ContextMenuTrigger({
 >): ReactElement {
   const ctx = useContextMenuContext("ContextMenuTrigger");
 
-  const shouldEnableOnThisPlatform =
-    enabled && (Platform.OS === "web" ? enabledOnWeb : enabledOnMobile);
+  const shouldEnableOnThisPlatform = enabled && (isWeb ? enabledOnWeb : enabledOnMobile);
 
   const openAtEvent = useCallback(
     (event: unknown) => {
@@ -294,7 +299,7 @@ export function ContextMenuTrigger({
       disabled={disabled}
       delayLongPress={longPressDelayMs}
       onLongPress={(event) => {
-        if (Platform.OS === "web") {
+        if (isWeb) {
           props.onLongPress?.(event);
           return;
         }
@@ -303,7 +308,7 @@ export function ContextMenuTrigger({
       }}
       // @ts-ignore - onContextMenu is web-only and not in RN types.
       onContextMenu={(event: unknown) => {
-        if (Platform.OS !== "web") {
+        if (isNative) {
           return;
         }
         const e: any = event;
@@ -348,10 +353,11 @@ export function ContextMenuContent({
   testID?: string;
 }>): ReactElement | null {
   const context = useContextMenuContext("ContextMenuContent");
+  const { theme } = useUnistyles();
+  const webScrollbarStyle = useWebScrollbarStyle();
   const isMobile = useIsCompactFormFactor();
   const useMobileSheet = isMobile && mobileMode === "sheet";
   const { open, setOpen, triggerRef, anchorRect } = context;
-  const bottomSheetRef = useRef<BottomSheetModal>(null);
   const sheetSnapPoints = useMemo(() => ["30%", "55%"], []);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
@@ -361,23 +367,11 @@ export function ContextMenuContent({
     setOpen(false);
   }, [setOpen]);
 
-  useEffect(() => {
-    if (!useMobileSheet) return;
-    if (open) {
-      bottomSheetRef.current?.present();
-      return;
-    }
-    bottomSheetRef.current?.dismiss();
-  }, [open, useMobileSheet]);
-
-  const handleSheetChange = useCallback(
-    (index: number) => {
-      if (index === -1) {
-        handleClose();
-      }
-    },
-    [handleClose],
-  );
+  const { sheetRef: bottomSheetRef, handleSheetChange } = useIsolatedBottomSheetVisibility({
+    visible: open,
+    isEnabled: useMobileSheet,
+    onClose: handleClose,
+  });
 
   const renderSheetBackdrop = useCallback(
     (props: ComponentProps<typeof BottomSheetBackdrop>) => (
@@ -465,7 +459,7 @@ export function ContextMenuContent({
   if (useMobileSheet) {
     return (
       <ContextMenuContext.Provider value={context}>
-        <BottomSheetModal
+        <IsolatedBottomSheetModal
           ref={bottomSheetRef}
           index={0}
           snapPoints={sheetSnapPoints}
@@ -473,8 +467,14 @@ export function ContextMenuContent({
           onChange={handleSheetChange}
           backdropComponent={renderSheetBackdrop}
           enablePanDownToClose
-          backgroundStyle={styles.sheetBackground}
-          handleIndicatorStyle={styles.sheetHandle}
+          backgroundStyle={[
+            styles.sheetBackground,
+            {
+              backgroundColor: theme.colors.surface0,
+              borderColor: theme.colors.border,
+            },
+          ]}
+          handleIndicatorStyle={[styles.sheetHandle, { backgroundColor: theme.colors.surface2 }]}
           keyboardBehavior="extend"
           keyboardBlurBehavior="restore"
         >
@@ -486,7 +486,7 @@ export function ContextMenuContent({
           >
             {children}
           </BottomSheetScrollView>
-        </BottomSheetModal>
+        </IsolatedBottomSheetModal>
       </ContextMenuContext.Provider>
     );
   }
@@ -537,6 +537,7 @@ export function ContextMenuContent({
           <ScrollView
             bounces={false}
             showsVerticalScrollIndicator
+            style={webScrollbarStyle}
             contentContainerStyle={{ flexGrow: 1 }}
           >
             {children}

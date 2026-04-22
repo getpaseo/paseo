@@ -7,6 +7,7 @@ function toTerminalListEntry(input: { terminal: CreatedTerminal }): TerminalList
   return {
     id: input.terminal.id,
     name: input.terminal.name,
+    ...(input.terminal.title ? { title: input.terminal.title } : {}),
   };
 }
 

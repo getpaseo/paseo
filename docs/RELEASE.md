@@ -7,7 +7,7 @@ All workspaces share one version and release together.
 There are two supported ways to ship from `main`:
 
 1. **Direct stable release**: you are ready to ship the current `main` commit to everyone immediately.
-2. **Release candidate flow**: you want public test builds first, but you are not ready for the website or npm release flows to move yet.
+2. **Beta flow**: you want public test builds first, but you are not ready for the website or npm release flows to move yet.
 
 ## Standard release (patch)
 
@@ -37,31 +37,32 @@ npm run release:publish      # Publish to npm
 npm run release:push         # Push HEAD + tag (triggers CI workflows)
 ```
 
-## Release candidate flow
+## Beta flow
 
 ```bash
-npm run release:rc:patch       # Bump to X.Y.Z-rc.1, push commit + tag
+npm run release:beta:patch       # Bump to X.Y.Z-beta.1, push commit + tag
 # ... test desktop prerelease assets from GitHub Releases ...
-npm run release:rc:next        # Optional: cut X.Y.Z-rc.2, rc.3, ...
-npm run release:promote        # Promote X.Y.Z-rc.N to stable X.Y.Z
+npm run release:beta:next        # Optional: cut X.Y.Z-beta.2, beta.3, ...
+npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
 ```
 
-- RC tags are published GitHub prereleases like `v0.1.41-rc.1`
-- RCs publish desktop assets for testing, but they do not publish npm packages and do not change the stable website download target
-- `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the RC tag
+- Beta tags are published GitHub prereleases like `v0.1.41-beta.1`
+- Betas publish desktop assets for testing, but they do not publish npm packages and do not change the stable website download target
+- `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
-- **Do NOT create a changelog entry for RCs.** The changelog remains stable-only. RC release notes are generated automatically so the website stays pinned to the latest published stable release.
+- Beta releases use Electron's `beta` update channel. Users on the stable channel only receive stable releases; users on the beta channel receive beta releases and the final stable release when it is published.
+- **Do create a changelog entry for betas.** The beta entry is temporary and gets updated in place until promotion.
 
-Use the RC path when you need to:
+Use the beta path when you need to:
 
 - test a build manually before shipping
 - send a build to a user who is hitting a specific problem
-- iterate on `rc.1`, `rc.2`, `rc.3`, and so on before deciding to ship broadly
+- iterate on `beta.1`, `beta.2`, `beta.3`, and so on before deciding to ship broadly
 
 ## Website behavior
 
 - The website download page points to GitHub's latest published **stable** release.
-- Published RC prereleases are public on GitHub Releases, but they do **not** become the website download target.
+- Published beta prereleases are public on GitHub Releases, but they do **not** become the website download target.
 - The website only moves when you publish the final stable release tag like `v0.1.41`.
 
 ## Fixing a failed release build
@@ -83,13 +84,13 @@ git tag -f desktop-v0.1.28 HEAD && git push origin desktop-v0.1.28 --force
 # Desktop (single platform)
 git tag -f desktop-macos-v0.1.28 HEAD && git push origin desktop-macos-v0.1.28 --force
 
-# RC
-git tag -f v0.1.29-rc.2 HEAD && git push origin v0.1.29-rc.2 --force
+# Beta
+git tag -f v0.1.29-beta.2 HEAD && git push origin v0.1.29-beta.2 --force
 ```
 
 This ensures the checkout ref matches the actual code on `main` with the fix included.
 
-- `vX.Y.Z` or `vX.Y.Z-rc.N` rebuilds the full tagged release
+- `vX.Y.Z` or `vX.Y.Z-beta.N` rebuilds the full tagged release
 - `desktop-vX.Y.Z` rebuilds desktop for all desktop platforms only
 - `desktop-macos-vX.Y.Z` rebuilds the macOS desktop release only
 
@@ -99,24 +100,26 @@ This ensures the checkout ref matches the actual code on `main` with the fix inc
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale types
 - `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`
 - If `release:publish` partially fails, re-run it — npm skips already-published versions
-- The website uses GitHub's latest published release API for download links, so published RC prereleases do not replace the stable download target.
+- The website uses GitHub's latest published release API for download links, so published beta prereleases do not replace the stable download target.
 
 ## Changelog format
 
-Stable release notes depend on the changelog heading format. The heading **must** be strictly followed:
+Release notes depend on the changelog heading format. The heading **must** be strictly followed:
 
 ```
 ## X.Y.Z - YYYY-MM-DD
+## X.Y.Z-beta.N - YYYY-MM-DD
 ```
 
 No prefix (`v`), no extra text. The parser matches the first `## X.Y.Z` line to extract the version. A malformed heading will break download links on the homepage.
 
 ## Changelog policy
 
-- `CHANGELOG.md` is for **final stable releases only**.
-- Do not add or edit changelog entries while iterating on RCs.
-- Write the proper changelog entry when you are cutting the final stable release that comes after the RC cycle.
-- Between stable releases, keep changelog work out of the repo until the final release is ready.
+- `CHANGELOG.md` includes stable releases and the current beta line.
+- The first beta inserts a top entry like `## 0.1.60-beta.1 - YYYY-MM-DD`.
+- The next beta updates that same top entry in place, for example from `0.1.60-beta.1` to `0.1.60-beta.2`.
+- Stable promotion updates that same entry in place, for example from `0.1.60-beta.2` to `0.1.60`.
+- Do not create duplicate entries for each beta on the same version line.
 
 ## Changelog ownership
 
@@ -133,9 +136,46 @@ The changelog is shown on the Paseo homepage. Write it for **end users**, not de
 - **Only list changes relative to the previous stable release.** The diff is `v(previous)..HEAD`. If something was introduced and fixed between those two tags, it never shipped — don't mention the fix.
 - **Cut low-signal entries.** "Toolbar buttons have consistent sizing" is too granular. Combine small polish items or drop them.
 
+## Changelog conciseness
+
+Every bullet must be scannable at a glance. The changelog is not release documentation — it's a list.
+
+- **One line per bullet.** If a bullet wraps to three lines in a narrow column, it's too long.
+- **Split bullets that pack multiple distinct changes.** If a bullet uses "and", "plus", a comma list, or an em-dash to chain several independent improvements, break them into separate bullets — even when they share a theme or author. One bullet = one user-facing change.
+- **Trim qualifying clauses.** Drop "with a hint shown when…", "matching the CLI's behaviour", "across common install shapes". If the detail doesn't change whether a user cares, cut it.
+- **Lead with the outcome.** "Windows: agents launch reliably from npm `.cmd` shims…" is better than "Windows: agents launch reliably across common install shapes. Claude, Codex, and OpenCode now start correctly…".
+- **Attribution follows the split.** When you split a dense bullet, move each PR/author to the bullet it belongs to. Never duplicate the same PR across multiple bullets.
+
+## Changelog attribution
+
+Every changelog bullet must credit contributors and link to the PR(s) that delivered the change. This is not one-PR-per-line — a single bullet describes a user-facing change and may reference multiple PRs.
+
+Format: append `([#123](https://github.com/getpaseo/paseo/pull/123) by [@user](https://github.com/user))` at the end of each bullet. For changes spanning multiple PRs or contributors:
+
+```markdown
+- Voice mode now works on tablets with proper microphone permissions. ([#210](https://github.com/getpaseo/paseo/pull/210), [#215](https://github.com/getpaseo/paseo/pull/215) by [@alice](https://github.com/alice), [@bob](https://github.com/bob))
+```
+
+Rules:
+
+- **Always link the PR number** as `[#N](https://github.com/getpaseo/paseo/pull/N)`.
+- **Always link the contributor's GitHub profile** as `[@user](https://github.com/user)`.
+- **One bullet = one user-facing change**, regardless of how many PRs went into it. Group related PRs on the same bullet.
+- **De-duplicate contributors.** If the same person authored multiple PRs in one bullet, list them once.
+- **Only credit external contributors.** Skip attribution for [@boudra](https://github.com/boudra). The changelog credits community contributions — core team work is the default.
+- **Use `git log` to find PR numbers and authors.** PR numbers are typically in the commit message as `(#N)`. Use `gh pr view N --json author` if the commit doesn't include the GitHub username.
+
+## Changelog ordering
+
+Entries within each section (Added, Improved, Fixed) are ordered by user impact:
+
+1. **User-facing features and changes first** — things users will notice, want to try, or that change their workflow.
+2. **Quality-of-life improvements** — polish, performance, smoother interactions.
+3. **Internal/infra changes last** — only include if they have a tangible user benefit (e.g. "faster startup" is user-facing even if the fix was internal).
+
 ## Pre-release sanity check
 
-Before cutting any release (RC or stable), run a Codex review of the diff as a last line of defence against shipping bugs.
+Before cutting any release (beta or stable), run a Codex review of the diff as a last line of defence against shipping bugs.
 
 Load the `paseo` skill and launch a **Codex 5.4** agent with a prompt like:
 
@@ -153,10 +193,10 @@ The agent's job is a deep sanity check, not a full code review. If it flags anyt
 
 The changelog always covers **stable-to-HEAD**:
 
-- **RC release**: the diff and release notes cover `latest stable tag → HEAD`. RC release notes are auto-generated and not added to `CHANGELOG.md`.
-- **Stable release**: the diff and changelog entry cover `latest stable tag → HEAD`. Any intermediate RCs are skipped — the changelog captures the full delta from the previous stable release, not just what changed since the last RC.
+- **Beta release**: the diff and release notes cover `latest stable tag -> HEAD`. The current beta changelog entry is updated in place.
+- **Stable release**: the same changelog entry is promoted in place. It still captures the full delta from the previous stable release, not just what changed since the last beta.
 
-In other words, RCs are checkpoints along the way; the changelog only records the final jump from one stable version to the next.
+In other words, betas are checkpoints along the way; the changelog entry remains the single record for the final jump from one stable version to the next.
 
 ## Completion checklist
 
@@ -167,3 +207,5 @@ In other words, RCs are checkpoints along the way; the changelog only records th
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] `npm run release:patch` or `npm run release:promote` completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
+- [ ] GitHub `Android APK Release` workflow for the same tag is green
+- [ ] EAS `release-mobile.yml` workflow for the same tag is green

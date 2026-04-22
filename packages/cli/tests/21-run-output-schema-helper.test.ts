@@ -2,10 +2,10 @@
 
 import assert from "node:assert";
 import {
-  resolveProviderAndModel,
   resolveStructuredResponseMessage,
   type StructuredResponseTimelineClient,
 } from "../src/commands/agent/run.ts";
+import { resolveProviderAndModel } from "../src/utils/provider-model.ts";
 
 type TimelineEntry = {
   item: {

@@ -1,4 +1,4 @@
-import { Platform } from "react-native";
+import { isDev, isWeb } from "@/constants/platform";
 
 type ListenerStats = {
   adds: number;
@@ -91,8 +91,7 @@ const SOURCE_LABEL = "[ScrollJankInvestigation]";
 
 function shouldInstall(): boolean {
   const runtime = globalThis as ScrollInvestigationGlobal;
-  const isDev = Boolean((globalThis as { __DEV__?: boolean }).__DEV__);
-  return Platform.OS === "web" && isDev && !runtime.__PASEO_SCROLL_JANK_INVESTIGATION_DISABLED__;
+  return isWeb && isDev && !runtime.__PASEO_SCROLL_JANK_INVESTIGATION_DISABLED__;
 }
 
 function normalizeCapture(options?: AddEventListenerOptions | boolean): boolean {
