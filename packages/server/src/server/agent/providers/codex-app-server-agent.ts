@@ -2721,7 +2721,7 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   /**
-   * Prepare the session for plan implementation by disabling plan/fast mode
+   * Prepare the session for plan implementation by disabling plan mode
    * and returning the implementation prompt. The caller is responsible for
    * starting the turn through the normal streamAgent path.
    */
@@ -2730,7 +2730,6 @@ class CodexAppServerAgentSession implements AgentSession {
       typeof params.planText === "string" ? normalizePlanMarkdown(params.planText) : "";
 
     this.applyFeatureValue("plan_mode", false);
-    this.applyFeatureValue("fast_mode", false);
 
     return buildCodexPlanImplementationPrompt(planText);
   }

@@ -3719,7 +3719,7 @@ describe("AgentManager", () => {
         this.modeId = "auto";
         this.pending = [];
         this.featureState = [
-          createFeature({ id: "fast_mode", label: "Fast", value: false }),
+          createFeature({ id: "fast_mode", label: "Fast", value: true }),
           createFeature({ id: "plan_mode", label: "Plan", value: false }),
         ];
       }
@@ -3765,7 +3765,7 @@ describe("AgentManager", () => {
     const updated = manager.getAgent(snapshot.id);
     expect(updated?.pendingPermissions.size).toBe(0);
     expect(updated?.features).toEqual([
-      createFeature({ id: "fast_mode", label: "Fast", value: false }),
+      createFeature({ id: "fast_mode", label: "Fast", value: true }),
       createFeature({ id: "plan_mode", label: "Plan", value: false }),
     ]);
     expect(updated?.runtimeInfo).toMatchObject({
@@ -3775,7 +3775,7 @@ describe("AgentManager", () => {
 
     const persisted = await storage.get(snapshot.id);
     expect(persisted?.features).toEqual([
-      createFeature({ id: "fast_mode", label: "Fast", value: false }),
+      createFeature({ id: "fast_mode", label: "Fast", value: true }),
       createFeature({ id: "plan_mode", label: "Plan", value: false }),
     ]);
   });

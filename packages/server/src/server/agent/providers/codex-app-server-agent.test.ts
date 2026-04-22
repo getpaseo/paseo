@@ -700,7 +700,7 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("approving a synthetic Codex plan permission disables plan and fast mode and returns follow-up prompt", async () => {
+  test("approving a synthetic Codex plan permission disables plan mode, preserves fast mode, and returns follow-up prompt", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },
     });
@@ -731,11 +731,11 @@ describe("Codex app-server provider", () => {
       selectedActionId: "implement",
     });
 
-    expect((session as any).serviceTier).toBeNull();
+    expect((session as any).serviceTier).toBe("fast");
     expect((session as any).planModeEnabled).toBe(false);
     expect((session as any).config.featureValues).toEqual({
       plan_mode: false,
-      fast_mode: false,
+      fast_mode: true,
     });
     // The session returns the follow-up prompt instead of calling startTurn directly.
     // The caller (session/agent-manager) is responsible for sending it through streamAgent.
@@ -752,5 +752,118 @@ describe("Codex app-server provider", () => {
         selectedActionId: "implement",
       },
     });
+  });
+
+  test("approving a synthetic Codex plan permission keeps fast mode disabled when it started disabled", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true, fast_mode: false },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    (session as any).handleNotification("turn/started", {
+      turn: { id: "turn-plan-3" },
+    });
+    (session as any).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the safe flow", status: "pending" }],
+    });
+    (session as any).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    const request = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+    expect(request).toBeDefined();
+    if (!request) {
+      throw new Error("Expected synthetic plan approval permission");
+    }
+
+    const result = await session.respondToPermission(request.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+
+    expect((session as any).serviceTier).toBeNull();
+    expect((session as any).planModeEnabled).toBe(false);
+    expect((session as any).config.featureValues).toEqual({
+      plan_mode: false,
+      fast_mode: false,
+    });
+    expect(result?.followUpPrompt).toEqual(
+      expect.stringContaining("The user approved the plan. Implement it now."),
+    );
+  });
+
+  test("follow-up implementation turn keeps fast service tier and switches back to code collaboration mode", async () => {
+    const session = createSession({
+      featureValues: { plan_mode: true, fast_mode: true },
+    });
+    (session as any).collaborationModes = [
+      {
+        name: "Code",
+        mode: "code",
+        developer_instructions: "Built-in code mode",
+      },
+      {
+        name: "Plan",
+        mode: "plan",
+        developer_instructions: "Built-in plan mode",
+      },
+    ];
+    (session as any).refreshResolvedCollaborationMode();
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = { request } as any;
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    (session as any).handleNotification("turn/started", {
+      turn: { id: "turn-plan-4" },
+    });
+    (session as any).handleNotification("turn/plan/updated", {
+      plan: [{ step: "Implement the fast flow", status: "pending" }],
+    });
+    (session as any).handleNotification("turn/completed", {
+      turn: { status: "completed", error: null },
+    });
+
+    const permissionRequest = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+    expect(permissionRequest).toBeDefined();
+    if (!permissionRequest) {
+      throw new Error("Expected synthetic plan approval permission");
+    }
+
+    const result = await session.respondToPermission(permissionRequest.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    expect(result?.followUpPrompt).toEqual(expect.any(String));
+
+    await session.startTurn(result!.followUpPrompt!);
+
+    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStartCall?.[1]).toEqual(
+      expect.objectContaining({
+        serviceTier: "fast",
+        collaborationMode: expect.objectContaining({
+          mode: "code",
+        }),
+      }),
+    );
   });
 });
