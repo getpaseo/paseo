@@ -1,30 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, Text, TextInput, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight, Globe, Monitor, Pencil, RotateCw, Trash2 } from "lucide-react-native";
-import type { HostConnection, HostProfile } from "@/types/host-connection";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Pressable, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { RenameModal } from "@/components/rename-modal";
+import { Button } from "@/components/ui/button";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Switch } from "@/components/ui/switch";
+import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
+import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import {
   getHostRuntimeStore,
   isHostRuntimeConnected,
+  useHostMutations,
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
   useHostRuntimeSnapshot,
-  useHostMutations,
   useHosts,
 } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
-import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
-import { confirmDialog } from "@/utils/confirm-dialog";
-import { settingsStyles } from "@/styles/settings";
-import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { SettingsSection } from "@/screens/settings/settings-section";
 import { ProvidersSection } from "@/screens/settings/providers-section";
-import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
-import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
+import { SettingsSection } from "@/screens/settings/settings-section";
+import { useSessionStore } from "@/stores/session-store";
+import { settingsStyles } from "@/styles/settings";
+import type { HostConnection, HostProfile } from "@/types/host-connection";
+import { confirmDialog } from "@/utils/confirm-dialog";
+import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons";
 
 const RESTART_CONFIRMATION_MESSAGE =
   "This will restart the daemon. Agents running on it will keep going; the app will reconnect automatically.";
@@ -174,64 +176,20 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
   const { theme } = useUnistyles();
   const { renameHost } = useHostMutations();
   const [isEditing, setIsEditing] = useState(false);
-  const [draftLabel, setDraftLabel] = useState(host.label ?? "");
-  const [isSaving, setIsSaving] = useState(false);
-  const inputRef = useRef<TextInput>(null);
 
-  useEffect(() => {
-    setDraftLabel(host.label ?? "");
-  }, [host.serverId, host.label]);
-
-  useEffect(() => {
-    if (isEditing) {
-      const timeout = setTimeout(() => inputRef.current?.focus(), 50);
-      return () => clearTimeout(timeout);
-    }
-    return undefined;
-  }, [isEditing]);
-
-  const handleSave = useCallback(async () => {
-    const nextLabel = draftLabel.trim();
-    if (!nextLabel) {
-      Alert.alert("Label required", "Enter a label for this host.");
-      return;
-    }
-    if (isSaving) return;
-    if (nextLabel === host.label.trim()) {
-      setIsEditing(false);
-      return;
-    }
-    try {
-      setIsSaving(true);
+  const handleSubmit = useCallback(
+    async (value: string) => {
+      const nextLabel = value.trim();
+      if (nextLabel === host.label.trim()) return;
       await renameHost(host.serverId, nextLabel);
-      setIsEditing(false);
-    } catch (error) {
-      console.error("[HostPage] Failed to rename host", error);
-      Alert.alert("Error", "Unable to save host");
-    } finally {
-      setIsSaving(false);
-    }
-  }, [draftLabel, host.label, host.serverId, isSaving, renameHost]);
-
-  const handleCancel = useCallback(() => {
-    if (isSaving) return;
-    setDraftLabel(host.label ?? "");
-    setIsEditing(false);
-  }, [host.label, isSaving]);
-
-  const handleStartEdit = useCallback(() => {
-    setDraftLabel(host.label ?? "");
-    setIsEditing(true);
-  }, [host.label]);
-
-  const handleSavePress = useCallback(() => {
-    void handleSave();
-  }, [handleSave]);
+    },
+    [host.label, host.serverId, renameHost],
+  );
 
   return (
     <>
       <Pressable
-        onPress={handleStartEdit}
+        onPress={() => setIsEditing(true)}
         hitSlop={8}
         style={styles.identityEditButton}
         accessibilityRole="button"
@@ -241,48 +199,16 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
         <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       </Pressable>
 
-      <AdaptiveModalSheet
+      <RenameModal
         visible={isEditing}
-        onClose={handleCancel}
         title="Rename host"
+        initialValue={host.label ?? ""}
+        placeholder="My Host"
+        submitLabel="Save"
+        onClose={() => setIsEditing(false)}
+        onSubmit={handleSubmit}
         testID="host-page-rename-modal"
-      >
-        <View style={styles.renameBody}>
-          <TextInput
-            ref={inputRef}
-            value={draftLabel}
-            onChangeText={setDraftLabel}
-            placeholder="My Host"
-            placeholderTextColor={theme.colors.foregroundMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!isSaving}
-            onSubmitEditing={handleSavePress}
-            style={styles.renameInput}
-            testID="host-page-label-input"
-          />
-          <View style={styles.renameActions}>
-            <Button
-              variant="secondary"
-              size="sm"
-              style={FLEX_1_STYLE}
-              onPress={handleCancel}
-              disabled={isSaving}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              style={FLEX_1_STYLE}
-              onPress={handleSavePress}
-              disabled={isSaving}
-              testID="host-page-label-save"
-            >
-              {isSaving ? "Saving..." : "Save"}
-            </Button>
-          </View>
-        </View>
-      </AdaptiveModalSheet>
+      />
     </>
   );
 }
@@ -831,25 +757,6 @@ const styles = StyleSheet.create((theme) => ({
   emptyText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-  },
-  renameBody: {
-    gap: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
-  },
-  renameInput: {
-    backgroundColor: theme.colors.surface0,
-    color: theme.colors.foreground,
-    paddingVertical: theme.spacing[3],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    fontSize: theme.fontSize.base,
-  },
-  renameActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
   },
 }));
 

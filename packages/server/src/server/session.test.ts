@@ -58,6 +58,7 @@ const checkoutGitMocks = vi.hoisted(() => ({
   mergeToBase: vi.fn(),
   pullCurrentBranch: vi.fn(),
   pushCurrentBranch: vi.fn(),
+  renameCurrentBranch: vi.fn(),
   resolveBranchCheckout: vi.fn(),
   warmCheckoutShortstatInBackground: vi.fn(),
 }));
@@ -149,6 +150,7 @@ vi.mock("../utils/checkout-git.js", async (importOriginal) => {
     mergeToBase: checkoutGitMocks.mergeToBase,
     pullCurrentBranch: checkoutGitMocks.pullCurrentBranch,
     pushCurrentBranch: checkoutGitMocks.pushCurrentBranch,
+    renameCurrentBranch: checkoutGitMocks.renameCurrentBranch,
     resolveBranchCheckout: checkoutGitMocks.resolveBranchCheckout,
     warmCheckoutShortstatInBackground: checkoutGitMocks.warmCheckoutShortstatInBackground,
   };
@@ -579,6 +581,16 @@ function createProviderSnapshotManagerStub(): ProviderSnapshotManager {
   stub.on.mockImplementation(() => stub);
   stub.off.mockImplementation(() => stub);
   return stub as unknown as ProviderSnapshotManager;
+}
+
+function createTerminalManagerStub(options?: { setTerminalTitle?: ReturnType<typeof vi.fn> }): {
+  setTerminalTitle: ReturnType<typeof vi.fn>;
+  subscribeTerminalsChanged: ReturnType<typeof vi.fn>;
+} {
+  return {
+    setTerminalTitle: options?.setTerminalTitle ?? vi.fn(),
+    subscribeTerminalsChanged: vi.fn(() => () => {}),
+  };
 }
 
 afterEach(() => {
@@ -1895,6 +1907,231 @@ describe("session checkout switch branch handling", () => {
         source: "local",
         error: null,
         requestId: "request-switch",
+      },
+    });
+  });
+});
+
+describe("session checkout rename branch handling", () => {
+  test("rejects invalid branch slugs without renaming", async () => {
+    const messages: unknown[] = [];
+    const workspaceGitService = {
+      getSnapshot: vi.fn(),
+      peekSnapshot: vi.fn(),
+    };
+    const session = createSessionForTest({ workspaceGitService, messages });
+
+    await (session as any).handleCheckoutRenameBranchRequest({
+      type: "checkout_rename_branch_request",
+      cwd: "/tmp/repo",
+      branch: "Feature Name",
+      requestId: "request-rename-invalid",
+    });
+
+    expect(checkoutGitMocks.renameCurrentBranch).not.toHaveBeenCalled();
+    expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "checkout_rename_branch_response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: false,
+        currentBranch: null,
+        error: {
+          code: "UNKNOWN",
+          message:
+            "Branch name must contain only lowercase letters, numbers, hyphens, and forward slashes",
+        },
+        requestId: "request-rename-invalid",
+      },
+    });
+  });
+
+  test("reports null current branch when branch rename fails", async () => {
+    const messages: unknown[] = [];
+    const workspaceGitService = {
+      getSnapshot: vi.fn(),
+      peekSnapshot: vi.fn(),
+    };
+    const session = createSessionForTest({ workspaceGitService, messages });
+    checkoutGitMocks.renameCurrentBranch.mockRejectedValue(new Error("branch already exists"));
+
+    await (session as any).handleCheckoutRenameBranchRequest({
+      type: "checkout_rename_branch_request",
+      cwd: "/tmp/repo",
+      branch: "feature/new-name",
+      requestId: "request-rename-failure",
+    });
+
+    expect(checkoutGitMocks.renameCurrentBranch).toHaveBeenCalledWith(
+      "/tmp/repo",
+      "feature/new-name",
+    );
+    expect(workspaceGitService.peekSnapshot).not.toHaveBeenCalled();
+    expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "checkout_rename_branch_response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: false,
+        currentBranch: null,
+        error: {
+          code: "UNKNOWN",
+          message: "branch already exists",
+        },
+        requestId: "request-rename-failure",
+      },
+    });
+  });
+
+  test("forces workspace git refresh after renaming the current branch", async () => {
+    const messages: unknown[] = [];
+    const github = { invalidate: vi.fn() };
+    const workspaceGitService = {
+      getSnapshot: vi.fn().mockResolvedValue(
+        createWorkspaceGitSnapshot("/tmp/repo", {
+          git: {
+            currentBranch: "feature/new-name",
+            isDirty: false,
+          },
+        }),
+      ),
+      peekSnapshot: vi.fn(() =>
+        createWorkspaceGitSnapshot("/tmp/repo", {
+          git: { currentBranch: "feature/old-name" },
+        }),
+      ),
+    };
+    const session = createSessionForTest({ github, workspaceGitService, messages });
+    checkoutGitMocks.renameCurrentBranch.mockResolvedValue({
+      previousBranch: "feature/old-name",
+      currentBranch: "feature/new-name",
+    });
+
+    await (session as any).handleCheckoutRenameBranchRequest({
+      type: "checkout_rename_branch_request",
+      cwd: "/tmp/repo",
+      branch: "feature/new-name",
+      requestId: "request-rename-success",
+    });
+
+    expect(checkoutGitMocks.renameCurrentBranch).toHaveBeenCalledWith(
+      "/tmp/repo",
+      "feature/new-name",
+    );
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
+      force: true,
+      reason: "rename-branch",
+    });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/repo" });
+    expect(messages).toContainEqual({
+      type: "checkout_rename_branch_response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: true,
+        currentBranch: "feature/new-name",
+        error: null,
+        requestId: "request-rename-success",
+      },
+    });
+  });
+});
+
+describe("session terminal rename handling", () => {
+  test("rejects an empty terminal title without calling the terminal manager", async () => {
+    const messages: unknown[] = [];
+    const terminalManager = createTerminalManagerStub();
+    const session = createSessionForTest({ terminalManager, messages });
+
+    await (session as any).terminalController.dispatch({
+      type: "rename_terminal_request",
+      terminalId: "terminal-1",
+      title: "   ",
+      requestId: "request-empty-title",
+    });
+
+    expect(terminalManager.setTerminalTitle).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "rename_terminal_response",
+      payload: {
+        requestId: "request-empty-title",
+        success: false,
+        error: "Title is required",
+      },
+    });
+  });
+
+  test("rejects an overlong terminal title without calling the terminal manager", async () => {
+    const messages: unknown[] = [];
+    const terminalManager = createTerminalManagerStub();
+    const session = createSessionForTest({ terminalManager, messages });
+
+    await (session as any).terminalController.dispatch({
+      type: "rename_terminal_request",
+      terminalId: "terminal-1",
+      title: "x".repeat(201),
+      requestId: "request-long-title",
+    });
+
+    expect(terminalManager.setTerminalTitle).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "rename_terminal_response",
+      payload: {
+        requestId: "request-long-title",
+        success: false,
+        error: "Title is too long",
+      },
+    });
+  });
+
+  test("reports when the terminal manager cannot find the terminal", async () => {
+    const messages: unknown[] = [];
+    const terminalManager = createTerminalManagerStub({
+      setTerminalTitle: vi.fn(() => false),
+    });
+    const session = createSessionForTest({ terminalManager, messages });
+
+    await (session as any).terminalController.dispatch({
+      type: "rename_terminal_request",
+      terminalId: "missing-terminal",
+      title: "Renamed terminal",
+      requestId: "request-missing-terminal",
+    });
+
+    expect(terminalManager.setTerminalTitle).toHaveBeenCalledWith(
+      "missing-terminal",
+      "Renamed terminal",
+    );
+    expect(messages).toContainEqual({
+      type: "rename_terminal_response",
+      payload: {
+        requestId: "request-missing-terminal",
+        success: false,
+        error: "Terminal not found",
+      },
+    });
+  });
+
+  test("trims and sets a valid terminal title", async () => {
+    const messages: unknown[] = [];
+    const terminalManager = createTerminalManagerStub({
+      setTerminalTitle: vi.fn(() => true),
+    });
+    const session = createSessionForTest({ terminalManager, messages });
+
+    await (session as any).terminalController.dispatch({
+      type: "rename_terminal_request",
+      terminalId: "terminal-1",
+      title: "  Renamed terminal  ",
+      requestId: "request-title-success",
+    });
+
+    expect(terminalManager.setTerminalTitle).toHaveBeenCalledWith("terminal-1", "Renamed terminal");
+    expect(messages).toContainEqual({
+      type: "rename_terminal_response",
+      payload: {
+        requestId: "request-title-success",
+        success: true,
+        error: null,
       },
     });
   });

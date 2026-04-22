@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager } from "./agent-manager.js";
+import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -1373,6 +1373,111 @@ test("setTitle bumps updatedAt and persists title in the same snapshot write", a
   const live = manager.getAgent(snapshot.id);
   expect(live).not.toBeNull();
   expect(live!.updatedAt.getTime()).toBeGreaterThan(Date.parse(before!.updatedAt));
+});
+
+test("setGeneratedTitleIfUnset preserves an existing user title", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generated-title-preserve-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000128",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  await manager.setTitle(snapshot.id, "User title");
+  await manager.setGeneratedTitleIfUnset(snapshot.id, "Generated title");
+
+  const after = await storage.get(snapshot.id);
+  expect(after?.title).toBe("User title");
+});
+
+test("setGeneratedTitleIfUnset persists generated title when no title exists", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generated-title-empty-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000129",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  await manager.setGeneratedTitleIfUnset(snapshot.id, "Generated title");
+
+  const after = await storage.get(snapshot.id);
+  expect(after?.title).toBe("Generated title");
+});
+
+test("setGeneratedTitleIfUnset ignores blank generated titles", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generated-title-blank-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000130",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+  const before = await storage.get(snapshot.id);
+  expect(before).not.toBeNull();
+
+  const stateEvents: ManagedAgent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        stateEvents.push(event.agent);
+      }
+    },
+    { agentId: snapshot.id, replayState: false },
+  );
+
+  await manager.setGeneratedTitleIfUnset(snapshot.id, "   ");
+
+  const after = await storage.get(snapshot.id);
+  expect(after?.title).toBeNull();
+  expect(after?.updatedAt).toBe(before?.updatedAt);
+  expect(manager.getAgent(snapshot.id)?.updatedAt.toISOString()).toBe(before?.updatedAt);
+  expect(stateEvents).toEqual([]);
+});
+
+test("setGeneratedTitleIfUnset throws for an unknown agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-generated-title-unknown-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+  });
+
+  await expect(
+    manager.setGeneratedTitleIfUnset("00000000-0000-4000-8000-000000000999", "Generated title"),
+  ).rejects.toThrow("Unknown agent '00000000-0000-4000-8000-000000000999'");
 });
 
 test("persists live mode, model, and thinking changes without an external snapshot subscriber", async () => {

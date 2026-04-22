@@ -26,6 +26,7 @@ import {
   resolveBranchCheckout,
   resolveRepositoryDefaultBranch,
   parseWorktreeList,
+  renameCurrentBranch,
   isPaseoWorktreePath,
   isDescendantPath,
   warmCheckoutShortstatInBackground,
@@ -211,6 +212,48 @@ describe("checkout git utilities", () => {
 
     const branch = await getCurrentBranch(repoDir);
     expect(branch).toBe("feature/rebase-test");
+  });
+
+  it("renames the checked out branch and returns concrete branch names", async () => {
+    execSync("git checkout -b feature/old-name", { cwd: repoDir });
+
+    const result = await renameCurrentBranch(repoDir, "feature/new-name");
+
+    const currentBranch = execSync("git branch --show-current", { cwd: repoDir }).toString().trim();
+    expect(currentBranch).toBe("feature/new-name");
+    expect(result).toEqual({
+      previousBranch: "feature/old-name",
+      currentBranch: "feature/new-name",
+    });
+    expect(() =>
+      execSync("git show-ref --verify refs/heads/feature/old-name", { cwd: repoDir }),
+    ).toThrow();
+    expect(
+      execSync("git show-ref --verify refs/heads/feature/new-name", { cwd: repoDir })
+        .toString()
+        .trim(),
+    ).toContain("refs/heads/feature/new-name");
+  });
+
+  it("fails when renaming the checked out branch to an existing branch", async () => {
+    execSync("git branch feature/new-name", { cwd: repoDir });
+    execSync("git checkout -b feature/old-name", { cwd: repoDir });
+
+    await expect(renameCurrentBranch(repoDir, "feature/new-name")).rejects.toThrow();
+
+    expect(execSync("git branch --show-current", { cwd: repoDir }).toString().trim()).toBe(
+      "feature/old-name",
+    );
+    expect(
+      execSync("git show-ref --verify refs/heads/feature/old-name", { cwd: repoDir })
+        .toString()
+        .trim(),
+    ).toContain("refs/heads/feature/old-name");
+    expect(
+      execSync("git show-ref --verify refs/heads/feature/new-name", { cwd: repoDir })
+        .toString()
+        .trim(),
+    ).toContain("refs/heads/feature/new-name");
   });
 
   it("handles status/diff/commit in a normal repo", async () => {

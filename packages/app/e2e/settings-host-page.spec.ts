@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "./fixtures";
+import { expect, type Page, test } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
 import { TEST_HOST_LABEL } from "./helpers/daemon-registry";
 
@@ -26,7 +26,7 @@ async function openHostPage(page: Page, serverId: string) {
 async function expectHostLabelHeader(page: Page) {
   await expect(page.getByTestId("settings-detail-header-title")).toHaveText(TEST_HOST_LABEL);
   await expect(page.getByTestId("host-page-label-edit-button")).toBeVisible();
-  await expect(page.getByTestId("host-page-label-input")).toHaveCount(0);
+  await expect(page.getByTestId("host-page-rename-modal-input")).toHaveCount(0);
 }
 
 test.describe("Settings host page", () => {
@@ -69,13 +69,13 @@ test.describe("Settings host page", () => {
     await openSettings(page);
     await openHostPage(page, serverId);
 
-    await expect(page.getByTestId("host-page-label-input")).toHaveCount(0);
+    await expect(page.getByTestId("host-page-rename-modal-input")).toHaveCount(0);
 
     await page.getByTestId("host-page-label-edit-button").click();
 
-    await expect(page.getByTestId("host-page-label-input")).toBeVisible();
-    await expect(page.getByTestId("host-page-label-input")).toHaveValue(TEST_HOST_LABEL);
-    await expect(page.getByTestId("host-page-label-save")).toBeVisible();
+    await expect(page.getByTestId("host-page-rename-modal-input")).toBeVisible();
+    await expect(page.getByTestId("host-page-rename-modal-input")).toHaveValue(TEST_HOST_LABEL);
+    await expect(page.getByTestId("host-page-rename-modal-submit")).toBeVisible();
   });
 
   test("host page does not render pair-device or daemon-lifecycle rows for a remote daemon", async ({

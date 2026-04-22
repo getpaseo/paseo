@@ -32,6 +32,9 @@ import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { ensureNodePtySpawnHelperExecutableForCurrentPlatform } from "../terminal/terminal.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
+import { validateBranchSlug } from "./branch-slug.js";
+
+export { slugify, validateBranchSlug } from "./branch-slug.js";
 
 const execFileAsync = promisify(execFile);
 const READ_ONLY_GIT_ENV = {
@@ -765,72 +768,6 @@ export async function getGitCommonDir(cwd: string): Promise<string> {
     throw new Error("Not in a git repository");
   }
   return commonDir;
-}
-
-/**
- * Validate that a string is a valid git branch name slug
- * Must be lowercase, alphanumeric, hyphens only
- */
-export function validateBranchSlug(slug: string): {
-  valid: boolean;
-  error?: string;
-} {
-  if (!slug || slug.length === 0) {
-    return { valid: false, error: "Branch name cannot be empty" };
-  }
-
-  if (slug.length > 100) {
-    return { valid: false, error: "Branch name too long (max 100 characters)" };
-  }
-
-  // Check for valid characters: lowercase letters, numbers, hyphens, forward slashes
-  const validPattern = /^[a-z0-9-/]+$/;
-  if (!validPattern.test(slug)) {
-    return {
-      valid: false,
-      error:
-        "Branch name must contain only lowercase letters, numbers, hyphens, and forward slashes",
-    };
-  }
-
-  // Cannot start or end with hyphen
-  if (slug.startsWith("-") || slug.endsWith("-")) {
-    return {
-      valid: false,
-      error: "Branch name cannot start or end with a hyphen",
-    };
-  }
-
-  // Cannot have consecutive hyphens
-  if (slug.includes("--")) {
-    return { valid: false, error: "Branch name cannot have consecutive hyphens" };
-  }
-
-  return { valid: true };
-}
-
-const MAX_SLUG_LENGTH = 50;
-
-/**
- * Convert string to kebab-case for branch names
- */
-export function slugify(input: string): string {
-  const slug = input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-  if (slug.length <= MAX_SLUG_LENGTH) {
-    return slug;
-  }
-
-  // Truncate at word boundary (hyphen) if possible
-  const truncated = slug.slice(0, MAX_SLUG_LENGTH);
-  const lastHyphen = truncated.lastIndexOf("-");
-  if (lastHyphen > MAX_SLUG_LENGTH / 2) {
-    return truncated.slice(0, lastHyphen);
-  }
-  return truncated.replace(/-+$/, "");
 }
 
 const WORKTREE_PROJECT_HASH_LENGTH = 8;

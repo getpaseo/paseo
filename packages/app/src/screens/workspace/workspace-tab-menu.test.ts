@@ -16,6 +16,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     const onCopyResumeCommand = vi.fn();
     const onCopyAgentId = vi.fn();
     const onReloadAgent = vi.fn();
+    const onRenameTab = vi.fn();
     const onCloseTab = vi.fn();
     const onCloseTabsBefore = vi.fn();
     const onCloseTabsAfter = vi.fn();
@@ -30,6 +31,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand,
       onCopyAgentId,
       onReloadAgent,
+      onRenameTab,
       onCloseTab,
       onCloseTabsBefore,
       onCloseTabsAfter,
@@ -39,6 +41,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
       "Copy resume command",
       "Copy agent id",
+      "Rename",
       "Close to the left",
       "Close to the right",
       "Close other tabs",
@@ -57,6 +60,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -66,6 +70,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
       "Copy resume command",
       "Copy agent id",
+      "Rename",
       "Close tabs above",
       "Close tabs below",
       "Close other tabs",
@@ -74,7 +79,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     ]);
   });
 
-  it("omits agent copy actions for non-agent tabs", () => {
+  it("omits agent copy actions and rename for draft tabs", () => {
     const entries = buildWorkspaceTabMenuEntries({
       surface: "mobile",
       tab: {
@@ -89,6 +94,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -101,6 +107,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(entries.some((entry) => entry.kind === "item" && entry.label === "Reload agent")).toBe(
       false,
     );
+    expect(entries.some((entry) => entry.kind === "item" && entry.label === "Rename")).toBe(false);
     expect(entries.some((entry) => entry.kind === "separator")).toBe(false);
   });
 
@@ -114,6 +121,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
       onCloseTab: vi.fn(),
       onCloseTabsBefore: vi.fn(),
       onCloseTabsAfter: vi.fn(),
@@ -127,5 +135,129 @@ describe("buildWorkspaceTabMenuEntries", () => {
         tooltip: "Reload agent to update skills, MCPs or login status.",
       }),
     );
+  });
+
+  it("invokes onRenameTab when the rename entry is selected for agent tabs", () => {
+    const onRenameTab = vi.fn();
+    const tab = createAgentTab();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab,
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const renameEntry = entries.find((entry) => entry.kind === "item" && entry.label === "Rename");
+    if (!renameEntry || renameEntry.kind !== "item") {
+      throw new Error("Rename entry missing");
+    }
+    renameEntry.onSelect();
+
+    expect(onRenameTab).toHaveBeenCalledWith(tab);
+  });
+
+  it("includes rename as the first entry for terminal tabs", () => {
+    const onRenameTab = vi.fn();
+    const terminalTab: WorkspaceTabDescriptor = {
+      key: "terminal_abc",
+      tabId: "terminal_abc",
+      kind: "terminal",
+      target: { kind: "terminal", terminalId: "terminal-abc" },
+    };
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab: terminalTab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-terminal_abc",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab,
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    });
+
+    const labels = entries.filter((entry) => entry.kind === "item").map((entry) => entry.label);
+    expect(labels[0]).toBe("Rename");
+    expect(labels).not.toContain("Copy resume command");
+    expect(labels).not.toContain("Copy agent id");
+    expect(labels).not.toContain("Reload agent");
+
+    const renameEntry = entries.find((entry) => entry.kind === "item" && entry.label === "Rename");
+    if (!renameEntry || renameEntry.kind !== "item") {
+      throw new Error("Rename entry missing");
+    }
+    renameEntry.onSelect();
+    expect(onRenameTab).toHaveBeenCalledWith(terminalTab);
+  });
+
+  it("uses the same rename entry shape for agent and terminal tabs", () => {
+    const terminalTab: WorkspaceTabDescriptor = {
+      key: "terminal_abc",
+      tabId: "terminal_abc",
+      kind: "terminal",
+      target: { kind: "terminal", terminalId: "terminal-abc" },
+    };
+    const menuTestIDBase = "workspace-tab-context";
+    const sharedInput = {
+      surface: "desktop" as const,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    };
+
+    const agentEntries = buildWorkspaceTabMenuEntries({ ...sharedInput, tab: createAgentTab() });
+    const terminalEntries = buildWorkspaceTabMenuEntries({ ...sharedInput, tab: terminalTab });
+
+    const agentRename = agentEntries.find(
+      (entry) => entry.kind === "item" && entry.key === "rename",
+    );
+    const terminalRename = terminalEntries.find(
+      (entry) => entry.kind === "item" && entry.key === "rename",
+    );
+    if (!agentRename || agentRename.kind !== "item") throw new Error("Agent rename missing");
+    if (!terminalRename || terminalRename.kind !== "item")
+      throw new Error("Terminal rename missing");
+
+    expect({
+      key: agentRename.key,
+      label: agentRename.label,
+      icon: agentRename.icon,
+      testID: agentRename.testID,
+    }).toEqual({
+      key: terminalRename.key,
+      label: terminalRename.label,
+      icon: terminalRename.icon,
+      testID: terminalRename.testID,
+    });
+
+    const agentSeparator = agentEntries
+      .slice(agentEntries.indexOf(agentRename) + 1)
+      .find((entry) => entry.kind === "separator");
+    const terminalSeparator = terminalEntries
+      .slice(terminalEntries.indexOf(terminalRename) + 1)
+      .find((entry) => entry.kind === "separator");
+    expect(agentSeparator?.key).toBe("rename-separator");
+    expect(terminalSeparator?.key).toBe("rename-separator");
   });
 });

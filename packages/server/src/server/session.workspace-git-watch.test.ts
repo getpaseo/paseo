@@ -1,6 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
 import type pino from "pino";
+import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
+import { ScriptRouteStore } from "./script-proxy.js";
 import { Session, type SessionOptions } from "./session.js";
+import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type {
   WorkspaceGitListener,
   WorkspaceGitRuntimeSnapshot,
@@ -87,7 +90,15 @@ function createWorkspaceRuntimeSnapshot(
   };
 }
 
-function createSessionForWorkspaceGitWatchTests(): {
+function createSessionForWorkspaceGitWatchTests(options?: {
+  onBranchChanged?: (
+    workspaceId: string,
+    oldBranch: string | null,
+    newBranch: string | null,
+  ) => void;
+  scriptRouteStore?: ScriptRouteStore;
+  scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
+}): {
   session: Session;
   emitted: Array<{ type: string; payload: unknown }>;
   projects: Map<string, ReturnType<typeof createPersistedProjectRecord>>;
@@ -216,6 +227,10 @@ function createSessionForWorkspaceGitWatchTests(): {
     stt: null,
     tts: null,
     terminalManager: null,
+    scriptRouteStore: options?.scriptRouteStore,
+    scriptRuntimeStore: options?.scriptRuntimeStore,
+    onBranchChanged: options?.onBranchChanged,
+    getDaemonTcpPort: () => 6767,
   } as unknown as SessionOptions);
 
   (session as unknown as SessionInternals).listAgentPayloads = async () => [];
@@ -398,6 +413,74 @@ describe("workspace git watch targets", () => {
       { cwd: "/tmp/repo" },
       expect.any(Function),
     );
+
+    await session.cleanup();
+  });
+
+  test("updates running service script URLs when the git branch changes", async () => {
+    const routeStore = new ScriptRouteStore();
+    routeStore.registerRoute({
+      hostname: "app.old-branch.paseo.localhost",
+      port: 4321,
+      workspaceId: "ws-10",
+      projectSlug: "paseo",
+      scriptName: "app",
+    });
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    runtimeStore.set({
+      workspaceId: "ws-10",
+      scriptName: "app",
+      type: "service",
+      lifecycle: "running",
+      terminalId: "term-app",
+      exitCode: null,
+    });
+
+    const handleBranchChange = createBranchChangeRouteHandler({
+      routeStore,
+      onRoutesChanged: vi.fn(),
+    });
+    const { session, projects, workspaces, subscriptions } = createSessionForWorkspaceGitWatchTests(
+      {
+        scriptRouteStore: routeStore,
+        scriptRuntimeStore: runtimeStore,
+        onBranchChanged: handleBranchChange,
+      },
+    );
+    const sessionAny = session as any;
+    seedGitWorkspace({
+      projects,
+      workspaces,
+      projectId: "proj-1",
+      workspaceId: "ws-10",
+      cwd: "/tmp/repo",
+      name: "old-branch",
+    });
+
+    await sessionAny.syncWorkspaceGitWatchTarget("/tmp/repo", { isGit: true });
+
+    subscriptions[0]?.listener(
+      createWorkspaceRuntimeSnapshot("/tmp/repo", {
+        git: {
+          currentBranch: "new-branch",
+        },
+      }),
+    );
+
+    expect(routeStore.listRoutesForWorkspace("ws-10")).toEqual([
+      expect.objectContaining({
+        hostname: "app.new-branch.paseo.localhost",
+        projectSlug: "paseo",
+        scriptName: "app",
+      }),
+    ]);
+    expect(sessionAny.buildWorkspaceScriptPayloadSnapshot("ws-10", "/tmp/repo")).toEqual([
+      expect.objectContaining({
+        scriptName: "app",
+        hostname: "app.new-branch.paseo.localhost",
+        proxyUrl: "http://app.new-branch.paseo.localhost:6767",
+      }),
+    ]);
 
     await session.cleanup();
   });
