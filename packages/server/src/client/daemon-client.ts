@@ -774,6 +774,8 @@ export class DaemonClient {
       const shouldUseRelayE2ee =
         this.config.e2ee?.enabled === true && isRelayClientWebSocketUrl(this.config.url);
 
+      console.log("[PD] DaemonClient.attemptConnect url=", this.config.url, "e2ee=", this.config.e2ee?.enabled, "relayE2ee=", shouldUseRelayE2ee);
+
       let transportFactory = baseTransportFactory;
       if (shouldUseRelayE2ee) {
         const daemonPublicKeyB64 = this.config.e2ee?.daemonPublicKeyB64;
@@ -815,6 +817,7 @@ export class DaemonClient {
 
       this.transportCleanup = [
         transport.onOpen(() => {
+          console.log("[PD] DaemonClient transport.onOpen fired");
           if (this.pendingGenericTransportErrorTimeout) {
             clearTimeout(this.pendingGenericTransportErrorTimeout);
             this.pendingGenericTransportErrorTimeout = null;
@@ -3692,6 +3695,7 @@ export class DaemonClient {
 
   private sendHelloMessage(): void {
     if (!this.transport) {
+      console.error("[PD] DaemonClient.sendHelloMessage: no transport");
       this.scheduleReconnect({
         reason: "Transport unavailable before hello",
         event: "HELLO_TRANSPORT_MISSING",
@@ -3701,17 +3705,19 @@ export class DaemonClient {
     }
 
     try {
-      this.transport.send(
-        JSON.stringify({
-          type: "hello",
-          clientId: this.config.clientId,
-          clientType: this.config.clientType ?? "cli",
-          protocolVersion: 1,
-          ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
-        }),
-      );
+      const helloPayload = JSON.stringify({
+        type: "hello",
+        clientId: this.config.clientId,
+        clientType: this.config.clientType ?? "cli",
+        protocolVersion: 1,
+        ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
+      });
+      console.log("[PD] DaemonClient.sendHelloMessage sending, clientType=", this.config.clientType, "url=", this.config.url);
+      this.transport.send(helloPayload);
+      console.log("[PD] DaemonClient.sendHelloMessage sent OK");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send hello message";
+      console.error("[PD] DaemonClient.sendHelloMessage FAILED", message);
       this.lastErrorValue = message;
       this.scheduleReconnect({
         reason: message,
@@ -3812,6 +3818,7 @@ export class DaemonClient {
     const parsed = WSOutboundMessageSchema.safeParse(parsedJson);
     if (!parsed.success) {
       const msgType = (parsedJson as { type?: string })?.type ?? "unknown";
+      console.error("[PD] DaemonClient WSOutboundMessageSchema validation FAILED", { msgType, error: parsed.error.message, rawPreview: payload.substring(0, 200) });
       this.logger.warn({ msgType, error: parsed.error.message }, "Message validation failed");
       return;
     }
@@ -3873,6 +3880,7 @@ export class DaemonClient {
   ): void {
     const previous = this.connectionState;
     this.connectionState = next;
+    console.log("[PD] DaemonClient state:", previous.status, "->", next.status, "event=", metadata?.event, "reason=", metadata?.reason ?? "");
     const reasonFromNext =
       next.status === "disconnected" && typeof next.reason === "string" ? next.reason : null;
     const reason = metadata?.reason ?? reasonFromNext;
@@ -3963,10 +3971,13 @@ export class DaemonClient {
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
     if (msg.type === "status") {
+      console.log("[PD] DaemonClient.handleSessionMessage status received, currentState=", this.connectionState.status);
       const serverInfo = parseServerInfoStatusPayload(msg.payload);
       if (serverInfo) {
+        console.log("[PD] DaemonClient serverInfo parsed ok, serverId=", serverInfo.serverId, "hostname=", serverInfo.hostname);
         this.lastServerInfoMessage = serverInfo;
         if (this.connectionState.status === "connecting") {
+          console.log("[PD] DaemonClient transitioning connecting -> connected");
           this.resetConnectTimeout();
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" }, { event: "HELLO_SERVER_INFO" });
@@ -3975,6 +3986,8 @@ export class DaemonClient {
           this.flushPendingSendQueue();
           this.resolveConnect();
         }
+      } else {
+        console.warn("[PD] DaemonClient status message but serverInfo could not be parsed", JSON.stringify(msg.payload).substring(0, 200));
       }
     }
 

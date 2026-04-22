@@ -343,19 +343,28 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const hydrateWorkspaces = useCallback(
     async (options?: { subscribe?: boolean; isCancelled?: () => boolean }) => {
       if (!client || !isConnected) {
+        console.log("[PD] hydrateWorkspaces skipped: client=", !!client, "isConnected=", isConnected);
         return;
       }
 
+      console.log("[PD] hydrateWorkspaces calling fetchWorkspaces");
       const workspaces = new Map<string, WorkspaceDescriptor>();
       let cursor: string | null = null;
       let includeSubscribe = options?.subscribe ?? false;
 
       while (true) {
-        const payload = await client.fetchWorkspaces({
-          sort: [{ key: "activity_at", direction: "desc" }],
-          ...(includeSubscribe ? { subscribe: {} } : {}),
-          page: cursor ? { limit: 200, cursor } : { limit: 200 },
-        });
+        let payload;
+        try {
+          payload = await client.fetchWorkspaces({
+            sort: [{ key: "activity_at", direction: "desc" }],
+            ...(includeSubscribe ? { subscribe: {} } : {}),
+            page: cursor ? { limit: 200, cursor } : { limit: 200 },
+          });
+        } catch (e) {
+          console.error("[PD] hydrateWorkspaces fetchWorkspaces FAILED", e);
+          throw e;
+        }
+        console.log("[PD] hydrateWorkspaces fetchWorkspaces returned entries=", payload.entries.length, "hasMore=", payload.pageInfo.hasMore);
         if (options?.isCancelled?.()) {
           return;
         }
@@ -736,9 +745,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   useEffect(() => {
     if (!client || !isConnected) {
+      console.log("[Session] hydrateWorkspaces skipped", { serverId, hasClient: !!client, isConnected });
       return;
     }
 
+    console.log("[Session] hydrateWorkspaces starting", { serverId });
     let cancelled = false;
     void (async () => {
       try {
@@ -746,6 +757,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           subscribe: true,
           isCancelled: () => cancelled,
         });
+        console.log("[Session] hydrateWorkspaces done", { serverId, cancelled });
       } catch (error) {
         console.error("[Session] Failed to hydrate workspaces:", error);
       }

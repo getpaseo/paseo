@@ -883,12 +883,15 @@ export class HostRuntimeController {
     });
   }
 
-  private logConnectionTransition(_input: {
+  private logConnectionTransition(input: {
     from: HostRuntimeConnectionMachineState["tag"];
     to: HostRuntimeConnectionMachineState["tag"];
     event: HostRuntimeConnectionMachineEvent;
   }): void {
-    // Intentionally empty - logging removed.
+    console.log("[PD] Controller state:", input.from, "->", input.to, "event=", input.event.type,
+      input.event.type === "client_state" ? `clientStatus=${input.event.state.status} lastError=${input.event.lastError}` : "",
+      input.event.type === "connect_failed" ? `msg=${input.event.message}` : "",
+    );
   }
 
   private trackConnectionFirstSeen(): void {
@@ -1070,9 +1073,14 @@ export class HostRuntimeController {
 
     try {
       if (!existingClient) {
+        console.log("[PD] switchToConnection: calling client.connect() for connectionId=", connectionId);
         await client.connect();
+        console.log("[PD] switchToConnection: client.connect() resolved for connectionId=", connectionId);
+      } else {
+        console.log("[PD] switchToConnection: reusing existing client for connectionId=", connectionId);
       }
     } catch (error) {
+      console.error("[PD] switchToConnection: client.connect() FAILED for connectionId=", connectionId, error);
       if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) {
         return;
       }
@@ -1645,14 +1653,20 @@ export class HostRuntimeStore {
     }
 
     const bootstrap = Promise.resolve()
-      .then(() =>
-        this.refreshAgentDirectory({
+      .then(() => {
+        console.log("[HostRuntime] agent directory bootstrap starting", { serverId });
+        return this.refreshAgentDirectory({
           serverId,
           subscribe: { subscriptionId: `app:${serverId}` },
           page: { limit: DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT },
-        }),
-      )
-      .then(() => undefined)
+        });
+      })
+      .then((result) => {
+        console.log("[HostRuntime] agent directory bootstrap done", {
+          serverId,
+          agentCount: result.agents.size,
+        });
+      })
       .catch((error) => {
         console.error("[HostRuntime] agent directory bootstrap failed", {
           serverId,

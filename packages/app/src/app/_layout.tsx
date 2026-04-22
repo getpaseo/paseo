@@ -1,5 +1,6 @@
 import "@/styles/unistyles";
 import { polyfillCrypto } from "@/polyfills/crypto";
+import { installLogCollector } from "@/utils/log-collector";
 import {
   Stack,
   useGlobalSearchParams,
@@ -98,6 +99,7 @@ import {
 import { isWeb, isNative } from "@/constants/platform";
 
 polyfillCrypto();
+installLogCollector();
 
 export type HostRuntimeBootstrapState = {
   phase: "starting-daemon" | "connecting" | "online" | "error";

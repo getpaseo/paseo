@@ -97,33 +97,49 @@ export function createEncryptedTransport(
 
   const startHandshake = async () => {
     try {
+      console.log("[PD] relay_e2ee startHandshake: calling createClientChannel");
       channel = await createClientChannel(relayTransport, daemonPublicKeyB64, {
-        onopen: emitOpen,
-        onmessage: (data) => emitMessage(data),
-        onclose: (code, reason) => emitClose({ code, reason }),
-        onerror: (error) => emitError(error),
+        onopen: () => {
+          console.log("[PD] relay_e2ee onopen fired");
+          emitOpen();
+        },
+        onmessage: (data) => {
+          emitMessage(data);
+        },
+        onclose: (code, reason) => {
+          console.log("[PD] relay_e2ee onclose code=", code, "reason=", reason);
+          emitClose({ code, reason });
+        },
+        onerror: (error) => {
+          console.error("[PD] relay_e2ee onerror", error);
+          emitError(error);
+        },
       });
+      console.log("[PD] relay_e2ee createClientChannel resolved successfully");
     } catch (error) {
+      console.error("[PD] relay_e2ee handshake FAILED", error);
       logger.warn({ err: normalizeTransportError(error) }, "relay_e2ee_handshake_failed");
       emitError(error);
-      // Browser WebSocket.close only accepts 1000 or 3000-4999.
-      // Use an app-defined code so this path works in browser and Node runtimes.
       base.close(4001, "E2EE handshake failed");
     }
   };
 
   base.onOpen(() => {
+    console.log("[PD] relay_e2ee base transport onOpen, starting handshake");
     void startHandshake();
   });
   base.onMessage((event) => {
-    relayTransport.onmessage?.(extractRelayMessageData(event));
+    const relayData = extractRelayMessageData(event);
+    relayTransport.onmessage?.(relayData);
   });
   base.onClose((event) => {
     const record = event as { code?: number; reason?: string } | undefined;
+    console.log("[PD] relay_e2ee base transport onClose code=", record?.code, "reason=", record?.reason);
     relayTransport.onclose?.(record?.code ?? 0, record?.reason ?? "");
     emitClose(event);
   });
   base.onError((event) => {
+    console.error("[PD] relay_e2ee base transport onError", event);
     relayTransport.onerror?.(event instanceof Error ? event : new Error(String(event)));
     emitError(event);
   });
