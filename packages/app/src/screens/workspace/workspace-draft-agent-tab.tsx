@@ -23,7 +23,6 @@ import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types"
 import type { AgentSnapshotPayload } from "@server/shared/messages";
 import type { DaemonClient } from "@server/client/daemon-client";
 import type { ComposerAttachment } from "@/attachments/types";
-import { stripGeneratedReviewAttachments } from "@/attachments/composer-attachment-utils";
 import type { UserMessageImageAttachment } from "@/types/stream";
 import { isWeb } from "@/constants/platform";
 

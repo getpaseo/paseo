@@ -263,11 +263,6 @@ export function InlineReviewThread({
   );
 }
 
-type WebStickyViewStyle = Omit<ViewStyle, "position"> & {
-  position: "sticky";
-  left: number;
-};
-
 export function getInlineReviewThreadViewportStyle({
   viewportWidth,
   pinToViewport,
@@ -279,7 +274,8 @@ export function getInlineReviewThreadViewportStyle({
   if (!pinToViewport || !isWeb) {
     return widthStyle;
   }
-  return [{ position: "sticky", left: 0 } as WebStickyViewStyle, widthStyle];
+  const stickyStyle = { position: "sticky", left: 0 } as unknown as ViewStyle;
+  return [stickyStyle, widthStyle];
 }
 
 export function InlineReviewEditor({

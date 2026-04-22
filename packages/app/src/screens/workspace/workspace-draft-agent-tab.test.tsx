@@ -15,12 +15,16 @@ import { WorkspaceDraftAgentTab } from "./workspace-draft-agent-tab";
 
 const {
   createAgentMock,
+  getCheckoutStatusMock,
+  onRuntimeEventMock,
   latestComposerText,
   latestComposerDisabled,
   latestStreamText,
   onCreatedMock,
 } = vi.hoisted(() => ({
   createAgentMock: vi.fn(),
+  getCheckoutStatusMock: vi.fn(),
+  onRuntimeEventMock: vi.fn(() => () => {}),
   latestComposerText: { current: null as string | null },
   latestComposerDisabled: { current: null as boolean | null },
   latestStreamText: { current: null as string | null },
@@ -43,6 +47,7 @@ vi.mock("react-native-unistyles", () => ({
           })
         : factory,
   },
+  useUnistyles: () => ({ rt: { breakpoint: "lg" } }),
 }));
 
 vi.mock("react-native-safe-area-context", () => ({
@@ -57,6 +62,8 @@ vi.mock("@/constants/platform", () => ({
 vi.mock("@/runtime/host-runtime", () => ({
   useHostRuntimeClient: () => ({
     createAgent: createAgentMock,
+    getCheckoutStatus: getCheckoutStatusMock,
+    on: onRuntimeEventMock,
   }),
   useHostRuntimeIsConnected: () => true,
 }));
@@ -196,6 +203,23 @@ beforeEach(() => {
   root = createRoot(container);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   createAgentMock.mockReset();
+  getCheckoutStatusMock.mockResolvedValue({
+    cwd: "/repo/.paseo/worktrees/workspace-1",
+    error: null,
+    requestId: "checkout-status-1",
+    isGit: false,
+    isPaseoOwnedWorktree: true,
+    repoRoot: null,
+    currentBranch: null,
+    isDirty: false,
+    baseRef: null,
+    aheadBehind: null,
+    aheadOfOrigin: null,
+    behindOfOrigin: null,
+    hasRemote: false,
+    remoteUrl: null,
+  });
+  onRuntimeEventMock.mockClear();
   onCreatedMock.mockReset();
   latestComposerText.current = null;
   latestComposerDisabled.current = null;
