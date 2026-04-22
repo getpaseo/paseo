@@ -1,8 +1,8 @@
 import type { Agent } from "@/stores/session-store";
-import { normalizeWorkspaceIdentity } from "@/utils/workspace-identity";
+import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 function normalizeWorkspaceId(value: string | null | undefined): string {
-  return normalizeWorkspaceIdentity(value) ?? "";
+  return normalizeWorkspacePath(value) ?? "";
 }
 
 export interface WorkspaceAgentVisibility {
@@ -12,11 +12,12 @@ export interface WorkspaceAgentVisibility {
 
 export function deriveWorkspaceAgentVisibility(input: {
   sessionAgents: Map<string, Agent> | undefined;
-  workspaceId: string;
+  agentDetails?: Map<string, Agent> | undefined;
+  workspaceDirectory: string | null | undefined;
 }): WorkspaceAgentVisibility {
-  const { sessionAgents, workspaceId } = input;
-  const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
-  if (!sessionAgents || !workspaceId) {
+  const { sessionAgents, agentDetails, workspaceDirectory } = input;
+  const normalizedWorkspaceDirectory = normalizeWorkspaceId(workspaceDirectory);
+  if ((!sessionAgents && !agentDetails) || !normalizedWorkspaceDirectory) {
     return {
       activeAgentIds: new Set<string>(),
       knownAgentIds: new Set<string>(),
@@ -25,14 +26,20 @@ export function deriveWorkspaceAgentVisibility(input: {
 
   const activeAgentIds = new Set<string>();
   const knownAgentIds = new Set<string>();
-  for (const agent of sessionAgents.values()) {
-    if (normalizeWorkspaceId(agent.cwd) !== normalizedWorkspaceId) {
+  for (const agent of sessionAgents?.values() ?? []) {
+    if (normalizeWorkspaceId(agent.cwd) !== normalizedWorkspaceDirectory) {
       continue;
     }
     knownAgentIds.add(agent.id);
     if (!agent.archivedAt) {
       activeAgentIds.add(agent.id);
     }
+  }
+  for (const agent of agentDetails?.values() ?? []) {
+    if (normalizeWorkspaceId(agent.cwd) !== normalizedWorkspaceDirectory) {
+      continue;
+    }
+    knownAgentIds.add(agent.id);
   }
 
   return { activeAgentIds, knownAgentIds };

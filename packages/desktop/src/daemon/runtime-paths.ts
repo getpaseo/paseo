@@ -4,6 +4,7 @@ import { spawnProcess } from "@getpaseo/server";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { app } from "electron";
+import log from "electron-log/main";
 import {
   DESKTOP_CLI_ENV,
   createNodeEntrypointInvocation as createSharedNodeEntrypointInvocation,
@@ -285,8 +286,17 @@ export async function runCliTextCommand(args: string[]): Promise<string> {
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
+    const stdout = result.stdout.trim();
+    log.warn("[desktop cli]", `CLI text command failed`, {
+      args,
+      exitCode: result.exitCode,
+      stdout: stdout.slice(0, 500),
+      stderr: stderr.slice(0, 500),
+    });
     throw new Error(
-      stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`,
+      stderr.length > 0
+        ? stderr
+        : `CLI command failed with exit code ${result.exitCode}${stdout.length > 0 ? `\nstdout: ${stdout.slice(0, 200)}` : ""}`,
     );
   }
 
@@ -301,13 +311,24 @@ export async function runCliJsonCommand(args: string[]): Promise<unknown> {
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
+    const stdout = result.stdout.trim();
+    log.warn("[desktop cli]", `CLI command failed`, {
+      args,
+      exitCode: result.exitCode,
+      stdout: stdout.slice(0, 500),
+      stderr: stderr.slice(0, 500),
+      command: invocation.command,
+    });
     throw new Error(
-      stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`,
+      stderr.length > 0
+        ? stderr
+        : `CLI command failed with exit code ${result.exitCode}${stdout.length > 0 ? `\nstdout: ${stdout.slice(0, 200)}` : ""}`,
     );
   }
 
   const stdout = result.stdout.trim();
   if (stdout.length === 0) {
+    log.warn("[desktop cli]", `CLI command produced no output`, { args });
     throw new Error("CLI command did not produce JSON output.");
   }
 
@@ -315,7 +336,11 @@ export async function runCliJsonCommand(args: string[]): Promise<unknown> {
   // Extract the first valid JSON object or array from the output.
   const jsonStart = stdout.search(/[{[]/);
   if (jsonStart < 0) {
-    throw new Error("CLI command output contained no JSON.");
+    log.warn("[desktop cli]", `CLI command output contained no JSON`, {
+      args,
+      stdout: stdout.slice(0, 500),
+    });
+    throw new Error(`CLI command output contained no JSON. Output: ${stdout.slice(0, 200)}`);
   }
   const jsonText = stdout.slice(jsonStart);
 

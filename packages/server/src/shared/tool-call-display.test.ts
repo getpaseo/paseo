@@ -79,6 +79,7 @@ describe("shared tool-call display mapping", () => {
             index: 1,
             command: "npm install",
             cwd: "/tmp/repo/.paseo/worktrees/repo/branch",
+            log: "==> [1/1] Running: npm install\n",
             status: "running",
             exitCode: null,
           },

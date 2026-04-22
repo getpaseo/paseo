@@ -1,4 +1,5 @@
 import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-sdk";
+import type { AgentAttachment } from "../../shared/messages.js";
 
 export type AgentProvider = string;
 
@@ -122,7 +123,8 @@ export type AgentPersistenceHandle = {
 
 export type AgentPromptContentBlock =
   | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string };
+  | { type: "image"; data: string; mimeType: string }
+  | AgentAttachment;
 
 export type AgentPromptInput = string | AgentPromptContentBlock[];
 
@@ -219,6 +221,7 @@ export type ToolCallDetail =
         index: number;
         command: string;
         cwd: string;
+        log: string;
         status: "running" | "completed" | "failed";
         exitCode: number | null;
         durationMs?: number;
@@ -488,11 +491,13 @@ export interface AgentSession {
 }
 
 export interface ListModelsOptions {
-  cwd?: string;
+  cwd: string;
+  force: boolean;
 }
 
 export interface ListModesOptions {
-  cwd?: string;
+  cwd: string;
+  force: boolean;
 }
 
 export interface AgentClient {
@@ -507,8 +512,8 @@ export interface AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession>;
-  listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]>;
-  listModes?(options?: ListModesOptions): Promise<AgentMode[]>;
+  listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
+  listModes?(options: ListModesOptions): Promise<AgentMode[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
   /**
    * Check if this provider is available (CLI binary is installed).

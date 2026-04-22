@@ -3,16 +3,13 @@ import pino from "pino";
 
 import { DaemonClient } from "../src/server/test-utils/daemon-client.js";
 import { OpenAITTS } from "../src/server/speech/providers/openai/tts.js";
+import { withTimeout } from "../src/utils/promise-timeout.js";
 
 type RoundTripResult = {
   voiceAgentId: string;
   speakToolCalls: number;
   audioChunks: number;
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function streamToBuffer(stream: AsyncIterable<unknown>): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -103,13 +100,7 @@ async function runVoiceRoundTrip(params: {
   }
 
   try {
-    await Promise.race([
-      done,
-      (async () => {
-        await sleep(params.timeoutMs);
-        throw new Error("Timed out waiting for audio_output");
-      })(),
-    ]);
+    await withTimeout(done, params.timeoutMs, "Timed out waiting for audio_output");
   } finally {
     offStream();
     await client.setVoiceMode(false).catch(() => undefined);

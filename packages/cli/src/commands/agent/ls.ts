@@ -5,6 +5,10 @@ import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../
 import { collectMultiple } from "../../utils/command-options.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
 
+type FetchAgentsOptions = NonNullable<
+  Parameters<Awaited<ReturnType<typeof connectToDaemon>>["fetchAgents"]>[0]
+>;
+
 export function addLsOptions(cmd: Command): Command {
   return cmd
     .description("List agents. By default excludes archived agents.")
@@ -115,9 +119,49 @@ export interface AgentLsOptions extends CommandOptions {
   thinking?: string;
 }
 
+function parseLabelFilters(labels: string[] | undefined): Record<string, string> {
+  const labelFilters: Record<string, string> = {};
+  for (const labelStr of labels ?? []) {
+    const eqIndex = labelStr.indexOf("=");
+    if (eqIndex !== -1) {
+      const key = labelStr.slice(0, eqIndex);
+      const value = labelStr.slice(eqIndex + 1);
+      labelFilters[key] = value;
+    }
+  }
+  return labelFilters;
+}
+
+export function buildAgentLsFetchOptions(
+  options: Pick<AgentLsOptions, "all" | "label" | "thinking">,
+): FetchAgentsOptions {
+  const labelFilters = parseLabelFilters(options.label);
+  const normalizedThinkingOptionId = options.thinking?.trim();
+  const daemonFilter: NonNullable<FetchAgentsOptions["filter"]> = {};
+
+  if (options.all) {
+    daemonFilter.includeArchived = true;
+  }
+  if (Object.keys(labelFilters).length > 0) {
+    daemonFilter.labels = labelFilters;
+  }
+  if (normalizedThinkingOptionId) {
+    daemonFilter.thinkingOptionId = normalizedThinkingOptionId;
+  }
+
+  const fetchOptions: FetchAgentsOptions = {};
+  if (!options.all) {
+    fetchOptions.scope = "active";
+  }
+  if (Object.keys(daemonFilter).length > 0) {
+    fetchOptions.filter = daemonFilter;
+  }
+  return fetchOptions;
+}
+
 /**
  * Agent ls command semantics:
- * - `paseo agent ls`    → all non-archived agents
+ * - `paseo agent ls`    → active non-archived agents
  * - `paseo agent ls -a` → include archived agents
  */
 export async function runLsCommand(
@@ -149,37 +193,8 @@ export async function runLsCommand(
       throw error;
     }
 
-    // Parse --label filters (key=value).
-    const labelFilters: Record<string, string> = {};
-    if (options.label) {
-      for (const labelStr of options.label) {
-        const eqIndex = labelStr.indexOf("=");
-        if (eqIndex !== -1) {
-          const key = labelStr.slice(0, eqIndex);
-          const value = labelStr.slice(eqIndex + 1);
-          labelFilters[key] = value;
-        }
-      }
-    }
-
-    const daemonFilter: {
-      includeArchived?: boolean;
-      labels?: Record<string, string>;
-      thinkingOptionId?: string;
-    } = {};
-    if (options.all) {
-      daemonFilter.includeArchived = true;
-    }
-    if (Object.keys(labelFilters).length > 0) {
-      daemonFilter.labels = labelFilters;
-    }
-    if (normalizedThinkingOptionId) {
-      daemonFilter.thinkingOptionId = normalizedThinkingOptionId;
-    }
-
-    const fetchPayload = await client.fetchAgents({
-      filter: Object.keys(daemonFilter).length > 0 ? daemonFilter : undefined,
-    });
+    const labelFilters = parseLabelFilters(options.label);
+    const fetchPayload = await client.fetchAgents(buildAgentLsFetchOptions(options));
     let agents = fetchPayload.entries.map((entry) => entry.agent);
 
     // By default, exclude archived agents. `-a` includes them.

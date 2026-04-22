@@ -17,6 +17,8 @@ export interface DesktopAppUpdateInstallResult {
   message: string;
 }
 
+export type DesktopReleaseChannel = "stable" | "beta";
+
 export interface LocalDaemonUpdateResult {
   exitCode: number;
   stdout: string;
@@ -69,8 +71,12 @@ export async function getLocalDaemonVersion(): Promise<LocalDaemonVersionResult>
   return parseLocalDaemonVersionResult(result);
 }
 
-export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResult> {
-  const result = await invokeDesktopCommand<unknown>("check_app_update");
+export async function checkDesktopAppUpdate({
+  releaseChannel,
+}: {
+  releaseChannel: DesktopReleaseChannel;
+}): Promise<DesktopAppUpdateCheckResult> {
+  const result = await invokeDesktopCommand<unknown>("check_app_update", { releaseChannel });
   if (!isRecord(result)) {
     throw new Error("Unexpected response while checking desktop updates.");
   }
@@ -85,8 +91,12 @@ export async function checkDesktopAppUpdate(): Promise<DesktopAppUpdateCheckResu
   };
 }
 
-export async function installDesktopAppUpdate(): Promise<DesktopAppUpdateInstallResult> {
-  const result = await invokeDesktopCommand<unknown>("install_app_update");
+export async function installDesktopAppUpdate({
+  releaseChannel,
+}: {
+  releaseChannel: DesktopReleaseChannel;
+}): Promise<DesktopAppUpdateInstallResult> {
+  const result = await invokeDesktopCommand<unknown>("install_app_update", { releaseChannel });
   if (!isRecord(result)) {
     throw new Error("Unexpected response while installing desktop update.");
   }

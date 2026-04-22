@@ -4,7 +4,9 @@ type ScrollInvestigationEvent =
   | "metricUpdate"
   | "itemRenderCall"
   | "wheelAttach"
-  | "wheelDetach";
+  | "wheelDetach"
+  | "inputChange"
+  | "keyPress";
 
 export function installScrollJankInvestigation(): void {}
 

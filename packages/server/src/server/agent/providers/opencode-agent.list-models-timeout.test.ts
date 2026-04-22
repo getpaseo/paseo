@@ -50,11 +50,14 @@ describe("OpenCodeAgentClient.listModels timeout", () => {
     } as never);
 
     vi.spyOn(OpenCodeServerManager, "getInstance").mockReturnValue({
-      ensureRunning: vi.fn().mockResolvedValue({ port: 1234, url: "http://127.0.0.1:1234" }),
+      acquire: vi.fn().mockResolvedValue({
+        server: { port: 1234, url: "http://127.0.0.1:1234" },
+        release: vi.fn(),
+      }),
     } as never);
 
     const client = new OpenCodeAgentClient(createTestLogger());
-    const modelsPromise = client.listModels();
+    const modelsPromise = client.listModels({ cwd: "/tmp/opencode-models", force: false });
 
     await vi.advanceTimersByTimeAsync(15_000);
 
@@ -65,5 +68,29 @@ describe("OpenCodeAgentClient.listModels timeout", () => {
         label: "GLM 5.1",
       },
     ]);
+  });
+
+  test("passes explicit refresh force through server acquisition", async () => {
+    vi.mocked(createOpencodeClient).mockReturnValue({
+      provider: {
+        list: vi.fn().mockResolvedValue({
+          data: {
+            connected: ["openai"],
+            all: [{ id: "openai", name: "OpenAI", models: {} }],
+          },
+        }),
+      },
+    } as never);
+    const acquire = vi.fn().mockResolvedValue({
+      server: { port: 1234, url: "http://127.0.0.1:1234" },
+      release: vi.fn(),
+    });
+    vi.spyOn(OpenCodeServerManager, "getInstance").mockReturnValue({ acquire } as never);
+
+    const client = new OpenCodeAgentClient(createTestLogger());
+
+    await client.listModels({ cwd: "/tmp/opencode-models", force: true });
+
+    expect(acquire).toHaveBeenCalledWith({ force: true });
   });
 });

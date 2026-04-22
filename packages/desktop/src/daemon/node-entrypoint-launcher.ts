@@ -31,10 +31,14 @@ type ParseCliPassthroughArgsFromArgvInput = {
   forceCli: boolean;
 };
 
-export function createElectronNodeEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function createElectronNodeEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  options?: { isPackaged?: boolean },
+): NodeJS.ProcessEnv {
   return {
     ...baseEnv,
     ELECTRON_RUN_AS_NODE: "1",
+    ...(options?.isPackaged === true ? { NODE_ENV: "production" } : {}),
   };
 }
 
@@ -61,7 +65,7 @@ export function parseCliPassthroughArgsFromArgv(
 export function createNodeEntrypointInvocation(
   input: CreateNodeEntrypointInvocationInput,
 ): NodeEntrypointInvocation {
-  const env = createElectronNodeEnv(input.baseEnv);
+  const env = createElectronNodeEnv(input.baseEnv, { isPackaged: input.isPackaged });
 
   if (input.isPackaged) {
     if (!input.packagedRunnerPath) {

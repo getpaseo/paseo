@@ -6,6 +6,7 @@ import pino from "pino";
 import { createTestPaseoDaemon } from "../src/server/test-utils/paseo-daemon.js";
 import { DaemonClient } from "../src/server/test-utils/daemon-client.js";
 import { OpenAITTS } from "../src/server/speech/providers/openai/tts.js";
+import { withTimeout } from "../src/utils/promise-timeout.js";
 
 async function streamToBuffer(stream: AsyncIterable<unknown>): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -151,18 +152,8 @@ async function main(): Promise<void> {
       );
     }
 
-    await Promise.race([
-      firstAudio,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Timed out waiting for first audio_output")), 120000),
-      ),
-    ]);
-    await Promise.race([
-      lastAudio,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Timed out waiting for final audio_output")), 120000),
-      ),
-    ]);
+    await withTimeout(firstAudio, 120000, "Timed out waiting for first audio_output");
+    await withTimeout(lastAudio, 120000, "Timed out waiting for final audio_output");
 
     console.log("success", { audioChunkCount });
     await client.setVoiceMode(false);

@@ -17,60 +17,73 @@ type RawWindowControlsPadding = {
   top: number;
 };
 
-type WindowControlsPaddingRole = "sidebar" | "header" | "tabRow" | "explorerSidebar";
+type WindowControlsPaddingRole =
+  | "sidebar"
+  | "header"
+  | "detailHeader"
+  | "tabRow"
+  | "explorerSidebar";
+
+// Module-level cache so hook remounts (e.g., on navigation) don't briefly
+// fall back to the default `false` while the async fullscreen check resolves.
+// Without this, in fullscreen the sidebar flashes with traffic-light padding
+// on first frame and then snaps to 0 once the async read completes.
+let cachedIsFullscreen = false;
+const fullscreenSubscribers = new Set<(value: boolean) => void>();
+let fullscreenSubscriptionStarted = false;
+
+function setCachedFullscreen(value: boolean) {
+  if (cachedIsFullscreen === value) return;
+  cachedIsFullscreen = value;
+  for (const sub of fullscreenSubscribers) {
+    sub(value);
+  }
+}
+
+function startFullscreenSubscription() {
+  if (fullscreenSubscriptionStarted) return;
+  if (isNative || !getIsElectronRuntime()) return;
+  fullscreenSubscriptionStarted = true;
+
+  void (async () => {
+    const win = getDesktopWindow();
+    if (!win) return;
+
+    if (typeof win.isFullscreen === "function") {
+      try {
+        setCachedFullscreen(await win.isFullscreen());
+      } catch (error) {
+        console.warn("[DesktopWindow] Failed to read fullscreen state", error);
+      }
+    }
+
+    if (typeof win.onResized !== "function") return;
+
+    try {
+      await win.onResized(async () => {
+        if (typeof win.isFullscreen !== "function") return;
+        try {
+          setCachedFullscreen(await win.isFullscreen());
+        } catch (error) {
+          console.warn("[DesktopWindow] Failed to read fullscreen state", error);
+        }
+      });
+    } catch (error) {
+      console.warn("[DesktopWindow] Failed to subscribe to resize", error);
+    }
+  })();
+}
 
 function useRawWindowControlsPadding(): RawWindowControlsPadding {
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(cachedIsFullscreen);
 
   useEffect(() => {
-    if (isNative || !getIsElectronRuntime()) return;
-
-    let disposed = false;
-    let cleanup: (() => void) | undefined;
-    let didCleanup = false;
-
-    function runCleanup() {
-      if (!cleanup || didCleanup) return;
-      didCleanup = true;
-      try {
-        void Promise.resolve(cleanup()).catch((error) => {
-          console.warn("[DesktopWindow] Failed to remove resize listener", error);
-        });
-      } catch (error) {
-        console.warn("[DesktopWindow] Failed to remove resize listener", error);
-      }
-    }
-
-    async function setup() {
-      const win = getDesktopWindow();
-      if (!win) return;
-
-      const fullscreen = typeof win.isFullscreen === "function" ? await win.isFullscreen() : false;
-      if (disposed) return;
-      setIsFullscreen(fullscreen);
-
-      if (typeof win.onResized !== "function") {
-        return;
-      }
-
-      const unlisten = await win.onResized(async () => {
-        if (disposed) return;
-        const fs = typeof win.isFullscreen === "function" ? await win.isFullscreen() : false;
-        if (disposed) return;
-        setIsFullscreen(fs);
-      });
-
-      cleanup = unlisten;
-      if (disposed) {
-        runCleanup();
-      }
-    }
-
-    void setup();
-
+    startFullscreenSubscription();
+    // Sync to any value that resolved between render and effect.
+    setIsFullscreen(cachedIsFullscreen);
+    fullscreenSubscribers.add(setIsFullscreen);
     return () => {
-      disposed = true;
-      runCleanup();
+      fullscreenSubscribers.delete(setIsFullscreen);
     };
   }, []);
 
@@ -106,22 +119,59 @@ export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
   const rawPadding = useRawWindowControlsPadding();
   const sidebarClosed = !sidebarOpen;
 
-  let left = 0;
-  let right = 0;
-  let top = 0;
-
-  if (role === "sidebar") {
-    left = rawPadding.left;
-    top = rawPadding.top;
-  } else if (role === "header") {
-    left = sidebarClosed ? rawPadding.left : 0;
-    right = explorerOpen ? 0 : rawPadding.right;
-  } else if (role === "tabRow") {
-    left = sidebarClosed && focusModeEnabled ? rawPadding.left : 0;
-    right = focusModeEnabled && !explorerOpen ? rawPadding.right : 0;
-  } else if (role === "explorerSidebar") {
-    right = rawPadding.right;
-  }
+  const { left, right, top } = resolveWindowControlsPadding({
+    role,
+    rawPadding,
+    sidebarClosed,
+    explorerOpen,
+    focusModeEnabled,
+  });
 
   return useMemo(() => ({ left, right, top }), [left, right, top]);
+}
+
+export function resolveWindowControlsPadding(input: {
+  role: WindowControlsPaddingRole;
+  rawPadding: RawWindowControlsPadding;
+  sidebarClosed: boolean;
+  explorerOpen: boolean;
+  focusModeEnabled: boolean;
+}): RawWindowControlsPadding {
+  if (input.role === "sidebar") {
+    return {
+      left: input.rawPadding.left,
+      right: 0,
+      top: input.rawPadding.top,
+    };
+  }
+
+  if (input.role === "header") {
+    return {
+      left: input.sidebarClosed ? input.rawPadding.left : 0,
+      right: input.explorerOpen ? 0 : input.rawPadding.right,
+      top: 0,
+    };
+  }
+
+  if (input.role === "detailHeader") {
+    return {
+      left: 0,
+      right: input.rawPadding.right,
+      top: 0,
+    };
+  }
+
+  if (input.role === "tabRow") {
+    return {
+      left: input.sidebarClosed && input.focusModeEnabled ? input.rawPadding.left : 0,
+      right: input.focusModeEnabled && !input.explorerOpen ? input.rawPadding.right : 0,
+      top: 0,
+    };
+  }
+
+  return {
+    left: 0,
+    right: input.rawPadding.right,
+    top: 0,
+  };
 }

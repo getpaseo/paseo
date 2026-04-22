@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 import { isCommandAvailable } from "../../utils/executable.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
@@ -113,6 +115,16 @@ export async function resolveProviderCommandPrefix(
   };
 }
 
+let cachedShellEnv: Record<string, string> | null = null;
+
+export function resolveShellEnv(): Record<string, string> {
+  if (cachedShellEnv) {
+    return cachedShellEnv;
+  }
+  cachedShellEnv = { ...process.env } as Record<string, string>;
+  return cachedShellEnv;
+}
+
 export function migrateProviderSettings(
   raw: Record<string, unknown>,
   builtinProviderIds: string[],
@@ -178,6 +190,28 @@ export function applyProviderEnv(
     delete merged[key];
   }
   return merged;
+}
+
+export function findExecutable(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes("/") || trimmed.includes("\\")) {
+    try {
+      const { existsSync } = require("node:fs");
+      return existsSync(trimmed) ? trimmed : null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const cmd = process.platform === "win32" ? "where.exe" : "which";
+    const result = execFileSync(cmd, [trimmed], { encoding: "utf8" }).trim();
+    const lines = result.split(/\r?\n/).filter((l: string) => l.trim());
+    const candidate = lines.at(-1)?.trim() ?? null;
+    return candidate && path.isAbsolute(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function isProviderCommandAvailable(

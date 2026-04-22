@@ -52,6 +52,8 @@ import {
   resolveAgentModelSelection,
 } from "@/components/agent-status-bar.utils";
 import { isWeb as platformIsWeb } from "@/constants/platform";
+import { useToast } from "@/contexts/toast-context";
+import { toErrorMessage } from "@/utils/error-messages";
 
 type StatusOption = {
   id: string;
@@ -90,7 +92,7 @@ type ControlledAgentStatusBarProps = {
 
 export interface DraftAgentStatusBarProps {
   providerDefinitions: AgentProviderDefinition[];
-  selectedProvider: AgentProvider;
+  selectedProvider: AgentProvider | null;
   onSelectProvider: (provider: AgentProvider) => void;
   modeOptions: AgentMode[];
   selectedMode: string;
@@ -253,7 +255,8 @@ function ControlledStatusBar({
     : undefined;
   const ModeIconComponent = modeVisuals?.icon ? MODE_ICONS[modeVisuals.icon] : null;
   const modeIconColor = getModeIconColor(modeVisuals?.colorTier, theme.colors.palette);
-  const ProviderIcon = getProviderIcon(provider);
+  const hasSelectedProvider = provider.trim().length > 0;
+  const ProviderIcon = hasSelectedProvider ? getProviderIcon(provider) : null;
 
   const hasAnyControl =
     Boolean(providerOptions?.length) ||
@@ -424,12 +427,7 @@ function ControlledStatusBar({
 
           {thinkingOptions && thinkingOptions.length > 0 ? (
             <>
-              <Tooltip
-                key={`thinking-${openSelector === "thinking" ? "open" : "closed"}`}
-                delayDuration={0}
-                enabledOnDesktop
-                enabledOnMobile={false}
-              >
+              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild triggerRefProp="ref">
                   <Pressable
                     ref={thinkingAnchorRef}
@@ -470,12 +468,7 @@ function ControlledStatusBar({
 
           {modeOptions && modeOptions.length > 0 ? (
             <>
-              <Tooltip
-                key={`mode-${openSelector === "mode" ? "open" : "closed"}`}
-                delayDuration={0}
-                enabledOnDesktop
-                enabledOnMobile={false}
-              >
+              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild triggerRefProp="ref">
                   <Pressable
                     ref={modeAnchorRef}
@@ -628,7 +621,9 @@ function ControlledStatusBar({
             accessibilityLabel="Agent preferences"
             testID="agent-preferences-button"
           >
-            <ProviderIcon size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
+            {ProviderIcon ? (
+              <ProviderIcon size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
+            ) : null}
             <Text style={styles.prefsButtonText} numberOfLines={1}>
               {displayModel}
             </Text>
@@ -638,7 +633,6 @@ function ControlledStatusBar({
             title="Preferences"
             visible={prefsOpen}
             onClose={() => setPrefsOpen(false)}
-            stackBehavior="replace"
             testID="agent-preferences-sheet"
           >
             {canSelectModel ? (
@@ -671,7 +665,12 @@ function ControlledStatusBar({
                       pointerEvents="none"
                       testID="agent-preferences-model"
                     >
-                      <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+                      {ProviderIcon ? (
+                        <ProviderIcon
+                          size={theme.iconSize.md}
+                          color={theme.colors.foregroundMuted}
+                        />
+                      ) : null}
                       <Text style={styles.sheetSelectText}>{selectedModelLabel}</Text>
                       <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
                     </View>
@@ -873,23 +872,23 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const toast = useToast();
 
   const {
     entries: snapshotEntries,
     isLoading: snapshotIsLoading,
-    isFetching: snapshotIsFetching,
-    invalidate: invalidateSnapshot,
+    refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(serverId);
 
-  const snapshotModels = useMemo(() => {
+  const snapshotSelectedEntry = useMemo(() => {
     if (!snapshotEntries || !agent?.provider) {
       return null;
     }
-    const entry = snapshotEntries.find((e) => e.provider === agent.provider);
-    return entry?.models ?? null;
+    return snapshotEntries.find((e) => e.provider === agent.provider) ?? null;
   }, [snapshotEntries, agent?.provider]);
 
-  const models = snapshotModels;
+  const models = snapshotSelectedEntry?.models ?? null;
+  const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
 
   const agentProviderDefinitions = useMemo(() => {
     const definition = agent?.provider
@@ -900,11 +899,11 @@ export const AgentStatusBar = memo(function AgentStatusBar({
 
   const agentProviderModels = useMemo(() => {
     const map = new Map<string, AgentModelDefinition[]>();
-    if (agent?.provider && snapshotModels) {
-      map.set(agent.provider, snapshotModels);
+    if (agent?.provider && models) {
+      map.set(agent.provider, models);
     }
     return map;
-  }, [agent?.provider, snapshotModels]);
+  }, [agent?.provider, models]);
 
   const displayMode =
     availableModes.find((mode) => mode.id === agent?.currentModeId)?.label ||
@@ -964,6 +963,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         }
         void client.setAgentMode(agentId, modeId).catch((error) => {
           console.warn("[AgentStatusBar] setAgentMode failed", error);
+          toast.error(toErrorMessage(error));
         });
       }}
       modelOptions={modelOptions}
@@ -985,6 +985,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         });
         void client.setAgentModel(agentId, modelId).catch((error) => {
           console.warn("[AgentStatusBar] setAgentModel failed", error);
+          toast.error(toErrorMessage(error));
         });
       }}
       favoriteKeys={favoriteKeys}
@@ -1020,6 +1021,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         }
         void client.setAgentThinkingOption(agentId, thinkingOptionId).catch((error) => {
           console.warn("[AgentStatusBar] setAgentThinkingOption failed", error);
+          toast.error(toErrorMessage(error));
         });
       }}
       features={agent.features}
@@ -1042,10 +1044,11 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         });
         void client.setAgentFeature(agentId, featureId, value).catch((error) => {
           console.warn("[AgentStatusBar] setAgentFeature failed", error);
+          toast.error(toErrorMessage(error));
         });
       }}
-      isModelLoading={snapshotIsLoading || snapshotIsFetching}
-      onModelSelectorOpen={invalidateSnapshot}
+      isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
+      onModelSelectorOpen={() => refetchSnapshotIfStale(agent?.provider)}
       onDropdownClose={onDropdownClose}
       disabled={!client}
     />
@@ -1101,6 +1104,7 @@ export function DraftAgentStatusBar({
   const effectiveSelectedMode = selectedMode || mappedModeOptions[0]?.id || "";
   const effectiveSelectedThinkingOption =
     selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
+  const hasSelectedProvider = selectedProvider !== null;
 
   if (platformIsWeb) {
     return (
@@ -1108,7 +1112,7 @@ export function DraftAgentStatusBar({
         <CombinedModelSelector
           providerDefinitions={providerDefinitions}
           allProviderModels={allProviderModels}
-          selectedProvider={selectedProvider}
+          selectedProvider={selectedProvider ?? ""}
           selectedModel={selectedModel}
           onSelect={onSelectProviderAndModel}
           favoriteKeys={favoriteKeys}
@@ -1124,20 +1128,22 @@ export function DraftAgentStatusBar({
           onOpen={onModelSelectorOpen}
           onClose={onDropdownClose}
         />
-        <ControlledStatusBar
-          provider={selectedProvider}
-          providerDefinitions={providerDefinitions}
-          modeOptions={mappedModeOptions}
-          selectedModeId={effectiveSelectedMode}
-          onSelectMode={onSelectMode}
-          thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
-          selectedThinkingOptionId={effectiveSelectedThinkingOption}
-          onSelectThinkingOption={onSelectThinkingOption}
-          features={features}
-          onSetFeature={onSetFeature}
-          onDropdownClose={onDropdownClose}
-          disabled={disabled}
-        />
+        {selectedProvider ? (
+          <ControlledStatusBar
+            provider={selectedProvider}
+            providerDefinitions={providerDefinitions}
+            modeOptions={mappedModeOptions}
+            selectedModeId={effectiveSelectedMode}
+            onSelectMode={onSelectMode}
+            thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
+            selectedThinkingOptionId={effectiveSelectedThinkingOption}
+            onSelectThinkingOption={onSelectThinkingOption}
+            features={features}
+            onSetFeature={onSetFeature}
+            onDropdownClose={onDropdownClose}
+            disabled={disabled}
+          />
+        ) : null}
       </View>
     );
   }
@@ -1150,10 +1156,10 @@ export function DraftAgentStatusBar({
   return (
     <>
       <ControlledStatusBar
-        provider={selectedProvider}
+        provider={selectedProvider ?? ""}
         providerDefinitions={providerDefinitions}
         allProviderModels={allProviderModels}
-        modeOptions={mappedModeOptions}
+        modeOptions={hasSelectedProvider ? mappedModeOptions : undefined}
         selectedModeId={effectiveSelectedMode}
         onSelectMode={onSelectMode}
         modelOptions={modelOptions}

@@ -15,14 +15,6 @@ type AnalyticsEvent =
       reason?: string | null;
     };
 
-export function trackAnalyticsEvent(event: AnalyticsEvent) {
-  try {
-    const payload = {
-      ...event,
-      timestamp: new Date().toISOString(),
-    };
-    console.info("[Analytics]", payload);
-  } catch (error) {
-    console.error("[Analytics] Failed to emit event", error);
-  }
+export function trackAnalyticsEvent(_event: AnalyticsEvent) {
+  // Placeholder until a real analytics sink is wired in.
 }

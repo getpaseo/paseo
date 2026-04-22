@@ -22,6 +22,10 @@ export function normalizeWorkspaceTabTarget(
     const path = trimNonEmpty(value.path);
     return path ? { kind: "file", path: path.replace(/\\/g, "/") } : null;
   }
+  if (value.kind === "setup") {
+    const workspaceId = trimNonEmpty(value.workspaceId);
+    return workspaceId ? { kind: "setup", workspaceId } : null;
+  }
   return null;
 }
 
@@ -44,6 +48,9 @@ export function workspaceTabTargetsEqual(
   if (left.kind === "file" && right.kind === "file") {
     return left.path === right.path;
   }
+  if (left.kind === "setup" && right.kind === "setup") {
+    return left.workspaceId === right.workspaceId;
+  }
   return false;
 }
 
@@ -56,6 +63,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "terminal") {
     return `terminal_${target.terminalId}`;
+  }
+  if (target.kind === "setup") {
+    return `setup_${target.workspaceId}`;
   }
   return `file_${target.path}`;
 }

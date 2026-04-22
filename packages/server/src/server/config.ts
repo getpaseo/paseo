@@ -181,6 +181,7 @@ export function loadConfig(
     mcpEnabled,
     mcpInjectIntoAgents,
     mcpDebug: env.MCP_DEBUG === "1",
+    isDev: env.NODE_ENV === "development",
     agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",
     agentClients: {},

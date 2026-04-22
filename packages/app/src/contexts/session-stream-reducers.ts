@@ -1,5 +1,7 @@
 import type { AgentStreamEventPayload } from "@server/shared/messages";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
+import type { Agent } from "@/stores/session-store";
+import { useSessionStore } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
 import {
   applyStreamEvent,
@@ -16,6 +18,8 @@ import {
   shouldResolveTimelineInit,
 } from "@/contexts/session-timeline-bootstrap-policy";
 import { deriveOptimisticLifecycleStatus } from "@/contexts/session-stream-lifecycle";
+
+const AGENT_STREAM_REDUCER_FLUSH_DELAY_MS = 16 * 3;
 
 // ---------------------------------------------------------------------------
 // Shared cursor type
@@ -324,6 +328,62 @@ export interface ProcessAgentStreamEventOutput {
   sideEffects: AgentStreamReducerSideEffect[];
 }
 
+export type AgentStreamReducerEvent = {
+  event: AgentStreamEventPayload;
+  seq: number | undefined;
+  epoch: string | undefined;
+  timestamp: Date;
+};
+
+export type AgentStreamReducerAgentSnapshot = {
+  status: AgentLifecycleStatus;
+  updatedAt: Date;
+  lastActivityAt: Date;
+};
+
+export type ProcessAgentStreamEventsInput = {
+  events: AgentStreamReducerEvent[];
+  currentTail: StreamItem[];
+  currentHead: StreamItem[];
+  currentCursor: TimelineCursor | undefined;
+  currentAgent: AgentStreamReducerAgentSnapshot | null;
+};
+
+export type AgentStreamReducerSnapshot = Omit<ProcessAgentStreamEventsInput, "events">;
+
+export type AgentStreamReducerQueue = {
+  enqueue: (agentId: string, event: AgentStreamReducerEvent) => void;
+  flush: () => void;
+  flushAgent: (agentId: string) => void;
+  dispose: (options?: { flush?: boolean }) => void;
+};
+
+export type CreateAgentStreamReducerQueueInput = {
+  getSnapshot: (agentId: string) => AgentStreamReducerSnapshot;
+  commit: (
+    agentId: string,
+    result: ProcessAgentStreamEventOutput,
+    events: AgentStreamReducerEvent[],
+  ) => void;
+  handleSideEffects: (agentId: string, sideEffects: AgentStreamReducerSideEffect[]) => void;
+  scheduleFlush: (callback: () => void) => number;
+  cancelFlush: (id: number) => void;
+};
+
+function applyAgentPatch(
+  currentAgent: AgentStreamReducerAgentSnapshot | null,
+  patch: AgentPatch | null,
+): AgentStreamReducerAgentSnapshot | null {
+  if (!currentAgent || !patch) {
+    return currentAgent;
+  }
+  return {
+    status: patch.status,
+    updatedAt: patch.updatedAt,
+    lastActivityAt: patch.lastActivityAt,
+  };
+}
+
 export function processAgentStreamEvent(
   input: ProcessAgentStreamEventInput,
 ): ProcessAgentStreamEventOutput {
@@ -429,4 +489,256 @@ export function processAgentStreamEvent(
     agentChanged,
     sideEffects,
   };
+}
+
+export function processAgentStreamEvents(
+  input: ProcessAgentStreamEventsInput,
+): ProcessAgentStreamEventOutput {
+  let tail = input.currentTail;
+  let head = input.currentHead;
+  let cursor = input.currentCursor;
+  let agent = input.currentAgent;
+  let changedTail = false;
+  let changedHead = false;
+  let cursorChanged = false;
+  let agentPatch: AgentPatch | null = null;
+  let agentChanged = false;
+  const sideEffects: AgentStreamReducerSideEffect[] = [];
+
+  for (const reducerEvent of input.events) {
+    const result = processAgentStreamEvent({
+      event: reducerEvent.event,
+      seq: reducerEvent.seq,
+      epoch: reducerEvent.epoch,
+      currentTail: tail,
+      currentHead: head,
+      currentCursor: cursor,
+      currentAgent: agent,
+      timestamp: reducerEvent.timestamp,
+    });
+
+    tail = result.tail;
+    head = result.head;
+    changedTail = changedTail || result.changedTail;
+    changedHead = changedHead || result.changedHead;
+    sideEffects.push(...result.sideEffects);
+
+    if (result.cursorChanged) {
+      cursor = result.cursor ?? undefined;
+      cursorChanged = true;
+    }
+
+    if (result.agentChanged) {
+      agentPatch = result.agent;
+      agentChanged = true;
+      agent = applyAgentPatch(agent, result.agent);
+    }
+  }
+
+  return {
+    tail,
+    head,
+    changedTail,
+    changedHead,
+    cursor: cursor ?? null,
+    cursorChanged,
+    agent: agentPatch,
+    agentChanged,
+    sideEffects,
+  };
+}
+
+export function createAgentStreamReducerQueue(
+  input: CreateAgentStreamReducerQueueInput,
+): AgentStreamReducerQueue {
+  const pendingByAgentId = new Map<string, AgentStreamReducerEvent[]>();
+  let scheduledFlushId: number | null = null;
+
+  const cancelScheduledFlush = () => {
+    if (scheduledFlushId === null) {
+      return;
+    }
+    input.cancelFlush(scheduledFlushId);
+    scheduledFlushId = null;
+  };
+
+  const flushAgent = (agentId: string) => {
+    const events = pendingByAgentId.get(agentId);
+    if (!events || events.length === 0) {
+      return;
+    }
+    pendingByAgentId.delete(agentId);
+    if (pendingByAgentId.size === 0) {
+      cancelScheduledFlush();
+    }
+
+    const result = processAgentStreamEvents({
+      events,
+      ...input.getSnapshot(agentId),
+    });
+
+    input.commit(agentId, result, events);
+    if (result.sideEffects.length > 0) {
+      input.handleSideEffects(agentId, result.sideEffects);
+    }
+  };
+
+  const flush = () => {
+    const agentIds = Array.from(pendingByAgentId.keys());
+    for (const agentId of agentIds) {
+      flushAgent(agentId);
+    }
+  };
+
+  const scheduleFlush = () => {
+    if (scheduledFlushId !== null) {
+      return;
+    }
+    scheduledFlushId = input.scheduleFlush(() => {
+      scheduledFlushId = null;
+      flush();
+    });
+  };
+
+  return {
+    enqueue(agentId, event) {
+      const pending = pendingByAgentId.get(agentId);
+      if (pending) {
+        pending.push(event);
+      } else {
+        pendingByAgentId.set(agentId, [event]);
+      }
+      scheduleFlush();
+    },
+    flush,
+    flushAgent,
+    dispose(options) {
+      cancelScheduledFlush();
+      if (options?.flush) {
+        flush();
+      } else {
+        pendingByAgentId.clear();
+      }
+    },
+  };
+}
+
+type StreamStatePatch = {
+  tail?: StreamItem[];
+  head?: StreamItem[];
+};
+
+export type CreateSessionAgentStreamReducerQueueInput = {
+  serverId: string;
+  setAgentStreamState: (serverId: string, agentId: string, state: StreamStatePatch) => void;
+  setAgentTimelineCursor: (
+    serverId: string,
+    state: (prev: Map<string, TimelineCursor>) => Map<string, TimelineCursor>,
+  ) => void;
+  setAgents: (serverId: string, state: (prev: Map<string, Agent>) => Map<string, Agent>) => void;
+  requestCanonicalCatchUp: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
+};
+
+function scheduleAgentStreamReducerFlush(callback: () => void): number {
+  return setTimeout(callback, AGENT_STREAM_REDUCER_FLUSH_DELAY_MS) as unknown as number;
+}
+
+function cancelAgentStreamReducerFlush(id: number) {
+  clearTimeout(id);
+}
+
+export function createSessionAgentStreamReducerQueue(
+  input: CreateSessionAgentStreamReducerQueueInput,
+): AgentStreamReducerQueue {
+  const {
+    serverId,
+    setAgentStreamState,
+    setAgentTimelineCursor,
+    setAgents,
+    requestCanonicalCatchUp,
+  } = input;
+
+  return createAgentStreamReducerQueue({
+    getSnapshot: (agentId) => {
+      const session = useSessionStore.getState().sessions[serverId];
+      const currentAgentEntry = session?.agents.get(agentId);
+      return {
+        currentTail: session?.agentStreamTail.get(agentId) ?? [],
+        currentHead: session?.agentStreamHead.get(agentId) ?? [],
+        currentCursor: session?.agentTimelineCursor.get(agentId),
+        currentAgent: currentAgentEntry
+          ? {
+              status: currentAgentEntry.status,
+              updatedAt: currentAgentEntry.updatedAt,
+              lastActivityAt: currentAgentEntry.lastActivityAt,
+            }
+          : null,
+      };
+    },
+    commit: (agentId, result, events) => {
+      if (result.changedTail || result.changedHead) {
+        setAgentStreamState(serverId, agentId, {
+          ...(result.changedTail ? { tail: result.tail } : {}),
+          ...(result.changedHead ? { head: result.head } : {}),
+        });
+      }
+
+      if (result.cursorChanged && result.cursor) {
+        const nextCursor = result.cursor;
+        const lastEvent = events.at(-1);
+        setAgentTimelineCursor(serverId, (prev) => {
+          const current = prev.get(agentId);
+          if (
+            current &&
+            lastEvent &&
+            typeof lastEvent.seq === "number" &&
+            typeof lastEvent.epoch === "string" &&
+            current.epoch === lastEvent.epoch &&
+            lastEvent.seq >= current.startSeq &&
+            lastEvent.seq <= current.endSeq
+          ) {
+            return prev;
+          }
+          if (
+            current &&
+            current.epoch === nextCursor.epoch &&
+            current.startSeq === nextCursor.startSeq &&
+            current.endSeq === nextCursor.endSeq
+          ) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.set(agentId, nextCursor);
+          return next;
+        });
+      }
+
+      if (result.agentChanged && result.agent) {
+        const nextAgent = result.agent;
+        setAgents(serverId, (prev) => {
+          const current = prev.get(agentId);
+          if (!current) {
+            return prev;
+          }
+          const next = new Map(prev);
+          next.set(agentId, {
+            ...current,
+            status: nextAgent.status,
+            updatedAt: nextAgent.updatedAt,
+            lastActivityAt: nextAgent.lastActivityAt,
+          });
+          return next;
+        });
+      }
+    },
+    handleSideEffects: (agentId, sideEffects) => {
+      for (const effect of sideEffects) {
+        if (effect.type === "catch_up") {
+          requestCanonicalCatchUp(agentId, effect.cursor);
+        }
+      }
+    },
+    scheduleFlush: scheduleAgentStreamReducerFlush,
+    cancelFlush: cancelAgentStreamReducerFlush,
+  });
 }

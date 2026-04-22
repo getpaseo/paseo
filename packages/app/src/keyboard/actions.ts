@@ -16,6 +16,7 @@ export type MessageInputKeyboardActionKind =
   | "voice-mute-toggle";
 
 export type KeyboardActionId =
+  | "agent.interrupt"
   | "agent.new"
   | "workspace.tab.new"
   | "workspace.tab.close.current"

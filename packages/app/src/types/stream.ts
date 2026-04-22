@@ -2,6 +2,7 @@ import type { AgentProvider, ToolCallDetail } from "@server/server/agent/agent-s
 import type { AgentStreamEventPayload } from "@server/shared/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
+import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 
 /**
  * Simple hash function for deterministic ID generation
@@ -66,6 +67,8 @@ export interface AssistantMessageItem {
   id: string;
   text: string;
   timestamp: Date;
+  blockGroupId?: string;
+  blockIndex?: number;
 }
 
 export type ThoughtStatus = "loading" | "ready";
@@ -336,7 +339,36 @@ function mergeUnknownValue(existing: unknown | null, incoming: unknown | null): 
   return incoming;
 }
 
-function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail): ToolCallDetail {
+function hasSameIncomingFields<T extends Record<string, unknown>>(
+  existing: T,
+  incoming: T,
+): boolean {
+  return Object.entries(incoming).every(([key, value]) => existing[key] === value);
+}
+
+function mergeToolCallMetadata(
+  existing: Record<string, unknown> | undefined,
+  incoming: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!incoming) {
+    return existing;
+  }
+
+  if (!existing) {
+    return incoming;
+  }
+
+  if (hasSameIncomingFields(existing, incoming)) {
+    return existing;
+  }
+
+  return { ...existing, ...incoming };
+}
+
+export function mergeToolCallDetail(
+  existing: ToolCallDetail,
+  incoming: ToolCallDetail,
+): ToolCallDetail {
   if (existing.type === "unknown" && incoming.type !== "unknown") {
     return incoming;
   }
@@ -346,14 +378,24 @@ function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail)
   }
 
   if (existing.type === "unknown" && incoming.type === "unknown") {
+    const input = mergeUnknownValue(existing.input, incoming.input);
+    const output = mergeUnknownValue(existing.output, incoming.output);
+    if (input === existing.input && output === existing.output) {
+      return existing;
+    }
+
     return {
       type: "unknown",
-      input: mergeUnknownValue(existing.input, incoming.input),
-      output: mergeUnknownValue(existing.output, incoming.output),
+      input,
+      output,
     };
   }
 
   if (existing.type === incoming.type) {
+    if (hasSameIncomingFields(existing, incoming)) {
+      return existing;
+    }
+
     return { ...existing, ...incoming } as ToolCallDetail;
   }
 
@@ -391,8 +433,7 @@ function appendAgentToolCall(
   const existingIndex = findExistingAgentToolCallIndex(state, data.callId);
 
   if (existingIndex >= 0) {
-    const next = [...state];
-    const existing = next[existingIndex];
+    const existing = state[existingIndex];
     if (!existing || !isAgentToolCallItem(existing)) {
       return state;
     }
@@ -401,12 +442,22 @@ function appendAgentToolCall(
       mergedStatus === "failed"
         ? (data.error ?? existing.payload.data.error ?? { message: "Tool call failed" })
         : null;
-    const mergedMetadata =
-      data.metadata || existing.payload.data.metadata
-        ? { ...existing.payload.data.metadata, ...data.metadata }
-        : undefined;
+    const mergedMetadata = mergeToolCallMetadata(existing.payload.data.metadata, data.metadata);
     const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
 
+    if (
+      data.provider === existing.payload.data.provider &&
+      data.callId === existing.payload.data.callId &&
+      data.name === existing.payload.data.name &&
+      mergedStatus === existing.payload.data.status &&
+      mergedError === existing.payload.data.error &&
+      mergedDetail === existing.payload.data.detail &&
+      mergedMetadata === existing.payload.data.metadata
+    ) {
+      return state;
+    }
+
+    const next = [...state];
     next[existingIndex] = {
       ...existing,
       timestamp,
@@ -722,8 +773,95 @@ function finalizeHeadItems(head: StreamItem[]): StreamItem[] {
     if (item.kind === "thought" && item.status !== "ready") {
       return markThoughtReady(item);
     }
+    if (item.kind === "assistant_message" && item.blockGroupId) {
+      return {
+        ...item,
+        id: createAssistantBlockId({
+          groupId: item.blockGroupId,
+          blockIndex: item.blockIndex ?? 0,
+        }),
+      };
+    }
     return item;
   });
+}
+
+function createAssistantBlockId(params: { groupId: string; blockIndex: number }): string {
+  return `${params.groupId}:block:${params.blockIndex}`;
+}
+
+function getActiveAssistantHeadIndex(head: StreamItem[]): number {
+  for (let index = head.length - 1; index >= 0; index -= 1) {
+    if (head[index]?.kind === "assistant_message") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: StreamItem[] }): {
+  tail: StreamItem[];
+  head: StreamItem[];
+  changedTail: boolean;
+  changedHead: boolean;
+} {
+  const assistantIndex = getActiveAssistantHeadIndex(params.head);
+  const activeItem = params.head[assistantIndex];
+  if (assistantIndex < 0 || !activeItem || activeItem.kind !== "assistant_message") {
+    return {
+      tail: params.tail,
+      head: params.head,
+      changedTail: false,
+      changedHead: false,
+    };
+  }
+
+  const blocks = splitMarkdownBlocks(activeItem.text);
+  if (blocks.length < 2) {
+    return {
+      tail: params.tail,
+      head: params.head,
+      changedTail: false,
+      changedHead: false,
+    };
+  }
+
+  const blockGroupId = activeItem.blockGroupId ?? activeItem.id;
+  const firstBlockIndex = activeItem.blockIndex ?? 0;
+  const completedBlocks = blocks.slice(0, -1);
+  const liveBlock = blocks[blocks.length - 1] ?? "";
+  const promotedItems = completedBlocks.map<AssistantMessageItem>((block, offset) => ({
+    kind: "assistant_message",
+    id: createAssistantBlockId({
+      groupId: blockGroupId,
+      blockIndex: firstBlockIndex + offset,
+    }),
+    blockGroupId,
+    blockIndex: firstBlockIndex + offset,
+    text: block,
+    timestamp: activeItem.timestamp,
+  }));
+
+  const nextTail = flushHeadToTail(params.tail, promotedItems);
+  const liveItem: AssistantMessageItem = {
+    ...activeItem,
+    id: `${blockGroupId}:head`,
+    blockGroupId,
+    blockIndex: firstBlockIndex + completedBlocks.length,
+    text: liveBlock,
+  };
+  const nextHead = [
+    ...params.head.slice(0, assistantIndex),
+    liveItem,
+    ...params.head.slice(assistantIndex + 1),
+  ];
+
+  return {
+    tail: nextTail,
+    head: nextHead,
+    changedTail: nextTail !== params.tail,
+    changedHead: true,
+  };
 }
 
 /**
@@ -856,6 +994,16 @@ export function applyStreamEvent(params: {
     if (reduced !== nextHead) {
       nextHead = reduced;
       changedHead = true;
+    }
+    if (incomingKind === "assistant_message") {
+      const promoted = promoteCompletedAssistantBlocks({
+        tail: nextTail,
+        head: nextHead,
+      });
+      nextTail = promoted.tail;
+      nextHead = promoted.head;
+      changedTail = changedTail || promoted.changedTail;
+      changedHead = changedHead || promoted.changedHead;
     }
     return { tail: nextTail, head: nextHead, changedTail, changedHead };
   }

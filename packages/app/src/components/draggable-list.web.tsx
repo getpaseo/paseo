@@ -142,7 +142,7 @@ export function DraggableList<T>({
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8,
+        distance: 6,
       },
     }),
     useSensor(KeyboardSensor, {
@@ -159,12 +159,16 @@ export function DraggableList<T>({
     [data, onDragBegin],
   );
 
+  const clearDragState = useCallback(() => {
+    setActiveId(null);
+    setDragItems(null);
+  }, []);
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
 
-      setActiveId(null);
-      setDragItems(null);
+      clearDragState();
 
       if (over && active.id !== over.id) {
         const oldIndex = items.findIndex((item, i) => keyExtractor(item, i) === active.id);
@@ -176,7 +180,7 @@ export function DraggableList<T>({
         }
       }
     },
-    [items, keyExtractor, onDragEnd],
+    [clearDragState, items, keyExtractor, onDragEnd],
   );
 
   const ids = items.map((item, index) => keyExtractor(item, index));
@@ -207,6 +211,7 @@ export function DraggableList<T>({
             collisionDetection={closestCenter}
             modifiers={[restrictToVerticalAxis]}
             onDragStart={handleDragStart}
+            onDragCancel={clearDragState}
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>
@@ -237,6 +242,7 @@ export function DraggableList<T>({
             collisionDetection={closestCenter}
             modifiers={[restrictToVerticalAxis]}
             onDragStart={handleDragStart}
+            onDragCancel={clearDragState}
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>

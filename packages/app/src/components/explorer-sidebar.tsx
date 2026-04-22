@@ -12,8 +12,12 @@ import Animated, { useAnimatedStyle, useSharedValue, runOnJS } from "react-nativ
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
+import { GitHubIcon } from "@/components/icons/github-icon";
+import { PrPane } from "./pr-pane";
+import { usePrPaneData } from "@/hooks/use-pr-pane-data";
 import {
   usePanelStore,
+  selectIsFileExplorerOpen,
   MIN_EXPLORER_SIDEBAR_WIDTH,
   MAX_EXPLORER_SIDEBAR_WIDTH,
   type ExplorerTab,
@@ -49,9 +53,9 @@ export function ExplorerSidebar({
   const isScreenFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
-  const mobileView = usePanelStore((state) => state.mobileView);
-  const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
-  const closeToAgent = usePanelStore((state) => state.closeToAgent);
+  const isOpen = usePanelStore((state) => selectIsFileExplorerOpen(state, { isCompact: isMobile }));
+  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
+  const closeDesktopFileExplorer = usePanelStore((state) => state.closeDesktopFileExplorer);
   const explorerTab = usePanelStore((state) => state.explorerTab);
   const explorerWidth = usePanelStore((state) => state.explorerWidth);
   const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
@@ -78,9 +82,6 @@ export function ExplorerSidebar({
     }
   }, [explorerWidth, isMobile, setExplorerWidth, viewportWidth]);
 
-  // Derive isOpen from the unified panel state
-  const isOpen = isMobile ? mobileView === "file-explorer" : desktopFileExplorerOpen;
-
   const {
     translateX,
     backdropOpacity,
@@ -101,18 +102,20 @@ export function ExplorerSidebar({
       logExplorerSidebar("handleClose", {
         reason,
         isOpen,
-        mobileView,
-        desktopFileExplorerOpen,
       });
-      closeToAgent();
+      if (isMobile) {
+        showMobileAgent();
+        return;
+      }
+      closeDesktopFileExplorer();
     },
-    [closeToAgent, desktopFileExplorerOpen, isOpen, mobileView],
+    [closeDesktopFileExplorer, isMobile, isOpen, showMobileAgent],
   );
 
   const handleCloseFromGesture = useCallback(() => {
     gestureAnimatingRef.current = true;
-    closeToAgent();
-  }, [closeToAgent, gestureAnimatingRef]);
+    showMobileAgent();
+  }, [gestureAnimatingRef, showMobileAgent]);
 
   const enableSidebarCloseGesture = isMobile && isOpen;
 
@@ -289,6 +292,7 @@ export function ExplorerSidebar({
               workspaceRoot={workspaceRoot}
               isGit={isGit}
               isMobile={isMobile}
+              isOpen={isOpen}
               onOpenFile={onOpenFile}
             />
           </Animated.View>
@@ -321,6 +325,7 @@ export function ExplorerSidebar({
           workspaceRoot={workspaceRoot}
           isGit={isGit}
           isMobile={false}
+          isOpen={isOpen}
           onOpenFile={onOpenFile}
         />
       </View>
@@ -337,6 +342,7 @@ interface SidebarContentProps {
   workspaceRoot: string;
   isGit: boolean;
   isMobile: boolean;
+  isOpen: boolean;
   onOpenFile?: (filePath: string) => void;
 }
 
@@ -349,11 +355,24 @@ function SidebarContent({
   workspaceRoot,
   isGit,
   isMobile,
+  isOpen,
   onOpenFile,
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const padding = useWindowControlsPadding("explorerSidebar");
-  const resolvedTab: ExplorerTab = !isGit && activeTab === "changes" ? "files" : activeTab;
+  const canQueryPullRequest = isGit && Boolean(workspaceRoot);
+  const prPane = usePrPaneData({
+    serverId,
+    cwd: workspaceRoot,
+    enabled: canQueryPullRequest && isOpen,
+    timelineEnabled: activeTab === "pr" && canQueryPullRequest && isOpen,
+  });
+  const hasPullRequest = prPane.prNumber !== null;
+  const requestedTab: ExplorerTab =
+    !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
+  const resolvedTab: ExplorerTab =
+    requestedTab === "pr" && !hasPullRequest ? "changes" : requestedTab;
+  const prTabLabel = prPane.prNumber === null ? "" : `#${prPane.prNumber}`;
 
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
@@ -381,6 +400,23 @@ function SidebarContent({
               Files
             </Text>
           </Pressable>
+          {isGit && hasPullRequest && (
+            <Pressable
+              testID="explorer-tab-pr"
+              style={[styles.tab, resolvedTab === "pr" && styles.tabActive]}
+              onPress={() => onTabPress("pr")}
+            >
+              <GitHubIcon
+                size={13}
+                color={
+                  resolvedTab === "pr" ? theme.colors.foreground : theme.colors.foregroundMuted
+                }
+              />
+              <Text style={[styles.tabText, resolvedTab === "pr" && styles.tabTextActive]}>
+                {prTabLabel}
+              </Text>
+            </Pressable>
+          )}
         </View>
         <View style={styles.headerRightSection}>
           {isMobile && (
@@ -409,6 +445,7 @@ function SidebarContent({
             onOpenFile={onOpenFile}
           />
         )}
+        {resolvedTab === "pr" && prPane.data && <PrPane data={prPane.data} />}
       </View>
     </View>
   );

@@ -42,6 +42,7 @@ import {
   formatProviderDiagnosticError,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 
 import type {
   AgentPermissionAction,
@@ -73,6 +74,7 @@ import type {
 } from "../agent-sdk-types.js";
 import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
+import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand, spawnProcess } from "../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
@@ -777,7 +779,7 @@ class TimelineAssembler {
     runId: string | null,
     messageIdHint: string | null,
   ): AgentTimelineItem[] {
-    const event = message.event as Record<string, unknown>;
+    const event = message.event as unknown as Record<string, unknown>;
     const eventType = readTrimmedString(event.type);
     const streamEventMessageId = this.readMessageIdFromStreamEvent(event) ?? messageIdHint;
 
@@ -1106,7 +1108,8 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    // Claude exposes a static catalog here; cwd/force are intentionally irrelevant.
     return getClaudeModels();
   }
 
@@ -1156,7 +1159,7 @@ export class ClaudeAgentClient implements AgentClient {
 
       if (available) {
         try {
-          const models = await this.listModels();
+          const models = await this.listModels({ cwd: os.homedir(), force: false });
           modelsValue = String(models.length);
         } catch (error) {
           modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
@@ -2096,12 +2099,7 @@ class ClaudeAgentSession implements AgentSession {
     const startedAt = Date.now();
     this.logger.trace({ label }, "Claude query operation wait start");
     try {
-      await Promise.race([
-        promise,
-        new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error("timeout")), 3_000);
-        }),
-      ]);
+      await withTimeout(promise, 3_000, "timeout");
       this.logger.trace(
         { label, durationMs: Date.now() - startedAt },
         "Claude query operation settled",
@@ -2225,7 +2223,14 @@ class ClaudeAgentSession implements AgentSession {
   private toSdkUserMessage(prompt: AgentPromptInput): SDKUserMessage {
     const content: Array<
       | { type: "text"; text: string }
-      | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+      | {
+          type: "image";
+          source: {
+            type: "base64";
+            media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+            data: string;
+          };
+        }
     > = [];
     if (Array.isArray(prompt)) {
       for (const chunk of prompt) {
@@ -2236,10 +2241,12 @@ class ClaudeAgentSession implements AgentSession {
             type: "image",
             source: {
               type: "base64",
-              media_type: chunk.mimeType,
+              media_type: chunk.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
               data: chunk.data,
             },
           });
+        } else if (chunk.type === "github_pr" || chunk.type === "github_issue") {
+          content.push({ type: "text", text: renderPromptAttachmentAsText(chunk) });
         }
       }
     } else {

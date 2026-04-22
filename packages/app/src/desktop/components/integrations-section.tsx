@@ -4,6 +4,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ArrowUpRight, Terminal, Blocks, Check } from "lucide-react-native";
 import { settingsStyles } from "@/styles/settings";
+import { SettingsSection } from "@/screens/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { openExternalUrl } from "@/utils/open-external-url";
 import {
@@ -79,39 +80,35 @@ export function IntegrationsSection() {
     return null;
   }
 
+  const trailing = (
+    <View style={styles.headerLinks}>
+      <Button
+        variant="ghost"
+        size="sm"
+        leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
+        textStyle={settingsStyles.sectionHeaderLinkText}
+        style={settingsStyles.sectionHeaderLink}
+        onPress={() => void openExternalUrl(CLI_DOCS_URL)}
+        accessibilityLabel="Open CLI documentation"
+      >
+        CLI docs
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
+        textStyle={settingsStyles.sectionHeaderLinkText}
+        style={settingsStyles.sectionHeaderLink}
+        onPress={() => void openExternalUrl(SKILLS_DOCS_URL)}
+        accessibilityLabel="Open skills documentation"
+      >
+        Skills docs
+      </Button>
+    </View>
+  );
+
   return (
-    <View style={settingsStyles.section}>
-      <View style={settingsStyles.sectionHeader}>
-        <Text style={settingsStyles.sectionHeaderTitle}>Integrations</Text>
-        <View style={styles.headerLinks}>
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={
-              <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            }
-            textStyle={settingsStyles.sectionHeaderLinkText}
-            style={settingsStyles.sectionHeaderLink}
-            onPress={() => void openExternalUrl(CLI_DOCS_URL)}
-            accessibilityLabel="Open CLI documentation"
-          >
-            CLI docs
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={
-              <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            }
-            textStyle={settingsStyles.sectionHeaderLinkText}
-            style={settingsStyles.sectionHeaderLink}
-            onPress={() => void openExternalUrl(SKILLS_DOCS_URL)}
-            accessibilityLabel="Open skills documentation"
-          >
-            Skills docs
-          </Button>
-        </View>
-      </View>
+    <SettingsSection title="Integrations" trailing={trailing}>
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
@@ -166,7 +163,7 @@ export function IntegrationsSection() {
           )}
         </View>
       </View>
-    </View>
+    </SettingsSection>
   );
 }
 

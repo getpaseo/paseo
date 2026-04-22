@@ -1,9 +1,9 @@
-import { AlertCircle, Search } from "lucide-react-native";
+import { AlertCircle, RotateCw, Search } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
-import { SpinningRefreshIcon } from "@/components/spinning-refresh-icon";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { isWeb } from "@/constants/platform";
 import { Fonts } from "@/constants/theme";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -82,8 +82,12 @@ export function ProviderDiagnosticSheet({
   );
 
   const handleRefresh = useCallback(() => {
-    void refresh([provider as AgentProvider]);
-    void fetchDiagnostic({ keepCurrent: true });
+    if (!provider) {
+      return;
+    }
+    void Promise.all([refresh([provider as AgentProvider]), fetchDiagnostic()]).catch((err) => {
+      setDiagnostic(err instanceof Error ? err.message : "Failed to refresh provider");
+    });
   }, [fetchDiagnostic, provider, refresh]);
 
   useEffect(() => {
@@ -157,13 +161,15 @@ export function ProviderDiagnosticSheet({
             refreshInFlight ? sheetStyles.disabled : null,
           ]}
           accessibilityRole="button"
-          accessibilityLabel={`Refresh ${providerLabel}`}
+          accessibilityLabel={
+            refreshInFlight ? `Refreshing ${providerLabel}` : `Refresh ${providerLabel}`
+          }
         >
-          <SpinningRefreshIcon
-            spinning={refreshInFlight}
-            size={theme.iconSize.sm}
-            color={theme.colors.foregroundMuted}
-          />
+          {refreshInFlight ? (
+            <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          ) : (
+            <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          )}
         </Pressable>
       }
     >

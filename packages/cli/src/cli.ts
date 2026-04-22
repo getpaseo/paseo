@@ -1,5 +1,4 @@
 import { Command, Option } from "commander";
-import { createRequire } from "node:module";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
 import { createChatCommand } from "./commands/chat/index.js";
@@ -30,20 +29,7 @@ import {
   addJsonAndDaemonHostOptions,
   addJsonOption,
 } from "./utils/command-options.js";
-
-const require = createRequire(import.meta.url);
-
-type CliPackageJson = {
-  version?: unknown;
-};
-
-function resolveCliVersion(): string {
-  const packageJson = require("../package.json") as CliPackageJson;
-  if (typeof packageJson.version === "string" && packageJson.version.trim().length > 0) {
-    return packageJson.version.trim();
-  }
-  throw new Error("Unable to resolve @getpaseo/cli version from package.json.");
-}
+import { resolveCliVersion } from "./version.js";
 
 const VERSION = resolveCliVersion();
 

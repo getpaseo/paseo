@@ -9,6 +9,7 @@ import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/in
 import { OpenAITTS } from "./speech/providers/openai/tts.js";
 import { OpenAISTT } from "./speech/providers/openai/stt.js";
 import { STTManager } from "./agent/stt-manager.js";
+import { withTimeout } from "../utils/promise-timeout.js";
 
 const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 const shouldRun = process.env.PASEO_VOICE_ROUNDTRIP_E2E === "1" && Boolean(openaiApiKey);
@@ -65,24 +66,6 @@ function waitForSignal<T>(
       (error) => {
         clearTimeout(timeout);
         cleanup?.();
-        reject(error);
-      },
-    );
-  });
-}
-
-async function withTimeout<T>(label: string, timeoutMs: number, task: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`Timed out during ${label} after ${timeoutMs}ms`));
-    }, timeoutMs);
-    task.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
         reject(error);
       },
     );
@@ -148,20 +131,20 @@ describe("voice roundtrip e2e", () => {
           path.join(tmpdir(), `voice-roundtrip-agent-${targetProvider}-`),
         );
         const voiceAgent = await withTimeout(
-          "createVoiceTargetAgent",
-          30000,
           ctx.client.createAgent({
             config: {
               ...getVoiceRoundtripConfig(targetProvider),
               cwd: voiceCwd,
             },
           }),
+          30000,
+          "Timed out during createVoiceTargetAgent after 30000ms",
         );
         const voiceAgentId = voiceAgent.id;
         const voiceMode = await withTimeout(
-          "setVoiceMode",
-          15000,
           ctx.client.setVoiceMode(true, voiceAgentId),
+          15000,
+          "Timed out during setVoiceMode after 15000ms",
         );
         expect(voiceMode.accepted).toBe(true);
         expect(voiceMode.enabled).toBe(true);
@@ -194,14 +177,14 @@ describe("voice roundtrip e2e", () => {
         });
 
         const inputSpeech = await withTimeout(
-          "synthesizeInputAudio",
-          30000,
           ttsProvider.synthesizeSpeech("Use the speak tool and say exactly round trip successful."),
+          30000,
+          "Timed out during synthesizeInputAudio after 30000ms",
         );
         const inputPcm = await withTimeout(
-          "collectInputAudio",
-          15000,
           streamToBuffer(inputSpeech.stream),
+          15000,
+          "Timed out during collectInputAudio after 15000ms",
         );
         const outputAudio = await (async () => {
           try {
@@ -281,16 +264,24 @@ describe("voice roundtrip e2e", () => {
               );
               const isLast = offset + chunkBytes >= inputPcm.length;
               await withTimeout(
-                "sendVoiceAudioChunk",
-                5000,
                 ctx.client.sendVoiceAudioChunk(chunk.toString("base64"), format, isLast),
+                5000,
+                "Timed out during sendVoiceAudioChunk after 5000ms",
               );
             }
-            const transcript = await withTimeout("waitForTranscription", 35000, transcriptPromise);
+            const transcript = await withTimeout(
+              transcriptPromise,
+              35000,
+              "Timed out during waitForTranscription after 35000ms",
+            );
             if (transcript.text.trim().length === 0) {
               throw new Error(`empty transcription (lowConfidence=${transcript.isLowConfidence})`);
             }
-            return await withTimeout("waitForAudioOutput", 95000, outputAudioPromise);
+            return await withTimeout(
+              outputAudioPromise,
+              95000,
+              "Timed out during waitForAudioOutput after 95000ms",
+            );
           } catch (error) {
             throw new Error(
               `${error instanceof Error ? error.message : String(error)} | requestedVoiceAgentId=${voiceAgentId} | timelineTools=${JSON.stringify(timelineTools)} | timelineToolAgentIds=${JSON.stringify(Array.from(timelineToolAgentIds))} | activityErrors=${JSON.stringify(activityErrors)}`,
@@ -311,11 +302,11 @@ describe("voice roundtrip e2e", () => {
               ? "audio/wav"
               : `audio/${outputAudio.format}`;
         const transcription = await withTimeout(
-          "transcribeOutputAudio",
-          60000,
           sttOutput.transcribe(outputRaw, outputFormat, {
             label: "voice-roundtrip-output",
           }),
+          60000,
+          "Timed out during transcribeOutputAudio after 60000ms",
         );
         const normalized = transcription.text.trim().toLowerCase();
 

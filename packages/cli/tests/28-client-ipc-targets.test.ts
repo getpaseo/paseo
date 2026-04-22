@@ -10,6 +10,7 @@ import {
   resolveDaemonTarget,
   resolveDefaultDaemonHosts,
 } from "../src/utils/client.js";
+import { resolveCliVersion } from "../src/version.js";
 
 console.log("=== CLI IPC Target Helpers ===\n");
 
@@ -94,7 +95,13 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
-  console.log("Test 6: local IPC still takes priority over configured TCP hosts");
+  console.log("Test 6: CLI app version resolves for daemon hello compatibility");
+  assert.match(resolveCliVersion(), /^\d+\.\d+\.\d+/);
+  console.log("✓ CLI app version resolves for daemon hello compatibility\n");
+}
+
+{
+  console.log("Test 7: local IPC still takes priority over configured TCP hosts");
   const paseoHome = mkdtempSync(path.join(os.tmpdir(), "paseo-client-targets-order-"));
   try {
     mkdirSync(paseoHome, { recursive: true });

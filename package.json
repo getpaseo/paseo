@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.1.59",
+  "version": "0.1.60-beta.2",
   "private": true,
   "workspaces": [
     "packages/expo-two-way-audio",
@@ -39,6 +39,7 @@
     "dev:desktop": "npm run dev --workspace=@getpaseo/desktop",
     "dev:win:desktop": "npm run dev:win --workspace=@getpaseo/desktop",
     "build:desktop": "npm run version:sync-internal && npm run build:web --workspace=@getpaseo/app && npm run build --workspace=@getpaseo/desktop",
+    "db:query": "npm run db:query --workspace=@getpaseo/server --",
     "cli": "npx tsx packages/cli/src/index.js",
     "version": "npm run version:sync-internal && npm run release:prepare && git add -A",
     "version:sync-internal": "node scripts/sync-workspace-versions.mjs",
@@ -46,19 +47,19 @@
     "version:all:patch": "node scripts/set-release-version.mjs --mode patch",
     "version:all:minor": "node scripts/set-release-version.mjs --mode minor",
     "version:all:major": "node scripts/set-release-version.mjs --mode major",
-    "version:all:rc:patch": "node scripts/set-release-version.mjs --mode rc-patch",
-    "version:all:rc:minor": "node scripts/set-release-version.mjs --mode rc-minor",
-    "version:all:rc:major": "node scripts/set-release-version.mjs --mode rc-major",
-    "version:all:rc:next": "node scripts/set-release-version.mjs --mode rc-next",
+    "version:all:beta:patch": "node scripts/set-release-version.mjs --mode beta-patch",
+    "version:all:beta:minor": "node scripts/set-release-version.mjs --mode beta-minor",
+    "version:all:beta:major": "node scripts/set-release-version.mjs --mode beta-major",
+    "version:all:beta:next": "node scripts/set-release-version.mjs --mode beta-next",
     "version:all:promote": "node scripts/set-release-version.mjs --mode promote",
     "release:check": "npm run release:prepare && npm run typecheck --workspace=@getpaseo/highlight && npm run build --workspace=@getpaseo/highlight && npm run typecheck --workspace=@getpaseo/relay && npm run build --workspace=@getpaseo/relay && npm run typecheck --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/server && npm run typecheck --workspace=@getpaseo/cli && npm run build --workspace=@getpaseo/cli && npm pack --dry-run --workspace=@getpaseo/highlight && npm pack --dry-run --workspace=@getpaseo/relay && npm pack --dry-run --workspace=@getpaseo/server && npm pack --dry-run --workspace=@getpaseo/cli",
     "release:publish:dry-run": "npm publish --dry-run --workspace=@getpaseo/highlight --access public && npm publish --dry-run --workspace=@getpaseo/relay --access public && npm publish --dry-run --workspace=@getpaseo/server --access public && npm publish --dry-run --workspace=@getpaseo/cli --access public",
     "release:publish": "npm publish --workspace=@getpaseo/highlight --access public && npm publish --workspace=@getpaseo/relay --access public && npm publish --workspace=@getpaseo/server --access public && npm publish --workspace=@getpaseo/cli --access public",
     "release:push": "node scripts/push-current-release-tag.mjs",
-    "release:rc:patch": "npm run release:check && npm run version:all:rc:patch && npm run release:push",
-    "release:rc:minor": "npm run release:check && npm run version:all:rc:minor && npm run release:push",
-    "release:rc:major": "npm run release:check && npm run version:all:rc:major && npm run release:push",
-    "release:rc:next": "npm run release:check && npm run version:all:rc:next && npm run release:push",
+    "release:beta:patch": "npm run release:check && npm run version:all:beta:patch && npm run release:push",
+    "release:beta:minor": "npm run release:check && npm run version:all:beta:minor && npm run release:push",
+    "release:beta:major": "npm run release:check && npm run version:all:beta:major && npm run release:push",
+    "release:beta:next": "npm run release:check && npm run version:all:beta:next && npm run release:push",
     "release:promote": "npm run release:check && npm run version:all:promote && npm run release:publish && npm run release:push",
     "release:patch": "npm run release:check && npm run version:all:patch && npm run release:publish && npm run release:push",
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
@@ -70,8 +71,8 @@
     "get-port-cli": "^3.0.0",
     "knip": "^5.82.1",
     "patch-package": "^8.0.1",
-    "react": "19.1.4",
-    "react-dom": "19.1.4",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
     "typescript": "^5.9.3"
   },
   "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",
@@ -95,11 +96,14 @@
   "license": "AGPL-3.0-or-later",
   "overrides": {
     "lightningcss": "1.30.1",
-    "react": "19.1.4",
-    "react-dom": "19.1.4"
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
-    "@modelcontextprotocol/sdk": "^1.27.1"
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "expo": "~54.0.33",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
   }
 }

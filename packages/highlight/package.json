@@ -1,12 +1,19 @@
 {
   "name": "@getpaseo/highlight",
-  "version": "0.1.59",
+  "version": "0.1.60-beta.2",
   "type": "module",
   "publishConfig": {
     "access": "public"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "source": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "files": [
     "dist"
   ],

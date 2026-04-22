@@ -16,6 +16,7 @@ import type {
 import { buildVoiceAgentMcpServerConfig } from "../src/server/session.js";
 import { createAgentMcpServer } from "../src/server/agent/mcp-server.js";
 import { createVoiceMcpSocketBridgeManager } from "../src/server/voice-mcp-bridge.js";
+import { withTimeout } from "../src/utils/promise-timeout.js";
 
 type CliOptions = {
   provider: AgentProvider;
@@ -54,17 +55,13 @@ async function streamWithTimeout(
   timeoutMs: number,
   onEvent: (event: AgentStreamEvent) => Promise<void> | void,
 ): Promise<void> {
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
-  });
-
   const consume = (async () => {
     for await (const event of iterator) {
       await onEvent(event);
     }
   })();
 
-  await Promise.race([consume, timeout]);
+  await withTimeout(consume, timeoutMs, `Timed out after ${timeoutMs}ms`);
 }
 
 async function main(): Promise<void> {

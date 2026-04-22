@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildHostAgentDetailRoute,
   buildHostRootRoute,
+  buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
   decodeFilePathFromPathSegment,
   decodeWorkspaceIdFromPathSegment,
@@ -23,8 +24,13 @@ describe("parseHostAgentRouteFromPathname", () => {
 });
 
 describe("workspace route parsing", () => {
-  it("encodes workspace IDs as base64url (no padding)", () => {
-    expect(encodeWorkspaceIdForPathSegment("/tmp/repo")).toBe("L3RtcC9yZXBv");
+  it("keeps URL-safe workspace IDs unencoded", () => {
+    expect(encodeWorkspaceIdForPathSegment("164")).toBe("164");
+    expect(decodeWorkspaceIdFromPathSegment("164")).toBe("164");
+  });
+
+  it("encodes non-URL-safe workspace IDs as base64url", () => {
+    expect(encodeWorkspaceIdForPathSegment("/tmp/repo")).toBe("b64_L3RtcC9yZXBv");
     expect(decodeWorkspaceIdFromPathSegment("L3RtcC9yZXBv")).toBe("/tmp/repo");
   });
 
@@ -40,7 +46,14 @@ describe("workspace route parsing", () => {
     expect(decodeFilePathFromPathSegment(encoded)).toBe("src/index.ts");
   });
 
-  it("parses workspace route", () => {
+  it("parses workspace route with a plain workspace id", () => {
+    expect(parseHostWorkspaceRouteFromPathname("/h/local/workspace/164")).toEqual({
+      serverId: "local",
+      workspaceId: "164",
+    });
+  });
+
+  it("parses workspace route with legacy base64 path", () => {
     expect(parseHostWorkspaceRouteFromPathname("/h/local/workspace/L3RtcC9yZXBv")).toEqual({
       serverId: "local",
       workspaceId: "/tmp/repo",
@@ -53,8 +66,14 @@ describe("workspace route parsing", () => {
     ).toBeNull();
   });
 
-  it("builds base64url workspace routes", () => {
-    expect(buildHostWorkspaceRoute("local", "/tmp/repo")).toBe("/h/local/workspace/L3RtcC9yZXBv");
+  it("builds plain workspace routes for URL-safe ids", () => {
+    expect(buildHostWorkspaceRoute("local", "164")).toBe("/h/local/workspace/164");
+  });
+
+  it("builds base64url workspace routes for legacy paths", () => {
+    expect(buildHostWorkspaceRoute("local", "/tmp/repo")).toBe(
+      "/h/local/workspace/b64_L3RtcC9yZXBv",
+    );
   });
 
   it("builds host root routes", () => {
@@ -63,9 +82,7 @@ describe("workspace route parsing", () => {
 
   it("parses workspace open intent from pathname query", () => {
     expect(
-      parseHostWorkspaceOpenIntentFromPathname(
-        "/h/local/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1",
-      ),
+      parseHostWorkspaceOpenIntentFromPathname("/h/local/workspace/164?open=agent%3Aagent-1"),
     ).toEqual({
       kind: "agent",
       agentId: "agent-1",
@@ -82,11 +99,37 @@ describe("workspace route parsing", () => {
       kind: "file",
       path: "src/index.ts",
     });
+    expect(parseWorkspaceOpenIntent("setup:L3RtcC9yZXBv")).toEqual({
+      kind: "setup",
+      workspaceId: "/tmp/repo",
+    });
   });
 
   it("uses the plain workspace route when workspace context is provided", () => {
-    expect(buildHostAgentDetailRoute("local", "agent-1", "/tmp/repo")).toBe(
-      "/h/local/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1",
+    expect(buildHostAgentDetailRoute("local", "agent-1", "164")).toBe(
+      "/h/local/workspace/164?open=agent%3Aagent-1",
     );
+  });
+
+  it("builds workspace routes with a one-shot open intent", () => {
+    expect(buildHostWorkspaceOpenRoute("local", "164", "draft:new")).toBe(
+      "/h/local/workspace/164?open=draft%3Anew",
+    );
+  });
+
+  it("round-trips URL-safe IDs through encode/decode", () => {
+    const ids = ["1", "40", "164", "9999", "workspace-1", "opaque_id.v2~test"];
+    for (const id of ids) {
+      const encoded = encodeWorkspaceIdForPathSegment(id);
+      const decoded = decodeWorkspaceIdFromPathSegment(encoded);
+      expect(decoded).toBe(id);
+    }
+  });
+
+  it("round-trips opaque IDs with reserved characters through base64 encoding", () => {
+    const id = "  team/setup:id#1  ";
+    const encoded = encodeWorkspaceIdForPathSegment(id);
+    expect(encoded).toBe("b64_dGVhbS9zZXR1cDppZCMx");
+    expect(decodeWorkspaceIdFromPathSegment(encoded)).toBe("team/setup:id#1");
   });
 });

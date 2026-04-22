@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess, execFileSync, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { Buffer } from "node:buffer";
 import dotenv from "dotenv";
+import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./helpers/paseo-home-fork";
 
 type WaitForServerOptions = {
   host?: string;
@@ -182,7 +183,19 @@ async function isOpenAiApiKeyUsable(apiKey: string | undefined): Promise<boolean
 let daemonProcess: ChildProcess | null = null;
 let metroProcess: ChildProcess | null = null;
 let paseoHome: string | null = null;
+let fakeGhBinDir: string | null = null;
 let relayProcess: ChildProcess | null = null;
+
+function resolveOptionalPaseoHomeEnv(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed === "current") {
+    return resolvePaseoHomePath("~/.paseo");
+  }
+  return resolvePaseoHomePath(trimmed);
+}
 
 type OfferPayload = {
   v: 2;
@@ -190,6 +203,52 @@ type OfferPayload = {
   daemonPublicKeyB64: string;
   relay: { endpoint: string };
 };
+
+async function createFakeGhBin(): Promise<string> {
+  const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-gh-bin-"));
+  const ghPath = path.join(binDir, "gh");
+  await writeFile(
+    ghPath,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+
+if (args[0] === "auth" && args[1] === "status") {
+  process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "list") {
+  console.log(JSON.stringify([
+    {
+      number: 515,
+      title: "Review selected start ref",
+      url: "https://github.com/getpaseo/paseo/pull/515",
+      state: "OPEN",
+      body: "Fixture pull request for app e2e.",
+      labels: [],
+      baseRefName: "main",
+      headRefName: "feature/start-from-pr"
+    }
+  ]));
+  process.exit(0);
+}
+
+if (args[0] === "pr" && args[1] === "view" && args[2] === "--json" && args[3]) {
+  console.error("no pull requests found for branch");
+  process.exit(1);
+}
+
+if (args[0] === "issue" && args[1] === "list") {
+  console.log("[]");
+  process.exit(0);
+}
+
+console.error("Unsupported fake gh invocation: " + args.join(" "));
+process.exit(1);
+`,
+  );
+  await chmod(ghPath, 0o755);
+  return binDir;
+}
 
 function stripAnsi(input: string): string {
   return input.replace(/\u001b\[[0-9;]*m/g, "");
@@ -280,10 +339,35 @@ export default async function globalSetup() {
   const port = await getAvailablePort();
   let relayPort = 0;
   const metroPort = await getAvailablePort();
-  paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-e2e-home-"));
+  const requestedPaseoHome = resolveOptionalPaseoHomeEnv(process.env.E2E_PASEO_HOME);
+  const shouldRemovePaseoHome = !requestedPaseoHome && process.env.E2E_KEEP_PASEO_HOME !== "1";
+  paseoHome = requestedPaseoHome ?? (await mkdtemp(path.join(tmpdir(), "paseo-e2e-home-")));
+  fakeGhBinDir = await createFakeGhBin();
   let relayLineBuffer = createLineBuffer();
   const metroLineBuffer = createLineBuffer();
   const daemonLineBuffer = createLineBuffer();
+
+  const forkSourceHome = resolveOptionalPaseoHomeEnv(process.env.E2E_FORK_PASEO_HOME_FROM);
+  if (forkSourceHome) {
+    const forkResult = await forkPaseoHomeMetadata({
+      sourceHome: forkSourceHome,
+      targetHome: paseoHome,
+    });
+    process.env.E2E_FORK_SOURCE_PASEO_HOME = forkResult.sourceHome;
+    process.env.E2E_FORK_TARGET_PASEO_HOME = forkResult.targetHome;
+    process.env.E2E_FORK_COPIED_FILES = String(forkResult.copiedFiles);
+    process.env.E2E_FORK_COPIED_BYTES = String(forkResult.copiedBytes);
+    console.log(
+      `[e2e] Forked Paseo metadata from ${forkResult.sourceHome} to ${forkResult.targetHome} ` +
+        `(${forkResult.agentFiles} agent files, ${forkResult.projectFiles} project registry files, ` +
+        `${forkResult.copiedBytes} bytes)`,
+    );
+    if (forkResult.skippedMissing.length > 0) {
+      console.warn(
+        `[e2e] Paseo metadata fork skipped missing paths: ${forkResult.skippedMissing.join(", ")}`,
+      );
+    }
+  }
 
   const cleanup = async () => {
     await Promise.all([
@@ -294,9 +378,15 @@ export default async function globalSetup() {
     daemonProcess = null;
     metroProcess = null;
     relayProcess = null;
-    if (paseoHome) {
+    if (paseoHome && shouldRemovePaseoHome) {
       await rm(paseoHome, { recursive: true, force: true });
       paseoHome = null;
+    } else if (paseoHome) {
+      console.log(`[e2e] Preserving PASEO_HOME: ${paseoHome}`);
+    }
+    if (fakeGhBinDir) {
+      await rm(fakeGhBinDir, { recursive: true, force: true });
+      fakeGhBinDir = null;
     }
   };
 
@@ -482,6 +572,7 @@ export default async function globalSetup() {
       cwd: serverDir,
       env: {
         ...process.env,
+        PATH: `${fakeGhBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
         PASEO_HOME: paseoHome,
         PASEO_SERVER_ID: "srv_e2e_test_daemon",
         PASEO_LISTEN: `0.0.0.0:${port}`,

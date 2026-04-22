@@ -310,24 +310,10 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
   };
 }
 
-export function normalizeEndpointOrNull(endpoint: string): string | null {
-  try {
-    return normalizeHostPort(endpoint);
-  } catch {
-    return null;
-  }
+export function hostHasConnection(host: HostProfile, connection: HostConnection): boolean {
+  return host.connections.some((existing) => hostConnectionEquals(existing, connection));
 }
 
-export function hostHasDirectEndpoint(host: HostProfile, endpoint: string): boolean {
-  const normalized = normalizeEndpointOrNull(endpoint);
-  if (!normalized) {
-    return false;
-  }
-  return host.connections.some(
-    (connection) => connection.type === "directTcp" && connection.endpoint === normalized,
-  );
-}
-
-export function registryHasDirectEndpoint(hosts: HostProfile[], endpoint: string): boolean {
-  return hosts.some((host) => hostHasDirectEndpoint(host, endpoint));
+export function registryHasConnection(hosts: HostProfile[], connection: HostConnection): boolean {
+  return hosts.some((host) => hostHasConnection(host, connection));
 }

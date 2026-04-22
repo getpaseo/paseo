@@ -1,14 +1,13 @@
 import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
-import { LigaturesAddon } from "@xterm/addon-ligatures";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { LigaturesAddon } from "@xterm/addon-ligatures/lib/addon-ligatures.mjs";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@server/shared/messages";
-import { openExternalUrl } from "@/utils/open-external-url";
 import {
   type PendingTerminalModifiers,
   isTerminalModifierDomKey,
@@ -37,6 +36,7 @@ export type TerminalEmulatorRuntimeCallbacks = {
     meta: boolean;
   }) => Promise<void> | void;
   onPendingModifiersConsumed?: () => Promise<void> | void;
+  onOpenExternalUrl?: (url: string) => Promise<void> | void;
 };
 
 type TerminalEmulatorRuntimeDisposables = {
@@ -80,6 +80,7 @@ const isMac =
 const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
+const RESET_TERMINAL_ANSI = "\u001bc";
 
 const DEFAULT_TERMINAL_FONT_FAMILY = [
   // Prefer common developer fonts, with Nerd Font variants for prompt/TUI glyphs.
@@ -177,7 +178,7 @@ export class TerminalEmulatorRuntime {
     terminal.loadAddon(
       new WebLinksAddon((event, uri) => {
         event.preventDefault();
-        void openExternalUrl(uri);
+        void this.callbacks.onOpenExternalUrl?.(uri);
       }),
     );
     terminal.loadAddon(new SearchAddon({ highlightLimit: 20_000 }));
@@ -264,6 +265,7 @@ export class TerminalEmulatorRuntime {
       }
 
       this.lastSize = { rows: nextRows, cols: nextCols };
+      this.refreshVisibleRows();
       this.callbacks.onResize?.({
         rows: nextRows,
         cols: nextCols,
@@ -509,7 +511,7 @@ export class TerminalEmulatorRuntime {
     }
     this.outputOperations.push({
       type: "snapshot",
-      text: renderTerminalSnapshotToAnsi(input.state),
+      text: `${RESET_TERMINAL_ANSI}${renderTerminalSnapshotToAnsi(input.state)}`,
       rows: input.state.rows,
       cols: input.state.cols,
       suppressInput: true,
@@ -535,15 +537,24 @@ export class TerminalEmulatorRuntime {
       return;
     }
 
-    try {
-      terminal.refresh(0, Math.max(0, terminal.rows - 1));
-    } catch {
-      // ignore
-    }
+    this.refreshVisibleRows();
   }
 
   focus(): void {
     this.terminal?.focus();
+  }
+
+  private refreshVisibleRows(): void {
+    const terminal = this.terminal;
+    if (!terminal || terminal.rows <= 0) {
+      return;
+    }
+
+    try {
+      terminal.refresh(0, terminal.rows - 1);
+    } catch {
+      // ignore
+    }
   }
 
   unmount(): void {
@@ -616,7 +627,6 @@ export class TerminalEmulatorRuntime {
         ) {
           terminal.resize(operation.cols, operation.rows);
         }
-        terminal.reset();
       } catch {
         finalizeOperation(operation);
         return;

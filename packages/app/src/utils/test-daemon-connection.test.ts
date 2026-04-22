@@ -59,6 +59,19 @@ vi.mock("./client-id", () => ({
   getOrCreateClientId: clientIdMock.getOrCreateClientId,
 }));
 
+vi.mock("@/desktop/daemon/desktop-daemon-transport", () => ({
+  createDesktopLocalDaemonTransportFactory: vi.fn(() => null),
+  buildLocalDaemonTransportUrl: vi.fn(
+    ({
+      transportType,
+      transportPath,
+    }: {
+      transportType: "socket" | "pipe";
+      transportPath: string;
+    }) => `paseo+local://${transportType}?path=${encodeURIComponent(transportPath)}`,
+  ),
+}));
+
 describe("test-daemon-connection connectToDaemon", () => {
   beforeEach(() => {
     daemonClientMock.createdConfigs.length = 0;

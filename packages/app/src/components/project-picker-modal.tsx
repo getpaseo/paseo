@@ -3,48 +3,31 @@ import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-nativ
 import { Folder } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQuery } from "@tanstack/react-query";
-import { usePathname } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { shortenPath } from "@/utils/shorten-path";
-import { useSessionStore } from "@/stores/session-store";
-import { useHosts, useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
+import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useOpenProject } from "@/hooks/use-open-project";
-import { parseServerIdFromPathname } from "@/utils/host-routes";
 import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
 import { isNative } from "@/constants/platform";
+import { useActiveServerId } from "@/hooks/use-active-server-id";
 
 export function ProjectPickerModal() {
   const { theme } = useUnistyles();
-  const pathname = usePathname();
-  const daemons = useHosts();
+  const serverId = useActiveServerId();
 
   const open = useKeyboardShortcutsStore((s) => s.projectPickerOpen);
   const setOpen = useKeyboardShortcutsStore((s) => s.setProjectPickerOpen);
 
-  const serverId = useMemo(() => {
-    const fromPath = parseServerIdFromPathname(pathname);
-    if (fromPath) return fromPath;
-    return daemons[0]?.serverId ?? null;
-  }, [pathname, daemons]);
-
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
-  const workspaces = useSessionStore((state) =>
-    serverId ? state.sessions[serverId]?.workspaces : undefined,
-  );
+  const recommendedPaths = useRecommendedProjectPaths(serverId);
 
   const inputRef = useRef<TextInput>(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const openProject = useOpenProject(serverId);
-
-  const recommendedPaths = useMemo(() => {
-    if (!workspaces) return [];
-    return Array.from(workspaces.values()).map(
-      (workspace) => workspace.projectRootPath || workspace.id,
-    );
-  }, [workspaces]);
 
   const directorySuggestionsQuery = useQuery({
     queryKey: ["project-picker-directory-suggestions", serverId, query],

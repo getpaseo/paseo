@@ -13,13 +13,47 @@ export async function getWorkspaceTabTestIds(page: Page): Promise<string[]> {
   return ids;
 }
 
+function visibleTestId(page: Page, testId: string) {
+  return page.getByTestId(testId).filter({ visible: true });
+}
+
 export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-tabs-row").first()).toBeVisible({
+  await expect(visibleTestId(page, "workspace-tabs-row").first()).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("workspace-new-agent-tab").first()).toBeVisible({
+  await expect(visibleTestId(page, "workspace-new-agent-tab").first()).toBeVisible({
     timeout: 30_000,
   });
+}
+
+export async function getVisibleWorkspaceAgentTabIds(page: Page): Promise<string[]> {
+  const tabs = page.locator('[data-testid^="workspace-tab-agent_"]').filter({ visible: true });
+  const count = await tabs.count();
+  const ids: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const testId = await tabs.nth(index).getAttribute("data-testid");
+    if (testId && !ids.includes(testId)) {
+      ids.push(testId);
+    }
+  }
+  return ids;
+}
+
+export async function expectOnlyWorkspaceAgentTabsVisible(
+  page: Page,
+  expectedAgentIds: string[],
+): Promise<void> {
+  const expected = new Set(expectedAgentIds.map((id) => `workspace-tab-agent_${id}`));
+  const visible = await getVisibleWorkspaceAgentTabIds(page);
+  const unexpected = visible.filter((id) => !expected.has(id));
+
+  expect(unexpected).toEqual([]);
+  expect(visible.length).toBe(expected.size);
+  for (const expectedId of expectedAgentIds) {
+    await expect(visibleTestId(page, `workspace-tab-agent_${expectedId}`).first()).toBeVisible({
+      timeout: 30_000,
+    });
+  }
 }
 
 export async function ensureWorkspaceAgentPaneVisible(page: Page): Promise<void> {

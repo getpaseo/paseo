@@ -60,6 +60,28 @@ function useTooltipContext(componentName: string): TooltipContextValue {
   return ctx;
 }
 
+// Tooltips should open on hover or keyboard focus, not when focus is restored
+// programmatically (e.g. when a Modal closes and returns focus to its opener).
+// Track the last input modality on web so TooltipTrigger can ignore focus
+// events that weren't keyboard-driven. Native has no equivalent scenario.
+let lastInputWasKeyboard = false;
+if (isWeb && typeof window !== "undefined") {
+  const markKeyboard = () => {
+    lastInputWasKeyboard = true;
+  };
+  const markPointer = () => {
+    lastInputWasKeyboard = false;
+  };
+  window.addEventListener("keydown", markKeyboard, true);
+  window.addEventListener("mousedown", markPointer, true);
+  window.addEventListener("pointerdown", markPointer, true);
+  window.addEventListener("touchstart", markPointer, true);
+}
+
+function shouldOpenOnFocus(): boolean {
+  return !isWeb || lastInputWasKeyboard;
+}
+
 function composeEventHandlers<E>(
   original?: (event: E) => void,
   injected?: (event: E) => void,
@@ -246,12 +268,10 @@ export function TooltipTrigger({
   asChild = false,
   triggerRefProp = "ref",
   ...props
-}: PropsWithChildren<
-  PressableProps & {
-    asChild?: boolean;
-    triggerRefProp?: string;
-  }
->): ReactElement {
+}: PressableProps & {
+  asChild?: boolean;
+  triggerRefProp?: string;
+}): ReactElement {
   const ctx = useTooltipContext("TooltipTrigger");
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -306,6 +326,7 @@ export function TooltipTrigger({
     (e: any) => {
       onFocus?.(e);
       if (!ctx.enabled || disabled) return;
+      if (!shouldOpenOnFocus()) return;
       clearOpenTimer();
       ctx.setOpen(true);
     },
@@ -365,6 +386,7 @@ export function TooltipTrigger({
     const mergedProps = {
       ...childProps,
       ...triggerProps,
+      disabled: childProps.disabled || disabled,
       onHoverIn: composeEventHandlers(childProps.onHoverIn, handleHoverIn),
       onHoverOut: composeEventHandlers(childProps.onHoverOut, handleHoverOut),
       onFocus: composeEventHandlers(childProps.onFocus, handleFocus),

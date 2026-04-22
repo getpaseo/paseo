@@ -8,6 +8,7 @@ import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
+import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
 
 export type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -86,6 +87,9 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
 }
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
+import { createGitHubService } from "../services/github-service.js";
+import { createPaseoWorktree } from "./paseo-worktree-service.js";
+import { createWorktreeCoreDeps } from "./worktree-core.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
@@ -119,6 +123,14 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
+import {
+  ScriptRouteStore,
+  createScriptProxyMiddleware,
+  createScriptProxyUpgradeHandler,
+} from "./script-proxy.js";
+import { ScriptHealthMonitor } from "./script-health-monitor.js";
+import { createScriptStatusEmitter } from "./script-status-projection.js";
+import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
@@ -162,11 +174,13 @@ export type PaseoDaemonConfig = {
   listen: string;
   paseoHome: string;
   corsAllowedOrigins: string[];
+  allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   staticDir: string;
   mcpDebug: boolean;
+  isDev?: boolean;
   agentClients: Partial<Record<AgentProvider, AgentClient>>;
   agentStoragePath: string;
   relayEnabled?: boolean;
@@ -190,6 +204,8 @@ export interface PaseoDaemon {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager: TerminalManager;
+  scriptRouteStore: ScriptRouteStore;
+  scriptRuntimeStore: WorkspaceScriptRuntimeStore;
   start(): Promise<void>;
   stop(): Promise<void>;
   getListenTarget(): ListenTarget | null;
@@ -225,19 +241,52 @@ export async function createPaseoDaemon(
 
     const app = express();
     let boundListenTarget: ListenTarget | null = null;
+    let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
+
+    const scriptRouteStore = new ScriptRouteStore();
+    const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
+    const configuredHostnames = config.hostnames ?? config.allowedHosts;
+    let wsServer: VoiceAssistantWebSocketServer | null = null;
+    const scriptHealthMonitor = new ScriptHealthMonitor({
+      routeStore: scriptRouteStore,
+      onChange: createScriptStatusEmitter({
+        sessions: () =>
+          wsServer?.listActiveSessions().map((session) => ({
+            emit: (message) => session.emitServerMessage(message),
+          })) ?? [],
+        routeStore: scriptRouteStore,
+        runtimeStore: scriptRuntimeStore,
+        daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+        resolveWorkspaceDirectory: async (workspaceId) =>
+          (await workspaceRegistry?.get(workspaceId))?.cwd ?? null,
+      }),
+    });
+    const handleBranchChange = createBranchChangeRouteHandler({
+      routeStore: scriptRouteStore,
+      onRoutesChanged: (workspaceId) => {
+        scriptHealthMonitor.invalidateWorkspace(workspaceId);
+      },
+      logger,
+    });
 
     // Host allowlist / DNS rebinding protection (vite-like semantics).
     // For non-TCP (unix sockets), skip host validation.
     if (listenTarget.type === "tcp") {
       app.use((req, res, next) => {
         const hostHeader = typeof req.headers.host === "string" ? req.headers.host : undefined;
-        if (!isHostnameAllowed(hostHeader, config.hostnames)) {
+        if (!isHostnameAllowed(hostHeader, configuredHostnames)) {
           res.status(403).json({ error: "Invalid Host header" });
           return;
         }
         next();
       });
     }
+
+    // Script proxy — intercepts requests for registered *.localhost hostnames
+    // and forwards them to the corresponding local script port. Placed after
+    // the host allowlist (*.localhost is already allowed) but before CORS and
+    // the rest of the routes so proxied requests skip unnecessary middleware.
+    app.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
 
     // CORS - allow same-origin + configured origins
     const allowedOrigins = new Set([
@@ -339,12 +388,22 @@ export async function createPaseoDaemon(
 
     const httpServer = createHTTPServer(app);
 
+    // Script proxy WebSocket upgrade handler — must be registered before the
+    // VoiceAssistantWebSocketServer attaches its own "upgrade" listener so that
+    // script-bound upgrades are forwarded first. The handler is a no-op for
+    // requests that don't match a registered script route.
+    const scriptProxyUpgradeHandler = createScriptProxyUpgradeHandler({
+      routeStore: scriptRouteStore,
+      logger,
+    });
+    httpServer.on("upgrade", scriptProxyUpgradeHandler);
+
     const agentStorage = new AgentStorage(config.agentStoragePath, logger);
     const projectRegistry = new FileBackedProjectRegistry(
       path.join(config.paseoHome, "projects", "projects.json"),
       logger,
     );
-    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    workspaceRegistry = new FileBackedWorkspaceRegistry(
       path.join(config.paseoHome, "projects", "workspaces.json"),
       logger,
     );
@@ -352,11 +411,22 @@ export async function createPaseoDaemon(
       paseoHome: config.paseoHome,
       logger,
     });
+    const terminalManager = createTerminalManager();
+    const github = createGitHubService();
+    const workspaceGitService = new WorkspaceGitServiceImpl({
+      logger,
+      paseoHome: config.paseoHome,
+      deps: {
+        github,
+      },
+    });
     const agentManager = new AgentManager({
       clients: {
         ...createAllClients(logger, {
           runtimeSettings: config.agentProviderSettings,
           providerOverrides: config.providerOverrides,
+          workspaceGitService,
+          isDev: config.isDev === true,
         }),
         ...config.agentClients,
       },
@@ -366,12 +436,8 @@ export async function createPaseoDaemon(
     const providerRegistry = buildProviderRegistry(logger, {
       runtimeSettings: config.agentProviderSettings,
       providerOverrides: config.providerOverrides,
-    });
-
-    const terminalManager = createTerminalManager();
-    const workspaceGitService = new WorkspaceGitServiceImpl({
-      logger,
-      paseoHome: config.paseoHome,
+      workspaceGitService,
+      isDev: config.isDev === true,
     });
 
     const detachAgentStoragePersistence = attachAgentStoragePersistence(
@@ -422,8 +488,6 @@ export async function createPaseoDaemon(
       "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
     );
     logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
-    let wsServer: VoiceAssistantWebSocketServer | null = null;
-
     const mcpEnabled = config.mcpEnabled ?? true;
     let agentMcpBaseUrl: string | null = null;
     if (mcpEnabled) {
@@ -435,8 +499,32 @@ export async function createPaseoDaemon(
           agentManager,
           agentStorage,
           terminalManager,
+          getDaemonTcpPort: () =>
+            boundListenTarget?.type === "tcp" ? boundListenTarget.port : null,
           scheduleService,
           providerRegistry,
+          github,
+          workspaceGitService,
+          createPaseoWorktree: async (input, serviceOptions) => {
+            const coreDeps = createWorktreeCoreDeps(github);
+            const result = await createPaseoWorktree(input, {
+              ...coreDeps,
+              ...(serviceOptions?.resolveDefaultBranch
+                ? {
+                    resolveDefaultBranch: serviceOptions.resolveDefaultBranch,
+                  }
+                : {}),
+              projectRegistry,
+              workspaceRegistry,
+              workspaceGitService,
+            });
+            await Promise.all(
+              wsServer
+                ?.listActiveSessions()
+                .map((session) => session.warmWorkspaceGitDataForWorkspace(result.workspace)) ?? [],
+            );
+            return result;
+          },
           paseoHome: config.paseoHome,
           callerAgentId,
           enableVoiceTools: false,
@@ -604,7 +692,7 @@ export async function createPaseoDaemon(
               config.paseoHome,
               daemonConfigStore,
               mcpBaseUrl,
-              { allowedOrigins, hostnames: config.hostnames },
+              { allowedOrigins, hostnames: configuredHostnames },
               speechService,
               terminalManager,
               {
@@ -612,6 +700,7 @@ export async function createPaseoDaemon(
               },
               config.agentProviderSettings,
               config.providerOverrides,
+              config.isDev === true,
               daemonVersion,
               (intent) => {
                 try {
@@ -626,7 +715,14 @@ export async function createPaseoDaemon(
               loopService,
               scheduleService,
               checkoutDiffManager,
+              scriptRouteStore,
+              scriptRuntimeStore,
+              handleBranchChange,
+              () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+              () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
+              (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
               workspaceGitService,
+              github,
             );
 
             if (typeof process.send === "function" && process.env.PASEO_SUPERVISED === "1") {
@@ -682,9 +778,11 @@ export async function createPaseoDaemon(
       // Start speech service after listening so synchronous Sherpa native
       // model loading doesn't block the server from accepting connections.
       speechService.start();
+      scriptHealthMonitor.start();
     };
 
     const stop = async () => {
+      scriptHealthMonitor.stop();
       await closeAllAgents(logger, agentManager);
       await agentManager.flush().catch(() => undefined);
       detachAgentStoragePersistence();
@@ -714,6 +812,8 @@ export async function createPaseoDaemon(
       agentManager,
       agentStorage,
       terminalManager,
+      scriptRouteStore,
+      scriptRuntimeStore,
       start,
       stop,
       getListenTarget: () => boundListenTarget,

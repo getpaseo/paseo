@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@server/shared/messages";
 import type { StreamItem } from "@/types/stream";
 import {
+  createAgentStreamReducerQueue,
   processTimelineResponse,
   processAgentStreamEvent,
+  processAgentStreamEvents,
   type ProcessTimelineResponseInput,
   type ProcessAgentStreamEventInput,
+  type AgentStreamReducerEvent,
   type TimelineCursor,
 } from "./session-stream-reducers";
 
@@ -39,6 +42,36 @@ function makeUserTimelineEvent(text: string): AgentStreamEventPayload {
     provider: "claude",
     item: { type: "user_message", text },
   } as AgentStreamEventPayload;
+}
+
+function makeToolCallTimelineEvent(callId: string): AgentStreamEventPayload {
+  return {
+    type: "timeline",
+    provider: "claude",
+    item: {
+      type: "tool_call",
+      callId,
+      name: "Read",
+      status: "running",
+      detail: {
+        type: "read",
+        filePath: "/tmp/example.ts",
+      },
+      error: null,
+    },
+  } as AgentStreamEventPayload;
+}
+
+function makeStreamReducerEvent(
+  event: AgentStreamEventPayload,
+  seq: number,
+): AgentStreamReducerEvent {
+  return {
+    event,
+    seq,
+    epoch: "epoch-1",
+    timestamp: new Date(1000 + seq),
+  };
 }
 
 const baseTimelineInput: ProcessTimelineResponseInput = {
@@ -645,5 +678,272 @@ describe("processAgentStreamEvent", () => {
 
     expect(result.agentChanged).toBe(false);
     expect(result.agent).toBe(null);
+  });
+});
+
+describe("processAgentStreamEvents", () => {
+  it("coalesces contiguous assistant stream events into one head update and final cursor", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeTimelineEvent("Hello"), 1),
+        makeStreamReducerEvent(makeTimelineEvent(" world"), 2),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    expect(result.changedTail).toBe(false);
+    expect(result.changedHead).toBe(true);
+    expect(result.tail).toEqual([]);
+    expect(result.head).toHaveLength(1);
+    expect(result.head[0]).toMatchObject({
+      kind: "assistant_message",
+      text: "Hello world",
+    });
+    expect(result.cursor).toEqual({
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 2,
+    } satisfies TimelineCursor);
+    expect(result.sideEffects).toEqual([]);
+  });
+
+  it("promotes completed assistant markdown blocks to tail while keeping the live block in head", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeTimelineEvent("First paragraph"), 1),
+        makeStreamReducerEvent(makeTimelineEvent("\n\nSecond paragraph"), 2),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    expect(result.changedTail).toBe(true);
+    expect(result.changedHead).toBe(true);
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "assistant_message",
+      text: "First paragraph",
+    });
+    expect(result.head).toHaveLength(1);
+    expect(result.head[0]).toMatchObject({
+      kind: "assistant_message",
+      text: "Second paragraph",
+    });
+  });
+
+  it("does not promote a markdown block that is still inside an open code fence", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeTimelineEvent("Before fence\n\n```ts\nconst a = 1;"), 1),
+        makeStreamReducerEvent(makeTimelineEvent("\n\nconst b = 2;"), 2),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    expect(result.changedTail).toBe(true);
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "assistant_message",
+      text: "Before fence",
+    });
+    expect(result.head).toHaveLength(1);
+    expect(result.head[0]).toMatchObject({
+      kind: "assistant_message",
+      text: "```ts\nconst a = 1;\n\nconst b = 2;",
+    });
+  });
+
+  it("flushes the live assistant block before applying a tool call in the same reducer pass", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeTimelineEvent("Before tool"), 1),
+        makeStreamReducerEvent(makeToolCallTimelineEvent("call-1"), 2),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: null,
+    });
+
+    expect(result.changedTail).toBe(true);
+    expect(result.changedHead).toBe(true);
+    expect(result.head).toEqual([]);
+    expect(result.tail.map((item: StreamItem) => item.kind)).toEqual([
+      "assistant_message",
+      "tool_call",
+    ]);
+    expect(result.cursor).toEqual({
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 2,
+    } satisfies TimelineCursor);
+  });
+
+  it("returns the final optimistic lifecycle patch across a batch", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeTimelineEvent("Done"), 1),
+        {
+          event: { type: "turn_completed", provider: "claude" } as AgentStreamEventPayload,
+          seq: undefined,
+          epoch: undefined,
+          timestamp: new Date(3000),
+        },
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      currentAgent: {
+        status: "running",
+        updatedAt: new Date(1000),
+        lastActivityAt: new Date(1000),
+      },
+    });
+
+    expect(result.head).toEqual([]);
+    expect(result.tail).toHaveLength(1);
+    expect(result.agentChanged).toBe(true);
+    expect(result.agent).toMatchObject({
+      status: "idle",
+      updatedAt: new Date(3000),
+      lastActivityAt: new Date(3000),
+    });
+  });
+});
+
+describe("createAgentStreamReducerQueue", () => {
+  function createManualScheduler() {
+    let nextId = 1;
+    const callbacks = new Map<number, () => void>();
+    return {
+      schedule(callback: () => void) {
+        const id = nextId;
+        nextId += 1;
+        callbacks.set(id, callback);
+        return id;
+      },
+      cancel(id: number) {
+        callbacks.delete(id);
+      },
+      flushOne() {
+        const entry = callbacks.entries().next().value;
+        if (!entry) {
+          throw new Error("Expected a scheduled callback");
+        }
+        const [id, callback] = entry;
+        callbacks.delete(id);
+        callback();
+      },
+      get size() {
+        return callbacks.size;
+      },
+    };
+  }
+
+  it("coalesces multiple events for one agent into one scheduled commit", () => {
+    const scheduler = createManualScheduler();
+    const commits: Array<{ agentId: string; headText: string; cursorEndSeq: number | null }> = [];
+    let currentTail: StreamItem[] = [];
+    let currentHead: StreamItem[] = [];
+
+    const queue = createAgentStreamReducerQueue({
+      getSnapshot: () => ({
+        currentTail,
+        currentHead,
+        currentCursor: undefined,
+        currentAgent: null,
+      }),
+      commit: (agentId, result) => {
+        currentTail = result.tail;
+        currentHead = result.head;
+        commits.push({
+          agentId,
+          headText: result.head[0]?.kind === "assistant_message" ? result.head[0].text : "",
+          cursorEndSeq: result.cursor?.endSeq ?? null,
+        });
+      },
+      handleSideEffects: () => {},
+      scheduleFlush: scheduler.schedule,
+      cancelFlush: scheduler.cancel,
+    });
+
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent("Hello"), 1));
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent(" world"), 2));
+
+    expect(scheduler.size).toBe(1);
+    expect(commits).toEqual([]);
+
+    scheduler.flushOne();
+
+    expect(commits).toEqual([
+      {
+        agentId: "agent-1",
+        headText: "Hello world",
+        cursorEndSeq: 2,
+      },
+    ]);
+    expect(scheduler.size).toBe(0);
+  });
+
+  it("flushes queued events synchronously for one agent before canonical history is applied", () => {
+    const scheduler = createManualScheduler();
+    const commits: string[] = [];
+    const queue = createAgentStreamReducerQueue({
+      getSnapshot: () => ({
+        currentTail: [],
+        currentHead: [],
+        currentCursor: undefined,
+        currentAgent: null,
+      }),
+      commit: (agentId, result) => {
+        commits.push(
+          `${agentId}:${result.head[0]?.kind === "assistant_message" ? result.head[0].text : ""}`,
+        );
+      },
+      handleSideEffects: () => {},
+      scheduleFlush: scheduler.schedule,
+      cancelFlush: scheduler.cancel,
+    });
+
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent("queued"), 1));
+    queue.flushAgent("agent-1");
+
+    expect(commits).toEqual(["agent-1:queued"]);
+    expect(scheduler.size).toBe(0);
+  });
+
+  it("flushes queued events synchronously before disposal", () => {
+    const scheduler = createManualScheduler();
+    const commits: string[] = [];
+    const queue = createAgentStreamReducerQueue({
+      getSnapshot: () => ({
+        currentTail: [],
+        currentHead: [],
+        currentCursor: undefined,
+        currentAgent: null,
+      }),
+      commit: (agentId, result) => {
+        commits.push(
+          `${agentId}:${result.head[0]?.kind === "assistant_message" ? result.head[0].text : ""}`,
+        );
+      },
+      handleSideEffects: () => {},
+      scheduleFlush: scheduler.schedule,
+      cancelFlush: scheduler.cancel,
+    });
+
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent("queued"), 1));
+    queue.dispose({ flush: true });
+
+    expect(commits).toEqual(["agent-1:queued"]);
+    expect(scheduler.size).toBe(0);
   });
 });

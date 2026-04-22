@@ -109,6 +109,7 @@ describe("node-entrypoint-launcher", () => {
         env: {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
+          NODE_ENV: "production",
         },
       });
     });
@@ -131,6 +132,25 @@ describe("node-entrypoint-launcher", () => {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
         },
+      });
+    });
+
+    it("forces packaged launches to production even when NODE_ENV is inherited as development", () => {
+      expect(
+        createNodeEntrypointInvocation({
+          execPath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
+          isPackaged: true,
+          packagedRunnerPath:
+            "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
+          entrypoint: CLI_ENTRYPOINT,
+          argvMode: "node-script",
+          args: [],
+          baseEnv: { PATH: "/usr/bin", NODE_ENV: "development" },
+        }).env,
+      ).toMatchObject({
+        PATH: "/usr/bin",
+        ELECTRON_RUN_AS_NODE: "1",
+        NODE_ENV: "production",
       });
     });
 
@@ -158,6 +178,7 @@ describe("node-entrypoint-launcher", () => {
         env: {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
+          NODE_ENV: "production",
         },
       });
     });

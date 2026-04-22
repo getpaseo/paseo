@@ -21,7 +21,7 @@ describe("CodexAppServerAgentClient spawn error handling", () => {
     process.on("uncaughtException", onUncaught);
 
     try {
-      await expect(client.listModels()).rejects.toThrow();
+      await expect(client.listModels({ cwd: "/tmp/codex-models", force: false })).rejects.toThrow();
       // Drain microtask queue to ensure no deferred uncaught errors
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(uncaughtErrors).toHaveLength(0);

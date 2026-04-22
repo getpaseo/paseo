@@ -533,10 +533,22 @@ export function CombinedModelSelector({
     return { kind: "provider", providerId, providerLabel: label };
   }, [allProviderModels, providerDefinitions]);
 
+  const computeInitialView = useCallback((): SelectorView => {
+    if (singleProviderView) return singleProviderView;
+
+    const selectedFavoriteKey = `${selectedProvider}:${selectedModel}`;
+    if (selectedProvider && selectedModel && !favoriteKeys.has(selectedFavoriteKey)) {
+      const label = resolveProviderLabel(providerDefinitions, selectedProvider);
+      return { kind: "provider", providerId: selectedProvider, providerLabel: label };
+    }
+
+    return { kind: "all" };
+  }, [singleProviderView, selectedProvider, selectedModel, favoriteKeys, providerDefinitions]);
+
   const handleOpenChange = useCallback(
     (open: boolean) => {
       setIsOpen(open);
-      setView(singleProviderView ?? { kind: "all" });
+      setView(computeInitialView());
       if (open) {
         onOpen?.();
       } else {
@@ -544,33 +556,35 @@ export function CombinedModelSelector({
         onClose?.();
       }
     },
-    [onOpen, onClose, singleProviderView],
+    [onOpen, onClose, computeInitialView],
   );
 
   const handleSelect = useCallback(
     (provider: string, modelId: string) => {
       onSelect(provider as AgentProvider, modelId);
       setIsOpen(false);
-      setView(singleProviderView ?? { kind: "all" });
       setSearchQuery("");
     },
-    [onSelect, singleProviderView],
+    [onSelect],
   );
 
-  const ProviderIcon = getProviderIcon(selectedProvider);
-  const selectedProviderLabel = useMemo(
-    () => resolveProviderLabel(providerDefinitions, selectedProvider),
-    [providerDefinitions, selectedProvider],
-  );
+  const hasSelectedProvider = selectedProvider.trim().length > 0;
+  const ProviderIcon = hasSelectedProvider ? getProviderIcon(selectedProvider) : null;
 
   const selectedModelLabel = useMemo(() => {
+    if (!selectedModel) {
+      if (!hasSelectedProvider) {
+        return "Select model";
+      }
+      return isLoading ? "Loading..." : "Select model";
+    }
     const models = allProviderModels.get(selectedProvider);
     if (!models) {
       return isLoading ? "Loading..." : "Select model";
     }
     const model = models.find((entry) => entry.id === selectedModel);
     return model?.label ?? resolveDefaultModelLabel(models);
-  }, [allProviderModels, isLoading, selectedModel, selectedProvider]);
+  }, [allProviderModels, hasSelectedProvider, isLoading, selectedModel, selectedProvider]);
 
   const desktopFixedHeight = useMemo(() => {
     if (view.kind !== "provider") {
@@ -586,8 +600,8 @@ export function CombinedModelSelector({
       return selectedModelLabel;
     }
 
-    return buildSelectedTriggerLabel(selectedProviderLabel, selectedModelLabel);
-  }, [selectedModelLabel, selectedProviderLabel]);
+    return buildSelectedTriggerLabel(selectedModelLabel);
+  }, [selectedModelLabel]);
 
   useEffect(() => {
     if (platformIsWeb) {
@@ -633,7 +647,9 @@ export function CombinedModelSelector({
           })
         ) : (
           <>
-            <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+            {ProviderIcon ? (
+              <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+            ) : null}
             <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
               {triggerLabel}
             </Text>
@@ -647,7 +663,6 @@ export function CombinedModelSelector({
         onSelect={() => {}}
         open={isOpen}
         onOpenChange={handleOpenChange}
-        stackBehavior="push"
         anchorRef={anchorRef}
         desktopPlacement="top-start"
         desktopMinWidth={360}
@@ -788,11 +803,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
-  level2Header: {
-    backgroundColor: theme.colors.surface1,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
+  level2Header: {},
   backButton: {
     flexDirection: "row",
     alignItems: "center",

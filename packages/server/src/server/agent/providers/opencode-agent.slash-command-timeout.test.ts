@@ -66,7 +66,10 @@ describe("OpenCodeAgentSession slash command timeout handling", () => {
     } as never);
 
     vi.spyOn(OpenCodeServerManager, "getInstance").mockReturnValue({
-      ensureRunning: vi.fn().mockResolvedValue({ port: 1234, url: "http://127.0.0.1:1234" }),
+      acquire: vi.fn().mockResolvedValue({
+        server: { port: 1234, url: "http://127.0.0.1:1234" },
+        release: vi.fn(),
+      }),
     } as never);
 
     const client = new OpenCodeAgentClient(createTestLogger());

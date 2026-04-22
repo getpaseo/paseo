@@ -3,6 +3,7 @@ import { loadConfig, resolvePaseoHome, DaemonClient } from "@getpaseo/server";
 import path from "node:path";
 import WebSocket from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
+import { resolveCliVersion } from "../version.js";
 
 export interface ConnectOptions {
   host?: string;
@@ -207,6 +208,7 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
       url: target.url,
       clientId,
       clientType: "cli",
+      appVersion: resolveCliVersion(),
       connectTimeoutMs: timeout,
       webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
         nodeWebSocketFactory(url, {

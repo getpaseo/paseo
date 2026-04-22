@@ -29,7 +29,6 @@ function shortcutContext(
     isDesktop: false,
     focusScope: "other",
     commandCenterOpen: false,
-    hasSelectedAgent: true,
     ...overrides,
   };
 }
@@ -281,11 +280,10 @@ describe("keyboard-shortcuts", () => {
       payload: { kind: "voice-mute-toggle" },
     },
     {
-      name: "lets Escape continue to local handlers while routing dictation cancel",
+      name: "routes Escape to agent interrupt outside terminal focus",
       event: { key: "Escape", code: "Escape" },
       context: { focusScope: "message-input" },
-      action: "message-input.action",
-      payload: { kind: "dictation-cancel" },
+      action: "agent.interrupt",
       preventDefault: false,
       stopPropagation: false,
     },
@@ -353,6 +351,16 @@ describe("keyboard-shortcuts", () => {
       name: "does not route message-input actions when terminal is focused",
       event: { key: "d", code: "KeyD", metaKey: true },
       context: { isMac: true, focusScope: "terminal" },
+    },
+    {
+      name: "does not interrupt agent when terminal is focused",
+      event: { key: "Escape", code: "Escape" },
+      context: { focusScope: "terminal" },
+    },
+    {
+      name: "does not interrupt agent when command center is open",
+      event: { key: "Escape", code: "Escape" },
+      context: { commandCenterOpen: true },
     },
     {
       name: "does not bind pane shortcuts on non-mac platforms",
@@ -477,10 +485,11 @@ describe("keyboard-shortcut help sections", () => {
       },
     },
     {
-      name: "uses mod+b as non-mac left sidebar shortcut",
+      name: "uses mod+b for the left sidebar and mod+period for both sidebars on non-mac",
       context: { isMac: false, isDesktop: false },
       expectedKeys: {
         "toggle-left-sidebar": ["mod", "B"],
+        "toggle-both-sidebars": ["mod", "."],
       },
     },
   ];

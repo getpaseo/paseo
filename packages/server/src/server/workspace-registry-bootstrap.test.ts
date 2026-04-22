@@ -32,7 +32,6 @@ function createNoopWorkspaceGitService(): WorkspaceGitService {
           featuresEnabled: false,
           pullRequest: null,
           error: null,
-          refreshedAt: null,
         },
       },
       unsubscribe: () => {},
@@ -57,9 +56,9 @@ function createNoopWorkspaceGitService(): WorkspaceGitService {
         featuresEnabled: false,
         pullRequest: null,
         error: null,
-        refreshedAt: null,
       },
     }),
+    resolveRepoRemoteUrl: async () => null,
     refresh: async () => {},
     requestWorkingTreeWatch: async () => ({
       repoRoot: null,

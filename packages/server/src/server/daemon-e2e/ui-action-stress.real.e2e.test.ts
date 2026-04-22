@@ -289,7 +289,6 @@ async function resolveLatestAssistantMessage(
     const timeline = await client.fetchAgentTimeline(agentId, {
       direction: "tail",
       limit: 300,
-      projection: "canonical",
     });
     for (let idx = timeline.entries.length - 1; idx >= 0; idx -= 1) {
       const entry = timeline.entries[idx];

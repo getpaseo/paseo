@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
@@ -11,6 +12,7 @@ import {
   closeTabInLayout,
   collectAllPanes,
   collectAllTabs,
+  convertDraftToAgentInLayout,
   createDefaultLayout,
   findPaneById,
   findPaneContainingTab,
@@ -20,7 +22,9 @@ import {
   insertSplit,
   moveTabToPaneInLayout,
   normalizeLayout,
-  openTabInLayout,
+  openTabInLayoutBackground,
+  openTabInLayoutFocused,
+  reconcileWorkspaceTabs,
   removePaneFromTree,
   removeTabFromTree,
   reorderFocusedPaneTabsInLayout,
@@ -31,6 +35,8 @@ import {
   type SplitGroup,
   type SplitNode,
   type SplitPane,
+  type WorkspaceTabReconcileState,
+  type WorkspaceTabSnapshot,
   type WorkspaceLayout,
 } from "@/stores/workspace-layout-actions";
 import { normalizeWorkspaceTabTarget } from "@/utils/workspace-tab-identity";
@@ -48,17 +54,27 @@ export {
   removePaneFromTree,
   removeTabFromTree,
 };
-export type { SplitGroup, SplitNode, SplitPane, WorkspaceLayout };
+export type {
+  SplitGroup,
+  SplitNode,
+  SplitPane,
+  WorkspaceLayout,
+  WorkspaceTabReconcileState,
+  WorkspaceTabSnapshot,
+};
 
 interface WorkspaceLayoutStore {
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
-  openTab: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  openTabInBackground: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
   retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
+  convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
+  reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
   reorderTabs: (workspaceKey: string, tabIds: string[]) => void;
   getWorkspaceTabs: (workspaceKey: string) => WorkspaceTab[];
   splitPane: (
@@ -84,6 +100,7 @@ interface WorkspaceLayoutStore {
   unpinAgent: (workspaceKey: string, agentId: string) => void;
   hideAgent: (workspaceKey: string, agentId: string) => void;
   unhideAgent: (workspaceKey: string, agentId: string) => void;
+  purgeWorkspace: (workspaceKey: string) => void;
 }
 
 const MAX_TREE_DEPTH = 4;
@@ -152,14 +169,44 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
       splitSizesByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
       hiddenAgentIdsByWorkspace: {},
-      openTab: (workspaceKey, target) => {
+      openTabFocused: (workspaceKey, target) => {
         const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
         const normalizedTarget = normalizeWorkspaceTabTarget(target);
         if (!normalizedWorkspaceKey || !normalizedTarget) {
           return null;
         }
 
-        const result = openTabInLayout({
+        const result = openTabInLayoutFocused({
+          layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+          target: normalizedTarget,
+          now: Date.now(),
+        });
+
+        set((state) => ({
+          hiddenAgentIdsByWorkspace:
+            normalizedTarget.kind !== "agent"
+              ? state.hiddenAgentIdsByWorkspace
+              : removeAgentIdFromWorkspaceSet(
+                  state.hiddenAgentIdsByWorkspace,
+                  normalizedWorkspaceKey,
+                  normalizedTarget.agentId,
+                ),
+          layoutByWorkspace: {
+            ...state.layoutByWorkspace,
+            [normalizedWorkspaceKey]: result.layout,
+          },
+        }));
+
+        return result.tabId;
+      },
+      openTabInBackground: (workspaceKey, target) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        const normalizedTarget = normalizeWorkspaceTabTarget(target);
+        if (!normalizedWorkspaceKey || !normalizedTarget) {
+          return null;
+        }
+
+        const result = openTabInLayoutBackground({
           layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
           target: normalizedTarget,
           now: Date.now(),
@@ -263,6 +310,65 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         }));
 
         return result.tabId;
+      },
+      convertDraftToAgent: (workspaceKey, tabId, agentId) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        const normalizedTabId = trimNonEmpty(tabId);
+        const normalizedAgentId = trimNonEmpty(agentId);
+        if (!normalizedWorkspaceKey || !normalizedTabId || !normalizedAgentId) {
+          return null;
+        }
+
+        const result = convertDraftToAgentInLayout({
+          layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+          tabId: normalizedTabId,
+          agentId: normalizedAgentId,
+        });
+        if (!result) {
+          return null;
+        }
+
+        set((state) => ({
+          hiddenAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
+            state.hiddenAgentIdsByWorkspace,
+            normalizedWorkspaceKey,
+            normalizedAgentId,
+          ),
+          layoutByWorkspace: {
+            ...state.layoutByWorkspace,
+            [normalizedWorkspaceKey]: result.layout,
+          },
+        }));
+
+        return result.tabId;
+      },
+      reconcileTabs: (workspaceKey, snapshot) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        if (!normalizedWorkspaceKey) {
+          return;
+        }
+
+        set((state) => {
+          const currentLayout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+          const nextState = reconcileWorkspaceTabs(
+            {
+              layout: currentLayout,
+              pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+              hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
+            },
+            snapshot,
+          );
+          if (nextState.layout === currentLayout) {
+            return state;
+          }
+
+          return {
+            layoutByWorkspace: {
+              ...state.layoutByWorkspace,
+              [normalizedWorkspaceKey]: nextState.layout,
+            },
+          };
+        });
       },
       reorderTabs: (workspaceKey, tabIds) => {
         const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
@@ -565,6 +671,37 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
           };
         });
       },
+      purgeWorkspace: (workspaceKey) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        if (!normalizedWorkspaceKey) {
+          return;
+        }
+
+        set((state) => {
+          const hasAny =
+            normalizedWorkspaceKey in state.layoutByWorkspace ||
+            normalizedWorkspaceKey in state.splitSizesByWorkspace ||
+            normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
+            normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace;
+          if (!hasAny) {
+            return state;
+          }
+          const { [normalizedWorkspaceKey]: _layout, ...layoutByWorkspace } =
+            state.layoutByWorkspace;
+          const { [normalizedWorkspaceKey]: _splits, ...splitSizesByWorkspace } =
+            state.splitSizesByWorkspace;
+          const { [normalizedWorkspaceKey]: _pinned, ...pinnedAgentIdsByWorkspace } =
+            state.pinnedAgentIdsByWorkspace;
+          const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
+            state.hiddenAgentIdsByWorkspace;
+          return {
+            layoutByWorkspace,
+            splitSizesByWorkspace,
+            pinnedAgentIdsByWorkspace,
+            hiddenAgentIdsByWorkspace,
+          };
+        });
+      },
     }),
     {
       name: "workspace-layout-state",
@@ -583,3 +720,22 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
     },
   ),
 );
+
+export function useWorkspaceLayoutStoreHydrated(): boolean {
+  const [hasHydrated, setHasHydrated] = useState(() =>
+    useWorkspaceLayoutStore.persist.hasHydrated(),
+  );
+
+  useEffect(() => {
+    if (useWorkspaceLayoutStore.persist.hasHydrated()) {
+      setHasHydrated(true);
+      return;
+    }
+
+    return useWorkspaceLayoutStore.persist.onFinishHydration(() => {
+      setHasHydrated(true);
+    });
+  }, []);
+
+  return hasHydrated;
+}

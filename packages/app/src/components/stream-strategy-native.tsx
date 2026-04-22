@@ -8,6 +8,7 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import type { StreamItem } from "@/types/stream";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { useBottomAnchorController } from "./use-bottom-anchor-controller";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./stream-strategy";
 import {
@@ -37,6 +38,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     baseListContentContainerStyle,
     strategy,
   } = props;
+  const { renderHistoryMountedRow, renderLiveHeadRow, renderLiveAuxiliary } = renderers;
   const flatListRef = useRef<FlatList<StreamItem>>(null);
   const streamViewportMetricsRef = useRef({
     containerKey: "native-virtualized",
@@ -190,105 +192,91 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
   }, [agentId, bottomAnchorController, markNativeViewportSettling, viewportRef]);
 
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-      const previousOffsetY = scrollOffsetYRef.current;
-      scrollOffsetYRef.current = contentOffset.y;
-      streamViewportMetricsRef.current = {
-        contentHeight: Math.max(0, contentSize.height),
-        viewportWidth: Math.max(0, layoutMeasurement.width),
-        viewportHeight: Math.max(0, layoutMeasurement.height),
-        containerKey: "native-virtualized",
-        offsetY: contentOffset.y,
-        viewportMeasuredForKey: "native-virtualized",
-        contentMeasuredForKey: "native-virtualized",
-      };
+  const handleScroll = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const previousOffsetY = scrollOffsetYRef.current;
+    scrollOffsetYRef.current = contentOffset.y;
+    streamViewportMetricsRef.current = {
+      contentHeight: Math.max(0, contentSize.height),
+      viewportWidth: Math.max(0, layoutMeasurement.width),
+      viewportHeight: Math.max(0, layoutMeasurement.height),
+      containerKey: "native-virtualized",
+      offsetY: contentOffset.y,
+      viewportMeasuredForKey: "native-virtualized",
+      contentMeasuredForKey: "native-virtualized",
+    };
 
-      const nearBottom = isNearBottomForStreamRenderStrategy({
-        strategy,
-        offsetY: contentOffset.y,
-        threshold: 32,
-        contentHeight: streamViewportMetricsRef.current.contentHeight,
-        viewportHeight: streamViewportMetricsRef.current.viewportHeight,
+    const nearBottom = isNearBottomForStreamRenderStrategy({
+      strategy,
+      offsetY: contentOffset.y,
+      threshold: 32,
+      contentHeight: streamViewportMetricsRef.current.contentHeight,
+      viewportHeight: streamViewportMetricsRef.current.viewportHeight,
+    });
+    onNearBottomChange(nearBottom);
+
+    if (programmaticScrollEventBudgetRef.current > 0 && contentOffset.y <= 8) {
+      programmaticScrollEventBudgetRef.current -= 1;
+    } else {
+      programmaticScrollEventBudgetRef.current = 0;
+      bottomAnchorController.handleScrollNearBottomChange({
+        nextIsNearBottom: nearBottom,
+        scrollDelta: contentOffset.y - previousOffsetY,
       });
-      onNearBottomChange(nearBottom);
+    }
+  });
 
-      if (programmaticScrollEventBudgetRef.current > 0 && contentOffset.y <= 8) {
-        programmaticScrollEventBudgetRef.current -= 1;
-      } else {
-        programmaticScrollEventBudgetRef.current = 0;
-        bottomAnchorController.handleScrollNearBottomChange({
-          nextIsNearBottom: nearBottom,
-          scrollDelta: contentOffset.y - previousOffsetY,
-        });
-      }
-    },
-    [bottomAnchorController, onNearBottomChange, strategy],
-  );
+  const handleListLayout = useStableEvent((event: LayoutChangeEvent) => {
+    const previousViewportWidth = streamViewportMetricsRef.current.viewportWidth;
+    const previousViewportHeight = streamViewportMetricsRef.current.viewportHeight;
+    const viewportWidth = Math.max(0, event.nativeEvent.layout.width);
+    const viewportHeight = Math.max(0, event.nativeEvent.layout.height);
+    const viewportChanged =
+      (previousViewportWidth > 0 && previousViewportWidth !== viewportWidth) ||
+      (previousViewportHeight > 0 && previousViewportHeight !== viewportHeight);
+    streamViewportMetricsRef.current = {
+      ...streamViewportMetricsRef.current,
+      containerKey: "native-virtualized",
+      viewportWidth,
+      viewportHeight,
+      viewportMeasuredForKey: "native-virtualized",
+    };
+    if (viewportChanged) {
+      markNativeViewportSettling();
+    }
+    bottomAnchorController.handleViewportMetricsChange({
+      previousViewportWidth,
+      viewportWidth,
+      previousViewportHeight,
+      viewportHeight,
+    });
+  });
 
-  const handleListLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      const previousViewportWidth = streamViewportMetricsRef.current.viewportWidth;
-      const previousViewportHeight = streamViewportMetricsRef.current.viewportHeight;
-      const viewportWidth = Math.max(0, event.nativeEvent.layout.width);
-      const viewportHeight = Math.max(0, event.nativeEvent.layout.height);
-      const viewportChanged =
-        (previousViewportWidth > 0 && previousViewportWidth !== viewportWidth) ||
-        (previousViewportHeight > 0 && previousViewportHeight !== viewportHeight);
-      streamViewportMetricsRef.current = {
-        ...streamViewportMetricsRef.current,
-        containerKey: "native-virtualized",
-        viewportWidth,
-        viewportHeight,
-        viewportMeasuredForKey: "native-virtualized",
-      };
-      if (viewportChanged) {
-        markNativeViewportSettling();
-      }
-      bottomAnchorController.handleViewportMetricsChange({
-        previousViewportWidth,
-        viewportWidth,
-        previousViewportHeight,
-        viewportHeight,
-      });
-    },
-    [bottomAnchorController, markNativeViewportSettling],
-  );
+  const handleContentSizeChange = useStableEvent((_width: number, height: number) => {
+    const previousContentHeight = streamViewportMetricsRef.current.contentHeight;
+    const nextContentHeight = Math.max(0, height);
+    streamViewportMetricsRef.current = {
+      ...streamViewportMetricsRef.current,
+      containerKey: "native-virtualized",
+      contentHeight: nextContentHeight,
+      contentMeasuredForKey: "native-virtualized",
+    };
+    bottomAnchorController.handleContentSizeChange({
+      previousContentHeight,
+      contentHeight: nextContentHeight,
+    });
+  });
 
-  const handleContentSizeChange = useCallback(
-    (_width: number, height: number) => {
-      const previousContentHeight = streamViewportMetricsRef.current.contentHeight;
-      const nextContentHeight = Math.max(0, height);
-      streamViewportMetricsRef.current = {
-        ...streamViewportMetricsRef.current,
-        containerKey: "native-virtualized",
-        contentHeight: nextContentHeight,
-        contentMeasuredForKey: "native-virtualized",
-      };
-      bottomAnchorController.handleContentSizeChange({
-        previousContentHeight,
-        contentHeight: nextContentHeight,
-      });
-    },
-    [bottomAnchorController],
-  );
-
-  const renderItem = useCallback(
-    ({ item, index }: ListRenderItemInfo<StreamItem>) => {
-      const rendered = renderers.renderHistoryMountedRow(item, index, historyRows);
-      return rendered ? <Fragment>{rendered}</Fragment> : null;
-    },
-    [historyRows, renderers],
-  );
+  const renderItem = useStableEvent(({ item, index }: ListRenderItemInfo<StreamItem>) => {
+    const rendered = renderHistoryMountedRow(item, index, historyRows);
+    return rendered ? <Fragment>{rendered}</Fragment> : null;
+  });
 
   const liveHeaderContent = useMemo(() => {
     const liveHeadRows = segments.liveHead.map((item, index) => (
-      <Fragment key={item.id}>
-        {renderers.renderLiveHeadRow(item, index, segments.liveHead)}
-      </Fragment>
+      <Fragment key={item.id}>{renderLiveHeadRow(item, index, segments.liveHead)}</Fragment>
     ));
-    const liveAuxiliary = renderers.renderLiveAuxiliary();
+    const liveAuxiliary = renderLiveAuxiliary();
     if (
       liveHeadRows.length === 0 &&
       !liveAuxiliary &&
@@ -303,7 +291,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         {liveAuxiliary}
       </Fragment>
     );
-  }, [boundary, listEmptyComponent, renderers, segments.liveHead]);
+  }, [boundary, listEmptyComponent, renderLiveAuxiliary, renderLiveHeadRow, segments.liveHead]);
 
   return (
     <FlatList
@@ -321,8 +309,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
       maintainVisibleContentPosition={DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION}
-      initialNumToRender={12}
-      windowSize={10}
+      initialNumToRender={40}
+      maxToRenderPerBatch={40}
+      updateCellsBatchingPeriod={0}
+      windowSize={21}
+      removeClippedSubviews={false}
       scrollEnabled={scrollEnabled}
       showsVerticalScrollIndicator
       inverted

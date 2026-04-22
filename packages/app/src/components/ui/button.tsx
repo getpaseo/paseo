@@ -181,7 +181,7 @@ export function Button({
       ]}
     >
       {renderIcon()}
-      <Text style={resolvedTextStyle}>{children}</Text>
+      {children != null ? <Text style={resolvedTextStyle}>{children}</Text> : null}
     </Pressable>
   );
 }

@@ -1,6 +1,7 @@
 export type KeyboardActionScope = "global" | "message-input" | "sidebar" | "workspace";
 
 export type KeyboardActionId =
+  | "agent.interrupt"
   | "message-input.focus"
   | "message-input.send"
   | "message-input.dictation-toggle"
@@ -24,10 +25,12 @@ export type KeyboardActionId =
   | "workspace.pane.move-tab.down"
   | "workspace.pane.close"
   | "workspace.terminal.new"
+  | "sidebar.toggle.right"
   | "worktree.new"
   | "worktree.archive";
 
 export type KeyboardActionDefinition =
+  | { id: "agent.interrupt"; scope: KeyboardActionScope }
   | { id: "message-input.focus"; scope: KeyboardActionScope }
   | { id: "message-input.send"; scope: KeyboardActionScope }
   | { id: "message-input.dictation-toggle"; scope: KeyboardActionScope }
@@ -51,6 +54,7 @@ export type KeyboardActionDefinition =
   | { id: "workspace.pane.move-tab.down"; scope: KeyboardActionScope }
   | { id: "workspace.pane.close"; scope: KeyboardActionScope }
   | { id: "workspace.terminal.new"; scope: KeyboardActionScope }
+  | { id: "sidebar.toggle.right"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "worktree.archive"; scope: KeyboardActionScope };
 

@@ -1,0 +1,26 @@
+appId: ${PASEO_MAESTRO_APP_ID}
+---
+# Android regression/reproduction flow for creating a workspace from an existing project.
+# The shell wrapper prepares the daemon/project and captures logcat around this flow.
+
+- launchApp:
+    clearState: true
+
+- runFlow: flows/android-dev-client.yaml
+- runFlow: flows/connect-direct-if-welcome.yaml
+
+- extendedWaitUntil:
+    visible: "What shall we build today?"
+    timeout: 60000
+
+- takeScreenshot: 01-connected
+
+- runFlow: flows/open-prepared-project-sidebar.yaml
+- runFlow: flows/new-workspace-open-from-sidebar.yaml
+
+- takeScreenshot: 02-new-workspace
+
+- runFlow: flows/new-workspace-select-codex-gpt54.yaml
+- runFlow: flows/new-workspace-submit-and-assert-created.yaml
+
+- takeScreenshot: 03-created-workspace

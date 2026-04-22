@@ -1,10 +1,13 @@
 import { useEffect, useRef, useCallback } from "react";
 import { AppState } from "react-native";
 import type { DaemonClient } from "@server/client/daemon-client";
-import { isWeb, isNative } from "@/constants/platform";
+import { getIsElectron, isWeb, isNative } from "@/constants/platform";
+import { getDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
+import { useStableEvent } from "@/hooks/use-stable-event";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const ACTIVITY_HEARTBEAT_THROTTLE_MS = 5_000;
+const DESKTOP_IDLE_POLL_INTERVAL_MS = 5_000;
 
 interface ClientActivityOptions {
   client: DaemonClient;
@@ -39,7 +42,7 @@ export function useClientActivity({
     lastActivityAtRef.current = new Date();
   }, []);
 
-  const sendHeartbeat = useCallback(() => {
+  const sendHeartbeat = useStableEvent(() => {
     if (!client.isConnected) return;
     client.sendHeartbeat({
       deviceType,
@@ -48,7 +51,7 @@ export function useClientActivity({
       appVisible: appVisibleRef.current,
       appVisibilityChangedAt: appVisibilityChangedAtRef.current.toISOString(),
     });
-  }, [client, deviceType, focusedAgentId]);
+  });
 
   const setAppVisible = useCallback(
     (nextVisible: boolean) => {
@@ -130,6 +133,31 @@ export function useClientActivity({
     };
   }, [maybeSendImmediateHeartbeat, recordUserActivity, setAppVisible]);
 
+  // Track OS-wide activity in Electron so backgrounded desktop windows still report presence.
+  useEffect(() => {
+    if (!getIsElectron()) return;
+
+    let disposed = false;
+    const pollSystemIdleTime = async () => {
+      const systemIdleMs = await getDesktopSystemIdleTimeMs();
+      if (disposed || systemIdleMs === null) return;
+
+      const systemLastActivityAtMs = Date.now() - systemIdleMs;
+      if (systemLastActivityAtMs > lastActivityAtRef.current.getTime()) {
+        lastActivityAtRef.current = new Date(systemLastActivityAtMs);
+      }
+    };
+
+    const interval = setInterval(() => {
+      void pollSystemIdleTime();
+    }, DESKTOP_IDLE_POLL_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+    };
+  }, [client]);
+
   // Send heartbeat on focused agent change
   useEffect(() => {
     if (prevFocusedAgentIdRef.current !== focusedAgentId) {
@@ -163,10 +191,6 @@ export function useClientActivity({
         stopHeartbeat();
       }
     });
-
-    if (client.isConnected) {
-      startHeartbeat();
-    }
 
     return () => {
       unsubscribe();

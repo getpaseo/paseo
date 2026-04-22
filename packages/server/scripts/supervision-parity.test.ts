@@ -14,4 +14,23 @@ describe("supervision parity", () => {
 
     expect(daemonRunnerCalls + devRunnerCalls).toBe(1);
   });
+
+  test("dev runner waits asynchronously for supervisor shutdown", () => {
+    const devRunner = readFileSync(new URL("./dev-runner.ts", import.meta.url), "utf8");
+
+    expect(devRunner).toContain('import { spawn } from "node:child_process"');
+    expect(devRunner).not.toContain("spawnSync");
+    expect(devRunner).toContain('supervisor.on("exit"');
+  });
+
+  test("npm dev script runs dev-runner as the signal-handling node process", () => {
+    const packageJson = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { scripts?: Record<string, string> };
+
+    const devScript = packageJson.scripts?.dev ?? "";
+
+    expect(devScript).toContain("node --import tsx scripts/dev-runner.ts");
+    expect(devScript).not.toMatch(/^cross-env NODE_ENV=development tsx scripts\/dev-runner\.ts$/);
+  });
 });

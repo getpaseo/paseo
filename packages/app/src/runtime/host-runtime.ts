@@ -1,15 +1,17 @@
 import { useSyncExternalStore, useCallback, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import equal from "fast-deep-equal/es6";
 import {
   DaemonClient,
   type ConnectionState,
+  type FetchAgentsEntry,
   type FetchAgentsOptions,
 } from "@server/client/daemon-client";
 import {
   connectionFromListen,
   normalizeStoredHostProfile,
   upsertHostConnectionInProfiles,
-  registryHasDirectEndpoint,
+  registryHasConnection,
   type HostConnection,
   type HostProfile,
 } from "@/types/host-connection";
@@ -29,8 +31,9 @@ import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
-import { applyFetchedAgentDirectory } from "@/utils/agent-directory-sync";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { isDev } from "@/constants/platform";
+import { replaceFetchedAgentDirectory } from "@/utils/agent-directory-sync";
+import { useSessionStore } from "@/stores/session-store";
 
 export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "offline" | "error";
 
@@ -66,6 +69,16 @@ export type HostRuntimeSnapshot = {
   probeByConnectionId: Map<string, ConnectionProbeState>;
   clientGeneration: number;
 };
+
+type HostRuntimeSnapshotPatch = Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">>;
+
+function setSnapshotPatchField<Key extends keyof HostRuntimeSnapshotPatch>(
+  patch: HostRuntimeSnapshotPatch,
+  key: Key,
+  value: HostRuntimeSnapshot[Key],
+): void {
+  patch[key] = value;
+}
 
 export function isHostRuntimeConnected(snapshot: HostRuntimeSnapshot | null): boolean {
   return snapshot?.connectionStatus === "online";
@@ -422,6 +435,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         clientType: "mobile" as const,
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
+        ...(isDev ? { runtimeMetricsIntervalMs: 10_000 } : {}),
       };
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
@@ -475,6 +489,7 @@ export class HostRuntimeController {
   private clientIdHash: string | null = null;
   private switchRequestVersion = 0;
   private probeRequestVersion = 0;
+  private probeCycleInFlight: Promise<void> | null = null;
 
   constructor(input: {
     host: HostProfile;
@@ -615,6 +630,20 @@ export class HostRuntimeController {
   }
 
   async runProbeCycleNow(): Promise<void> {
+    if (this.probeCycleInFlight) {
+      return this.probeCycleInFlight;
+    }
+
+    const cycle = this.runProbeCycle().finally(() => {
+      if (this.probeCycleInFlight === cycle) {
+        this.probeCycleInFlight = null;
+      }
+    });
+    this.probeCycleInFlight = cycle;
+    return cycle;
+  }
+
+  private async runProbeCycle(): Promise<void> {
     const requestVersion = ++this.probeRequestVersion;
     if (this.host.connections.length === 0) {
       if (!this.isCurrentProbeRequest(requestVersion)) {
@@ -650,10 +679,15 @@ export class HostRuntimeController {
     const probeByConnectionId = new Map(this.snapshot.probeByConnectionId);
     for (const connection of connectionsToProbe) {
       this.connectionLastProbedAt.set(connection.id, performance.now());
-      probeByConnectionId.set(connection.id, {
-        status: "pending",
-        latencyMs: null,
-      });
+      const existingProbe = probeByConnectionId.get(connection.id);
+      const shouldPreserveActiveLatency =
+        isOnline && connection.id === activeConnectionId && existingProbe?.status === "available";
+      if (!shouldPreserveActiveLatency) {
+        probeByConnectionId.set(connection.id, {
+          status: "pending",
+          latencyMs: null,
+        });
+      }
     }
     this.updateSnapshot({ probeByConnectionId: new Map(probeByConnectionId) });
 
@@ -787,22 +821,39 @@ export class HostRuntimeController {
       for (const connection of connectionsToProbe) {
         void (async () => {
           let connectedClient: DaemonClient | null = null;
-          let handedOffClient = false;
+          let shouldCloseClient = false;
           try {
-            const { client } = await this.deps.connectToDaemon({
-              host: this.host,
-              connection,
-            });
-            connectedClient = client;
+            const activeClient =
+              this.snapshot.connectionStatus === "online" &&
+              this.snapshot.activeConnectionId === connection.id
+                ? this.snapshot.client
+                : null;
+
+            if (activeClient) {
+              connectedClient = activeClient;
+            } else {
+              const { client, serverId } = await this.deps.connectToDaemon({
+                host: this.host,
+                connection,
+              });
+              if (serverId !== this.host.serverId) {
+                await client.close().catch(() => undefined);
+                throw new Error(
+                  `Connection resolved to ${serverId}, expected ${this.host.serverId}.`,
+                );
+              }
+              connectedClient = client;
+              shouldCloseClient = true;
+            }
 
             if (!this.isCurrentProbeRequest(requestVersion)) {
               return;
             }
 
-            const activated = await maybeActivateFirstAvailable(connection.id, client);
-            handedOffClient = activated;
+            const activated = await maybeActivateFirstAvailable(connection.id, connectedClient);
+            shouldCloseClient = shouldCloseClient && !activated;
 
-            const { rttMs } = await client.ping({ timeoutMs: 5000 });
+            const { rttMs } = await connectedClient.ping({ timeoutMs: 5000 });
             if (!this.isCurrentProbeRequest(requestVersion)) {
               return;
             }
@@ -821,7 +872,7 @@ export class HostRuntimeController {
               publishProbeState();
             }
           } finally {
-            if (connectedClient && !handedOffClient) {
+            if (connectedClient && shouldCloseClient) {
               await connectedClient.close().catch(() => undefined);
             }
             settleProbe();
@@ -831,15 +882,25 @@ export class HostRuntimeController {
     });
   }
 
-  private updateSnapshot(
-    patch: Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">>,
-  ): void {
-    const next: HostRuntimeSnapshot = {
+  private updateSnapshot(patch: HostRuntimeSnapshotPatch): void {
+    const preservedPatch: HostRuntimeSnapshotPatch = { ...patch };
+    let hasChanged = this.host.serverId !== this.snapshot.serverId;
+    for (const key of Object.keys(patch) as Array<keyof HostRuntimeSnapshotPatch>) {
+      const incomingValue = patch[key];
+      if (equal(this.snapshot[key], incomingValue)) {
+        setSnapshotPatchField(preservedPatch, key, this.snapshot[key]);
+        continue;
+      }
+      hasChanged = true;
+    }
+    if (!hasChanged) {
+      return;
+    }
+    this.snapshot = {
       ...this.snapshot,
-      ...patch,
+      ...preservedPatch,
       serverId: this.host.serverId,
     };
-    this.snapshot = next;
     for (const listener of this.listeners) {
       listener();
     }
@@ -1021,7 +1082,7 @@ export class HostRuntimeController {
         state,
         lastError: client.lastError,
       });
-      const patch: Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">> = {
+      const patch: HostRuntimeSnapshotPatch = {
         ...toSnapshotConnectionPatch(this.connectionMachineState),
       };
 
@@ -1076,7 +1137,6 @@ export class HostRuntimeController {
 
 const REGISTRY_STORAGE_KEY = "@paseo:daemon-registry";
 const DEFAULT_LOCALHOST_ENDPOINT = process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim() || "localhost:6767";
-const DEFAULT_LOCALHOST_BOOTSTRAP_KEY = "@paseo:default-localhost-bootstrap-v1";
 const DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS = 2500;
 const CONNECTION_ONLINE_TIMEOUT_MS = 15_000;
 const E2E_STORAGE_KEY = "@paseo:e2e";
@@ -1206,33 +1266,22 @@ export class HostRuntimeStore {
 
   private async bootstrapLocalhost(): Promise<void> {
     try {
-      const alreadyHandled = await AsyncStorage.getItem(DEFAULT_LOCALHOST_BOOTSTRAP_KEY);
-      if (alreadyHandled) {
-        return;
-      }
-
-      if (registryHasDirectEndpoint(this.hosts, DEFAULT_LOCALHOST_ENDPOINT)) {
-        await AsyncStorage.setItem(DEFAULT_LOCALHOST_BOOTSTRAP_KEY, "1");
+      const connection = connectionFromListen(DEFAULT_LOCALHOST_ENDPOINT);
+      if (!connection || registryHasConnection(this.hosts, connection)) {
         return;
       }
 
       try {
-        const { client, serverId, hostname } = await connectToDaemon(
-          {
-            id: `bootstrap:${DEFAULT_LOCALHOST_ENDPOINT}`,
-            type: "directTcp",
-            endpoint: DEFAULT_LOCALHOST_ENDPOINT,
-          },
-          { timeoutMs: DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS },
-        );
+        const { client, serverId, hostname } = await connectToDaemon(connection, {
+          timeoutMs: DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS,
+        });
 
-        await this.upsertDirectConnection({
+        await this.upsertHostConnection({
           serverId,
-          endpoint: DEFAULT_LOCALHOST_ENDPOINT,
           label: hostname ?? undefined,
+          connection,
           existingClient: client,
         });
-        await AsyncStorage.setItem(DEFAULT_LOCALHOST_BOOTSTRAP_KEY, "1");
       } catch {
         // Best-effort bootstrap only
       }
@@ -1736,7 +1785,7 @@ export class HostRuntimeStore {
     subscribe?: FetchAgentsOptions["subscribe"];
     page?: FetchAgentsOptions["page"];
   }): Promise<{
-    agents: ReturnType<typeof applyFetchedAgentDirectory>["agents"];
+    agents: ReturnType<typeof replaceFetchedAgentDirectory>["agents"];
     subscriptionId: string | null;
   }> {
     const controller = this.controllers.get(input.serverId);
@@ -1755,23 +1804,18 @@ export class HostRuntimeStore {
       let cursor = input.page?.cursor ?? null;
       let includeSubscribe = true;
       let subscriptionId: string | null = null;
-      const allAgents = new Map<string, Agent>();
+      const allEntries: FetchAgentsEntry[] = [];
 
       while (true) {
         const payload = await client.fetchAgents({
-          filter: input.filter ?? { includeArchived: true },
+          scope: input.filter ? undefined : "active",
+          ...(input.filter ? { filter: input.filter } : {}),
           sort: DEFAULT_AGENT_DIRECTORY_SORT,
           ...(includeSubscribe && input.subscribe ? { subscribe: input.subscribe } : {}),
           page: cursor ? { limit: pageLimit, cursor } : { limit: pageLimit },
         });
 
-        const pageAgents = applyFetchedAgentDirectory({
-          serverId: input.serverId,
-          entries: payload.entries,
-        }).agents;
-        for (const [agentId, agent] of pageAgents) {
-          allAgents.set(agentId, agent);
-        }
+        allEntries.push(...payload.entries);
 
         subscriptionId = subscriptionId ?? payload.subscriptionId ?? null;
         includeSubscribe = false;
@@ -1787,9 +1831,14 @@ export class HostRuntimeStore {
         cursor = nextCursor;
       }
 
+      const { agents } = replaceFetchedAgentDirectory({
+        serverId: input.serverId,
+        entries: allEntries,
+      });
+
       controller.markAgentDirectorySyncReady();
       return {
-        agents: allAgents,
+        agents,
         subscriptionId,
       };
     } catch (error) {
