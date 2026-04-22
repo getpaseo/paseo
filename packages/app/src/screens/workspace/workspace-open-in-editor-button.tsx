@@ -11,6 +11,7 @@ import { Check, ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { EditorTargetDescriptorPayload, EditorTargetId } from "@server/shared/messages";
 import { EditorAppIcon } from "@/components/icons/editor-app-icons";
+import { GitHubIcon } from "@/components/icons/github-icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,8 +19,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/contexts/toast-context";
+import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
+import { buildGitHubBranchTreeUrl } from "@/utils/github-repo-url";
+import { openExternalUrl } from "@/utils/open-external-url";
 import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
@@ -30,38 +34,85 @@ interface WorkspaceOpenInEditorButtonProps {
   hideLabels?: boolean;
 }
 
-interface EditorMenuItemProps {
-  editor: EditorTargetDescriptorPayload;
+type WorkspaceOpenTarget =
+  | (EditorTargetDescriptorPayload & { kind: "editor" })
+  | {
+      id: EditorTargetId;
+      label: string;
+      kind: "url";
+      url: string;
+    };
+
+interface WorkspaceOpenTargetMenuItemProps {
+  target: WorkspaceOpenTarget;
   isPreferred: boolean;
-  onOpen: (editorId: EditorTargetId) => void;
+  onOpen: (target: WorkspaceOpenTarget) => void;
 }
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedEditorAppIcon = withUnistyles(EditorAppIcon);
+const ThemedGitHubIcon = withUnistyles(GitHubIcon);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCheckIcon = withUnistyles(Check);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-function EditorMenuItem({ editor, isPreferred, onOpen }: EditorMenuItemProps) {
-  const handleSelect = useCallback(() => onOpen(editor.id), [onOpen, editor.id]);
-  const leading = useMemo(
-    () => <ThemedEditorAppIcon editorId={editor.id} size={16} uniProps={mutedColorMapping} />,
-    [editor.id],
-  );
+function trimNonEmpty(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveGitHubOpenTarget(input: {
+  remoteUrl: string | null | undefined;
+  currentBranch: string | null | undefined;
+}): WorkspaceOpenTarget | null {
+  const url = buildGitHubBranchTreeUrl({
+    remoteUrl: input.remoteUrl,
+    branch: trimNonEmpty(input.currentBranch),
+  });
+  if (!url) {
+    return null;
+  }
+
+  return {
+    id: "github",
+    label: "GitHub",
+    kind: "url",
+    url,
+  };
+}
+
+function OpenTargetIcon({ targetId }: { targetId: EditorTargetId }) {
+  if (targetId === "github") {
+    return <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />;
+  }
+
+  return <ThemedEditorAppIcon editorId={targetId} size={16} uniProps={mutedColorMapping} />;
+}
+
+function WorkspaceOpenTargetMenuItem({
+  target,
+  isPreferred,
+  onOpen,
+}: WorkspaceOpenTargetMenuItemProps) {
+  const handleSelect = useCallback(() => onOpen(target), [onOpen, target]);
+  const leading = useMemo(() => <OpenTargetIcon targetId={target.id} />, [target.id]);
   const trailing = useMemo(
     () => (isPreferred ? <ThemedCheckIcon size={16} uniProps={mutedColorMapping} /> : undefined),
     [isPreferred],
   );
   return (
     <DropdownMenuItem
-      testID={`workspace-open-in-editor-item-${editor.id}`}
+      testID={`workspace-open-in-editor-item-${target.id}`}
       leading={leading}
       trailing={trailing}
       onSelect={handleSelect}
     >
-      {editor.label}
+      {target.label}
     </DropdownMenuItem>
   );
 }
@@ -76,12 +127,12 @@ export function WorkspaceOpenInEditorButton({
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
 
-  const shouldLoadEditors =
+  const shouldLoadTargets =
     isWeb && Boolean(client && isConnected) && cwd.trim().length > 0 && isAbsolutePath(cwd);
 
   const availableEditorsQuery = useQuery<EditorTargetDescriptorPayload[]>({
     queryKey: ["available-editors", serverId],
-    enabled: shouldLoadEditors,
+    enabled: shouldLoadTargets,
     staleTime: 60_000,
     retry: false,
     queryFn: async () => {
@@ -99,18 +150,38 @@ export function WorkspaceOpenInEditorButton({
 
   const availableEditorsRaw = availableEditorsQuery.data;
   const availableEditors = useMemo(() => availableEditorsRaw ?? [], [availableEditorsRaw]);
-  const availableEditorIds = useMemo(
-    () => availableEditors.map((editor: EditorTargetDescriptorPayload) => editor.id),
-    [availableEditors],
+  const { status: checkoutStatus } = useCheckoutStatusQuery({
+    serverId,
+    cwd: shouldLoadTargets ? cwd : "",
+  });
+  const githubTarget = useMemo(
+    () =>
+      resolveGitHubOpenTarget({
+        remoteUrl: checkoutStatus?.isGit ? checkoutStatus.remoteUrl : null,
+        currentBranch: checkoutStatus?.isGit ? checkoutStatus.currentBranch : null,
+      }),
+    [checkoutStatus],
+  );
+  const availableTargets = useMemo<WorkspaceOpenTarget[]>(() => {
+    const targets: WorkspaceOpenTarget[] = availableEditors.map((editor) => ({
+      ...editor,
+      kind: "editor",
+    }));
+    if (githubTarget && !targets.some((target) => target.id === githubTarget.id)) {
+      targets.push(githubTarget);
+    }
+    return targets;
+  }, [availableEditors, githubTarget]);
+  const availableTargetIds = useMemo(
+    () => availableTargets.map((target) => target.id),
+    [availableTargets],
   );
   const effectivePreferredEditorId = useMemo(
-    () => resolvePreferredEditorId(availableEditorIds, preferredEditorId),
-    [availableEditorIds, preferredEditorId],
+    () => resolvePreferredEditorId(availableTargetIds, preferredEditorId),
+    [availableTargetIds, preferredEditorId],
   );
   const primaryOption =
-    availableEditors.find(
-      (editor: EditorTargetDescriptorPayload) => editor.id === effectivePreferredEditorId,
-    ) ?? null;
+    availableTargets.find((target) => target.id === effectivePreferredEditorId) ?? null;
 
   useEffect(() => {
     if (!effectivePreferredEditorId || effectivePreferredEditorId === preferredEditorId) {
@@ -120,25 +191,29 @@ export function WorkspaceOpenInEditorButton({
   }, [effectivePreferredEditorId, preferredEditorId, updatePreferredEditor]);
 
   const openMutation = useMutation({
-    mutationFn: async (editorId: EditorTargetId) => {
+    mutationFn: async (target: WorkspaceOpenTarget) => {
+      if (target.kind === "url") {
+        await openExternalUrl(target.url);
+        return target.id;
+      }
       if (!client) {
         throw new Error("Host is not connected");
       }
-      const payload = await client.openInEditor(cwd, editorId);
+      const payload = await client.openInEditor(cwd, target.id);
       if (payload.error) {
         throw new Error(payload.error);
       }
-      return editorId;
+      return target.id;
     },
     onError: (error: unknown) => {
-      toast.error(error instanceof Error ? error.message : "Failed to open in editor");
+      toast.error(error instanceof Error ? error.message : "Failed to open workspace target");
     },
   });
 
-  const handleOpenEditor = useCallback(
-    (editorId: EditorTargetId) => {
-      void updatePreferredEditor(editorId).catch(() => undefined);
-      openMutation.mutate(editorId);
+  const handleOpenTarget = useCallback(
+    (target: WorkspaceOpenTarget) => {
+      void updatePreferredEditor(target.id).catch(() => undefined);
+      openMutation.mutate(target);
     },
     [openMutation, updatePreferredEditor],
   );
@@ -160,12 +235,13 @@ export function WorkspaceOpenInEditorButton({
     [],
   );
 
-  const primaryId = primaryOption?.id;
   const handlePrimaryPress = useCallback(() => {
-    if (primaryId) handleOpenEditor(primaryId);
-  }, [primaryId, handleOpenEditor]);
+    if (primaryOption) {
+      handleOpenTarget(primaryOption);
+    }
+  }, [primaryOption, handleOpenTarget]);
 
-  if (!shouldLoadEditors || !primaryOption || availableEditors.length === 0) {
+  if (!shouldLoadTargets || !primaryOption || availableTargets.length === 0) {
     return null;
   }
 
@@ -188,16 +264,12 @@ export function WorkspaceOpenInEditorButton({
             />
           ) : (
             <View style={styles.splitButtonContent}>
-              <ThemedEditorAppIcon
-                editorId={primaryOption.id}
-                size={16}
-                uniProps={mutedColorMapping}
-              />
+              <OpenTargetIcon targetId={primaryOption.id} />
               {!hideLabels && <Text style={styles.splitButtonText}>Open</Text>}
             </View>
           )}
         </Pressable>
-        {availableEditors.length > 1 ? (
+        {availableTargets.length > 1 ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               testID="workspace-open-in-editor-caret"
@@ -213,12 +285,12 @@ export function WorkspaceOpenInEditorButton({
               maxWidth={176}
               testID="workspace-open-in-editor-menu"
             >
-              {availableEditors.map((editor: EditorTargetDescriptorPayload) => (
-                <EditorMenuItem
-                  key={editor.id}
-                  editor={editor}
-                  isPreferred={editor.id === effectivePreferredEditorId}
-                  onOpen={handleOpenEditor}
+              {availableTargets.map((target) => (
+                <WorkspaceOpenTargetMenuItem
+                  key={target.id}
+                  target={target}
+                  isPreferred={target.id === effectivePreferredEditorId}
+                  onOpen={handleOpenTarget}
                 />
               ))}
             </DropdownMenuContent>
