@@ -150,6 +150,7 @@ function makeActiveAgent(): Agent {
     model: null,
     labels: {},
     archivedAt: null,
+    parentAgentId: null,
   };
 }
 

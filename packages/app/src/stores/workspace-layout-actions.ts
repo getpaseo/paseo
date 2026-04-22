@@ -197,6 +197,7 @@ export interface WorkspaceTabSnapshot {
   agentsHydrated: boolean;
   terminalsHydrated: boolean;
   activeAgentIds: Iterable<string>;
+  autoOpenAgentIds: Iterable<string>;
   knownAgentIds: Iterable<string>;
   knownTerminalIds?: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
@@ -1470,6 +1471,25 @@ function buildVisibleAgentIds(input: {
   return visibleAgentIds;
 }
 
+function buildAutoOpenAgentIds(input: {
+  autoOpenAgentIds: Set<string>;
+  pinnedAgentIds: Set<string>;
+  hiddenAgentIds: Set<string>;
+  knownAgentIds: Set<string>;
+}): Set<string> {
+  const { autoOpenAgentIds, pinnedAgentIds, hiddenAgentIds, knownAgentIds } = input;
+  const autoOpenSet = new Set(autoOpenAgentIds);
+  for (const agentId of pinnedAgentIds) {
+    if (knownAgentIds.has(agentId)) {
+      autoOpenSet.add(agentId);
+    }
+  }
+  for (const agentId of hiddenAgentIds) {
+    autoOpenSet.delete(agentId);
+  }
+  return autoOpenSet;
+}
+
 function buildEntityTabGroups(initialTabs: WorkspaceTab[]): Map<string, EntityTabGroup> {
   const entityGroups = new Map<string, EntityTabGroup>();
   for (const tab of initialTabs) {
@@ -1527,13 +1547,13 @@ function collapseStaleEntityTabs(input: {
 
 function addMissingEntityTabs(input: {
   layout: WorkspaceLayout;
-  visibleAgentIds: Set<string>;
+  autoOpenAgentIds: Set<string>;
   representedAgentIds: Set<string>;
   standaloneTerminalIds: Set<string>;
   hasActivePendingDraftCreate: boolean;
 }): WorkspaceLayout {
   const {
-    visibleAgentIds,
+    autoOpenAgentIds,
     representedAgentIds,
     standaloneTerminalIds,
     hasActivePendingDraftCreate,
@@ -1547,8 +1567,8 @@ function addMissingEntityTabs(input: {
     currentEntityTabs.filter(isTerminalTab).map((tab) => tab.target.terminalId),
   );
 
-  const sortedVisibleAgentIds = [...visibleAgentIds].sort();
-  for (const agentId of sortedVisibleAgentIds) {
+  const sortedAutoOpenAgentIds = [...autoOpenAgentIds].sort();
+  for (const agentId of sortedAutoOpenAgentIds) {
     if (currentAgentIds.has(agentId)) {
       continue;
     }
@@ -1587,6 +1607,7 @@ export function reconcileWorkspaceTabs(
   const pinnedAgentIds = new Set(state.pinnedAgentIds ?? []);
   const hiddenAgentIds = new Set(state.hiddenAgentIds ?? []);
   const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
+  const autoOpenAgentIds = normalizeStringSet(snapshot.autoOpenAgentIds);
   const knownAgentIds = normalizeStringSet(snapshot.knownAgentIds);
   const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
   const knownTerminalIds = snapshot.knownTerminalIds
@@ -1594,6 +1615,12 @@ export function reconcileWorkspaceTabs(
     : standaloneTerminalIds;
   const visibleAgentIds = buildVisibleAgentIds({
     activeAgentIds,
+    pinnedAgentIds,
+    hiddenAgentIds,
+    knownAgentIds,
+  });
+  const autoOpenSet = buildAutoOpenAgentIds({
+    autoOpenAgentIds,
     pinnedAgentIds,
     hiddenAgentIds,
     knownAgentIds,
@@ -1645,7 +1672,7 @@ export function reconcileWorkspaceTabs(
 
   nextLayout = addMissingEntityTabs({
     layout: nextLayout,
-    visibleAgentIds,
+    autoOpenAgentIds: autoOpenSet,
     representedAgentIds,
     standaloneTerminalIds,
     hasActivePendingDraftCreate: snapshot.hasActivePendingDraftCreate ?? false,

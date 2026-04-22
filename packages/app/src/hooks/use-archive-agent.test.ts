@@ -31,6 +31,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     title: "Agent 1",
     cwd: "/repo",
     model: null,
+    parentAgentId: null,
     labels: {},
     archivedAt: null,
     ...overrides,

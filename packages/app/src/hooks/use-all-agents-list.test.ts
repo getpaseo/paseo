@@ -36,6 +36,7 @@ const AGENT_DEFAULTS: Agent = {
   attentionReason: null,
   attentionTimestamp: null,
   archivedAt: null,
+  parentAgentId: null,
   labels: {},
   projectPlacement: null,
 };

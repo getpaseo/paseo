@@ -42,6 +42,7 @@ function createAgent(id: string): Agent {
     title: "Agent",
     cwd: "/repo",
     model: null,
+    parentAgentId: null,
     labels: {},
   };
 }

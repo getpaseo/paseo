@@ -1173,6 +1173,7 @@ describe("workspace-layout-store actions", () => {
       agentsHydrated: true,
       terminalsHydrated: true,
       activeAgentIds: ["agent-1"],
+      autoOpenAgentIds: ["agent-1"],
       knownAgentIds: ["agent-1", "agent-2"],
       standaloneTerminalIds: ["term-1"],
       hasActivePendingDraftCreate: false,
@@ -1210,12 +1211,108 @@ describe("workspace-layout-store actions", () => {
       agentsHydrated: true,
       terminalsHydrated: true,
       activeAgentIds: ["agent-1"],
+      autoOpenAgentIds: ["agent-1"],
       knownAgentIds: ["agent-1"],
       standaloneTerminalIds: [],
       hasActivePendingDraftCreate: false,
     });
 
     expect(useWorkspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).toEqual([]);
+  });
+
+  it("reconcileTabs does not auto-open subagents omitted from autoOpenAgentIds", () => {
+    const workspaceKey = createWorkspaceKey();
+
+    useWorkspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["parent-agent", "child-agent"],
+      autoOpenAgentIds: ["parent-agent"],
+      knownAgentIds: ["parent-agent", "child-agent"],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+
+    expect(
+      useWorkspaceLayoutStore
+        .getState()
+        .getWorkspaceTabs(workspaceKey)
+        .map((tab) => tab.tabId),
+    ).toEqual(["agent_parent-agent"]);
+  });
+
+  it("reconcileTabs keeps manually opened subagent tabs that remain active", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "child-agent" });
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["parent-agent", "child-agent"],
+      autoOpenAgentIds: ["parent-agent"],
+      knownAgentIds: ["parent-agent", "child-agent"],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+
+    expect(
+      useWorkspaceLayoutStore
+        .getState()
+        .getWorkspaceTabs(workspaceKey)
+        .map((tab) => tab.tabId),
+    ).toEqual(["agent_child-agent", "agent_parent-agent"]);
+  });
+
+  it("reconcileTabs prunes archived subagent tabs that are no longer active", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "child-agent" });
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["parent-agent"],
+      autoOpenAgentIds: ["parent-agent"],
+      knownAgentIds: ["parent-agent", "child-agent"],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+
+    expect(
+      useWorkspaceLayoutStore
+        .getState()
+        .getWorkspaceTabs(workspaceKey)
+        .map((tab) => tab.tabId),
+    ).toEqual(["agent_parent-agent"]);
+  });
+
+  it("openTabFocused reopens hidden subagent tabs and clears hidden intent", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+
+    store.hideAgent(workspaceKey, "child-agent");
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["child-agent"],
+      autoOpenAgentIds: [],
+      knownAgentIds: ["child-agent"],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+
+    expect(useWorkspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).toEqual([]);
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "child-agent" });
+
+    const state = useWorkspaceLayoutStore.getState();
+    expect(state.hiddenAgentIdsByWorkspace[workspaceKey]).toBeUndefined();
+    expect(state.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).toEqual([
+      "agent_child-agent",
+    ]);
   });
 
   it("reconcileTabs auto-opens only standalone terminals while keeping explicitly opened live terminals", () => {
@@ -1231,6 +1328,7 @@ describe("workspace-layout-store actions", () => {
       agentsHydrated: true,
       terminalsHydrated: true,
       activeAgentIds: [],
+      autoOpenAgentIds: [],
       knownAgentIds: [],
       knownTerminalIds: ["term-script", "term-manual"],
       standaloneTerminalIds: ["term-manual"],
@@ -1250,6 +1348,7 @@ describe("workspace-layout-store actions", () => {
       agentsHydrated: true,
       terminalsHydrated: true,
       activeAgentIds: [],
+      autoOpenAgentIds: [],
       knownAgentIds: [],
       knownTerminalIds: ["term-script"],
       standaloneTerminalIds: [],
