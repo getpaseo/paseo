@@ -11,7 +11,7 @@ import { useWindowDimensions } from "react-native";
 import { useSharedValue, withTiming, Easing, type SharedValue } from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { usePanelStore } from "@/stores/panel-store";
+import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import {
   getLeftSidebarAnimationTargets,
   shouldSyncSidebarAnimation,
@@ -37,11 +37,9 @@ const SidebarAnimationContext = createContext<SidebarAnimationContextValue | nul
 export function SidebarAnimationProvider({ children }: { children: ReactNode }) {
   const { width: windowWidth } = useWindowDimensions();
   const isCompactLayout = useIsCompactFormFactor();
-  const mobileView = usePanelStore((state) => state.mobileView);
-  const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
-
-  // Derive isOpen from the unified panel state
-  const isOpen = isCompactLayout ? mobileView === "agent-list" : desktopAgentListOpen;
+  const isOpen = usePanelStore((state) =>
+    selectIsAgentListOpen(state, { isCompact: isCompactLayout }),
+  );
 
   // Initialize based on current state
   const initialTargets = getLeftSidebarAnimationTargets({ isOpen, windowWidth });

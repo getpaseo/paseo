@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.1.58",
+  "version": "0.1.60-beta.1",
   "description": "Paseo backend server",
   "type": "module",
   "publishConfig": {
@@ -18,24 +18,20 @@
   "exports": {
     ".": {
       "types": "./dist/server/server/exports.d.ts",
-      "default": [
-        "./dist/server/server/exports.js",
-        "./src/server/exports.ts"
-      ]
+      "source": "./src/server/exports.ts",
+      "default": "./dist/server/server/exports.js"
     },
     "./utils/tool-call-parsers": {
       "types": "./dist/server/utils/tool-call-parsers.d.ts",
-      "default": [
-        "./dist/server/utils/tool-call-parsers.js",
-        "./src/utils/tool-call-parsers.ts"
-      ]
+      "source": "./src/utils/tool-call-parsers.ts",
+      "default": "./dist/server/utils/tool-call-parsers.js"
     }
   },
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx scripts/dev-runner.ts",
     "dev:tsx": "cross-env NODE_ENV=development tsx watch --ignore '**/*.timestamp-*' src/server/index.ts",
     "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && npm run build:lib && npm run build:scripts",
-    "build:lib": "tsc -p tsconfig.server.json --incremental false && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx');\"",
+    "build:lib": "tsc -p tsconfig.server.json --incremental false && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true});\"",
     "build:scripts": "tsc -p tsconfig.scripts.json --incremental false && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs');\"",
     "prepack": "npm run build",
     "start": "cross-env NODE_ENV=production node dist/server/server/index.js",
@@ -64,9 +60,10 @@
     "@ai-sdk/openai": "2.0.52",
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
     "@deepgram/sdk": "^3.4.0",
-    "@getpaseo/highlight": "0.1.58",
-    "@getpaseo/relay": "0.1.58",
+    "@getpaseo/highlight": "0.1.60-beta.1",
+    "@getpaseo/relay": "0.1.60-beta.1",
     "@isaacs/ttlcache": "^2.1.4",
+    "@mariozechner/pi-coding-agent": "^0.67.68",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.2.6",
     "@sctg/sentencepiece-js": "^1.1.0",
@@ -83,7 +80,7 @@
     "onnxruntime-node": "^1.23.0",
     "openai": "^4.20.0",
     "p-limit": "^7.3.0",
-    "pi-acp": "^0.0.24",
+    "p-memoize": "^8.0.0",
     "pino": "^10.2.0",
     "pino-pretty": "^13.1.3",
     "qrcode": "^1.5.4",

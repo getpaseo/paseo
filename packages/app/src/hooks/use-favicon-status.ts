@@ -1,13 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useShallow } from "zustand/shallow";
 import { getIsElectronRuntimeMac } from "@/constants/layout";
 import { useAggregatedAgents } from "./use-aggregated-agents";
 import { getDesktopHost } from "@/desktop/host";
-import { useSessionStore } from "@/stores/session-store";
-import {
-  deriveMacDockBadgeCountFromWorkspaceStatuses,
-  type DesktopBadgeWorkspaceStatus,
-} from "@/utils/desktop-badge-state";
+import { useWorkspaceStatusesForBadges } from "@/stores/session-store-hooks";
+import { deriveMacDockBadgeCountFromWorkspaceStatuses } from "@/utils/desktop-badge-state";
 import { isNative } from "@/constants/platform";
 
 type FaviconStatus = "none" | "running" | "attention";
@@ -99,17 +95,7 @@ async function updateMacDockBadge(count?: number) {
 
 export function useFaviconStatus() {
   const { agents } = useAggregatedAgents();
-  const workspaceStatuses = useSessionStore(
-    useShallow((state) => {
-      const statuses: DesktopBadgeWorkspaceStatus[] = [];
-      for (const session of Object.values(state.sessions)) {
-        for (const workspace of session.workspaces.values()) {
-          statuses.push(workspace.status);
-        }
-      }
-      return statuses;
-    }),
-  );
+  const workspaceStatuses = useWorkspaceStatusesForBadges();
   const [colorScheme, setColorScheme] = useState<ColorScheme>(getSystemColorScheme);
   const lastDockBadgeCountRef = useRef<number | undefined>(undefined);
 

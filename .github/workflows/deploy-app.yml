@@ -4,9 +4,9 @@ on:
   push:
     tags:
       - 'v*'
-      - '!v*-rc.*'
+      - '!v*-beta.*'
       - 'app-v*'
-      - '!app-v*-rc.*'
+      - '!app-v*-beta.*'
   workflow_dispatch:
 
 jobs:

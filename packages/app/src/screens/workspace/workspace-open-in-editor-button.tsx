@@ -20,9 +20,14 @@ import { isWeb } from "@/constants/platform";
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
   cwd: string;
+  hideLabels?: boolean;
 }
 
-export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEditorButtonProps) {
+export function WorkspaceOpenInEditorButton({
+  serverId,
+  cwd,
+  hideLabels,
+}: WorkspaceOpenInEditorButtonProps) {
   const { theme } = useUnistyles();
   const toast = useToast();
   const client = useHostRuntimeClient(serverId);
@@ -127,7 +132,7 @@ export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEd
                 size={16}
                 color={theme.colors.foregroundMuted}
               />
-              <Text style={styles.splitButtonText}>Open</Text>
+              {!hideLabels && <Text style={styles.splitButtonText}>Open</Text>}
             </View>
           )}
         </Pressable>
@@ -196,7 +201,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   splitButtonPrimary: {
     paddingLeft: theme.spacing[3],
-    paddingRight: 10,
+    paddingRight: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    justifyContent: "center",
+    position: "relative",
+  },
+  splitButtonPrimaryIconOnly: {
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     justifyContent: "center",
     position: "relative",

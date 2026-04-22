@@ -1,20 +1,14 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { buildHostRootRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
-
-function trimNonEmpty(value: string | null | undefined): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
+import { resolveWorkspaceRouteId } from "@/utils/workspace-execution";
 
 export function resolveWorkspaceArchiveRedirectWorkspaceId(input: {
   archivedWorkspaceId: string;
   workspaces: Iterable<WorkspaceDescriptor>;
 }): string | null {
-  const archivedWorkspaceId = trimNonEmpty(input.archivedWorkspaceId);
+  const archivedWorkspaceId = resolveWorkspaceRouteId({
+    routeWorkspaceId: input.archivedWorkspaceId,
+  });
   if (!archivedWorkspaceId) {
     return null;
   }
@@ -36,11 +30,6 @@ export function resolveWorkspaceArchiveRedirectWorkspaceId(input: {
     ) ?? null;
   if (rootCheckoutWorkspace) {
     return rootCheckoutWorkspace.id;
-  }
-
-  const fallbackProjectRootPath = trimNonEmpty(archivedWorkspace.projectRootPath);
-  if (fallbackProjectRootPath && fallbackProjectRootPath !== archivedWorkspace.id) {
-    return fallbackProjectRootPath;
   }
 
   const siblingWorkspace =

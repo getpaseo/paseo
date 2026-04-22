@@ -1,5 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
-import { existsSync, rmSync } from "node:fs";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { PassThrough } from "node:stream";
 
 import type {
   AgentLaunchContext,
@@ -43,6 +49,59 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}) {
 }
 
 describe("Codex app-server provider", () => {
+  test("disposes an unresponsive app-server child with SIGKILL", async () => {
+    vi.useFakeTimers();
+    const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+    child.stdin = new PassThrough() as ChildProcessWithoutNullStreams["stdin"];
+    child.stdout = new PassThrough() as ChildProcessWithoutNullStreams["stdout"];
+    child.stderr = new PassThrough() as ChildProcessWithoutNullStreams["stderr"];
+    child.exitCode = null;
+    child.signalCode = null;
+    child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+    const client = new __codexAppServerInternals.CodexAppServerClient(child, createTestLogger());
+
+    try {
+      const disposePromise = client.dispose();
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(disposePromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-skills-"));
+    const cwd = path.join(tempDir, "repo", "packages", "app");
+    const repoSkillDir = path.join(tempDir, "repo", ".codex", "skills", "shipper");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(repoSkillDir, { recursive: true });
+    writeFileSync(
+      path.join(repoSkillDir, "SKILL.md"),
+      "---\nname: shipper\ndescription: Ship changes carefully.\n---\n",
+    );
+    const workspaceGitService = {
+      resolveRepoRoot: vi.fn().mockResolvedValue(path.join(tempDir, "repo")),
+    };
+
+    try {
+      await expect(
+        __codexAppServerInternals.listCodexSkills(cwd, workspaceGitService),
+      ).resolves.toContainEqual({
+        name: "shipper",
+        description: "Ship changes carefully.",
+        argumentHint: "",
+      });
+      expect(workspaceGitService.resolveRepoRoot).toHaveBeenCalledWith(cwd);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   const logger = createTestLogger();
 
   test("extracts context window usage from snake_case token payloads", () => {
@@ -238,6 +297,31 @@ describe("Codex app-server provider", () => {
       expect(existsSync(localImage.path)).toBe(true);
       rmSync(localImage.path, { force: true });
     }
+  });
+
+  test("maps github_pr prompt attachments to Codex text input", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        {
+          type: "github_pr",
+          mimeType: "application/github-pr",
+          number: 123,
+          title: "Fix race in worktree setup",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          body: "Review body",
+          baseRefName: "main",
+          headRefName: "fix/worktree-race",
+        },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      {
+        type: "text",
+        text: expect.stringContaining("GitHub PR #123: Fix race in worktree setup"),
+      },
+    ]);
   });
 
   test("maps patch notifications with array-style changes and alias diff keys", () => {

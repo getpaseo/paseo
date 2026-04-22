@@ -18,38 +18,46 @@ export const AgentProviderEnum = z.string();
 
 export const AgentStatusEnum = z.enum(["initializing", "idle", "running", "error", "closed"]);
 
-export const ProviderModeSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  icon: z.string().optional(),
-  colorTier: z.string().optional(),
-});
+export const ProviderModeSchema = z
+  .object({
+    id: z.string(),
+    label: z.string().nullish(),
+    description: z.string().nullish(),
+    icon: z.string().nullish(),
+    colorTier: z.string().nullish(),
+  })
+  .passthrough();
 
-export const ProviderSummarySchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  modes: z.array(ProviderModeSchema),
-});
+export const ProviderSummarySchema = z
+  .object({
+    id: z.string(),
+    label: z.string().nullish(),
+    modes: z.array(ProviderModeSchema).nullish(),
+  })
+  .passthrough();
 
-export const AgentSelectOptionSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  isDefault: z.boolean().optional(),
-  metadata: z.record(z.unknown()).optional(),
-});
+export const AgentSelectOptionSchema = z
+  .object({
+    id: z.string(),
+    label: z.string().nullish(),
+    description: z.string().nullish(),
+    isDefault: z.boolean().nullish(),
+    metadata: z.record(z.string(), z.unknown()).nullish(),
+  })
+  .passthrough();
 
-export const AgentModelSchema = z.object({
-  provider: z.string(),
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  isDefault: z.boolean().optional(),
-  metadata: z.record(z.unknown()).optional(),
-  thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
-  defaultThinkingOptionId: z.string().optional(),
-});
+export const AgentModelSchema = z
+  .object({
+    provider: z.string(),
+    id: z.string(),
+    label: z.string().nullish(),
+    description: z.string().nullish(),
+    isDefault: z.boolean().nullish(),
+    metadata: z.record(z.string(), z.unknown()).nullish(),
+    thinkingOptions: z.array(AgentSelectOptionSchema).nullish(),
+    defaultThinkingOptionId: z.string().nullish(),
+  })
+  .passthrough();
 
 // 30 seconds - surface friendly message before SDK tool timeout (~60s)
 export const AGENT_WAIT_TIMEOUT_MS = 30000;
@@ -59,41 +67,24 @@ export interface ResolvedProviderModel {
   model: string | undefined;
 }
 
-export function resolveProviderAndModel(params: {
-  provider?: string;
-  model?: string;
-  defaultProvider: AgentProvider;
-}): ResolvedProviderModel {
-  const providerInput = params.provider?.trim() || params.defaultProvider;
-  const modelInput = params.model?.trim();
-
-  if (params.model !== undefined && !modelInput) {
-    throw new Error("model cannot be empty");
-  }
-
+export function resolveRequiredProviderModel(
+  providerValue: string,
+): Required<ResolvedProviderModel> {
+  const providerInput = providerValue.trim();
   const slashIndex = providerInput.indexOf("/");
-  if (slashIndex === -1) {
-    return {
-      provider: providerInput as AgentProvider,
-      model: modelInput,
-    };
+  if (slashIndex <= 0 || slashIndex === providerInput.length - 1) {
+    throw new Error("provider must be provider/model, for example codex/gpt-5.4");
   }
 
   const provider = providerInput.slice(0, slashIndex).trim();
-  const modelFromProvider = providerInput.slice(slashIndex + 1).trim();
-  if (!provider || !modelFromProvider) {
-    throw new Error("provider must be <provider> or <provider>/<model>");
-  }
-
-  if (modelInput && modelInput !== modelFromProvider) {
-    throw new Error(
-      `Conflicting model values provided: provider specifies ${modelFromProvider}, but model specifies ${modelInput}`,
-    );
+  const model = providerInput.slice(slashIndex + 1).trim();
+  if (!provider || !model) {
+    throw new Error("provider must be provider/model, for example codex/gpt-5.4");
   }
 
   return {
     provider: provider as AgentProvider,
-    model: modelInput ?? modelFromProvider,
+    model,
   };
 }
 

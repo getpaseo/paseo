@@ -181,6 +181,7 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     undefined,
     undefined,
     undefined,
+    false,
     TEST_DAEMON_VERSION,
     undefined,
     undefined,

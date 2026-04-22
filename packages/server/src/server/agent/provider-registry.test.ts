@@ -226,8 +226,8 @@ vi.mock("./providers/opencode-agent.js", () => ({
   },
 }));
 
-vi.mock("./providers/pi-acp-agent.js", () => ({
-  PiACPAgentClient: class PiACPAgentClient {
+vi.mock("./providers/pi-direct-agent.js", () => ({
+  PiDirectAgentClient: class PiDirectAgentClient {
     readonly capabilities = {
       supportsStreaming: true,
       supportsSessionPersistence: true,
@@ -330,6 +330,19 @@ describe("buildProviderRegistry", () => {
     const registry = buildProviderRegistry(logger);
 
     expect(Object.keys(registry)).toHaveLength(AGENT_PROVIDER_DEFINITIONS.length);
+  });
+
+  test("includes mock provider only for development builds", () => {
+    expect(buildProviderRegistry(logger).mock).toBeUndefined();
+    expect(buildProviderRegistry(logger, { isDev: false }).mock).toBeUndefined();
+
+    const registry = buildProviderRegistry(logger, { isDev: true });
+
+    expect(registry.mock).toMatchObject({
+      id: "mock",
+      label: "Mock Load Test",
+      defaultModeId: "load-test",
+    });
   });
 
   test("built-in override applies command", () => {
@@ -565,7 +578,10 @@ describe("buildProviderRegistry", () => {
         },
       });
 
-      const models = await registry.claude.fetchModels();
+      const models = await registry.claude.fetchModels({
+        cwd: "/tmp/registry-models",
+        force: false,
+      });
 
       expect(models.map((model) => model.id)).toEqual(["profile-fast"]);
     });
@@ -597,7 +613,10 @@ describe("buildProviderRegistry", () => {
         },
       });
 
-      const models = await registry.claude.fetchModels();
+      const models = await registry.claude.fetchModels({
+        cwd: "/tmp/registry-models",
+        force: false,
+      });
 
       expect(models).toEqual([
         {
@@ -632,7 +651,10 @@ describe("buildProviderRegistry", () => {
         },
       });
 
-      const models = await registry.claude.fetchModels();
+      const models = await registry.claude.fetchModels({
+        cwd: "/tmp/registry-models",
+        force: false,
+      });
 
       expect(models).toEqual([
         {
@@ -655,7 +677,10 @@ describe("buildProviderRegistry", () => {
       ]);
 
       const registry = buildProviderRegistry(logger);
-      const models = await registry.claude.fetchModels();
+      const models = await registry.claude.fetchModels({
+        cwd: "/tmp/registry-models",
+        force: false,
+      });
 
       expect(models).toEqual([
         {

@@ -54,15 +54,15 @@ function makeAgent(input: {
 
 describe("workspace agent visibility", () => {
   it("keeps archived agents out of activeAgentIds but present in knownAgentIds", () => {
-    const workspaceId = "/repo/worktree";
+    const workspaceDirectory = "/repo/worktree";
     const visible = makeAgent({
       id: "visible-agent",
-      cwd: workspaceId,
+      cwd: workspaceDirectory,
       createdAt: new Date("2026-03-04T00:00:00.000Z"),
     });
     const archived = makeAgent({
       id: "archived-agent",
-      cwd: workspaceId,
+      cwd: workspaceDirectory,
       archivedAt: new Date("2026-03-04T00:01:00.000Z"),
       createdAt: new Date("2026-03-04T00:01:00.000Z"),
     });
@@ -79,7 +79,7 @@ describe("workspace agent visibility", () => {
 
     const result = deriveWorkspaceAgentVisibility({
       sessionAgents,
-      workspaceId,
+      workspaceDirectory,
     });
 
     expect(result.activeAgentIds).toEqual(new Set(["visible-agent"]));
@@ -151,11 +151,31 @@ describe("workspace agent visibility", () => {
 
     const result = deriveWorkspaceAgentVisibility({
       sessionAgents,
-      workspaceId: "/Users/moboudra/.paseo/worktrees/1luy0po7/normal-squid",
+      workspaceDirectory: "/Users/moboudra/.paseo/worktrees/1luy0po7/normal-squid",
     });
 
     expect(result.activeAgentIds).toEqual(new Set(["slash-agent"]));
     expect(result.knownAgentIds.has("slash-agent")).toBe(true);
+  });
+
+  it("matches workspace agents using the workspace directory even when the route uses a numeric workspace id", () => {
+    const sessionAgents = new Map<string, Agent>([
+      [
+        "recent-agent",
+        makeAgent({
+          id: "recent-agent",
+          cwd: "/tmp/workspace-lifecycle-main",
+        }),
+      ],
+    ]);
+
+    const result = deriveWorkspaceAgentVisibility({
+      sessionAgents,
+      workspaceDirectory: "/tmp/workspace-lifecycle-main",
+    });
+
+    expect(result.activeAgentIds).toEqual(new Set(["recent-agent"]));
+    expect(result.knownAgentIds).toEqual(new Set(["recent-agent"]));
   });
 
   describe("workspaceAgentVisibilityEqual", () => {

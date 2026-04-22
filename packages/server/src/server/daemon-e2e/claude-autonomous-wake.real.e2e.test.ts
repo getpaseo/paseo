@@ -1,13 +1,12 @@
-import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
+import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import WebSocket from "ws";
-
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { DaemonClient } from "../test-utils/daemon-client.js";
 import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
+import { DaemonClient } from "../test-utils/daemon-client.js";
+import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
 
 function tmpCwd(): string {
@@ -427,7 +426,6 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         const nextTimeline = await client.fetchAgentTimeline(agent.id, {
           direction: "tail",
           limit: 0,
-          projection: "canonical",
         });
         sawTimelineGrowth = nextTimeline.entries.length > timelineAtIdle.entries.length;
       }
@@ -482,6 +480,25 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
       if (autonomousWake) {
         const autonomousFinish = await client.waitForFinish(agent.id, 120_000);
         expect(autonomousFinish.status).toBe("idle");
+
+        const timelineAfterWake = await client.fetchAgentTimeline(agent.id, {
+          direction: "tail",
+          limit: 0,
+        });
+        expect(timelineAfterWake.entries.length).toBeGreaterThanOrEqual(
+          timelineAtIdle.entries.length,
+        );
+        let sawTimelineGrowth = timelineAfterWake.entries.length > timelineAtIdle.entries.length;
+        const growthDeadline = Date.now() + 20_000;
+        while (!sawTimelineGrowth && Date.now() < growthDeadline) {
+          await sleep(250);
+          const nextTimeline = await client.fetchAgentTimeline(agent.id, {
+            direction: "tail",
+            limit: 0,
+          });
+          sawTimelineGrowth = nextTimeline.entries.length > timelineAtIdle.entries.length;
+        }
+        expect(sawTimelineGrowth).toBe(true);
       } else {
         const current = await client.fetchAgent(agent.id);
         expect(current.agent.status).toBe("idle");

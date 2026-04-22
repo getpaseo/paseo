@@ -8,6 +8,10 @@ import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 export type TerminalPerfDaemonClient = {
   connect(): Promise<void>;
   close(): Promise<void>;
+  openProject(cwd: string): Promise<{
+    workspace: { id: string; name: string; projectRootPath: string } | null;
+    error: string | null;
+  }>;
   createTerminal(
     cwd: string,
     name?: string,
@@ -15,6 +19,13 @@ export type TerminalPerfDaemonClient = {
     terminal: { id: string; name: string; cwd: string } | null;
     error: string | null;
   }>;
+  createAgent(options: {
+    provider: string;
+    cwd: string;
+    title?: string;
+    modeId?: string;
+  }): Promise<{ id: string; status: string }>;
+  sendAgentMessage(agentId: string, text: string): Promise<void>;
   subscribeTerminal(
     terminalId: string,
   ): Promise<{ terminalId: string; slot: number; error: null } | { error: string }>;
@@ -79,14 +90,14 @@ export async function connectTerminalClient(): Promise<TerminalPerfDaemonClient>
   return client;
 }
 
-export function buildTerminalWorkspaceUrl(cwd: string, terminalId: string): string {
+export function buildTerminalWorkspaceUrl(workspaceId: string, terminalId: string): string {
   const serverId = getServerId();
-  const route = buildHostWorkspaceRoute(serverId, cwd);
+  const route = buildHostWorkspaceRoute(serverId, workspaceId);
   return `${route}?open=${encodeURIComponent(`terminal:${terminalId}`)}`;
 }
 
-function buildWorkspaceUrl(cwd: string): string {
-  return buildHostWorkspaceRoute(getServerId(), cwd);
+function buildWorkspaceUrl(workspaceId: string): string {
+  return buildHostWorkspaceRoute(getServerId(), workspaceId);
 }
 
 export async function getTerminalBufferText(page: Page): Promise<string> {
@@ -125,31 +136,35 @@ export async function waitForTerminalContent(
 
 export async function navigateToTerminal(
   page: Page,
-  input: { cwd: string; terminalId: string },
+  input: { workspaceId: string; terminalId: string },
 ): Promise<void> {
   // Boot the app at the workspace route directly.
   // The fixtures.ts beforeEach addInitScript seeds localStorage on every navigation,
   // so the daemon registry is already configured when the app starts.
-  const workspaceRoute = buildTerminalWorkspaceUrl(input.cwd, input.terminalId);
+  const workspaceRoute = buildTerminalWorkspaceUrl(input.workspaceId, input.terminalId);
   await page.goto(workspaceRoute);
 
   // The workspace layout consumes `?open=...`, returns null during the effect,
   // then replaces the URL with the clean workspace route after preparing the tab.
-  const cleanWorkspaceRoute = buildWorkspaceUrl(input.cwd);
+  // On CI, Expo Router's rootNavigationState may take time to initialize,
+  // so we allow a generous timeout here.
+  const cleanWorkspaceRoute = buildWorkspaceUrl(input.workspaceId);
   await page.waitForURL(
     (url) => url.pathname === cleanWorkspaceRoute && !url.searchParams.has("open"),
-    { timeout: 15_000 },
+    { timeout: 30_000 },
   );
 
   // Wait for daemon connection (sidebar shows host label)
   await page
     .getByText("localhost", { exact: true })
     .first()
-    .waitFor({ state: "visible", timeout: 15_000 });
+    .waitFor({ state: "visible", timeout: 30_000 });
 
   // The open intent should have prepared and focused the exact pre-created terminal tab.
+  // The tab reconciliation effect also auto-creates terminal tabs once hydration completes,
+  // so we give it enough time for the full workspace hydration + tab creation cycle.
   const terminalTab = page.locator(`[data-testid="workspace-tab-terminal_${input.terminalId}"]`);
-  await terminalTab.waitFor({ state: "visible", timeout: 15_000 });
+  await terminalTab.waitFor({ state: "visible", timeout: 30_000 });
   await terminalTab.click();
 
   const terminalSurface = page.locator('[data-testid="terminal-surface"]');

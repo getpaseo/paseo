@@ -49,6 +49,7 @@ describe("resolveAgentModel", () => {
     expect(result).toBe("claude-3.5-sonnet");
     expect(fetchModels).toHaveBeenCalledWith({
       cwd: expect.stringMatching(/repo$/),
+      force: false,
     });
   });
 

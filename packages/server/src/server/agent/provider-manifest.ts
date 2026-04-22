@@ -116,6 +116,16 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const MOCK_LOAD_TEST_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "load-test",
+    label: "Load Test",
+    description: "Streams repeated markdown, reasoning, and tool calls for app stress testing",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+  },
+];
+
 export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   {
     id: "claude",
@@ -168,9 +178,23 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   },
 ];
 
+export const DEV_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
+  {
+    id: "mock",
+    label: "Mock Load Test",
+    description:
+      "Development-only provider that emits synthetic agent traffic for performance tests",
+    defaultModeId: "load-test",
+    modes: MOCK_LOAD_TEST_MODES,
+  },
+];
+
 export function getAgentProviderDefinition(
   provider: string,
-  definitions: AgentProviderDefinition[] = AGENT_PROVIDER_DEFINITIONS,
+  definitions: AgentProviderDefinition[] = [
+    ...AGENT_PROVIDER_DEFINITIONS,
+    ...DEV_AGENT_PROVIDER_DEFINITIONS,
+  ],
 ): AgentProviderDefinition {
   const definition = definitions.find((entry) => entry.id === provider);
   if (!definition) {

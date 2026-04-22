@@ -1,7 +1,7 @@
 import { SquarePen } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { WorkspaceDraftAgentTab } from "@/screens/workspace/workspace-draft-agent-tab";
-import { usePaneContext } from "@/panels/pane-context";
+import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import type { PanelRegistration } from "@/panels/panel-registry";
 import { useSessionStore } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -17,15 +17,9 @@ function useDraftPanelDescriptor() {
 }
 
 function DraftPanel() {
-  const {
-    serverId,
-    workspaceId,
-    tabId,
-    target,
-    isPaneFocused,
-    openFileInWorkspace,
-    retargetCurrentTab,
-  } = usePaneContext();
+  const { serverId, workspaceId, tabId, target, openFileInWorkspace, retargetCurrentTab } =
+    usePaneContext();
+  const { isInteractive } = usePaneFocus();
   invariant(target.kind === "draft", "DraftPanel requires draft target");
 
   return (
@@ -34,7 +28,7 @@ function DraftPanel() {
       workspaceId={workspaceId}
       tabId={tabId}
       draftId={target.draftId}
-      isPaneFocused={isPaneFocused}
+      isPaneFocused={isInteractive}
       onOpenWorkspaceFile={({ filePath }) => {
         openFileInWorkspace(filePath);
       }}

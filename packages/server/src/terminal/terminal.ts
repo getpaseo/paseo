@@ -2,14 +2,28 @@ import * as pty from "node-pty";
 import xterm, { type Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
 import { chmodSync, existsSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import stripAnsi from "strip-ansi";
 import type { TerminalCell, TerminalState } from "../shared/messages.js";
 
 const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
 let nodePtySpawnHelperChecked = false;
+const TERMINAL_TITLE_DEBOUNCE_MS = 150;
+const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
+const TERMINAL_EXIT_OUTPUT_CHAR_LIMIT = 16000;
+
+export interface TerminalExitInfo {
+  exitCode: number | null;
+  signal: number | null;
+  lastOutputLines: string[];
+}
+
+export interface TerminalCommandFinishedInfo {
+  exitCode: number | null;
+}
 
 export type ClientMessage =
   | { type: "input"; data: string }
@@ -18,7 +32,8 @@ export type ClientMessage =
 
 export type ServerMessage =
   | { type: "output"; data: string }
-  | { type: "snapshot"; state: TerminalState };
+  | { type: "snapshot"; state: TerminalState }
+  | { type: "titleChange"; title?: string };
 
 export interface TerminalSession {
   id: string;
@@ -26,19 +41,50 @@ export interface TerminalSession {
   cwd: string;
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void): () => void;
-  onExit(listener: () => void): () => void;
+  onExit(listener: (info: TerminalExitInfo) => void): () => void;
+  onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
+  onTitleChange(listener: (title?: string) => void): () => void;
   getSize(): { rows: number; cols: number };
   getState(): TerminalState;
+  getTitle(): string | undefined;
+  getExitInfo(): TerminalExitInfo | null;
   kill(): void;
+  killAndWait(options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number }): Promise<void>;
+}
+
+function parseCommandFinishedOsc(data: string): TerminalCommandFinishedInfo | null {
+  // OSC 633 is terminal control traffic, but a foreground command can still
+  // print arbitrary control bytes. Keep this boundary to the exact VS Code
+  // command-finished shape emitted by our shell integration.
+  const parts = data.split(";");
+  if (parts[0] !== "D") {
+    return null;
+  }
+  if (parts.length === 1) {
+    return { exitCode: null };
+  }
+  if (parts.length !== 2 || !/^-?\d+$/.test(parts[1])) {
+    return null;
+  }
+  return { exitCode: Number(parts[1]) };
 }
 
 export interface CreateTerminalOptions {
+  id?: string;
   cwd: string;
   shell?: string;
   env?: Record<string, string>;
   rows?: number;
   cols?: number;
   name?: string;
+  title?: string;
+  command?: string;
+  args?: string[];
+}
+
+interface BuildTerminalEnvironmentInput {
+  shell: string;
+  env: Record<string, string>;
 }
 
 export interface CaptureTerminalLinesOptions {
@@ -130,6 +176,31 @@ export function resolveDefaultTerminalShell(
   }
 
   return env.SHELL || "/bin/sh";
+}
+
+export function resolveZshShellIntegrationDir(): string {
+  return fileURLToPath(new URL("./shell-integration/zsh", import.meta.url));
+}
+
+export function buildTerminalEnvironment(
+  input: BuildTerminalEnvironmentInput,
+): Record<string, string> {
+  const baseEnv: Record<string, string> = {
+    ...process.env,
+    ...input.env,
+    TERM: "xterm-256color",
+  };
+
+  if (basename(input.shell) !== "zsh") {
+    return baseEnv;
+  }
+
+  const originalZdotdir = baseEnv.ZDOTDIR ?? "";
+  return {
+    ...baseEnv,
+    PASEO_ZSH_ZDOTDIR: originalZdotdir,
+    ZDOTDIR: resolveZshShellIntegrationDir(),
+  };
 }
 
 function extractCell(terminal: TerminalType, row: number, col: number): TerminalCell {
@@ -255,6 +326,154 @@ function extractCursorState(terminal: TerminalType): TerminalState["cursor"] {
   };
 }
 
+function normalizeProcessToken(token: string): string {
+  if (token.length === 0) {
+    return token;
+  }
+
+  const quote =
+    token.startsWith('"') && token.endsWith('"')
+      ? '"'
+      : token.startsWith("'") && token.endsWith("'")
+        ? "'"
+        : "";
+  const rawToken = quote ? token.slice(1, -1) : token;
+  if (rawToken.length === 0) {
+    return token;
+  }
+
+  const assignmentMatch = rawToken.match(/^([A-Za-z_][A-Za-z0-9_]*=)(.+)$/);
+  const prefix = assignmentMatch ? assignmentMatch[1] : "";
+  const value = assignmentMatch ? assignmentMatch[2] : rawToken;
+  if (!value.includes("/")) {
+    return token;
+  }
+
+  const normalized = `${prefix}${basename(value)}`;
+  return quote ? `${quote}${normalized}${quote}` : normalized;
+}
+
+export function normalizeProcessTitle(processTitle: string): string | undefined {
+  const trimmed = processTitle.trim().replace(/\s+/g, " ");
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const normalized = trimmed
+    .split(" ")
+    .map((token) => normalizeProcessToken(token))
+    .join(" ")
+    .trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+const PROCESS_INTERPRETERS = new Set([
+  "bash",
+  "bun",
+  "deno",
+  "node",
+  "nodejs",
+  "python",
+  "python3",
+  "ruby",
+  "sh",
+  "tsx",
+  "zsh",
+]);
+
+const PACKAGE_MANAGER_SCRIPT_NAMES = new Map<string, string>([
+  ["bun.js", "bun"],
+  ["npm-cli.js", "npm"],
+  ["npx-cli.js", "npx"],
+  ["pnpm.cjs", "pnpm"],
+  ["pnpm.js", "pnpm"],
+  ["yarn.cjs", "yarn"],
+  ["yarn.js", "yarn"],
+]);
+
+export function humanizeProcessTitle(processTitle: string): string | undefined {
+  const normalized = normalizeProcessTitle(processTitle);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const tokens = normalized.split(" ").filter(Boolean);
+  if (tokens.length === 0) {
+    return undefined;
+  }
+
+  while (tokens[0] === "env") {
+    tokens.shift();
+    while (tokens[0] && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) {
+      tokens.shift();
+    }
+  }
+
+  if (tokens.length === 0) {
+    return normalized;
+  }
+
+  const first = tokens[0];
+  const second = tokens[1];
+  if (PROCESS_INTERPRETERS.has(first) && second) {
+    const packageManager = PACKAGE_MANAGER_SCRIPT_NAMES.get(second);
+    if (packageManager) {
+      return [packageManager, ...tokens.slice(2)].join(" ").trim() || packageManager;
+    }
+
+    if (!second.startsWith("-")) {
+      return [second, ...tokens.slice(2)].join(" ").trim();
+    }
+  }
+
+  return normalized;
+}
+
+function extractLastOutputLines(terminal: TerminalType, limit: number): string[] {
+  const buffer = terminal.buffer.active;
+  const mergedLines: string[] = [];
+
+  for (let row = 0; row < buffer.length; row++) {
+    const line = buffer.getLine(row);
+    if (!line) {
+      continue;
+    }
+
+    const text = line.translateToString(true);
+    const isWrapped = (line as { isWrapped?: boolean }).isWrapped === true;
+    if (isWrapped && mergedLines.length > 0) {
+      mergedLines[mergedLines.length - 1] += text;
+      continue;
+    }
+    mergedLines.push(text);
+  }
+
+  while (mergedLines.length > 0 && mergedLines[0]?.trim().length === 0) {
+    mergedLines.shift();
+  }
+  while (mergedLines.length > 0 && mergedLines[mergedLines.length - 1]?.trim().length === 0) {
+    mergedLines.pop();
+  }
+
+  return mergedLines.slice(-limit);
+}
+
+function stripAnsiSequences(input: string): string {
+  return input.replace(/\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\].*?(?:\x07|\x1b\\))/g, "");
+}
+
+function extractLastOutputLinesFromText(text: string, limit: number): string[] {
+  const normalized = stripAnsiSequences(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized.split("\n").map((line) => line.trimEnd());
+  while (lines[0]?.trim().length === 0) {
+    lines.shift();
+  }
+  while (lines[lines.length - 1]?.trim().length === 0) {
+    lines.pop();
+  }
+  return lines.slice(-limit);
+}
+
 function cellsToPlainText(cells: TerminalCell[], options: { stripAnsi: boolean }): string {
   const text = cells
     .map((cell) => cell.char)
@@ -313,15 +532,36 @@ export function captureTerminalLines(
 }
 
 export async function createTerminal(options: CreateTerminalOptions): Promise<TerminalSession> {
-  const { cwd, shell, env = {}, rows = 24, cols = 80, name = "Terminal" } = options;
+  const {
+    cwd,
+    shell,
+    env = {},
+    rows = 24,
+    cols = 80,
+    name = "Terminal",
+    title: presetTitle,
+    command,
+    args = [],
+  } = options;
   const resolvedShell = shell ?? resolveDefaultTerminalShell();
 
-  const id = randomUUID();
+  const id = options.id ?? randomUUID();
   const listeners = new Set<(msg: ServerMessage) => void>();
-  const exitListeners = new Set<() => void>();
+  const exitListeners = new Set<(info: TerminalExitInfo) => void>();
+  const commandFinishedListeners = new Set<(info: TerminalCommandFinishedInfo) => void>();
+  const titleChangeListeners = new Set<(title?: string) => void>();
   let killed = false;
   let disposed = false;
   let exitEmitted = false;
+  let processExited = false;
+  const processExitWaiters = new Set<() => void>();
+  let exitInfo: TerminalExitInfo | null = null;
+  let recentOutputText = "";
+  let title: string | undefined;
+  let pendingTitle: string | undefined;
+  let titleDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingInput = "";
+  let inputFlushImmediate: ReturnType<typeof setImmediate> | null = null;
 
   // Create xterm.js headless terminal
   const terminal = new Terminal({
@@ -334,17 +574,44 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
   // Create PTY
-  const ptyProcess = pty.spawn(resolvedShell, [], {
+  const spawnCommand = command ?? resolvedShell;
+  const spawnArgs = command ? args : [];
+  const ptyProcess = pty.spawn(spawnCommand, spawnArgs, {
     name: "xterm-256color",
     cols,
     rows,
     cwd,
-    env: {
-      ...process.env,
-      ...env,
-      TERM: "xterm-256color",
-    },
+    env: buildTerminalEnvironment({ shell: spawnCommand, env }),
   });
+
+  function emitTitleChange(nextTitle: string | undefined): void {
+    if (title === nextTitle) {
+      return;
+    }
+    title = nextTitle;
+    for (const listener of Array.from(titleChangeListeners)) {
+      try {
+        listener(title);
+      } catch {
+        // no-op
+      }
+    }
+    for (const listener of Array.from(listeners)) {
+      try {
+        listener({ type: "titleChange", title });
+      } catch {
+        // no-op
+      }
+    }
+  }
+
+  const lockedTitle = presetTitle?.trim() || undefined;
+  const processTitle = command ? [command, ...args].join(" ") : null;
+  let initialTitle = lockedTitle;
+  if (!initialTitle && processTitle) {
+    initialTitle = humanizeProcessTitle(processTitle) ?? normalizeProcessTitle(processTitle);
+  }
+  emitTitleChange(initialTitle);
 
   // Respond to DA1 queries (CSI c or CSI 0 c) — apps like nvim query terminal capabilities
   terminal.parser.registerCsiHandler({ final: "c" }, (params) => {
@@ -355,14 +622,63 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     return false;
   });
 
-  function emitExit(): void {
+  let disposeTitleChangeSubscription: { dispose(): void } | null = null;
+  if (!lockedTitle) {
+    disposeTitleChangeSubscription = terminal.onTitleChange((nextTitle) => {
+      if (disposed || killed) {
+        return;
+      }
+      pendingTitle = nextTitle.trim().length > 0 ? nextTitle : undefined;
+      if (titleDebounceTimer) {
+        clearTimeout(titleDebounceTimer);
+      }
+      titleDebounceTimer = setTimeout(() => {
+        titleDebounceTimer = null;
+        emitTitleChange(pendingTitle);
+      }, TERMINAL_TITLE_DEBOUNCE_MS);
+    });
+  }
+
+  const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
+    const commandFinished = parseCommandFinishedOsc(data);
+    if (!commandFinished) {
+      return true;
+    }
+
+    for (const listener of Array.from(commandFinishedListeners)) {
+      try {
+        listener(commandFinished);
+      } catch {
+        // no-op
+      }
+    }
+    return true;
+  });
+
+  function buildExitInfo(input?: {
+    exitCode?: number | null;
+    signal?: number | null;
+  }): TerminalExitInfo {
+    const lastOutputLines = extractLastOutputLines(terminal, TERMINAL_EXIT_OUTPUT_LINE_LIMIT);
+    return {
+      exitCode: input?.exitCode ?? null,
+      signal: input?.signal && input.signal > 0 ? input.signal : null,
+      lastOutputLines:
+        lastOutputLines.length > 0
+          ? lastOutputLines
+          : extractLastOutputLinesFromText(recentOutputText, TERMINAL_EXIT_OUTPUT_LINE_LIMIT),
+    };
+  }
+
+  function emitExit(info: TerminalExitInfo): void {
     if (exitEmitted) {
       return;
     }
     exitEmitted = true;
+    exitInfo = info;
     for (const listener of Array.from(exitListeners)) {
       try {
-        listener();
+        listener(info);
       } catch {
         // no-op
       }
@@ -375,14 +691,31 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       return;
     }
     disposed = true;
+    pendingInput = "";
+    if (inputFlushImmediate) {
+      clearImmediate(inputFlushImmediate);
+      inputFlushImmediate = null;
+    }
+    if (titleDebounceTimer) {
+      clearTimeout(titleDebounceTimer);
+      titleDebounceTimer = null;
+    }
+    disposeTitleChangeSubscription?.dispose();
+    disposeCommandLifecycleSubscription.dispose();
     terminal.dispose();
     listeners.clear();
     exitListeners.clear();
+    commandFinishedListeners.clear();
+    titleChangeListeners.clear();
   }
 
   // Pipe PTY output to terminal emulator
   ptyProcess.onData((data) => {
     if (killed) return;
+    recentOutputText = `${recentOutputText}${data}`;
+    if (recentOutputText.length > TERMINAL_EXIT_OUTPUT_CHAR_LIMIT) {
+      recentOutputText = recentOutputText.slice(-TERMINAL_EXIT_OUTPUT_CHAR_LIMIT);
+    }
     terminal.write(data, () => {
       if (disposed || killed) {
         return;
@@ -393,9 +726,23 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     });
   });
 
-  ptyProcess.onExit(() => {
+  ptyProcess.onExit((event) => {
     killed = true;
-    emitExit();
+    processExited = true;
+    for (const waiter of Array.from(processExitWaiters)) {
+      try {
+        waiter();
+      } catch {
+        // no-op
+      }
+    }
+    processExitWaiters.clear();
+    emitExit(
+      buildExitInfo({
+        exitCode: event.exitCode,
+        signal: event.signal,
+      }),
+    );
     disposeResources();
   });
 
@@ -406,6 +753,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       grid: extractGrid(terminal),
       scrollback: extractScrollback(terminal),
       cursor: extractCursorState(terminal),
+      ...(title ? { title } : {}),
     };
   }
 
@@ -416,14 +764,44 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     };
   }
 
+  function writeInputToPty(data: string): void {
+    ptyProcess.write(data);
+  }
+
+  function flushPendingInput(): void {
+    if (inputFlushImmediate) {
+      clearImmediate(inputFlushImmediate);
+      inputFlushImmediate = null;
+    }
+    const data = pendingInput;
+    pendingInput = "";
+    if (!data || killed || disposed) {
+      return;
+    }
+    writeInputToPty(data);
+  }
+
+  function scheduleInputFlush(): void {
+    if (inputFlushImmediate) {
+      return;
+    }
+    inputFlushImmediate = setImmediate(() => {
+      inputFlushImmediate = null;
+      flushPendingInput();
+    });
+  }
+
   function send(msg: ClientMessage): void {
     if (killed) return;
 
     switch (msg.type) {
-      case "input":
-        ptyProcess.write(msg.data);
+      case "input": {
+        pendingInput += msg.data;
+        scheduleInputFlush();
         break;
+      }
       case "resize":
+        flushPendingInput();
         terminal.resize(msg.cols, msg.rows);
         ptyProcess.resize(msg.cols, msg.rows);
         break;
@@ -448,11 +826,11 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     };
   }
 
-  function onExit(listener: () => void): () => void {
+  function onExit(listener: (info: TerminalExitInfo) => void): () => void {
     if (killed) {
       queueMicrotask(() => {
         try {
-          listener();
+          listener(exitInfo ?? buildExitInfo());
         } catch {
           // no-op
         }
@@ -466,13 +844,96 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     };
   }
 
+  function onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void {
+    commandFinishedListeners.add(listener);
+    return () => {
+      commandFinishedListeners.delete(listener);
+    };
+  }
+
+  function onTitleChange(listener: (title?: string) => void): () => void {
+    titleChangeListeners.add(listener);
+    if (title !== undefined) {
+      queueMicrotask(() => {
+        if (disposed || !titleChangeListeners.has(listener)) {
+          return;
+        }
+        try {
+          listener(title);
+        } catch {
+          // no-op
+        }
+      });
+    }
+    return () => {
+      titleChangeListeners.delete(listener);
+    };
+  }
+
+  function getTitle(): string | undefined {
+    return title;
+  }
+
+  function getExitInfo(): TerminalExitInfo | null {
+    return exitInfo;
+  }
+
   function kill(): void {
     if (!killed) {
       killed = true;
       ptyProcess.kill();
-      emitExit();
+      emitExit(buildExitInfo());
     }
     disposeResources();
+  }
+
+  function waitForProcessExit(timeoutMs: number): Promise<boolean> {
+    if (processExited) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      const waiter = (): void => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        processExitWaiters.delete(waiter);
+        resolve(false);
+      }, timeoutMs);
+      processExitWaiters.add(waiter);
+    });
+  }
+
+  async function killAndWait(options?: {
+    gracefulTimeoutMs?: number;
+    forceTimeoutMs?: number;
+  }): Promise<void> {
+    const gracefulTimeoutMs = options?.gracefulTimeoutMs ?? 2000;
+    const forceTimeoutMs = options?.forceTimeoutMs ?? 1000;
+
+    if (processExited) {
+      kill();
+      return;
+    }
+
+    try {
+      ptyProcess.kill();
+    } catch {
+      // process may already be gone
+    }
+
+    const exitedGracefully = await waitForProcessExit(gracefulTimeoutMs);
+    if (!exitedGracefully) {
+      try {
+        ptyProcess.kill("SIGKILL");
+      } catch {
+        // process may already be gone
+      }
+      await waitForProcessExit(forceTimeoutMs);
+    }
+
+    // Finalize bookkeeping (idempotent if ptyProcess.onExit already fired).
+    kill();
   }
 
   // Small delay to let shell initialize
@@ -485,8 +946,13 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     send,
     subscribe,
     onExit,
+    onCommandFinished,
+    onTitleChange,
     getSize,
     getState,
+    getTitle,
+    getExitInfo,
     kill,
+    killAndWait,
   };
 }

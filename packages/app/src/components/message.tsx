@@ -53,7 +53,6 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
-import { theme } from "@/styles/theme";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { Colors, Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
@@ -119,6 +118,26 @@ function useDisableOuterSpacing(disableOuterSpacing: boolean | undefined) {
 
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_ID = "paseo-toolcall-shimmer-keyframes";
 const WEB_TOOLCALL_SHIMMER_ANIMATION_NAME = "paseo-toolcall-shimmer";
+const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
+  "data:image/png;base64",
+  "data:image/gif;base64",
+  "data:image/jpeg;base64",
+  "https://",
+  "http://",
+] as const;
+const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
+
+type MarkdownWithStableRendererProps = {
+  children: ReactNode;
+  style: ReturnType<typeof createMarkdownStyles>;
+  rules: RenderRules;
+  markdownit: MarkdownIt;
+  onLinkPress: (url: string) => boolean;
+  allowedImageHandlers: readonly string[];
+  topLevelMaxExceededItem: ReactNode;
+};
+
+const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_CSS = `
   @keyframes ${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} {
     0% {
@@ -264,6 +283,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   content: {
     alignItems: "flex-end",
     maxWidth: "100%",
+    cursor: "auto",
   },
   containerSpacing: {
     marginBottom: theme.spacing[1],
@@ -341,6 +361,7 @@ export const UserMessage = memo(function UserMessage({
   isLastInGroup = true,
   disableOuterSpacing,
 }: UserMessageProps) {
+  const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
   const [messageHovered, setMessageHovered] = useState(false);
   const [copyButtonHovered, setCopyButtonHovered] = useState(false);
@@ -947,9 +968,16 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   onLinkPress,
 }: MemoizedMarkdownBlockProps) {
   return (
-    <Markdown style={styles} rules={rules} markdownit={parser} onLinkPress={onLinkPress}>
+    <MarkdownWithStableRenderer
+      style={styles}
+      rules={rules}
+      markdownit={parser}
+      onLinkPress={onLinkPress}
+      allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
+      topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
+    >
       {text}
-    </Markdown>
+    </MarkdownWithStableRenderer>
   );
 });
 
@@ -962,10 +990,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   disableOuterSpacing,
 }: AssistantMessageProps) {
-  const { theme, rt } = useUnistyles();
+  const { theme } = useUnistyles();
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
 
-  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [rt.themeName]);
+  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
 
   const markdownParser = useMemo(() => {
     const parser = MarkdownIt({ typographer: true, linkify: true });

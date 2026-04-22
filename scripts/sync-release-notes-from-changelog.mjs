@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync as nodeExecFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -117,41 +117,31 @@ function parseChangelog(changelogText) {
   });
 }
 
-function hasRelease(tag, repo) {
+function getRelease(tag, repo, execFileSync = nodeExecFileSync) {
   try {
-    execFileSync("gh", ["release", "view", tag, "--repo", repo], {
-      stdio: "ignore",
+    const output = execFileSync("gh", ["api", `repos/${repo}/releases/tags/${tag}`], {
+      encoding: "utf8",
     });
-    return true;
+    return JSON.parse(output);
   } catch {
-    return false;
+    return null;
   }
 }
 
-function runGh(args) {
+function runGh(args, execFileSync = nodeExecFileSync) {
   execFileSync("gh", args, { stdio: "inherit" });
 }
 
-function buildPrereleaseNotes({ releaseTag, version }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const lines = [
-    `## ${version} - ${today}`,
-    "",
-    "Release candidate build for testing from `main`.",
-    "",
-    `- Tag: \`${releaseTag}\``,
-  ];
-
-  if (process.env.GITHUB_SHA) {
-    lines.push(`- Commit: \`${process.env.GITHUB_SHA}\``);
-  }
-
-  lines.push("- This prerelease does not replace the website's latest stable download.");
-  return `${lines.join("\n")}\n`;
+function updateReleaseNotes({ releaseId, repo, notesPath }, execFileSync = nodeExecFileSync) {
+  runGh(
+    ["api", "-X", "PATCH", `repos/${repo}/releases/${releaseId}`, "-F", `body=@${notesPath}`],
+    execFileSync,
+  );
 }
 
-function main() {
-  const args = parseArgs(process.argv.slice(2));
+export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
+  const execFileSync = deps.execFileSync ?? nodeExecFileSync;
+  const args = parseArgs(argv);
   const changelogPath = path.resolve("CHANGELOG.md");
   const changelogText = readFileSync(changelogPath, "utf8");
   const entries = parseChangelog(changelogText);
@@ -162,13 +152,6 @@ function main() {
 
   let notes = targetEntry?.notes ?? null;
 
-  if (!notes && releaseInfo.isPrerelease) {
-    notes = buildPrereleaseNotes({
-      releaseTag: releaseInfo.releaseTag,
-      version: releaseInfo.version,
-    });
-  }
-
   if (!notes) {
     console.log(`No matching changelog section found for ${targetTag}. Skipping.`);
     return;
@@ -178,7 +161,6 @@ function main() {
   const notesPath = path.join(tempDir, `${targetTag}-notes.md`);
   writeFileSync(notesPath, notes);
 
-  const editArgs = ["release", "edit", targetTag, "--repo", args.repo, "--notes-file", notesPath];
   const createArgs = [
     "release",
     "create",
@@ -194,16 +176,11 @@ function main() {
   ];
 
   try {
-    if (hasRelease(targetTag, args.repo)) {
-      try {
-        runGh(editArgs);
-        console.log(`Updated release notes for ${targetTag}.`);
-        return;
-      } catch {
-        console.warn(
-          `Edit failed for ${targetTag} (release may have been recreated by another workflow); falling through to create.`,
-        );
-      }
+    const release = getRelease(targetTag, args.repo, execFileSync);
+    if (release) {
+      updateReleaseNotes({ releaseId: release.id, repo: args.repo, notesPath }, execFileSync);
+      console.log(`Updated release notes for ${targetTag}.`);
+      return;
     }
 
     if (!args.createIfMissing) {
@@ -214,13 +191,17 @@ function main() {
     }
 
     try {
-      runGh(createArgs);
+      runGh(createArgs, execFileSync);
       console.log(`Created release ${targetTag} with changelog notes.`);
     } catch (createError) {
       console.warn(
         `Release creation failed for ${targetTag}; attempting edit in case another workflow created it concurrently.`,
       );
-      runGh(editArgs);
+      const raceRelease = getRelease(targetTag, args.repo, execFileSync);
+      if (!raceRelease) {
+        throw createError;
+      }
+      updateReleaseNotes({ releaseId: raceRelease.id, repo: args.repo, notesPath }, execFileSync);
       console.log(`Updated release notes for ${targetTag} after create race.`);
 
       if (createError instanceof Error) {
@@ -232,4 +213,6 @@ function main() {
   }
 }
 
-main();
+if (import.meta.url === `file://${process.argv[1]}`) {
+  syncReleaseNotes();
+}

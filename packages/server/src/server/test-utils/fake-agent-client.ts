@@ -181,6 +181,107 @@ function buildToolCallForPrompt(provider: string, prompt: string) {
   return null;
 }
 
+function parseAgentStreamStressPrompt(prompt: string): {
+  count: number;
+  coalesced: boolean;
+} | null {
+  const match = /emit\s+(\d+)\s+(coalesced\s+)?agent stream updates/i.exec(prompt);
+  if (!match) {
+    return null;
+  }
+  const count = Number(match[1]);
+  if (!Number.isFinite(count) || count <= 0) {
+    return null;
+  }
+  return {
+    count: Math.min(count, 5000),
+    coalesced: Boolean(match[2]),
+  };
+}
+
+function parseLargeAgentStreamPayloadPrompt(prompt: string): {
+  bytes: number;
+  kind: "diff" | "file" | "image";
+} | null {
+  const match =
+    /emit\s+(\d+)\s+(?:byte\s+)?(?:large\s+)?(diff|file|image)\s+agent stream (?:update|payload)/i.exec(
+      prompt,
+    );
+  if (!match) {
+    return null;
+  }
+  const bytes = Number(match[1]);
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return null;
+  }
+  return {
+    bytes: Math.min(bytes, 1_000_000),
+    kind: match[2]?.toLowerCase() as "diff" | "file" | "image",
+  };
+}
+
+function buildRepeatedPayload(bytes: number, prefix: string): string {
+  const line = `${prefix} ${"x".repeat(96)}\n`;
+  let output = "";
+  while (output.length < bytes) {
+    output += line;
+  }
+  return output.slice(0, bytes);
+}
+
+function buildLargeTimelineItem(input: {
+  bytes: number;
+  kind: "diff" | "file" | "image";
+  callId: string;
+  provider: AgentStreamEvent["provider"];
+}): AgentStreamEvent {
+  const payload = buildRepeatedPayload(input.bytes, input.kind);
+  if (input.kind === "diff") {
+    return {
+      type: "timeline",
+      provider: input.provider,
+      item: {
+        type: "tool_call",
+        name: "apply_patch",
+        callId: input.callId,
+        status: "completed",
+        detail: {
+          type: "edit",
+          filePath: "src/large-diff.ts",
+          unifiedDiff: `diff --git a/src/large-diff.ts b/src/large-diff.ts\n${payload}`,
+        },
+        error: null,
+      },
+    };
+  }
+  if (input.kind === "file") {
+    return {
+      type: "timeline",
+      provider: input.provider,
+      item: {
+        type: "tool_call",
+        name: "read_file",
+        callId: input.callId,
+        status: "completed",
+        detail: {
+          type: "read",
+          filePath: "src/large-file.txt",
+          content: payload,
+        },
+        error: null,
+      },
+    };
+  }
+  return {
+    type: "timeline",
+    provider: input.provider,
+    item: {
+      type: "assistant_message",
+      text: `data:image/png;base64,${payload}`,
+    },
+  };
+}
+
 class FakeAgentSession implements AgentSession {
   readonly capabilities = TEST_CAPABILITIES;
   readonly id: string;
@@ -372,6 +473,57 @@ class FakeAgentSession implements AgentSession {
       await this.appendHistoryEvent(turnStarted);
       this.notifySubscribers(turnStarted);
 
+      const stress = parseAgentStreamStressPrompt(textPrompt);
+      if (stress !== null) {
+        for (let index = 0; index < stress.count; index += 1) {
+          const stressUpdate: AgentStreamEvent = {
+            type: "timeline",
+            provider: this.providerName,
+            item: stress.coalesced
+              ? {
+                  type: "assistant_message",
+                  text: `stress-update-${index}`,
+                }
+              : {
+                  type: "todo",
+                  items: [{ text: `stress-update-${index}`, completed: index % 2 === 0 }],
+                },
+          };
+          await this.appendHistoryEvent(stressUpdate);
+          this.notifySubscribers(stressUpdate);
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+
+        const completed: AgentStreamEvent = {
+          type: "turn_completed",
+          provider: this.providerName,
+          usage: { inputTokens: 1, outputTokens: stress.count },
+        };
+        await this.appendHistoryEvent(completed);
+        this.notifySubscribers(completed);
+        return;
+      }
+
+      const largePayload = parseLargeAgentStreamPayloadPrompt(textPrompt);
+      if (largePayload !== null) {
+        const largeUpdate = buildLargeTimelineItem({
+          ...largePayload,
+          callId: randomUUID(),
+          provider: this.providerName,
+        });
+        await this.appendHistoryEvent(largeUpdate);
+        this.notifySubscribers(largeUpdate);
+
+        const completed: AgentStreamEvent = {
+          type: "turn_completed",
+          provider: this.providerName,
+          usage: { inputTokens: 1, outputTokens: largePayload.bytes },
+        };
+        await this.appendHistoryEvent(completed);
+        this.notifySubscribers(completed);
+        return;
+      }
+
       const tool = buildToolCallForPrompt(this.providerName, textPrompt);
       if (tool) {
         const needsPermission = this.needsPermissionForTool(tool.name, tool.input ?? {});
@@ -505,13 +657,16 @@ class FakeAgentSession implements AgentSession {
       await this.appendHistoryEvent(assistantChunkA);
       this.notifySubscribers(assistantChunkA);
 
-      const assistantChunkB: AgentStreamEvent = {
-        type: "timeline",
-        provider: this.providerName,
-        item: { type: "assistant_message", text: assistantText.slice(6) },
-      };
-      await this.appendHistoryEvent(assistantChunkB);
-      this.notifySubscribers(assistantChunkB);
+      const assistantChunkBText = assistantText.slice(6);
+      if (assistantChunkBText.length > 0) {
+        const assistantChunkB: AgentStreamEvent = {
+          type: "timeline",
+          provider: this.providerName,
+          item: { type: "assistant_message", text: assistantChunkBText },
+        };
+        await this.appendHistoryEvent(assistantChunkB);
+        this.notifySubscribers(assistantChunkB);
+      }
 
       const completed: AgentStreamEvent = {
         type: "turn_completed",
@@ -903,7 +1058,7 @@ class FakeAgentClient implements AgentClient {
     );
   }
 
-  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
     if (this.provider === "claude") {
       return [
         { provider: this.provider, id: "haiku", label: "Haiku", isDefault: true },

@@ -155,12 +155,16 @@ export function SortableInlineList<T>({
     [data, disabled, onDragBegin],
   );
 
+  const clearDragState = useCallback(() => {
+    setActiveId(null);
+    setDragItems(null);
+  }, []);
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
 
-      setActiveId(null);
-      setDragItems(null);
+      clearDragState();
 
       if (disabled) {
         return;
@@ -176,7 +180,7 @@ export function SortableInlineList<T>({
         }
       }
     },
-    [disabled, items, keyExtractor, onDragEnd],
+    [clearDragState, disabled, items, keyExtractor, onDragEnd],
   );
 
   const ids = items.map((item, index) => keyExtractor(item, index));
@@ -213,6 +217,7 @@ export function SortableInlineList<T>({
       collisionDetection={closestCenter}
       modifiers={[restrictToHorizontalAxis]}
       onDragStart={handleDragStart}
+      onDragCancel={clearDragState}
       onDragEnd={handleDragEnd}
     >
       {renderedItems}

@@ -1,3 +1,4 @@
+import type { Href } from "expo-router";
 import {
   buildHostAgentDetailRoute,
   buildHostRootRoute,
@@ -5,6 +6,7 @@ import {
 } from "@/utils/host-routes";
 
 type NotificationData = Record<string, unknown> | null | undefined;
+type NotificationRoute = Extract<Href, string>;
 
 function readNonEmptyString(data: NotificationData, key: string): string | null {
   const value = data?.[key];
@@ -23,11 +25,11 @@ export function resolveNotificationTarget(data: NotificationData): {
   return {
     serverId: readNonEmptyString(data, "serverId"),
     agentId: readNonEmptyString(data, "agentId"),
-    workspaceId: readNonEmptyString(data, "workspaceId") ?? readNonEmptyString(data, "cwd"),
+    workspaceId: readNonEmptyString(data, "workspaceId"),
   };
 }
 
-export function buildNotificationRoute(data: NotificationData) {
+export function buildNotificationRoute(data: NotificationData): NotificationRoute {
   const { serverId, agentId, workspaceId } = resolveNotificationTarget(data);
   if (serverId && agentId) {
     if (workspaceId) {

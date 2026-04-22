@@ -1,7 +1,6 @@
 import type pino from "pino";
 import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./messages.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { getCheckoutDiff } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
 
@@ -36,7 +35,6 @@ type CheckoutDiffWatchTarget = {
 };
 
 export class CheckoutDiffManager {
-  private readonly paseoHome: string;
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly targets = new Map<string, CheckoutDiffWatchTarget>();
 
@@ -45,7 +43,6 @@ export class CheckoutDiffManager {
     paseoHome: string;
     workspaceGitService: WorkspaceGitService;
   }) {
-    this.paseoHome = options.paseoHome;
     this.workspaceGitService = options.workspaceGitService;
   }
 
@@ -167,11 +164,11 @@ export class CheckoutDiffManager {
   private async computeCheckoutDiffSnapshot(
     cwd: string,
     compare: CheckoutDiffCompareInput,
-    options?: { diffCwd?: string },
+    options?: { diffCwd?: string; force?: boolean; reason?: string },
   ): Promise<CheckoutDiffSnapshotPayload> {
     const diffCwd = options?.diffCwd ?? cwd;
     try {
-      const diffResult = await getCheckoutDiff(
+      const diffResult = await this.workspaceGitService.getCheckoutDiff(
         diffCwd,
         {
           mode: compare.mode,
@@ -179,7 +176,9 @@ export class CheckoutDiffManager {
           ignoreWhitespace: compare.ignoreWhitespace,
           includeStructured: true,
         },
-        { paseoHome: this.paseoHome },
+        options?.force
+          ? { force: true, reason: options.reason ?? "checkout-diff-refresh" }
+          : undefined,
       );
       const files = [...(diffResult.structured ?? [])];
       files.sort((a, b) => {
@@ -211,6 +210,8 @@ export class CheckoutDiffManager {
         target.refreshQueued = false;
         const snapshot = await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
           diffCwd: target.diffCwd,
+          force: true,
+          reason: "working-tree-watch",
         });
         target.latestPayload = snapshot;
         const fingerprint = JSON.stringify(snapshot);

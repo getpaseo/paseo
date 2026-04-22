@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
+import { SettingsSection } from "@/screens/settings/settings-section";
 import { ArrowUpRight, Play, Pause, RotateCw, Copy, FileText, Activity } from "lucide-react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
@@ -18,15 +19,12 @@ import {
   stopDesktopDaemon,
 } from "@/desktop/daemon/desktop-daemon";
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
+import { resolveAppVersion } from "@/utils/app-version";
 
-export interface LocalDaemonSectionProps {
-  appVersion: string | null;
-  showLifecycleControls: boolean;
-}
-
-export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalDaemonSectionProps) {
+export function LocalDaemonSection() {
   const { theme } = useUnistyles();
   const showSection = shouldUseDesktopDaemon();
+  const appVersion = resolveAppVersion();
   const { settings, updateSettings } = useAppSettings();
   const { data, isLoading, error: statusError, setStatus, refetch } = useDaemonStatus();
   const [isRestartingDaemon, setIsRestartingDaemon] = useState(false);
@@ -236,22 +234,26 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
     return null;
   }
 
+  const advancedSettingsButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
+      textStyle={settingsStyles.sectionHeaderLinkText}
+      style={settingsStyles.sectionHeaderLink}
+      onPress={() => void openExternalUrl(ADVANCED_DAEMON_SETTINGS_URL)}
+      accessibilityLabel="Open advanced daemon settings"
+    >
+      Advanced settings
+    </Button>
+  );
+
   return (
-    <View style={settingsStyles.section}>
-      <View style={settingsStyles.sectionHeader}>
-        <Text style={settingsStyles.sectionHeaderTitle}>Built-in daemon</Text>
-        <Button
-          variant="ghost"
-          size="sm"
-          leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
-          textStyle={settingsStyles.sectionHeaderLinkText}
-          style={settingsStyles.sectionHeaderLink}
-          onPress={() => void openExternalUrl(ADVANCED_DAEMON_SETTINGS_URL)}
-          accessibilityLabel="Open advanced daemon settings"
-        >
-          Advanced settings
-        </Button>
-      </View>
+    <SettingsSection
+      title="Daemon"
+      trailing={advancedSettingsButton}
+      testID="host-page-daemon-lifecycle-card"
+    >
       {isLoading ? (
         <View style={[settingsStyles.card, styles.loadingCard]}>
           <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
@@ -271,61 +273,57 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
                 <Text style={styles.valueSubtext}>{daemonStatusDetailText}</Text>
               </View>
             </View>
-            {showLifecycleControls ? (
-              <>
-                <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-                  <View style={settingsStyles.rowContent}>
-                    <Text style={settingsStyles.rowTitle}>Daemon management</Text>
-                    <Text style={settingsStyles.rowHint}>
-                      {isDaemonManagementPaused
-                        ? "Paused. The built-in daemon stays stopped until you start it again."
-                        : "Enabled. Paseo can manage the built-in daemon from the desktop app."}
-                    </Text>
-                  </View>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    leftIcon={
-                      isDaemonManagementPaused ? (
-                        <Play size={theme.iconSize.sm} color={theme.colors.foreground} />
-                      ) : (
-                        <Pause size={theme.iconSize.sm} color={theme.colors.foreground} />
-                      )
-                    }
-                    onPress={handleToggleDaemonManagement}
-                    disabled={isUpdatingDaemonManagement}
-                  >
-                    {isUpdatingDaemonManagement
-                      ? isDaemonManagementPaused
-                        ? "Resuming..."
-                        : "Pausing..."
-                      : isDaemonManagementPaused
-                        ? "Resume"
-                        : "Pause"}
-                  </Button>
-                </View>
-                <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-                  <View style={settingsStyles.rowContent}>
-                    <Text style={settingsStyles.rowTitle}>{daemonActionLabel}</Text>
-                    <Text style={settingsStyles.rowHint}>{daemonActionMessage}</Text>
-                    {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
-                  </View>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
-                    onPress={handleUpdateLocalDaemon}
-                    disabled={isRestartingDaemon}
-                  >
-                    {isRestartingDaemon
-                      ? daemonStatus?.status === "running"
-                        ? "Restarting..."
-                        : "Starting..."
-                      : daemonActionLabel}
-                  </Button>
-                </View>
-              </>
-            ) : null}
+            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>Daemon management</Text>
+                <Text style={settingsStyles.rowHint}>
+                  {isDaemonManagementPaused
+                    ? "Paused. The built-in daemon stays stopped until you start it again."
+                    : "Enabled. Paseo can manage the built-in daemon from the desktop app."}
+                </Text>
+              </View>
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={
+                  isDaemonManagementPaused ? (
+                    <Play size={theme.iconSize.sm} color={theme.colors.foreground} />
+                  ) : (
+                    <Pause size={theme.iconSize.sm} color={theme.colors.foreground} />
+                  )
+                }
+                onPress={handleToggleDaemonManagement}
+                disabled={isUpdatingDaemonManagement}
+              >
+                {isUpdatingDaemonManagement
+                  ? isDaemonManagementPaused
+                    ? "Resuming..."
+                    : "Pausing..."
+                  : isDaemonManagementPaused
+                    ? "Resume"
+                    : "Pause"}
+              </Button>
+            </View>
+            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>{daemonActionLabel}</Text>
+                <Text style={settingsStyles.rowHint}>{daemonActionMessage}</Text>
+                {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
+              </View>
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
+                onPress={handleUpdateLocalDaemon}
+                disabled={isRestartingDaemon}
+              >
+                {isRestartingDaemon
+                  ? daemonStatus?.status === "running"
+                    ? "Restarting..."
+                    : "Starting..."
+                  : daemonActionLabel}
+              </Button>
+            </View>
             <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
               <View style={settingsStyles.rowContent}>
                 <Text style={settingsStyles.rowTitle}>Log file</Text>
@@ -423,7 +421,7 @@ export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalD
           </View>
         </View>
       </AdaptiveModalSheet>
-    </View>
+    </SettingsSection>
   );
 }
 
@@ -448,7 +446,6 @@ const styles = StyleSheet.create((theme) => ({
   valueText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.normal,
   },
   valueSubtext: {
     color: theme.colors.foregroundMuted,
@@ -481,17 +478,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     lineHeight: 18,
-  },
-  codeBlock: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    lineHeight: 18,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface0,
-    padding: theme.spacing[3],
   },
   modalActions: {
     flexDirection: "row",

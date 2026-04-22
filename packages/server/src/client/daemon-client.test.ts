@@ -213,6 +213,531 @@ describe("DaemonClient", () => {
     expect(client.getConnectionState().status).toBe("disposed");
   });
 
+  test("normalizes workspace_setup_progress into a workspace-scoped daemon event", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const events: Array<Parameters<Parameters<typeof client.subscribe>[0]>[0]> = [];
+    client.subscribe((event) => {
+      events.push(event);
+    });
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "workspace_setup_progress",
+        payload: {
+          workspaceId: "ws-feature-a",
+          status: "running",
+          detail: {
+            type: "worktree_setup",
+            worktreePath: "/tmp/project/.paseo/worktrees/feature-a",
+            branchName: "feature-a",
+            log: "phase-one\n",
+            commands: [
+              {
+                index: 1,
+                command: "npm install",
+                cwd: "/tmp/project/.paseo/worktrees/feature-a",
+                log: "phase-one\n",
+                status: "running",
+                exitCode: null,
+              },
+            ],
+          },
+          error: null,
+        },
+      }),
+    );
+
+    expect(events).toContainEqual({
+      type: "workspace_setup_progress",
+      workspaceId: "ws-feature-a",
+      payload: {
+        workspaceId: "ws-feature-a",
+        status: "running",
+        detail: {
+          type: "worktree_setup",
+          worktreePath: "/tmp/project/.paseo/worktrees/feature-a",
+          branchName: "feature-a",
+          log: "phase-one\n",
+          commands: [
+            {
+              index: 1,
+              command: "npm install",
+              cwd: "/tmp/project/.paseo/worktrees/feature-a",
+              log: "phase-one\n",
+              status: "running",
+              exitCode: null,
+            },
+          ],
+        },
+        error: null,
+      },
+    });
+  });
+
+  test("sends create_agent_request with string workspace ids", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const createPromise = client.createAgent({
+      provider: "codex",
+      cwd: "/tmp/project/.paseo/worktrees/feature-a",
+      workspaceId: "ws-feature-a",
+      title: "Compat agent",
+      modeId: "default",
+    });
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(String(mock.sent[0])) as {
+      type: "session";
+      message: {
+        type: "create_agent_request";
+        requestId: string;
+        workspaceId: string;
+      };
+    };
+    expect(request.message).toEqual(
+      expect.objectContaining({
+        type: "create_agent_request",
+        workspaceId: "ws-feature-a",
+      }),
+    );
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "agent_create_failed",
+          requestId: request.message.requestId,
+          error: "compat test sentinel",
+        },
+      }),
+    );
+
+    await expect(createPromise).rejects.toThrow("compat test sentinel");
+  });
+
+  test("sends structured attachments with create_agent_request", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const createPromise = client.createAgent({
+      provider: "codex",
+      cwd: "/tmp/project",
+      initialPrompt: "Review this PR",
+      attachments: [
+        {
+          type: "github_pr",
+          mimeType: "application/github-pr",
+          number: 123,
+          title: "Fix race in worktree setup",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+          baseRefName: "main",
+          headRefName: "fix/worktree-race",
+        },
+      ],
+    });
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(String(mock.sent[0])) as {
+      type: "session";
+      message: {
+        type: "create_agent_request";
+        requestId: string;
+        attachments: Array<{ type: string; mimeType: string; number: number }>;
+      };
+    };
+    expect(request.message.attachments).toEqual([
+      {
+        type: "github_pr",
+        mimeType: "application/github-pr",
+        number: 123,
+        title: "Fix race in worktree setup",
+        url: "https://github.com/getpaseo/paseo/pull/123",
+        baseRefName: "main",
+        headRefName: "fix/worktree-race",
+      },
+    ]);
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "agent_create_failed",
+          requestId: request.message.requestId,
+          error: "attachment test sentinel",
+        },
+      }),
+    );
+
+    await expect(createPromise).rejects.toThrow("attachment test sentinel");
+  });
+
+  test("sends worktree base-ref fields in create_agent_request git options", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const createPromise = client.createAgent({
+      provider: "codex",
+      cwd: "/tmp/project",
+      requestId: "req-agent-ref",
+      git: {
+        createWorktree: true,
+        worktreeSlug: "review-pr-123",
+        refName: "feature/worktree-base-ref",
+        action: "checkout",
+        githubPrNumber: 123,
+      },
+    });
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(String(mock.sent[0])) as {
+      type: "session";
+      message: {
+        type: "create_agent_request";
+        requestId: string;
+        git: {
+          createWorktree: boolean;
+          worktreeSlug: string;
+          refName: string;
+          action: string;
+          githubPrNumber: number;
+        };
+      };
+    };
+    expect(request.message.git).toEqual({
+      createWorktree: true,
+      worktreeSlug: "review-pr-123",
+      refName: "feature/worktree-base-ref",
+      action: "checkout",
+      githubPrNumber: 123,
+    });
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "agent_create_failed",
+          requestId: request.message.requestId,
+          error: "git ref fields sentinel",
+        },
+      }),
+    );
+
+    await expect(createPromise).rejects.toThrow("git ref fields sentinel");
+  });
+
+  test("omitting create_agent_request worktree base-ref fields preserves legacy wire shape", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const createPromise = client.createAgent({
+      provider: "codex",
+      cwd: "/tmp/project",
+      requestId: "req-agent-legacy",
+      git: {
+        createWorktree: true,
+        worktreeSlug: "feature-a",
+      },
+    });
+
+    expect(String(mock.sent[0])).toBe(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "create_agent_request",
+          config: {
+            provider: "codex",
+            cwd: "/tmp/project",
+          },
+          git: {
+            createWorktree: true,
+            worktreeSlug: "feature-a",
+          },
+          labels: {},
+          requestId: "req-agent-legacy",
+        },
+      }),
+    );
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "agent_create_failed",
+          requestId: "req-agent-legacy",
+          error: "legacy git shape sentinel",
+        },
+      }),
+    );
+
+    await expect(createPromise).rejects.toThrow("legacy git shape sentinel");
+  });
+
+  test("sends structured attachments with create_paseo_worktree_request", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const createPromise = client.createPaseoWorktree({
+      cwd: "/tmp/project",
+      worktreeSlug: "review-pr-123",
+      attachments: [
+        {
+          type: "github_pr",
+          mimeType: "application/github-pr",
+          number: 123,
+          title: "Fix race in worktree setup",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+        },
+      ],
+    });
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(String(mock.sent[0])) as {
+      type: "session";
+      message: {
+        type: "create_paseo_worktree_request";
+        requestId: string;
+        attachments: Array<{ type: string; mimeType: string; number: number }>;
+      };
+    };
+    expect(request.message.attachments).toEqual([
+      {
+        type: "github_pr",
+        mimeType: "application/github-pr",
+        number: 123,
+        title: "Fix race in worktree setup",
+        url: "https://github.com/getpaseo/paseo/pull/123",
+      },
+    ]);
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "create_paseo_worktree_response",
+        payload: {
+          requestId: request.message.requestId,
+          workspace: null,
+          error: "worktree attachment sentinel",
+          setupTerminalId: null,
+        },
+      }),
+    );
+
+    await expect(createPromise).resolves.toEqual({
+      requestId: request.message.requestId,
+      workspace: null,
+      error: "worktree attachment sentinel",
+      setupTerminalId: null,
+    });
+  });
+
+  test("sends worktree base-ref fields in create_paseo_worktree_request", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const createPromise = client.createPaseoWorktree(
+      {
+        cwd: "/tmp/project",
+        worktreeSlug: "review-pr-123",
+        refName: "feature/worktree-base-ref",
+        action: "checkout",
+        githubPrNumber: 123,
+      },
+      "req-worktree-ref",
+    );
+
+    expect(mock.sent).toHaveLength(1);
+    const request = JSON.parse(String(mock.sent[0])) as {
+      type: "session";
+      message: {
+        type: "create_paseo_worktree_request";
+        requestId: string;
+        cwd: string;
+        worktreeSlug: string;
+        refName: string;
+        action: string;
+        githubPrNumber: number;
+      };
+    };
+    expect(request.message).toEqual({
+      type: "create_paseo_worktree_request",
+      cwd: "/tmp/project",
+      worktreeSlug: "review-pr-123",
+      refName: "feature/worktree-base-ref",
+      action: "checkout",
+      githubPrNumber: 123,
+      requestId: "req-worktree-ref",
+    });
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "create_paseo_worktree_response",
+        payload: {
+          requestId: request.message.requestId,
+          workspace: null,
+          error: "worktree ref fields sentinel",
+          setupTerminalId: null,
+        },
+      }),
+    );
+
+    await expect(createPromise).resolves.toEqual({
+      requestId: request.message.requestId,
+      workspace: null,
+      error: "worktree ref fields sentinel",
+      setupTerminalId: null,
+    });
+  });
+
+  test("omitting create_paseo_worktree_request worktree base-ref fields preserves legacy wire shape", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const createPromise = client.createPaseoWorktree(
+      {
+        cwd: "/tmp/project",
+        worktreeSlug: "feature-a",
+      },
+      "req-worktree-legacy",
+    );
+
+    expect(String(mock.sent[0])).toBe(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "create_paseo_worktree_request",
+          cwd: "/tmp/project",
+          worktreeSlug: "feature-a",
+          requestId: "req-worktree-legacy",
+        },
+      }),
+    );
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "create_paseo_worktree_response",
+        payload: {
+          requestId: "req-worktree-legacy",
+          workspace: null,
+          error: "legacy worktree shape sentinel",
+          setupTerminalId: null,
+        },
+      }),
+    );
+
+    await expect(createPromise).resolves.toEqual({
+      requestId: "req-worktree-legacy",
+      workspace: null,
+      error: "legacy worktree shape sentinel",
+      setupTerminalId: null,
+    });
+  });
+
   test("sends explicit shutdown_server_request via shutdownServer", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();
@@ -489,7 +1014,7 @@ describe("DaemonClient", () => {
     expect(request.message.type).toBe("subscribe_checkout_diff_request");
     expect(request.message.subscriptionId).toBe("checkout-sub-1");
     expect(request.message.cwd).toBe("/tmp/project");
-    expect(request.message.compare).toEqual({ mode: "uncommitted", ignoreWhitespace: false });
+    expect(request.message.compare).toEqual({ mode: "uncommitted" });
 
     mock.triggerMessage(
       JSON.stringify({
@@ -551,7 +1076,6 @@ describe("DaemonClient", () => {
     expect(subscribeRequest.message.compare).toEqual({
       mode: "base",
       baseRef: "main",
-      ignoreWhitespace: false,
     });
 
     mock.triggerMessage(

@@ -3,11 +3,43 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AgentProvider, ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useSessionForServer } from "./use-session-directory";
+import { useSessionStore } from "@/stores/session-store";
 import { queryClient as singletonQueryClient } from "@/query/query-client";
 
-export function providersSnapshotQueryKey(serverId: string | null) {
-  return ["providersSnapshot", serverId] as const;
+export function normalizeProvidersSnapshotCwdKey(cwd?: string | null): string | null {
+  const trimmed = cwd?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.replace(/^\/(?:Users|home)\/[^/]+/, "~");
+}
+
+export function shouldApplyProvidersSnapshotUpdate(
+  currentCwd?: string | null,
+  messageCwd?: string | null,
+): boolean {
+  const currentCwdKey = normalizeProvidersSnapshotCwdKey(currentCwd);
+  const messageCwdKey = normalizeProvidersSnapshotCwdKey(messageCwd);
+  return messageCwdKey === currentCwdKey || (currentCwdKey === null && messageCwdKey === "~");
+}
+
+export function providersSnapshotQueryKey(serverId: string | null, cwd?: string | null) {
+  return ["providersSnapshot", serverId, normalizeProvidersSnapshotCwdKey(cwd)] as const;
+}
+
+function providersSnapshotRequest(cwd?: string): { cwd?: string } {
+  return cwd ? { cwd } : {};
+}
+
+function refreshProvidersSnapshotRequest(
+  cwd: string | undefined,
+  providers: AgentProvider[] | undefined,
+): { cwd?: string; providers?: AgentProvider[] } {
+  return {
+    ...providersSnapshotRequest(cwd),
+    ...(providers ? { providers } : {}),
+  };
 }
 
 interface UseProvidersSnapshotResult {
@@ -18,29 +50,42 @@ interface UseProvidersSnapshotResult {
   error: string | null;
   supportsSnapshot: boolean;
   refresh: (providers?: AgentProvider[]) => Promise<void>;
-  invalidate: () => void;
+  refetchIfStale: (selectedProvider?: AgentProvider | null) => void;
 }
 
-export function useProvidersSnapshot(serverId: string | null): UseProvidersSnapshotResult {
+interface UseProvidersSnapshotOptions {
+  enabled?: boolean;
+}
+
+export function useProvidersSnapshot(
+  serverId: string | null,
+  cwd?: string | null,
+  options: UseProvidersSnapshotOptions = {},
+): UseProvidersSnapshotResult {
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
-  const supportsSnapshot = useSessionForServer(
-    serverId,
-    (session) => session?.serverInfo?.features?.providersSnapshot === true,
+  const enabled = options.enabled ?? true;
+  const normalizedCwd = cwd?.trim() || undefined;
+  const normalizedCwdKey = normalizeProvidersSnapshotCwdKey(normalizedCwd);
+  const supportsSnapshot = useSessionStore(
+    (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.providersSnapshot === true,
   );
 
-  const queryKey = useMemo(() => providersSnapshotQueryKey(serverId), [serverId]);
+  const queryKey = useMemo(
+    () => providersSnapshotQueryKey(serverId, normalizedCwdKey),
+    [normalizedCwdKey, serverId],
+  );
 
   const snapshotQuery = useQuery({
     queryKey,
-    enabled: Boolean(supportsSnapshot && serverId && client && isConnected),
+    enabled: Boolean(enabled && supportsSnapshot && serverId && client && isConnected),
     staleTime: 60_000,
     queryFn: async () => {
       if (!client) {
         throw new Error("Host is not connected");
       }
-      return client.getProvidersSnapshot();
+      return client.getProvidersSnapshot(providersSnapshotRequest(normalizedCwd));
     },
   });
 
@@ -49,13 +94,15 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
       if (!client) {
         return;
       }
-      await client.refreshProvidersSnapshot({ providers });
+      await client.refreshProvidersSnapshot(
+        refreshProvidersSnapshotRequest(normalizedCwd, providers),
+      );
     },
   });
   const { mutateAsync: refreshSnapshot, isPending: isRefreshing } = refreshMutation;
 
   useEffect(() => {
-    if (!supportsSnapshot || !client || !isConnected || !serverId) {
+    if (!enabled || !supportsSnapshot || !client || !isConnected || !serverId) {
       return;
     }
 
@@ -63,24 +110,67 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
       if (message.type !== "providers_snapshot_update") {
         return;
       }
+      if (!shouldApplyProvidersSnapshotUpdate(normalizedCwd, message.payload.cwd)) {
+        return;
+      }
       queryClient.setQueryData(queryKey, {
         entries: message.payload.entries,
         generatedAt: message.payload.generatedAt,
         requestId: "providers_snapshot_update",
       });
+      const shouldRefetch = message.payload.entries.some((entry) => entry.status === "loading");
+      if (shouldRefetch) {
+        void queryClient.invalidateQueries({
+          queryKey,
+          exact: true,
+          refetchType: "active",
+        });
+      }
     });
-  }, [client, isConnected, serverId, queryClient, queryKey, supportsSnapshot]);
+  }, [
+    client,
+    enabled,
+    isConnected,
+    normalizedCwd,
+    normalizedCwdKey,
+    queryClient,
+    queryKey,
+    serverId,
+    supportsSnapshot,
+  ]);
 
   const refresh = useCallback(
     async (providers?: AgentProvider[]) => {
+      if (!client) {
+        return;
+      }
       await refreshSnapshot(providers);
+      const snapshot = await client.getProvidersSnapshot(providersSnapshotRequest(normalizedCwd));
+      queryClient.setQueryData(queryKey, snapshot);
     },
-    [refreshSnapshot],
+    [client, normalizedCwd, queryClient, queryKey, refreshSnapshot],
   );
 
-  const invalidate = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey });
-  }, [queryClient, queryKey]);
+  const refetchIfStale = useCallback(
+    (selectedProvider?: AgentProvider | null) => {
+      if (!selectedProvider) {
+        void queryClient.refetchQueries({ queryKey, type: "active", stale: true });
+        return;
+      }
+
+      const selectedEntry = snapshotQuery.data?.entries.find(
+        (entry) => entry.provider === selectedProvider,
+      );
+
+      if (!selectedEntry || selectedEntry.status === "loading") {
+        void queryClient.refetchQueries({ queryKey, type: "active" });
+        return;
+      }
+
+      void queryClient.refetchQueries({ queryKey, type: "active", stale: true });
+    },
+    [queryClient, queryKey, snapshotQuery.data?.entries],
+  );
 
   return {
     entries: snapshotQuery.data?.entries ?? undefined,
@@ -90,15 +180,20 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
     error: snapshotQuery.error instanceof Error ? snapshotQuery.error.message : null,
     supportsSnapshot,
     refresh,
-    invalidate,
+    refetchIfStale,
   };
 }
 
-export function prefetchProvidersSnapshot(serverId: string, client: DaemonClient): void {
-  const queryKey = providersSnapshotQueryKey(serverId);
+export function prefetchProvidersSnapshot(
+  serverId: string,
+  client: DaemonClient,
+  cwd?: string | null,
+): void {
+  const normalizedCwd = cwd?.trim() || undefined;
+  const queryKey = providersSnapshotQueryKey(serverId, normalizedCwd);
   void singletonQueryClient.prefetchQuery({
     queryKey,
     staleTime: 60_000,
-    queryFn: () => client.getProvidersSnapshot(),
+    queryFn: () => client.getProvidersSnapshot(providersSnapshotRequest(normalizedCwd)),
   });
 }

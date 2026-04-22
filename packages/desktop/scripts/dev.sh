@@ -9,8 +9,9 @@ ROOT_DIR="$(cd "$DESKTOP_DIR/../.." && pwd)"
 # Build the Electron main process
 npm run build:main
 
-# Get a random available port for Metro
-EXPO_PORT=$("$ROOT_DIR/node_modules/.bin/get-port")
+# Prefer Metro's stable default port so dev browser storage keeps the same
+# localhost origin across restarts. Fall back only when earlier ports are busy.
+EXPO_PORT=$("$ROOT_DIR/node_modules/.bin/get-port" 8081 8082 8083 8084 8085)
 export EXPO_PORT
 
 # Allow any origin in dev so Electron on random localhost ports can reach
@@ -25,7 +26,7 @@ echo "  Metro:     http://localhost:${EXPO_PORT}"
 echo "══════════════════════════════════════════════════════"
 
 # Launch Metro + Electron together, kill both on exit
-"$ROOT_DIR/node_modules/.bin/concurrently" \
+exec "$ROOT_DIR/node_modules/.bin/concurrently" \
   --kill-others \
   --names "metro,electron" \
   --prefix-colors "magenta,cyan" \

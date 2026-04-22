@@ -16,7 +16,7 @@ type DraftFeatureConfig = Pick<
 
 export function useDraftAgentFeatures(input: {
   serverId: string | null | undefined;
-  provider: AgentProvider;
+  provider: AgentProvider | null;
   cwd: string | null | undefined;
   modeId: string | null | undefined;
   modelId: string | null | undefined;
@@ -28,30 +28,31 @@ export function useDraftAgentFeatures(input: {
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
+  const normalizedProvider = provider ?? null;
   const persistedFeatureValues = useMemo(
-    () => preferences.providerPreferences?.[provider]?.featureValues ?? {},
+    () => (provider ? (preferences.providerPreferences?.[provider]?.featureValues ?? {}) : {}),
     [preferences.providerPreferences, provider],
   );
 
   const draftConfig = useMemo<DraftFeatureConfig | null>(() => {
-    if (!normalizedCwd) {
+    if (!normalizedProvider || !normalizedCwd) {
       return null;
     }
 
     return {
-      provider,
+      provider: normalizedProvider,
       cwd: normalizedCwd,
       ...(modeId ? { modeId } : {}),
       ...(modelId ? { model: modelId } : {}),
       ...(thinkingOptionId ? { thinkingOptionId } : {}),
     };
-  }, [modeId, modelId, normalizedCwd, provider, thinkingOptionId]);
+  }, [modeId, modelId, normalizedCwd, normalizedProvider, thinkingOptionId]);
 
   const featuresQuery = useQuery({
     queryKey: [
       "providerFeatures",
       serverId ?? null,
-      provider,
+      normalizedProvider,
       normalizedCwd || null,
       modeId ?? null,
       modelId ?? null,
@@ -106,6 +107,9 @@ export function useDraftAgentFeatures(input: {
 
         return { ...current, [featureId]: value };
       });
+      if (!provider) {
+        return;
+      }
       void updatePreferences((current) =>
         mergeProviderPreferences({
           preferences: current,

@@ -1,23 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { AgentInputArea } from "@/components/agent-input-area";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import invariant from "tiny-invariant";
+import { Composer } from "@/components/composer";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import type { ImageAttachment } from "@/components/message-input";
-import { useAgentFormState } from "@/hooks/use-agent-form-state";
 import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
-import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { Agent } from "@/stores/session-store";
+import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 import { encodeImages } from "@/utils/encode-images";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
-import type {
-  AgentCapabilityFlags,
-  AgentSessionConfig,
-} from "@server/server/agent/agent-sdk-types";
+import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
 import { isWeb } from "@/constants/platform";
 
@@ -50,82 +49,37 @@ export function WorkspaceDraftAgentTab({
   onCreated,
   onOpenWorkspaceFile,
 }: WorkspaceDraftAgentTabProps) {
+  const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const workspaceAuthority = useWorkspaceExecutionAuthority(serverId, workspaceId);
+  const workspaceExecutionAuthority = workspaceAuthority?.ok ? workspaceAuthority.authority : null;
+  const workspaceDirectory = workspaceExecutionAuthority?.workspaceDirectory ?? null;
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
-  const draftInput = useAgentInputDraft(
-    buildDraftStoreKey({
-      serverId,
-      agentId: tabId,
-      draftId,
-    }),
+  const draftStoreKey = useMemo(
+    () =>
+      buildDraftStoreKey({
+        serverId,
+        agentId: tabId,
+        draftId,
+      }),
+    [draftId, serverId, tabId],
   );
-
-  const {
-    selectedProvider,
-    setProviderFromUser,
-    selectedMode,
-    setModeFromUser,
-    selectedModel,
-    setModelFromUser,
-    selectedThinkingOptionId,
-    setThinkingOptionFromUser,
-    workingDir,
-    setWorkingDir,
-    providerDefinitions,
-    modeOptions,
-    availableModels,
-    allProviderModels,
-    allProviderEntries,
-    isAllModelsLoading,
-    availableThinkingOptions,
-    isModelLoading,
-    setProviderAndModelFromUser,
-    invalidateProviderModels,
-    persistFormPreferences,
-  } = useAgentFormState({
-    initialServerId: serverId,
-    initialValues: { workingDir: workspaceId },
-    isVisible: true,
-    isCreateFlow: true,
-    onlineServerIds: isConnected ? [serverId] : [],
+  const draftInput = useAgentInputDraft({
+    draftKey: draftStoreKey,
+    initialCwd: workspaceDirectory ?? "",
+    composer: {
+      initialServerId: serverId,
+      initialValues: workspaceDirectory ? { workingDir: workspaceDirectory } : undefined,
+      isVisible: true,
+      onlineServerIds: isConnected ? [serverId] : [],
+      lockedWorkingDir: workspaceDirectory ?? undefined,
+    },
   });
-
-  // Lock working directory to workspace.
-  useEffect(() => {
-    if (workingDir.trim() === workspaceId.trim()) {
-      return;
-    }
-    setWorkingDir(workspaceId);
-  }, [setWorkingDir, workingDir, workspaceId]);
-
-  const effectiveDraftModelId = useMemo(() => {
-    if (selectedModel.trim()) {
-      return selectedModel.trim();
-    }
-    return availableModels.find((model) => model.isDefault)?.id ?? availableModels[0]?.id ?? "";
-  }, [availableModels, selectedModel]);
-
-  const effectiveDraftThinkingOptionId = useMemo(() => {
-    if (selectedThinkingOptionId.trim()) {
-      return selectedThinkingOptionId.trim();
-    }
-    const selectedModelDefinition =
-      availableModels.find((model) => model.id === effectiveDraftModelId) ?? null;
-    return selectedModelDefinition?.defaultThinkingOptionId ?? "";
-  }, [availableModels, effectiveDraftModelId, selectedThinkingOptionId]);
-  const {
-    features: draftFeatures,
-    featureValues: draftFeatureValues,
-    setFeatureValue: setDraftFeatureValue,
-  } = useDraftAgentFeatures({
-    serverId,
-    provider: selectedProvider,
-    cwd: workspaceId,
-    modeId: selectedMode,
-    modelId: effectiveDraftModelId,
-    thinkingOptionId: effectiveDraftThinkingOptionId,
-  });
+  const composerState = draftInput.composerState;
+  if (!composerState) {
+    throw new Error("Workspace draft composer state is required");
+  }
 
   const {
     formErrorMessage,
@@ -140,14 +94,20 @@ export function WorkspaceDraftAgentTab({
       if (!text.trim()) {
         return "Initial prompt is required";
       }
-      if (providerDefinitions.length === 0) {
+      if (composerState.providerDefinitions.length === 0) {
         return "No available providers on the selected host";
       }
-      if (isModelLoading) {
+      if (!composerState.selectedProvider) {
+        return "Select a model";
+      }
+      if (composerState.isModelLoading) {
         return "Model defaults are still loading";
       }
-      if (!effectiveDraftModelId) {
+      if (!composerState.effectiveModelId) {
         return "No model is available for the selected provider";
+      }
+      if (!workspaceDirectory) {
+        return "Workspace directory not found";
       }
       if (!client) {
         return "Host is not connected";
@@ -155,21 +115,29 @@ export function WorkspaceDraftAgentTab({
       return null;
     },
     onBeforeSubmit: () => {
-      void persistFormPreferences();
+      void composerState.persistFormPreferences();
       if (isWeb) {
         (document.activeElement as HTMLElement | null)?.blur?.();
       }
       Keyboard.dismiss();
     },
     buildDraftAgent: (attempt) => {
+      invariant(workspaceDirectory, "Workspace directory is required");
       const now = attempt.timestamp;
-      const model = effectiveDraftModelId || null;
-      const thinkingOptionId = effectiveDraftThinkingOptionId || null;
-      const modeId = modeOptions.length > 0 && selectedMode !== "" ? selectedMode : null;
+      const model = composerState.effectiveModelId || null;
+      const thinkingOptionId = composerState.effectiveThinkingOptionId || null;
+      const modeId =
+        composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
+          ? composerState.selectedMode
+          : null;
+      const provider = composerState.selectedProvider;
+      if (!provider) {
+        throw new Error("Select a model");
+      }
       return {
         serverId,
         id: tabId,
-        provider: selectedProvider,
+        provider,
         status: "running",
         createdAt: now,
         updatedAt: now,
@@ -180,38 +148,45 @@ export function WorkspaceDraftAgentTab({
         availableModes: [],
         pendingPermissions: [],
         persistence: null,
-        runtimeInfo: { provider: selectedProvider, sessionId: null, model, modeId },
+        runtimeInfo: { provider, sessionId: null, model, modeId },
         title: "Agent",
-        cwd: workspaceId,
+        cwd: workspaceDirectory,
         model,
-        features: draftFeatures,
+        features: composerState.statusControls.features,
         thinkingOptionId,
         labels: {},
       };
     },
-    createRequest: async ({ attempt, text, images }) => {
+    createRequest: async ({ attempt, text, images, attachments }) => {
+      invariant(workspaceDirectory, "Workspace directory is required");
+      invariant(workspaceExecutionAuthority, "Workspace authority is required");
       if (!client) {
         throw new Error("Host is not connected");
       }
 
-      const modeId = modeOptions.length > 0 && selectedMode !== "" ? selectedMode : undefined;
-      const config: AgentSessionConfig = {
-        provider: selectedProvider,
-        cwd: workspaceId,
-        ...(modeId ? { modeId } : {}),
-        ...(effectiveDraftModelId ? { model: effectiveDraftModelId } : {}),
-        ...(effectiveDraftThinkingOptionId
-          ? { thinkingOptionId: effectiveDraftThinkingOptionId }
+      const provider = composerState.selectedProvider;
+      if (!provider) {
+        throw new Error("Select a model");
+      }
+      const config = buildWorkspaceDraftAgentConfig({
+        provider,
+        cwd: workspaceDirectory,
+        ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
+          ? { modeId: composerState.selectedMode }
           : {}),
-        ...(draftFeatureValues ? { featureValues: draftFeatureValues } : {}),
-      };
+        model: composerState.effectiveModelId || undefined,
+        thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
+        featureValues: composerState.featureValues,
+      });
 
       const imagesData = await encodeImages(images);
       const result = await client.createAgent({
         config,
-        initialPrompt: text,
+        workspaceId: workspaceExecutionAuthority.workspaceId,
+        ...(text ? { initialPrompt: text } : {}),
         clientMessageId: attempt.clientMessageId,
         ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
       });
 
       return {
@@ -223,27 +198,6 @@ export function WorkspaceDraftAgentTab({
       onCreated(result);
     },
   });
-
-  const draftCommandConfig = useMemo(() => {
-    return {
-      provider: selectedProvider,
-      cwd: workspaceId,
-      ...(modeOptions.length > 0 && selectedMode !== "" ? { modeId: selectedMode } : {}),
-      ...(effectiveDraftModelId ? { model: effectiveDraftModelId } : {}),
-      ...(effectiveDraftThinkingOptionId
-        ? { thinkingOptionId: effectiveDraftThinkingOptionId }
-        : {}),
-      ...(draftFeatureValues ? { featureValues: draftFeatureValues } : {}),
-    };
-  }, [
-    draftFeatureValues,
-    effectiveDraftModelId,
-    effectiveDraftThinkingOptionId,
-    modeOptions.length,
-    selectedMode,
-    selectedProvider,
-    workspaceId,
-  ]);
 
   const handleFilesDropped = useCallback((files: ImageAttachment[]) => {
     addImagesRef.current?.(files);
@@ -260,51 +214,54 @@ export function WorkspaceDraftAgentTab({
   }, []);
 
   const handleProviderSelectWithFocus = useCallback(
-    (provider: string) => {
-      setProviderFromUser(provider);
+    (provider: Parameters<typeof composerState.setProviderFromUser>[0]) => {
+      composerState.setProviderFromUser(provider);
       focusInputRef.current?.();
     },
-    [setProviderFromUser],
+    [composerState],
   );
 
   const handleModeSelectWithFocus = useCallback(
     (modeId: string) => {
-      setModeFromUser(modeId);
+      composerState.setModeFromUser(modeId);
       focusInputRef.current?.();
     },
-    [setModeFromUser],
+    [composerState],
   );
 
   const handleModelSelectWithFocus = useCallback(
     (modelId: string) => {
-      setModelFromUser(modelId);
+      composerState.setModelFromUser(modelId);
       focusInputRef.current?.();
     },
-    [setModelFromUser],
+    [composerState],
   );
 
   const handleProviderAndModelSelectWithFocus = useCallback(
-    (provider: string, modelId: string) => {
-      setProviderAndModelFromUser(provider, modelId);
+    (
+      provider: Parameters<typeof composerState.setProviderAndModelFromUser>[0],
+      modelId: string,
+    ) => {
+      composerState.setProviderAndModelFromUser(provider, modelId);
       focusInputRef.current?.();
     },
-    [setProviderAndModelFromUser],
+    [composerState],
   );
 
   const handleThinkingOptionSelectWithFocus = useCallback(
     (optionId: string) => {
-      setThinkingOptionFromUser(optionId);
+      composerState.setThinkingOptionFromUser(optionId);
       focusInputRef.current?.();
     },
-    [setThinkingOptionFromUser],
+    [composerState],
   );
 
   const handleSetFeatureWithFocus = useCallback(
     (featureId: string, value: unknown) => {
-      setDraftFeatureValue(featureId, value);
+      composerState.statusControls.onSetFeature?.(featureId, value);
       focusInputRef.current?.();
     },
-    [setDraftFeatureValue],
+    [composerState],
   );
 
   return (
@@ -338,8 +295,8 @@ export function WorkspaceDraftAgentTab({
           )}
         </View>
 
-        <View style={styles.inputAreaWrapper}>
-          <AgentInputArea
+        <View style={[styles.inputAreaWrapper, { paddingBottom: insets.bottom }]}>
+          <Composer
             agentId={tabId}
             serverId={serverId}
             isPaneFocused={isPaneFocused}
@@ -348,34 +305,23 @@ export function WorkspaceDraftAgentTab({
             blurOnSubmit={true}
             value={draftInput.text}
             onChangeText={draftInput.setText}
-            images={draftInput.images}
-            onChangeImages={draftInput.setImages}
+            attachments={draftInput.attachments}
+            onChangeAttachments={draftInput.setAttachments}
+            cwd={draftInput.cwd}
             clearDraft={draftInput.clear}
             autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
             onAddImages={handleAddImagesCallback}
             onFocusInput={handleFocusInputCallback}
-            commandDraftConfig={draftCommandConfig}
+            commandDraftConfig={composerState.commandDraftConfig}
             statusControls={{
-              providerDefinitions,
-              selectedProvider,
+              ...composerState.statusControls,
               onSelectProvider: handleProviderSelectWithFocus,
-              modeOptions,
-              selectedMode,
               onSelectMode: handleModeSelectWithFocus,
-              models: availableModels,
-              selectedModel,
               onSelectModel: handleModelSelectWithFocus,
-              isModelLoading,
-              allProviderModels,
-              isAllModelsLoading,
               onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
-              thinkingOptions: availableThinkingOptions,
-              selectedThinkingOptionId,
               onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
-              features: draftFeatures,
               onSetFeature: handleSetFeatureWithFocus,
               onDropdownClose: () => focusInputRef.current?.(),
-              onModelSelectorOpen: invalidateProviderModels,
               disabled: isSubmitting,
             }}
           />

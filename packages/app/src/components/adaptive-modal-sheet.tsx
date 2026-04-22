@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useMemo } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
@@ -7,13 +7,18 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { getOverlayRoot, OVERLAY_Z } from "../lib/overlay-root";
 import {
-  BottomSheetModal,
   BottomSheetBackdrop,
   BottomSheetScrollView,
   BottomSheetTextInput,
   type BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import { X } from "lucide-react-native";
+import { FileDropZone } from "@/components/file-drop-zone";
+import type { ImageAttachment } from "@/components/message-input";
+import {
+  IsolatedBottomSheetModal,
+  useIsolatedBottomSheetVisibility,
+} from "@/components/ui/isolated-bottom-sheet-modal";
 import { isWeb } from "@/constants/platform";
 
 type EscHandler = () => void;
@@ -65,20 +70,24 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.xl,
     borderWidth: 1,
     borderColor: theme.colors.surface2,
-    overflow: "hidden",
   },
   header: {
     paddingHorizontal: theme.spacing[6],
     paddingVertical: theme.spacing[4],
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.surface2,
+    gap: theme.spacing[3],
+  },
+  headerTitleGroup: {
+    flex: 1,
+    gap: theme.spacing[2],
+    minWidth: 0,
   },
   title: {
     flex: 1,
-    color: theme.colors.foreground,
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.medium,
   },
@@ -103,18 +112,16 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[4],
     flexGrow: 1,
   },
-  bottomSheetHandle: {
-    backgroundColor: theme.colors.surface2,
-  },
   bottomSheetHeader: {
     paddingHorizontal: theme.spacing[6],
     paddingTop: theme.spacing[4],
     paddingBottom: theme.spacing[3],
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.surface2,
+    gap: theme.spacing[3],
   },
   bottomSheetContent: {
     padding: theme.spacing[6],
@@ -152,56 +159,43 @@ function SheetBackground({ style }: BottomSheetBackgroundProps) {
 
 export interface AdaptiveModalSheetProps {
   title: string;
+  /** Optional content rendered below the title in the header area. */
+  subtitle?: ReactNode;
   visible: boolean;
   onClose: () => void;
   children: ReactNode;
   headerActions?: ReactNode;
   snapPoints?: string[];
-  stackBehavior?: "push" | "switch" | "replace";
   testID?: string;
+  /** Override the max width of the desktop card. */
+  desktopMaxWidth?: number;
+  /** When provided, wraps the card content in a FileDropZone. */
+  onFilesDropped?: (files: ImageAttachment[]) => void;
   scrollable?: boolean;
 }
 
 export function AdaptiveModalSheet({
   title,
+  subtitle,
   visible,
   onClose,
   children,
   headerActions,
   snapPoints,
-  stackBehavior,
   testID,
+  desktopMaxWidth,
+  onFilesDropped,
   scrollable = true,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
-  const sheetRef = useRef<BottomSheetModal>(null);
-  const dismissingForVisibilityRef = useRef(false);
+  const titleColor = theme.colors.foreground;
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
-
-  useEffect(() => {
-    if (!isMobile) return;
-    if (visible) {
-      dismissingForVisibilityRef.current = false;
-      sheetRef.current?.present();
-    } else {
-      dismissingForVisibilityRef.current = true;
-      sheetRef.current?.dismiss();
-    }
-  }, [visible, isMobile]);
-
-  const handleSheetChange = useCallback(
-    (index: number) => {
-      if (index === -1) {
-        if (dismissingForVisibilityRef.current) {
-          dismissingForVisibilityRef.current = false;
-          return;
-        }
-        onClose();
-      }
-    },
-    [onClose],
-  );
+  const { sheetRef, handleSheetChange } = useIsolatedBottomSheetVisibility({
+    visible,
+    isEnabled: isMobile,
+    onClose,
+  });
 
   const renderBackdrop = useCallback(
     (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
@@ -217,7 +211,7 @@ export function AdaptiveModalSheet({
 
   if (isMobile) {
     return (
-      <BottomSheetModal
+      <IsolatedBottomSheetModal
         ref={sheetRef}
         snapPoints={resolvedSnapPoints}
         index={0}
@@ -225,16 +219,19 @@ export function AdaptiveModalSheet({
         onChange={handleSheetChange}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
-        stackBehavior={stackBehavior}
         backgroundComponent={SheetBackground}
-        handleIndicatorStyle={styles.bottomSheetHandle}
+        handleIndicatorStyle={{ backgroundColor: theme.colors.surface2 }}
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
+        accessible={false}
       >
-        <View style={styles.bottomSheetHeader}>
-          <Text style={styles.title} numberOfLines={1}>
-            {title}
-          </Text>
+        <View style={styles.bottomSheetHeader} testID={testID}>
+          <View style={styles.headerTitleGroup}>
+            <Text key={titleColor} style={[styles.title, { color: titleColor }]} numberOfLines={1}>
+              {title}
+            </Text>
+            {subtitle}
+          </View>
           {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
           <Pressable accessibilityLabel="Close" style={styles.closeButton} onPress={onClose}>
             <X size={16} color={theme.colors.foregroundMuted} />
@@ -251,9 +248,38 @@ export function AdaptiveModalSheet({
         ) : (
           <View style={styles.bottomSheetStaticContent}>{children}</View>
         )}
-      </BottomSheetModal>
+      </IsolatedBottomSheetModal>
     );
   }
+
+  const cardInner = (
+    <>
+      <View style={styles.header}>
+        <View style={styles.headerTitleGroup}>
+          <Text key={titleColor} style={[styles.title, { color: titleColor }]} numberOfLines={1}>
+            {title}
+          </Text>
+          {subtitle}
+        </View>
+        {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
+        <Pressable accessibilityLabel="Close" style={styles.closeButton} onPress={onClose}>
+          <X size={16} color={theme.colors.foregroundMuted} />
+        </Pressable>
+      </View>
+      {scrollable ? (
+        <ScrollView
+          style={styles.desktopScroll}
+          contentContainerStyle={styles.desktopContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {children}
+        </ScrollView>
+      ) : (
+        <View style={styles.desktopStaticContent}>{children}</View>
+      )}
+    </>
+  );
 
   const desktopContent = (
     <View style={styles.desktopOverlay} testID={testID}>
@@ -262,27 +288,11 @@ export function AdaptiveModalSheet({
         style={{ ...StyleSheet.absoluteFillObject }}
         onPress={onClose}
       />
-      <View style={styles.desktopCard}>
-        <View style={styles.header}>
-          <Text style={styles.title} numberOfLines={1}>
-            {title}
-          </Text>
-          {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
-          <Pressable accessibilityLabel="Close" style={styles.closeButton} onPress={onClose}>
-            <X size={16} color={theme.colors.foregroundMuted} />
-          </Pressable>
-        </View>
-        {scrollable ? (
-          <ScrollView
-            style={styles.desktopScroll}
-            contentContainerStyle={styles.desktopContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {children}
-          </ScrollView>
+      <View style={[styles.desktopCard, desktopMaxWidth != null && { maxWidth: desktopMaxWidth }]}>
+        {onFilesDropped ? (
+          <FileDropZone onFilesDropped={onFilesDropped}>{cardInner}</FileDropZone>
         ) : (
-          <View style={styles.desktopStaticContent}>{children}</View>
+          cardInner
         )}
       </View>
     </View>

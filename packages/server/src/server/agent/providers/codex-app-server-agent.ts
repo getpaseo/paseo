@@ -27,8 +27,8 @@ import type {
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import type { Logger } from "pino";
+import { homedir } from "node:os";
 
-import { execSync } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Dirent } from "node:fs";
@@ -38,6 +38,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { z } from "zod";
 import { loadCodexPersistedTimeline } from "./codex-rollout-timeline.js";
+import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import {
   mapCodexRolloutToolCall,
   mapCodexToolCallFromThreadItem,
@@ -58,9 +59,13 @@ import {
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import type { WorkspaceGitService } from "../../workspace-git-service.js";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const TURN_START_TIMEOUT_MS = 90 * 1000;
+const INTERRUPT_TIMEOUT_MS = 2_000;
+const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
+const APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
@@ -89,6 +94,10 @@ const CODEX_MODES: AgentMode[] = [
 ];
 
 const DEFAULT_CODEX_MODE_ID = "auto";
+
+type CodexAppServerAgentDeps = {
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+};
 
 const MODE_PRESETS: Record<
   string,
@@ -369,23 +378,16 @@ async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
   return commands.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function listCodexSkills(cwd: string): Promise<AgentSlashCommand[]> {
+async function listCodexSkills(
+  cwd: string,
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">,
+): Promise<AgentSlashCommand[]> {
   const candidates: string[] = [];
   candidates.push(path.join(cwd, ".codex", "skills"));
 
-  const repoRoot = (() => {
-    try {
-      const output = execSync("git rev-parse --show-toplevel", {
-        cwd,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      const trimmed = output.trim();
-      return trimmed ? trimmed : null;
-    } catch {
-      return null;
-    }
-  })();
+  const repoRoot = workspaceGitService
+    ? await workspaceGitService.resolveRepoRoot(cwd).catch(() => null)
+    : null;
   if (repoRoot) {
     candidates.push(path.join(path.dirname(cwd), ".codex", "skills"));
     candidates.push(path.join(repoRoot, ".codex", "skills"));
@@ -665,8 +667,40 @@ class CodexAppServerClient {
     } catch {
       // ignore
     }
-    terminateChildProcessTree(this.child);
-    await this.exitPromise;
+    signalChildProcessTree(this.child, "SIGTERM");
+    if (await this.waitForExit(APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS)) {
+      return;
+    }
+
+    this.logger.warn(
+      { timeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS },
+      "Codex app-server did not exit after SIGTERM; sending SIGKILL",
+    );
+    signalChildProcessTree(this.child, "SIGKILL");
+    if (await this.waitForExit(APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS)) {
+      return;
+    }
+
+    this.logger.warn(
+      { timeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
+      "Codex app-server did not report exit after SIGKILL",
+    );
+  }
+
+  private async waitForExit(timeoutMs: number): Promise<boolean> {
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      return await Promise.race([
+        this.exitPromise.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
   }
 
   private async handleLine(line: string): Promise<void> {
@@ -718,14 +752,17 @@ class CodexAppServerClient {
   }
 }
 
-function terminateChildProcessTree(child: ChildProcessWithoutNullStreams): void {
-  if (child.killed) {
+function signalChildProcessTree(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+): void {
+  if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
 
   if (process.platform !== "win32" && typeof child.pid === "number" && child.pid > 0) {
     try {
-      process.kill(-child.pid, "SIGTERM");
+      process.kill(-child.pid, signal);
       return;
     } catch {
       // Fall back to the direct child when no separate process group exists.
@@ -733,7 +770,7 @@ function terminateChildProcessTree(child: ChildProcessWithoutNullStreams): void 
   }
 
   try {
-    child.kill("SIGTERM");
+    child.kill(signal);
   } catch {
     // ignore
   }
@@ -2357,6 +2394,15 @@ export async function codexAppServerTurnInputFromPrompt(
       }
       continue;
     }
+    if (record.type === "github_pr" || record.type === "github_issue") {
+      output.push({
+        type: "text",
+        text: renderPromptAttachmentAsText(
+          record as Extract<AgentPromptContentBlock, { type: "github_pr" | "github_issue" }>,
+        ),
+      });
+      continue;
+    }
     output.push(block);
   }
   return output;
@@ -2457,6 +2503,7 @@ class CodexAppServerAgentSession implements AgentSession {
     private readonly resumeHandle: { sessionId: string; metadata?: Record<string, unknown> } | null,
     logger: Logger,
     private readonly spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>,
+    private readonly deps: CodexAppServerAgentDeps = {},
   ) {
     this.logger = logger.child({ module: "agent", provider: CODEX_PROVIDER });
     if (config.modeId === undefined) {
@@ -3265,10 +3312,14 @@ class CodexAppServerAgentSession implements AgentSession {
   async interrupt(): Promise<void> {
     if (!this.client || !this.currentThreadId || !this.currentTurnId) return;
     try {
-      await this.client.request("turn/interrupt", {
-        threadId: this.currentThreadId,
-        turnId: this.currentTurnId,
-      });
+      await this.client.request(
+        "turn/interrupt",
+        {
+          threadId: this.currentThreadId,
+          turnId: this.currentTurnId,
+        },
+        INTERRUPT_TIMEOUT_MS,
+      );
     } catch (error) {
       this.logger.warn({ error }, "Failed to interrupt Codex turn");
     }
@@ -3305,7 +3356,9 @@ class CodexAppServerAgentSession implements AgentSession {
       argumentHint: "",
     }));
     const fallbackSkills =
-      appServerSkills.length === 0 ? await listCodexSkills(this.config.cwd) : [];
+      appServerSkills.length === 0
+        ? await listCodexSkills(this.config.cwd, this.deps.workspaceGitService)
+        : [];
     return [...appServerSkills, ...fallbackSkills, ...prompts].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
@@ -3996,6 +4049,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   constructor(
     private readonly logger: Logger,
     private readonly runtimeSettings?: ProviderRuntimeSettings,
+    private readonly deps: CodexAppServerAgentDeps = {},
   ) {}
 
   private async spawnAppServer(
@@ -4020,8 +4074,12 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
-    const session = new CodexAppServerAgentSession(sessionConfig, null, this.logger, () =>
-      this.spawnAppServer(launchContext?.env),
+    const session = new CodexAppServerAgentSession(
+      sessionConfig,
+      null,
+      this.logger,
+      () => this.spawnAppServer(launchContext?.env),
+      this.deps,
     );
     await session.connect();
     return session;
@@ -4039,8 +4097,12 @@ export class CodexAppServerAgentClient implements AgentClient {
       provider: CODEX_PROVIDER,
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
     };
-    const session = new CodexAppServerAgentSession(merged, handle, this.logger, () =>
-      this.spawnAppServer(launchContext?.env),
+    const session = new CodexAppServerAgentSession(
+      merged,
+      handle,
+      this.logger,
+      () => this.spawnAppServer(launchContext?.env),
+      this.deps,
     );
     await session.connect();
     return session;
@@ -4118,7 +4180,8 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
     const child = await this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger);
 
@@ -4228,7 +4291,7 @@ export class CodexAppServerAgentClient implements AgentClient {
         entries.push({ label: "Models", value: "Not checked" });
       } else {
         try {
-          const models = await this.listModels();
+          const models = await this.listModels({ cwd: homedir(), force: false });
           entries.push({ label: "Models", value: String(models.length) });
         } catch (error) {
           entries.push({
@@ -4257,6 +4320,7 @@ export class CodexAppServerAgentClient implements AgentClient {
 
 export const __codexAppServerInternals = {
   buildCodexAppServerEnv,
+  CodexAppServerClient,
   codexModelSupportsFastMode,
   CodexAppServerAgentSession,
   formatCodexQuestionPrompts,
@@ -4264,6 +4328,7 @@ export const __codexAppServerInternals = {
   mapCodexPatchNotificationToToolCall,
   planStepsToMarkdown,
   mapCodexPlanToToolCall,
+  listCodexSkills,
   normalizeCodexOutputSchema,
   normalizeCodexQuestionPrompts,
   toAgentUsage,

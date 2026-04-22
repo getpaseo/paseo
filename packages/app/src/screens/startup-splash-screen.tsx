@@ -48,6 +48,7 @@ const styles = StyleSheet.create((theme) => ({
       ? {
           overflowX: "auto",
           overflowY: "auto",
+          WebkitAppRegion: "no-drag",
         }
       : null),
   },

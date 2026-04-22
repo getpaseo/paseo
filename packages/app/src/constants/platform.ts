@@ -10,6 +10,7 @@ import { isElectronRuntime, isElectronRuntimeMac } from "@/desktop/host";
 // Default is cross-platform. Gate only when you must:
 //   isWeb      → DOM APIs (document, window, <div>, addEventListener)
 //   isNative   → Native-only APIs (Haptics, StatusBar, push tokens, camera)
+//   isDev      → Development-only diagnostics and instrumentation
 //   isElectron → Desktop wrapper features (file dialogs, titlebar, updates)
 //
 // For layout decisions, use useIsCompactFormFactor() from constants/layout.ts.
@@ -21,6 +22,9 @@ export const isWeb = Platform.OS === "web";
 
 /** iOS or Android — the JS runtime is React Native. */
 export const isNative = Platform.OS !== "web";
+
+/** Development build/runtime — true in Metro dev bundles, false in production. */
+export const isDev = Boolean((globalThis as { __DEV__?: boolean }).__DEV__);
 
 // ---------------------------------------------------------------------------
 // Electron detection (cached — only caches `true`, keeps checking if false

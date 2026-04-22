@@ -8,7 +8,7 @@ type ContextWindowMeterProps = {
   usedTokens: number;
 };
 
-const SVG_SIZE = 20;
+const SVG_SIZE = 16;
 const CENTER = SVG_SIZE / 2;
 const RADIUS = 7;
 const STROKE_WIDTH = 2.25;

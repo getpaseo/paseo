@@ -8,6 +8,7 @@ import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@server/shared/messages";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import { TerminalEmulatorRuntime } from "../terminal/runtime/terminal-emulator-runtime";
+import { openExternalUrl } from "../utils/open-external-url";
 import { focusWithRetries } from "../utils/web-focus";
 import {
   computeScrollOffsetFromDragDelta,
@@ -325,6 +326,7 @@ export default function TerminalEmulator({
         onResize,
         onTerminalKey,
         onPendingModifiersConsumed,
+        onOpenExternalUrl: openExternalUrl,
       },
     });
     runtime.setPendingModifiers({ pendingModifiers });
@@ -350,6 +352,7 @@ export default function TerminalEmulator({
         onResize,
         onTerminalKey,
         onPendingModifiersConsumed,
+        onOpenExternalUrl: openExternalUrl,
       },
     });
   }, [onInput, onPendingModifiersConsumed, onResize, onTerminalKey]);
