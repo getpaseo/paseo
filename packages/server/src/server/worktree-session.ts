@@ -2,8 +2,6 @@ import type { Logger } from "pino";
 import { basename } from "node:path";
 
 import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
-import type { AgentManager } from "./agent/agent-manager.js";
-import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import {
   type AgentAttachment,
   type GitSetupOptions,
@@ -14,7 +12,6 @@ import {
 } from "./messages.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { normalizeWorkspaceId as normalizePersistedWorkspaceId } from "./workspace-registry-model.js";
 import {
   applyWorktreeSetupProgressEvent,
   buildWorktreeSetupDetail,
@@ -28,10 +25,8 @@ import type { GitHubService } from "../services/github-service.js";
 import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
-  deletePaseoWorktree,
   getWorktreeSetupCommands,
   isPaseoOwnedWorktreeCwd,
-  resolvePaseoWorktreeRootForCwd,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   slugify,
@@ -45,6 +40,10 @@ import type {
   CreatePaseoWorktreeInput,
   CreatePaseoWorktreeResult,
 } from "./paseo-worktree-service.js";
+import {
+  archivePaseoWorktree,
+  type ArchivePaseoWorktreeDependencies,
+} from "./paseo-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
@@ -80,20 +79,6 @@ type BuildAgentSessionConfigDependencies = {
     newBranchName: string;
   }) => Promise<void>;
   github?: Pick<GitHubService, "invalidate">;
-};
-
-type ArchivePaseoWorktreeDependencies = {
-  paseoHome?: string;
-  github: GitHubService;
-  workspaceGitService: WorkspaceGitService;
-  agentManager: Pick<AgentManager, "listAgents" | "closeAgent">;
-  agentStorage: Pick<AgentStorage, "list" | "remove">;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
-  emit: EmitSessionMessage;
-  emitWorkspaceUpdatesForCwds: (cwds: Iterable<string>) => Promise<void>;
-  isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
-  killTerminalsUnderPath: (rootPath: string) => Promise<void>;
-  sessionLogger?: Logger;
 };
 
 type CreatePaseoWorktreeInBackgroundDependencies = {
@@ -134,14 +119,6 @@ type HandleCreatePaseoWorktreeRequestDependencies = {
     slug: string;
     worktreePath: string;
   }) => Promise<void>;
-};
-
-type KillTerminalsUnderPathDependencies = {
-  isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
-  killTrackedTerminal: (terminalId: string, options?: { emitExit: boolean }) => void;
-  detachTerminalStream?: (terminalId: string, options: { emitExit: boolean }) => void;
-  sessionLogger: Logger;
-  terminalManager: TerminalManager | null;
 };
 
 export async function buildAgentSessionConfig(
@@ -368,151 +345,13 @@ export async function handlePaseoWorktreeListRequest(
   }
 }
 
-export async function archivePaseoWorktree(
-  dependencies: ArchivePaseoWorktreeDependencies,
-  options: {
-    targetPath: string;
-    repoRoot: string | null;
-    worktreesRoot?: string;
-    requestId: string;
-  },
-): Promise<string[]> {
-  let targetPath = options.targetPath;
-  const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
-    paseoHome: dependencies.paseoHome,
-  });
-  if (resolvedWorktree) {
-    targetPath = resolvedWorktree.worktreePath;
-  }
-
-  const removedAgents = new Set<string>();
-  const affectedWorkspaceCwds = new Set<string>([targetPath]);
-  const affectedWorkspaceIds = new Set<string>([normalizePersistedWorkspaceId(targetPath)]);
-
-  const liveAgents = dependencies.agentManager
-    .listAgents()
-    .filter((agent) => dependencies.isPathWithinRoot(targetPath, agent.cwd));
-  for (const agent of liveAgents) {
-    removedAgents.add(agent.id);
-    affectedWorkspaceCwds.add(agent.cwd);
-    affectedWorkspaceIds.add(normalizePersistedWorkspaceId(agent.cwd));
-  }
-
-  let storedRecords: StoredAgentRecord[] = [];
-  try {
-    storedRecords = await dependencies.agentStorage.list();
-  } catch (error) {
-    dependencies.sessionLogger?.warn(
-      { err: error, targetPath },
-      "Failed to list stored agents during worktree archive; continuing",
-    );
-  }
-  const matchingStoredRecords = storedRecords.filter((record) =>
-    dependencies.isPathWithinRoot(targetPath, record.cwd),
-  );
-  for (const record of matchingStoredRecords) {
-    removedAgents.add(record.id);
-    affectedWorkspaceCwds.add(record.cwd);
-    affectedWorkspaceIds.add(normalizePersistedWorkspaceId(record.cwd));
-  }
-
-  const agentIdsToRemoveFromStorage = new Set<string>([
-    ...liveAgents.map((agent) => agent.id),
-    ...matchingStoredRecords.map((record) => record.id),
-  ]);
-
-  // Fan out agent close + terminal teardown concurrently. We never let a
-  // per-item failure abort the archive — the FS delete must still run so the
-  // worktree doesn't get stuck half-dead.
-  const teardownResults = await Promise.allSettled([
-    ...liveAgents.map((agent) => dependencies.agentManager.closeAgent(agent.id)),
-    dependencies.killTerminalsUnderPath(targetPath),
-  ]);
-
-  for (const result of teardownResults) {
-    if (result.status === "rejected") {
-      dependencies.sessionLogger?.warn(
-        { err: result.reason, targetPath },
-        "Worktree teardown step failed during archive; continuing",
-      );
-    }
-  }
-
-  // Agent storage removal runs after closeAgent so file handles on the agent
-  // state file are released; still allSettled so a single bad record can't
-  // derail the rest.
-  const agentIdsToRemove = Array.from(agentIdsToRemoveFromStorage);
-  const storageRemovalResults = await Promise.allSettled(
-    agentIdsToRemove.map((agentId) => dependencies.agentStorage.remove(agentId)),
-  );
-  storageRemovalResults.forEach((result, index) => {
-    if (result.status === "fulfilled") {
-      return;
-    }
-    dependencies.sessionLogger?.warn(
-      {
-        err: result.reason,
-        agentId: agentIdsToRemove[index],
-        targetPath,
-      },
-      "Failed to remove archived worktree agent from storage; continuing",
-    );
-  });
-
-  await deletePaseoWorktree({
-    cwd: options.repoRoot,
-    worktreePath: targetPath,
-    worktreesRoot: options.worktreesRoot,
-    paseoHome: dependencies.paseoHome,
-  });
-
-  if (options.repoRoot) {
-    try {
-      await dependencies.workspaceGitService.getSnapshot(options.repoRoot, {
-        force: true,
-        reason: "archive-worktree",
-      });
-    } catch (error) {
-      dependencies.sessionLogger?.warn(
-        { err: error, cwd: options.repoRoot },
-        "Failed to force-refresh workspace git snapshot after archiving worktree",
-      );
-    }
-  }
-
-  for (const cwd of affectedWorkspaceCwds) {
-    dependencies.github.invalidate({ cwd });
-  }
-
-  for (const workspaceId of affectedWorkspaceIds) {
-    try {
-      await dependencies.archiveWorkspaceRecord(workspaceId);
-    } catch (error) {
-      dependencies.sessionLogger?.warn(
-        { err: error, workspaceId },
-        "Failed to archive workspace record; worktree FS already removed",
-      );
-    }
-  }
-
-  for (const agentId of removedAgents) {
-    dependencies.emit({
-      type: "agent_deleted",
-      payload: {
-        agentId,
-        requestId: options.requestId,
-      },
-    });
-  }
-
-  await dependencies.emitWorkspaceUpdatesForCwds(affectedWorkspaceCwds);
-
-  return Array.from(removedAgents);
-}
-
 export async function handlePaseoWorktreeArchiveRequest(
-  dependencies: Omit<ArchivePaseoWorktreeDependencies, "emitWorkspaceUpdatesForCwds"> & {
+  dependencies: Omit<
+    ArchivePaseoWorktreeDependencies,
+    "emitWorkspaceUpdatesForCwds" | "workspaceGitService"
+  > & {
     emit: EmitSessionMessage;
+    workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
     emitWorkspaceUpdatesForCwds: (cwds: Iterable<string>) => Promise<void>;
   },
   msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
@@ -532,6 +371,9 @@ export async function handlePaseoWorktreeArchiveRequest(
         throw new Error(`Paseo worktree not found for branch ${msg.branchName}`);
       }
       targetPath = match.path;
+    }
+    if (!targetPath) {
+      throw new Error("worktreePath could not be resolved");
     }
 
     const ownership = await isPaseoOwnedWorktreeCwd(targetPath, {
@@ -778,54 +620,4 @@ export async function runWorktreeSetupInBackground(
   } finally {
     await dependencies.emitWorkspaceUpdateForCwd(worktree.worktreePath);
   }
-}
-
-export async function killTerminalsUnderPath(
-  dependencies: KillTerminalsUnderPathDependencies,
-  rootPath: string,
-): Promise<void> {
-  const terminalManager = dependencies.terminalManager;
-  if (!terminalManager) {
-    return;
-  }
-
-  const terminalIds: string[] = [];
-  const terminalDirectories = [...terminalManager.listDirectories()];
-  for (const terminalCwd of terminalDirectories) {
-    if (!dependencies.isPathWithinRoot(rootPath, terminalCwd)) {
-      continue;
-    }
-    try {
-      const terminals = await terminalManager.getTerminals(terminalCwd);
-      for (const terminal of terminals) {
-        terminalIds.push(terminal.id);
-      }
-    } catch (error) {
-      dependencies.sessionLogger.warn(
-        { err: error, cwd: terminalCwd },
-        "Failed to enumerate worktree terminals during archive",
-      );
-    }
-  }
-
-  if (terminalIds.length === 0) {
-    return;
-  }
-
-  await Promise.allSettled(
-    terminalIds.map(async (terminalId) => {
-      try {
-        dependencies.detachTerminalStream?.(terminalId, { emitExit: true });
-        await terminalManager.killTerminalAndWait(terminalId, {
-          gracefulTimeoutMs: 2000,
-          forceTimeoutMs: 1500,
-        });
-      } catch (error) {
-        dependencies.sessionLogger.warn(
-          { err: error, terminalId },
-          "Terminal kill escalation failed during archive; proceeding anyway",
-        );
-      }
-    }),
-  );
 }

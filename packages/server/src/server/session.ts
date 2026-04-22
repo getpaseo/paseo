@@ -165,6 +165,7 @@ import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { type WorktreeConfig } from "../utils/worktree.js";
 import { runAsyncWorktreeBootstrap } from "./worktree-bootstrap.js";
+import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import type { ScriptRouteStore } from "./script-proxy.js";
 import {
@@ -211,8 +212,8 @@ import {
   handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
-  killTerminalsUnderPath as killWorktreeTerminalsUnderPath,
 } from "./worktree-session.js";
+import { killTerminalsUnderPath as killWorktreeTerminalsUnderPath } from "./paseo-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
@@ -905,6 +906,14 @@ export class Session {
 
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
     await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], { skipReconcile: true });
+  }
+
+  async archiveWorkspaceRecordForExternalMutation(workspaceId: string): Promise<void> {
+    await this.archiveWorkspaceRecord(workspaceId);
+  }
+
+  async emitWorkspaceUpdatesForExternalCwds(cwds: Iterable<string>): Promise<void> {
+    await this.emitWorkspaceUpdatesForCwds(cwds);
   }
 
   async warmWorkspaceGitDataForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
@@ -6403,24 +6412,20 @@ export class Session {
   }
 
   private async archiveWorkspaceRecord(workspaceId: string, archivedAt?: string): Promise<void> {
-    const existingWorkspace = await this.workspaceRegistry.get(workspaceId);
-    if (!existingWorkspace || existingWorkspace.archivedAt) {
+    const existingWorkspace = await archivePersistedWorkspaceRecord({
+      workspaceId,
+      archivedAt,
+      workspaceRegistry: this.workspaceRegistry,
+      projectRegistry: this.projectRegistry,
+    });
+    if (!existingWorkspace) {
       this.removeWorkspaceGitSubscription(workspaceId);
       return;
     }
 
-    const nextArchivedAt = archivedAt ?? new Date().toISOString();
-    await this.workspaceRegistry.archive(workspaceId, nextArchivedAt);
     await this.removeWorkspaceGitWatchTarget(existingWorkspace.cwd);
     this.scriptRuntimeStore?.removeForWorkspace(existingWorkspace.cwd);
     this.removeWorkspaceGitSubscription(workspaceId);
-
-    const siblingWorkspaces = (await this.workspaceRegistry.list()).filter(
-      (workspace) => workspace.projectId === existingWorkspace.projectId && !workspace.archivedAt,
-    );
-    if (siblingWorkspaces.length === 0) {
-      await this.projectRegistry.archive(existingWorkspace.projectId, nextArchivedAt);
-    }
   }
 
   private async reconcileAndEmitWorkspaceUpdates(): Promise<void> {

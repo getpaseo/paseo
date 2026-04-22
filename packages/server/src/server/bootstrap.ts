@@ -112,6 +112,8 @@ import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore } from "./daemon-config-store.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
+import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
@@ -493,6 +495,34 @@ export async function createPaseoDaemon(
     if (mcpEnabled) {
       const agentMcpRoute = "/mcp/agents";
       const agentMcpTransports: AgentMcpTransportMap = new Map();
+      const archiveWorkspaceRecordForMcp = async (workspaceId: string) => {
+        const sessions = wsServer?.listActiveSessions() ?? [];
+        if (sessions.length > 0) {
+          await Promise.all(
+            sessions.map((session) =>
+              session.archiveWorkspaceRecordForExternalMutation(workspaceId),
+            ),
+          );
+          return;
+        }
+
+        await archivePersistedWorkspaceRecord({
+          workspaceId,
+          workspaceRegistry,
+          projectRegistry,
+        });
+      };
+      const emitWorkspaceUpdatesForMcpArchive = async (cwds: Iterable<string>) => {
+        const cwdList = Array.from(cwds);
+        await Promise.all(
+          (wsServer?.listActiveSessions() ?? []).map((session) =>
+            session.emitWorkspaceUpdatesForExternalCwds(cwdList),
+          ),
+        );
+      };
+      const emitMcpArchiveSessionMessage = (message: SessionOutboundMessage) => {
+        wsServer?.broadcast(wrapSessionMessage(message));
+      };
 
       const createAgentMcpTransport = async (callerAgentId?: string) => {
         const agentMcpServer = await createAgentMcpServer({
@@ -505,6 +535,9 @@ export async function createPaseoDaemon(
           providerRegistry,
           github,
           workspaceGitService,
+          archiveWorkspaceRecord: archiveWorkspaceRecordForMcp,
+          emitWorkspaceUpdatesForCwds: emitWorkspaceUpdatesForMcpArchive,
+          emitSessionMessage: emitMcpArchiveSessionMessage,
           createPaseoWorktree: async (input, serviceOptions) => {
             const coreDeps = createWorktreeCoreDeps(github);
             const result = await createPaseoWorktree(input, {

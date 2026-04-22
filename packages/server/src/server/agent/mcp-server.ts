@@ -26,7 +26,12 @@ import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
 } from "./timeline-append.js";
-import { deletePaseoWorktree, type WorktreeConfig } from "../../utils/worktree.js";
+import { getPaseoWorktreesRoot, type WorktreeConfig } from "../../utils/worktree.js";
+import {
+  archivePaseoWorktree,
+  killTerminalsUnderPath,
+  type ArchivePaseoWorktreeDependencies,
+} from "../paseo-worktree-archive-service.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
@@ -61,6 +66,7 @@ import type {
   CreatePaseoWorktreeResult,
 } from "../paseo-worktree-service.js";
 import { toWorktreeRequestError } from "../worktree-errors.js";
+import { join } from "node:path";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
@@ -71,6 +77,9 @@ export interface AgentMcpServerOptions {
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
   github?: GitHubService;
   workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+  archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
+  emitWorkspaceUpdatesForCwds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForCwds"];
+  emitSessionMessage?: ArchivePaseoWorktreeDependencies["emit"];
   createPaseoWorktree?: CreatePaseoWorktreeFn;
   paseoHome?: string;
   /**
@@ -1733,24 +1742,58 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
     async ({ cwd, worktreePath, worktreeSlug }) => {
       const repoRoot = resolveScopedCwd(cwd, { required: true });
-      await deletePaseoWorktree({
-        cwd: repoRoot,
-        worktreePath,
-        worktreeSlug,
-        paseoHome: options.paseoHome,
-      });
-      options.github?.invalidate({ cwd: repoRoot });
-      try {
-        await options.workspaceGitService?.getSnapshot(repoRoot, {
-          force: true,
-          reason: "archive-worktree",
-        });
-      } catch (error) {
-        options.logger.warn(
-          { err: error, cwd: repoRoot },
-          "Failed to force-refresh workspace git snapshot after archiving worktree",
-        );
+      if (!worktreePath && !worktreeSlug) {
+        throw new Error("worktreePath or worktreeSlug is required");
       }
+      if (!options.github) {
+        throw new Error("GitHub service is required to archive worktrees");
+      }
+      if (!options.workspaceGitService) {
+        throw new Error("WorkspaceGitService is required to archive worktrees");
+      }
+      if (!options.archiveWorkspaceRecord) {
+        throw new Error("Workspace registry archiver is required to archive worktrees");
+      }
+      if (!options.emitWorkspaceUpdatesForCwds) {
+        throw new Error("Workspace update emitter is required to archive worktrees");
+      }
+      if (!options.emitSessionMessage) {
+        throw new Error("Session message emitter is required to archive worktrees");
+      }
+
+      const targetPath =
+        worktreePath ??
+        join(await getPaseoWorktreesRoot(repoRoot, options.paseoHome), worktreeSlug!);
+
+      await archivePaseoWorktree(
+        {
+          paseoHome: options.paseoHome,
+          github: options.github,
+          workspaceGitService: options.workspaceGitService,
+          agentManager,
+          agentStorage,
+          archiveWorkspaceRecord: options.archiveWorkspaceRecord,
+          emit: options.emitSessionMessage,
+          emitWorkspaceUpdatesForCwds: options.emitWorkspaceUpdatesForCwds,
+          isPathWithinRoot: isSameOrDescendantPath,
+          killTerminalsUnderPath: (rootPath) =>
+            killTerminalsUnderPath(
+              {
+                terminalManager: terminalManager ?? null,
+                isPathWithinRoot: isSameOrDescendantPath,
+                killTrackedTerminal: () => {},
+                sessionLogger: childLogger,
+              },
+              rootPath,
+            ),
+          sessionLogger: childLogger,
+        },
+        {
+          targetPath,
+          repoRoot,
+          requestId: "mcp:archive_worktree",
+        },
+      );
 
       return {
         content: [],

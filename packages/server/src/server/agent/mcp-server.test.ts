@@ -652,12 +652,19 @@ describe("create_agent MCP tool", () => {
       const workspaceGitService = {
         getSnapshot: vi.fn(async () => null),
       };
+      const archiveWorkspaceRecord = vi.fn(async () => undefined);
+      const emitWorkspaceUpdatesForCwds = vi.fn(async () => undefined);
+      const emitSessionMessage = vi.fn();
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
         paseoHome,
         createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts: [] }),
         workspaceGitService: workspaceGitService as any,
+        archiveWorkspaceRecord,
+        emitWorkspaceUpdatesForCwds,
+        emitSessionMessage,
+        github: createGitHubServiceStub(),
         logger,
       });
       const createTool = (server as any)._registeredTools["create_worktree"];
@@ -678,6 +685,10 @@ describe("create_agent MCP tool", () => {
         force: true,
         reason: "archive-worktree",
       });
+      expect(archiveWorkspaceRecord).toHaveBeenCalledWith(created.structuredContent.worktreePath);
+      expect(Array.from(emitWorkspaceUpdatesForCwds.mock.calls[0]?.[0] ?? [])).toEqual([
+        created.structuredContent.worktreePath,
+      ]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

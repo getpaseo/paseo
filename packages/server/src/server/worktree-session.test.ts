@@ -14,8 +14,8 @@ import pino, { type Logger } from "pino";
 
 import type { SessionOutboundMessage, WorkspaceDescriptorPayload } from "./messages.js";
 import { ScriptRouteStore } from "./script-proxy.js";
+import { archivePaseoWorktree } from "./paseo-worktree-archive-service.js";
 import {
-  archivePaseoWorktree,
   buildAgentSessionConfig,
   handlePaseoWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest,
