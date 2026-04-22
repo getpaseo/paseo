@@ -219,7 +219,10 @@ function TabChip({
               onPress={() => {
                 onNavigateTab(tab.tabId);
               }}
+              accessibilityRole="button"
               accessibilityLabel={tooltipLabel}
+              accessibilityState={{ selected: isActive }}
+              aria-selected={isActive}
             >
               {isActive && (
                 <View

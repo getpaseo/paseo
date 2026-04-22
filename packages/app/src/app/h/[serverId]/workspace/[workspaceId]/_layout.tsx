@@ -15,6 +15,7 @@ import {
 } from "@/stores/navigation-active-workspace-store";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
+import { useWorkspaceLayoutStoreHydrated } from "@/stores/workspace-layout-store";
 import {
   buildHostWorkspaceRoute,
   decodeWorkspaceIdFromPathSegment,
@@ -88,6 +89,7 @@ function HostWorkspaceLayoutContent() {
   const navigation = useNavigation();
   const router = useRouter();
   const rootNavigationState = useRootNavigationState();
+  const hasHydratedWorkspaceLayoutStore = useWorkspaceLayoutStoreHydrated();
   const consumedIntentRef = useRef<string | null>(null);
   const [intentConsumed, setIntentConsumed] = useState(false);
   const params = useLocalSearchParams<{
@@ -128,6 +130,9 @@ function HostWorkspaceLayoutContent() {
     if (!rootNavigationState?.key) {
       return;
     }
+    if (!hasHydratedWorkspaceLayoutStore) {
+      return;
+    }
 
     const consumptionKey = `${serverId}:${workspaceId}:${openValue}`;
     if (consumedIntentRef.current === consumptionKey) {
@@ -163,9 +168,17 @@ function HostWorkspaceLayoutContent() {
     });
 
     setIntentConsumed(true);
-  }, [navigation, openValue, rootNavigationState?.key, router, serverId, workspaceId]);
+  }, [
+    hasHydratedWorkspaceLayoutStore,
+    navigation,
+    openValue,
+    rootNavigationState?.key,
+    router,
+    serverId,
+    workspaceId,
+  ]);
 
-  if (openValue && !intentConsumed) {
+  if (openValue && (!intentConsumed || !hasHydratedWorkspaceLayoutStore)) {
     return null;
   }
 

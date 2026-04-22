@@ -55,6 +55,7 @@ import {
   buildWorkspaceTabPersistenceKey,
   collectAllTabs,
   useWorkspaceLayoutStore,
+  useWorkspaceLayoutStoreHydrated,
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
@@ -111,6 +112,7 @@ import {
   type WorkspacePaneContentModel,
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
+import { shouldSeedEmptyWorkspaceDraft } from "@/screens/workspace/workspace-empty-draft-seed";
 import {
   buildBulkCloseConfirmationMessage,
   classifyBulkClosableTabs,
@@ -977,6 +979,7 @@ function WorkspaceScreenContent({
   const workspaceLayout = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.layoutByWorkspace[persistenceKey] ?? null) : null,
   );
+  const hasHydratedWorkspaceLayoutStore = useWorkspaceLayoutStoreHydrated();
   const workspaceSetupSnapshot = useWorkspaceSetupStore((state) =>
     persistenceKey ? (state.snapshots[persistenceKey] ?? null) : null,
   );
@@ -1138,6 +1141,9 @@ function WorkspaceScreenContent({
     if (!normalizedServerId || !normalizedWorkspaceId || !persistenceKey) {
       return;
     }
+    if (!hasHydratedWorkspaceLayoutStore) {
+      return;
+    }
 
     const hasActivePendingDraftCreateInWorkspace = uiTabs.some((tab) => {
       if (tab.target.kind !== "draft") {
@@ -1158,6 +1164,7 @@ function WorkspaceScreenContent({
     });
   }, [
     hasHydratedAgents,
+    hasHydratedWorkspaceLayoutStore,
     isRouteFocused,
     pendingByDraftId,
     persistenceKey,
@@ -1246,17 +1253,19 @@ function WorkspaceScreenContent({
   ]);
 
   useEffect(() => {
-    if (!isRouteFocused) {
-      return;
-    }
-    if (!persistenceKey) {
-      return;
-    }
-    if (workspaceAgentVisibility.activeAgentIds.size > 0 || terminals.length > 0) {
-      emptyWorkspaceSeedRef.current = null;
-      return;
-    }
-    if (tabs.length > 0) {
+    if (
+      !shouldSeedEmptyWorkspaceDraft({
+        isRouteFocused,
+        hasPersistenceKey: Boolean(persistenceKey),
+        hasWorkspaceDirectory: Boolean(workspaceDirectory),
+        hasHydratedWorkspaceLayoutStore,
+        hasHydratedAgents,
+        hasLoadedTerminals: terminalsQuery.isSuccess,
+        activeAgentCount: workspaceAgentVisibility.activeAgentIds.size,
+        terminalCount: terminals.length,
+        tabCount: tabs.length,
+      })
+    ) {
       emptyWorkspaceSeedRef.current = null;
       return;
     }
@@ -1271,9 +1280,13 @@ function WorkspaceScreenContent({
     normalizedWorkspaceId,
     openWorkspaceDraftTab,
     persistenceKey,
+    hasHydratedAgents,
+    hasHydratedWorkspaceLayoutStore,
     isRouteFocused,
     terminals.length,
+    terminalsQuery.isSuccess,
     tabs.length,
+    workspaceDirectory,
     workspaceAgentVisibility.activeAgentIds.size,
   ]);
 
