@@ -1,5 +1,46 @@
 import "@/styles/unistyles";
 import { polyfillCrypto } from "@/polyfills/crypto";
+import { LogBox } from "react-native";
+
+// React 19 prints an internal-assert warning when a component's
+// static-hook flags mismatch between the previous and current fiber.
+// This fires spuriously on Metro HMR (stale fiber + fresh compiled
+// module have different hook metadata even when the hook list is
+// unchanged). It's a `console.error`, not a throw — app keeps
+// running fine — but it clogs LogBox and makes real errors hard to
+// spot. Safe to ignore.
+LogBox.ignoreLogs([
+  "Internal React error: Expected static flag was missing",
+]);
+
+// Global error capture: log the full stack of any uncaught error so we
+// can actually diagnose minified "Xx is not a function" crashes that
+// would otherwise just show the message with no file/line/function
+// context. Attach once at module load.
+if (typeof window !== "undefined" && !(window as any).__hubcodeErrorLogged) {
+  (window as any).__hubcodeErrorLogged = true;
+  window.addEventListener("error", (e) => {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[global-error]",
+      e.message,
+      "at",
+      e.filename,
+      e.lineno + ":" + e.colno,
+      "\nstack:",
+      e.error?.stack ?? "(no stack)",
+    );
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[global-unhandled-rejection]",
+      (e.reason && (e.reason.message ?? e.reason)) || "(no reason)",
+      "\nstack:",
+      e.reason?.stack ?? "(no stack)",
+    );
+  });
+}
 import {
   Stack,
   useGlobalSearchParams,
@@ -77,6 +118,8 @@ import { FloatingVideoPanel } from "@/components/sharing/floating-video-panel";
 import { SharedWorkspaceRouteGuard } from "@/components/sharing/shared-workspace-route-guard";
 import { JoiningSharedSessionOverlay } from "@/components/sharing/joining-shared-session-overlay";
 import { SharedDrawOverlay } from "@/components/sharing/shared-draw-overlay";
+import { SharedCursorsOverlay } from "@/components/sharing/shared-cursors-overlay";
+import { SharedSelectionOverlay } from "@/components/sharing/shared-selection-overlay";
 import { useJoinSound } from "@/hooks/sharing/use-join-sound";
 import { useProjectRegistrySync } from "@/hooks/use-project-registry-sync";
 import {
@@ -497,6 +540,8 @@ function AppContainer({
       <SharedWorkspaceRouteGuard />
       <GlobalSharedSessionTopStrip />
       <SharedDrawOverlay />
+      <SharedCursorsOverlay />
+      <SharedSelectionOverlay />
       <ProjectRegistrySyncMount />
       <GlobalPresenceMount />
       <View style={rowStyle}>
@@ -508,7 +553,9 @@ function AppContainer({
         )}
         <View style={flexStyle}>
           <GlobalSharedSessionBar />
-          <View style={flexStyle}>{children}</View>
+          <View style={flexStyle} nativeID="hc-shared-viewport">
+            {children}
+          </View>
         </View>
         <DesktopTitlebarAccent />
       </View>

@@ -52,6 +52,7 @@ import {
   resolveAgentModelSelection,
 } from "@/components/agent-status-bar.utils";
 import { isWeb as platformIsWeb } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
 
 type StatusOption = {
   id: string;
@@ -116,6 +117,30 @@ interface AgentStatusBarProps {
   agentId: string;
   serverId: string;
   onDropdownClose?: () => void;
+}
+
+/**
+ * Collapse the full permission mode name into a single word that fits next
+ * to the shield icon in the composer, matching the "Opus" / "Low" labels of
+ * the model + thinking pickers.
+ *
+ *   "Always Ask"           → "Ask"
+ *   "Accept File Edits"    → "Accept"
+ *   "Plan Mode"            → "Plan"
+ *   "Bypass Permissions"   → "Bypass"
+ *   "YOLO"                 → "YOLO"   (leaves unrecognized values alone)
+ */
+function shortenModeLabel(label: string): string {
+  const normalized = label.trim().toLowerCase();
+  if (!normalized) return label;
+  if (normalized.startsWith("always ask") || normalized === "ask") return "Ask";
+  if (normalized.startsWith("accept")) return "Accept";
+  if (normalized.startsWith("plan")) return "Plan";
+  if (normalized.startsWith("bypass")) return "Bypass";
+  if (normalized.startsWith("default")) return "Default";
+  // Unknown → first word, capitalized.
+  const first = label.split(/\s+/)[0] ?? label;
+  return first;
 }
 
 function findOptionLabel(
@@ -219,6 +244,9 @@ function ControlledStatusBar({
   onModelSelectorOpen,
 }: ControlledAgentStatusBarProps) {
   const { theme } = useUnistyles();
+  // Shrink chips to icon-only on narrow web/Electron viewports where the
+  // full "Select model" / mode label would wrap and push controls off-row.
+  const isCompact = useIsCompactFormFactor() && platformIsWeb;
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [openSelector, setOpenSelector] = useState<StatusSelector | null>(null);
 
@@ -413,6 +441,7 @@ function ControlledStatusBar({
                     disabled={modelDisabled}
                     onOpen={onModelSelectorOpen}
                     onClose={onDropdownClose}
+                    compact={isCompact}
                   />
                 </View>
               </TooltipTrigger>
@@ -447,7 +476,9 @@ function ControlledStatusBar({
                     testID="agent-thinking-selector"
                   >
                     <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                    <Text style={styles.modeBadgeText}>{displayThinking}</Text>
+                    {!isCompact ? (
+                      <Text style={styles.modeBadgeText}>{displayThinking}</Text>
+                    ) : null}
                     <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
                   </Pressable>
                 </TooltipTrigger>
@@ -483,7 +514,7 @@ function ControlledStatusBar({
                     disabled={disabled || !canSelectMode}
                     onPress={() => handleSelectorPress("mode")}
                     style={({ pressed, hovered }) => [
-                      styles.modeIconBadge,
+                      styles.modeBadge,
                       hovered && styles.modeBadgeHovered,
                       (pressed || openSelector === "mode") && styles.modeBadgePressed,
                       (disabled || !canSelectMode) && styles.disabledBadge,
@@ -497,6 +528,10 @@ function ControlledStatusBar({
                     ) : (
                       <ShieldCheck size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
                     )}
+                    {!isCompact ? (
+                      <Text style={styles.modeBadgeText}>{shortenModeLabel(displayMode)}</Text>
+                    ) : null}
+                    <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
                   </Pressable>
                 </TooltipTrigger>
                 <TooltipContent side="top" align="center" offset={8}>

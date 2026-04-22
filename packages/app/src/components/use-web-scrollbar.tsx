@@ -77,7 +77,22 @@ export function useWebElementScrollbar(
 
     element.addEventListener("scroll", update, { passive: true });
 
-    const resizeObserver = new ResizeObserver(update);
+    // Defer the ResizeObserver callback to the next frame. Without this,
+    // showing/hiding our custom overlay can change the element's layout
+    // inside the same resize cycle, which re-triggers the observer and
+    // re-enters `update()` → setState → render → resize → … producing
+    // "Maximum update depth exceeded" and starving the whole app
+    // (unrelated panes stop mounting their effects). RAF breaks the cycle
+    // because ResizeObserver only schedules one callback per frame.
+    let rafHandle: number | null = null;
+    const scheduleUpdate = () => {
+      if (rafHandle !== null) return;
+      rafHandle = requestAnimationFrame(() => {
+        rafHandle = null;
+        update();
+      });
+    };
+    const resizeObserver = new ResizeObserver(scheduleUpdate);
     resizeObserver.observe(element);
     const contentElement = contentRef?.current;
     if (contentElement) {
@@ -89,6 +104,7 @@ export function useWebElementScrollbar(
     return () => {
       element.removeEventListener("scroll", update);
       resizeObserver.disconnect();
+      if (rafHandle !== null) cancelAnimationFrame(rafHandle);
       element.removeAttribute("data-hide-scrollbar");
       (element.style as any).scrollbarWidth = "";
       (element.style as any).msOverflowStyle = "";

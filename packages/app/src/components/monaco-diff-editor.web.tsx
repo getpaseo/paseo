@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
+import { useMonacoSelectionSync } from "@/hooks/sharing/use-monaco-selection-sync";
 
 export interface MonacoDiffEditorProps {
   originalValue: string;
@@ -50,10 +51,27 @@ export function MonacoDiffEditor({
   renderSideBySide = true,
 }: MonacoDiffEditorProps) {
   const editorRef = useRef<editor.IStandaloneDiffEditor | null>(null);
+  const [mountTick, setMountTick] = useState(0);
 
   const handleMount: DiffOnMount = useCallback((diffEditor) => {
     editorRef.current = diffEditor;
+    // Re-run the selection-sync hook now that the editor instance exists.
+    setMountTick((n) => n + 1);
   }, []);
+
+  const getEditors = useCallback(() => {
+    const diff = editorRef.current;
+    if (!diff) return [null, null];
+    try {
+      return [diff.getOriginalEditor(), diff.getModifiedEditor()];
+    } catch {
+      return [null, null];
+    }
+    // mountTick keeps the callback identity stable between mount events so the
+    // effect in useMonacoSelectionSync re-runs after the editor is ready.
+    void mountTick;
+  }, [mountTick]);
+  useMonacoSelectionSync(getEditors);
 
   // Dispose editor manually on unmount to avoid the "TextModel got disposed" race
   useEffect(() => {

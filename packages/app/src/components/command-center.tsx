@@ -1,6 +1,6 @@
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { memo, useEffect, useRef, type ReactNode } from "react";
-import { Plus, Settings } from "lucide-react-native";
+import { Boxes, FileCode, Folder, Plus, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useCommandCenter } from "@/hooks/use-command-center";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
@@ -93,8 +93,25 @@ export function CommandCenter() {
 
   if (isNative || !open) return null;
 
-  const actionItems = items.filter((item) => item.kind === "action");
-  const agentItems = items.filter((item) => item.kind === "agent");
+  const actionItems = items.filter(
+    (item): item is Extract<typeof item, { kind: "action" }> => item.kind === "action",
+  );
+  const projectItems = items.filter(
+    (item): item is Extract<typeof item, { kind: "project" }> => item.kind === "project",
+  );
+  const workspaceItems = items.filter(
+    (item): item is Extract<typeof item, { kind: "workspace" }> => item.kind === "workspace",
+  );
+  const agentItems = items.filter(
+    (item): item is Extract<typeof item, { kind: "agent" }> => item.kind === "agent",
+  );
+  const fileItems = items.filter(
+    (item): item is Extract<typeof item, { kind: "file" }> => item.kind === "file",
+  );
+  const projectsOffset = actionItems.length;
+  const workspacesOffset = projectsOffset + projectItems.length;
+  const agentsOffset = workspacesOffset + workspaceItems.length;
+  const filesOffset = agentsOffset + agentItems.length;
 
   return (
     <Modal visible={open} transparent animationType="fade" onRequestClose={handleClose}>
@@ -114,7 +131,7 @@ export function CommandCenter() {
               ref={inputRef}
               value={query}
               onChangeText={setQuery}
-              placeholder="Type a command or search agents..."
+              placeholder="Search projects, workspaces, agents, or commands…"
               placeholderTextColor={theme.colors.foregroundMuted}
               style={[styles.input, { color: theme.colors.foreground }]}
               autoCapitalize="none"
@@ -188,9 +205,124 @@ export function CommandCenter() {
                   </>
                 ) : null}
 
-                {agentItems.length > 0 ? (
+                {projectItems.length > 0 ? (
                   <>
                     {actionItems.length > 0 ? (
+                      <View
+                        style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
+                      />
+                    ) : null}
+                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
+                      Projects
+                    </Text>
+                    {projectItems.map((item, index) => {
+                      if (item.kind !== "project") return null;
+                      const rowIndex = projectsOffset + index;
+                      const active = rowIndex === activeIndex;
+                      const project = item.project;
+                      return (
+                        <CommandCenterRow
+                          key={`project:${project.projectKey}`}
+                          registerRow={(el: View | null) => {
+                            if (el) rowRefs.current.set(rowIndex, el);
+                            else rowRefs.current.delete(rowIndex);
+                          }}
+                          active={active}
+                          onPress={() => handleSelectItem(item)}
+                        >
+                          <View style={styles.rowContent}>
+                            <View style={styles.rowMain}>
+                              <View style={styles.iconSlot}>
+                                <Boxes
+                                  size={16}
+                                  strokeWidth={2}
+                                  color={theme.colors.foregroundMuted}
+                                />
+                              </View>
+                              <View style={styles.textContent}>
+                                <Text
+                                  style={[styles.title, { color: theme.colors.foreground }]}
+                                  numberOfLines={1}
+                                >
+                                  {project.projectName}
+                                </Text>
+                                <Text
+                                  style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
+                                  numberOfLines={1}
+                                >
+                                  {project.totalWorkspaces} workspace
+                                  {project.totalWorkspaces === 1 ? "" : "s"}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+                        </CommandCenterRow>
+                      );
+                    })}
+                  </>
+                ) : null}
+
+                {workspaceItems.length > 0 ? (
+                  <>
+                    {(actionItems.length > 0 || projectItems.length > 0) ? (
+                      <View
+                        style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
+                      />
+                    ) : null}
+                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
+                      Workspaces
+                    </Text>
+                    {workspaceItems.map((item, index) => {
+                      if (item.kind !== "workspace") return null;
+                      const rowIndex = workspacesOffset + index;
+                      const active = rowIndex === activeIndex;
+                      const workspace = item.workspace;
+                      return (
+                        <CommandCenterRow
+                          key={`ws:${workspace.workspaceKey}`}
+                          registerRow={(el: View | null) => {
+                            if (el) rowRefs.current.set(rowIndex, el);
+                            else rowRefs.current.delete(rowIndex);
+                          }}
+                          active={active}
+                          onPress={() => handleSelectItem(item)}
+                        >
+                          <View style={styles.rowContent}>
+                            <View style={styles.rowMain}>
+                              <View style={styles.iconSlot}>
+                                <Folder
+                                  size={16}
+                                  strokeWidth={2}
+                                  color={theme.colors.foregroundMuted}
+                                />
+                              </View>
+                              <View style={styles.textContent}>
+                                <Text
+                                  style={[styles.title, { color: theme.colors.foreground }]}
+                                  numberOfLines={1}
+                                >
+                                  {workspace.name}
+                                </Text>
+                                <Text
+                                  style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
+                                  numberOfLines={1}
+                                >
+                                  {item.projectName}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+                        </CommandCenterRow>
+                      );
+                    })}
+                  </>
+                ) : null}
+
+                {agentItems.length > 0 ? (
+                  <>
+                    {(actionItems.length > 0 ||
+                      projectItems.length > 0 ||
+                      workspaceItems.length > 0) ? (
                       <View
                         style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
                       />
@@ -199,7 +331,7 @@ export function CommandCenter() {
                       Agents
                     </Text>
                     {agentItems.map((item, index) => {
-                      const rowIndex = actionItems.length + index;
+                      const rowIndex = agentsOffset + index;
                       const active = rowIndex === activeIndex;
                       const agent = item.agent;
                       return (
@@ -233,6 +365,71 @@ export function CommandCenter() {
                                   numberOfLines={1}
                                 >
                                   {shortenPath(agent.cwd)} · {formatTimeAgo(agent.lastActivityAt)}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+                        </CommandCenterRow>
+                      );
+                    })}
+                  </>
+                ) : null}
+
+                {fileItems.length > 0 ? (
+                  <>
+                    {(actionItems.length > 0 ||
+                      projectItems.length > 0 ||
+                      workspaceItems.length > 0 ||
+                      agentItems.length > 0) ? (
+                      <View
+                        style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
+                      />
+                    ) : null}
+                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
+                      Files
+                    </Text>
+                    {fileItems.map((item, index) => {
+                      const rowIndex = filesOffset + index;
+                      const active = rowIndex === activeIndex;
+                      const file = item.file;
+                      const basename = file.relativePath.split("/").pop() ?? file.relativePath;
+                      const parentPath = file.relativePath.slice(
+                        0,
+                        Math.max(0, file.relativePath.length - basename.length - 1),
+                      );
+                      return (
+                        <CommandCenterRow
+                          key={`file:${file.workspaceId}:${file.relativePath}`}
+                          registerRow={(el: View | null) => {
+                            if (el) rowRefs.current.set(rowIndex, el);
+                            else rowRefs.current.delete(rowIndex);
+                          }}
+                          active={active}
+                          onPress={() => handleSelectItem(item)}
+                        >
+                          <View style={styles.rowContent}>
+                            <View style={styles.rowMain}>
+                              <View style={styles.iconSlot}>
+                                <FileCode
+                                  size={16}
+                                  strokeWidth={2}
+                                  color={theme.colors.foregroundMuted}
+                                />
+                              </View>
+                              <View style={styles.textContent}>
+                                <Text
+                                  style={[styles.title, { color: theme.colors.foreground }]}
+                                  numberOfLines={1}
+                                >
+                                  {basename}
+                                </Text>
+                                <Text
+                                  style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
+                                  numberOfLines={1}
+                                >
+                                  {file.workspaceName
+                                    ? `${file.workspaceName} · ${parentPath || "/"}`
+                                    : parentPath || "/"}
                                 </Text>
                               </View>
                             </View>

@@ -53,6 +53,10 @@ interface CombinedModelSelectorProps {
   onOpen?: () => void;
   onClose?: () => void;
   disabled?: boolean;
+  /** Render only the provider icon + chevron (no label), for compact
+   * toolbars where horizontal space is tight. Full label still reaches
+   * screen readers via accessibilityLabel. */
+  compact?: boolean;
 }
 
 interface SelectorContentProps {
@@ -516,6 +520,7 @@ export function CombinedModelSelector({
   onOpen,
   onClose,
   disabled = false,
+  compact = false,
 }: CombinedModelSelectorProps) {
   const { theme } = useUnistyles();
   const anchorRef = useRef<View>(null);
@@ -634,7 +639,7 @@ export function CombinedModelSelector({
         ) : (
           <>
             <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-            <Text style={styles.triggerText}>{triggerLabel}</Text>
+            {!compact ? <Text style={styles.triggerText}>{triggerLabel}</Text> : null}
             <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           </>
         )}

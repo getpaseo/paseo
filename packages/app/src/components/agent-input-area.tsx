@@ -1,5 +1,10 @@
 import { View, Pressable, Text, ActivityIndicator } from "react-native";
-import { getSharedSessionAuthor, notifyChatMessageAuthored } from "@/stores/shared-session-store";
+import {
+  getSharedSessionAuthor,
+  notifyChatMessageAuthored,
+  notifyLocalUserStoppedTyping,
+  notifyLocalUserTyping,
+} from "@/stores/shared-session-store";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -45,6 +50,7 @@ import {
   persistAttachmentFromFileUri,
 } from "@/attachments/service";
 import { resolveStatusControlMode } from "@/components/agent-input-area.status-controls";
+import { SharedTypingIndicator } from "@/components/sharing/shared-typing-indicator";
 import { markScrollInvestigationRender } from "@/utils/scroll-jank-investigation";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
@@ -163,7 +169,17 @@ export function AgentInputArea({
     ? DESKTOP_MESSAGE_PLACEHOLDER
     : MOBILE_MESSAGE_PLACEHOLDER;
   const userInput = value;
-  const setUserInput = onChangeText;
+  const setUserInput = useCallback(
+    (text: string) => {
+      onChangeText(text);
+      if (text.trim().length === 0) {
+        notifyLocalUserStoppedTyping();
+      } else {
+        notifyLocalUserTyping();
+      }
+    },
+    [onChangeText],
+  );
   const selectedImages = images;
   const setSelectedImages = onChangeImages;
   const [cursorIndex, setCursorIndex] = useState(0);
@@ -265,6 +281,7 @@ export function AgentInputArea({
       // Seed the author buffer BEFORE appending the stream item so the bubble
       // finds the attribution on first render (no empty-then-populated flicker).
       notifyChatMessageAuthored(text);
+      notifyLocalUserStoppedTyping();
       const clientMessageId = generateMessageId();
       const author = getSharedSessionAuthor();
       const userMessage: StreamItem = {
@@ -708,6 +725,8 @@ export function AgentInputArea({
           )}
 
           {sendError && <Text style={styles.sendErrorText}>{sendError}</Text>}
+
+          <SharedTypingIndicator />
 
           <View style={styles.messageInputContainer}>
             {/* Command + file mention autocomplete rendered as a true popover */}

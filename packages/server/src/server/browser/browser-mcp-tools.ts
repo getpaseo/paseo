@@ -547,6 +547,183 @@ export function registerBrowserTools(
   );
 
   server.registerTool(
+    "browser_scroll",
+    {
+      title: "Scroll the browser",
+      description:
+        "Scroll the current page. Use when a result is below the fold, or when content is lazy-loaded and needs to appear (e.g. infinite-scroll feeds, Google Images thumbnails). Options: `deltaY` pixels, jump to `top`/`bottom`, or scroll a `selector` into view.",
+      inputSchema: {
+        browserId: z.string().describe("ID of the browser instance"),
+        deltaY: z
+          .number()
+          .optional()
+          .describe("Pixels to scroll (positive = down). Default 500"),
+        to: z
+          .enum(["top", "bottom"])
+          .optional()
+          .describe("Jump to top or bottom of the page"),
+        selector: z
+          .string()
+          .optional()
+          .describe("CSS selector to scroll into view"),
+      },
+      outputSchema: { success: z.boolean() },
+    },
+    async ({ browserId, deltaY, to, selector }) => {
+      try {
+        await (browserManager as any).scroll(browserId, { deltaY, to, selector });
+        return { content: [], structuredContent: ensureValidJson({ success: true }) };
+      } catch (error) {
+        logger.error({ error, browserId }, "scroll failed");
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text" as const, text: `Error: ${message}` }],
+          structuredContent: ensureValidJson({ success: false }),
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "browser_hover",
+    {
+      title: "Hover over an element",
+      description:
+        "Move the mouse over an element. Use to trigger tooltips, menus, or dropdowns that only appear on hover. Follow with browser_click if the revealed element needs a click.",
+      inputSchema: {
+        browserId: z.string().describe("ID of the browser instance"),
+        selector: z.string().describe("CSS selector of the target element"),
+      },
+      outputSchema: { success: z.boolean() },
+    },
+    async ({ browserId, selector }) => {
+      try {
+        await (browserManager as any).hover(browserId, selector);
+        return { content: [], structuredContent: ensureValidJson({ success: true }) };
+      } catch (error) {
+        logger.error({ error, browserId, selector }, "hover failed");
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text" as const, text: `Error: ${message}` }],
+          structuredContent: ensureValidJson({ success: false }),
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "browser_press_key",
+    {
+      title: "Press a keyboard key",
+      description:
+        "Send a keyboard key press to the currently focused element. Use for `Enter` to submit forms, `Escape` to close modals, `Tab` to move focus, arrow keys to navigate lists. See Playwright's key reference for full syntax (e.g. 'Enter', 'Control+A', 'ArrowDown').",
+      inputSchema: {
+        browserId: z.string().describe("ID of the browser instance"),
+        key: z.string().describe("Key name (e.g. 'Enter', 'Escape', 'Tab', 'ArrowDown')"),
+      },
+      outputSchema: { success: z.boolean() },
+    },
+    async ({ browserId, key }) => {
+      try {
+        await (browserManager as any).pressKey(browserId, key);
+        return { content: [], structuredContent: ensureValidJson({ success: true }) };
+      } catch (error) {
+        logger.error({ error, browserId, key }, "pressKey failed");
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text" as const, text: `Error: ${message}` }],
+          structuredContent: ensureValidJson({ success: false }),
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "browser_wait_for",
+    {
+      title: "Wait for an element or network idle",
+      description:
+        "Pause until either a selector appears/disappears or the network goes idle. Use before extracting text/screenshots when content loads dynamically. Without `selector` the tool waits for `networkidle` (no pending fetches for 500ms).",
+      inputSchema: {
+        browserId: z.string().describe("ID of the browser instance"),
+        selector: z
+          .string()
+          .optional()
+          .describe("CSS selector to wait for. Omit to wait for networkidle"),
+        state: z
+          .enum(["visible", "attached", "hidden", "detached"])
+          .optional()
+          .describe("Desired state (default 'visible')"),
+        timeoutMs: z
+          .number()
+          .int()
+          .optional()
+          .describe("Max wait in ms (default 10000)"),
+      },
+      outputSchema: { success: z.boolean() },
+    },
+    async ({ browserId, selector, state, timeoutMs }) => {
+      try {
+        await (browserManager as any).waitFor(browserId, { selector, state, timeoutMs });
+        return { content: [], structuredContent: ensureValidJson({ success: true }) };
+      } catch (error) {
+        logger.error({ error, browserId, selector }, "waitFor failed");
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text" as const, text: `Error: ${message}` }],
+          structuredContent: ensureValidJson({ success: false }),
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "browser_get_links",
+    {
+      title: "List anchor links on the page",
+      description:
+        "Return the anchor links (`<a href>`) on the page as `{text, href, title}` records. Ideal for 'open the first search result' — the agent picks the link by text/href and calls browser_navigate directly, sidestepping click intercepts (Google Images overlays, SPA routers that swallow the event, etc.). Use `viewportOnly=true` to skip off-screen links.",
+      inputSchema: {
+        browserId: z.string().describe("ID of the browser instance"),
+        scope: z
+          .string()
+          .optional()
+          .describe("CSS selector of a container to scope the search (default: body)"),
+        limit: z
+          .number()
+          .int()
+          .optional()
+          .describe("Max links to return (default 60)"),
+        viewportOnly: z
+          .boolean()
+          .optional()
+          .describe("Only include links currently visible in the viewport"),
+      },
+      outputSchema: { links: z.string() },
+    },
+    async ({ browserId, scope, limit, viewportOnly }) => {
+      try {
+        const links = await (browserManager as any).getLinks(browserId, {
+          scope,
+          limit,
+          viewportOnly,
+        });
+        return {
+          content: [],
+          structuredContent: ensureValidJson({ links: JSON.stringify(links) }),
+        };
+      } catch (error) {
+        logger.error({ error, browserId }, "getLinks failed");
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text" as const, text: `Error: ${message}` }],
+          structuredContent: ensureValidJson({ links: "[]" }),
+        };
+      }
+    },
+  );
+
+  server.registerTool(
     "browser_close",
     {
       title: "Close browser",

@@ -461,7 +461,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           });
 
         return (
-          <View style={[stylesheet.streamItemWrapper, { marginBottom: gapBelow }]}>
+          <View
+            style={[stylesheet.streamItemWrapper, { marginBottom: gapBelow }]}
+            // Stable anchor for shared-session selection overlay: lets peers
+            // align highlights per-message even when surrounding content
+            // (collapsed Thinking blocks, etc.) differs across clients.
+            // `nativeID` becomes `id` on web, which the overlay queries.
+            nativeID={`shared-anchor-${item.id}`}
+          >
             {content}
             {isEndOfAssistantTurn ? <TurnCopyButton getContent={getTurnContent} /> : null}
           </View>

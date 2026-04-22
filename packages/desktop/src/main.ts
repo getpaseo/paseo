@@ -27,11 +27,35 @@ for (const t of [log.transports.console, log.transports.file] as unknown as Tran
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 inheritLoginShellEnv();
 
+// Silence Electron's "Insecure Content-Security-Policy" / "unsafe-eval"
+// dev-mode warnings — they spam the log on every webview load and
+// Electron already gates them to non-packaged builds (so this is a
+// no-op in production). Must be set before `app` initializes.
+process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
+
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { app, BrowserWindow, ipcMain, nativeImage, net, protocol } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  nativeImage,
+  nativeTheme,
+  net,
+  protocol,
+} from "electron";
+
+// Enable Chrome DevTools Protocol so the Hubcode daemon can drive our
+// <webview> panes with Playwright via `chromium.connectOverCDP`. The
+// port is fixed (not 0/random) because the daemon runs in a separate
+// process and has no easy way to ask us for the port mid-bootstrap —
+// using a known port keeps the wiring trivial. Bound to 127.0.0.1 by
+// Electron default, so remote machines can't attack it.
+const HUBCODE_CDP_PORT = Number(process.env.HUBCODE_CDP_PORT ?? "9222");
+app.commandLine.appendSwitch("remote-debugging-port", String(HUBCODE_CDP_PORT));
+app.commandLine.appendSwitch("remote-allow-origins", "*");
 import { registerDaemonManager } from "./daemon/daemon-manager.js";
 import {
   parseCliPassthroughArgsFromArgv,
@@ -48,6 +72,7 @@ import {
   setupDragDropPrevention,
 } from "./window/window-manager.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
+import { registerBrowserViewIpc } from "./features/browser-views.js";
 import {
   registerNotificationHandlers,
   ensureNotificationCenterRegistration,
@@ -241,8 +266,18 @@ async function createMainWindow(): Promise<void> {
   });
 
   if (!app.isPackaged) {
-    const { loadReactDevTools } = await import("./features/react-devtools.js");
-    await loadReactDevTools();
+    // React DevTools Extension DISABLED — it's been generating
+    // "Internal React error: Expected static flag was missing. Please
+    // notify the React team." + "Uncaught TypeError: Oc is not a
+    // function" whenever browser panes mount/unmount. Those `Oc` calls
+    // come from React DevTools' minified internal hook instrumenter,
+    // which isn't compatible with React 19's new static-flag model
+    // when combined with rapid remounts. Re-enable via env var when
+    // needed for a specific debug session.
+    if (process.env.HUBCODE_ENABLE_REACT_DEVTOOLS === "true") {
+      const { loadReactDevTools } = await import("./features/react-devtools.js");
+      await loadReactDevTools();
+    }
     await mainWindow.loadURL(DEV_SERVER_URL);
     mainWindow.webContents.openDevTools({ mode: "detach" });
     return;
@@ -363,6 +398,16 @@ async function bootstrap(): Promise<void> {
 
   await app.whenReady();
 
+  // Pin Chromium's color scheme so DevTools + every webContents keep
+  // a consistent theme. Without this, a fresh `WebContentsView`
+  // loading `about:blank` (which has no <meta color-scheme>) makes
+  // Chromium think a light-mode context appeared, and Electron's
+  // DevTools panel — which follows the theme of the most-recent
+  // attached webContents — flips from dark to light. Mirror whatever
+  // the OS was at launch; the app UI is dark-first so default to dark
+  // if the system doesn't express a preference.
+  nativeTheme.themeSource = nativeTheme.shouldUseDarkColors ? "dark" : "light";
+
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, (request) => {
     const { pathname, search, hash } = new URL(request.url);
@@ -398,6 +443,7 @@ async function bootstrap(): Promise<void> {
   registerDialogHandlers();
   registerNotificationHandlers();
   registerOpenerHandlers();
+  registerBrowserViewIpc();
   await createMainWindow();
 
   app.on("activate", async () => {

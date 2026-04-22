@@ -22,12 +22,15 @@ import {
   TrackRefContext,
   TrackToggle,
   RoomAudioRenderer,
-  Chat,
   VideoTrack,
   useIsMuted,
   useIsSpeaking,
   type TrackReferenceOrPlaceholder,
 } from "@livekit/components-react";
+import {
+  sendSessionChat,
+  useSessionChatMessages,
+} from "@/stores/session-chat-store";
 import { Track } from "livekit-client";
 import { useSharedSessionStore } from "@/stores/shared-session-store";
 import { getSharedMediaPreferences } from "@/stores/shared-media-preferences";
@@ -39,6 +42,7 @@ import {
   useSharedDrawState,
 } from "@/stores/shared-draw-store";
 import { Fonts } from "@/constants/theme";
+import { rectsIntersect, useBrowserRects } from "@/stores/browser-bounds-store";
 
 const PANEL_FONT_FAMILY =
   (Fonts as { sans?: string } | undefined)?.sans ??
@@ -116,6 +120,40 @@ function PanelShell({ roomSend }: { roomSend: (type: string, payload?: unknown) 
   const dragRef = useRef({ startX: 0, startY: 0, isDragging: false });
   const participants = useParticipants();
   const count = participants.length;
+  const browserRects = useBrowserRects();
+
+  // Auto-reposition when a browser WebContentsView overlaps the panel.
+  // The native overlay always renders above DOM regardless of z-index,
+  // so keeping the panel off the browser rect is the only way to keep
+  // it visible. We only snap when we actually overlap — normal drags
+  // stay wherever the user put them.
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    const rects = Object.values(browserRects);
+    if (rects.length === 0) return;
+    const r = el.getBoundingClientRect();
+    const panelRect = { x: r.left, y: r.top, width: r.width, height: r.height };
+    const overlaps = (pr: { x: number; y: number; width: number; height: number }) =>
+      rects.some((b) => rectsIntersect(pr, b));
+    if (!overlaps(panelRect)) return;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const M = 16;
+    const candidates = [
+      { x: M, y: H - r.height - M },
+      { x: W - r.width - M, y: M },
+      { x: M, y: M },
+      { x: W - r.width - M, y: H - r.height - M },
+    ];
+    for (const c of candidates) {
+      if (!overlaps({ x: c.x, y: c.y, width: r.width, height: r.height })) {
+        setPosition(c);
+        return;
+      }
+    }
+    setPosition(candidates[1]!);
+  }, [browserRects, minimized, customSize]);
 
   const onMouseDown = (e: React.MouseEvent) => {
     dragRef.current = {
@@ -379,7 +417,7 @@ function PanelShell({ roomSend }: { roomSend: (type: string, payload?: unknown) 
             fontFamily: PANEL_FONT_FAMILY,
           }}
         >
-          <Chat style={{ flex: 1, minHeight: 0, width: "100%" }} />
+          <SessionChat />
         </div>
       )}
     </>
@@ -611,6 +649,164 @@ const PANEL_CSS = `
   font-size: 11px;
 }
 `;
+
+function SessionChat() {
+  const messages = useSessionChatMessages();
+  const { room: colyseusRoom, currentUser } = useSharedSessionStore();
+  const [draft, setDraft] = useState("");
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const myUserId = currentUser?.userId ?? "";
+
+  // Auto-scroll to bottom on new message. We only scroll if the user is
+  // already near the bottom — otherwise jumping past scrollback they're
+  // reading would be jarring.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (nearBottom) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages]);
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!draft.trim() || !colyseusRoom) return;
+    sendSessionChat(colyseusRoom, draft);
+    setDraft("");
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <div
+        style={{
+          padding: "10px 14px",
+          fontSize: 12,
+          fontWeight: 600,
+          color: "#d4d4d8",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+        }}
+      >
+        Messages
+      </div>
+      <div
+        ref={scrollRef}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          padding: "10px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        {messages.length === 0 ? (
+          <div
+            style={{
+              textAlign: "center",
+              color: "#52525b",
+              fontSize: 11,
+              padding: 16,
+            }}
+          >
+            Say hi 👋
+          </div>
+        ) : (
+          messages.map((m) => {
+            const mine = m.userId === myUserId;
+            return (
+              <div
+                key={m.id}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: mine ? "flex-end" : "flex-start",
+                  gap: 2,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#a1a1aa",
+                    fontWeight: 500,
+                    paddingInline: 2,
+                  }}
+                >
+                  {m.username || "?"}
+                </div>
+                <div
+                  style={{
+                    background: mine
+                      ? "rgba(196,25,139,0.25)"
+                      : "rgba(39,39,42,0.8)",
+                    border: mine
+                      ? "1px solid rgba(196,25,139,0.4)"
+                      : "1px solid rgba(255,255,255,0.06)",
+                    borderRadius: 10,
+                    padding: "6px 10px",
+                    fontSize: 12,
+                    color: "#fafafa",
+                    wordBreak: "break-word",
+                    whiteSpace: "pre-wrap",
+                    maxWidth: "85%",
+                  }}
+                >
+                  {m.content}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <form
+        onSubmit={onSubmit}
+        style={{
+          display: "flex",
+          gap: 6,
+          padding: "8px 10px",
+          borderTop: "1px solid rgba(255,255,255,0.04)",
+          background: "rgba(15,15,17,0.5)",
+        }}
+      >
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Enter a message..."
+          style={{
+            flex: 1,
+            minWidth: 0,
+            background: "rgba(39,39,42,0.8)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 8,
+            color: "#fafafa",
+            padding: "8px 12px",
+            fontSize: 12,
+            outline: "none",
+            fontFamily: "inherit",
+          }}
+        />
+        <button
+          type="submit"
+          disabled={!draft.trim()}
+          style={{
+            background: draft.trim() ? "#C4198B" : "rgba(196,25,139,0.4)",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            padding: "6px 14px",
+            fontSize: 12,
+            fontWeight: 500,
+            cursor: draft.trim() ? "pointer" : "default",
+            fontFamily: "inherit",
+          }}
+        >
+          Send
+        </button>
+      </form>
+    </div>
+  );
+}
 
 function ParticipantGrid({
   cols,

@@ -62,4 +62,33 @@ contextBridge.exposeInMainWorld("hubcodeDesktop", {
     showContextMenu: (input?: Record<string, unknown>) =>
       ipcRenderer.invoke("hubcode:menu:showContextMenu", input),
   },
+  browserView: {
+    create: (payload: { browserId: string; url?: string }) =>
+      ipcRenderer.invoke("hubcode:browser-view:create", payload),
+    setBounds: (payload: {
+      browserId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }) => ipcRenderer.invoke("hubcode:browser-view:set-bounds", payload),
+    setVisible: (payload: { browserId: string; visible: boolean }) =>
+      ipcRenderer.invoke("hubcode:browser-view:set-visible", payload),
+    destroy: (payload: { browserId: string }) =>
+      ipcRenderer.invoke("hubcode:browser-view:destroy", payload),
+    loadUrl: (payload: { browserId: string; url: string }) =>
+      ipcRenderer.invoke("hubcode:browser-view:load-url", payload),
+    nav: (payload: {
+      browserId: string;
+      action: "back" | "forward" | "reload";
+    }) => ipcRenderer.invoke("hubcode:browser-view:nav", payload),
+    getState: (payload: { browserId: string }) =>
+      ipcRenderer.invoke("hubcode:browser-view:get-state", payload),
+    onState: (handler: (payload: any) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, payload: unknown) =>
+        handler(payload);
+      ipcRenderer.on("hubcode:browser-view:state", listener);
+      return () => ipcRenderer.removeListener("hubcode:browser-view:state", listener);
+    },
+  },
 });

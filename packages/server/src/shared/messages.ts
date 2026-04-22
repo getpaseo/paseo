@@ -1780,6 +1780,100 @@ export const BrowserCommandResultSchema = z.object({
   error: z.string().optional(),
 });
 
+/**
+ * Daemon → Client: snapshot of browsers currently tracked by
+ * ClientBrowserManager. Emitted when a new session connects so the client
+ * can close any persisted browser tabs whose ids the daemon no longer knows
+ * (typically after a daemon restart). Additive — old clients ignore it.
+ */
+export const BrowserActiveListSchema = z.object({
+  type: z.literal("browser_active_list"),
+  payload: z.object({
+    browserIds: z.array(z.string()).default([]),
+  }),
+});
+
+/**
+ * Daemon → Client: a browser was closed on the server side (via the
+ * `browser_close` tool). Tells the client to tear down the matching
+ * UI tab + WebContentsView. Additive — old clients ignore.
+ */
+export const BrowserClosedSchema = z.object({
+  type: z.literal("browser_closed"),
+  payload: z.object({
+    browserId: z.string(),
+  }),
+});
+
+/**
+ * Daemon → Client: a single screencast frame from the host's browser, so
+ * shared-session visitors (who don't have the native WebContentsView) can
+ * see what the host sees. Additive — old clients ignore these messages.
+ */
+export const BrowserFrameSchema = z.object({
+  type: z.literal("browser_frame"),
+  payload: z.object({
+    browserId: z.string(),
+    data: z.string(), // base64 JPEG
+    width: z.number().optional(),
+    height: z.number().optional(),
+    timestamp: z.number().optional(),
+  }),
+});
+
+/**
+ * Client → Daemon: start receiving `browser_frame` messages for a browser.
+ * The daemon ref-counts subscribers across sessions and starts a CDP
+ * screencast only when the first subscriber shows up. The optional `url`
+ * lets a visitor session that never registered this browserId locate the
+ * matching Playwright page.
+ */
+export const BrowserSubscribeFramesSchema = z.object({
+  type: z.literal("browser_subscribe_frames"),
+  payload: z.object({
+    browserId: z.string(),
+    url: z.string().optional(),
+  }),
+});
+
+export const BrowserUnsubscribeFramesSchema = z.object({
+  type: z.literal("browser_unsubscribe_frames"),
+  payload: z.object({
+    browserId: z.string(),
+  }),
+});
+
+/**
+ * Client → Daemon: forward an input event (mouse/keyboard/wheel) from a
+ * shared-session visitor to the host's browser via CDP. Coordinates are
+ * CSS pixels in the host viewport; the client translates from the
+ * rendered frame's displayed size using the frame metadata.
+ */
+export const BrowserInputSchema = z.object({
+  type: z.literal("browser_input"),
+  payload: z.object({
+    browserId: z.string(),
+    kind: z.enum([
+      "mouse_move",
+      "mouse_down",
+      "mouse_up",
+      "mouse_wheel",
+      "key_down",
+      "key_up",
+    ]),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    button: z.enum(["left", "right", "middle"]).optional(),
+    clickCount: z.number().optional(),
+    deltaX: z.number().optional(),
+    deltaY: z.number().optional(),
+    key: z.string().optional(),
+    code: z.string().optional(),
+    text: z.string().optional(),
+    modifiers: z.number().optional(),
+  }),
+});
+
 // ─── Library sync (Skills/MCP marketplace, PR7) ────────────────────────────
 // Additive only. Old daemons just ignore this message; old clients never send
 // it. All inner fields are optional or have transformed defaults so a 6-month-
@@ -1906,6 +2000,41 @@ export const LibraryAgentsResponseSchema = z.object({
 export type LibraryAgentsRequest = z.infer<typeof LibraryAgentsRequestSchema>;
 export type LibraryAgentsResponse = z.infer<typeof LibraryAgentsResponseSchema>;
 
+// Fuzzy file search across the daemon's known workspaces. Used by the command
+// center so the user can jump straight to a file by typing its name.
+export const FileSearchRequestSchema = z.object({
+  type: z.literal("file_search_request"),
+  requestId: z.string(),
+  query: z.string().min(1),
+  /** Limit total results. Daemon clamps to a sane max. */
+  limit: z.number().int().positive().max(200).default(50),
+  /** Optional: restrict to a subset of workspace ids. Empty = all. */
+  workspaceIds: z.array(z.string()).default([]),
+});
+
+export const FileSearchResponseSchema = z.object({
+  type: z.literal("file_search_response"),
+  requestId: z.string(),
+  ok: z.boolean(),
+  error: z.string().optional(),
+  results: z
+    .array(
+      z
+        .object({
+          workspaceId: z.string(),
+          workspaceName: z.string().optional(),
+          /** Path relative to the workspace root. */
+          relativePath: z.string(),
+        })
+        .passthrough(),
+    )
+    .default([]),
+  truncated: z.boolean().default(false),
+});
+
+export type FileSearchRequest = z.infer<typeof FileSearchRequestSchema>;
+export type FileSearchResponse = z.infer<typeof FileSearchResponseSchema>;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const _sessionInboundRaw: any = z.union([
   VoiceAudioChunkMessageSchema,
@@ -2018,6 +2147,9 @@ const _sessionInboundRaw: any = z.union([
   CliAgentListRequestSchema,
   UpdateWorkspaceMetadataRequestSchema,
   BrowserCommandResultSchema,
+  BrowserSubscribeFramesSchema,
+  BrowserUnsubscribeFramesSchema,
+  BrowserInputSchema,
   // Browser
   BrowserLaunchRequestSchema,
   BrowserStateRequestSchema,
@@ -2030,6 +2162,7 @@ const _sessionInboundRaw: any = z.union([
   // Library sync (additive, optional for old clients)
   LibrarySyncRequestSchema,
   LibraryAgentsRequestSchema,
+  FileSearchRequestSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 115-member union
 export type SessionInboundMessage =
@@ -2143,6 +2276,9 @@ export type SessionInboundMessage =
   | CliAgentListRequest
   | UpdateWorkspaceMetadataRequest
   | BrowserCommandResult
+  | BrowserSubscribeFrames
+  | BrowserUnsubscribeFrames
+  | BrowserInput
   | BrowserLaunchRequest
   | BrowserStateRequest
   | BrowserScreenshotRequest
@@ -2152,7 +2288,8 @@ export type SessionInboundMessage =
   | BrowserCloseRequest
   | BrowserResizeRequest
   | LibrarySyncRequest
-  | LibraryAgentsRequest;
+  | LibraryAgentsRequest
+  | FileSearchRequest;
 export const SessionInboundMessageSchema: z.ZodType<SessionInboundMessage> =
   _sessionInboundRaw as z.ZodType<SessionInboundMessage>;
 
@@ -3650,9 +3787,13 @@ const _sessionOutboundRaw: any = z.union([
   BrowserLaunchedEventSchema,
   BrowserStateUpdateSchema,
   BrowserCommandSchema,
+  BrowserActiveListSchema,
+  BrowserClosedSchema,
+  BrowserFrameSchema,
   // Library sync response (additive)
   LibrarySyncResponseSchema,
   LibraryAgentsResponseSchema,
+  FileSearchResponseSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 118-member union
 export type SessionOutboundMessage =
@@ -3778,8 +3919,12 @@ export type SessionOutboundMessage =
   | BrowserLaunchedEvent
   | BrowserStateUpdate
   | BrowserCommand
+  | BrowserActiveList
+  | BrowserClosed
+  | BrowserFrame
   | LibrarySyncResponse
-  | LibraryAgentsResponse;
+  | LibraryAgentsResponse
+  | FileSearchResponse;
 export const SessionOutboundMessageSchema: z.ZodType<SessionOutboundMessage> =
   _sessionOutboundRaw as z.ZodType<SessionOutboundMessage>;
 
@@ -4090,7 +4235,13 @@ export type BrowserResizeResponse = z.infer<typeof BrowserResizeResponseSchema>;
 export type BrowserLaunchedEvent = z.infer<typeof BrowserLaunchedEventSchema>;
 export type BrowserStateUpdate = z.infer<typeof BrowserStateUpdateSchema>;
 export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
+export type BrowserActiveList = z.infer<typeof BrowserActiveListSchema>;
+export type BrowserClosed = z.infer<typeof BrowserClosedSchema>;
 export type BrowserCommandResult = z.infer<typeof BrowserCommandResultSchema>;
+export type BrowserFrame = z.infer<typeof BrowserFrameSchema>;
+export type BrowserSubscribeFrames = z.infer<typeof BrowserSubscribeFramesSchema>;
+export type BrowserUnsubscribeFrames = z.infer<typeof BrowserUnsubscribeFramesSchema>;
+export type BrowserInput = z.infer<typeof BrowserInputSchema>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

@@ -32,6 +32,7 @@ import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
 import type { BrowserManager } from "../browser/browser-manager.js";
 import { registerBrowserTools } from "../browser/browser-mcp-tools.js";
+import { registerLocalTools } from "../tools/local-mcp-register.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { deleteHubcodeWorktree, listHubcodeWorktrees } from "../../utils/worktree.js";
 import {
@@ -1648,6 +1649,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   if (browserManager) {
     registerBrowserTools(server, browserManager, childLogger);
   }
+
+  // Local fs/shell/git tools — no managers needed, all operate on the
+  // `cwd` argument the agent passes in.
+  registerLocalTools(server, childLogger);
 
   return server;
 }

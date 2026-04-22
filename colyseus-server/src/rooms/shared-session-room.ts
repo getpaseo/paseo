@@ -27,12 +27,29 @@ interface ChatToAgentMessage {
   content: string;
 }
 
+interface SessionChatEntry {
+  id: string;
+  userId: string;
+  username: string;
+  avatarUrl: string;
+  content: string;
+  ts: number;
+}
+
+const SESSION_CHAT_HISTORY_LIMIT = 200;
+
 export class SharedSessionRoom extends Room<SharedSessionState> {
   private authService!: AuthService;
   private daemonBridge!: DaemonBridge;
   private isProcessingQueue = false;
   private shareToken = "";
   private authWatcher: NodeJS.Timeout | null = null;
+  /** In-memory FIFO of session chat messages (human-to-human, not agent
+   * chat). Kept off the Colyseus schema on purpose — ArraySchema diffing
+   * on every message would be overkill for ephemeral chat, and we only
+   * need two behaviors: broadcast new entries live, and replay the last
+   * N to a newly joining client. */
+  private sessionChatHistory: SessionChatEntry[] = [];
 
   onCreate(options: RoomCreateOptions): void {
     console.log(`[room] onCreate roomId=${this.roomId} options=`, options);
@@ -99,6 +116,117 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
       const auth = (client as any).auth as AuthData | undefined;
       if (!auth) return;
       this.broadcast("draw_clear", { userId: auth.userId }, { except: client });
+    });
+
+    // Live cursor tracking — coordinates are normalized 0..1 so every viewer
+    // renders peer cursors against their own viewport. Fire-and-forget.
+    this.onMessage("cursor_move", (client, message: any) => {
+      const auth = (client as any).auth as AuthData | undefined;
+      if (!auth) return;
+      const x = Number(message?.x);
+      const y = Number(message?.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      this.broadcast(
+        "cursor_move",
+        {
+          userId: auth.userId,
+          username: auth.username,
+          avatarUrl: auth.avatarUrl,
+          x,
+          y,
+          visible: message?.visible !== false,
+          ts: Date.now(),
+        },
+        { except: client },
+      );
+    });
+
+    // Typing indicators — "X is typing" bubble. Server doesn't persist state;
+    // clients maintain their own typing map with a per-user idle timeout.
+    this.onMessage("typing_start", (client) => {
+      const auth = (client as any).auth as AuthData | undefined;
+      if (!auth) return;
+      this.broadcast(
+        "typing_status",
+        {
+          userId: auth.userId,
+          username: auth.username,
+          avatarUrl: auth.avatarUrl,
+          typing: true,
+          ts: Date.now(),
+        },
+        { except: client },
+      );
+    });
+
+    // Text selection sharing — broadcast the viewer's selected text rects
+    // (normalized 0..1 against the shared viewport) so peers can render a
+    // Google-Docs-style colored highlight. Empty rects = selection cleared.
+    this.onMessage("selection_rects", (client, message: any) => {
+      const auth = (client as any).auth as AuthData | undefined;
+      if (!auth) return;
+      const rects = Array.isArray(message?.rects) ? message.rects : [];
+      this.broadcast(
+        "selection_rects",
+        {
+          userId: auth.userId,
+          username: auth.username,
+          avatarUrl: auth.avatarUrl,
+          rects,
+          ts: Date.now(),
+        },
+        { except: client },
+      );
+    });
+
+    // Human-to-human chat inside the shared session (the "Messages" panel
+    // on the floating video widget). Persists last N messages in memory so
+    // late joiners see recent context — LiveKit's built-in Chat has no
+    // replay and loses messages sent before the peer connected.
+    this.onMessage("session_chat_send", (client, message: { content?: string }) => {
+      const auth = (client as any).auth as AuthData | undefined;
+      if (!auth) return;
+      const content = String(message?.content ?? "").trim();
+      if (!content) return;
+      // Read-only viewers can't chat either — stops lurkers from
+      // spamming and matches the `chat_to_agent` posture.
+      const participant = this.state.participants.get(client.sessionId);
+      if (this.state.accessLevel === "read_only" && participant?.role !== "owner") {
+        client.send("error", { message: "This session is read-only" });
+        return;
+      }
+      const entry: SessionChatEntry = {
+        id: nanoid(),
+        userId: auth.userId,
+        username: auth.username,
+        avatarUrl: auth.avatarUrl,
+        content: content.slice(0, 2000),
+        ts: Date.now(),
+      };
+      this.sessionChatHistory.push(entry);
+      if (this.sessionChatHistory.length > SESSION_CHAT_HISTORY_LIMIT) {
+        this.sessionChatHistory.splice(
+          0,
+          this.sessionChatHistory.length - SESSION_CHAT_HISTORY_LIMIT,
+        );
+      }
+      this.broadcast("session_chat_new", entry);
+    });
+
+    this.onMessage("typing_stop", (client) => {
+      const auth = (client as any).auth as AuthData | undefined;
+      if (!auth) return;
+      this.broadcast(
+        "typing_status",
+        {
+          userId: auth.userId,
+          username: auth.username,
+          avatarUrl: auth.avatarUrl,
+          typing: false,
+          ts: Date.now(),
+        },
+        { except: client },
+      );
     });
 
     // Auto-dispose after 5 minutes with no clients
@@ -197,6 +325,12 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
     // sync for nested MapSchema was not reaching clients in some environments;
     // this custom channel guarantees every client has the full participant list.
     this.broadcastParticipantsSnapshot();
+
+    // Replay the last N session chat messages to the new client so they
+    // land in an already-running conversation with context.
+    if (this.sessionChatHistory.length > 0) {
+      client.send("session_chat_history", { entries: this.sessionChatHistory });
+    }
   }
 
   async onLeave(client: Client, consented?: boolean): Promise<void> {

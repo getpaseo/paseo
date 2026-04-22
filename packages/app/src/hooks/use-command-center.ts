@@ -3,15 +3,24 @@ import type { TextInput } from "react-native";
 import { router, usePathname, type Href } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
-import { useHosts } from "@/runtime/host-runtime";
+import { useHosts, useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useAllAgentsList } from "@/hooks/use-all-agents-list";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import {
+  useSidebarWorkspacesList,
+  type SidebarProjectEntry,
+  type SidebarWorkspaceEntry,
+} from "@/hooks/use-sidebar-workspaces-list";
+import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
 } from "@/utils/command-center-focus-restore";
-import { buildHostSettingsRoute, parseServerIdFromPathname } from "@/utils/host-routes";
+import {
+  buildHostSettingsRoute,
+  buildHostWorkspaceRoute,
+  parseServerIdFromPathname,
+} from "@/utils/host-routes";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { chordStringToShortcutKeys } from "@/keyboard/shortcut-string";
 import { getBindingIdForAction, getDefaultKeysForAction } from "@/keyboard/keyboard-shortcuts";
@@ -94,6 +103,12 @@ export type CommandCenterActionItem = {
   shortcutKeys?: ShortcutKey[][];
 };
 
+export interface CommandCenterFile {
+  workspaceId: string;
+  workspaceName?: string;
+  relativePath: string;
+}
+
 export type CommandCenterItem =
   | {
       kind: "action";
@@ -102,6 +117,19 @@ export type CommandCenterItem =
   | {
       kind: "agent";
       agent: AggregatedAgent;
+    }
+  | {
+      kind: "project";
+      project: SidebarProjectEntry;
+    }
+  | {
+      kind: "workspace";
+      workspace: SidebarWorkspaceEntry;
+      projectName: string;
+    }
+  | {
+      kind: "file";
+      file: CommandCenterFile;
     };
 
 function resolveActionShortcutKeys(
@@ -154,6 +182,47 @@ export function useCommandCenter() {
     serverId: activeServerId,
   });
 
+  const { projects: sidebarProjects } = useSidebarWorkspacesList({
+    serverId: activeServerId,
+  });
+
+  const daemonClient = useHostRuntimeClient(activeServerId ?? "");
+  const [fileResults, setFileResults] = useState<CommandCenterFile[]>([]);
+  // Debounce file search so we don't hammer the daemon on every keystroke.
+  useEffect(() => {
+    if (!open) {
+      setFileResults([]);
+      return;
+    }
+    const trimmed = query.trim();
+    if (trimmed.length < 2 || !daemonClient) {
+      setFileResults([]);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      daemonClient
+        .searchFiles({ query: trimmed, limit: 25 })
+        .then((res) => {
+          if (cancelled) return;
+          setFileResults(
+            res.results.map((r) => ({
+              workspaceId: r.workspaceId,
+              workspaceName: r.workspaceName,
+              relativePath: r.relativePath,
+            })),
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setFileResults([]);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [daemonClient, open, query]);
+
   const agentResults = useMemo(() => {
     if (!open || agents.length === 0) {
       return EMPTY_AGENTS;
@@ -184,25 +253,48 @@ export function useCommandCenter() {
     }));
   }, [open, query, settingsRoute, overrides]);
 
+  const projectResults = useMemo(() => {
+    if (!open) return [] as SidebarProjectEntry[];
+    const q = query.trim().toLowerCase();
+    if (!q) return sidebarProjects;
+    return sidebarProjects.filter((p) => p.projectName.toLowerCase().includes(q));
+  }, [open, query, sidebarProjects]);
+
+  const workspaceResults = useMemo(() => {
+    if (!open) return [] as Array<{ workspace: SidebarWorkspaceEntry; projectName: string }>;
+    const q = query.trim().toLowerCase();
+    const out: Array<{ workspace: SidebarWorkspaceEntry; projectName: string }> = [];
+    for (const project of sidebarProjects) {
+      for (const workspace of project.workspaces) {
+        if (q && !workspace.name.toLowerCase().includes(q)) continue;
+        out.push({ workspace, projectName: project.projectName });
+      }
+    }
+    return out;
+  }, [open, query, sidebarProjects]);
+
   const items = useMemo(() => {
     if (!open) {
       return EMPTY_COMMAND_CENTER_ITEMS;
     }
     const next: CommandCenterItem[] = [];
     for (const action of actionItems) {
-      next.push({
-        kind: "action",
-        action,
-      });
+      next.push({ kind: "action", action });
+    }
+    for (const project of projectResults) {
+      next.push({ kind: "project", project });
+    }
+    for (const { workspace, projectName } of workspaceResults) {
+      next.push({ kind: "workspace", workspace, projectName });
     }
     for (const agent of agentResults) {
-      next.push({
-        kind: "agent",
-        agent,
-      });
+      next.push({ kind: "agent", agent });
+    }
+    for (const file of fileResults) {
+      next.push({ kind: "file", file });
     }
     return next;
-  }, [actionItems, agentResults, open]);
+  }, [actionItems, projectResults, workspaceResults, agentResults, fileResults, open]);
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -244,15 +336,75 @@ export function useCommandCenter() {
     [openProjectPicker, setOpen],
   );
 
+  const handleSelectWorkspace = useCallback(
+    (workspace: SidebarWorkspaceEntry) => {
+      didNavigateRef.current = true;
+      clearCommandCenterFocusRestoreElement();
+      setOpen(false);
+      router.navigate(
+        buildHostWorkspaceRoute(workspace.serverId, workspace.workspaceId),
+      );
+    },
+    [setOpen],
+  );
+
+  const handleSelectProject = useCallback(
+    (project: SidebarProjectEntry) => {
+      // Jump into the project's first workspace — the sidebar list already
+      // sorts by "most relevant" so taking `[0]` matches the sidebar click.
+      const first = project.workspaces[0];
+      if (!first) return;
+      handleSelectWorkspace(first);
+    },
+    [handleSelectWorkspace],
+  );
+
+  const handleSelectFile = useCallback(
+    (file: CommandCenterFile) => {
+      if (!activeServerId) return;
+      didNavigateRef.current = true;
+      clearCommandCenterFocusRestoreElement();
+      setOpen(false);
+      // Nav to the file tab inside its workspace. `prepareWorkspaceTab`
+      // opens the file in the editor pane next to any existing tabs.
+      router.navigate(
+        prepareWorkspaceTab({
+          serverId: activeServerId,
+          workspaceId: file.workspaceId,
+          target: { kind: "file", path: file.relativePath },
+        }),
+      );
+    },
+    [activeServerId, setOpen],
+  );
+
   const handleSelectItem = useCallback(
     (item: CommandCenterItem) => {
       if (item.kind === "action") {
         handleSelectAction(item.action);
         return;
       }
+      if (item.kind === "project") {
+        handleSelectProject(item.project);
+        return;
+      }
+      if (item.kind === "workspace") {
+        handleSelectWorkspace(item.workspace);
+        return;
+      }
+      if (item.kind === "file") {
+        handleSelectFile(item.file);
+        return;
+      }
       handleSelectAgent(item.agent);
     },
-    [handleSelectAction, handleSelectAgent],
+    [
+      handleSelectAction,
+      handleSelectAgent,
+      handleSelectFile,
+      handleSelectProject,
+      handleSelectWorkspace,
+    ],
   );
 
   useEffect(() => {

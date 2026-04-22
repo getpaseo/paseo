@@ -6,6 +6,7 @@ import {
   Building2,
   ImagePlus,
   Plus,
+  Search,
   Settings as SettingsIcon,
   Sparkles,
   User,
@@ -17,7 +18,8 @@ import { router } from "expo-router";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { getIsElectron } from "@/constants/platform";
-import { DESKTOP_TRAFFIC_LIGHT_HEIGHT } from "@/constants/layout";
+import { DESKTOP_TRAFFIC_LIGHT_HEIGHT, DESKTOP_TRAFFIC_LIGHT_WIDTH } from "@/constants/layout";
+import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
@@ -36,15 +38,23 @@ import { useIsInSharedSession, useIsSharedRecipient } from "@/stores/shared-sess
  */
 export function DesktopTitlebarAccent() {
   const { theme } = useUnistyles();
+  const setCommandCenterOpen = useKeyboardShortcutsStore((s) => s.setCommandCenterOpen);
   // Hide for *any* shared session (host or recipient) — the participant bar
   // already occupies the titlebar area and reserves traffic-light space, so
   // stacking the pink accent on top would leave an empty strip between them.
   const hideAccent = useIsInSharedSession();
   if (!getIsElectron()) return null;
   if (hideAccent) return null;
-  // Raw <div> (not <View>) so we can set `-webkit-app-region: drag` — React
-  // Native Web strips `WebkitAppRegion` from View styles, which made the
-  // magenta strip eat the OS drag region without providing one of its own.
+
+  // The whole strip is draggable (WebkitAppRegion: "drag") — except the search
+  // pill which needs to receive clicks. Electron treats any descendant with
+  // `no-drag` as interactive and lets the rest remain as window drag surface.
+  //
+  // Rendered as a raw <div> (not <View>) because React Native Web strips the
+  // non-standard `WebkitAppRegion` property from View styles.
+  const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+  const shortcutLabel = isMac ? "⌘K" : "Ctrl+K";
+
   return (
     <div
       style={{
@@ -55,10 +65,67 @@ export function DesktopTitlebarAccent() {
         height: DESKTOP_TRAFFIC_LIGHT_HEIGHT,
         backgroundColor: theme.colors.accent,
         zIndex: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        paddingLeft: DESKTOP_TRAFFIC_LIGHT_WIDTH,
+        paddingRight: 16,
         // @ts-expect-error — WebkitAppRegion is not in CSSProperties
         WebkitAppRegion: "drag",
       }}
-    />
+    >
+      <button
+        type="button"
+        onClick={() => setCommandCenterOpen(true)}
+        style={{
+          // no-drag so the click actually reaches the button
+          // @ts-expect-error — WebkitAppRegion is not in CSSProperties
+          WebkitAppRegion: "no-drag",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          maxWidth: 520,
+          width: "min(520px, 40vw)",
+          minWidth: 0,
+          height: 26,
+          padding: "0 10px",
+          borderRadius: 6,
+          border: "1px solid rgba(255, 255, 255, 0.28)",
+          backgroundColor: "rgba(0, 0, 0, 0.18)",
+          color: "rgba(255, 255, 255, 0.85)",
+          fontSize: 12,
+          cursor: "pointer",
+          fontFamily:
+            "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+        }}
+        aria-label={`Open command center (${shortcutLabel})`}
+      >
+        <Search size={12} color="currentColor" style={{ flexShrink: 0 }} />
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            textAlign: "left",
+            opacity: 0.75,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          Search projects, agents, commands…
+        </span>
+        <span
+          style={{
+            flexShrink: 0,
+            opacity: 0.6,
+            fontSize: 11,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {shortcutLabel}
+        </span>
+      </button>
+    </div>
   );
 }
 

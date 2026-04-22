@@ -49,7 +49,7 @@ import {
 } from "./messages.js";
 import type { TerminalManager, TerminalsChangedEvent } from "../terminal/terminal-manager.js";
 import { BrowserManager } from "./browser/browser-manager.js";
-import { ClientBrowserManager } from "./browser/client-browser-manager.js";
+import { PlaywrightBrowserManager } from "./browser/playwright-browser-manager.js";
 import { captureTerminalLines, type TerminalSession } from "../terminal/terminal.js";
 import {
   TerminalStreamOpcode,
@@ -421,7 +421,7 @@ export type SessionOptions = {
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   browserManager?: BrowserManager | null;
-  clientBrowserManager?: ClientBrowserManager | null;
+  clientBrowserManager?: PlaywrightBrowserManager | null;
   providerSnapshotManager?: ProviderSnapshotManager;
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
@@ -646,9 +646,10 @@ export class Session {
   private readonly MOBILE_BACKGROUND_STREAM_GRACE_MS = 60_000;
   private readonly terminalManager: TerminalManager | null;
   private readonly browserManager: BrowserManager;
-  private readonly clientBrowserManager: ClientBrowserManager;
+  private readonly clientBrowserManager: PlaywrightBrowserManager;
   private unsubscribeBrowserLaunched: (() => void) | null = null;
   private unsubscribeClientBrowserLaunched: (() => void) | null = null;
+  private releaseClientBrowserEmit: (() => void) | null = null;
   private readonly providerSnapshotManager: ProviderSnapshotManager | null;
   private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
   private readonly subscribedTerminalDirectories = new Set<string>();
@@ -748,9 +749,11 @@ export class Session {
         },
       });
     this.clientBrowserManager =
-      (options.clientBrowserManager as ClientBrowserManager | null) ??
-      new ClientBrowserManager({ logger });
-    this.clientBrowserManager.setEmit((message) => this.emit(message as any));
+      (options.clientBrowserManager as PlaywrightBrowserManager | null) ??
+      new PlaywrightBrowserManager({ logger });
+    this.releaseClientBrowserEmit = this.clientBrowserManager.setEmit(
+      (message) => this.emit(message as any),
+    );
     this.unsubscribeBrowserLaunched = this.browserManager.onBrowserLaunched((event) => {
       this.emit({
         type: "browser_launched",
@@ -2409,6 +2412,34 @@ export class Session {
             this.handleBrowserCommandResult(msg);
             break;
 
+          // Screencast streaming for shared-session visitors (no native
+          // WebContentsView). Start/stop CDP screencast on demand.
+          case "browser_subscribe_frames":
+            void this.clientBrowserManager
+              .startScreencast(msg.payload.browserId, { url: msg.payload.url })
+              .catch((err: unknown) => {
+                this.sessionLogger.warn(
+                  { err, browserId: msg.payload.browserId },
+                  "browser_subscribe_frames failed",
+                );
+              });
+            break;
+          case "browser_unsubscribe_frames":
+            void this.clientBrowserManager
+              .stopScreencast(msg.payload.browserId)
+              .catch(() => {});
+            break;
+          case "browser_input":
+            void this.clientBrowserManager
+              .dispatchInput(msg.payload)
+              .catch((err: unknown) => {
+                this.sessionLogger.debug(
+                  { err, kind: msg.payload.kind, browserId: msg.payload.browserId },
+                  "browser_input dispatch failed",
+                );
+              });
+            break;
+
           // Library sync (PR7) — apply user's activated MCP/Skill entries to
           // the local CLI configs (~/.claude.json, ~/.codex/config.toml,
           // ~/.config/opencode/opencode.json, ~/.agentskills/).
@@ -2417,6 +2448,9 @@ export class Session {
             break;
           case "library_agents_request":
             await this.handleLibraryAgentsRequest(msg);
+            break;
+          case "file_search_request":
+            await this.handleFileSearchRequest(msg);
             break;
         }
       } catch (error: any) {
@@ -7938,6 +7972,17 @@ export class Session {
       this.unsubscribeBrowserLaunched();
       this.unsubscribeBrowserLaunched = null;
     }
+    if (this.unsubscribeClientBrowserLaunched) {
+      this.unsubscribeClientBrowserLaunched();
+      this.unsubscribeClientBrowserLaunched = null;
+    }
+    // Release our emit closure on the shared clientBrowserManager so any
+    // pending browser tool call from the agent fails fast with "Client
+    // disconnected" instead of hanging for the full command timeout.
+    if (this.releaseClientBrowserEmit) {
+      this.releaseClientBrowserEmit();
+      this.releaseClientBrowserEmit = null;
+    }
 
     // Close MCP clients
     if (this.agentMcpClient) {
@@ -8662,6 +8707,49 @@ export class Session {
       result: msg.result,
       error: msg.error,
     });
+  }
+
+  private async handleFileSearchRequest(
+    msg: Extract<SessionInboundMessage, { type: "file_search_request" }>,
+  ): Promise<void> {
+    try {
+      const { searchFiles } = await import("./search/file-search.js");
+      const allWorkspaces = await this.workspaceRegistry.list();
+      const scoped = msg.workspaceIds.length
+        ? allWorkspaces.filter((w) => msg.workspaceIds.includes(w.workspaceId))
+        : allWorkspaces;
+      const result = await searchFiles({
+        query: msg.query,
+        limit: msg.limit,
+        workspaces: scoped.map((w) => ({
+          workspaceId: w.workspaceId,
+          workspaceName: w.displayName,
+          cwd: w.cwd,
+        })),
+      });
+      this.emit({
+        type: "file_search_response",
+        requestId: msg.requestId,
+        ok: true,
+        results: result.matches.map((m) => ({
+          workspaceId: m.workspaceId,
+          workspaceName: m.workspaceName,
+          relativePath: m.relativePath,
+        })),
+        truncated: result.truncated,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sessionLogger.warn({ err }, "file_search_request failed");
+      this.emit({
+        type: "file_search_response",
+        requestId: msg.requestId,
+        ok: false,
+        error: message,
+        results: [],
+        truncated: false,
+      });
+    }
   }
 
   private async handleLibraryAgentsRequest(

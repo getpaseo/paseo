@@ -105,11 +105,6 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     alignItems: "center",
     gap: theme.spacing[3],
-    shadowColor: theme.colors.brandMagenta,
-    shadowOpacity: 0.3,
-    shadowRadius: 32,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 20,
   },
   iconWrap: {
     width: 72,

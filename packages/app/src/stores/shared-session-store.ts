@@ -6,6 +6,16 @@
 
 import { useSyncExternalStore } from "react";
 import { clearChatAuthors, pushChatAuthor } from "@/stores/shared-chat-authors-store";
+import {
+  clearAllTyping,
+  notifyLocalTyping,
+  setRemoteTyping,
+  stopLocalTyping,
+} from "@/stores/shared-typing-store";
+import {
+  clearSessionChat,
+  wireSessionChatListeners,
+} from "@/stores/session-chat-store";
 
 export interface SharedSessionUser {
   userId: string;
@@ -247,6 +257,35 @@ export function setSharedSession(
   wireParticipantSync(room);
   wireSessionExpiredListener(room);
   wireChatMessageListener(room);
+  wireTypingStatusListener(room);
+  wireSessionChatListeners(room);
+}
+
+function wireTypingStatusListener(room: any) {
+  try {
+    room?.onMessage?.(
+      "typing_status",
+      (payload: {
+        userId?: string;
+        username?: string;
+        avatarUrl?: string;
+        typing?: boolean;
+      }) => {
+        const userId = String(payload?.userId ?? "");
+        if (!userId) return;
+        setRemoteTyping(
+          {
+            userId,
+            username: String(payload.username ?? ""),
+            avatarUrl: String(payload.avatarUrl ?? ""),
+          },
+          Boolean(payload.typing),
+        );
+      },
+    );
+  } catch (err) {
+    console.warn("[shared-session] failed to wire typing_status:", err);
+  }
 }
 
 /**
@@ -276,6 +315,21 @@ export function getSharedSessionAuthor(): {
  * Currently agent messages bypass the Colyseus chat queue — this closes the
  * attribution gap without re-routing the daemon send path.
  */
+/**
+ * Broadcast that the local user is typing. Safe to call on every keystroke —
+ * the typing store debounces the outgoing `typing_start`/`typing_stop`.
+ */
+export function notifyLocalUserTyping(): void {
+  if (!state.enteredViaShare) return;
+  if (!state.room) return;
+  notifyLocalTyping(state.room);
+}
+
+export function notifyLocalUserStoppedTyping(): void {
+  if (!state.room) return;
+  stopLocalTyping(state.room);
+}
+
 export function notifyChatMessageAuthored(content: string): void {
   const trimmed = content.trim();
   if (!trimmed) return;
@@ -549,6 +603,8 @@ export async function startSharedSessionAsHost(params: {
     wireParticipantSync(room);
     wireSessionExpiredListener(room);
     wireChatMessageListener(room);
+    wireTypingStatusListener(room);
+    wireSessionChatListeners(room);
   } catch (err) {
     console.warn("[shared-session] host-mode join failed:", err);
     state = { ...state, joining: false };
@@ -569,6 +625,8 @@ function clearSharedSessionWithReason(opts: { wasHostMode: boolean }): void {
     }
   }
   clearChatAuthors();
+  clearAllTyping();
+  clearSessionChat();
   state = {
     room: null,
     shareToken: null,

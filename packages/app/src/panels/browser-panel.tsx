@@ -1,6 +1,5 @@
+"use no memo";
 import { Globe } from "lucide-react-native";
-import { View } from "react-native";
-import { useIsFocused } from "@react-navigation/native";
 import invariant from "tiny-invariant";
 import { BrowserPane } from "@/components/browser-pane";
 import { usePaneContext } from "@/panels/pane-context";
@@ -20,17 +19,21 @@ function useBrowserPanelDescriptor(
 }
 
 function BrowserPanel() {
-  const isFocused = useIsFocused();
+  "use no memo";
   const { serverId, workspaceId, target, isPaneFocused } = usePaneContext();
   invariant(target.kind === "browser", "BrowserPanel requires browser target");
   console.log("[BrowserPanel] target:", JSON.stringify(target));
 
-  if (!isFocused) {
-    return <View style={{ flex: 1 }} />;
-  }
-
+  // Keyed on browserId so React fully unmounts + remounts BrowserPane
+  // when the id changes. Without this React would try to re-render
+  // the same instance with new props, which was triggering
+  // "Uncaught TypeError: Oc is not a function" during reconciliation —
+  // the hook order of BrowserPane is tied to its browserId lifecycle
+  // (ResizeObserver, IPC subscription, etc.) and React's in-place
+  // update path gets confused when those get rebound mid-flight.
   return (
     <BrowserPane
+      key={target.browserId}
       serverId={serverId}
       cwd={workspaceId}
       browserId={target.browserId}

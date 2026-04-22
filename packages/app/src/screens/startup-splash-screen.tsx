@@ -22,6 +22,8 @@ type StartupSplashScreenProps = {
 const GITHUB_ISSUE_URL = "https://github.com/hubtool/hubcode/issues/new";
 const DOCS_URL = "https://hubcode.ai/docs";
 
+const TAGLINE = "Your dev environment. Anywhere.";
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     position: "relative",
@@ -78,6 +80,13 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize["3xl"],
     fontWeight: theme.fontWeight.semibold,
+    textAlign: "center",
+    letterSpacing: -0.5,
+  },
+  tagline: {
+    marginTop: theme.spacing[2],
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
   titleError: {
@@ -209,19 +218,19 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
 
   const progressSteps =
     phase === "starting-daemon"
-      ? [{ key: "starting-daemon", label: "Starting local server...", status: "active" as const }]
+      ? [{ key: "starting-daemon", label: "Waking up your local agent…", status: "active" as const }]
       : phase === "connecting"
         ? [
-            { key: "starting-daemon", label: "Started local server", status: "complete" as const },
+            { key: "starting-daemon", label: "Local agent ready", status: "complete" as const },
             {
               key: "connecting",
-              label: "Connecting to local server...",
+              label: "Connecting…",
               status: "active" as const,
             },
           ]
         : [
-            { key: "starting-daemon", label: "Started local server", status: "complete" as const },
-            { key: "connecting", label: "Connected to local server", status: "complete" as const },
+            { key: "starting-daemon", label: "Local agent ready", status: "complete" as const },
+            { key: "connecting", label: "Connected", status: "complete" as const },
           ];
 
   const logsText = useMemo(() => {
@@ -249,7 +258,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
       <View style={styles.container}>
         <TitlebarDragRegion />
         <HubcodeLogo size={96} />
-        <Text style={styles.subtitle}>Starting up…</Text>
+        <Text style={styles.subtitle}>Getting things ready…</Text>
       </View>
     );
   }
@@ -261,6 +270,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
         <View style={styles.centeredContent}>
           <HubcodeLogo size={96} />
           <Text style={styles.title}>Welcome to Hubcode</Text>
+          <Text style={styles.tagline}>{TAGLINE}</Text>
           <View style={styles.progressSteps}>
             {progressSteps.map((step) => (
               <View key={step.key} style={styles.progressStepRow}>
@@ -289,12 +299,12 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
         <View style={styles.errorContent}>
           <View style={styles.errorHeader}>
             <HubcodeLogo size={64} />
-            <Text style={[styles.title, styles.titleError]}>Something went wrong</Text>
+            <Text style={[styles.title, styles.titleError]}>We couldn't start your local agent</Text>
           </View>
 
           <Text style={styles.errorDescription}>
-            The local server failed to start. If this keeps happening, please report the issue on
-            GitHub and include the logs below.
+            Your local agent didn't come online this time. Try again below — if it keeps failing,
+            open a GitHub issue with the logs attached so we can dig in.
           </Text>
 
           <Text style={styles.errorMessage}>{bootstrapState.error}</Text>

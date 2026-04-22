@@ -142,7 +142,14 @@ export default {
     ],
     experiments: {
       typedRoutes: true,
-      reactCompiler: true,
+      // React Compiler was generating internal assertions like
+      // "Internal React error: Expected static flag was missing" +
+      // "Uncaught TypeError: Oc is not a function" when browser tabs
+      // mounted / unmounted rapidly. `"use no memo"` directives in
+      // individual files didn't suppress it reliably. Turn it off
+      // globally until the compiler's static-flag analysis stops
+      // conflicting with our imperative DOM/IPC patterns.
+      reactCompiler: false,
       autolinkingModuleResolution: true,
     },
     extra: {

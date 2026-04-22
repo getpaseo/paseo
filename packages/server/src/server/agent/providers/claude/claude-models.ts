@@ -10,6 +10,21 @@ const CLAUDE_THINKING_OPTIONS = [
 const CLAUDE_MODELS: AgentModelDefinition[] = [
   {
     provider: "claude",
+    id: "claude-opus-4-7[1m]",
+    label: "Opus 4.7 1M",
+    description: "Opus 4.7 with 1M context window",
+    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
+  },
+  {
+    provider: "claude",
+    id: "claude-opus-4-7",
+    label: "Opus 4.7",
+    description: "Opus 4.7 · Latest Opus, most capable for complex work",
+    isDefault: true,
+    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
+  },
+  {
+    provider: "claude",
     id: "claude-opus-4-6[1m]",
     label: "Opus 4.6 1M",
     description: "Opus 4.6 with 1M context window",
@@ -19,8 +34,7 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
     provider: "claude",
     id: "claude-opus-4-6",
     label: "Opus 4.6",
-    description: "Opus 4.6 · Most capable for complex work",
-    isDefault: true,
+    description: "Opus 4.6 · Previous Opus generation",
     thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
   },
   {

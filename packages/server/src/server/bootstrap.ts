@@ -95,6 +95,7 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
+import { PlaywrightBrowserManager } from "./browser/playwright-browser-manager.js";
 import {
   buildProviderRegistry,
   createAllClients,
@@ -375,8 +376,13 @@ export async function createHubcodeDaemon(
 
     const terminalManager = createTerminalManager();
     const browserManager = new BrowserManager({ logger });
-    const { ClientBrowserManager } = await import("./browser/client-browser-manager.js");
-    const clientBrowserManager = new ClientBrowserManager({ logger });
+    // `clientBrowserManager` drives the desktop app's <webview> via
+    // Playwright connected to Electron's CDP endpoint (exposed by the
+    // desktop's `--remote-debugging-port` switch). Tools like click /
+    // fill / screenshot / evaluate go through Playwright's Page API,
+    // which handles load races and screenshots natively — previously
+    // we hand-rolled this over a WS IPC and hit lots of timing bugs.
+    const clientBrowserManager = new PlaywrightBrowserManager({ logger });
 
     const detachAgentStoragePersistence = attachAgentStoragePersistence(
       logger,

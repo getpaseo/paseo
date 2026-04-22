@@ -2583,6 +2583,49 @@ export class DaemonClient {
     });
   }
 
+  /** Tell the daemon to start streaming CDP screencast frames for the
+   * given browser. Used by shared-session visitors on web (no native
+   * WebContentsView). Ref-counted on the server. */
+  subscribeBrowserFrames(browserId: string, url?: string): void {
+    this.sendSessionMessage({
+      type: "browser_subscribe_frames",
+      payload: { browserId, url },
+    } as any);
+  }
+
+  unsubscribeBrowserFrames(browserId: string): void {
+    this.sendSessionMessage({
+      type: "browser_unsubscribe_frames",
+      payload: { browserId },
+    } as any);
+  }
+
+  sendBrowserInput(payload: {
+    browserId: string;
+    kind:
+      | "mouse_move"
+      | "mouse_down"
+      | "mouse_up"
+      | "mouse_wheel"
+      | "key_down"
+      | "key_up";
+    x?: number;
+    y?: number;
+    button?: "left" | "right" | "middle";
+    clickCount?: number;
+    deltaX?: number;
+    deltaY?: number;
+    key?: string;
+    code?: string;
+    text?: string;
+    modifiers?: number;
+  }): void {
+    this.sendSessionMessage({
+      type: "browser_input",
+      payload,
+    } as any);
+  }
+
   sendBrowserCommandResult(result: {
     requestId: string;
     browserId: string;
@@ -4423,6 +4466,38 @@ export class DaemonClient {
           },
           runningAgentIds: msg.runningAgentIds,
         };
+      },
+    });
+  }
+
+  async searchFiles(params: {
+    query: string;
+    limit?: number;
+    workspaceIds?: string[];
+    requestId?: string;
+    timeoutMs?: number;
+  }): Promise<{
+    results: import("../shared/messages.js").FileSearchResponse["results"];
+    truncated: boolean;
+  }> {
+    const requestId = this.createRequestId(params.requestId);
+    return this.sendRequest({
+      requestId,
+      message: {
+        type: "file_search_request",
+        requestId,
+        query: params.query,
+        limit: params.limit ?? 50,
+        workspaceIds: params.workspaceIds ?? [],
+      },
+      timeout: params.timeoutMs ?? 10_000,
+      select: (msg) => {
+        if (msg.type !== "file_search_response") return null;
+        if (msg.requestId !== requestId) return null;
+        if (!msg.ok) {
+          throw new Error(msg.error ?? "File search failed");
+        }
+        return { results: msg.results, truncated: msg.truncated };
       },
     });
   }
