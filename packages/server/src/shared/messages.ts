@@ -733,9 +733,38 @@ export const GitHubIssueAttachmentSchema = z.object({
   body: z.string().nullable().optional(),
 });
 
+export const ReviewAttachmentContextLineSchema = z.object({
+  oldLineNumber: z.number().int().positive().nullable(),
+  newLineNumber: z.number().int().positive().nullable(),
+  type: z.enum(["add", "remove", "context"]),
+  content: z.string(),
+});
+
+export const ReviewAttachmentCommentSchema = z.object({
+  filePath: z.string(),
+  side: z.enum(["old", "new"]),
+  lineNumber: z.number().int().positive(),
+  body: z.string(),
+  context: z.object({
+    hunkHeader: z.string(),
+    targetLine: ReviewAttachmentContextLineSchema,
+    lines: z.array(ReviewAttachmentContextLineSchema),
+  }),
+});
+
+export const ReviewAttachmentSchema = z.object({
+  type: z.literal("review"),
+  mimeType: z.literal("application/paseo-review"),
+  cwd: z.string(),
+  mode: z.enum(["uncommitted", "base"]),
+  baseRef: z.string().nullable().optional(),
+  comments: z.array(ReviewAttachmentCommentSchema),
+});
+
 export const AgentAttachmentSchema = z.discriminatedUnion("type", [
   GitHubPrAttachmentSchema,
   GitHubIssueAttachmentSchema,
+  ReviewAttachmentSchema,
 ]);
 
 function normalizeAgentAttachments(input: unknown): AgentAttachment[] {

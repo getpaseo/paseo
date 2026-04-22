@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ComposerAttachment } from "@/attachments/types";
+import type { UserComposerAttachment } from "@/attachments/types";
 import type { DraftAgentStatusBarProps } from "@/components/agent-status-bar";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import {
@@ -13,8 +13,8 @@ import type { AgentModelDefinition } from "@server/server/agent/agent-sdk-types"
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 
 type AttachmentUpdater =
-  | ComposerAttachment[]
-  | ((prev: ComposerAttachment[]) => ComposerAttachment[]);
+  | UserComposerAttachment[]
+  | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
 
 interface AgentInputDraftComposerOptions {
   initialServerId: string | null;
@@ -48,7 +48,7 @@ type DraftComposerState = UseAgentFormStateResult & {
 interface AgentInputDraft {
   text: string;
   setText: (text: string) => void;
-  attachments: ComposerAttachment[];
+  attachments: UserComposerAttachment[];
   setAttachments: (updater: AttachmentUpdater) => void;
   cwd: string;
   setCwd: (cwd: string) => void;
@@ -59,7 +59,7 @@ interface AgentInputDraft {
 
 function hasDraftContent(input: {
   text: string;
-  attachments: ComposerAttachment[];
+  attachments: UserComposerAttachment[];
   cwd: string;
 }): boolean {
   return (
@@ -68,8 +68,8 @@ function hasDraftContent(input: {
 }
 
 function areAttachmentsEqual(input: {
-  left: ComposerAttachment[];
-  right: ComposerAttachment[];
+  left: UserComposerAttachment[];
+  right: UserComposerAttachment[];
 }): boolean {
   if (input.left.length !== input.right.length) {
     return false;
@@ -190,7 +190,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [formState.selectedServerId, input.draftKey],
   );
   const [text, setText] = useState("");
-  const [attachments, setAttachmentsState] = useState<ComposerAttachment[]>([]);
+  const [attachments, setAttachmentsState] = useState<UserComposerAttachment[]>([]);
   const [cwd, setCwd] = useState(input.initialCwd ?? "");
   const [isHydrated, setIsHydrated] = useState(false);
   const draftGenerationRef = useRef(0);

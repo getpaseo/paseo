@@ -1,4 +1,4 @@
-import type { GitHubSearchItem } from "@server/shared/messages";
+import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
 
 export type AttachmentStorageType = "web-indexeddb" | "desktop-file" | "native-file";
 
@@ -20,7 +20,16 @@ export interface AttachmentMetadata {
 export type ComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "github_issue"; item: GitHubSearchItem }
-  | { kind: "github_pr"; item: GitHubSearchItem };
+  | { kind: "github_pr"; item: GitHubSearchItem }
+  | {
+      kind: "review";
+      attachment: Extract<AgentAttachment, { type: "review" }>;
+      reviewDraftKey: string;
+      commentCount: number;
+      generated: true;
+    };
+
+export type UserComposerAttachment = Exclude<ComposerAttachment, { kind: "review" }>;
 
 export type AttachmentDataSource =
   | { kind: "base64"; base64: string }

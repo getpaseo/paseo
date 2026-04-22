@@ -698,20 +698,24 @@ function buildOpenCodePromptParts(
       output.push({ type: "text", text: part.text });
       continue;
     }
-    if (part.type === "github_pr" || part.type === "github_issue") {
-      output.push({ type: "text", text: renderPromptAttachmentAsText(part) });
+    if (part.type === "image") {
+      attachmentOrdinal += 1;
+      const normalized = toOpenCodeDataUrl(part.mimeType, part.data);
+      output.push({
+        type: "file",
+        mime: normalized.mimeType,
+        filename: `attachment-${attachmentOrdinal}.${getOpenCodeAttachmentExtension(
+          normalized.mimeType,
+        )}`,
+        url: normalized.url,
+      });
       continue;
     }
-    attachmentOrdinal += 1;
-    const normalized = toOpenCodeDataUrl(part.mimeType, part.data);
-    output.push({
-      type: "file",
-      mime: normalized.mimeType,
-      filename: `attachment-${attachmentOrdinal}.${getOpenCodeAttachmentExtension(
-        normalized.mimeType,
-      )}`,
-      url: normalized.url,
-    });
+    const renderedAttachment = renderPromptAttachmentAsText(part);
+    if (renderedAttachment !== null) {
+      output.push({ type: "text", text: renderedAttachment });
+      continue;
+    }
   }
   return output;
 }

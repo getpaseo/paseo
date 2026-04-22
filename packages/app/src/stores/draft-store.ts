@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { AttachmentMetadata, ComposerAttachment } from "@/attachments/types";
+import type { AttachmentMetadata, UserComposerAttachment } from "@/attachments/types";
 import { GitHubSearchItemSchema } from "@server/shared/messages";
 import {
   garbageCollectAttachments,
@@ -23,7 +23,7 @@ type PersistedDraftImage = AttachmentMetadata | LegacyDraftImage;
 
 export interface DraftInput {
   text: string;
-  attachments: ComposerAttachment[];
+  attachments: UserComposerAttachment[];
   cwd: string;
 }
 
@@ -135,7 +135,7 @@ function normalizePersistedImage(value: unknown): PersistedDraftImage | null {
   return null;
 }
 
-function isComposerAttachment(value: unknown): value is ComposerAttachment {
+function isUserComposerAttachment(value: unknown): value is UserComposerAttachment {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -150,7 +150,7 @@ function isComposerAttachment(value: unknown): value is ComposerAttachment {
   return GitHubSearchItemSchema.safeParse(record.item).success;
 }
 
-function normalizeComposerAttachment(attachment: ComposerAttachment): ComposerAttachment {
+function normalizeComposerAttachment(attachment: UserComposerAttachment): UserComposerAttachment {
   if (attachment.kind === "image") {
     return {
       kind: "image",
@@ -160,14 +160,16 @@ function normalizeComposerAttachment(attachment: ComposerAttachment): ComposerAt
   return attachment;
 }
 
-function normalizePersistedComposerAttachment(value: unknown): ComposerAttachment | null {
-  if (!isComposerAttachment(value)) {
+function normalizePersistedComposerAttachment(value: unknown): UserComposerAttachment | null {
+  if (!isUserComposerAttachment(value)) {
     return null;
   }
   return normalizeComposerAttachment(value);
 }
 
-function legacyImagesToAttachments(images: readonly AttachmentMetadata[]): ComposerAttachment[] {
+function legacyImagesToAttachments(
+  images: readonly AttachmentMetadata[],
+): UserComposerAttachment[] {
   return images.map((metadata) => ({
     kind: "image",
     metadata,
@@ -182,7 +184,7 @@ function isCanonicalDraftInput(value: unknown): value is CanonicalDraftInput {
   return (
     typeof input.text === "string" &&
     Array.isArray(input.attachments) &&
-    input.attachments.every(isComposerAttachment) &&
+    input.attachments.every(isUserComposerAttachment) &&
     typeof input.cwd === "string"
   );
 }
@@ -426,7 +428,7 @@ async function migrateDraftInput(input: {
   const attachments = Array.isArray(rawInput.attachments)
     ? rawInput.attachments
         .map((entry) => normalizePersistedComposerAttachment(entry))
-        .filter((entry): entry is ComposerAttachment => entry !== null)
+        .filter((entry): entry is UserComposerAttachment => entry !== null)
     : [];
   const legacyImages = Array.isArray(rawInput.images)
     ? rawInput.images

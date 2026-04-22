@@ -4,10 +4,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AttachmentMetadata, ComposerAttachment } from "@/attachments/types";
-import type { GitHubSearchItem } from "@server/shared/messages";
+import type {
+  AttachmentMetadata,
+  ComposerAttachment,
+  UserComposerAttachment,
+} from "@/attachments/types";
+import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
 import { Composer } from "./composer";
 import { splitComposerAttachmentsForSubmit } from "./composer-attachments";
+import { useReviewDraftStore } from "@/stores/review-draft-store";
 
 const keyboardActionHandlerMock = vi.hoisted(() => vi.fn());
 
@@ -27,6 +32,7 @@ const {
   setAgentStreamHeadMock,
   setQueuedMessagesMock,
   agentDirectoryStatusMock,
+  appSendBehavior,
 } = vi.hoisted(() => {
   const hoistedTheme = {
     spacing: { 1: 4, 2: 8, 3: 12, 4: 16, 6: 24, 8: 32 },
@@ -99,7 +105,12 @@ const {
     cancelAgent: vi.fn(async () => {}),
   };
 
-  const hoistedSetQueuedMessagesMock = vi.fn();
+  const hoistedSetQueuedMessagesMock = vi.fn(
+    (serverId: string, updater: (prev: Map<string, unknown[]>) => Map<string, unknown[]>) => {
+      const session = hoistedMockSessionState.sessions[serverId];
+      session.queuedMessages = updater(session.queuedMessages);
+    },
+  );
   const hoistedMockSessionState: {
     sessions: Record<
       string,
@@ -161,6 +172,7 @@ const {
   hoistedMockSessionState.setAgentStreamTail = hoistedSetAgentStreamTailMock;
   hoistedMockSessionState.setAgentStreamHead = hoistedSetAgentStreamHeadMock;
   const hoistedAgentDirectoryStatusMock = vi.fn(() => "ready");
+  const hoistedAppSendBehavior = { current: "interrupt" as "interrupt" | "queue" };
 
   return {
     theme: hoistedTheme,
@@ -178,6 +190,7 @@ const {
     setAgentStreamHeadMock: hoistedSetAgentStreamHeadMock,
     setQueuedMessagesMock: hoistedSetQueuedMessagesMock,
     agentDirectoryStatusMock: hoistedAgentDirectoryStatusMock,
+    appSendBehavior: hoistedAppSendBehavior,
   };
 });
 
@@ -297,7 +310,7 @@ vi.mock("@/utils/open-external-url", () => ({
 }));
 
 vi.mock("@/hooks/use-settings", () => ({
-  useAppSettings: () => ({ settings: { sendBehavior: "interrupt" } }),
+  useAppSettings: () => ({ settings: { sendBehavior: appSendBehavior.current } }),
 }));
 
 vi.mock("@/hooks/use-agent-autocomplete", () => ({
@@ -556,8 +569,73 @@ let container: HTMLElement | null = null;
 let queryClient: QueryClient | null = null;
 let latestAttachments: ComposerAttachment[] = [];
 
+type ReviewComposerAttachment = Extract<ComposerAttachment, { kind: "review" }>;
+type ReviewAttachment = Extract<AgentAttachment, { type: "review" }>;
+
+function reviewAttachment(body: string): ReviewAttachment {
+  return {
+    type: "review",
+    mimeType: "application/paseo-review",
+    cwd: "/repo",
+    mode: "uncommitted",
+    baseRef: null,
+    comments: [
+      {
+        filePath: "src/example.ts",
+        side: "new",
+        lineNumber: 41,
+        body,
+        context: {
+          hunkHeader: "@@ -40,2 +40,2 @@",
+          targetLine: {
+            oldLineNumber: null,
+            newLineNumber: 41,
+            type: "add",
+            content: "const value = newValue;",
+          },
+          lines: [
+            {
+              oldLineNumber: null,
+              newLineNumber: 41,
+              type: "add",
+              content: "const value = newValue;",
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+function reviewComposerAttachment(body: string): ReviewComposerAttachment {
+  return {
+    kind: "review",
+    generated: true,
+    reviewDraftKey: `review:${body}`,
+    commentCount: 1,
+    attachment: reviewAttachment(body),
+  };
+}
+
+function seedReviewDraft(key: string) {
+  useReviewDraftStore.getState().addComment({
+    key,
+    comment: {
+      id: `${key}:comment`,
+      filePath: "src/example.ts",
+      side: "new",
+      lineNumber: 41,
+      body: "Please simplify this.",
+      createdAt: "2026-04-21T00:00:00.000Z",
+      updatedAt: "2026-04-21T00:00:00.000Z",
+    },
+  });
+}
+
 beforeEach(() => {
-  const dom = new JSDOM("<!doctype html><html><body></body></html>");
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+    url: "http://localhost",
+  });
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", dom.window);
@@ -570,6 +648,7 @@ beforeEach(() => {
     attachEvent: vi.fn(),
     detachEvent: vi.fn(),
   });
+  vi.stubGlobal("localStorage", dom.window.localStorage);
 
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -590,6 +669,7 @@ beforeEach(() => {
   keyboardActionHandlerMock.mockClear();
   agentDirectoryStatusMock.mockReset();
   agentDirectoryStatusMock.mockReturnValue("ready");
+  appSendBehavior.current = "interrupt";
   mockSessionState.sessions.server.serverInfo = {
     serverId: "server",
     hostname: "test",
@@ -607,6 +687,10 @@ beforeEach(() => {
   mockSessionState.sessions.server.agentStreamHead = new Map();
   mockSessionState.sessions.server.agentStreamTail = new Map();
   mockSessionState.sessions.server.queuedMessages = new Map();
+  mockSessionState.sessions.server.agents = new Map([
+    ["agent", { status: "idle", lastUsage: null }],
+  ]);
+  useReviewDraftStore.setState({ drafts: {}, activeModesByScope: {} });
 });
 
 afterEach(() => {
@@ -634,11 +718,13 @@ function imageAttachment(id: string): AttachmentMetadata {
 function ComposerHarness({
   initialText = "",
   initialAttachments = [],
+  generatedReviewAttachment = null,
   isSubmitLoading = false,
   submitBehavior,
 }: {
   initialText?: string;
-  initialAttachments?: ComposerAttachment[];
+  initialAttachments?: UserComposerAttachment[];
+  generatedReviewAttachment?: ReviewComposerAttachment | null;
   isSubmitLoading?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
 }) {
@@ -647,7 +733,11 @@ function ComposerHarness({
   latestAttachments = attachments;
 
   const handleChangeAttachments = React.useCallback(
-    (updater: ComposerAttachment[] | ((current: ComposerAttachment[]) => ComposerAttachment[])) => {
+    (
+      updater:
+        | UserComposerAttachment[]
+        | ((current: UserComposerAttachment[]) => UserComposerAttachment[]),
+    ) => {
       setAttachments((current) => {
         const next = typeof updater === "function" ? updater(current) : updater;
         latestAttachments = next;
@@ -666,6 +756,7 @@ function ComposerHarness({
         value={text}
         onChangeText={setText}
         attachments={attachments}
+        generatedAttachment={generatedReviewAttachment}
         onChangeAttachments={handleChangeAttachments}
         isSubmitLoading={isSubmitLoading}
         submitBehavior={submitBehavior}
@@ -679,7 +770,8 @@ function ComposerHarness({
 function renderComposer(
   input: {
     initialText?: string;
-    initialAttachments?: ComposerAttachment[];
+    initialAttachments?: UserComposerAttachment[];
+    generatedReviewAttachment?: ReviewComposerAttachment | null;
     isSubmitLoading?: boolean;
     submitBehavior?: "clear" | "preserve-and-lock";
   } = {},
@@ -901,6 +993,222 @@ describe("Composer attachments", () => {
         ],
       }),
     );
+  });
+
+  it("serializes generated review attachments through the structured attachment path", async () => {
+    const review = reviewComposerAttachment("Please simplify this.");
+    expect(splitComposerAttachmentsForSubmit([review])).toEqual({
+      images: [],
+      attachments: [review.attachment],
+    });
+  });
+
+  it("renders and submits a generated review attachment pill", async () => {
+    const review = reviewComposerAttachment("Please simplify this.");
+    renderComposer({
+      initialText: "review this",
+      generatedReviewAttachment: review,
+    });
+
+    expect(queryByTestId("composer-review-attachment-pill")?.textContent).toContain("Review");
+    expect(queryByTestId("composer-review-attachment-pill")?.textContent).toContain("1 comment");
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(mockClient.sendAgentMessage).toHaveBeenCalledWith(
+      "agent",
+      "review this",
+      expect.objectContaining({
+        attachments: [review.attachment],
+      }),
+    );
+  });
+
+  it("clears the included generated review draft after a successful submit", async () => {
+    const review = reviewComposerAttachment("Clear submitted review draft.");
+    seedReviewDraft(review.reviewDraftKey);
+    renderComposer({
+      initialText: "review this",
+      generatedReviewAttachment: review,
+    });
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(useReviewDraftStore.getState().drafts[review.reviewDraftKey]).toBeUndefined();
+  });
+
+  it("restores only normal attachments when a submit with a generated review fails", async () => {
+    const image = imageAttachment("img-failure");
+    const review = reviewComposerAttachment("This should be sent but not persisted.");
+    seedReviewDraft(review.reviewDraftKey);
+    mockClient.sendAgentMessage.mockRejectedValueOnce(new Error("network down"));
+    renderComposer({
+      initialText: "review this",
+      initialAttachments: [{ kind: "image", metadata: image }],
+      generatedReviewAttachment: review,
+    });
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(mockClient.sendAgentMessage).toHaveBeenCalledWith(
+      "agent",
+      "review this",
+      expect.objectContaining({
+        attachments: [review.attachment],
+      }),
+    );
+    expect(latestAttachments).toEqual([{ kind: "image", metadata: image }]);
+    expect(useReviewDraftStore.getState().drafts[review.reviewDraftKey]).toHaveLength(1);
+  });
+
+  it("clears generated review suppression after a send lifecycle", async () => {
+    const review = reviewComposerAttachment("Keep this available for the next message.");
+    renderComposer({
+      initialText: "send without review",
+      generatedReviewAttachment: review,
+    });
+
+    click(document.querySelector('[aria-label="Remove review attachment"]')!);
+    expect(queryByTestId("composer-review-attachment-pill")).toBeNull();
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(mockClient.sendAgentMessage).toHaveBeenCalledWith(
+      "agent",
+      "send without review",
+      expect.objectContaining({
+        attachments: [],
+      }),
+    );
+    expect(queryByTestId("composer-review-attachment-pill")).not.toBeNull();
+  });
+
+  it("keeps generated review suppressed after a failed send", async () => {
+    const review = reviewComposerAttachment("Do not send this on retry.");
+    mockClient.sendAgentMessage.mockRejectedValueOnce(new Error("network down"));
+    renderComposer({
+      initialText: "retry without review",
+      generatedReviewAttachment: review,
+    });
+
+    click(document.querySelector('[aria-label="Remove review attachment"]')!);
+    expect(queryByTestId("composer-review-attachment-pill")).toBeNull();
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(mockClient.sendAgentMessage).toHaveBeenNthCalledWith(
+      1,
+      "agent",
+      "retry without review",
+      expect.objectContaining({
+        attachments: [],
+      }),
+    );
+    expect(queryByTestId("composer-review-attachment-pill")).toBeNull();
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(mockClient.sendAgentMessage).toHaveBeenNthCalledWith(
+      2,
+      "agent",
+      "retry without review",
+      expect.objectContaining({
+        attachments: [],
+      }),
+    );
+  });
+
+  it("captures generated review attachments at queue time", async () => {
+    appSendBehavior.current = "queue";
+    mockSessionState.sessions.server.agents.set("agent", { status: "running", lastUsage: null });
+    const initialReview = reviewComposerAttachment("Initial queued review.");
+    const editedReview = reviewComposerAttachment("Edited after queue.");
+    renderComposer({
+      initialText: "queue this",
+      generatedReviewAttachment: initialReview,
+    });
+
+    click(document.querySelector('[aria-label="Queue message"]')!);
+    await flushAsyncWork();
+    renderComposer({
+      initialText: "",
+      generatedReviewAttachment: editedReview,
+    });
+
+    const queued = mockSessionState.sessions.server.queuedMessages.get("agent") as Array<{
+      attachments: ComposerAttachment[];
+    }>;
+    expect(queued[0]?.attachments).toEqual([initialReview]);
+  });
+
+  it("clears the included generated review draft after queueing", async () => {
+    appSendBehavior.current = "queue";
+    mockSessionState.sessions.server.agents.set("agent", { status: "running", lastUsage: null });
+    const review = reviewComposerAttachment("Clear queued review draft.");
+    seedReviewDraft(review.reviewDraftKey);
+    renderComposer({
+      initialText: "queue this",
+      generatedReviewAttachment: review,
+    });
+
+    click(document.querySelector('[aria-label="Queue message"]')!);
+    await flushAsyncWork();
+
+    expect(useReviewDraftStore.getState().drafts[review.reviewDraftKey]).toBeUndefined();
+  });
+
+  it("clears generated review suppression after queueing a message", async () => {
+    appSendBehavior.current = "queue";
+    mockSessionState.sessions.server.agents.set("agent", { status: "running", lastUsage: null });
+    const review = reviewComposerAttachment("Queue without this review first.");
+    renderComposer({
+      initialText: "queue without review",
+      generatedReviewAttachment: review,
+    });
+
+    click(document.querySelector('[aria-label="Remove review attachment"]')!);
+    expect(queryByTestId("composer-review-attachment-pill")).toBeNull();
+
+    click(document.querySelector('[aria-label="Queue message"]')!);
+    await flushAsyncWork();
+
+    const queued = mockSessionState.sessions.server.queuedMessages.get("agent") as Array<{
+      attachments: ComposerAttachment[];
+    }>;
+    expect(queued[0]?.attachments).toEqual([]);
+    expect(queryByTestId("composer-review-attachment-pill")).not.toBeNull();
+  });
+
+  it("does not restore queued generated review attachments into live draft attachments when editing", async () => {
+    appSendBehavior.current = "queue";
+    mockSessionState.sessions.server.agents.set("agent", { status: "running", lastUsage: null });
+    const image = imageAttachment("img-queued-edit");
+    const review = reviewComposerAttachment("Queued snapshot.");
+    renderComposer({
+      initialText: "queue this",
+      initialAttachments: [{ kind: "image", metadata: image }],
+      generatedReviewAttachment: review,
+    });
+
+    click(document.querySelector('[aria-label="Queue message"]')!);
+    await flushAsyncWork();
+    expect(
+      (
+        mockSessionState.sessions.server.queuedMessages.get("agent") as Array<{
+          attachments: ComposerAttachment[];
+        }>
+      )[0]?.attachments,
+    ).toEqual([{ kind: "image", metadata: image }, review]);
+
+    click(document.querySelector('[aria-label="Edit queued message"]')!);
+
+    expect(latestAttachments).toEqual([{ kind: "image", metadata: image }]);
   });
 
   it("submits empty wire arrays when there are no composer attachments", async () => {

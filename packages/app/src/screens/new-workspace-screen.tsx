@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/components/composer";
 import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
+import { stripGeneratedReviewAttachments } from "@/attachments/composer-attachment-utils";
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -26,7 +27,7 @@ import { useDraftStore } from "@/stores/draft-store";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { toErrorMessage } from "@/utils/error-messages";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
-import type { ComposerAttachment } from "@/attachments/types";
+import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment, MessagePayload } from "@/components/message-input";
 import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
@@ -195,10 +196,10 @@ function pickerItemTriggerLabel(item: PickerItem): string {
 }
 
 function syncPickerPrAttachment(input: {
-  attachments: ComposerAttachment[];
+  attachments: UserComposerAttachment[];
   previousPickerPrNumber: number | null;
   item: PickerItem;
-}): { attachments: ComposerAttachment[]; attachedPrNumber: number | null } {
+}): { attachments: UserComposerAttachment[]; attachedPrNumber: number | null } {
   let nextAttachments = input.attachments;
   let attachedPrNumber: number | null = null;
 
@@ -373,7 +374,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     }),
     draft: {
       text,
-      attachments,
+      attachments: stripGeneratedReviewAttachments(attachments),
       cwd: workspaceDirectory,
     },
   });

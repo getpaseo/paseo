@@ -2434,13 +2434,9 @@ export async function codexAppServerTurnInputFromPrompt(
           };
         }
       }
-      if (record.type === "github_pr" || record.type === "github_issue") {
-        return {
-          type: "text",
-          text: renderPromptAttachmentAsText(
-            record as Extract<AgentPromptContentBlock, { type: "github_pr" | "github_issue" }>,
-          ),
-        };
+      const renderedAttachment = renderPromptAttachmentAsText(record);
+      if (renderedAttachment !== null) {
+        return { type: "text", text: renderedAttachment };
       }
       return block;
     }),
