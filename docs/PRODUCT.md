@@ -4,7 +4,7 @@ What Paseo is, who it's for, and where it's going.
 
 ## What is Paseo
 
-Paseo is a next-generation development environment built around agents. One interface to run, monitor, and interact with coding agents across desktop, mobile, terminal, and web.
+Paseo is a next-generation development environment built around agents. One interface to run, monitor, and interact with coding agents across desktop, terminal, and web.
 
 The development workflow is shifting from manually editing files to orchestrating agents that do the editing. Paseo is built for that workflow.
 
@@ -13,7 +13,7 @@ The development workflow is shifting from manually editing files to orchestratin
 Freedom and flexibility. Every design decision follows from this:
 
 - **Multi-provider** — Use any coding agent harness. Pick the right model for each job, switch freely as the landscape shifts. No vendor-lock in.
-- **Cross-device** — Desktop, mobile, web, CLI. Start work at your desk, check progress from your phone, script from the terminal.
+- **Cross-device** — macOS desktop, web, CLI. Start work at your desk, check progress from the browser, script from the terminal.
 - **Self-hosted** — The daemon runs on your machine. Your code, your keys, your environment. No inference markup, no cloud dependency.
 - **Respectful** - No telemetry, no forced cloud, no forced accounts
 - **Open source** — AGPL-3.0. Users can inspect, fork, and contribute.
@@ -67,7 +67,7 @@ Anyone who builds software:
 
 ## Current state (March 2026)
 
-- Desktop (Electron), mobile (iOS/Android), web, CLI
+- Desktop (Electron on macOS), web, CLI
 - Providers: Claude Code (Agent SDK), Codex (app-server), OpenCode
 - Daily releases
 - Community contributions starting (packaging, bug fixes)

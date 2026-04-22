@@ -2,18 +2,12 @@ const fs = require("fs");
 const path = require("path");
 
 const EXECUTABLE_NAME = "Paseo";
-const WRAPPER_MODE = 0o755;
-const WRAPPER_SCRIPT = `#!/bin/bash
-exec "$(dirname "$(readlink -f "$0")")/${EXECUTABLE_NAME}.bin" --no-sandbox "$@"
-`;
 
 // electron-builder arch enum → Node.js arch string
 const ARCH_MAP = { 0: "ia32", 1: "x64", 2: "armv7l", 3: "arm64", 4: "universal" };
 
 const RIPGREP_PLATFORM_DIR = {
   darwin: { arm64: "arm64-darwin", x64: "x64-darwin" },
-  linux: { arm64: "arm64-linux", x64: "x64-linux" },
-  win32: { arm64: "arm64-win32", x64: "x64-win32" },
 };
 
 function rmSafe(target) {
@@ -33,23 +27,12 @@ function pruneOnnxRuntime(nodeModules, platform, arch) {
   const onnxBin = path.join(nodeModules, "onnxruntime-node", "bin", "napi-v6");
   if (!fs.existsSync(onnxBin)) return;
 
-  const otherPlatforms = ["darwin", "linux", "win32"].filter((p) => p !== platform);
+  const otherPlatforms = Object.keys(RIPGREP_PLATFORM_DIR).filter((p) => p !== platform);
   for (const p of otherPlatforms) {
     rmSafe(path.join(onnxBin, p));
   }
 
   pruneChildrenExcept(path.join(onnxBin, platform), new Set([arch]));
-
-  if (platform === "linux") {
-    const archDir = path.join(onnxBin, "linux", arch);
-    if (fs.existsSync(archDir)) {
-      for (const name of fs.readdirSync(archDir)) {
-        if (name.includes("cuda") || name.includes("tensorrt")) {
-          fs.rmSync(path.join(archDir, name), { force: true });
-        }
-      }
-    }
-  }
 }
 
 function pruneClaudeAgentSdk(nodeModules, platform, arch) {
@@ -65,7 +48,7 @@ function pruneNodePty(nodeModules, platform, arch) {
   const prebuilds = path.join(nodeModules, "node-pty", "prebuilds");
   pruneChildrenExcept(prebuilds, new Set([`${platform}-${arch}`]));
 
-  if (platform !== "win32") {
+  if (platform === "darwin") {
     rmSafe(path.join(nodeModules, "node-pty", "third_party"));
   }
 }
@@ -128,28 +111,4 @@ exports.default = async function afterPack(context) {
   const arch = ARCH_MAP[context.arch] || process.arch;
 
   pruneNativeModules(context.appOutDir, platform, arch);
-
-  if (platform !== "linux") return;
-
-  const chromeSandbox = path.join(context.appOutDir, "chrome-sandbox");
-  if (fs.existsSync(chromeSandbox)) {
-    fs.unlinkSync(chromeSandbox);
-    console.log("Removed chrome-sandbox from Linux build");
-  }
-
-  const executablePath = path.join(context.appOutDir, EXECUTABLE_NAME);
-  const wrappedBinaryPath = path.join(context.appOutDir, `${EXECUTABLE_NAME}.bin`);
-
-  if (!fs.existsSync(wrappedBinaryPath)) {
-    if (!fs.existsSync(executablePath)) {
-      throw new Error(`Expected Linux executable at ${executablePath}`);
-    }
-
-    fs.renameSync(executablePath, wrappedBinaryPath);
-    console.log(`Renamed ${EXECUTABLE_NAME} to ${EXECUTABLE_NAME}.bin for Linux wrapper`);
-  }
-
-  fs.writeFileSync(executablePath, WRAPPER_SCRIPT, { mode: WRAPPER_MODE });
-  fs.chmodSync(executablePath, WRAPPER_MODE);
-  console.log(`Created Linux wrapper for ${EXECUTABLE_NAME} with --no-sandbox`);
 };

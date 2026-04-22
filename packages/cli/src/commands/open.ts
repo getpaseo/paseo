@@ -4,45 +4,16 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 function findDesktopApp(): string | null {
-  if (process.platform === "darwin") {
-    const candidates = [
-      "/Applications/Paseo.app",
-      path.join(homedir(), "Applications", "Paseo.app"),
-    ];
-
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        return candidate;
-      }
-    }
-
+  if (process.platform !== "darwin") {
     return null;
   }
 
-  if (process.platform === "linux") {
-    const candidates = [
-      "/usr/bin/Paseo",
-      "/opt/Paseo/Paseo",
-      path.join(homedir(), "Applications", "Paseo.AppImage"),
-    ];
+  const candidates = ["/Applications/Paseo.app", path.join(homedir(), "Applications", "Paseo.app")];
 
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        return candidate;
-      }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
     }
-
-    return null;
-  }
-
-  if (process.platform === "win32") {
-    const localAppData = process.env.LOCALAPPDATA;
-    if (!localAppData) {
-      return null;
-    }
-
-    const candidate = path.join(localAppData, "Programs", "Paseo", "Paseo.exe");
-    return existsSync(candidate) ? candidate : null;
   }
 
   return null;
@@ -50,9 +21,7 @@ function findDesktopApp(): string | null {
 
 function cleanEnvForDesktopLaunch(): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  // The CLI runs via ELECTRON_RUN_AS_NODE=1. On Linux/Windows the spawned
-  // desktop process inherits the env directly, so we must strip it or the
-  // desktop app would start as a bare Node process instead of Electron.
+  // The CLI runs via ELECTRON_RUN_AS_NODE=1. Strip it before spawning Electron.
   delete env.ELECTRON_RUN_AS_NODE;
   return env;
 }
@@ -73,6 +42,12 @@ export async function openDesktopWithProject(projectPath: string): Promise<void>
       );
     }
 
+    if (process.platform !== "darwin") {
+      throw new Error(
+        "Paseo desktop is supported only on macOS. Use the web app on this platform.",
+      );
+    }
+
     const desktopApp = findDesktopApp();
     if (!desktopApp) {
       throw new Error(
@@ -80,17 +55,12 @@ export async function openDesktopWithProject(projectPath: string): Promise<void>
       );
     }
 
-    if (process.platform === "darwin") {
-      // -n forces a new instance even if the app is already running.
-      // The new instance hits requestSingleInstanceLock(), fails, and relays
-      // the argv to the first instance via the second-instance event.
-      // -g keeps the terminal in the foreground (better CLI UX).
-      // Without -n, macOS just activates the existing window and drops --args.
-      spawnDetached("open", ["-n", "-g", "-a", desktopApp, "--args", projectPath]);
-      return;
-    }
-
-    spawnDetached(desktopApp, [projectPath]);
+    // -n forces a new instance even if the app is already running.
+    // The new instance hits requestSingleInstanceLock(), fails, and relays
+    // the argv to the first instance via the second-instance event.
+    // -g keeps the terminal in the foreground (better CLI UX).
+    // Without -n, macOS just activates the existing window and drops --args.
+    spawnDetached("open", ["-n", "-g", "-a", desktopApp, "--args", projectPath]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { MutableRefObject, ComponentType } from "react";
 import { View, Text, ScrollView, Alert, Platform, Pressable } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -22,7 +22,6 @@ import {
   Shield,
   Puzzle,
   Blocks,
-  Smartphone,
 } from "lucide-react-native";
 import { useAppSettings, type AppSettings, type SendBehavior } from "@/hooks/use-settings";
 import { THEME_SWATCHES, type ThemeName } from "@/styles/theme";
@@ -106,7 +105,7 @@ function getSettingsSections(context: { isDesktopApp: boolean }): SettingsSectio
     sections.push(
       { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
       { id: "integrations", label: "Integrations", icon: Puzzle },
-      { id: "pair-device", label: "Pair device", icon: Smartphone },
+      { id: "pair-device", label: "Connect device", icon: Globe },
       { id: "daemon", label: "Daemon", icon: Settings },
       { id: "providers", label: "Providers", icon: Blocks },
     );
@@ -273,14 +272,6 @@ function HostsSection(props: HostsSectionProps) {
         onPasteLink={() => {
           props.setIsAddHostMethodVisible(false);
           props.setIsPasteLinkVisible(true);
-        }}
-        onScanQr={() => {
-          const sourceServerId = props.routeServerId || undefined;
-          props.closeAddConnectionFlow();
-          router.push({
-            pathname: "/pair-scan",
-            params: { source: "settings", sourceServerId },
-          });
         }}
       />
 

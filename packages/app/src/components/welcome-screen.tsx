@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { Pressable, Text, View, Platform, ScrollView } from "react-native";
+import { Pressable, Text, View, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { QrCode, Link2, ClipboardPaste, ExternalLink } from "lucide-react-native";
+import { Link2, ClipboardPaste, ExternalLink } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { HostProfile } from "@/types/host-connection";
 import {
@@ -20,11 +20,11 @@ import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 type WelcomeAction = {
-  key: "scan-qr" | "direct-connection" | "paste-pairing-link";
+  key: "direct-connection" | "paste-pairing-link";
   label: string;
   testID: string;
   primary: boolean;
-  icon: typeof QrCode;
+  icon: typeof Link2;
   onPress: () => void;
 };
 
@@ -255,52 +255,24 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
     [router],
   );
 
-  const actions: WelcomeAction[] =
-    Platform.OS === "web"
-      ? [
-          {
-            key: "direct-connection",
-            label: "Direct connection",
-            testID: "welcome-direct-connection",
-            primary: true,
-            icon: Link2,
-            onPress: () => setIsDirectOpen(true),
-          },
-          {
-            key: "paste-pairing-link",
-            label: "Paste pairing link",
-            testID: "welcome-paste-pairing-link",
-            primary: false,
-            icon: ClipboardPaste,
-            onPress: () => setIsPasteLinkOpen(true),
-          },
-        ]
-      : [
-          {
-            key: "scan-qr",
-            label: "Scan QR code",
-            testID: "welcome-scan-qr",
-            primary: true,
-            icon: QrCode,
-            onPress: () => router.push("/pair-scan?source=onboarding"),
-          },
-          {
-            key: "direct-connection",
-            label: "Direct connection",
-            testID: "welcome-direct-connection",
-            primary: false,
-            icon: Link2,
-            onPress: () => setIsDirectOpen(true),
-          },
-          {
-            key: "paste-pairing-link",
-            label: "Paste pairing link",
-            testID: "welcome-paste-pairing-link",
-            primary: false,
-            icon: ClipboardPaste,
-            onPress: () => setIsPasteLinkOpen(true),
-          },
-        ];
+  const actions: WelcomeAction[] = [
+    {
+      key: "direct-connection",
+      label: "Direct connection",
+      testID: "welcome-direct-connection",
+      primary: true,
+      icon: Link2,
+      onPress: () => setIsDirectOpen(true),
+    },
+    {
+      key: "paste-pairing-link",
+      label: "Paste pairing link",
+      testID: "welcome-paste-pairing-link",
+      primary: false,
+      icon: ClipboardPaste,
+      onPress: () => setIsPasteLinkOpen(true),
+    },
+  ];
 
   const showHostList = hosts.length > 0 && !anyOnlineServerId;
 
@@ -321,10 +293,10 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           {showHostList ? "Connecting to your hosts…" : "Connect to your host to start"}
         </Text>
 
-        {!showHostList && Platform.OS !== "web" && (
+        {!showHostList && (
           <>
             <Text style={styles.setupHint}>
-              You need the Paseo desktop app or server running on your computer first.
+              Start with the Paseo desktop app on macOS, or a daemon already running elsewhere.
             </Text>
             <Pressable style={styles.setupLink} onPress={() => openExternalUrl("https://paseo.sh")}>
               <Text style={styles.setupLinkText}>Get started at paseo.sh</Text>

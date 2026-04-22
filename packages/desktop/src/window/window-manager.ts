@@ -161,7 +161,7 @@ export function registerWindowManager(): void {
   });
 
   ipcMain.handle("paseo:window:setBadgeCount", (_event, count?: unknown) => {
-    if (process.platform === "darwin" || process.platform === "linux") {
+    if (process.platform === "darwin") {
       const badgeCount = readBadgeCount(count);
       try {
         app.setBadgeCount(badgeCount);

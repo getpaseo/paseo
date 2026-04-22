@@ -6,8 +6,6 @@ on:
       - 'v*'
       - 'desktop-v*'
       - 'desktop-macos-v*'
-      - 'desktop-linux-v*'
-      - 'desktop-windows-v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -22,8 +20,6 @@ on:
         options:
           - all
           - macos
-          - linux
-          - windows
 
 concurrency:
   group: desktop-release-${{ github.ref }}
@@ -36,7 +32,7 @@ env:
 
 jobs:
   create-release:
-    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all') }}
+    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -252,145 +248,3 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_TAG" latest-mac.yml --clobber --repo "${{ github.repository }}"
-
-  publish-linux:
-    needs: [create-release]
-    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-linux-v')))) }}
-    permissions:
-      contents: write
-      packages: read
-    runs-on: ubuntu-22.04
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
-
-      - name: Resolve release metadata
-        shell: bash
-        run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@boudra'
-
-      - name: Install JS dependencies
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set desktop package version from tag
-        shell: bash
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
-
-          const version = process.env.DESKTOP_VERSION;
-          if (!version) throw new Error('DESKTOP_VERSION env var is missing');
-
-          const packageJsonPath = path.join(process.env.DESKTOP_PACKAGE_PATH, 'package.json');
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-          packageJson.version = version;
-          fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
-          NODE
-
-      - name: Build web app for desktop
-        run: npm run build:web --workspace=@getpaseo/app
-
-      - name: Build desktop release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EP_GH_IGNORE_TIME: true
-        run: |
-          set -euo pipefail
-          publish_mode="never"
-          publish_args=()
-          if [[ "$IS_SMOKE_TAG" != "true" ]]; then
-            publish_mode="always"
-            publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
-          fi
-
-          npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --linux --x64 "${publish_args[@]}"
-
-  publish-windows:
-    needs: [create-release]
-    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-windows-v')))) }}
-    permissions:
-      contents: write
-      packages: read
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
-
-      - name: Resolve release metadata
-        shell: bash
-        run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@boudra'
-
-      - name: Install JS dependencies
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set desktop package version from tag
-        shell: bash
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
-
-          const version = process.env.DESKTOP_VERSION;
-          if (!version) throw new Error('DESKTOP_VERSION env var is missing');
-
-          const packageJsonPath = path.join(process.env.DESKTOP_PACKAGE_PATH, 'package.json');
-          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-          packageJson.version = version;
-          fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
-          NODE
-
-      - name: Build workspace dependencies
-        run: npm run build:workspace-deps --workspace=@getpaseo/app
-
-      - name: Build web app for desktop
-        shell: pwsh
-        run: |
-          $patchPath = (Get-Item "$env:GITHUB_WORKSPACE/scripts/metro-config-windows-loader-patch.cjs").FullName
-          $env:NODE_OPTIONS = "--require=$patchPath"
-          npx expo export --platform web
-        working-directory: packages/app
-
-      - name: Build desktop release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EP_GH_IGNORE_TIME: true
-        run: |
-          set -euo pipefail
-          publish_mode="never"
-          publish_args=()
-          if [[ "$IS_SMOKE_TAG" != "true" ]]; then
-            publish_mode="always"
-            publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
-          fi
-
-          npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --win --x64 "${publish_args[@]}"

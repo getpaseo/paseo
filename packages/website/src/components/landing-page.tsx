@@ -10,13 +10,9 @@ import {
 import { CursorFieldProvider } from "~/components/butterfly";
 import { CommandDialog } from "~/components/command-dialog";
 import {
-  appStoreUrl,
-  playStoreUrl,
   webAppUrl,
   getDownloadOptions,
   useDetectedPlatform,
-  AppleIcon,
-  AndroidIcon,
   TerminalIcon,
   GlobeIcon,
 } from "~/downloads";
@@ -156,22 +152,6 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <div className="space-y-3">
               <p className="text-white/60 font-medium">Download</p>
               <div className="space-y-2">
-                <a
-                  href={appStoreUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block text-white/40 hover:text-white/60 transition-colors"
-                >
-                  App Store
-                </a>
-                <a
-                  href={playStoreUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block text-white/40 hover:text-white/60 transition-colors"
-                >
-                  Google Play
-                </a>
                 <a
                   href="https://github.com/getpaseo/paseo/releases"
                   target="_blank"
@@ -896,24 +876,6 @@ function GetStarted() {
           <GlobeIcon className="h-4 w-4" />
           Web App
         </a>
-        <a
-          href={appStoreUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center justify-center rounded-lg border border-white/20 px-3 py-2 text-white hover:bg-white/10 transition-colors"
-          aria-label="App Store"
-        >
-          <AppleIcon className="h-5 w-5" />
-        </a>
-        <a
-          href={playStoreUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center justify-center rounded-lg border border-white/20 px-3 py-2 text-white hover:bg-white/10 transition-colors"
-          aria-label="Google Play"
-        >
-          <AndroidIcon className="h-5 w-5" />
-        </a>
         <ServerInstallButton />
       </div>
       <div className="pt-3">
@@ -949,7 +911,7 @@ function DownloadButton() {
       className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:bg-foreground/90 transition-colors"
     >
       <PrimaryIcon className="h-4 w-4" />
-      Download for {primary.label}
+      {primary.platform === "web" ? "Open Web App" : `Download for ${primary.label}`}
     </a>
   );
 }
@@ -963,7 +925,7 @@ function ServerInstallButton() {
         </span>
       }
       title="Run agents on a remote machine"
-      description="For headless machines you want to connect to from the Paseo apps. The desktop app already includes a built-in daemon."
+      description="For headless machines you want to connect to from the web app or the macOS desktop app. The desktop app already includes a built-in daemon."
       command="npm install -g @getpaseo/cli && paseo"
       footnote={
         <>
@@ -1422,7 +1384,7 @@ function PhoneShowcase() {
           <br className="md:hidden" /> you can.
         </p>
         <p className="text-sm text-white/50 text-center">
-          The native mobile app has full feature parity with desktop.
+          The web app works well on smaller screens too.
         </p>
       </motion.div>
 
@@ -1558,8 +1520,7 @@ function FAQ() {
           <code className="font-mono text-muted-foreground">
             npm install -g @getpaseo/cli && paseo
           </code>{" "}
-          and use the CLI, web app, or mobile app to connect. The desktop app just bundles the
-          daemon with a UI.
+          and use the CLI or web app to connect. The desktop app just bundles the daemon with a UI.
         </FAQItem>
         <FAQItem question="How does voice work?">
           Voice runs locally on your device by default. You talk, the app transcribes and sends it

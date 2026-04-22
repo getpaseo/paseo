@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { AppState, Platform } from "react-native";
 import type { DaemonClient } from "@server/client/daemon-client";
+import { detectBrowserDeviceTypeFromNavigator } from "@/utils/browser-device-type";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const ACTIVITY_HEARTBEAT_THROTTLE_MS = 5_000;
@@ -32,7 +33,7 @@ export function useClientActivity({
   const prevFocusedAgentIdRef = useRef<string | null>(focusedAgentId);
   const lastImmediateHeartbeatAtRef = useRef<number>(0);
 
-  const deviceType = Platform.OS === "web" ? "web" : "mobile";
+  const deviceType = Platform.OS === "web" ? detectBrowserDeviceTypeFromNavigator() : "mobile";
 
   const recordUserActivity = useCallback(() => {
     lastActivityAtRef.current = new Date();

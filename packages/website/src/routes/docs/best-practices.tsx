@@ -5,7 +5,7 @@ export const Route = createFileRoute("/docs/best-practices")({
   head: () => ({
     meta: pageMeta(
       "Best Practices - Paseo Docs",
-      "Tips for getting the most out of Paseo and mobile-first agent workflows.",
+      "Tips for getting the most out of Paseo and browser-first agent workflows.",
     ),
   }),
   component: BestPractices,
@@ -63,8 +63,8 @@ function BestPractices() {
         <h2 className="text-xl font-medium">Agents are cheap</h2>
         <p className="text-white/60 leading-relaxed">
           Don't be shy about running multiple agents. Paseo lets you launch agents in isolated
-          worktrees. Kick one off with voice while walking, then kick off another. They work
-          independently. You get a notification when they're done.
+          worktrees. Kick one off, switch contexts, then come back from the browser or desktop app.
+          They work independently. You get a notification when they're done.
         </p>
       </section>
 

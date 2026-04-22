@@ -1,9 +1,8 @@
 import { useRef, ReactNode, useCallback, useEffect, useMemo } from "react";
 import { Buffer } from "buffer";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useClientActivity } from "@/hooks/use-client-activity";
-import { usePushTokenRegistration } from "@/hooks/use-push-token-registration";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { generateMessageId, type StreamItem } from "@/types/stream";
@@ -547,24 +546,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     (awayMs: number) => {
       scheduleAuthoritativeRevalidation();
 
-      if (Platform.OS !== "web") {
-        const session = useSessionStore.getState().sessions[serverId];
-        const agentId = session?.focusedAgentId;
-        const cursor = agentId ? session?.agentTimelineCursor.get(agentId) : undefined;
-        if (agentId && cursor) {
-          void client
-            .fetchAgentTimeline(agentId, {
-              direction: "after",
-              cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
-              limit: 0,
-              projection: "canonical",
-            })
-            .catch((error) => {
-              console.warn("[Session] failed to fetch catch-up timeline on resume", agentId, error);
-            });
-        }
-      }
-
       if (awayMs < HISTORY_STALE_AFTER_MS) {
         return;
       }
@@ -575,7 +556,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   // Client activity tracking (heartbeat, push token registration)
   useClientActivity({ client, focusedAgentId, onAppResumed: handleAppResumed });
-  usePushTokenRegistration({ client, serverId });
 
   const notifyAgentAttention = useCallback(
     (params: {

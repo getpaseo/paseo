@@ -46,7 +46,7 @@ export function PairDeviceSection() {
 
   return (
     <View style={settingsStyles.section}>
-      <Text style={settingsStyles.sectionTitle}>Pair device</Text>
+      <Text style={settingsStyles.sectionTitle}>Connect another device</Text>
       <View style={settingsStyles.card}>
         {pairingQuery.isPending ? (
           <View style={styles.centered}>
@@ -88,7 +88,7 @@ export function PairDeviceSection() {
         ) : (
           <View style={styles.content}>
             <Text style={styles.hint}>
-              Scan this QR code with Paseo on your phone, or copy the link below.
+              Open this link on another device, or scan the QR code to continue in the web app.
             </Text>
             <View style={styles.qrContainer}>
               {qrQuery.data ? (

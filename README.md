@@ -26,22 +26,22 @@
 </p>
 
 <p align="center">
-  <img src="https://paseo.sh/mobile-mockup.png" alt="Paseo mobile app" width="100%">
+  <img src="https://paseo.sh/mobile-mockup.png" alt="Paseo on a smaller screen" width="100%">
 </p>
 
 ---
 
-Run agents in parallel on your own machines. Ship from your phone or your desk.
+Run agents in parallel on your own machines. Ship from your browser or your desk.
 
 - **Self-hosted:** Agents run on your machine with your full dev environment. Use your tools, your configs, and your skills.
 - **Multi-provider:** Claude Code, Codex, and OpenCode through the same interface. Pick the right model for each job.
 - **Voice control:** Dictate tasks or talk through problems in voice mode. Hands-free when you need it.
-- **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
+- **Cross-device:** macOS desktop, web, and CLI. The web app also works on mobile browsers when you need to check in away from your desk.
 - **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
 
 ## Getting Started
 
-Paseo runs a local server called the daemon that manages your coding agents. Clients like the desktop app, mobile app, web app, and CLI connect to it.
+Paseo runs a local server called the daemon that manages your coding agents. Clients like the macOS desktop app, web app, and CLI connect to it.
 
 ### Prerequisites
 
@@ -51,11 +51,9 @@ You need at least one agent CLI installed and configured with your credentials:
 - [Codex](https://github.com/openai/codex)
 - [OpenCode](https://github.com/anomalyco/opencode)
 
-### Desktop app (recommended)
+### Desktop app (recommended on macOS)
 
 Download it from [paseo.sh/download](https://paseo.sh/download) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases). Open the app and the daemon starts automatically. Nothing else to install.
-
-To connect from your phone, scan the QR code shown in Settings.
 
 ### CLI / headless
 
@@ -66,7 +64,7 @@ npm install -g @getpaseo/cli
 paseo
 ```
 
-This shows a QR code in the terminal. Connect from any client. This path is useful for servers and remote machines.
+This starts the daemon so you can connect from the web app, CLI, or another machine. This path is useful for servers and remote machines.
 
 For full setup and configuration, see:
 - [Docs](https://paseo.sh/docs)
@@ -117,9 +115,9 @@ Then use them in any agent conversation:
 
 Quick monorepo package map:
 - `packages/server`: Paseo daemon (agent process orchestration, WebSocket API, MCP server)
-- `packages/app`: Expo client (iOS, Android, web)
+- `packages/app`: Web client and shared UI
 - `packages/cli`: `paseo` CLI for daemon and agent workflows
-- `packages/desktop`: Electron desktop app
+- `packages/desktop`: Electron desktop app for macOS
 - `packages/relay`: Relay package for remote connectivity
 - `packages/website`: Marketing site and documentation (`paseo.sh`)
 

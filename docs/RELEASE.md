@@ -7,7 +7,7 @@ All workspaces share one version and release together.
 There are two supported ways to ship from `main`:
 
 1. **Direct stable release**: you are ready to ship the current `main` commit to everyone immediately.
-2. **Release candidate flow**: you want public test builds first, but you are not ready for the website, npm, or production mobile release flows to move yet.
+2. **Release candidate flow**: you want public test builds first, but you are not ready for the website or npm release flows to move yet.
 
 ## Standard release (patch)
 
@@ -21,7 +21,7 @@ Before running any stable patch release command:
 npm run release:patch
 ```
 
-This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag (triggering desktop, APK, and EAS mobile workflows).
+This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag (triggering the desktop release workflow).
 
 If asked to "release paseo" without specifying major/minor, treat it as a patch release.
 
@@ -41,20 +41,20 @@ npm run release:push         # Push HEAD + tag (triggers CI workflows)
 
 ```bash
 npm run release:rc:patch       # Bump to X.Y.Z-rc.1, push commit + tag
-# ... test desktop and APK prerelease assets from GitHub Releases ...
+# ... test desktop prerelease assets from GitHub Releases ...
 npm run release:rc:next        # Optional: cut X.Y.Z-rc.2, rc.3, ...
 npm run release:promote        # Promote X.Y.Z-rc.N to stable X.Y.Z
 ```
 
 - RC tags are published GitHub prereleases like `v0.1.41-rc.1`
-- RCs publish desktop assets and APKs for testing, but they do not publish npm packages and do not trigger the production web/mobile release flows
+- RCs publish desktop assets for testing, but they do not publish npm packages and do not change the stable website download target
 - `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the RC tag
 - Desktop assets now come from the Electron package at `packages/desktop`
 - **Do NOT create a changelog entry for RCs.** The changelog remains stable-only. RC release notes are generated automatically so the website stays pinned to the latest published stable release.
 
 Use the RC path when you need to:
 
-- test a build manually in a Linux or Windows VM
+- test a build manually before shipping
 - send a build to a user who is hitting a specific problem
 - iterate on `rc.1`, `rc.2`, `rc.3`, and so on before deciding to ship broadly
 
@@ -82,11 +82,6 @@ git tag -f desktop-v0.1.28 HEAD && git push origin desktop-v0.1.28 --force
 
 # Desktop (single platform)
 git tag -f desktop-macos-v0.1.28 HEAD && git push origin desktop-macos-v0.1.28 --force
-git tag -f desktop-linux-v0.1.28 HEAD && git push origin desktop-linux-v0.1.28 --force
-git tag -f desktop-windows-v0.1.28 HEAD && git push origin desktop-windows-v0.1.28 --force
-
-# Android APK
-git tag -f android-v0.1.28 HEAD && git push origin android-v0.1.28 --force
 
 # RC
 git tag -f v0.1.29-rc.2 HEAD && git push origin v0.1.29-rc.2 --force
@@ -96,8 +91,7 @@ This ensures the checkout ref matches the actual code on `main` with the fix inc
 
 - `vX.Y.Z` or `vX.Y.Z-rc.N` rebuilds the full tagged release
 - `desktop-vX.Y.Z` rebuilds desktop for all desktop platforms only
-- `desktop-macos-vX.Y.Z`, `desktop-linux-vX.Y.Z`, and `desktop-windows-vX.Y.Z` rebuild only that desktop platform
-- `android-vX.Y.Z` rebuilds the Android APK release only
+- `desktop-macos-vX.Y.Z` rebuilds the macOS desktop release only
 
 ## Notes
 
@@ -173,5 +167,3 @@ In other words, RCs are checkpoints along the way; the changelog only records th
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] `npm run release:patch` or `npm run release:promote` completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
-- [ ] GitHub `Android APK Release` workflow for the same tag is green
-- [ ] EAS `release-mobile.yml` workflow for the same tag is green

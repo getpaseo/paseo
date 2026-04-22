@@ -48,12 +48,11 @@ function getLocalBinDir(): string {
 }
 
 function getCliTargetPath(): string {
-  const filename = process.platform === "win32" ? "paseo.cmd" : "paseo";
-  return path.join(getLocalBinDir(), filename);
+  return path.join(getLocalBinDir(), "paseo");
 }
 
 function getBundledCliShimPath(): string {
-  const cliShimFilename = process.platform === "win32" ? "paseo.cmd" : "paseo";
+  const cliShimFilename = "paseo";
 
   if (process.platform === "darwin") {
     const electronExePath = app.getPath("exe");
@@ -61,12 +60,6 @@ function getBundledCliShimPath(): string {
     return path.join(appBundle, "Contents", "Resources", "bin", cliShimFilename);
   }
 
-  if (process.platform === "win32") {
-    const electronExePath = app.getPath("exe");
-    return path.join(path.dirname(electronExePath), "resources", "bin", cliShimFilename);
-  }
-
-  // Linux
   const electronExePath = app.getPath("exe");
   return path.join(path.dirname(electronExePath), "resources", "bin", cliShimFilename);
 }

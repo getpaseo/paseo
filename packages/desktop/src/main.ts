@@ -122,17 +122,8 @@ function getAppDistDir(): string {
 
 function getWindowIconPath(): string | null {
   const candidates = app.isPackaged
-    ? process.platform === "win32"
-      ? [path.join(process.resourcesPath, "icon.ico"), path.join(process.resourcesPath, "icon.png")]
-      : [path.join(process.resourcesPath, "icon.png")]
-    : process.platform === "darwin"
-      ? [path.resolve(__dirname, "../assets/icon.png")]
-      : process.platform === "win32"
-        ? [
-            path.resolve(__dirname, "../assets/icon.ico"),
-            path.resolve(__dirname, "../assets/icon.png"),
-          ]
-        : [path.resolve(__dirname, "../assets/icon.png")];
+    ? [path.join(process.resourcesPath, "icon.png")]
+    : [path.resolve(__dirname, "../assets/icon.png")];
 
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }

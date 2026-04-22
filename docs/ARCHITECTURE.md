@@ -1,6 +1,6 @@
 # Architecture
 
-Paseo is a client-server system for monitoring and controlling local AI coding agents. The daemon runs on your machine, manages agent processes, and streams their output in real time over WebSocket. Clients (mobile app, CLI, desktop app) connect to the daemon to observe and interact with agents.
+Paseo is a client-server system for monitoring and controlling local AI coding agents. The daemon runs on your machine, manages agent processes, and streams their output in real time over WebSocket. Clients (web app, CLI, desktop app) connect to the daemon to observe and interact with agents.
 
 Your code never leaves your machine. Paseo is local-first.
 
@@ -8,7 +8,7 @@ Your code never leaves your machine. Paseo is local-first.
 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│  Mobile App  │    │     CLI     │    │ Desktop App │
+│   Web App    │    │     CLI     │    │ Desktop App │
 │   (Expo)     │    │ (Commander) │    │ (Electron)  │
 └──────┬───────┘    └──────┬──────┘    └──────┬──────┘
        │                   │                  │
@@ -34,7 +34,7 @@ Your code never leaves your machine. Paseo is local-first.
 ## Components at a glance
 
 - **Daemon:** Local server that spawns and manages agent processes and exposes the WebSocket API.
-- **App:** Cross-platform Expo client for iOS, Android, web, and the shared UI used by desktop.
+- **App:** Expo web client and the shared UI used by desktop.
 - **CLI:** Terminal interface for agent workflows that can also start and manage the daemon.
 - **Desktop app:** Electron wrapper around the web app that bundles and auto-manages its own daemon.
 - **Relay:** Optional encrypted bridge for remote access without opening ports directly.
@@ -65,9 +65,9 @@ The heart of Paseo. A Node.js process that:
 | `relay-transport.ts` | Outbound relay connection with E2E encryption |
 | `client/daemon-client.ts` | Client library for connecting to the daemon (used by CLI and app) |
 
-### `packages/app` — Mobile + web client (Expo)
+### `packages/app` — Web client (Expo)
 
-Cross-platform React Native app that connects to one or more daemons.
+React-based web app that connects to one or more daemons.
 
 - Expo Router navigation (`/h/[serverId]/agents`, etc.)
 - `DaemonRegistryContext` manages saved daemon connections
@@ -100,11 +100,11 @@ See [SECURITY.md](../SECURITY.md) for the full threat model.
 
 ### `packages/desktop` — Desktop app (Electron)
 
-Electron wrapper for macOS, Linux, and Windows.
+Electron wrapper for macOS.
 
 - Can spawn the daemon as a managed subprocess
 - Native file access for workspace integration
-- Same WebSocket client as mobile app
+- Same WebSocket client as the web app
 
 ### `packages/website` — Marketing site
 

@@ -5,7 +5,7 @@ export const Route = createFileRoute("/docs/")({
   head: () => ({
     meta: pageMeta(
       "Getting Started - Paseo Docs",
-      "Learn how to set up and use Paseo to manage your coding agents from anywhere.",
+      "Learn how to set up and use Paseo from the web or the macOS desktop app.",
     ),
   }),
   component: GettingStarted,
@@ -18,8 +18,8 @@ function GettingStarted() {
         <h1 className="text-3xl font-medium font-title mb-4">Getting Started</h1>
         <p className="text-white/60 leading-relaxed">
           Paseo has three main pieces: the daemon is the local server that manages your agents, the
-          app is the client you use from mobile, web, or desktop, and the CLI is the terminal
-          interface that can also launch the daemon.
+          app is the client you use from the web or the macOS desktop app, and the CLI is the
+          terminal interface that can also launch the daemon.
         </p>
       </div>
 
@@ -92,8 +92,8 @@ function GettingStarted() {
         </p>
         <p className="text-white/60">
           On first launch, you may briefly see a startup screen while the local server starts and
-          the app connects to it. After that, connect from your phone by scanning the QR code in
-          Settings if you want mobile access.
+          the app connects to it. After that, you can open the web app on another device using the
+          pairing link from Settings.
         </p>
       </section>
 
@@ -112,8 +112,7 @@ function GettingStarted() {
           <span>paseo</span>
         </div>
         <p className="text-white/60">
-          Paseo prints a QR code in the terminal. Scan it from the mobile app, or enter the daemon
-          address manually from another client.
+          Open the web app and add the daemon manually, or use a pairing link when relay is enabled.
         </p>
         <p className="text-white/60">
           Configuration and local state live under <code>PASEO_HOME</code>.

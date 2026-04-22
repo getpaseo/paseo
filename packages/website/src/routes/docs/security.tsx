@@ -26,7 +26,7 @@ function Security() {
         <h1 className="text-3xl font-medium font-title mb-4">Security</h1>
         <p className="text-white/60 leading-relaxed">
           Paseo follows a client-server architecture, similar to Docker. The daemon runs on your
-          machine and manages your coding agents. Clients (the mobile app, CLI, or web interface)
+          machine and manages your coding agents. Clients (the web app, macOS desktop app, or CLI)
           connect to the daemon to monitor and control those agents.
         </p>
         <p className="text-white/60 leading-relaxed mt-3">
@@ -64,16 +64,17 @@ function Security() {
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Relay connections (recommended)</h2>
         <p className="text-white/60 leading-relaxed">
-          The relay is the simplest way to connect from your phone. It requires no VPN setup, no
-          port forwarding, and no firewall configuration. The daemon can stay bound to localhost or
-          a socket file — it connects <em>outbound</em> to the relay, and your phone meets it there.
+          The relay is the simplest way to connect from another browser or device. It requires no
+          VPN setup, no port forwarding, and no firewall configuration. The daemon can stay bound to
+          localhost or a socket file — it connects <em>outbound</em> to the relay, and your browser
+          meets it there.
         </p>
 
         <Callout>
-          <strong>The relay is designed to be untrusted.</strong> All traffic between your phone and
-          daemon is end-to-end encrypted. The relay server cannot read your messages, see your code,
-          or modify traffic without detection. Even if the relay is compromised, your data remains
-          protected.
+          <strong>The relay is designed to be untrusted.</strong> All traffic between your client
+          and daemon is end-to-end encrypted. The relay server cannot read your messages, see your
+          code, or modify traffic without detection. Even if the relay is compromised, your data
+          remains protected.
         </Callout>
 
         <h3 className="text-lg font-medium mt-6">How it works</h3>
@@ -83,11 +84,11 @@ function Security() {
             <code className="font-mono">$PASEO_HOME/daemon-keypair.json</code>
           </li>
           <li>
-            When you scan the QR code or click the pairing link, your phone receives the daemon's
-            public key
+            When you open a pairing link or scan a QR code in the web app, the client receives the
+            daemon's public key
           </li>
           <li>
-            Your phone sends a handshake message with its own public key. The daemon will not accept
+            The client sends a handshake message with its own public key. The daemon will not accept
             any commands until this handshake completes.
           </li>
           <li>
@@ -107,7 +108,7 @@ function Security() {
         </p>
         <ul className="text-white/60 space-y-2 list-disc list-inside">
           <li>
-            <strong className="text-white/80">Send commands</strong> — Without your phone's private
+            <strong className="text-white/80">Send commands</strong> — Without the client's private
             key, it cannot complete the handshake
           </li>
           <li>
@@ -141,16 +142,15 @@ function Security() {
         <h2 className="text-xl font-medium">Direct connections</h2>
         <p className="text-white/60 leading-relaxed">
           By default, the daemon listens on <code className="font-mono">127.0.0.1:6767</code>{" "}
-          (localhost only). This is safe for local CLI usage but not reachable from your phone or
-          other devices.
+          (localhost only). This is safe for local CLI usage but not reachable from other devices.
         </p>
 
         <h3 className="text-lg font-medium mt-6">Socket file (CLI only)</h3>
         <p className="text-white/60 leading-relaxed">
           For maximum isolation, you can configure the daemon to listen on a Unix socket file
           instead of a TCP port. This prevents any network access entirely — only processes on the
-          same machine can connect. The CLI supports this mode, but the mobile app and web interface
-          require a network connection.
+          same machine can connect. The CLI supports this mode, but the web interface requires a
+          network connection.
         </p>
 
         <h3 className="text-lg font-medium mt-6">VPN access</h3>
@@ -170,7 +170,8 @@ function Security() {
         <p className="text-white/60 leading-relaxed">To set this up:</p>
         <ol className="text-white/60 space-y-2 list-decimal list-inside">
           <li>
-            Install Tailscale on your machine and phone and join them to the same{" "}
+            Install Tailscale on your machine and the device running your browser and join them to
+            the same{" "}
             <a
               href="https://tailscale.com/kb/1136/tailnet"
               target="_blank"
@@ -267,8 +268,8 @@ function Security() {
         <h2 className="text-xl font-medium">Recommendations</h2>
         <ul className="text-white/60 space-y-3 list-disc list-inside">
           <li>
-            <strong className="text-white/80">Use the relay</strong> for mobile access — it's the
-            simplest option and all traffic is end-to-end encrypted
+            <strong className="text-white/80">Use the relay</strong> for remote browser access —
+            it's the simplest option and all traffic is end-to-end encrypted
           </li>
           <li>
             <strong className="text-white/80">Treat the QR code like a password</strong> — anyone

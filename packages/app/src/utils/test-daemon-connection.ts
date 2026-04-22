@@ -53,7 +53,7 @@ export async function buildClientConfig(
   const localTransportFactory = createDesktopLocalDaemonTransportFactory();
   const base = {
     clientId,
-    clientType: "mobile" as const,
+    clientType: "browser" as const,
     appVersion: resolveAppVersion() ?? undefined,
     suppressSendErrors: true,
     reconnect: { enabled: false },

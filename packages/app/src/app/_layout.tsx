@@ -43,7 +43,6 @@ import {
 } from "react";
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
-import * as Notifications from "expo-notifications";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { DownloadToast } from "@/components/download-toast";
 import { UpdateBanner } from "@/desktop/updates/update-banner";
@@ -98,93 +97,54 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
 
 function PushNotificationRouter() {
   const router = useRouter();
-  const lastHandledIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (Platform.OS === "web") {
-      let removeDesktopNotificationListener: (() => void) | null = null;
-      let cancelled = false;
+    let removeDesktopNotificationListener: (() => void) | null = null;
+    let cancelled = false;
 
-      if (getIsElectronRuntime()) {
-        void ensureOsNotificationPermission();
+    if (getIsElectronRuntime()) {
+      void ensureOsNotificationPermission();
 
-        const unlistenResult = getDesktopHost()?.events?.on?.(
-          "notification-click",
-          (payload: unknown) => {
-            const data =
-              typeof payload === "object" &&
-              payload !== null &&
-              "data" in payload &&
-              typeof (payload as { data?: unknown }).data === "object" &&
-              (payload as { data?: unknown }).data !== null
-                ? (payload as { data: Record<string, unknown> }).data
-                : undefined;
-            router.push(buildNotificationRoute(data) as any);
-          },
-        );
+      const unlistenResult = getDesktopHost()?.events?.on?.(
+        "notification-click",
+        (payload: unknown) => {
+          const data =
+            typeof payload === "object" &&
+            payload !== null &&
+            "data" in payload &&
+            typeof (payload as { data?: unknown }).data === "object" &&
+            (payload as { data?: unknown }).data !== null
+              ? (payload as { data: Record<string, unknown> }).data
+              : undefined;
+          router.push(buildNotificationRoute(data) as any);
+        },
+      );
 
-        void Promise.resolve(unlistenResult).then((unlisten) => {
-          if (typeof unlisten !== "function") {
-            return;
-          }
-          if (cancelled) {
-            unlisten();
-            return;
-          }
-          removeDesktopNotificationListener = unlisten;
-        });
-      }
-
-      const target = globalThis as unknown as EventTarget;
-      const openFromWebClick = (event: Event) => {
-        const customEvent = event as CustomEvent<WebNotificationClickDetail>;
-        event.preventDefault();
-        router.push(buildNotificationRoute(customEvent.detail?.data) as any);
-      };
-
-      target.addEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
-
-      return () => {
-        cancelled = true;
-        removeDesktopNotificationListener?.();
-        target.removeEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
-      };
+      void Promise.resolve(unlistenResult).then((unlisten) => {
+        if (typeof unlisten !== "function") {
+          return;
+        }
+        if (cancelled) {
+          unlisten();
+          return;
+        }
+        removeDesktopNotificationListener = unlisten;
+      });
     }
 
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        // When the app is open, don't show OS banners.
-        shouldShowAlert: false,
-        shouldShowBanner: false,
-        shouldShowList: false,
-        shouldPlaySound: false,
-        shouldSetBadge: false,
-      }),
-    });
-
-    const openFromResponse = (response: Notifications.NotificationResponse) => {
-      const identifier = response.notification.request.identifier;
-      if (lastHandledIdRef.current === identifier) {
-        return;
-      }
-      lastHandledIdRef.current = identifier;
-
-      const data = response.notification.request.content.data as
-        | Record<string, unknown>
-        | undefined;
-      router.push(buildNotificationRoute(data) as any);
+    const target = globalThis as unknown as EventTarget;
+    const openFromWebClick = (event: Event) => {
+      const customEvent = event as CustomEvent<WebNotificationClickDetail>;
+      event.preventDefault();
+      router.push(buildNotificationRoute(customEvent.detail?.data) as any);
     };
 
-    const subscription = Notifications.addNotificationResponseReceivedListener(openFromResponse);
-
-    void Notifications.getLastNotificationResponseAsync().then((response) => {
-      if (response) {
-        openFromResponse(response);
-      }
-    });
+    target.addEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
 
     return () => {
-      subscription.remove();
+      cancelled = true;
+      removeDesktopNotificationListener?.();
+      target.removeEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
     };
   }, [router]);
 
@@ -785,7 +745,6 @@ function RootStack() {
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
         <Stack.Screen name="settings" />
-        <Stack.Screen name="pair-scan" />
       </Stack.Protected>
       <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
       <Stack.Screen name="h/[serverId]/agent/[agentId]" options={{ gestureEnabled: false }} />

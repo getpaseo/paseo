@@ -1,18 +1,7 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { CommandDialog } from "~/components/command-dialog";
 import { pageMeta } from "~/meta";
-import {
-  downloadUrls,
-  appStoreUrl,
-  playStoreUrl,
-  webAppUrl,
-  AppleIcon,
-  AndroidIcon,
-  WindowsIcon,
-  LinuxIcon,
-  TerminalIcon,
-  GlobeIcon,
-} from "~/downloads";
+import { downloadUrls, webAppUrl, AppleIcon, TerminalIcon, GlobeIcon } from "~/downloads";
 import { useRelease } from "~/routes/__root";
 import "~/styles.css";
 
@@ -20,7 +9,7 @@ export const Route = createFileRoute("/download")({
   head: () => ({
     meta: pageMeta(
       "Download - Paseo",
-      "Download Paseo for macOS, Windows, Linux, iOS, and Android. Your dev environment, in your pocket.",
+      "Download Paseo for macOS or open the web app from any browser.",
     ),
   }),
   component: Download,
@@ -95,87 +84,27 @@ function Download() {
         {/* Desktop */}
         <section className="rounded-xl border border-border bg-card/40 p-6 md:p-8 mb-6">
           <div className="flex items-center justify-between mb-8">
-            <h2 className="text-2xl font-semibold">Desktop</h2>
+            <h2 className="text-2xl font-semibold">macOS Desktop</h2>
             <MonitorIcon className="h-5 w-5 text-muted-foreground" />
           </div>
 
-          <div className="divide-y divide-border">
-            {/* macOS */}
-            <div className="flex items-center justify-between py-5 first:pt-0 last:pb-0">
-              <div className="flex items-center gap-3">
-                <AppleIcon className="h-5 w-5 text-foreground" />
-                <span className="font-medium">macOS</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <DownloadPill href={urls.macAppleSilicon} label="Apple Silicon" />
-                <DownloadPill href={urls.macIntel} label="Intel" />
-                <CommandDialog
-                  trigger={
-                    <span className="inline-flex items-center justify-center rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:bg-foreground/85 transition-colors">
-                      Homebrew
-                    </span>
-                  }
-                  title="Install via Homebrew"
-                  command="brew install --cask paseo"
-                />
-              </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <AppleIcon className="h-5 w-5 text-foreground" />
+              <span className="font-medium">macOS</span>
             </div>
-
-            {/* Windows */}
-            <div className="flex items-center justify-between py-5 first:pt-0 last:pb-0">
-              <div className="flex items-center gap-3">
-                <WindowsIcon className="h-5 w-5 text-foreground" />
-                <span className="font-medium">Windows</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <DownloadPill href={urls.windowsExe} label="Download" />
-              </div>
-            </div>
-
-            {/* Linux */}
-            <div className="flex items-center justify-between py-5 first:pt-0 last:pb-0">
-              <div className="flex items-center gap-3">
-                <LinuxIcon className="h-5 w-5 text-foreground" />
-                <span className="font-medium">Linux</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <DownloadPill href={urls.linuxAppImage} label="AppImage" />
-                <DownloadPill href={urls.linuxDeb} label="DEB" />
-                <DownloadPill href={urls.linuxRpm} label="RPM" />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Mobile */}
-        <section className="rounded-xl border border-border bg-card/40 p-6 md:p-8 mb-6">
-          <div className="flex items-center justify-between mb-8">
-            <h2 className="text-2xl font-semibold">Mobile</h2>
-            <PhoneIcon className="h-5 w-5 text-muted-foreground" />
-          </div>
-
-          <div className="divide-y divide-border">
-            {/* Android */}
-            <div className="flex items-center justify-between py-5 first:pt-0 last:pb-0">
-              <div className="flex items-center gap-3">
-                <AndroidIcon className="h-5 w-5 text-foreground" />
-                <span className="font-medium">Android</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <DownloadPill href={playStoreUrl} label="Play Store" external />
-                <DownloadPill href={urls.androidApk} label="APK" />
-              </div>
-            </div>
-
-            {/* iOS */}
-            <div className="flex items-center justify-between py-5 first:pt-0 last:pb-0">
-              <div className="flex items-center gap-3">
-                <AppleIcon className="h-5 w-5 text-foreground" />
-                <span className="font-medium">iOS</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <DownloadPill href={appStoreUrl} label="App Store" external />
-              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <DownloadPill href={urls.macAppleSilicon} label="Apple Silicon" />
+              <DownloadPill href={urls.macIntel} label="Intel" />
+              <CommandDialog
+                trigger={
+                  <span className="inline-flex items-center justify-center rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:bg-foreground/85 transition-colors">
+                    Homebrew
+                  </span>
+                }
+                title="Install via Homebrew"
+                command="brew install --cask paseo"
+              />
             </div>
           </div>
         </section>
@@ -197,6 +126,9 @@ function Download() {
                 <DownloadPill href={webAppUrl} label="Open" external />
               </div>
             </div>
+            <p className="py-5 text-sm text-muted-foreground">
+              The web app works on desktop and mobile browsers.
+            </p>
 
             <div className="flex items-center justify-between py-5 first:pt-0 last:pb-0">
               <div className="flex items-center gap-3">
@@ -282,25 +214,6 @@ function MonitorIcon(props: React.SVGProps<SVGSVGElement>) {
       <rect width="20" height="14" x="2" y="3" rx="2" />
       <line x1="8" x2="16" y1="21" y2="21" />
       <line x1="12" x2="12" y1="17" y2="21" />
-    </svg>
-  );
-}
-
-function PhoneIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      {...props}
-    >
-      <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
-      <path d="M12 18h.01" />
     </svg>
   );
 }

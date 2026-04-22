@@ -38,7 +38,6 @@ Please read these first:
 The most useful contributions right now are:
 
 - bug fixes
-- windows and linux specific fixes
 - regression fixes
 - doc improvements
 - packaging / platform fixes
@@ -109,7 +108,7 @@ Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for build-sync gotchas, local st
 
 ## Multi-platform testing
 
-Paseo ships to mobile (iOS/Android), web, and desktop (Electron). Every UI change must be tested on mobile and web at minimum, and desktop if relevant. Things that look fine on one surface regularly break on another.
+Paseo ships to web and desktop (Electron on macOS). Every UI change must be tested on web, and on desktop if relevant. Things that look fine on one surface regularly break on another.
 
 Common checks:
 
@@ -141,8 +140,8 @@ Before opening a PR, make sure:
 - there was prior discussion and alignment on scope (issue or conversation)
 - the change is focused, one idea per PR
 - the PR description explains what changed and why
-- **UI changes include screenshots or videos** for every affected platform (mobile, web, desktop)
-- UI changes have been tested on mobile and web at minimum
+- **UI changes include screenshots or videos** for every affected platform (web, desktop)
+- UI changes have been tested on web, and on desktop when relevant
 - typecheck passes
 - tests pass, or you clearly explain what could not be run
 - relevant docs were updated if needed

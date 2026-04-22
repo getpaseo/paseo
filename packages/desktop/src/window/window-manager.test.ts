@@ -54,7 +54,7 @@ describe("window-manager", () => {
 
     it("returns dark title bar overlay colors", () => {
       expect(getTitleBarOverlayOptions("dark")).toEqual({
-        color: "#18181c",
+        color: "#181B1A",
         symbolColor: "#e4e4e7",
         height: 29,
       });
@@ -137,10 +137,10 @@ describe("window-manager", () => {
   });
 
   describe("getMainWindowChromeOptions", () => {
-    it("uses frameless hidden title bars with overlay on windows", () => {
+    it("uses a generic frameless fallback away from macOS", () => {
       expect(
         getMainWindowChromeOptions({
-          platform: "win32",
+          platform: "freebsd",
           theme: "dark",
         }),
       ).toEqual({
@@ -148,26 +148,8 @@ describe("window-manager", () => {
         frame: false,
         autoHideMenuBar: true,
         titleBarOverlay: {
-          color: "#18181c",
+          color: "#181B1A",
           symbolColor: "#e4e4e7",
-          height: 29,
-        },
-      });
-    });
-
-    it("uses frameless hidden title bars with overlay on linux", () => {
-      expect(
-        getMainWindowChromeOptions({
-          platform: "linux",
-          theme: "light",
-        }),
-      ).toEqual({
-        titleBarStyle: "hidden",
-        frame: false,
-        autoHideMenuBar: true,
-        titleBarOverlay: {
-          color: "#ffffff",
-          symbolColor: "#09090b",
           height: 29,
         },
       });

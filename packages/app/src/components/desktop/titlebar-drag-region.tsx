@@ -13,7 +13,7 @@ import { getIsElectronRuntime } from "@/constants/layout";
  * no state, no event listeners. Interactive elements get no-drag from their own
  * CSS (global backstop in index.html). The drag region never re-renders.
  *
- * The resizer is Windows/Linux only (titlebarpart.css:249 scopes to .windows/.linux).
+ * The extra resizer is only needed on non-mac desktop shells.
  * On macOS, Electron handles edge resize natively.
  */
 

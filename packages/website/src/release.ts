@@ -14,8 +14,7 @@ interface GitHubRelease {
 
 const REQUIRED_ASSET_PATTERNS = [
   /Paseo-.*-arm64\.dmg$/, // Mac Apple Silicon
-  /Paseo-.*-x86_64\.AppImage$/, // Linux AppImage
-  /Paseo-Setup-.*\.exe$/, // Windows
+  /Paseo-.*-x64\.dmg$/, // Mac Intel
 ];
 
 function hasRequiredAssets(release: GitHubRelease): boolean {

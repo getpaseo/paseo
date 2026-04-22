@@ -5,7 +5,7 @@ export const Route = createFileRoute("/docs/updates")({
   head: () => ({
     meta: pageMeta(
       "Updates - Paseo Docs",
-      "How to update Paseo daemon and apps across web, desktop, and mobile.",
+      "How to update the Paseo daemon, web app, and macOS desktop app.",
     ),
   }),
   component: UpdatesDocs,
@@ -72,14 +72,6 @@ function UpdatesDocs() {
         >
           Paseo releases
         </a>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-xl font-medium">Mobile apps</h2>
-        <p className="text-white/60">
-          Mobile apps are available on the App Store and Play Store. Update through your respective
-          store. Store versions may lag behind the latest release due to review processes.
-        </p>
       </section>
     </div>
   );
