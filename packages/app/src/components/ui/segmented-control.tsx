@@ -1,5 +1,5 @@
-import { useMemo, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useCallback, useMemo, type ReactNode } from "react";
+import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
@@ -61,11 +61,8 @@ export function SegmentedControl<T extends string>({
             hideLabels={hideLabels}
             segmentSizeStyle={segmentSizeStyle}
             labelSizeStyle={labelSizeStyle}
-            onPress={() => {
-              if (!option.disabled && option.value !== value) {
-                onValueChange(option.value);
-              }
-            }}
+            currentValue={value}
+            onValueChange={onValueChange}
           />
         );
       })}
@@ -81,7 +78,8 @@ function SegmentItem<T extends string>({
   hideLabels,
   segmentSizeStyle,
   labelSizeStyle,
-  onPress,
+  currentValue,
+  onValueChange,
 }: {
   option: SegmentedControlOption<T>;
   isSelected: boolean;
@@ -90,11 +88,28 @@ function SegmentItem<T extends string>({
   hideLabels: boolean;
   segmentSizeStyle: StyleProp<ViewStyle>;
   labelSizeStyle: StyleProp<TextStyle>;
-  onPress: () => void;
+  currentValue: T;
+  onValueChange: (value: T) => void;
 }) {
   const labelStyle = useMemo(
     () => [styles.label, labelSizeStyle, isSelected && styles.labelSelected],
     [labelSizeStyle, isSelected],
+  );
+  const handlePress = useCallback(() => {
+    if (!option.disabled && option.value !== currentValue) {
+      onValueChange(option.value);
+    }
+  }, [option.disabled, option.value, currentValue, onValueChange]);
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.segment,
+      segmentSizeStyle,
+      isSelected && styles.segmentSelected,
+      Boolean(hovered) && !isSelected && styles.segmentHover,
+      pressed && !isSelected && styles.segmentPressed,
+      option.disabled && styles.segmentDisabled,
+    ],
+    [isSelected, option.disabled, segmentSizeStyle],
   );
   return (
     <Pressable
@@ -102,15 +117,8 @@ function SegmentItem<T extends string>({
       accessibilityState={{ selected: isSelected, disabled: option.disabled }}
       disabled={option.disabled}
       testID={option.testID}
-      onPress={onPress}
-      style={({ hovered, pressed }) => [
-        styles.segment,
-        segmentSizeStyle,
-        isSelected && styles.segmentSelected,
-        hovered && !isSelected && styles.segmentHover,
-        pressed && !isSelected && styles.segmentPressed,
-        option.disabled && styles.segmentDisabled,
-      ]}
+      onPress={handlePress}
+      style={pressableStyle}
     >
       {option.icon ? (
         <View style={styles.iconContainer}>

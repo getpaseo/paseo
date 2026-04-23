@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
 import { Pressable } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -13,15 +13,26 @@ interface BackHeaderProps {
   onBack?: () => void;
 }
 
+function goBack(): void {
+  router.back();
+}
+
 export function BackHeader({ title, titleAccessory, rightContent, onBack }: BackHeaderProps) {
   const { theme } = useUnistyles();
+  const handleBack = useCallback(() => {
+    if (onBack) {
+      onBack();
+      return;
+    }
+    goBack();
+  }, [onBack]);
 
   return (
     <ScreenHeader
       left={
         <>
           <Pressable
-            onPress={onBack ?? (() => router.back())}
+            onPress={handleBack}
             style={styles.backButton}
             accessibilityRole="button"
             accessibilityLabel="Back"

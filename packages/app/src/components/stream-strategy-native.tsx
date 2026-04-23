@@ -22,6 +22,10 @@ const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   autoscrollToTopThreshold: 0,
 });
 
+function keyExtractor(item: { id: string }): string {
+  return item.id;
+}
+
 function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrategy }) {
   const {
     agentId,
@@ -298,7 +302,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       ref={flatListRef}
       data={historyRows}
       renderItem={renderItem}
-      keyExtractor={(item) => item.id}
+      keyExtractor={keyExtractor}
       testID="agent-chat-scroll"
       nativeID="agent-chat-scroll-native-virtualized"
       ListHeaderComponent={liveHeaderContent ?? undefined}

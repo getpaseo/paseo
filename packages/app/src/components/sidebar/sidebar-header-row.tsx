@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useCallback, useMemo } from "react";
+import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { LucideIcon } from "lucide-react-native";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
@@ -31,6 +31,35 @@ export function SidebarHeaderRow({
 }: SidebarHeaderRowProps) {
   const { theme } = useUnistyles();
 
+  const buttonStyle = useCallback(
+    ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.button,
+      (Boolean(hovered) || isActive) && styles.buttonHovered,
+    ],
+    [isActive],
+  );
+
+  const renderChildren = useCallback(
+    (state: PressableStateCallbackType & { hovered?: boolean }) => {
+      const isHighlighted = Boolean(state.hovered) || isActive;
+      const iconColor = isHighlighted ? theme.colors.foreground : theme.colors.foregroundMuted;
+      return (
+        <>
+          <Icon size={theme.iconSize.md} color={iconColor} />
+          <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
+        </>
+      );
+    },
+    [
+      Icon,
+      isActive,
+      label,
+      theme.colors.foreground,
+      theme.colors.foregroundMuted,
+      theme.iconSize.md,
+    ],
+  );
+
   return (
     <View style={styles.container}>
       <Pressable
@@ -40,18 +69,9 @@ export function SidebarHeaderRow({
         accessible
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel ?? label}
-        style={({ hovered }) => [styles.button, (hovered || isActive) && styles.buttonHovered]}
+        style={buttonStyle}
       >
-        {({ hovered }) => {
-          const isHighlighted = hovered || isActive;
-          const iconColor = isHighlighted ? theme.colors.foreground : theme.colors.foregroundMuted;
-          return (
-            <>
-              <Icon size={theme.iconSize.md} color={iconColor} />
-              <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
-            </>
-          );
-        }}
+        {renderChildren}
       </Pressable>
     </View>
   );

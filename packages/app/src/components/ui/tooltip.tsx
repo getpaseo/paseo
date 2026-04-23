@@ -494,6 +494,8 @@ export function TooltipContent({
     [maxWidth, style, position?.x, position?.y],
   );
 
+  const handleDismiss = useCallback(() => ctx.setOpen(false), [ctx]);
+
   if (!ctx.open || !ctx.enabled) return null;
 
   // On web, avoid React Native's <Modal/> implementation (it uses <dialog> and can
@@ -525,9 +527,9 @@ export function TooltipContent({
       transparent
       animationType="none"
       statusBarTranslucent={Platform.OS === "android"}
-      onRequestClose={() => ctx.setOpen(false)}
+      onRequestClose={handleDismiss}
     >
-      <Pressable style={styles.overlay} onPress={() => ctx.setOpen(false)}>
+      <Pressable style={styles.overlay} onPress={handleDismiss}>
         <Animated.View
           pointerEvents="none"
           entering={FadeIn.duration(80)}

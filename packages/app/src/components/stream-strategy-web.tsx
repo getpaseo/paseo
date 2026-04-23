@@ -107,6 +107,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   } = props;
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
+  const handleScrollContainerRef = useCallback((node: HTMLElement | null) => {
+    scrollContainerRef.current = node;
+  }, []);
+  const handleContentRef = useCallback((node: HTMLElement | null) => {
+    contentRef.current = node;
+  }, []);
   const [followOutput, setFollowOutputr] = useState(true);
   const setFollowOutput = (value: boolean) => {
     setFollowOutputr(value);
@@ -705,19 +711,12 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   return (
     <>
       <div
-        ref={(node) => {
-          scrollContainerRef.current = node;
-        }}
+        ref={handleScrollContainerRef}
         data-testid="agent-chat-scroll"
         id={`agent-chat-scroll-${shouldUseVirtualizer ? "web-dom-virtualized" : "web-dom-scroll"}`}
         style={scrollContainerStyle}
       >
-        <div
-          ref={(node) => {
-            contentRef.current = node;
-          }}
-          style={contentContainerStyle}
-        >
+        <div ref={handleContentRef} style={contentContainerStyle}>
           {shouldUseVirtualizer ? (
             <div style={virtualRowsContainerStyle}>
               {virtualRows.map((virtualRow) => {

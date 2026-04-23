@@ -1,6 +1,6 @@
 import { X } from "lucide-react-native";
-import { useMemo, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useCallback, useMemo, type ReactNode } from "react";
+import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 export type CalloutActionVariant = "primary" | "secondary";
@@ -113,18 +113,22 @@ function CalloutActionButton({ action, testID }: { action: CalloutAction; testID
     () => [styles.actionLabel, isPrimary ? styles.actionLabelPrimary : styles.actionLabelSecondary],
     [isPrimary],
   );
+  const pressableStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.actionButton,
+      isPrimary ? styles.actionButtonPrimary : styles.actionButtonSecondary,
+      pressed ? styles.actionButtonPressed : null,
+      action.disabled ? styles.actionButtonDisabled : null,
+    ],
+    [action.disabled, isPrimary],
+  );
   return (
     <Pressable
       onPress={action.onPress}
       disabled={action.disabled}
       testID={testID}
       accessibilityRole="button"
-      style={({ pressed }) => [
-        styles.actionButton,
-        isPrimary ? styles.actionButtonPrimary : styles.actionButtonSecondary,
-        pressed ? styles.actionButtonPressed : null,
-        action.disabled ? styles.actionButtonDisabled : null,
-      ]}
+      style={pressableStyle}
     >
       <Text style={labelStyle} numberOfLines={1}>
         {action.label}

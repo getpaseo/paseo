@@ -93,6 +93,20 @@ export function ResizeHandle({
     [direction, groupId, index, onResizeSplit, sizes],
   );
 
+  const handlePointerEnter = useCallback(() => {
+    hoverTimerRef.current = setTimeout(() => {
+      setActive(true);
+    }, 150);
+  }, []);
+
+  const handlePointerLeave = useCallback(() => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    setActive(false);
+  }, []);
+
   return (
     <View
       style={[
@@ -122,18 +136,8 @@ export function ResizeHandle({
           } as any,
         ]}
         onPointerDown={handlePointerDown}
-        onPointerEnter={() => {
-          hoverTimerRef.current = setTimeout(() => {
-            setActive(true);
-          }, 150);
-        }}
-        onPointerLeave={() => {
-          if (hoverTimerRef.current) {
-            clearTimeout(hoverTimerRef.current);
-            hoverTimerRef.current = null;
-          }
-          setActive(false);
-        }}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
       />
     </View>
   );

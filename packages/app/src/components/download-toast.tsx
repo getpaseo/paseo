@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -41,6 +41,12 @@ export function DownloadToast() {
     [theme.spacing, insets.bottom],
   );
 
+  const handleDismiss = useCallback(() => {
+    if (activeDownload) {
+      dismissDownload(activeDownload.id);
+    }
+  }, [activeDownload, dismissDownload]);
+
   if (!activeDownload) {
     return null;
   }
@@ -75,11 +81,7 @@ export function DownloadToast() {
           )}
         </View>
         {activeDownload.status !== "downloading" && (
-          <Pressable
-            onPress={() => dismissDownload(activeDownload.id)}
-            hitSlop={8}
-            style={styles.dismiss}
-          >
+          <Pressable onPress={handleDismiss} hitSlop={8} style={styles.dismiss}>
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>
         )}

@@ -1,6 +1,13 @@
 import { AlertCircle, RotateCw, Search } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  type PressableStateCallbackType,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -81,6 +88,15 @@ export function ProviderDiagnosticSheet({
     [client, provider],
   );
 
+  const refreshButtonStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      sheetStyles.iconButton,
+      (Boolean(hovered) || pressed) && sheetStyles.iconButtonHovered,
+      refreshInFlight ? sheetStyles.disabled : null,
+    ],
+    [refreshInFlight],
+  );
+
   const handleRefresh = useCallback(() => {
     if (!provider) {
       return;
@@ -155,11 +171,7 @@ export function ProviderDiagnosticSheet({
           onPress={handleRefresh}
           disabled={refreshInFlight}
           hitSlop={8}
-          style={({ hovered, pressed }) => [
-            sheetStyles.iconButton,
-            (hovered || pressed) && sheetStyles.iconButtonHovered,
-            refreshInFlight ? sheetStyles.disabled : null,
-          ]}
+          style={refreshButtonStyle}
           accessibilityRole="button"
           accessibilityLabel={
             refreshInFlight ? `Refreshing ${providerLabel}` : `Refresh ${providerLabel}`

@@ -47,6 +47,10 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
     return [...agents].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }, [agents]);
 
+  const handleBack = useCallback(() => {
+    router.navigate(buildHostOpenProjectRoute(serverId));
+  }, [serverId]);
+
   return (
     <View style={styles.container}>
       <MenuHeader title="Sessions" />
@@ -57,11 +61,7 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
       ) : sortedAgents.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>No sessions yet</Text>
-          <Button
-            variant="ghost"
-            leftIcon={ChevronLeft}
-            onPress={() => router.navigate(buildHostOpenProjectRoute(serverId))}
-          >
+          <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
             Back
           </Button>
         </View>

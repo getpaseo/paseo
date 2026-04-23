@@ -1,5 +1,5 @@
-import { useMemo, type ReactElement, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useCallback, useMemo, type ReactElement, type ReactNode } from "react";
+import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { Check } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
@@ -184,15 +184,16 @@ export function WorkspaceTabOptionRow({
   trailingAccessory,
 }: WorkspaceTabOptionRowProps): ReactElement {
   const { theme } = useUnistyles();
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.optionMainPressable,
+      (Boolean(hovered) || pressed || active) && styles.optionRowActive,
+    ],
+    [active],
+  );
   return (
     <View style={[styles.optionRow, active && styles.optionRowActive]}>
-      <Pressable
-        onPress={onPress}
-        style={({ hovered = false, pressed }) => [
-          styles.optionMainPressable,
-          (hovered || pressed || active) && styles.optionRowActive,
-        ]}
-      >
+      <Pressable onPress={onPress} style={pressableStyle}>
         <View style={styles.optionLeadingSlot}>
           <WorkspaceTabIcon presentation={presentation} active={selected || active} />
         </View>

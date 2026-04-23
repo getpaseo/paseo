@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -47,6 +47,9 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
     [insets.top, insets.right, theme.spacing],
   );
 
+  const handleImageError = useCallback(() => setErrored(true), []);
+  const noopPress = useCallback(() => {}, []);
+
   if (!metadata) {
     return null;
   }
@@ -68,12 +71,12 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
             {hasError ? (
               <Text style={styles.errorText}>Couldn't load image</Text>
             ) : (
-              <Pressable onPress={() => {}} style={styles.imagePressable}>
+              <Pressable onPress={noopPress} style={styles.imagePressable}>
                 <ExpoImage
                   testID="attachment-lightbox-image"
                   source={{ uri: url }}
                   contentFit="contain"
-                  onError={() => setErrored(true)}
+                  onError={handleImageError}
                   style={imageFillStyle}
                 />
               </Pressable>

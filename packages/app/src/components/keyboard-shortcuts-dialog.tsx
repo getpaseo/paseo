@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { getIsElectronRuntime } from "@/constants/layout";
@@ -21,11 +21,13 @@ export function KeyboardShortcutsDialog() {
     [isDesktopApp, isMac],
   );
 
+  const handleClose = useCallback(() => setOpen(false), [setOpen]);
+
   return (
     <AdaptiveModalSheet
       title="Shortcuts"
       visible={open}
-      onClose={() => setOpen(false)}
+      onClose={handleClose}
       testID="keyboard-shortcuts-dialog"
       snapPoints={SNAP_POINTS}
     >

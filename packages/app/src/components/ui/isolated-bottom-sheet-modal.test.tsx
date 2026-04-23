@@ -12,6 +12,8 @@ const SNAP_POINTS_50: (string | number)[] = ["50%"];
 const SNAP_POINTS_60: (string | number)[] = ["60%"];
 const SNAP_POINTS_90: (string | number)[] = ["90%"];
 
+function noop(): void {}
+
 const { modalMethods, modalProps } = vi.hoisted(() => ({
   modalMethods: {
     present: vi.fn(),
@@ -117,7 +119,7 @@ describe("IsolatedBottomSheetModal", () => {
   it("allows nested sheets inside a parent sheet without creating a sibling provider", () => {
     const { getAllByTestId } = render(
       <IsolatedBottomSheetModal index={0} snapPoints={SNAP_POINTS_90}>
-        <IsolatedBottomSheetModal index={0} snapPoints={SNAP_POINTS_60} onChange={() => {}}>
+        <IsolatedBottomSheetModal index={0} snapPoints={SNAP_POINTS_60} onChange={noop}>
           <div>Nested model picker</div>
         </IsolatedBottomSheetModal>
       </IsolatedBottomSheetModal>,

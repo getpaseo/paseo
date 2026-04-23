@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PanelLeft } from "lucide-react-native";
@@ -53,9 +53,13 @@ export function SidebarMenuToggle({
   const menuIconColor =
     !isMobile && isOpen ? theme.colors.foreground : theme.colors.foregroundMuted;
 
+  const handlePress = useCallback(() => {
+    toggleAgentListForLayout({ isCompact: isMobile });
+  }, [toggleAgentListForLayout, isMobile]);
+
   return (
     <HeaderToggleButton
-      onPress={() => toggleAgentListForLayout({ isCompact: isMobile })}
+      onPress={handlePress}
       tooltipLabel="Toggle sidebar"
       tooltipKeys={toggleShortcutKeys}
       tooltipSide={tooltipSide}

@@ -25,6 +25,11 @@ export function DiffViewer({
 }: DiffViewerProps) {
   const [scrollViewWidth, setScrollViewWidth] = React.useState(0);
   const webScrollbarStyle = useWebScrollbarStyle();
+  const handleInnerLayout = React.useCallback(
+    (e: { nativeEvent: { layout: { width: number } } }) =>
+      setScrollViewWidth(e.nativeEvent.layout.width),
+    [],
+  );
 
   if (!diffLines.length) {
     return (
@@ -52,7 +57,7 @@ export function DiffViewer({
         showsHorizontalScrollIndicator
         style={webScrollbarStyle}
         contentContainerStyle={styles.horizontalContent}
-        onLayout={(e) => setScrollViewWidth(e.nativeEvent.layout.width)}
+        onLayout={handleInnerLayout}
       >
         <View style={[styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }]}>
           {diffLines.map((line, index) => (

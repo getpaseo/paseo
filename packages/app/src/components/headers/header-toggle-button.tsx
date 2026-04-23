@@ -50,9 +50,7 @@ export function HeaderToggleButton({
         {...props}
         {...ariaExpandedProps}
         disabled={disabled}
-        onPress={(e) => {
-          onPress(e);
-        }}
+        onPress={onPress}
         style={combinedStyle}
       >
         {typeof children === "function"

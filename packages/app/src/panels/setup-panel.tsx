@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronRight, CircleAlert, SquareTerminal } from "lucide-react-native";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  type PressableStateCallbackType,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 import invariant from "tiny-invariant";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
-import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
+import {
+  useWorkspaceSetupStore,
+  type WorkspaceSetupSnapshot,
+} from "@/stores/workspace-setup-store";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 
 function useSetupPanelDescriptor(
@@ -223,67 +233,19 @@ function SetupPanel() {
             const processedLog = hasLog ? processCarriageReturns(commandLog) : "";
 
             return (
-              <View key={`${command.index}:${command.command}`} style={styles.commandItem}>
-                <Pressable
-                  onPress={() => toggleExpanded(command.index, isAutoExpanded)}
-                  style={({ pressed }) => [
-                    styles.commandRow,
-                    showDetail && styles.commandRowExpanded,
-                    pressed && styles.commandRowPressed,
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded: showDetail }}
-                >
-                  <View style={styles.commandStatusIcon}>
-                    <CommandStatusIcon status={command.status} />
-                  </View>
-                  <Text style={styles.commandText} numberOfLines={1}>
-                    {command.command}
-                  </Text>
-                  {command.durationMs != null ? (
-                    <Text style={styles.commandDuration}>{formatDuration(command.durationMs)}</Text>
-                  ) : null}
-                  <SetupCommandChevron
-                    showDetail={showDetail}
-                    color={theme.colors.foregroundMuted}
-                  />
-                </Pressable>
-                {showDetail ? (
-                  <View style={styles.commandDetail}>
-                    {hasLog ? (
-                      <ScrollView
-                        style={styles.logScroll}
-                        contentContainerStyle={styles.logScrollContent}
-                        horizontal={false}
-                        showsVerticalScrollIndicator
-                        testID="workspace-setup-log"
-                        accessible
-                        accessibilityLabel="Workspace setup log"
-                      >
-                        <Text selectable style={styles.logText}>
-                          {processedLog}
-                        </Text>
-                      </ScrollView>
-                    ) : (
-                      <View
-                        style={styles.logScrollContent}
-                        testID="workspace-setup-log"
-                        accessible
-                        accessibilityLabel="Workspace setup log"
-                      >
-                        <Text style={styles.emptyLogText}>No output</Text>
-                      </View>
-                    )}
-                    {hasError ? (
-                      <View style={styles.errorCard}>
-                        <Text selectable style={styles.errorText}>
-                          {snapshot.error}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-                ) : null}
-              </View>
+              <SetupCommandRow
+                key={`${command.index}:${command.command}`}
+                command={command}
+                showDetail={showDetail}
+                isAutoExpanded={isAutoExpanded}
+                isExpandable={isExpandable}
+                hasLog={hasLog}
+                hasError={!!hasError}
+                processedLog={processedLog}
+                errorMessage={snapshot?.error ?? null}
+                foregroundMutedColor={theme.colors.foregroundMuted}
+                onToggle={toggleExpanded}
+              />
             );
           })}
 
@@ -314,6 +276,105 @@ function SetupPanel() {
         </View>
       )}
     </ScrollView>
+  );
+}
+
+type SetupCommand = WorkspaceSetupSnapshot["detail"]["commands"][number];
+
+interface SetupCommandRowProps {
+  command: SetupCommand;
+  showDetail: boolean;
+  isAutoExpanded: boolean;
+  isExpandable: boolean;
+  hasLog: boolean;
+  hasError: boolean;
+  processedLog: string;
+  errorMessage: string | null;
+  foregroundMutedColor: string;
+  onToggle: (index: number, isAutoExpanded: boolean) => void;
+}
+
+function SetupCommandRow({
+  command,
+  showDetail,
+  isAutoExpanded,
+  isExpandable,
+  hasLog,
+  hasError,
+  processedLog,
+  errorMessage,
+  foregroundMutedColor,
+  onToggle,
+}: SetupCommandRowProps) {
+  const handlePress = useCallback(() => {
+    if (!isExpandable) return;
+    onToggle(command.index, isAutoExpanded);
+  }, [command.index, isAutoExpanded, isExpandable, onToggle]);
+
+  const pressableStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.commandRow,
+      showDetail && styles.commandRowExpanded,
+      pressed && styles.commandRowPressed,
+    ],
+    [showDetail],
+  );
+
+  return (
+    <View style={styles.commandItem}>
+      <Pressable
+        onPress={handlePress}
+        style={pressableStyle}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: showDetail }}
+      >
+        <View style={styles.commandStatusIcon}>
+          <CommandStatusIcon status={command.status} />
+        </View>
+        <Text style={styles.commandText} numberOfLines={1}>
+          {command.command}
+        </Text>
+        {command.durationMs != null ? (
+          <Text style={styles.commandDuration}>{formatDuration(command.durationMs)}</Text>
+        ) : null}
+        <SetupCommandChevron showDetail={showDetail} color={foregroundMutedColor} />
+      </Pressable>
+      {showDetail ? (
+        <View style={styles.commandDetail}>
+          {hasLog ? (
+            <ScrollView
+              style={styles.logScroll}
+              contentContainerStyle={styles.logScrollContent}
+              horizontal={false}
+              showsVerticalScrollIndicator
+              testID="workspace-setup-log"
+              accessible
+              accessibilityLabel="Workspace setup log"
+            >
+              <Text selectable style={styles.logText}>
+                {processedLog}
+              </Text>
+            </ScrollView>
+          ) : (
+            <View
+              style={styles.logScrollContent}
+              testID="workspace-setup-log"
+              accessible
+              accessibilityLabel="Workspace setup log"
+            >
+              <Text style={styles.emptyLogText}>No output</Text>
+            </View>
+          )}
+          {hasError && errorMessage ? (
+            <View style={styles.errorCard}>
+              <Text selectable style={styles.errorText}>
+                {errorMessage}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import Animated from "react-native-reanimated";
@@ -27,7 +27,7 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
     [insets.bottom, keyboardAnimatedStyle],
   );
 
-  async function handleUnarchive() {
+  const handleUnarchive = useCallback(async () => {
     if (!client || !isConnected || isUnarchiving) return;
     setIsUnarchiving(true);
     try {
@@ -36,7 +36,7 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
       console.error("[ArchivedAgentCallout] Failed to unarchive agent:", error);
       setIsUnarchiving(false);
     }
-  }
+  }, [client, isConnected, isUnarchiving, agentId]);
 
   return (
     <Animated.View style={containerStyle}>

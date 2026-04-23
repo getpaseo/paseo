@@ -61,6 +61,11 @@ export function DiffScroll({
     [horizontalScroll, scrollId],
   );
 
+  const handleLayout = useCallback(
+    (e: LayoutChangeEvent) => onScrollViewWidthChange(e.nativeEvent.layout.width),
+    [onScrollViewWidthChange],
+  );
+
   return (
     <ScrollView
       ref={scrollViewRef}
@@ -72,7 +77,7 @@ export function DiffScroll({
       contentContainerStyle={contentContainerStyle}
       onScroll={handleScroll}
       scrollEventThrottle={16}
-      onLayout={(e: LayoutChangeEvent) => onScrollViewWidthChange(e.nativeEvent.layout.width)}
+      onLayout={handleLayout}
       // When at left edge, wait for close gesture to fail before scrolling.
       // The close gesture fails quickly on leftward swipes (failOffsetX=-10),
       // so scrolling left works normally. On rightward swipes, close gesture
