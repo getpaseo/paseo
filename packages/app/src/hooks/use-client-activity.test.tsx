@@ -76,10 +76,10 @@ async function renderActivityHook({
   client?: ReturnType<typeof createTestClient>;
   focusedAgentId?: string | null;
 } = {}) {
-  function Probe({ focusedAgentId }: { focusedAgentId: string | null }) {
+  function Probe({ focusedAgentId: probeFocusedAgentId }: { focusedAgentId: string | null }) {
     useClientActivity({
       client: client as unknown as Parameters<typeof useClientActivity>[0]["client"],
-      focusedAgentId,
+      focusedAgentId: probeFocusedAgentId,
     });
     return null;
   }

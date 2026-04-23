@@ -185,7 +185,7 @@ describe("buildSidebarProjectsFromStructure", () => {
       ],
     });
 
-    expect(projects.map((project) => project.projectKey)).toEqual(["project-b", "project-a"]);
+    expect(projects.map((entry) => entry.projectKey)).toEqual(["project-b", "project-a"]);
   });
 
   it("preserves the structure hook workspace order", () => {

@@ -140,12 +140,12 @@ test.describe("Workspace navigation regression", () => {
       await expect(page.locator('[data-testid^="workspace-deck-entry-"]')).toHaveCount(2);
 
       await page.evaluate(
-        ({ agentId, serverId }) => {
+        ({ agentId, serverId: targetServerId }) => {
           globalThis.dispatchEvent(
             new CustomEvent("paseo:web-notification-click", {
               detail: {
                 data: {
-                  serverId,
+                  serverId: targetServerId,
                   agentId,
                   reason: "finished",
                 },
