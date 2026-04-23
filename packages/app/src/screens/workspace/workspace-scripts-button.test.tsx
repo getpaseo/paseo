@@ -137,6 +137,8 @@ function script(
   };
 }
 
+const LIVE_TERMINAL_IDS: string[] = ["terminal-script-1"];
+
 function renderScripts(scripts: WorkspaceScriptPayload[]): {
   rerender: (nextScripts: WorkspaceScriptPayload[]) => Promise<void>;
   unmount: () => void;
@@ -158,7 +160,7 @@ function renderScripts(scripts: WorkspaceScriptPayload[]): {
           serverId="test-server"
           workspaceId="workspace-1"
           scripts={nextScripts}
-          liveTerminalIds={["terminal-script-1"]}
+          liveTerminalIds={LIVE_TERMINAL_IDS}
         />
       </QueryClientProvider>
     );

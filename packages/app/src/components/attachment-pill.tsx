@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
@@ -30,6 +30,10 @@ export function AttachmentPill({
   const [isCloseHovered, setIsCloseHovered] = useState(false);
   const alwaysShow = isNative || isCompact;
   const showRemove = alwaysShow || isBodyHovered || isCloseHovered;
+  const closeButtonStyle = useMemo(
+    () => [styles.closeButton, !showRemove && styles.closeButtonHidden],
+    [showRemove],
+  );
   return (
     <View style={styles.wrapper}>
       <Pressable
@@ -52,7 +56,7 @@ export function AttachmentPill({
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel={removeAccessibilityLabel}
-        style={[styles.closeButton, !showRemove && styles.closeButtonHidden]}
+        style={closeButtonStyle}
       >
         <X size={12} color={theme.colors.foregroundMuted} />
       </Pressable>

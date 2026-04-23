@@ -8,6 +8,8 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { buildKeyboardShortcutHelpSections } from "@/keyboard/keyboard-shortcuts";
 
+const SNAP_POINTS: string[] = ["70%", "92%"];
+
 export function KeyboardShortcutsDialog() {
   const open = useKeyboardShortcutsStore((s) => s.shortcutsDialogOpen);
   const setOpen = useKeyboardShortcutsStore((s) => s.setShortcutsDialogOpen);
@@ -25,7 +27,7 @@ export function KeyboardShortcutsDialog() {
       visible={open}
       onClose={() => setOpen(false)}
       testID="keyboard-shortcuts-dialog"
-      snapPoints={["70%", "92%"]}
+      snapPoints={SNAP_POINTS}
     >
       <View testID="keyboard-shortcuts-dialog-content" style={styles.content}>
         {sections.map((section) => (

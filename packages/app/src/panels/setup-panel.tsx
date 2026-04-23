@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronRight, CircleAlert, SquareTerminal } from "lucide-react-native";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import invariant from "tiny-invariant";
@@ -243,10 +243,9 @@ function SetupPanel() {
                   {command.durationMs != null ? (
                     <Text style={styles.commandDuration}>{formatDuration(command.durationMs)}</Text>
                   ) : null}
-                  <ChevronRight
-                    size={14}
+                  <SetupCommandChevron
+                    showDetail={showDetail}
                     color={theme.colors.foregroundMuted}
-                    style={[styles.chevron, showDetail && styles.chevronExpanded]}
                   />
                 </Pressable>
                 {showDetail ? (
@@ -323,6 +322,14 @@ export const setupPanelRegistration: PanelRegistration<"setup"> = {
   component: SetupPanel,
   useDescriptor: useSetupPanelDescriptor,
 };
+
+function SetupCommandChevron({ showDetail, color }: { showDetail: boolean; color: string }) {
+  const chevronStyle = useMemo(
+    () => [styles.chevron, showDetail && styles.chevronExpanded],
+    [showDetail],
+  );
+  return <ChevronRight size={14} color={color} style={chevronStyle} />;
+}
 
 const styles = StyleSheet.create((theme) => ({
   container: {

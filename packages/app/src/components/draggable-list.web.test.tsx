@@ -90,11 +90,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const DATA: string[] = ["alpha", "beta"];
+
 function renderList(): void {
   act(() => {
     root?.render(
       <DraggableList
-        data={["alpha", "beta"]}
+        data={DATA}
         keyExtractor={(item) => item}
         onDragEnd={vi.fn()}
         renderItem={({ item, isActive }) => (

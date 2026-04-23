@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,6 +35,17 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
       window.removeEventListener("keydown", handleKeydown);
     };
   }, [metadata, onClose]);
+
+  const closeButtonStyle = useMemo(
+    () => [
+      styles.closeButton,
+      {
+        top: insets.top + theme.spacing[3],
+        right: insets.right + theme.spacing[3],
+      },
+    ],
+    [insets.top, insets.right, theme.spacing],
+  );
 
   if (!metadata) {
     return null;
@@ -74,13 +85,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
             accessibilityLabel="Close image"
             hitSlop={8}
             onPress={onClose}
-            style={[
-              styles.closeButton,
-              {
-                top: insets.top + theme.spacing[3],
-                right: insets.right + theme.spacing[3],
-              },
-            ]}
+            style={closeButtonStyle}
           >
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>

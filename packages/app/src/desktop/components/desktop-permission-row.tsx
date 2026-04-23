@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check } from "lucide-react-native";
@@ -38,8 +39,13 @@ export function DesktopPermissionRow({
     state !== "prompt" &&
     state !== "not-granted";
 
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder],
+    [showBorder],
+  );
+
   return (
-    <View style={[settingsStyles.row, showBorder && settingsStyles.rowBorder]}>
+    <View style={rowStyle}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle}>{title}</Text>
       </View>

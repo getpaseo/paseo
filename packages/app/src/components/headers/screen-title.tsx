@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Text, type StyleProp, type TextStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
@@ -15,8 +15,9 @@ interface ScreenTitleProps {
  * HeaderIconBadge) — never nested inside this component.
  */
 export function ScreenTitle({ children, numberOfLines = 1, testID, style }: ScreenTitleProps) {
+  const combinedStyle = useMemo(() => [styles.text, style], [style]);
   return (
-    <Text style={[styles.text, style]} numberOfLines={numberOfLines} testID={testID}>
+    <Text style={combinedStyle} numberOfLines={numberOfLines} testID={testID}>
       {children}
     </Text>
   );

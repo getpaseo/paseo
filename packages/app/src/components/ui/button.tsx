@@ -1,4 +1,10 @@
-import { useState, type ComponentType, type PropsWithChildren, type ReactElement } from "react";
+import {
+  useMemo,
+  useState,
+  type ComponentType,
+  type PropsWithChildren,
+  type ReactElement,
+} from "react";
 import { Pressable, Text, View } from "react-native";
 import type { PressableProps, StyleProp, TextStyle, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -119,14 +125,17 @@ export function Button({
   const sizeStyle = size === "sm" ? styles.sm : size === "lg" ? styles.lg : styles.md;
   const isGhostHovered = hovered && variant === "ghost";
 
-  const resolvedTextStyle = [
-    styles.text,
-    variant === "default" ? styles.textDefault : null,
-    variant === "destructive" ? styles.textDestructive : null,
-    variant === "ghost" ? styles.textGhost : null,
-    textStyle,
-    isGhostHovered ? styles.textGhostHovered : null,
-  ];
+  const resolvedTextStyle = useMemo(
+    () => [
+      styles.text,
+      variant === "default" ? styles.textDefault : null,
+      variant === "destructive" ? styles.textDestructive : null,
+      variant === "ghost" ? styles.textGhost : null,
+      textStyle,
+      isGhostHovered ? styles.textGhostHovered : null,
+    ],
+    [variant, textStyle, isGhostHovered],
+  );
 
   function renderIcon() {
     if (!leftIcon) return null;

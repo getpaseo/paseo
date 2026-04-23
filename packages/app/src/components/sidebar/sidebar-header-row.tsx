@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { LucideIcon } from "lucide-react-native";
@@ -47,13 +48,27 @@ export function SidebarHeaderRow({
           return (
             <>
               <Icon size={theme.iconSize.md} color={iconColor} />
-              <Text style={[styles.label, isHighlighted && styles.labelHighlighted]}>{label}</Text>
+              <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
             </>
           );
         }}
       </Pressable>
     </View>
   );
+}
+
+function SidebarHeaderRowLabel({
+  label,
+  isHighlighted,
+}: {
+  label: string;
+  isHighlighted: boolean;
+}) {
+  const labelStyle = useMemo(
+    () => [styles.label, isHighlighted && styles.labelHighlighted],
+    [isHighlighted],
+  );
+  return <Text style={labelStyle}>{label}</Text>;
 }
 
 const styles = StyleSheet.create((theme) => ({

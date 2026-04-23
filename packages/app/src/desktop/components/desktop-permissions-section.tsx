@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { RotateCw } from "lucide-react-native";
@@ -27,6 +28,10 @@ export function DesktopPermissionsSection() {
 
   const isBusy = isRefreshing || requestingPermission !== null;
   const notificationsGranted = snapshot?.notifications.state === "granted";
+  const errorTextStyle = useMemo(
+    () => [styles.errorText, { color: theme.colors.destructive }],
+    [theme.colors.destructive],
+  );
 
   const refreshButton = (
     <Button
@@ -60,11 +65,7 @@ export function DesktopPermissionsSection() {
             void sendTestNotification();
           }}
         />
-        {testNotificationError ? (
-          <Text style={[styles.errorText, { color: theme.colors.destructive }]}>
-            {testNotificationError}
-          </Text>
-        ) : null}
+        {testNotificationError ? <Text style={errorTextStyle}>{testNotificationError}</Text> : null}
         <DesktopPermissionRow
           title="Microphone"
           showBorder

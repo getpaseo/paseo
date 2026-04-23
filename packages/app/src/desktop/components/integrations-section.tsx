@@ -18,6 +18,7 @@ import {
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
 const SKILLS_DOCS_URL = "https://paseo.sh/docs/skills";
+const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
 
 export function IntegrationsSection() {
   const { theme } = useUnistyles();
@@ -136,7 +137,7 @@ export function IntegrationsSection() {
             </Button>
           )}
         </View>
-        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={ROW_WITH_BORDER_STYLE}>
           <View style={settingsStyles.rowContent}>
             <View style={styles.rowTitleRow}>
               <Blocks size={theme.iconSize.md} color={theme.colors.foreground} />

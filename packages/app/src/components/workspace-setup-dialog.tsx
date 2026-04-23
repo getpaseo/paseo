@@ -26,6 +26,8 @@ function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): 
   return `data:${icon.mimeType};base64,${icon.data}`;
 }
 
+const SNAP_POINTS: string[] = ["82%", "94%"];
+
 export function WorkspaceSetupDialog() {
   const { theme } = useUnistyles();
   const toast = useToast();
@@ -284,7 +286,7 @@ export function WorkspaceSetupDialog() {
       subtitle={subtitleContent}
       visible={true}
       onClose={handleClose}
-      snapPoints={["82%", "94%"]}
+      snapPoints={SNAP_POINTS}
       testID="workspace-setup-dialog"
       desktopMaxWidth={640}
       onFilesDropped={handleFilesDropped}

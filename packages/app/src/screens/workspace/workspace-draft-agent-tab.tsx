@@ -337,6 +337,11 @@ export function WorkspaceDraftAgentTab({
     [composerState],
   );
 
+  const inputAreaWrapperStyle = useMemo(
+    () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }],
+    [insets.bottom],
+  );
+
   return (
     <FileDropZone onFilesDropped={handleFilesDropped}>
       <View style={styles.container}>
@@ -368,7 +373,7 @@ export function WorkspaceDraftAgentTab({
           )}
         </View>
 
-        <View style={[styles.inputAreaWrapper, { paddingBottom: insets.bottom }]}>
+        <View style={inputAreaWrapperStyle}>
           <Composer
             agentId={tabId}
             serverId={serverId}
