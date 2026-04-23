@@ -27,6 +27,7 @@ export interface DesktopPairingOffer {
 }
 
 export interface LocalTransportTarget {
+  [key: string]: unknown;
   transportType: "socket" | "pipe";
   transportPath: string;
 }

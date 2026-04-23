@@ -258,6 +258,7 @@ export type ToolCallDetail =
     };
 
 interface ToolCallBase {
+  [key: string]: unknown;
   type: "tool_call";
   callId: string;
   name: string;
@@ -292,6 +293,7 @@ export type ToolCallTimelineItem =
   | ToolCallCanceledTimelineItem;
 
 export interface CompactionTimelineItem {
+  [key: string]: unknown;
   type: "compaction";
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
