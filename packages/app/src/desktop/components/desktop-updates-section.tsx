@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -247,23 +247,55 @@ export function LocalDaemonSection() {
   const handleCloseLogsModal = useCallback(() => setIsLogsModalOpen(false), []);
   const handleCloseCliStatusModal = useCallback(() => setIsCliStatusModalOpen(false), []);
 
+  const advancedSettingsIcon = useMemo(
+    () => <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+    [theme.iconSize.sm, theme.colors.foregroundMuted],
+  );
+  const playIcon = useMemo(
+    () => <Play size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+  const pauseIcon = useMemo(
+    () => <Pause size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+  const rotateIcon = useMemo(
+    () => <RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+  const copyIcon = useMemo(
+    () => <Copy size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+  const fileTextIcon = useMemo(
+    () => <FileText size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+  const activityIcon = useMemo(
+    () => <Activity size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+
+  const advancedSettingsButton = useMemo(
+    () => (
+      <Button
+        variant="ghost"
+        size="sm"
+        leftIcon={advancedSettingsIcon}
+        textStyle={settingsStyles.sectionHeaderLinkText}
+        style={settingsStyles.sectionHeaderLink}
+        onPress={handleOpenAdvancedSettings}
+        accessibilityLabel="Open advanced daemon settings"
+      >
+        Advanced settings
+      </Button>
+    ),
+    [advancedSettingsIcon, handleOpenAdvancedSettings],
+  );
+
   if (!showSection) {
     return null;
   }
-
-  const advancedSettingsButton = (
-    <Button
-      variant="ghost"
-      size="sm"
-      leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
-      textStyle={settingsStyles.sectionHeaderLinkText}
-      style={settingsStyles.sectionHeaderLink}
-      onPress={handleOpenAdvancedSettings}
-      accessibilityLabel="Open advanced daemon settings"
-    >
-      Advanced settings
-    </Button>
-  );
 
   return (
     <SettingsSection
@@ -302,13 +334,7 @@ export function LocalDaemonSection() {
               <Button
                 variant="outline"
                 size="sm"
-                leftIcon={
-                  isDaemonManagementPaused ? (
-                    <Play size={theme.iconSize.sm} color={theme.colors.foreground} />
-                  ) : (
-                    <Pause size={theme.iconSize.sm} color={theme.colors.foreground} />
-                  )
-                }
+                leftIcon={isDaemonManagementPaused ? playIcon : pauseIcon}
                 onPress={handleToggleDaemonManagement}
                 disabled={isUpdatingDaemonManagement}
               >
@@ -330,7 +356,7 @@ export function LocalDaemonSection() {
               <Button
                 variant="outline"
                 size="sm"
-                leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
+                leftIcon={rotateIcon}
                 onPress={handleUpdateLocalDaemon}
                 disabled={isRestartingDaemon}
               >
@@ -353,7 +379,7 @@ export function LocalDaemonSection() {
                   <Button
                     variant="outline"
                     size="sm"
-                    leftIcon={<Copy size={theme.iconSize.sm} color={theme.colors.foreground} />}
+                    leftIcon={copyIcon}
                     onPress={handleCopyLogPath}
                   >
                     Copy path
@@ -362,7 +388,7 @@ export function LocalDaemonSection() {
                 <Button
                   variant="outline"
                   size="sm"
-                  leftIcon={<FileText size={theme.iconSize.sm} color={theme.colors.foreground} />}
+                  leftIcon={fileTextIcon}
                   onPress={handleOpenLogs}
                   disabled={!daemonLogs}
                 >
@@ -380,7 +406,7 @@ export function LocalDaemonSection() {
               <Button
                 variant="outline"
                 size="sm"
-                leftIcon={<Activity size={theme.iconSize.sm} color={theme.colors.foreground} />}
+                leftIcon={activityIcon}
                 onPress={handleRunCliStatus}
                 disabled={isLoadingCliStatus}
               >

@@ -43,25 +43,33 @@ export function DesktopPermissionsSection() {
     void sendTestNotification();
   }, [sendTestNotification]);
 
-  if (!isDesktopApp) {
-    return null;
-  }
-
   const isBusy = isRefreshing || requestingPermission !== null;
   const notificationsGranted = snapshot?.notifications.state === "granted";
 
-  const refreshButton = (
-    <Button
-      variant="ghost"
-      size="sm"
-      leftIcon={<RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
-      onPress={handleRefreshPress}
-      disabled={isBusy}
-      accessibilityLabel="Refresh desktop permissions"
-    >
-      {isRefreshing ? "Refreshing..." : "Refresh"}
-    </Button>
+  const refreshIcon = useMemo(
+    () => <RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />,
+    [theme.iconSize.md, theme.colors.foregroundMuted],
   );
+
+  const refreshButton = useMemo(
+    () => (
+      <Button
+        variant="ghost"
+        size="sm"
+        leftIcon={refreshIcon}
+        onPress={handleRefreshPress}
+        disabled={isBusy}
+        accessibilityLabel="Refresh desktop permissions"
+      >
+        {isRefreshing ? "Refreshing..." : "Refresh"}
+      </Button>
+    ),
+    [refreshIcon, handleRefreshPress, isBusy, isRefreshing],
+  );
+
+  if (!isDesktopApp) {
+    return null;
+  }
 
   return (
     <SettingsSection title="Permissions" trailing={refreshButton}>

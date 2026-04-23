@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -85,36 +85,44 @@ export function IntegrationsSection() {
     void openExternalUrl(SKILLS_DOCS_URL);
   }, []);
 
+  const arrowIcon = useMemo(
+    () => <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+    [theme.iconSize.sm, theme.colors.foregroundMuted],
+  );
+
+  const trailing = useMemo(
+    () => (
+      <View style={styles.headerLinks}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={arrowIcon}
+          textStyle={settingsStyles.sectionHeaderLinkText}
+          style={settingsStyles.sectionHeaderLink}
+          onPress={handleOpenCliDocs}
+          accessibilityLabel="Open CLI documentation"
+        >
+          CLI docs
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={arrowIcon}
+          textStyle={settingsStyles.sectionHeaderLinkText}
+          style={settingsStyles.sectionHeaderLink}
+          onPress={handleOpenSkillsDocs}
+          accessibilityLabel="Open skills documentation"
+        >
+          Skills docs
+        </Button>
+      </View>
+    ),
+    [arrowIcon, handleOpenCliDocs, handleOpenSkillsDocs],
+  );
+
   if (!showSection) {
     return null;
   }
-
-  const trailing = (
-    <View style={styles.headerLinks}>
-      <Button
-        variant="ghost"
-        size="sm"
-        leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
-        textStyle={settingsStyles.sectionHeaderLinkText}
-        style={settingsStyles.sectionHeaderLink}
-        onPress={handleOpenCliDocs}
-        accessibilityLabel="Open CLI documentation"
-      >
-        CLI docs
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
-        textStyle={settingsStyles.sectionHeaderLinkText}
-        style={settingsStyles.sectionHeaderLink}
-        onPress={handleOpenSkillsDocs}
-        accessibilityLabel="Open skills documentation"
-      >
-        Skills docs
-      </Button>
-    </View>
-  );
 
   return (
     <SettingsSection title="Integrations" trailing={trailing}>

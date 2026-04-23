@@ -55,6 +55,20 @@ export function PairDeviceSection() {
     [qrQuery.data],
   );
 
+  const retryIcon = useMemo(
+    () => <RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+  const copyButtonIcon = useMemo(
+    () =>
+      copied ? (
+        <Check size={theme.iconSize.sm} color={theme.colors.accent} />
+      ) : (
+        <Copy size={theme.iconSize.sm} color={theme.colors.foreground} />
+      ),
+    [copied, theme.iconSize.sm, theme.colors.accent, theme.colors.foreground],
+  );
+
   if (!showSection) return null;
 
   return (
@@ -72,12 +86,7 @@ export function PairDeviceSection() {
                 ? pairingQuery.error.message
                 : "Failed to load pairing offer."}
             </Text>
-            <Button
-              variant="outline"
-              size="sm"
-              leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
-              onPress={handleRefetch}
-            >
+            <Button variant="outline" size="sm" leftIcon={retryIcon} onPress={handleRefetch}>
               Retry
             </Button>
           </View>
@@ -88,12 +97,7 @@ export function PairDeviceSection() {
                 ? "Relay is not enabled. Enable relay to pair a device."
                 : "Pairing offer unavailable."}
             </Text>
-            <Button
-              variant="outline"
-              size="sm"
-              leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
-              onPress={handleRefetch}
-            >
+            <Button variant="outline" size="sm" leftIcon={retryIcon} onPress={handleRefetch}>
               Retry
             </Button>
           </View>
@@ -124,13 +128,7 @@ export function PairDeviceSection() {
               <Button
                 variant="outline"
                 size="sm"
-                leftIcon={
-                  copied ? (
-                    <Check size={theme.iconSize.sm} color={theme.colors.accent} />
-                  ) : (
-                    <Copy size={theme.iconSize.sm} color={theme.colors.foreground} />
-                  )
-                }
+                leftIcon={copyButtonIcon}
                 onPress={handleCopyPress}
               >
                 {copied ? "Copied" : "Copy"}
