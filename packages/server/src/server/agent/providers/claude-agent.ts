@@ -155,7 +155,7 @@ type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
 export interface ClaudeContentChunk {
   type: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 type ClaudeOptions = Options;
@@ -1166,7 +1166,11 @@ export class ClaudeAgentClient implements AgentClient {
     if (!merged.cwd) {
       throw new Error("Claude resume requires the original working directory in metadata");
     }
-    const mergedConfig: AgentSessionConfig = { ...merged, provider: "claude", cwd: merged.cwd };
+    const mergedConfig: AgentSessionConfig = {
+      ...merged,
+      provider: "claude",
+      cwd: merged.cwd,
+    };
     const claudeConfig = this.assertConfig(mergedConfig);
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
@@ -1222,7 +1226,10 @@ export class ClaudeAgentClient implements AgentClient {
 
       if (available) {
         try {
-          const models = await this.listModels({ cwd: os.homedir(), force: false });
+          const models = await this.listModels({
+            cwd: os.homedir(),
+            force: false,
+          });
           modelsValue = String(models.length);
         } catch (error) {
           modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
@@ -1277,7 +1284,9 @@ async function resolveClaudeVersion(
       return null;
     }
 
-    const { stdout } = await execCommand(executable, ["--version"], { timeout: 5_000 });
+    const { stdout } = await execCommand(executable, ["--version"], {
+      timeout: 5_000,
+    });
     return stdout.trim() || null;
   } catch {
     return null;
@@ -1296,7 +1305,11 @@ async function resolveClaudeAuth(
     try {
       return await execCommand(executable, args, { timeout: 5_000 });
     } catch (error) {
-      const err = error as { stdout?: string; stderr?: string; message?: string };
+      const err = error as {
+        stdout?: string;
+        stderr?: string;
+        message?: string;
+      };
       return {
         stdout: err.stdout ?? "",
         stderr: err.stderr ?? err.message ?? "",
@@ -1944,7 +1957,11 @@ class ClaudeAgentSession implements AgentSession {
 
   private buildRewindSuccessMessage(
     targetUserMessageId: string,
-    rewindResult: { filesChanged?: string[]; insertions?: number; deletions?: number },
+    rewindResult: {
+      filesChanged?: string[];
+      insertions?: number;
+      deletions?: number;
+    },
   ): string {
     const fileCount = Array.isArray(rewindResult.filesChanged)
       ? rewindResult.filesChanged.length
@@ -1967,7 +1984,11 @@ class ClaudeAgentSession implements AgentSession {
 
   private async attemptRewind(args: string | undefined): Promise<{
     messageId: string | null;
-    result?: { filesChanged?: string[]; insertions?: number; deletions?: number };
+    result?: {
+      filesChanged?: string[];
+      insertions?: number;
+      deletions?: number;
+    };
     error?: string;
   }> {
     if (typeof args === "string" && args.trim().length > 0) {
@@ -2312,7 +2333,10 @@ class ClaudeAgentSession implements AgentSession {
             },
           });
         } else if (chunk.type === "github_pr" || chunk.type === "github_issue") {
-          content.push({ type: "text", text: renderPromptAttachmentAsText(chunk) });
+          content.push({
+            type: "text",
+            text: renderPromptAttachmentAsText(chunk),
+          });
         }
       }
     } else {
@@ -3284,12 +3308,18 @@ class ClaudeAgentSession implements AgentSession {
       kind,
       input,
       detail: toolDetail,
-      suggestions: options.suggestions?.map((suggestion) => ({ ...suggestion })),
+      suggestions: options.suggestions?.map((suggestion) => ({
+        ...suggestion,
+      })),
       actions: kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 
-    this.pushEvent({ type: "permission_requested", provider: "claude", request });
+    this.pushEvent({
+      type: "permission_requested",
+      provider: "claude",
+      request,
+    });
 
     return await new Promise<PermissionResult>((resolve, reject) => {
       const cleanupFns: Array<() => void> = [];
@@ -3460,7 +3490,7 @@ class ClaudeAgentSession implements AgentSession {
     return path.join(dir, `${sessionId}.jsonl`);
   }
 
-  private convertHistoryEntry(entry: any): AgentTimelineItem[] {
+  private convertHistoryEntry(entry: ClaudeHistoryEntry): AgentTimelineItem[] {
     return convertClaudeHistoryEntry(entry, (content) => this.mapBlocksToTimeline(content));
   }
 
@@ -3536,22 +3566,19 @@ class ClaudeAgentSession implements AgentSession {
     },
   ): void {
     const { items, userTextParts, textMessageType, suppressText } = context;
-    if (
-      !block.text ||
-      block.text === INTERRUPT_TOOL_USE_PLACEHOLDER ||
-      isClaudeTranscriptNoiseText(block.text)
-    ) {
+    const text = typeof block.text === "string" ? block.text : "";
+    if (!text || text === INTERRUPT_TOOL_USE_PLACEHOLDER || isClaudeTranscriptNoiseText(text)) {
       return;
     }
     if (textMessageType === "user_message") {
-      const trimmed = block.text.trim();
+      const trimmed = text.trim();
       if (trimmed) {
         userTextParts.push(trimmed);
       }
       return;
     }
     if (!suppressText) {
-      items.push({ type: "assistant_message", text: block.text });
+      items.push({ type: "assistant_message", text });
     }
   }
 
@@ -3572,7 +3599,7 @@ class ClaudeAgentSession implements AgentSession {
         break;
       case "thinking":
       case "thinking_delta":
-        if (block.thinking && !context.suppressReasoning) {
+        if (typeof block.thinking === "string" && block.thinking && !context.suppressReasoning) {
           context.items.push({ type: "reasoning", text: block.thinking });
         }
         break;
@@ -3619,7 +3646,8 @@ class ClaudeAgentSession implements AgentSession {
   private handleToolResult(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
     const entry =
       typeof block.tool_use_id === "string" ? this.toolUseCache.get(block.tool_use_id) : undefined;
-    const toolName = entry?.name ?? block.tool_name ?? "tool";
+    const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
+    const toolName = entry?.name ?? blockToolName ?? "tool";
     const callId =
       typeof block.tool_use_id === "string" && block.tool_use_id.length > 0
         ? block.tool_use_id
@@ -3665,8 +3693,10 @@ class ClaudeAgentSession implements AgentSession {
       return undefined;
     }
 
-    const server = entry?.server ?? block.server ?? "tool";
-    const tool = entry?.name ?? block.tool_name ?? "tool";
+    const blockServer = typeof block.server === "string" ? block.server : undefined;
+    const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
+    const server = entry?.server ?? blockServer ?? "tool";
+    const tool = entry?.name ?? blockToolName ?? "tool";
     const content = coerceToolResultContentToString(block.content);
     const input = entry?.input;
 
@@ -4122,8 +4152,18 @@ function normalizeHistoryBlocks(content: unknown): ClaudeContentChunk[] | null {
   return null;
 }
 
+interface ClaudeHistoryEntry {
+  type?: unknown;
+  subtype?: unknown;
+  isCompactSummary?: unknown;
+  isSidechain?: unknown;
+  uuid?: unknown;
+  message?: { content?: unknown; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
 function convertClaudeHistoryEntryPreamble(
-  entry: any,
+  entry: ClaudeHistoryEntry,
 ): { shortCircuit: AgentTimelineItem[] } | { proceed: { content: unknown } } {
   if (entry.type === "system" && entry.subtype === "compact_boundary") {
     const compactMetadata = readCompactionMetadata(entry as Record<string, unknown>);
@@ -4168,7 +4208,7 @@ function convertClaudeHistoryEntryPreamble(
 }
 
 export function convertClaudeHistoryEntry(
-  entry: any,
+  entry: ClaudeHistoryEntry,
   mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
 ): AgentTimelineItem[] {
   const preamble = convertClaudeHistoryEntryPreamble(entry);
