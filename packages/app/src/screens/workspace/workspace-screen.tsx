@@ -89,12 +89,16 @@ import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
   WorkspaceTabOptionRow,
+  type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
 import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
-import { buildWorkspaceTabMenuEntries } from "@/screens/workspace/workspace-tab-menu";
+import {
+  buildWorkspaceTabMenuEntries,
+  type WorkspaceTabMenuEntry,
+} from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
   resolveWorkspaceHeaderRenderState,
@@ -289,6 +293,87 @@ function switcherTriggerStyle({ pressed }: { pressed?: boolean }) {
   return [styles.switcherTrigger, Boolean(pressed) && styles.switcherTriggerPressed];
 }
 
+function MobileTabTrailingAccessory({
+  menuTestIDBase,
+  presentationLabel,
+  menuEntries,
+  iconColor,
+  iconSizeSm,
+}: {
+  menuTestIDBase: string;
+  presentationLabel: string;
+  menuEntries: WorkspaceTabMenuEntry[];
+  iconColor: string;
+  iconSizeSm: number;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        testID={`${menuTestIDBase}-trigger`}
+        accessibilityRole="button"
+        accessibilityLabel={`Open menu for ${presentationLabel}`}
+        hitSlop={8}
+        style={mobileTabMenuTriggerStyle}
+      >
+        <Ellipsis size={iconSizeSm} color={iconColor} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="bottom" align="end" width={220} testID={menuTestIDBase}>
+        {menuEntries.map((entry) =>
+          entry.kind === "separator" ? (
+            <DropdownMenuSeparator key={entry.key} />
+          ) : (
+            <MobileTabDropdownMenuItem key={entry.key} entry={entry} iconColor={iconColor} />
+          ),
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function MobileTabDropdownMenuItem({
+  entry,
+  iconColor,
+}: {
+  entry: Extract<WorkspaceTabMenuEntry, { kind: "item" }>;
+  iconColor: string;
+}) {
+  const leading = useMemo(() => {
+    switch (entry.icon) {
+      case "copy":
+        return <Copy size={16} color={iconColor} />;
+      case "rotate-cw":
+        return <RotateCw size={16} color={iconColor} />;
+      case "arrow-left-to-line":
+        return <ArrowLeftToLine size={16} color={iconColor} />;
+      case "arrow-right-to-line":
+        return <ArrowRightToLine size={16} color={iconColor} />;
+      case "copy-x":
+        return <CopyX size={16} color={iconColor} />;
+      case "x":
+        return <X size={16} color={iconColor} />;
+      default:
+        return undefined;
+    }
+  }, [entry.icon, iconColor]);
+  const trailing = useMemo(
+    () => (entry.hint ? <Text style={styles.menuItemHint}>{entry.hint}</Text> : undefined),
+    [entry.hint],
+  );
+  return (
+    <DropdownMenuItem
+      testID={entry.testID}
+      disabled={entry.disabled}
+      destructive={entry.destructive}
+      onSelect={entry.onSelect}
+      tooltip={entry.tooltip}
+      leading={leading}
+      trailing={trailing}
+    >
+      {entry.label}
+    </DropdownMenuItem>
+  );
+}
+
 function MobileWorkspaceTabOption({
   tab,
   tabIndex,
@@ -339,75 +424,43 @@ function MobileWorkspaceTabOption({
     onCloseOtherTabs,
   });
 
+  const iconColor = theme.colors.foregroundMuted;
+  const iconSizeSm = theme.iconSize.sm;
+
+  const fallbackLabel = getFallbackTabOptionLabel(tab);
+  const trailingAccessory = useMemo(
+    () => (
+      <MobileTabTrailingAccessory
+        menuTestIDBase={menuTestIDBase}
+        presentationLabel={fallbackLabel}
+        menuEntries={menuEntries}
+        iconColor={iconColor}
+        iconSizeSm={iconSizeSm}
+      />
+    ),
+    [menuTestIDBase, fallbackLabel, menuEntries, iconColor, iconSizeSm],
+  );
+
+  const renderPresentation = useCallback(
+    (presentation: WorkspaceTabPresentation) => (
+      <WorkspaceTabOptionRow
+        presentation={presentation}
+        selected={selected}
+        active={active}
+        onPress={onPress}
+        trailingAccessory={trailingAccessory}
+      />
+    ),
+    [selected, active, onPress, trailingAccessory],
+  );
+
   return (
     <WorkspaceTabPresentationResolver
       tab={tab}
       serverId={normalizedServerId}
       workspaceId={normalizedWorkspaceId}
     >
-      {(presentation) => (
-        <WorkspaceTabOptionRow
-          presentation={presentation}
-          selected={selected}
-          active={active}
-          onPress={onPress}
-          trailingAccessory={
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                testID={`${menuTestIDBase}-trigger`}
-                accessibilityRole="button"
-                accessibilityLabel={`Open menu for ${presentation.label}`}
-                hitSlop={8}
-                style={mobileTabMenuTriggerStyle}
-              >
-                <Ellipsis size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="bottom" align="end" width={220} testID={menuTestIDBase}>
-                {menuEntries.map((entry) =>
-                  entry.kind === "separator" ? (
-                    <DropdownMenuSeparator key={entry.key} />
-                  ) : (
-                    <DropdownMenuItem
-                      key={entry.key}
-                      testID={entry.testID}
-                      disabled={entry.disabled}
-                      destructive={entry.destructive}
-                      onSelect={entry.onSelect}
-                      tooltip={entry.tooltip}
-                      leading={(() => {
-                        const iconColor = theme.colors.foregroundMuted;
-                        switch (entry.icon) {
-                          case "copy":
-                            return <Copy size={16} color={iconColor} />;
-                          case "rotate-cw":
-                            return <RotateCw size={16} color={iconColor} />;
-                          case "arrow-left-to-line":
-                            return <ArrowLeftToLine size={16} color={iconColor} />;
-                          case "arrow-right-to-line":
-                            return <ArrowRightToLine size={16} color={iconColor} />;
-                          case "copy-x":
-                            return <CopyX size={16} color={iconColor} />;
-                          case "x":
-                            return <X size={16} color={iconColor} />;
-                          default:
-                            return undefined;
-                        }
-                      })()}
-                      trailing={
-                        entry.hint ? (
-                          <Text style={styles.menuItemHint}>{entry.hint}</Text>
-                        ) : undefined
-                      }
-                    >
-                      {entry.label}
-                    </DropdownMenuItem>
-                  ),
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          }
-        />
-      )}
+      {renderPresentation}
     </WorkspaceTabPresentationResolver>
   );
 }
@@ -2275,6 +2328,160 @@ function WorkspaceScreenContent({
     [mainBackgroundColor],
   );
 
+  const menuNewAgentIcon = useMemo(
+    () => <SquarePen size={16} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const menuNewTerminalIcon = useMemo(
+    () => <SquareTerminal size={16} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const menuCopyIcon = useMemo(
+    () => <Copy size={16} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const menuSettingsIcon = useMemo(
+    () => <Settings size={16} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+
+  const headerRight = useMemo(
+    () => (
+      <View style={styles.headerRight}>
+        {!isMobile && workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
+          <WorkspaceScriptsButton
+            serverId={normalizedServerId}
+            workspaceId={normalizedWorkspaceId}
+            scripts={workspaceDescriptor.scripts}
+            liveTerminalIds={liveTerminalIds}
+            onScriptTerminalStarted={handleScriptTerminalStarted}
+            onViewTerminal={handleViewScriptTerminal}
+            hideLabels={showCompactButtonLabels}
+          />
+        ) : null}
+        {!isMobile ? (
+          <WorkspaceOpenInEditorButton
+            serverId={normalizedServerId}
+            cwd={normalizedWorkspaceId}
+            hideLabels={showCompactButtonLabels}
+          />
+        ) : null}
+        {!isMobile && isGitCheckout ? (
+          <>
+            <WorkspaceGitActions
+              serverId={normalizedServerId}
+              cwd={normalizedWorkspaceId}
+              hideLabels={showCompactButtonLabels}
+            />
+            <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+              <TooltipTrigger asChild>
+                <Pressable
+                  testID="workspace-explorer-toggle"
+                  onPress={handleToggleExplorer}
+                  accessibilityRole="button"
+                  accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
+                  accessibilityState={explorerToggleAccessibilityState}
+                  style={explorerToggleStyle}
+                >
+                  {({ hovered, pressed }) => {
+                    const active = isExplorerOpen || hovered || pressed;
+                    const iconColor = active
+                      ? theme.colors.foreground
+                      : theme.colors.foregroundMuted;
+                    return (
+                      <>
+                        <SourceControlPanelIcon size={theme.iconSize.md} color={iconColor} />
+                        {workspaceDescriptor?.diffStat ? (
+                          <DiffStat
+                            additions={workspaceDescriptor.diffStat.additions}
+                            deletions={workspaceDescriptor.diffStat.deletions}
+                          />
+                        ) : null}
+                      </>
+                    );
+                  }}
+                </Pressable>
+              </TooltipTrigger>
+              <TooltipContent
+                testID="workspace-explorer-toggle-tooltip"
+                side="left"
+                align="center"
+                offset={8}
+              >
+                <View style={styles.explorerTooltipRow}>
+                  <Text style={styles.explorerTooltipText}>Toggle explorer</Text>
+                  <Shortcut keys={EXPLORER_TOGGLE_KEYS} style={styles.explorerTooltipShortcut} />
+                </View>
+              </TooltipContent>
+            </Tooltip>
+          </>
+        ) : null}
+        {!isMobile && !isGitCheckout ? (
+          <HeaderToggleButton
+            testID="workspace-explorer-toggle"
+            onPress={handleToggleExplorer}
+            tooltipLabel="Toggle explorer"
+            tooltipKeys={EXPLORER_TOGGLE_KEYS}
+            tooltipSide="left"
+            style={styles.headerActionButton}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
+            accessibilityState={explorerToggleAccessibilityState}
+          >
+            {({ hovered }) => {
+              const color =
+                isExplorerOpen || hovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+              return <PanelRight size={theme.iconSize.md} color={color} />;
+            }}
+          </HeaderToggleButton>
+        ) : null}
+        {isMobile ? (
+          <HeaderToggleButton
+            testID="workspace-explorer-toggle"
+            onPress={handleToggleExplorer}
+            tooltipLabel="Toggle explorer"
+            tooltipKeys={EXPLORER_TOGGLE_KEYS}
+            tooltipSide="left"
+            style={styles.headerActionButton}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
+            accessibilityState={explorerToggleAccessibilityState}
+          >
+            {({ hovered }) => {
+              const color =
+                isExplorerOpen || hovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+              return isGitCheckout ? (
+                <SourceControlPanelIcon size={theme.iconSize.lg} color={color} strokeWidth={1.5} />
+              ) : (
+                <PanelRight size={theme.iconSize.lg} color={color} />
+              );
+            }}
+          </HeaderToggleButton>
+        ) : null}
+      </View>
+    ),
+    [
+      isMobile,
+      workspaceDescriptor,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      liveTerminalIds,
+      handleScriptTerminalStarted,
+      handleViewScriptTerminal,
+      showCompactButtonLabels,
+      isGitCheckout,
+      handleToggleExplorer,
+      isExplorerOpen,
+      explorerToggleAccessibilityState,
+      theme.colors.foreground,
+      theme.colors.foregroundMuted,
+      theme.iconSize.md,
+      theme.iconSize.lg,
+    ],
+  );
+
   return (
     <View style={containerStyle}>
       {isRouteFocused && isWeb && activeTabDescriptor ? (
@@ -2348,16 +2555,14 @@ function WorkspaceScreenContent({
                       <DropdownMenuContent align="start" width={220} testID="workspace-header-menu">
                         <DropdownMenuItem
                           testID="workspace-header-new-agent"
-                          leading={<SquarePen size={16} color={theme.colors.foregroundMuted} />}
+                          leading={menuNewAgentIcon}
                           onSelect={handleCreateDraftTab}
                         >
                           New agent
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           testID="workspace-header-new-terminal"
-                          leading={
-                            <SquareTerminal size={16} color={theme.colors.foregroundMuted} />
-                          }
+                          leading={menuNewTerminalIcon}
                           disabled={
                             createTerminalMutation.isPending || pendingTerminalCreateInput !== null
                           }
@@ -2367,7 +2572,7 @@ function WorkspaceScreenContent({
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           testID="workspace-header-copy-path"
-                          leading={<Copy size={16} color={theme.colors.foregroundMuted} />}
+                          leading={menuCopyIcon}
                           disabled={!isAbsolutePath(normalizedWorkspaceId)}
                           onSelect={handleCopyWorkspacePath}
                         >
@@ -2376,7 +2581,7 @@ function WorkspaceScreenContent({
                         {currentBranchName ? (
                           <DropdownMenuItem
                             testID="workspace-header-copy-branch-name"
-                            leading={<Copy size={16} color={theme.colors.foregroundMuted} />}
+                            leading={menuCopyIcon}
                             onSelect={handleCopyBranchName}
                           >
                             Copy branch name
@@ -2387,7 +2592,7 @@ function WorkspaceScreenContent({
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               testID="workspace-header-show-setup"
-                              leading={<Settings size={16} color={theme.colors.foregroundMuted} />}
+                              leading={menuSettingsIcon}
                               onSelect={handleOpenSetupTab}
                             >
                               Show setup
@@ -2399,136 +2604,7 @@ function WorkspaceScreenContent({
                   </View>
                 </>
               }
-              right={
-                <View style={styles.headerRight}>
-                  {!isMobile && workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
-                    <WorkspaceScriptsButton
-                      serverId={normalizedServerId}
-                      workspaceId={normalizedWorkspaceId}
-                      scripts={workspaceDescriptor.scripts}
-                      liveTerminalIds={liveTerminalIds}
-                      onScriptTerminalStarted={handleScriptTerminalStarted}
-                      onViewTerminal={handleViewScriptTerminal}
-                      hideLabels={showCompactButtonLabels}
-                    />
-                  ) : null}
-                  {!isMobile ? (
-                    <WorkspaceOpenInEditorButton
-                      serverId={normalizedServerId}
-                      cwd={normalizedWorkspaceId}
-                      hideLabels={showCompactButtonLabels}
-                    />
-                  ) : null}
-                  {!isMobile && isGitCheckout ? (
-                    <>
-                      <WorkspaceGitActions
-                        serverId={normalizedServerId}
-                        cwd={normalizedWorkspaceId}
-                        hideLabels={showCompactButtonLabels}
-                      />
-                      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-                        <TooltipTrigger asChild>
-                          <Pressable
-                            testID="workspace-explorer-toggle"
-                            onPress={handleToggleExplorer}
-                            accessibilityRole="button"
-                            accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
-                            accessibilityState={explorerToggleAccessibilityState}
-                            style={explorerToggleStyle}
-                          >
-                            {({ hovered, pressed }) => {
-                              const active = isExplorerOpen || hovered || pressed;
-                              const iconColor = active
-                                ? theme.colors.foreground
-                                : theme.colors.foregroundMuted;
-                              return (
-                                <>
-                                  <SourceControlPanelIcon
-                                    size={theme.iconSize.md}
-                                    color={iconColor}
-                                  />
-                                  {workspaceDescriptor?.diffStat ? (
-                                    <DiffStat
-                                      additions={workspaceDescriptor.diffStat.additions}
-                                      deletions={workspaceDescriptor.diffStat.deletions}
-                                    />
-                                  ) : null}
-                                </>
-                              );
-                            }}
-                          </Pressable>
-                        </TooltipTrigger>
-                        <TooltipContent
-                          testID="workspace-explorer-toggle-tooltip"
-                          side="left"
-                          align="center"
-                          offset={8}
-                        >
-                          <View style={styles.explorerTooltipRow}>
-                            <Text style={styles.explorerTooltipText}>Toggle explorer</Text>
-                            <Shortcut
-                              keys={EXPLORER_TOGGLE_KEYS}
-                              style={styles.explorerTooltipShortcut}
-                            />
-                          </View>
-                        </TooltipContent>
-                      </Tooltip>
-                    </>
-                  ) : null}
-                  {!isMobile && !isGitCheckout ? (
-                    <HeaderToggleButton
-                      testID="workspace-explorer-toggle"
-                      onPress={handleToggleExplorer}
-                      tooltipLabel="Toggle explorer"
-                      tooltipKeys={EXPLORER_TOGGLE_KEYS}
-                      tooltipSide="left"
-                      style={styles.headerActionButton}
-                      accessible
-                      accessibilityRole="button"
-                      accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
-                      accessibilityState={explorerToggleAccessibilityState}
-                    >
-                      {({ hovered }) => {
-                        const color =
-                          isExplorerOpen || hovered
-                            ? theme.colors.foreground
-                            : theme.colors.foregroundMuted;
-                        return <PanelRight size={theme.iconSize.md} color={color} />;
-                      }}
-                    </HeaderToggleButton>
-                  ) : null}
-                  {isMobile ? (
-                    <HeaderToggleButton
-                      testID="workspace-explorer-toggle"
-                      onPress={handleToggleExplorer}
-                      tooltipLabel="Toggle explorer"
-                      tooltipKeys={EXPLORER_TOGGLE_KEYS}
-                      tooltipSide="left"
-                      style={styles.headerActionButton}
-                      accessible
-                      accessibilityRole="button"
-                      accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
-                      accessibilityState={explorerToggleAccessibilityState}
-                    >
-                      {({ hovered }) => {
-                        const color =
-                          isExplorerOpen || hovered
-                            ? theme.colors.foreground
-                            : theme.colors.foregroundMuted;
-                        return isGitCheckout ? (
-                          <SourceControlPanelIcon
-                            size={theme.iconSize.lg}
-                            color={color}
-                            strokeWidth={1.5}
-                          />
-                        ) : (
-                          <PanelRight size={theme.iconSize.lg} color={color} />
-                        );
-                      }}
-                    </HeaderToggleButton>
-                  ) : null}
-                </View>
-              }
+              right={headerRight}
             />
           )}
 

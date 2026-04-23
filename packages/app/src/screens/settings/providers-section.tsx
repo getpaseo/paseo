@@ -98,23 +98,35 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
 
   const handleCloseDiagnostic = useCallback(() => setDiagnosticProvider(null), []);
 
-  const refreshAction =
-    hasServer && isConnected ? (
-      <Pressable
-        onPress={handleRefresh}
-        disabled={providerRefreshInFlight}
-        hitSlop={8}
-        style={settingsStyles.sectionHeaderLink}
-        accessibilityRole="button"
-        accessibilityLabel={providerRefreshInFlight ? "Refreshing providers" : "Refresh providers"}
-      >
-        {providerRefreshInFlight ? (
-          <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-        ) : (
-          <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-        )}
-      </Pressable>
-    ) : undefined;
+  const refreshAction = useMemo(
+    () =>
+      hasServer && isConnected ? (
+        <Pressable
+          onPress={handleRefresh}
+          disabled={providerRefreshInFlight}
+          hitSlop={8}
+          style={settingsStyles.sectionHeaderLink}
+          accessibilityRole="button"
+          accessibilityLabel={
+            providerRefreshInFlight ? "Refreshing providers" : "Refresh providers"
+          }
+        >
+          {providerRefreshInFlight ? (
+            <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          ) : (
+            <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          )}
+        </Pressable>
+      ) : undefined,
+    [
+      hasServer,
+      isConnected,
+      handleRefresh,
+      providerRefreshInFlight,
+      theme.iconSize.sm,
+      theme.colors.foregroundMuted,
+    ],
+  );
 
   return (
     <>

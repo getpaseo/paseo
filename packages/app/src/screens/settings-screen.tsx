@@ -206,12 +206,12 @@ function ThemeMenuItem({
   const handleSelect = useCallback(() => {
     onChange(themeValue);
   }, [onChange, themeValue]);
+  const leading = useMemo(
+    () => <ThemeIcon theme={themeValue} size={iconSize} color={iconColor} />,
+    [themeValue, iconSize, iconColor],
+  );
   return (
-    <DropdownMenuItem
-      selected={selected}
-      onSelect={handleSelect}
-      leading={<ThemeIcon theme={themeValue} size={iconSize} color={iconColor} />}
-    >
+    <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leading}>
       {THEME_LABELS[themeValue]}
     </DropdownMenuItem>
   );

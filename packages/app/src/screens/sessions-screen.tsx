@@ -51,6 +51,18 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
     router.navigate(buildHostOpenProjectRoute(serverId));
   }, [serverId]);
 
+  const listFooterComponent = useMemo(
+    () =>
+      hasMore ? (
+        <View style={styles.footer}>
+          <Button variant="ghost" onPress={loadMore} disabled={isLoadingMore}>
+            {isLoadingMore ? "Loading..." : "Load more"}
+          </Button>
+        </View>
+      ) : null,
+    [hasMore, loadMore, isLoadingMore],
+  );
+
   return (
     <View style={styles.container}>
       <MenuHeader title="Sessions" />
@@ -71,15 +83,7 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
           showCheckoutInfo={false}
           isRefreshing={isManualRefresh && isRevalidating}
           onRefresh={handleRefresh}
-          listFooterComponent={
-            hasMore ? (
-              <View style={styles.footer}>
-                <Button variant="ghost" onPress={loadMore} disabled={isLoadingMore}>
-                  {isLoadingMore ? "Loading..." : "Load more"}
-                </Button>
-              </View>
-            ) : null
-          }
+          listFooterComponent={listFooterComponent}
           showAttentionIndicator={false}
         />
       )}

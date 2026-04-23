@@ -571,6 +571,11 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
       });
   }, [daemonClient, host.label, host.serverId, isHostConnected, waitForDaemonRestart]);
 
+  const restartIcon = useMemo(
+    () => <RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+
   return (
     <View style={settingsStyles.card} testID="host-page-restart-card">
       <View style={settingsStyles.row}>
@@ -583,7 +588,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
         <Button
           variant="outline"
           size="sm"
-          leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
+          leftIcon={restartIcon}
           onPress={handleRestart}
           disabled={isRestarting || !daemonClient || !isConnected}
           testID="host-page-restart-button"
@@ -697,6 +702,11 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
       .finally(() => setIsRemoving(false));
   }, [host.serverId, onRemoved, removeHost]);
 
+  const removeIcon = useMemo(
+    () => <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />,
+    [theme.iconSize.sm, theme.colors.destructive],
+  );
+
   return (
     <SettingsSection title="Danger zone" testID="host-page-remove-host-card">
       <View style={settingsStyles.card}>
@@ -710,7 +720,7 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
           <Button
             variant="outline"
             size="sm"
-            leftIcon={<Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />}
+            leftIcon={removeIcon}
             textStyle={destructiveTextStyle}
             onPress={handleOpenConfirm}
             testID="host-page-remove-host-button"
