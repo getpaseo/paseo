@@ -106,11 +106,13 @@ function ModifierButton({ modifier, active, onToggle }: ModifierButtonProps) {
     ],
     [active],
   );
+  const textStyle = useMemo(
+    () => [styles.keyButtonText, active && styles.keyButtonTextActive],
+    [active],
+  );
   return (
     <Pressable testID={`terminal-key-${modifier}`} onPress={handlePress} style={pressableStyle}>
-      <Text style={[styles.keyButtonText, active && styles.keyButtonTextActive]}>
-        {MODIFIER_LABELS[modifier]}
-      </Text>
+      <Text style={textStyle}>{MODIFIER_LABELS[modifier]}</Text>
     </Pressable>
   );
 }
@@ -628,16 +630,7 @@ export function TerminalPane({
           <View style={styles.terminalGestureContainer}>
             <TerminalEmulator
               ref={emulatorRef}
-              dom={{
-                style: { flex: 1 },
-                matchContents: false,
-                scrollEnabled: true,
-                nestedScrollEnabled: true,
-                overScrollMode: "never",
-                bounces: false,
-                automaticallyAdjustContentInsets: false,
-                contentInsetAdjustmentBehavior: "never",
-              }}
+              dom={TERMINAL_EMULATOR_DOM_PROPS}
               streamKey={`${scopeKey}:${terminalId}`}
               testId="terminal-surface"
               xtermTheme={xtermTheme}
@@ -787,3 +780,14 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
   },
 }));
+
+const TERMINAL_EMULATOR_DOM_PROPS = {
+  style: { flex: 1 },
+  matchContents: false,
+  scrollEnabled: true,
+  nestedScrollEnabled: true,
+  overScrollMode: "never" as const,
+  bounces: false,
+  automaticallyAdjustContentInsets: false,
+  contentInsetAdjustmentBehavior: "never" as const,
+};

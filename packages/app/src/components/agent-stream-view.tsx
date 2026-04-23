@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type ReactNode,
 } from "react";
 import {
   View,
@@ -535,7 +536,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             (nextItem === undefined && agent.status !== "running"));
 
         return (
-          <View style={[stylesheet.streamItemWrapper, { marginBottom: gapBelow }]}>
+          <StreamItemWrapper gapBelow={gapBelow}>
             {content}
             {isEndOfAssistantTurn ? (
               <TurnCopyButtonSlot
@@ -544,7 +545,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 startIndex={index}
               />
             ) : null}
-          </View>
+          </StreamItemWrapper>
         );
       },
       [getGapBetween, renderStreamItemContent, agent.status, streamRenderStrategy],
@@ -916,6 +917,15 @@ function PermissionRequestCard({
   const isPlanRequest = request.kind === "plan";
   const title = isPlanRequest ? "Plan" : (request.title ?? request.name ?? "Permission Required");
   const description = request.description ?? "";
+  const resolvedToolCallDetail = useMemo(
+    () =>
+      request.detail ?? {
+        type: "unknown" as const,
+        input: request.input ?? null,
+        output: null,
+      },
+    [request.detail, request.input],
+  );
   const resolvedActions = useMemo((): AgentPermissionAction[] => {
     if (request.kind === "question") {
       return [];
@@ -1121,13 +1131,7 @@ function PermissionRequestCard({
 
       {!isPlanRequest ? (
         <ToolCallDetailsContent
-          detail={
-            request.detail ?? {
-              type: "unknown",
-              input: request.input ?? null,
-              output: null,
-            }
-          }
+          detail={resolvedToolCallDetail}
           maxHeight={200}
         />
       ) : null}
@@ -1317,3 +1321,16 @@ const permissionStyles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
   },
 }));
+
+interface StreamItemWrapperProps {
+  gapBelow: number;
+  children: ReactNode;
+}
+
+function StreamItemWrapper({ gapBelow, children }: StreamItemWrapperProps) {
+  const wrapperStyle = useMemo(
+    () => [stylesheet.streamItemWrapper, { marginBottom: gapBelow }],
+    [gapBelow],
+  );
+  return <View style={wrapperStyle}>{children}</View>;
+}

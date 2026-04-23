@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ActivityIndicator,
@@ -146,29 +146,21 @@ function TreeRowItem({
     <Pressable onPress={handlePress} style={pressableStyle}>
       {depth > 0 &&
         Array.from({ length: depth }, (_, i) => (
-          <View
-            key={i}
-            style={[
-              styles.indentGuide,
-              {
-                left: theme.spacing[3] + i * INDENT_PER_LEVEL + 4,
-              },
-            ]}
-          />
+          <IndentGuide key={i} index={i} />
         ))}
       <View style={styles.entryInfo}>
         <View style={styles.entryIcon}>
-          {isDirectory ? (
-            loading ? (
-              <ActivityIndicator size="small" />
-            ) : (
+          {(() => {
+            if (!isDirectory) {
+              return <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />;
+            }
+            if (loading) return <ActivityIndicator size="small" />;
+            return (
               <View style={chevronStyle}>
                 <ChevronRight size={16} color={theme.colors.foregroundMuted} />
               </View>
-            )
-          ) : (
-            <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />
-          )}
+            );
+          })()}
         </View>
         <Text style={styles.entryName} numberOfLines={1}>
           {entry.name}
@@ -540,77 +532,84 @@ export function FileExplorerPane({
     );
   }
 
-  return (
-    <View style={styles.container}>
-      {error ? (
-        <View style={styles.centerState}>
-          <Text style={styles.errorText}>{error}</Text>
-          <View style={styles.errorActions}>
-            {showBackFromError ? (
-              <Pressable style={styles.retryButton} onPress={handleBackFromError}>
-                <Text style={styles.retryButtonText}>Back</Text>
-              </Pressable>
-            ) : null}
-            <Pressable style={styles.retryButton} onPress={handleRetry}>
-              <Text style={styles.retryButtonText}>Retry</Text>
+  let paneContent: ReactNode;
+  if (error) {
+    paneContent = (
+      <View style={styles.centerState}>
+        <Text style={styles.errorText}>{error}</Text>
+        <View style={styles.errorActions}>
+          {showBackFromError ? (
+            <Pressable style={styles.retryButton} onPress={handleBackFromError}>
+              <Text style={styles.retryButtonText}>Back</Text>
             </Pressable>
-          </View>
+          ) : null}
+          <Pressable style={styles.retryButton} onPress={handleRetry}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </Pressable>
         </View>
-      ) : showInitialLoading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator size="small" />
-          <Text style={styles.loadingText}>Loading files…</Text>
+      </View>
+    );
+  } else if (showInitialLoading) {
+    paneContent = (
+      <View style={styles.centerState}>
+        <ActivityIndicator size="small" />
+        <Text style={styles.loadingText}>Loading files…</Text>
+      </View>
+    );
+  } else if (treeRows.length === 0) {
+    paneContent = (
+      <View style={styles.centerState}>
+        <Text style={styles.emptyText}>No files</Text>
+      </View>
+    );
+  } else {
+    paneContent = (
+      <View style={TREE_PANE_CONTAINER_STYLE}>
+        <View style={styles.paneHeader} testID="files-pane-header">
+          <Pressable onPress={handleSortCycle} style={sortTriggerStyle}>
+            <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
+            <ChevronDown size={12} color={theme.colors.foregroundMuted} />
+          </Pressable>
+          <Pressable
+            onPress={handleRefresh}
+            disabled={isRefreshFetching}
+            hitSlop={8}
+            style={iconButtonStyle}
+            accessibilityRole="button"
+            accessibilityLabel={isRefreshFetching ? "Refreshing files" : "Refresh files"}
+          >
+            <View style={styles.refreshIcon}>
+              {isRefreshFetching ? (
+                <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              ) : (
+                <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              )}
+            </View>
+          </Pressable>
         </View>
-      ) : treeRows.length === 0 ? (
-        <View style={styles.centerState}>
-          <Text style={styles.emptyText}>No files</Text>
-        </View>
-      ) : (
-        <View style={[styles.treePane, styles.treePaneFill]}>
-          <View style={styles.paneHeader} testID="files-pane-header">
-            <Pressable onPress={handleSortCycle} style={sortTriggerStyle}>
-              <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
-              <ChevronDown size={12} color={theme.colors.foregroundMuted} />
-            </Pressable>
-            <Pressable
-              onPress={handleRefresh}
-              disabled={isRefreshFetching}
-              hitSlop={8}
-              style={iconButtonStyle}
-              accessibilityRole="button"
-              accessibilityLabel={isRefreshFetching ? "Refreshing files" : "Refresh files"}
-            >
-              <View style={styles.refreshIcon}>
-                {isRefreshFetching ? (
-                  <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-                ) : (
-                  <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-                )}
-              </View>
-            </Pressable>
-          </View>
-          <FlatList
-            ref={treeListRef}
-            style={styles.treeList}
-            data={treeRows}
-            renderItem={renderTreeRow}
-            keyExtractor={treeRowKeyExtractor}
-            testID="file-explorer-tree-scroll"
-            contentContainerStyle={styles.entriesContent}
-            onLayout={scrollbar.onLayout}
-            onScroll={scrollbar.onScroll}
-            onContentSizeChange={scrollbar.onContentSizeChange}
-            scrollEventThrottle={16}
-            showsVerticalScrollIndicator={!showDesktopWebScrollbar}
-            initialNumToRender={24}
-            maxToRenderPerBatch={40}
-            windowSize={12}
-          />
-          {scrollbar.overlay}
-        </View>
-      )}
-    </View>
-  );
+        <FlatList
+          ref={treeListRef}
+          style={styles.treeList}
+          data={treeRows}
+          renderItem={renderTreeRow}
+          keyExtractor={treeRowKeyExtractor}
+          testID="file-explorer-tree-scroll"
+          contentContainerStyle={styles.entriesContent}
+          onLayout={scrollbar.onLayout}
+          onScroll={scrollbar.onScroll}
+          onContentSizeChange={scrollbar.onContentSizeChange}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+          initialNumToRender={24}
+          maxToRenderPerBatch={40}
+          windowSize={12}
+        />
+        {scrollbar.overlay}
+      </View>
+    );
+  }
+
+  return <View style={styles.container}>{paneContent}</View>;
 }
 
 function sortEntries(entries: ExplorerEntry[], sortOption: SortOption): ExplorerEntry[] {
@@ -959,3 +958,21 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
   },
 }));
+
+const TREE_PANE_CONTAINER_STYLE = [styles.treePane, styles.treePaneFill];
+
+interface IndentGuideProps {
+  index: number;
+}
+
+function IndentGuide({ index }: IndentGuideProps) {
+  const { theme } = useUnistyles();
+  const guideStyle = useMemo(
+    () => [
+      styles.indentGuide,
+      { left: theme.spacing[3] + index * INDENT_PER_LEVEL + 4 },
+    ],
+    [index, theme.spacing],
+  );
+  return <View style={guideStyle} />;
+}

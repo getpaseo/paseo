@@ -456,10 +456,14 @@ function ControlledStatusBar({
     [canSelectMode, disabled],
   );
 
+  const sheetSelectStyle = useMemo(
+    () => [styles.sheetSelect, modelDisabled && styles.disabledSheetSelect],
+    [modelDisabled],
+  );
   const renderSheetModelTrigger = useCallback(
     ({ selectedModelLabel }: { selectedModelLabel: string }) => (
       <View
-        style={[styles.sheetSelect, modelDisabled && styles.disabledSheetSelect]}
+        style={sheetSelectStyle}
         pointerEvents="none"
         testID="agent-preferences-model"
       >
@@ -470,7 +474,7 @@ function ControlledStatusBar({
         <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
       </View>
     ),
-    [ProviderIcon, modelDisabled, theme.colors.foregroundMuted, theme.iconSize.md],
+    [ProviderIcon, sheetSelectStyle, theme.colors.foregroundMuted, theme.iconSize.md],
   );
 
   if (!hasAnyControl) {
@@ -1353,6 +1357,15 @@ export function DraftAgentStatusBar({
     selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
   const hasSelectedProvider = selectedProvider !== null;
 
+  const modelOptions = useMemo<StatusOption[]>(
+    () =>
+      models.map((model) => ({
+        id: model.id,
+        label: model.label,
+      })),
+    [models],
+  );
+
   const handleToggleFavorite = useCallback(
     (provider: string, modelId: string) => {
       void updatePreferences((current) =>
@@ -1399,11 +1412,6 @@ export function DraftAgentStatusBar({
       </View>
     );
   }
-
-  const modelOptions: StatusOption[] = models.map((model) => ({
-    id: model.id,
-    label: model.label,
-  }));
 
   return (
     <ControlledStatusBar

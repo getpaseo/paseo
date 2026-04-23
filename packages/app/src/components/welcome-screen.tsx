@@ -283,27 +283,9 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           </View>
 
           <View style={styles.actions}>
-            {actions.map((action) => {
-              const Icon = action.icon;
-              return (
-                <Pressable
-                  key={action.key}
-                  style={[styles.actionButton, action.primary ? styles.actionButtonPrimary : null]}
-                  onPress={action.onPress}
-                  testID={action.testID}
-                >
-                  <Icon
-                    size={18}
-                    color={action.primary ? theme.colors.accentForeground : theme.colors.foreground}
-                  />
-                  <Text
-                    style={[styles.actionText, action.primary ? styles.actionTextPrimary : null]}
-                  >
-                    {action.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
+            {actions.map((action) => (
+              <WelcomeActionButton key={action.key} action={action} />
+            ))}
           </View>
 
           <Button
@@ -332,5 +314,31 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
         />
       </ScrollView>
     </View>
+  );
+}
+
+interface WelcomeActionButtonProps {
+  action: WelcomeAction;
+}
+
+function WelcomeActionButton({ action }: WelcomeActionButtonProps) {
+  const { theme } = useUnistyles();
+  const Icon = action.icon;
+  const buttonStyle = useMemo(
+    () => [styles.actionButton, action.primary ? styles.actionButtonPrimary : null],
+    [action.primary],
+  );
+  const textStyle = useMemo(
+    () => [styles.actionText, action.primary ? styles.actionTextPrimary : null],
+    [action.primary],
+  );
+  return (
+    <Pressable style={buttonStyle} onPress={action.onPress} testID={action.testID}>
+      <Icon
+        size={18}
+        color={action.primary ? theme.colors.accentForeground : theme.colors.foreground}
+      />
+      <Text style={textStyle}>{action.label}</Text>
+    </Pressable>
   );
 }
