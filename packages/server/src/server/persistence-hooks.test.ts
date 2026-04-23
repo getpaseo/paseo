@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import { describe, expect, test, vi } from "vitest";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import { buildConfigOverrides, buildSessionConfig } from "./persistence-hooks.js";
@@ -6,7 +7,7 @@ const testLogger = {
   child: () => testLogger,
   error: vi.fn(),
   warn: vi.fn(),
-} as any;
+} as unknown as Logger;
 
 function createRecord(overrides?: Partial<StoredAgentRecord>): StoredAgentRecord {
   const now = new Date().toISOString();
