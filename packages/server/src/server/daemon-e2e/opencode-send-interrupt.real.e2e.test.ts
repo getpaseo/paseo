@@ -120,13 +120,11 @@ async function approvePendingPermissions(
 ): Promise<void> {
   const snapshot = await client.fetchAgent(agentId).catch(() => null);
   const pending = snapshot?.agent.pendingPermissions ?? [];
-  for (const permission of pending) {
-    if (handledPermissionIds.has(permission.id)) {
-      continue;
-    }
+  const toApprove = pending.filter((permission) => !handledPermissionIds.has(permission.id));
+  for (const permission of toApprove) {
     handledPermissionIds.add(permission.id);
-    await allowPermission(client, agentId, permission);
   }
+  await Promise.all(toApprove.map((permission) => allowPermission(client, agentId, permission)));
 }
 
 async function waitForRunningBashToolCall(
