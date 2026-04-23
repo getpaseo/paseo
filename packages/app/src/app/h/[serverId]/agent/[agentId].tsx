@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import { useSessionStore } from "@/stores/session-store";
 import { useResolveWorkspaceIdByCwd } from "@/stores/session-store-hooks";
@@ -44,7 +44,7 @@ function HostAgentReadyRouteContent() {
     }
     if (!serverId || !agentId) {
       redirectedRef.current = true;
-      router.replace("/" as any);
+      router.replace("/" as Href);
       return;
     }
 
@@ -55,7 +55,7 @@ function HostAgentReadyRouteContent() {
           serverId,
           workspaceId: resolvedWorkspaceId,
           target: { kind: "agent", agentId },
-        }) as any,
+        }) as Href,
       );
     }
   }, [agentId, resolvedWorkspaceId, router, serverId]);
@@ -107,7 +107,7 @@ function HostAgentReadyRouteContent() {
               serverId,
               workspaceId,
               target: { kind: "agent", agentId },
-            }) as any,
+            }) as Href,
           );
           return;
         }

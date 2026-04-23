@@ -18,6 +18,7 @@ vi.mock("@react-native-async-storage/async-storage", () => {
 import {
   buildExplorerCheckoutKey,
   resolveExplorerTabForCheckout,
+  type ExplorerTab,
 } from "@/stores/explorer-tab-memory";
 import {
   selectIsAgentListOpen,
@@ -108,7 +109,7 @@ describe("panel-store explorer tab resolution", () => {
         cwd,
         isGit: true,
         explorerTabByCheckout: {
-          [key]: "terminals" as any,
+          [key]: "terminals" as unknown as ExplorerTab,
         },
       }),
     ).toBe("changes");

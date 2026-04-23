@@ -9,10 +9,14 @@ import { isWeb } from "@/constants/platform";
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
 
 function getExpoProjectId(): string | null {
-  const fromEas = (Constants as any)?.easConfig?.projectId;
+  const constants = Constants as unknown as {
+    easConfig?: { projectId?: unknown };
+    expoConfig?: { extra?: { eas?: { projectId?: unknown } } };
+  };
+  const fromEas = constants?.easConfig?.projectId;
   if (typeof fromEas === "string" && fromEas.trim()) return fromEas.trim();
 
-  const fromExtra = (Constants as any)?.expoConfig?.extra?.eas?.projectId;
+  const fromExtra = constants?.expoConfig?.extra?.eas?.projectId;
   if (typeof fromExtra === "string" && fromExtra.trim()) return fromExtra.trim();
 
   return null;

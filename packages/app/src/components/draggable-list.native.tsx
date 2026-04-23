@@ -85,8 +85,8 @@ export function DraggableList<T>({
     containerStyle ?? (scrollEnabled ? SCROLL_ENABLED_FLEX_STYLE : undefined);
   const shouldShowRefreshControl = showRefreshControl && !nestable;
   const ListComponent: typeof DraggableFlatList = (
-    nestable ? (NestableDraggableFlatList as any) : DraggableFlatList
-  ) as any;
+    nestable ? (NestableDraggableFlatList as unknown) : DraggableFlatList
+  ) as typeof DraggableFlatList;
 
   const refreshControl = useMemo(
     () =>

@@ -24,6 +24,9 @@ import {
 } from "@server/shared/agent-attention-notification";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type { DaemonClient } from "@server/client/daemon-client";
+import type { AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
+import type { GitSetupOptions } from "@server/shared/messages";
+import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
@@ -1629,11 +1632,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       worktreeName,
       requestId,
     }: {
-      config: any;
+      config: AgentSessionConfig;
       initialPrompt: string;
       images?: AttachmentMetadata[];
       attachments?: AgentAttachment[];
-      git?: any;
+      git?: GitSetupOptions;
       worktreeName?: string;
       requestId?: string;
     }) => {
@@ -1704,7 +1707,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
 
   const _respondToPermission = useCallback(
-    (agentId: string, requestId: string, response: any) => {
+    (agentId: string, requestId: string, response: AgentPermissionResponse) => {
       if (!client) {
         console.warn("[Session] respondToPermission skipped: daemon unavailable");
         return;

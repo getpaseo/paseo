@@ -260,7 +260,10 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       // isn't available (e.g., Playwright tests with a stubbed getUserMedia).
     }
 
-    const RecorderCtor = typeof window !== "undefined" ? (window as any).MediaRecorder : undefined;
+    const RecorderCtor =
+      typeof window !== "undefined"
+        ? (window as Window & { MediaRecorder?: typeof MediaRecorder }).MediaRecorder
+        : undefined;
     if (!RecorderCtor) {
       throw new Error("MediaRecorder unavailable");
     }
@@ -277,7 +280,7 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       stoppedReject: null,
     };
 
-    recorder.ondataavailable = (event: any) => {
+    recorder.ondataavailable = (event: BlobEvent) => {
       const data: Blob | undefined = event?.data;
       if (data) {
         recorderRefs.audioChunks.push(data);

@@ -189,8 +189,11 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (error: any) {
-      throw new Error(`Failed to access microphone: ${error?.message ?? error}`, { cause: error });
+    } catch (error) {
+      throw new Error(
+        `Failed to access microphone: ${(error as { message?: string })?.message ?? String(error)}`,
+        { cause: error },
+      );
     }
 
     try {
@@ -223,11 +226,14 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
     let recorder: MediaRecorder;
     try {
       recorder = new MediaRecorder(stream, recorderOptions);
-    } catch (error: any) {
+    } catch (error) {
       cleanupStream();
-      throw new Error(`Failed to initialize recorder: ${error?.message ?? error}`, {
-        cause: error,
-      });
+      throw new Error(
+        `Failed to initialize recorder: ${(error as { message?: string })?.message ?? String(error)}`,
+        {
+          cause: error,
+        },
+      );
     }
 
     mediaRecorderRef.current = recorder;

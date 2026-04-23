@@ -283,7 +283,7 @@ export function Autocomplete({
   );
 }
 
-const styles = StyleSheet.create(((theme: Theme) => ({
+const styles = StyleSheet.create((theme: Theme) => ({
   outerWrapper: {
     gap: theme.spacing[1],
   },
@@ -385,4 +385,4 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
-})) as any) as Record<string, any>;
+})) as unknown as Record<string, object>;

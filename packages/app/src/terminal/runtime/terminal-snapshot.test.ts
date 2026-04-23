@@ -62,7 +62,16 @@ function extractState(terminal: ClientTerminal | HeadlessTerminal): SnapshotStat
 
 function extractCursorState(terminal: ClientTerminal | HeadlessTerminal): SnapshotState["cursor"] {
   const buffer = terminal.buffer.active;
-  const coreService = (terminal as any)._core?.coreService;
+  const coreService = (
+    terminal as unknown as {
+      _core?: {
+        coreService?: {
+          decPrivateModes?: { cursorStyle?: string; cursorBlink?: boolean };
+          isCursorHidden?: boolean;
+        };
+      };
+    }
+  )._core?.coreService;
   const cursorStyle = coreService?.decPrivateModes?.cursorStyle;
   const normalizedCursorStyle =
     cursorStyle === "block" || cursorStyle === "underline" || cursorStyle === "bar"

@@ -59,7 +59,7 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
   );
 }
 
-const styles = StyleSheet.create(((theme: Theme) => ({
+const styles = StyleSheet.create((theme: Theme) => ({
   container: {
     flexDirection: "column",
     position: "relative",
@@ -99,4 +99,4 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
   },
-})) as any) as Record<string, any>;
+})) as unknown as Record<string, object>;

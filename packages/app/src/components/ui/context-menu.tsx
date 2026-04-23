@@ -175,7 +175,17 @@ function computePosition({
 }
 
 function coerceEventPoint(event: unknown): { pageX: number; pageY: number } | null {
-  const nativeEvent: any = (event as any)?.nativeEvent ?? event;
+  const wrapper = event as
+    | {
+        nativeEvent?: { pageX?: number; pageY?: number; clientX?: number; clientY?: number };
+        pageX?: number;
+        pageY?: number;
+        clientX?: number;
+        clientY?: number;
+      }
+    | null
+    | undefined;
+  const nativeEvent = wrapper?.nativeEvent ?? wrapper;
   const pageX = nativeEvent?.pageX;
   const pageY = nativeEvent?.pageY;
   if (typeof pageX === "number" && typeof pageY === "number") {
@@ -315,7 +325,7 @@ export function ContextMenuTrigger({
       if (isNative) {
         return;
       }
-      const e: any = event;
+      const e = event as { preventDefault?: () => void; stopPropagation?: () => void } | undefined;
       e?.preventDefault?.();
       e?.stopPropagation?.();
       openAtEvent(event as GestureResponderEvent);

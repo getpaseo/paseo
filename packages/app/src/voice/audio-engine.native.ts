@@ -98,17 +98,17 @@ export function createAudioEngine(
 
   const microphoneSubscription = native.addExpoTwoWayAudioEventListener(
     "onMicrophoneData",
-    (event: any) => {
+    (event: { data: Uint8Array }) => {
       if (!refs.captureActive || refs.muted) {
         return;
       }
-      const pcm = event.data as Uint8Array;
+      const pcm = event.data;
       callbacks.onCaptureData(pcm);
     },
   );
   const volumeSubscription = native.addExpoTwoWayAudioEventListener(
     "onInputVolumeLevelData",
-    (event: any) => {
+    (event: { data: number }) => {
       if (!refs.captureActive) {
         return;
       }

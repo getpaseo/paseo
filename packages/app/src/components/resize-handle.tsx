@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { View } from "react-native";
+import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 export interface ResizeHandleProps {
@@ -32,8 +32,8 @@ export function ResizeHandle({
   const highlighted = active || dragging;
 
   const handlePointerDown = useCallback(
-    (event: any) => {
-      const hitAreaElement = event.currentTarget as HTMLElement | null;
+    (event: RNPointerEvent) => {
+      const hitAreaElement = event.currentTarget as unknown as HTMLElement | null;
       const containerElement = hitAreaElement?.parentElement?.parentElement ?? null;
       if (!containerElement) {
         return;
@@ -49,7 +49,8 @@ export function ResizeHandle({
 
       pointerStateRef.current = {
         containerSize,
-        pointerStart: direction === "horizontal" ? event.clientX : event.clientY,
+        pointerStart:
+          direction === "horizontal" ? event.nativeEvent.clientX : event.nativeEvent.clientY,
         leftSize: sizes[index] ?? 0,
         rightSize: sizes[index + 1] ?? 0,
       };
@@ -129,7 +130,7 @@ export function ResizeHandle({
       direction === "horizontal" ? styles.hitAreaHorizontal : styles.hitAreaVertical,
       {
         cursor: direction === "horizontal" ? "col-resize" : "row-resize",
-      } as any,
+      } as object,
     ],
     [direction],
   );

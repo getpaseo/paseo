@@ -150,11 +150,11 @@ vi.mock("@/components/ui/tooltip", () => ({
   }: {
     asChild?: boolean;
     children: React.ReactNode | ((state: { hovered: boolean }) => React.ReactNode);
-  } & Record<string, any>) =>
+  } & Record<string, unknown>) =>
     asChild ? (
       children
     ) : (
-      <button type="button" aria-label={props.accessibilityLabel}>
+      <button type="button" aria-label={props.accessibilityLabel as string | undefined}>
         {typeof children === "function" ? children({ hovered: false }) : children}
       </button>
     ),

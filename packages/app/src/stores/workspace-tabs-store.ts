@@ -405,36 +405,36 @@ export const useWorkspaceTabsStore = create<WorkspaceTabsState>()(
         const legacy = persistedState as
           | {
               version?: number;
-              state?: any;
+              state?: unknown;
               openTabsByWorkspace?: Record<string, WorkspaceTab[]>;
               uiTabsByWorkspace?: Record<string, WorkspaceTab[]>;
               focusedTabIdByWorkspace?: Record<string, string>;
               tabOrderByWorkspace?: Record<string, string[]>;
-              lastFocusedTabByWorkspace?: Record<string, any>;
+              lastFocusedTabByWorkspace?: Record<string, unknown>;
               tabOrderLegacyByWorkspace?: Record<string, string[]>;
             }
           | undefined;
 
-        const rawState = (legacy as any)?.state ?? legacy ?? {};
+        const rawState = ((legacy as { state?: Record<string, unknown> } | undefined)?.state ??
+          legacy ??
+          {}) as Record<string, unknown>;
 
-        const rawUiTabsByWorkspace =
-          rawState.uiTabsByWorkspace ??
+        const rawUiTabsByWorkspace = (rawState.uiTabsByWorkspace ??
           rawState.openTabsByWorkspace ??
           legacy?.uiTabsByWorkspace ??
           legacy?.openTabsByWorkspace ??
-          {};
-        const rawFocused =
-          rawState.focusedTabIdByWorkspace ??
+          {}) as Record<string, unknown>;
+        const rawFocused = (rawState.focusedTabIdByWorkspace ??
           legacy?.focusedTabIdByWorkspace ??
           rawState.lastFocusedTabByWorkspace ??
-          {};
-        const rawOrder =
-          rawState.tabOrderByWorkspace ??
+          {}) as Record<string, unknown>;
+        const rawOrder = (rawState.tabOrderByWorkspace ??
           legacy?.tabOrderByWorkspace ??
           rawState.tabOrderByWorkspace ??
-          {};
-        const legacyOrder =
-          rawState.tabOrderByWorkspace ?? rawState.tabOrderLegacyByWorkspace ?? {};
+          {}) as Record<string, unknown>;
+        const legacyOrder = (rawState.tabOrderByWorkspace ??
+          rawState.tabOrderLegacyByWorkspace ??
+          {}) as Record<string, unknown>;
 
         const uiTabsByWorkspace: Record<string, WorkspaceTab[]> = {};
         const tabOrderByWorkspace: Record<string, string[]> = {};
@@ -523,15 +523,24 @@ export const useWorkspaceTabsStore = create<WorkspaceTabsState>()(
         }
 
         for (const key in rawFocused) {
-          const value = rawFocused[key];
-          if (typeof value === "string") {
-            const normalized = trimNonEmpty(value);
+          const rawValue = rawFocused[key];
+          if (typeof rawValue === "string") {
+            const normalized = trimNonEmpty(rawValue);
             if (normalized) {
               focusedTabIdByWorkspace[key] = normalized;
             }
             continue;
           }
-          if (!value || typeof value !== "object" || typeof value.kind !== "string") {
+          if (!rawValue || typeof rawValue !== "object") {
+            continue;
+          }
+          const value = rawValue as {
+            kind?: string;
+            agentId?: string;
+            terminalId?: string;
+            draftId?: string;
+          };
+          if (typeof value.kind !== "string") {
             continue;
           }
           if (value.kind === "agent" && typeof value.agentId === "string" && value.agentId.trim()) {

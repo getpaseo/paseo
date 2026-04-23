@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
 import { isNative } from "@/constants/platform";
 import {
   activateNavigationWorkspaceSelection,
@@ -65,9 +65,9 @@ export function navigateToPreparedWorkspaceTab(input: NavigateToPreparedWorkspac
       }, 0);
       return route;
     }
-    router.replace(route as any);
+    router.replace(route as Href);
   } else {
-    router.navigate(route as any);
+    router.navigate(route as Href);
   }
   return route;
 }
