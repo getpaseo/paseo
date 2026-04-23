@@ -15,6 +15,19 @@ import { RotateCw } from "lucide-react-native";
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
 type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];
 
+function getProviderStatusLabel(status: string): string {
+  if (status === "ready") return "Available";
+  if (status === "error") return "Error";
+  if (status === "loading") return "Loading...";
+  return "Not installed";
+}
+
+function getProviderStatusVariant(status: string): "success" | "error" | "muted" {
+  if (status === "ready") return "success";
+  if (status === "error") return "error";
+  return "muted";
+}
+
 interface ProviderRowProps {
   def: ProviderDefinition;
   entry: ProviderEntry | undefined;
@@ -57,16 +70,8 @@ function ProviderRow({ def, entry, isFirst, onPress }: ProviderRowProps) {
         ) : null}
       </View>
       <StatusBadge
-        label={
-          status === "ready"
-            ? "Available"
-            : status === "error"
-              ? "Error"
-              : status === "loading"
-                ? "Loading..."
-                : "Not installed"
-        }
-        variant={status === "ready" ? "success" : status === "error" ? "error" : "muted"}
+        label={getProviderStatusLabel(status)}
+        variant={getProviderStatusVariant(status)}
       />
     </Pressable>
   );

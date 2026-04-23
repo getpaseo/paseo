@@ -94,22 +94,26 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
   const lastError = snapshot?.lastError ?? null;
   const statusLabel = formatConnectionStatus(connectionStatus);
   const statusTone = getConnectionStatusTone(connectionStatus);
-  const statusColor =
-    statusTone === "success"
-      ? theme.colors.palette.green[400]
-      : statusTone === "warning"
-        ? theme.colors.palette.amber[500]
-        : statusTone === "error"
-          ? theme.colors.destructive
-          : theme.colors.foregroundMuted;
-  const statusPillBg =
-    statusTone === "success"
-      ? "rgba(74, 222, 128, 0.1)"
-      : statusTone === "warning"
-        ? "rgba(245, 158, 11, 0.1)"
-        : statusTone === "error"
-          ? "rgba(248, 113, 113, 0.1)"
-          : "rgba(161, 161, 170, 0.1)";
+  let statusColor: string;
+  if (statusTone === "success") {
+    statusColor = theme.colors.palette.green[400];
+  } else if (statusTone === "warning") {
+    statusColor = theme.colors.palette.amber[500];
+  } else if (statusTone === "error") {
+    statusColor = theme.colors.destructive;
+  } else {
+    statusColor = theme.colors.foregroundMuted;
+  }
+  let statusPillBg: string;
+  if (statusTone === "success") {
+    statusPillBg = "rgba(74, 222, 128, 0.1)";
+  } else if (statusTone === "warning") {
+    statusPillBg = "rgba(245, 158, 11, 0.1)";
+  } else if (statusTone === "error") {
+    statusPillBg = "rgba(248, 113, 113, 0.1)";
+  } else {
+    statusPillBg = "rgba(161, 161, 170, 0.1)";
+  }
   const connectionBadge = formatActiveConnectionBadge(activeConnection, theme);
   const versionBadgeText = formatDaemonVersionBadge(daemonVersion);
   const connectionError =

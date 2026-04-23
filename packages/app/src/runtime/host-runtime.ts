@@ -254,20 +254,26 @@ function nextConnectionMachineState(input: {
   }
 
   if (event.type === "connect_failed") {
+    let failedConnectionId: string | null;
+    if (state.tag === "connecting" || state.tag === "online") {
+      failedConnectionId = state.activeConnectionId;
+    } else if (state.tag === "offline" || state.tag === "error") {
+      failedConnectionId = state.activeConnectionId;
+    } else {
+      failedConnectionId = null;
+    }
+    let failedConnection: ActiveConnection | null;
+    if (state.tag === "connecting" || state.tag === "online") {
+      failedConnection = state.activeConnection;
+    } else if (state.tag === "offline" || state.tag === "error") {
+      failedConnection = state.activeConnection;
+    } else {
+      failedConnection = null;
+    }
     return {
       tag: "error",
-      activeConnectionId:
-        state.tag === "connecting" || state.tag === "online"
-          ? state.activeConnectionId
-          : state.tag === "offline" || state.tag === "error"
-            ? state.activeConnectionId
-            : null,
-      activeConnection:
-        state.tag === "connecting" || state.tag === "online"
-          ? state.activeConnection
-          : state.tag === "offline" || state.tag === "error"
-            ? state.activeConnection
-            : null,
+      activeConnectionId: failedConnectionId,
+      activeConnection: failedConnection,
       message: event.message,
     };
   }
@@ -280,18 +286,22 @@ function nextConnectionMachineState(input: {
     };
   }
 
-  const previousActiveConnectionId =
-    state.tag === "connecting" || state.tag === "online"
-      ? state.activeConnectionId
-      : state.tag === "offline" || state.tag === "error"
-        ? state.activeConnectionId
-        : null;
-  const previousActiveConnection =
-    state.tag === "connecting" || state.tag === "online"
-      ? state.activeConnection
-      : state.tag === "offline" || state.tag === "error"
-        ? state.activeConnection
-        : null;
+  let previousActiveConnectionId: string | null;
+  if (state.tag === "connecting" || state.tag === "online") {
+    previousActiveConnectionId = state.activeConnectionId;
+  } else if (state.tag === "offline" || state.tag === "error") {
+    previousActiveConnectionId = state.activeConnectionId;
+  } else {
+    previousActiveConnectionId = null;
+  }
+  let previousActiveConnection: ActiveConnection | null;
+  if (state.tag === "connecting" || state.tag === "online") {
+    previousActiveConnection = state.activeConnection;
+  } else if (state.tag === "offline" || state.tag === "error") {
+    previousActiveConnection = state.activeConnection;
+  } else {
+    previousActiveConnection = null;
+  }
 
   if (!previousActiveConnectionId || !previousActiveConnection) {
     return state.tag === "booting"
