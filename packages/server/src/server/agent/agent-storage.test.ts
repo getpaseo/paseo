@@ -505,24 +505,23 @@ describe("AgentStorage", () => {
     await reloaded.remove(agentId);
 
     const hasAnyRecordFile = async () => {
-      try {
-        const projects = await fs.readdir(storagePath, { withFileTypes: true });
-        for (const project of projects) {
-          if (!project.isDirectory()) {
-            continue;
-          }
-          const candidate = path.join(storagePath, project.name, `${agentId}.json`);
-          try {
-            await fs.access(candidate);
-            return true;
-          } catch {
-            // not here
-          }
-        }
-      } catch {
-        // ignore
-      }
-      return false;
+      const projects = await fs
+        .readdir(storagePath, { withFileTypes: true })
+        .catch(() => [] as Awaited<ReturnType<typeof fs.readdir>>);
+      const exists = await Promise.all(
+        projects
+          .filter((project) => project.isDirectory())
+          .map(async (project) => {
+            const candidate = path.join(storagePath, project.name, `${agentId}.json`);
+            try {
+              await fs.access(candidate);
+              return true;
+            } catch {
+              return false;
+            }
+          }),
+      );
+      return exists.some((present) => present);
     };
 
     expect(await hasAnyRecordFile()).toBe(false);
