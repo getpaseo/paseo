@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -106,17 +106,22 @@ function QuestionOptionRow({
     [isSelected, theme.colors.surface2],
   );
 
+  const optionLabelStyle = useMemo(
+    () => [styles.optionLabel, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const optionDescriptionStyle = useMemo(
+    () => [styles.optionDescription, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+
   return (
     <Pressable style={pressableStyle} onPress={handlePress} disabled={isResponding}>
       <View style={styles.optionItemContent}>
         <View style={styles.optionTextBlock}>
-          <Text style={[styles.optionLabel, { color: theme.colors.foreground }]}>
-            {option.label}
-          </Text>
+          <Text style={optionLabelStyle}>{option.label}</Text>
           {option.description ? (
-            <Text style={[styles.optionDescription, { color: theme.colors.foregroundMuted }]}>
-              {option.description}
-            </Text>
+            <Text style={optionDescriptionStyle}>{option.description}</Text>
           ) : null}
         </View>
         {isSelected ? (
@@ -151,18 +156,29 @@ function QuestionOtherInput({
     },
     [onChange, qIndex],
   );
-  return (
-    <TextInput
-      style={[
+  const otherInputStyle = useMemo(
+    () =>
+      [
         styles.otherInput,
         {
           borderColor: value.length > 0 ? theme.colors.borderAccent : theme.colors.border,
           color: theme.colors.foreground,
           backgroundColor: theme.colors.surface2,
         },
-        // @ts-expect-error - outlineStyle is web-only
-        IS_WEB && { outlineStyle: "none", outlineWidth: 0, outlineColor: "transparent" },
-      ]}
+        IS_WEB ? { outlineStyle: "none", outlineWidth: 0, outlineColor: "transparent" } : null,
+      ] as const,
+    [
+      value.length,
+      theme.colors.borderAccent,
+      theme.colors.border,
+      theme.colors.foreground,
+      theme.colors.surface2,
+    ],
+  );
+  return (
+    <TextInput
+      // @ts-expect-error - outlineStyle is web-only
+      style={otherInputStyle}
       placeholder="Other..."
       placeholderTextColor={theme.colors.foregroundMuted}
       value={value}
@@ -299,20 +315,42 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     ],
   );
 
+  const containerStyle = useMemo(
+    () => [
+      styles.container,
+      {
+        backgroundColor: theme.colors.surface1,
+        borderColor: theme.colors.border,
+      },
+    ],
+    [theme.colors.surface1, theme.colors.border],
+  );
+  const questionTextStyle = useMemo(
+    () => [styles.questionText, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const actionsContainerStyle = useMemo(
+    () => [styles.actionsContainer, !isMobile && styles.actionsContainerDesktop],
+    [isMobile],
+  );
+  const dismissActionTextStyle = useMemo(
+    () => [styles.actionText, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+  const submitActionTextColor = allAnswered
+    ? theme.colors.foreground
+    : theme.colors.foregroundMuted;
+  const submitActionTextStyle = useMemo(
+    () => [styles.actionText, { color: submitActionTextColor }],
+    [submitActionTextColor],
+  );
+
   if (!questions) {
     return null;
   }
 
   return (
-    <View
-      style={[
-        styles.container,
-        {
-          backgroundColor: theme.colors.surface1,
-          borderColor: theme.colors.border,
-        },
-      ]}
-    >
+    <View style={containerStyle}>
       {questions.map((q, qIndex) => {
         const selected = selections[qIndex] ?? new Set<number>();
         const otherText = otherTexts[qIndex] ?? "";
@@ -320,9 +358,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         return (
           <View key={qIndex} style={styles.questionBlock}>
             <View style={styles.questionHeader}>
-              <Text style={[styles.questionText, { color: theme.colors.foreground }]}>
-                {q.question}
-              </Text>
+              <Text style={questionTextStyle}>{q.question}</Text>
               <CircleHelp size={14} color={theme.colors.foregroundMuted} />
             </View>
             <View style={styles.optionsWrap}>
@@ -350,16 +386,14 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         );
       })}
 
-      <View style={[styles.actionsContainer, !isMobile && styles.actionsContainerDesktop]}>
+      <View style={actionsContainerStyle}>
         <Pressable style={dismissButtonStyle} onPress={handleDeny} disabled={isResponding}>
           {respondingAction === "dismiss" ? (
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
           ) : (
             <View style={styles.actionContent}>
               <X size={14} color={theme.colors.foregroundMuted} />
-              <Text style={[styles.actionText, { color: theme.colors.foregroundMuted }]}>
-                Dismiss
-              </Text>
+              <Text style={dismissActionTextStyle}>Dismiss</Text>
             </View>
           )}
         </Pressable>
@@ -369,20 +403,8 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
             <ActivityIndicator size="small" color={theme.colors.foreground} />
           ) : (
             <View style={styles.actionContent}>
-              <Check
-                size={14}
-                color={allAnswered ? theme.colors.foreground : theme.colors.foregroundMuted}
-              />
-              <Text
-                style={[
-                  styles.actionText,
-                  {
-                    color: allAnswered ? theme.colors.foreground : theme.colors.foregroundMuted,
-                  },
-                ]}
-              >
-                Submit
-              </Text>
+              <Check size={14} color={submitActionTextColor} />
+              <Text style={submitActionTextStyle}>Submit</Text>
             </View>
           )}
         </Pressable>
