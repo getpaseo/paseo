@@ -580,7 +580,7 @@ describe("workspace-layout-store actions", () => {
     const store = useWorkspaceLayoutStore.getState();
 
     store.openTabFocused(workspaceKey, { kind: "file", path: "/repo/worktree/a.ts" });
-    const secondTabId = store.openTabFocused(workspaceKey, {
+    store.openTabFocused(workspaceKey, {
       kind: "file",
       path: "/repo/worktree/b.ts",
     });

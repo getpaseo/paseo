@@ -91,7 +91,7 @@ export async function pressNewTabShortcut(page: Page): Promise<void> {
 // ─── Tab bar assertions ───────────────────────────────────────────────────
 
 /** @deprecated The launcher panel was removed. Actions go directly to their target. */
-export async function waitForLauncherPanel(page: Page): Promise<void> {
+export async function waitForLauncherPanel(_page: Page): Promise<void> {
   // No-op: the launcher panel no longer exists.
 }
 

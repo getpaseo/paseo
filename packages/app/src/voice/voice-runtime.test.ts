@@ -124,7 +124,7 @@ describe("voice runtime", () => {
 
   it("moves from listening to playing on the first assistant audio", async () => {
     const adapter = createSessionAdapter();
-    const { runtime, engine } = createRuntime();
+    const { runtime, engine: _engine } = createRuntime();
     runtime.registerSession(adapter);
 
     await runtime.startVoice("server-1", "agent-1");
