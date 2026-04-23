@@ -2453,7 +2453,7 @@ export class AgentManager {
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
 
-    await this.dispatchStreamEventByType({
+    const dispatchPromise = this.dispatchStreamEventByType({
       agent,
       event,
       options,
@@ -2461,6 +2461,9 @@ export class AgentManager {
       eventTurnId,
       flags,
     });
+    if (dispatchPromise) {
+      await dispatchPromise;
+    }
 
     if (!options?.fromHistory && isForegroundEvent && isTurnTerminalEvent(event)) {
       this.finalizeForegroundTurn(agent, eventTurnId);
@@ -2473,46 +2476,50 @@ export class AgentManager {
     return flags.shouldNotifyWaiters;
   }
 
-  private async dispatchStreamEventByType(params: {
+  private dispatchStreamEventByType(params: {
     agent: ActiveManagedAgent;
     event: AgentStreamEvent;
     options: HandleStreamEventOptions | undefined;
     isForegroundEvent: boolean;
     eventTurnId: string | undefined;
     flags: StreamEventFlags;
-  }): Promise<void> {
+  }): Promise<void> | undefined {
     const { agent, event, options, isForegroundEvent, eventTurnId, flags } = params;
     switch (event.type) {
       case "thread_started":
         this.onStreamThreadStarted(agent);
-        break;
+        return undefined;
       case "usage_updated":
         agent.lastUsage = event.usage;
         this.emitState(agent);
-        break;
+        return undefined;
       case "timeline":
-        await this.onStreamTimelineEvent({ agent, event, options, isForegroundEvent, flags });
-        break;
+        return this.onStreamTimelineEvent({ agent, event, options, isForegroundEvent, flags });
       case "turn_completed":
         this.onStreamTurnCompleted({ agent, event, eventTurnId, isForegroundEvent });
-        break;
+        return undefined;
       case "turn_failed":
-        await this.onStreamTurnFailed({ agent, event, eventTurnId, isForegroundEvent, options });
-        break;
+        return this.onStreamTurnFailed({
+          agent,
+          event,
+          eventTurnId,
+          isForegroundEvent,
+          options,
+        });
       case "turn_canceled":
         this.onStreamTurnCanceled({ agent, event, eventTurnId, isForegroundEvent, options });
-        break;
+        return undefined;
       case "turn_started":
         this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent });
-        break;
+        return undefined;
       case "permission_requested":
         this.onStreamPermissionRequested(agent, event);
-        break;
+        return undefined;
       case "permission_resolved":
         this.onStreamPermissionResolved({ agent, event, options, flags });
-        break;
+        return undefined;
       default:
-        break;
+        return undefined;
     }
   }
 

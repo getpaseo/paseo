@@ -2347,13 +2347,17 @@ export class Session {
   }
 
   private async handleCloseItemsRequest(msg: CloseItemsRequest): Promise<void> {
+    const archiveResults = await Promise.allSettled(
+      msg.agentIds.map((agentId) => this.archiveAgentForClose(agentId)),
+    );
     const agents = [];
-    for (const agentId of msg.agentIds) {
-      try {
-        agents.push(await this.archiveAgentForClose(agentId));
-      } catch (error: any) {
+    for (let i = 0; i < archiveResults.length; i += 1) {
+      const result = archiveResults[i]!;
+      if (result.status === "fulfilled") {
+        agents.push(result.value);
+      } else {
         this.sessionLogger.warn(
-          { err: error, agentId, requestId: msg.requestId },
+          { err: result.reason, agentId: msg.agentIds[i], requestId: msg.requestId },
           "Failed to archive agent during close_items batch",
         );
       }
@@ -5711,18 +5715,19 @@ export class Session {
     );
     const placementsByCwd = new Map<string, ProjectPlacementPayload>();
 
-    for (const workspace of persistedWorkspaces) {
-      if (workspace.archivedAt) {
-        continue;
-      }
+    const pairs = persistedWorkspaces.flatMap((workspace) => {
+      if (workspace.archivedAt) return [];
       const project = activeProjects.get(workspace.projectId);
-      if (!project) {
-        continue;
-      }
-      placementsByCwd.set(
-        normalizePersistedWorkspaceId(workspace.cwd),
-        await this.buildProjectPlacementForWorkspace(workspace, project),
-      );
+      if (!project) return [];
+      return [{ workspace, project }];
+    });
+    const placements = await Promise.all(
+      pairs.map(({ workspace, project }) =>
+        this.buildProjectPlacementForWorkspace(workspace, project),
+      ),
+    );
+    for (let i = 0; i < pairs.length; i += 1) {
+      placementsByCwd.set(normalizePersistedWorkspaceId(pairs[i]!.workspace.cwd), placements[i]!);
     }
 
     return placementsByCwd;
@@ -6033,19 +6038,20 @@ export class Session {
       ),
     );
 
-    for (const workspace of activeRecords) {
-      if (workspaceIds && !workspaceIds.has(workspace.workspaceId)) {
-        continue;
-      }
-      const projectRecord = activeProjects.get(workspace.projectId) ?? null;
-      descriptorsByWorkspaceId.set(
-        workspace.workspaceId,
-        await this.buildWorkspaceDescriptor({
+    const includedWorkspaces = activeRecords.filter(
+      (workspace) => !workspaceIds || workspaceIds.has(workspace.workspaceId),
+    );
+    const workspaceDescriptors = await Promise.all(
+      includedWorkspaces.map((workspace) =>
+        this.buildWorkspaceDescriptor({
           workspace,
-          projectRecord,
+          projectRecord: activeProjects.get(workspace.projectId) ?? null,
           includeGitData: options.includeGitData,
         }),
-      );
+      ),
+    );
+    for (let i = 0; i < includedWorkspaces.length; i += 1) {
+      descriptorsByWorkspaceId.set(includedWorkspaces[i]!.workspaceId, workspaceDescriptors[i]!);
     }
 
     for (const agent of agents) {
@@ -6523,23 +6529,25 @@ export class Session {
     const changedWorkspaceIds = new Set<string>();
     const changedProjectIds = new Set<string>();
 
-    for (const change of result.changesApplied) {
-      switch (change.kind) {
-        case "workspace_archived":
-          await this.removeWorkspaceGitWatchTarget(change.directory);
-          this.scriptRuntimeStore?.removeForWorkspace(change.directory);
-          this.removeWorkspaceGitSubscription(change.workspaceId);
-          changedWorkspaceIds.add(change.workspaceId);
-          break;
-        case "workspace_updated":
-          changedWorkspaceIds.add(change.workspaceId);
-          break;
-        case "project_archived":
-        case "project_updated":
-          changedProjectIds.add(change.projectId);
-          break;
-      }
-    }
+    await Promise.all(
+      result.changesApplied.map(async (change) => {
+        switch (change.kind) {
+          case "workspace_archived":
+            await this.removeWorkspaceGitWatchTarget(change.directory);
+            this.scriptRuntimeStore?.removeForWorkspace(change.directory);
+            this.removeWorkspaceGitSubscription(change.workspaceId);
+            changedWorkspaceIds.add(change.workspaceId);
+            break;
+          case "workspace_updated":
+            changedWorkspaceIds.add(change.workspaceId);
+            break;
+          case "project_archived":
+          case "project_updated":
+            changedProjectIds.add(change.projectId);
+            break;
+        }
+      }),
+    );
 
     if (changedProjectIds.size > 0) {
       for (const workspace of await this.workspaceRegistry.list()) {
