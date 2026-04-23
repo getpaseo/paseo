@@ -1474,17 +1474,19 @@ function mapCodexTerminalInteractionToToolCall(params: {
   };
 }
 
-function mapCodexThreadPlanItem(normalizedItem: any): AgentTimelineItem | null {
+function mapCodexThreadPlanItem(normalizedItem: Record<string, unknown>): AgentTimelineItem | null {
   const callId =
     nonEmptyString(normalizedItem.id ?? normalizedItem.itemId ?? undefined) ??
-    `plan:${normalizePlanMarkdown(normalizedItem.text ?? "")}`;
+    `plan:${normalizePlanMarkdown(typeof normalizedItem.text === "string" ? normalizedItem.text : "")}`;
   return mapCodexPlanToToolCall({
     callId,
-    text: normalizedItem.text ?? "",
+    text: typeof normalizedItem.text === "string" ? normalizedItem.text : "",
   });
 }
 
-function mapCodexThreadReasoningItem(normalizedItem: any): AgentTimelineItem | null {
+function mapCodexThreadReasoningItem(
+  normalizedItem: Record<string, unknown>,
+): AgentTimelineItem | null {
   const summary = Array.isArray(normalizedItem.summary) ? normalizedItem.summary.join("\n") : "";
   const content = Array.isArray(normalizedItem.content) ? normalizedItem.content.join("\n") : "";
   const text = summary || content;
@@ -1492,7 +1494,7 @@ function mapCodexThreadReasoningItem(normalizedItem: any): AgentTimelineItem | n
 }
 
 function mapCodexThreadUserMessageItem(
-  normalizedItem: any,
+  normalizedItem: Record<string, unknown>,
   includeUserMessage: boolean,
 ): AgentTimelineItem | null {
   if (!includeUserMessage) {
@@ -1503,25 +1505,29 @@ function mapCodexThreadUserMessageItem(
 }
 
 function threadItemToTimeline(
-  item: any,
+  item: unknown,
   options?: { includeUserMessage?: boolean; cwd?: string | null },
 ): AgentTimelineItem | null {
   if (!item || typeof item !== "object") return null;
+  const itemRecord = item as Record<string, unknown>;
   const includeUserMessage = options?.includeUserMessage ?? true;
   const cwd = options?.cwd ?? null;
   const normalizedType = normalizeCodexThreadItemType(
-    typeof item.type === "string" ? item.type : undefined,
+    typeof itemRecord.type === "string" ? itemRecord.type : undefined,
   );
-  const normalizedItem =
-    normalizedType && normalizedType !== item.type
-      ? ({ ...item, type: normalizedType } as typeof item)
-      : item;
+  const normalizedItem: Record<string, unknown> =
+    normalizedType && normalizedType !== itemRecord.type
+      ? { ...itemRecord, type: normalizedType }
+      : itemRecord;
 
   switch (normalizedType) {
     case "userMessage":
       return mapCodexThreadUserMessageItem(normalizedItem, includeUserMessage);
     case "agentMessage":
-      return { type: "assistant_message", text: normalizedItem.text ?? "" };
+      return {
+        type: "assistant_message",
+        text: typeof normalizedItem.text === "string" ? normalizedItem.text : "",
+      };
     case "plan":
       return mapCodexThreadPlanItem(normalizedItem);
     case "reasoning":
@@ -2589,15 +2595,17 @@ class CodexAppServerAgentSession implements AgentSession {
     if (!this.client) return;
     try {
       const response = (await this.client.request("collaborationMode/list", {})) as {
-        data?: Array<any>;
+        data?: Array<Record<string, unknown>>;
       };
       const data = Array.isArray(response?.data) ? response.data : [];
       this.collaborationModes = data.map((entry) => ({
-        name: String(entry.name ?? ""),
-        mode: entry.mode ?? null,
-        model: entry.model ?? null,
-        reasoning_effort: entry.reasoning_effort ?? null,
-        developer_instructions: entry.developer_instructions ?? null,
+        name: typeof entry.name === "string" ? entry.name : "",
+        mode: typeof entry.mode === "string" ? entry.mode : null,
+        model: typeof entry.model === "string" ? entry.model : null,
+        reasoning_effort:
+          typeof entry.reasoning_effort === "string" ? entry.reasoning_effort : null,
+        developer_instructions:
+          typeof entry.developer_instructions === "string" ? entry.developer_instructions : null,
       }));
     } catch (error) {
       this.logger.trace({ error }, "Failed to load collaboration modes");
@@ -2611,16 +2619,23 @@ class CodexAppServerAgentSession implements AgentSession {
     try {
       const response = (await this.client.request("skills/list", {
         cwd: [this.config.cwd],
-      })) as { data?: Array<any> };
+      })) as { data?: Array<Record<string, unknown>> };
       const entries = Array.isArray(response?.data) ? response.data : [];
       const skills: Array<{ name: string; description: string; path: string }> = [];
       for (const entry of entries) {
-        const list = Array.isArray(entry.skills) ? entry.skills : [];
+        const list = Array.isArray(entry.skills)
+          ? (entry.skills as Array<Record<string, unknown>>)
+          : [];
         for (const skill of list) {
-          if (!skill?.name || !skill?.path) continue;
+          if (typeof skill?.name !== "string" || typeof skill?.path !== "string") continue;
           skills.push({
             name: skill.name,
-            description: skill.description ?? skill.shortDescription ?? "Skill",
+            description:
+              typeof skill.description === "string"
+                ? skill.description
+                : typeof skill.shortDescription === "string"
+                  ? skill.shortDescription
+                  : "Skill",
             path: skill.path,
           });
         }
@@ -2794,7 +2809,7 @@ class CodexAppServerAgentSession implements AgentSession {
       const response = (await this.client.request("thread/read", {
         threadId: this.currentThreadId,
         includeTurns: true,
-      })) as { thread?: { turns?: Array<{ items?: any[] }> } };
+      })) as { thread?: { turns?: Array<{ items?: unknown[] }> } };
       const thread = response?.thread;
       const threadTimeline: AgentTimelineItem[] = [];
       if (thread && Array.isArray(thread.turns)) {
@@ -4116,7 +4131,12 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   private handleToolApprovalRequest(params: unknown): Promise<unknown> {
-    const parsed = params as { itemId: string; threadId: string; turnId: string; questions: any[] };
+    const parsed = params as {
+      itemId: string;
+      threadId: string;
+      turnId: string;
+      questions: unknown[];
+    };
     const requestId = `permission-${parsed.itemId}`;
     const questions = normalizeCodexQuestionPrompts(parsed.questions);
     const request: AgentPermissionRequest = {
@@ -4238,14 +4258,14 @@ export class CodexAppServerAgentClient implements AgentClient {
 
       const limit = options?.limit ?? 20;
       const response = (await client.request("thread/list", { limit })) as {
-        data?: Array<any>;
+        data?: Array<Record<string, unknown>>;
       };
       const threads = Array.isArray(response?.data) ? response.data : [];
       const descriptors: PersistedAgentDescriptor[] = await Promise.all(
         threads.slice(0, limit).map(async (thread) => {
-          const threadId = thread.id;
-          const cwd = thread.cwd ?? process.cwd();
-          const title = thread.preview ?? null;
+          const threadId = typeof thread.id === "string" ? thread.id : "";
+          const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
+          const title = typeof thread.preview === "string" ? thread.preview : null;
           let timeline: AgentTimelineItem[] = [];
           try {
             const [rolloutTimeline, read] = await Promise.all([
@@ -4253,7 +4273,7 @@ export class CodexAppServerAgentClient implements AgentClient {
               client.request("thread/read", {
                 threadId,
                 includeTurns: true,
-              }) as Promise<{ thread?: { turns?: Array<{ items?: any[] }> } }>,
+              }) as Promise<{ thread?: { turns?: Array<{ items?: unknown[] }> } }>,
             ]);
             const turns = read.thread?.turns ?? [];
             const itemsFromThreadRead: AgentTimelineItem[] = [];
@@ -4273,7 +4293,11 @@ export class CodexAppServerAgentClient implements AgentClient {
             sessionId: threadId,
             cwd,
             title,
-            lastActivityAt: new Date((thread.updatedAt ?? thread.createdAt ?? 0) * 1000),
+            lastActivityAt: new Date(
+              ((typeof thread.updatedAt === "number" ? thread.updatedAt : undefined) ??
+                (typeof thread.createdAt === "number" ? thread.createdAt : undefined) ??
+                0) * 1000,
+            ),
             persistence: {
               provider: CODEX_PROVIDER,
               sessionId: threadId,
