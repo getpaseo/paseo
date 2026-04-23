@@ -192,7 +192,7 @@ function createSherpaOfflineTts(params: {
   modelId: "kokoro-en-v0_19" | "kitten-nano-en-v0_1-fp16";
   modelDir: string;
   speed: number;
-}): { tts: any; speed: number } {
+}): { tts: unknown; speed: number } {
   const sherpa = loadSherpaOnnxNode();
   const model =
     params.modelId === "kokoro-en-v0_19"
@@ -355,7 +355,9 @@ for (const modelId of options.modelIds) {
 
     for (let sid = 0; sid < numSpeakers; sid += 1) {
       const audio = (
-        tts as { generate: (config: { text: string; sid: number; speed: number }) => unknown }
+        tts as {
+          generate: (config: { text: string; sid: number; speed: number }) => unknown;
+        }
       ).generate({
         text: options.text,
         sid,
