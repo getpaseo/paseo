@@ -91,8 +91,10 @@ export async function createTestPaseoDaemon(
         await daemon.agentManager.flush().catch(() => undefined);
         if (options.cleanup ?? true) {
           await new Promise((r) => setTimeout(r, 50));
-          await rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-          await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+          await Promise.all([
+            rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+            rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+          ]);
         }
       };
 
@@ -107,8 +109,10 @@ export async function createTestPaseoDaemon(
     } catch (error) {
       lastError = error;
       await daemon.stop().catch(() => undefined);
-      await rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-      await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      await Promise.all([
+        rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+        rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+      ]);
 
       if (
         (!isAddressInUseError(error) && !isStartupTimeoutError(error)) ||
