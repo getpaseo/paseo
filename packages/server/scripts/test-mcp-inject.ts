@@ -181,9 +181,9 @@ async function main(): Promise<void> {
       ),
     );
   } finally {
-    for (const agentId of createdAgentIds) {
-      await client.archiveAgent(agentId).catch(() => undefined);
-    }
+    await Promise.all(
+      createdAgentIds.map((agentId) => client.archiveAgent(agentId).catch(() => undefined)),
+    );
     await client.close().catch(() => undefined);
     await daemon.close().catch(() => undefined);
     await rm(rootCwd, { recursive: true, force: true });
