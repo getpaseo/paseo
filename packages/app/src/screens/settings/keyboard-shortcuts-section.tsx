@@ -74,10 +74,7 @@ function ShortcutRow({
     () => (overrideCombo ? chordStringToShortcutKeys(overrideCombo) : [row.keys]),
     [overrideCombo, row.keys],
   );
-  const rowStyle = useMemo(
-    () => [styles.row, isCapturing && styles.rowCapturing],
-    [isCapturing],
-  );
+  const rowStyle = useMemo(() => [styles.row, isCapturing && styles.rowCapturing], [isCapturing]);
 
   return (
     <View style={rowStyle}>
