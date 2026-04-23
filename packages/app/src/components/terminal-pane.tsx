@@ -543,6 +543,11 @@ export function TerminalPane({
     ],
   );
 
+  const containerStyle = useMemo(
+    () => [styles.container, keyboardPaddingStyle],
+    [keyboardPaddingStyle],
+  );
+
   if (!client || !isConnected) {
     return (
       <View style={styles.centerState}>
@@ -552,7 +557,7 @@ export function TerminalPane({
   }
 
   return (
-    <Animated.View style={[styles.container, keyboardPaddingStyle]}>
+    <Animated.View style={containerStyle}>
       <View style={styles.outputContainer}>
         {isWorkspaceFocused ? (
           <View style={styles.terminalGestureContainer}>

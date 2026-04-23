@@ -480,6 +480,20 @@ export function TooltipContent({
     [],
   );
 
+  const contentStyle = useMemo(
+    () => [
+      styles.content,
+      { maxWidth },
+      style,
+      {
+        position: "absolute" as const,
+        top: position?.y ?? -9999,
+        left: position?.x ?? -9999,
+      },
+    ],
+    [maxWidth, style, position?.x, position?.y],
+  );
+
   if (!ctx.open || !ctx.enabled) return null;
 
   // On web, avoid React Native's <Modal/> implementation (it uses <dialog> and can
@@ -496,16 +510,7 @@ export function TooltipContent({
             collapsable={false}
             testID={testID}
             onLayout={handleLayout}
-            style={[
-              styles.content,
-              { maxWidth },
-              style,
-              {
-                position: "absolute",
-                top: position?.y ?? -9999,
-                left: position?.x ?? -9999,
-              },
-            ]}
+            style={contentStyle}
           >
             {children}
           </Animated.View>
@@ -530,16 +535,7 @@ export function TooltipContent({
           collapsable={false}
           testID={testID}
           onLayout={handleLayout}
-          style={[
-            styles.content,
-            { maxWidth },
-            style,
-            {
-              position: "absolute",
-              top: position?.y ?? -9999,
-              left: position?.x ?? -9999,
-            },
-          ]}
+          style={contentStyle}
         >
           {children}
         </Animated.View>

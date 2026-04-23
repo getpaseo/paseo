@@ -357,26 +357,51 @@ export function WebDesktopScrollbarOverlay({
   );
   const handleInsetTop = Math.max(0, (thumbRegionHeight - geometry.handleSize) / 2);
 
+  const thumbRegionStyle = useMemo(
+    () => [
+      styles.thumbRegion,
+      {
+        top: 0,
+        height: thumbRegionHeight,
+        transform: [{ translateY: thumbRegionOffset }],
+      },
+      platformIsWeb &&
+        ({
+          cursor: handleCursor,
+          touchAction: "none",
+          userSelect: "none",
+          transitionProperty: "transform",
+          transitionDuration: `${handleTravelDurationMs}ms`,
+          transitionTimingFunction: "linear",
+        } as any),
+    ],
+    [thumbRegionHeight, thumbRegionOffset, handleCursor, handleTravelDurationMs],
+  );
+
+  const handleStyle = useMemo(
+    () => [
+      styles.handle,
+      {
+        marginTop: handleInsetTop,
+        height: geometry.handleSize,
+        width: handleWidth,
+        backgroundColor: handleColor,
+        opacity: handleOpacity,
+      },
+      platformIsWeb &&
+        ({
+          transitionProperty: "opacity, width, background-color",
+          transitionDuration: `${HANDLE_FADE_DURATION_MS}ms, ${HANDLE_WIDTH_TRANSITION_DURATION_MS}ms, ${HANDLE_FADE_DURATION_MS}ms`,
+          transitionTimingFunction: "ease-out, cubic-bezier(0.22, 0.75, 0.2, 1), ease-out",
+        } as any),
+    ],
+    [handleInsetTop, geometry.handleSize, handleWidth, handleColor, handleOpacity],
+  );
+
   return (
     <View style={styles.overlay} pointerEvents="box-none">
       <View
-        style={[
-          styles.thumbRegion,
-          {
-            top: 0,
-            height: thumbRegionHeight,
-            transform: [{ translateY: thumbRegionOffset }],
-          },
-          platformIsWeb &&
-            ({
-              cursor: handleCursor,
-              touchAction: "none",
-              userSelect: "none",
-              transitionProperty: "transform",
-              transitionDuration: `${handleTravelDurationMs}ms`,
-              transitionTimingFunction: "linear",
-            } as any),
-        ]}
+        style={thumbRegionStyle}
         pointerEvents={handleVisible ? "auto" : "none"}
         {...(panResponder?.panHandlers ?? {})}
         {...(platformIsWeb
@@ -389,25 +414,7 @@ export function WebDesktopScrollbarOverlay({
             } as any)
           : null)}
       >
-        <View
-          style={[
-            styles.handle,
-            {
-              marginTop: handleInsetTop,
-              height: geometry.handleSize,
-              width: handleWidth,
-              backgroundColor: handleColor,
-              opacity: handleOpacity,
-            },
-            platformIsWeb &&
-              ({
-                transitionProperty: "opacity, width, background-color",
-                transitionDuration: `${HANDLE_FADE_DURATION_MS}ms, ${HANDLE_WIDTH_TRANSITION_DURATION_MS}ms, ${HANDLE_FADE_DURATION_MS}ms`,
-                transitionTimingFunction: "ease-out, cubic-bezier(0.22, 0.75, 0.2, 1), ease-out",
-              } as any),
-          ]}
-          pointerEvents="none"
-        />
+        <View style={handleStyle} pointerEvents="none" />
       </View>
     </View>
   );

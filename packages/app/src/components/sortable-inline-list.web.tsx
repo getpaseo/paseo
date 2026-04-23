@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 import {
   DndContext,
   closestCenter,
@@ -24,6 +24,8 @@ const restrictToHorizontalAxis: Modifier = ({ transform }) => ({
   ...transform,
   y: 0,
 });
+
+const DND_MODIFIERS: Modifier[] = [restrictToHorizontalAxis];
 
 function SortableItem<T>({
   id,
@@ -183,7 +185,10 @@ export function SortableInlineList<T>({
     [clearDragState, disabled, items, keyExtractor, onDragEnd],
   );
 
-  const ids = items.map((item, index) => keyExtractor(item, index));
+  const ids = useMemo(
+    () => items.map((item, index) => keyExtractor(item, index)),
+    [items, keyExtractor],
+  );
 
   const renderedItems = (
     <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
@@ -215,7 +220,7 @@ export function SortableInlineList<T>({
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
-      modifiers={[restrictToHorizontalAxis]}
+      modifiers={DND_MODIFIERS}
       onDragStart={handleDragStart}
       onDragCancel={clearDragState}
       onDragEnd={handleDragEnd}

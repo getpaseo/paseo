@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -36,15 +36,17 @@ export function DownloadToast() {
     };
   }, [activeDownload, dismissDownload]);
 
+  const containerStyle = useMemo(
+    () => [styles.container, { bottom: theme.spacing[4] + insets.bottom }],
+    [theme.spacing, insets.bottom],
+  );
+
   if (!activeDownload) {
     return null;
   }
 
   return (
-    <View
-      style={[styles.container, { bottom: theme.spacing[4] + insets.bottom }]}
-      pointerEvents="box-none"
-    >
+    <View style={containerStyle} pointerEvents="box-none">
       <View style={styles.toast}>
         {activeDownload.status === "downloading" ? (
           <ActivityIndicator size="small" color={theme.colors.foreground} />
@@ -68,12 +70,7 @@ export function DownloadToast() {
           </Text>
           {activeDownload.status === "downloading" && activeDownload.progress && (
             <View style={styles.progressBar}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${Math.round(activeDownload.progress.percent * 100)}%` },
-                ]}
-              />
+              <ProgressFill percent={activeDownload.progress.percent} />
             </View>
           )}
         </View>
@@ -89,6 +86,12 @@ export function DownloadToast() {
       </View>
     </View>
   );
+}
+
+function ProgressFill({ percent }: { percent: number }) {
+  const width: `${number}%` = `${Math.round(percent * 100)}%`;
+  const fillStyle = useMemo(() => [styles.progressFill, { width }], [width]);
+  return <View style={fillStyle} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

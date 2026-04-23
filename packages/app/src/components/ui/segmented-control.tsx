@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import type { StyleProp, ViewStyle } from "react-native";
+import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 type SegmentedControlSize = "sm" | "md";
@@ -40,50 +40,89 @@ export function SegmentedControl<T extends string>({
   const labelSizeStyle = size === "sm" ? styles.labelSm : styles.labelMd;
   const iconSize = size === "sm" ? theme.iconSize.sm : theme.iconSize.md;
 
+  const containerStyle = useMemo(
+    () => [styles.container, containerSizeStyle, style],
+    [containerSizeStyle, style],
+  );
+
   return (
-    <View style={[styles.container, containerSizeStyle, style]} testID={testID}>
+    <View style={containerStyle} testID={testID}>
       {options.map((option) => {
         const isSelected = option.value === value;
         const iconColor = isSelected ? theme.colors.foreground : theme.colors.foregroundMuted;
 
         return (
-          <Pressable
+          <SegmentItem
             key={option.value}
-            accessibilityRole="button"
-            accessibilityState={{ selected: isSelected, disabled: option.disabled }}
-            disabled={option.disabled}
-            testID={option.testID}
+            option={option}
+            isSelected={isSelected}
+            iconColor={iconColor}
+            iconSize={iconSize}
+            hideLabels={hideLabels}
+            segmentSizeStyle={segmentSizeStyle}
+            labelSizeStyle={labelSizeStyle}
             onPress={() => {
               if (!option.disabled && option.value !== value) {
                 onValueChange(option.value);
               }
             }}
-            style={({ hovered, pressed }) => [
-              styles.segment,
-              segmentSizeStyle,
-              isSelected && styles.segmentSelected,
-              hovered && !isSelected && styles.segmentHover,
-              pressed && !isSelected && styles.segmentPressed,
-              option.disabled && styles.segmentDisabled,
-            ]}
-          >
-            {option.icon ? (
-              <View style={styles.iconContainer}>
-                {option.icon({ color: iconColor, size: iconSize })}
-              </View>
-            ) : null}
-            {hideLabels ? null : (
-              <Text
-                style={[styles.label, labelSizeStyle, isSelected && styles.labelSelected]}
-                numberOfLines={1}
-              >
-                {option.label}
-              </Text>
-            )}
-          </Pressable>
+          />
         );
       })}
     </View>
+  );
+}
+
+function SegmentItem<T extends string>({
+  option,
+  isSelected,
+  iconColor,
+  iconSize,
+  hideLabels,
+  segmentSizeStyle,
+  labelSizeStyle,
+  onPress,
+}: {
+  option: SegmentedControlOption<T>;
+  isSelected: boolean;
+  iconColor: string;
+  iconSize: number;
+  hideLabels: boolean;
+  segmentSizeStyle: StyleProp<ViewStyle>;
+  labelSizeStyle: StyleProp<TextStyle>;
+  onPress: () => void;
+}) {
+  const labelStyle = useMemo(
+    () => [styles.label, labelSizeStyle, isSelected && styles.labelSelected],
+    [labelSizeStyle, isSelected],
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: isSelected, disabled: option.disabled }}
+      disabled={option.disabled}
+      testID={option.testID}
+      onPress={onPress}
+      style={({ hovered, pressed }) => [
+        styles.segment,
+        segmentSizeStyle,
+        isSelected && styles.segmentSelected,
+        hovered && !isSelected && styles.segmentHover,
+        pressed && !isSelected && styles.segmentPressed,
+        option.disabled && styles.segmentDisabled,
+      ]}
+    >
+      {option.icon ? (
+        <View style={styles.iconContainer}>
+          {option.icon({ color: iconColor, size: iconSize })}
+        </View>
+      ) : null}
+      {hideLabels ? null : (
+        <Text style={labelStyle} numberOfLines={1}>
+          {option.label}
+        </Text>
+      )}
+    </Pressable>
   );
 }
 

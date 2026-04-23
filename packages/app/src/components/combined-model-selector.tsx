@@ -16,7 +16,9 @@ import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/a
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 const IS_WEB = platformIsWeb;
 
-import { Combobox, ComboboxItem } from "@/components/ui/combobox";
+import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+
+const EMPTY_COMBOBOX_OPTIONS: ReadonlyArray<ComboboxOption> = [];
 import { getProviderIcon } from "@/components/provider-icons";
 import {
   buildModelRows,
@@ -356,13 +358,18 @@ function ProviderSearchInput({
     }
   }, [autoFocus]);
 
+  const inputStyle = useMemo(
+    () => [styles.providerSearchInput, platformIsWeb && { outlineStyle: "none" }],
+    [],
+  );
+
   return (
     <View style={styles.providerSearchContainer}>
       <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
       <InputComponent
         ref={inputRef as any}
         // @ts-expect-error - outlineStyle is web-only
-        style={[styles.providerSearchInput, platformIsWeb && { outlineStyle: "none" }]}
+        style={inputStyle}
         placeholder="Search models..."
         placeholderTextColor={theme.colors.foregroundMuted}
         value={value}
@@ -657,7 +664,7 @@ export function CombinedModelSelector({
         )}
       </Pressable>
       <Combobox
-        options={[]}
+        options={EMPTY_COMBOBOX_OPTIONS as ComboboxOption[]}
         value=""
         onSelect={() => {}}
         open={isOpen}

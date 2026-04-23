@@ -1,5 +1,5 @@
 import { X } from "lucide-react-native";
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
@@ -43,7 +43,10 @@ export function CalloutCard({
   const hasHeader = title != null || icon != null;
   const hasDescription = description != null && description !== "";
 
-  const containerStyle = [styles.container, variant === "error" ? styles.containerError : null];
+  const containerStyle = useMemo(
+    () => [styles.container, variant === "error" ? styles.containerError : null],
+    [variant],
+  );
 
   return (
     <View style={containerStyle} testID={testID} accessibilityRole="alert">
@@ -106,6 +109,10 @@ export function CalloutCard({
 
 function CalloutActionButton({ action, testID }: { action: CalloutAction; testID?: string }) {
   const isPrimary = action.variant === "primary";
+  const labelStyle = useMemo(
+    () => [styles.actionLabel, isPrimary ? styles.actionLabelPrimary : styles.actionLabelSecondary],
+    [isPrimary],
+  );
   return (
     <Pressable
       onPress={action.onPress}
@@ -119,13 +126,7 @@ function CalloutActionButton({ action, testID }: { action: CalloutAction; testID
         action.disabled ? styles.actionButtonDisabled : null,
       ]}
     >
-      <Text
-        style={[
-          styles.actionLabel,
-          isPrimary ? styles.actionLabelPrimary : styles.actionLabelSecondary,
-        ]}
-        numberOfLines={1}
-      >
+      <Text style={labelStyle} numberOfLines={1}>
         {action.label}
       </Text>
     </Pressable>

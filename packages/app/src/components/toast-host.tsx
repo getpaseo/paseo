@@ -212,16 +212,35 @@ export function ToastViewport({
     };
   }, [clearTimer, opacity, scheduleDismiss, toast, translateY]);
 
-  if (!toast) {
-    return null;
-  }
-
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
   const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const topOffset =
     placement === "app-shell"
       ? insets.top + headerTopPadding + headerHeight + theme.spacing[2]
       : theme.spacing[3];
+
+  const toastVariant = toast?.variant;
+  const toastAnimatedStyle = useMemo(
+    () => [
+      styles.toast,
+      toastVariant === "success" ? styles.toastSuccess : null,
+      toastVariant === "error" ? styles.toastError : null,
+      {
+        marginTop: topOffset,
+        opacity,
+        transform: [{ translateY }],
+      },
+    ],
+    [toastVariant, topOffset, opacity, translateY],
+  );
+  const toastMessageStyle = useMemo(
+    () => [styles.message, toastVariant === "error" ? styles.messageError : null],
+    [toastVariant],
+  );
+
+  if (!toast) {
+    return null;
+  }
 
   const icon =
     toast.icon ??
@@ -237,24 +256,12 @@ export function ToastViewport({
         testID={toast.testID ?? "app-toast"}
         onPointerEnter={isWeb ? pauseDismiss : undefined}
         onPointerLeave={isWeb ? resumeDismiss : undefined}
-        style={[
-          styles.toast,
-          toast.variant === "success" ? styles.toastSuccess : null,
-          toast.variant === "error" ? styles.toastError : null,
-          {
-            marginTop: topOffset,
-            opacity,
-            transform: [{ translateY }],
-          },
-        ]}
+        style={toastAnimatedStyle}
         accessibilityRole="alert"
       >
         {icon ? <View style={styles.iconSlot}>{icon}</View> : null}
         {typeof toast.content === "string" ? (
-          <Text
-            testID="app-toast-message"
-            style={[styles.message, toast.variant === "error" ? styles.messageError : null]}
-          >
+          <Text testID="app-toast-message" style={toastMessageStyle}>
             {toast.content}
           </Text>
         ) : (

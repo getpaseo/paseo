@@ -7,7 +7,7 @@ import Animated, {
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 const SYNCED_LOADER_DURATION_MS = 950;
 const SYNCED_LOADER_EPOCH_MS = 0;
@@ -66,6 +66,11 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
   const gridWidth = dotSize * 2 + gap;
   const gridHeight = dotSize * 3 + gap * 2;
 
+  const gridStyle = useMemo(
+    () => [animatedStyle, { width: gridWidth, height: gridHeight }],
+    [animatedStyle, gridWidth, gridHeight],
+  );
+
   return (
     <View
       style={{
@@ -75,15 +80,7 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
         justifyContent: "center",
       }}
     >
-      <Animated.View
-        style={[
-          animatedStyle,
-          {
-            width: gridWidth,
-            height: gridHeight,
-          },
-        ]}
-      >
+      <Animated.View style={gridStyle}>
         {Array.from({ length: DOT_COUNT }).map((_, dotIndex) => {
           const rowIndex = Math.floor(dotIndex / GRID_COLUMNS);
           const columnIndex = dotIndex % GRID_COLUMNS;
@@ -144,18 +141,19 @@ function SpinnerDot({
     };
   });
 
-  return (
-    <Animated.View
-      style={[
-        animatedStyle,
-        {
-          width: dotSize,
-          height: dotSize,
-          borderRadius: dotSize / 2,
-          backgroundColor: color,
-        },
-        style,
-      ]}
-    />
+  const dotStyle = useMemo(
+    () => [
+      animatedStyle,
+      {
+        width: dotSize,
+        height: dotSize,
+        borderRadius: dotSize / 2,
+        backgroundColor: color,
+      },
+      style,
+    ],
+    [animatedStyle, dotSize, color, style],
   );
+
+  return <Animated.View style={dotStyle} />;
 }

@@ -100,10 +100,15 @@ const CodeLine = React.memo(function CodeLine({
   colorMap,
   baseColor,
 }: CodeLineProps) {
+  const gutterStyle = useMemo(() => [codeLineStyles.gutter, { width: gutterWidth }], [gutterWidth]);
+  const gutterTextStyle = useMemo(
+    () => [codeLineStyles.gutterText, { color: baseColor }],
+    [baseColor],
+  );
   return (
     <View style={codeLineStyles.line}>
-      <View style={[codeLineStyles.gutter, { width: gutterWidth }]}>
-        <Text style={[codeLineStyles.gutterText, { color: baseColor }]}>{String(lineNumber)}</Text>
+      <View style={gutterStyle}>
+        <Text style={gutterTextStyle}>{String(lineNumber)}</Text>
       </View>
       <Text selectable style={codeLineStyles.lineText}>
         {tokens.map((token, index) => (

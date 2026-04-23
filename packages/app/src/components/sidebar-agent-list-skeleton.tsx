@@ -1,6 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Animated, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+
+const SECTION_OPACITIES: readonly number[] = [1, 0.7, 0.4];
 
 function SkeletonPulse({ pulse, style }: { pulse: Animated.Value; style: StyleProp<ViewStyle> }) {
   const opacity = pulse.interpolate({
@@ -8,7 +10,43 @@ function SkeletonPulse({ pulse, style }: { pulse: Animated.Value; style: StylePr
     outputRange: [0.4, 0.8],
   });
 
-  return <Animated.View style={[style, { opacity }]} />;
+  const pulseStyle = useMemo(() => [style, { opacity }], [style, opacity]);
+
+  return <Animated.View style={pulseStyle} />;
+}
+
+function SkeletonSection({
+  pulse,
+  sectionOpacity,
+  sectionIdx,
+}: {
+  pulse: Animated.Value;
+  sectionOpacity: number;
+  sectionIdx: number;
+}) {
+  const sectionStyle = useMemo(
+    () => [styles.section, { opacity: sectionOpacity }],
+    [sectionOpacity],
+  );
+  return (
+    <View style={sectionStyle}>
+      <View style={styles.sectionHeader}>
+        <SkeletonPulse pulse={pulse} style={styles.chevron} />
+        <SkeletonPulse pulse={pulse} style={styles.projectIcon} />
+        <SkeletonPulse pulse={pulse} style={styles.sectionTitle} />
+      </View>
+
+      <View style={styles.rows}>
+        {Array.from({ length: 3 }).map((__, rowIdx) => (
+          <View key={`skeleton-row-${sectionIdx}-${rowIdx}`} style={styles.row}>
+            <SkeletonPulse pulse={pulse} style={styles.rowDot} />
+            <SkeletonPulse pulse={pulse} style={styles.rowTitle} />
+            <SkeletonPulse pulse={pulse} style={styles.rowBadge} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
 }
 
 export function SidebarAgentListSkeleton() {
@@ -36,27 +74,13 @@ export function SidebarAgentListSkeleton() {
 
   return (
     <View style={styles.container}>
-      {[1, 0.7, 0.4].map((sectionOpacity, sectionIdx) => (
-        <View
+      {SECTION_OPACITIES.map((sectionOpacity, sectionIdx) => (
+        <SkeletonSection
           key={`skeleton-section-${sectionIdx}`}
-          style={[styles.section, { opacity: sectionOpacity }]}
-        >
-          <View style={styles.sectionHeader}>
-            <SkeletonPulse pulse={pulse} style={styles.chevron} />
-            <SkeletonPulse pulse={pulse} style={styles.projectIcon} />
-            <SkeletonPulse pulse={pulse} style={styles.sectionTitle} />
-          </View>
-
-          <View style={styles.rows}>
-            {Array.from({ length: 3 }).map((__, rowIdx) => (
-              <View key={`skeleton-row-${sectionIdx}-${rowIdx}`} style={styles.row}>
-                <SkeletonPulse pulse={pulse} style={styles.rowDot} />
-                <SkeletonPulse pulse={pulse} style={styles.rowTitle} />
-                <SkeletonPulse pulse={pulse} style={styles.rowBadge} />
-              </View>
-            ))}
-          </View>
-        </View>
+          pulse={pulse}
+          sectionOpacity={sectionOpacity}
+          sectionIdx={sectionIdx}
+        />
       ))}
     </View>
   );

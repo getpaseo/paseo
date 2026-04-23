@@ -1,5 +1,5 @@
 import { RefreshControl } from "react-native";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import DraggableFlatList, {
   NestableDraggableFlatList,
   type RenderItemParams,
@@ -37,7 +37,15 @@ export function DraggableList<T>({
 
   // Pass the ref directly to DraggableFlatList - it handles gesture
   // coordination internally for nestable lists.
-  const simultaneousHandlers = simultaneousGestureRef ? [simultaneousGestureRef] : undefined;
+  const simultaneousHandlers = useMemo(
+    () => (simultaneousGestureRef ? [simultaneousGestureRef] : undefined),
+    [simultaneousGestureRef],
+  );
+
+  const refreshColors = useMemo(
+    () => [theme.colors.foregroundMuted],
+    [theme.colors.foregroundMuted],
+  );
 
   const handleRenderItem = useCallback(
     ({ item, drag, isActive, getIndex }: RenderItemParams<T>) => {
@@ -106,7 +114,7 @@ export function DraggableList<T>({
             refreshing={refreshing ?? false}
             onRefresh={onRefresh}
             tintColor={theme.colors.foregroundMuted}
-            colors={[theme.colors.foregroundMuted]}
+            colors={refreshColors}
           />
         ) : undefined
       }

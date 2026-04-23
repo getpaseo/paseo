@@ -101,14 +101,9 @@ describe("CalloutCard", () => {
 
   it("renders one action when one is provided", () => {
     const onPress = vi.fn();
+    const actions = [{ label: "Undo", onPress }];
     act(() => {
-      root?.render(
-        <CalloutCard
-          description="Saved."
-          actions={[{ label: "Undo", onPress }]}
-          testID="callout"
-        />,
-      );
+      root?.render(<CalloutCard description="Saved." actions={actions} testID="callout" />);
     });
 
     const button = container?.querySelector(
@@ -119,15 +114,16 @@ describe("CalloutCard", () => {
   });
 
   it("renders up to two actions", () => {
+    const actions: React.ComponentProps<typeof CalloutCard>["actions"] = [
+      { label: "What's new", onPress: vi.fn() },
+      { label: "Install & restart", onPress: vi.fn(), variant: "primary" },
+    ];
     act(() => {
       root?.render(
         <CalloutCard
           title="Update available"
           description="v1 ready."
-          actions={[
-            { label: "What's new", onPress: vi.fn() },
-            { label: "Install & restart", onPress: vi.fn(), variant: "primary" },
-          ]}
+          actions={actions}
           testID="callout"
         />,
       );
