@@ -38,7 +38,7 @@ type ResolveLogConfigOptions = {
 };
 
 const LOG_LEVELS: Set<LogLevel> = new Set(["trace", "debug", "info", "warn", "error", "fatal"]);
-const LOG_FORMATS: LogFormat[] = ["pretty", "json"];
+const LOG_FORMATS: Set<LogFormat> = new Set(["pretty", "json"]);
 const LOG_LEVEL_PRIORITIES: Record<LogLevel, number> = {
   trace: 10,
   debug: 20,
@@ -63,7 +63,7 @@ function parseLogLevel(value: string | undefined): LogLevel | undefined {
 }
 
 function parseLogFormat(value: string | undefined): LogFormat | undefined {
-  if (!value || !LOG_FORMATS.includes(value as LogFormat)) {
+  if (!value || !LOG_FORMATS.has(value as LogFormat)) {
     return undefined;
   }
   return value as LogFormat;
