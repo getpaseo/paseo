@@ -29,7 +29,9 @@ vi.mock("ws", () => ({
 }));
 
 vi.mock("./session.js", () => ({
-  Session: class {},
+  Session: function Session() {
+    return {};
+  },
 }));
 
 vi.mock("./push/token-store.js", () => ({

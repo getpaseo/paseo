@@ -1741,10 +1741,6 @@ test("hydrateTimeline preserves assistant chunk, reasoning, and tool timeline hi
   const storage = new AgentStorage(storagePath, logger);
 
   class ChunkedAssistantHistorySession extends TestAgentSession {
-    constructor(config: AgentSessionConfig) {
-      super(config);
-    }
-
     async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
       yield {
         type: "timeline",
@@ -1846,10 +1842,6 @@ test("hydrateTimeline preserves reasoning between assistant chunks", async () =>
   const storage = new AgentStorage(storagePath, logger);
 
   class ReasoningInterleavedHistorySession extends TestAgentSession {
-    constructor(config: AgentSessionConfig) {
-      super(config);
-    }
-
     async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
       yield {
         type: "timeline",
@@ -4101,10 +4093,6 @@ test("hydrateTimeline skips provider user_message items to prevent duplicates wi
   // Session whose streamHistory yields user_message + assistant_message items.
   // This simulates Codex provider replaying its thread history on resume.
   class HistoryWithUserMessagesSession extends TestAgentSession {
-    constructor(config: AgentSessionConfig) {
-      super(config);
-    }
-
     async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
       yield {
         type: "timeline",
@@ -4196,10 +4184,6 @@ test("hydrateTimeline keeps provider user_message items when no canonical user h
   const storage = new AgentStorage(storagePath, logger);
 
   class HistoryWithUserMessagesSession extends TestAgentSession {
-    constructor(config: AgentSessionConfig) {
-      super(config);
-    }
-
     async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
       yield {
         type: "timeline",
@@ -4270,10 +4254,6 @@ test("hydrateTimeline suppresses only matching canonical user_message messageId"
   const storage = new AgentStorage(storagePath, logger);
 
   class HistoryWithMixedUserMessagesSession extends TestAgentSession {
-    constructor(config: AgentSessionConfig) {
-      super(config);
-    }
-
     async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
       yield {
         type: "timeline",
@@ -4446,10 +4426,6 @@ test("live provider user_message echo is suppressed when recordUserMessage was c
 
   // Session whose live turn echoes the user message (as Claude does)
   class EchoUserMessageSession extends TestAgentSession {
-    constructor(config: AgentSessionConfig) {
-      super(config);
-    }
-
     override async startTurn(): Promise<{ turnId: string }> {
       const turnId = "turn-echo-1";
       setTimeout(() => {
@@ -4529,10 +4505,6 @@ test("live provider user_message with different messageId is NOT suppressed", as
   const storage = new AgentStorage(storagePath, logger);
 
   class DifferentMessageIdSession extends TestAgentSession {
-    constructor(config: AgentSessionConfig) {
-      super(config);
-    }
-
     override async startTurn(): Promise<{ turnId: string }> {
       const turnId = "turn-diff-msgid-1";
       setTimeout(() => {
@@ -4600,10 +4572,6 @@ test("live provider user_message without messageId is NOT suppressed", async () 
   const storage = new AgentStorage(storagePath, logger);
 
   class NoMessageIdSession extends TestAgentSession {
-    constructor(config: AgentSessionConfig) {
-      super(config);
-    }
-
     override async startTurn(): Promise<{ turnId: string }> {
       const turnId = "turn-no-msgid-1";
       setTimeout(() => {
@@ -4661,10 +4629,6 @@ test("provider user_message is NOT suppressed when no prior recordUserMessage", 
 
   // Session whose live turn yields a user_message without prior canonical recording
   class UnexpectedUserMessageSession extends TestAgentSession {
-    constructor(config: AgentSessionConfig) {
-      super(config);
-    }
-
     override async startTurn(): Promise<{ turnId: string }> {
       const turnId = "turn-unexpected-1";
       setTimeout(() => {
