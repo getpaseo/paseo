@@ -1679,57 +1679,51 @@ export class Session {
   }
 
   private async dispatchInboundMessage(msg: SessionInboundMessage): Promise<void> {
-    if (await this.dispatchVoiceAndControlMessage(msg)) return;
-    if (await this.dispatchAgentLifecycleMessage(msg)) return;
-    if (await this.dispatchAgentConfigMessage(msg)) return;
-    if (await this.dispatchCheckoutMessage(msg)) return;
-    if (await this.dispatchWorkspaceAndProjectMessage(msg)) return;
-    if (await this.dispatchProviderMessage(msg)) return;
-    if (await this.dispatchTerminalMessage(msg)) return;
-    if (await this.dispatchChatScheduleLoopMessage(msg)) return;
-    await this.dispatchMiscMessage(msg);
+    const promise =
+      this.dispatchVoiceAndControlMessage(msg) ??
+      this.dispatchAgentLifecycleMessage(msg) ??
+      this.dispatchAgentConfigMessage(msg) ??
+      this.dispatchCheckoutMessage(msg) ??
+      this.dispatchWorkspaceAndProjectMessage(msg) ??
+      this.dispatchProviderMessage(msg) ??
+      this.dispatchTerminalMessage(msg) ??
+      this.dispatchChatScheduleLoopMessage(msg) ??
+      this.dispatchMiscMessage(msg);
+    if (promise) await promise;
   }
 
-  private async dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<boolean> {
+  private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "voice_audio_chunk":
-        await this.handleAudioChunk(msg);
-        return true;
+        return this.handleAudioChunk(msg);
       case "abort_request":
-        await this.handleAbort();
-        return true;
+        return this.handleAbort();
       case "audio_played":
         this.handleAudioPlayed(msg.id);
-        return true;
+        return undefined;
       case "set_voice_mode":
-        await this.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
-        return true;
+        return this.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
       case "dictation_stream_start":
-        await this.handleDictationStreamStart(msg);
-        return true;
+        return this.handleDictationStreamStart(msg);
       case "dictation_stream_chunk":
-        await this.dictationStreamManager.handleChunk({
+        return this.dictationStreamManager.handleChunk({
           dictationId: msg.dictationId,
           seq: msg.seq,
           audioBase64: msg.audio,
           format: msg.format,
         });
-        return true;
       case "dictation_stream_finish":
-        await this.dictationStreamManager.handleFinish(msg.dictationId, msg.finalSeq);
-        return true;
+        return this.dictationStreamManager.handleFinish(msg.dictationId, msg.finalSeq);
       case "dictation_stream_cancel":
         this.dictationStreamManager.handleCancel(msg.dictationId);
-        return true;
+        return undefined;
       case "restart_server_request":
-        await this.handleRestartServerRequest(msg.requestId, msg.reason);
-        return true;
+        return this.handleRestartServerRequest(msg.requestId, msg.reason);
       case "shutdown_server_request":
-        await this.handleShutdownServerRequest(msg.requestId);
-        return true;
+        return this.handleShutdownServerRequest(msg.requestId);
       case "client_heartbeat":
         this.handleClientHeartbeat(msg);
-        return true;
+        return undefined;
       case "ping": {
         const now = Date.now();
         this.emit({
@@ -1741,10 +1735,10 @@ export class Session {
             serverSentAt: now,
           },
         });
-        return true;
+        return undefined;
       }
       default:
-        return false;
+        return undefined;
     }
   }
 
@@ -1768,86 +1762,66 @@ export class Session {
     await this.dictationStreamManager.handleStart(msg.dictationId, msg.format);
   }
 
-  private async dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<boolean> {
+  private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_agents_request":
-        await this.handleFetchAgents(msg);
-        return true;
+        return this.handleFetchAgents(msg);
       case "fetch_agent_history_request":
-        await this.handleFetchAgentHistory(msg);
-        return true;
+        return this.handleFetchAgentHistory(msg);
       case "fetch_agent_request":
-        await this.handleFetchAgent(msg.agentId, msg.requestId);
-        return true;
+        return this.handleFetchAgent(msg.agentId, msg.requestId);
       case "delete_agent_request":
-        await this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
-        return true;
+        return this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
       case "archive_agent_request":
-        await this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
-        return true;
+        return this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
       case "close_items_request":
-        await this.handleCloseItemsRequest(msg);
-        return true;
+        return this.handleCloseItemsRequest(msg);
       case "update_agent_request":
-        await this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
-        return true;
+        return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
       case "send_agent_message_request":
-        await this.handleSendAgentMessageRequest(msg);
-        return true;
+        return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
-        await this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
-        return true;
+        return this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
       case "create_agent_request":
-        await this.handleCreateAgentRequest(msg);
-        return true;
+        return this.handleCreateAgentRequest(msg);
       case "resume_agent_request":
-        await this.handleResumeAgentRequest(msg);
-        return true;
+        return this.handleResumeAgentRequest(msg);
       case "refresh_agent_request":
-        await this.handleRefreshAgentRequest(msg);
-        return true;
+        return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
-        await this.handleCancelAgentRequest(msg.agentId, msg.requestId);
-        return true;
+        return this.handleCancelAgentRequest(msg.agentId, msg.requestId);
       case "fetch_agent_timeline_request":
-        await this.handleFetchAgentTimelineRequest(msg);
-        return true;
+        return this.handleFetchAgentTimelineRequest(msg);
       case "agent_permission_response":
-        await this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
-        return true;
+        return this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
       case "clear_agent_attention":
-        await this.handleClearAgentAttention(msg.agentId, msg.requestId);
-        return true;
+        return this.handleClearAgentAttention(msg.agentId, msg.requestId);
       default:
-        return false;
+        return undefined;
     }
   }
 
-  private async dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<boolean> {
+  private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "set_agent_mode_request":
-        await this.handleSetAgentModeRequest(msg.agentId, msg.modeId, msg.requestId);
-        return true;
+        return this.handleSetAgentModeRequest(msg.agentId, msg.modeId, msg.requestId);
       case "set_agent_model_request":
-        await this.handleSetAgentModelRequest(msg.agentId, msg.modelId, msg.requestId);
-        return true;
+        return this.handleSetAgentModelRequest(msg.agentId, msg.modelId, msg.requestId);
       case "set_agent_feature_request":
-        await this.handleSetAgentFeatureRequest(
+        return this.handleSetAgentFeatureRequest(
           msg.agentId,
           msg.featureId,
           msg.value,
           msg.requestId,
         );
-        return true;
       case "set_agent_thinking_request":
-        await this.handleSetAgentThinkingRequest(msg.agentId, msg.thinkingOptionId, msg.requestId);
-        return true;
+        return this.handleSetAgentThinkingRequest(msg.agentId, msg.thinkingOptionId, msg.requestId);
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
           payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
         });
-        return true;
+        return undefined;
       case "set_daemon_config_request":
         this.emit({
           type: "set_daemon_config_response",
@@ -1856,245 +1830,185 @@ export class Session {
             config: this.daemonConfigStore.patch(msg.config),
           },
         });
-        return true;
+        return undefined;
       default:
-        return false;
+        return undefined;
     }
   }
 
-  private async dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<boolean> {
+  private dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "checkout_status_request":
-        await this.handleCheckoutStatusRequest(msg);
-        return true;
+        return this.handleCheckoutStatusRequest(msg);
       case "validate_branch_request":
-        await this.handleValidateBranchRequest(msg);
-        return true;
+        return this.handleValidateBranchRequest(msg);
       case "branch_suggestions_request":
-        await this.handleBranchSuggestionsRequest(msg);
-        return true;
+        return this.handleBranchSuggestionsRequest(msg);
       case "directory_suggestions_request":
-        await this.handleDirectorySuggestionsRequest(msg);
-        return true;
+        return this.handleDirectorySuggestionsRequest(msg);
       case "subscribe_checkout_diff_request":
-        await this.handleSubscribeCheckoutDiffRequest(msg);
-        return true;
+        return this.handleSubscribeCheckoutDiffRequest(msg);
       case "unsubscribe_checkout_diff_request":
         this.handleUnsubscribeCheckoutDiffRequest(msg);
-        return true;
+        return undefined;
       case "checkout_switch_branch_request":
-        await this.handleCheckoutSwitchBranchRequest(msg);
-        return true;
+        return this.handleCheckoutSwitchBranchRequest(msg);
       case "stash_save_request":
-        await this.handleStashSaveRequest(msg);
-        return true;
+        return this.handleStashSaveRequest(msg);
       case "stash_pop_request":
-        await this.handleStashPopRequest(msg);
-        return true;
+        return this.handleStashPopRequest(msg);
       case "stash_list_request":
-        await this.handleStashListRequest(msg);
-        return true;
+        return this.handleStashListRequest(msg);
       case "checkout_commit_request":
-        await this.handleCheckoutCommitRequest(msg);
-        return true;
+        return this.handleCheckoutCommitRequest(msg);
       case "checkout_merge_request":
-        await this.handleCheckoutMergeRequest(msg);
-        return true;
+        return this.handleCheckoutMergeRequest(msg);
       case "checkout_merge_from_base_request":
-        await this.handleCheckoutMergeFromBaseRequest(msg);
-        return true;
+        return this.handleCheckoutMergeFromBaseRequest(msg);
       case "checkout_pull_request":
-        await this.handleCheckoutPullRequest(msg);
-        return true;
+        return this.handleCheckoutPullRequest(msg);
       case "checkout_push_request":
-        await this.handleCheckoutPushRequest(msg);
-        return true;
+        return this.handleCheckoutPushRequest(msg);
       case "checkout_pr_create_request":
-        await this.handleCheckoutPrCreateRequest(msg);
-        return true;
+        return this.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_status_request":
-        await this.handleCheckoutPrStatusRequest(msg);
-        return true;
+        return this.handleCheckoutPrStatusRequest(msg);
       case "pull_request_timeline_request":
-        await this.handlePullRequestTimelineRequest(msg);
-        return true;
+        return this.handlePullRequestTimelineRequest(msg);
       case "github_search_request":
-        await this.handleGitHubSearchRequest(msg);
-        return true;
+        return this.handleGitHubSearchRequest(msg);
       default:
-        return false;
+        return undefined;
     }
   }
 
-  private async dispatchWorkspaceAndProjectMessage(msg: SessionInboundMessage): Promise<boolean> {
+  private dispatchWorkspaceAndProjectMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_workspaces_request":
-        await this.handleFetchWorkspacesRequest(msg);
-        return true;
+        return this.handleFetchWorkspacesRequest(msg);
       case "paseo_worktree_list_request":
-        await this.handlePaseoWorktreeListRequest(msg);
-        return true;
+        return this.handlePaseoWorktreeListRequest(msg);
       case "paseo_worktree_archive_request":
-        await this.handlePaseoWorktreeArchiveRequest(msg);
-        return true;
+        return this.handlePaseoWorktreeArchiveRequest(msg);
       case "create_paseo_worktree_request":
-        await this.handleCreatePaseoWorktreeRequest(msg);
-        return true;
+        return this.handleCreatePaseoWorktreeRequest(msg);
       case "workspace_setup_status_request":
-        await this.handleWorkspaceSetupStatusRequest(msg);
-        return true;
+        return this.handleWorkspaceSetupStatusRequest(msg);
       case "list_available_editors_request":
-        await this.handleListAvailableEditorsRequest(msg);
-        return true;
+        return this.handleListAvailableEditorsRequest(msg);
       case "open_in_editor_request":
-        await this.handleOpenInEditorRequest(msg);
-        return true;
+        return this.handleOpenInEditorRequest(msg);
       case "open_project_request":
-        await this.handleOpenProjectRequest(msg);
-        return true;
+        return this.handleOpenProjectRequest(msg);
       case "archive_workspace_request":
-        await this.handleArchiveWorkspaceRequest(msg);
-        return true;
+        return this.handleArchiveWorkspaceRequest(msg);
       case "file_explorer_request":
-        await this.handleFileExplorerRequest(msg);
-        return true;
+        return this.handleFileExplorerRequest(msg);
       case "project_icon_request":
-        await this.handleProjectIconRequest(msg);
-        return true;
+        return this.handleProjectIconRequest(msg);
       case "file_download_token_request":
-        await this.handleFileDownloadTokenRequest(msg);
-        return true;
+        return this.handleFileDownloadTokenRequest(msg);
       default:
-        return false;
+        return undefined;
     }
   }
 
-  private async dispatchProviderMessage(msg: SessionInboundMessage): Promise<boolean> {
+  private dispatchProviderMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "list_provider_models_request":
-        await this.handleListProviderModelsRequest(msg);
-        return true;
+        return this.handleListProviderModelsRequest(msg);
       case "list_provider_modes_request":
-        await this.handleListProviderModesRequest(msg);
-        return true;
+        return this.handleListProviderModesRequest(msg);
       case "list_provider_features_request":
-        await this.handleListProviderFeaturesRequest(msg);
-        return true;
+        return this.handleListProviderFeaturesRequest(msg);
       case "list_available_providers_request":
-        await this.handleListAvailableProvidersRequest(msg);
-        return true;
+        return this.handleListAvailableProvidersRequest(msg);
       case "get_providers_snapshot_request":
-        await this.handleGetProvidersSnapshotRequest(msg);
-        return true;
+        return this.handleGetProvidersSnapshotRequest(msg);
       case "refresh_providers_snapshot_request":
-        await this.handleRefreshProvidersSnapshotRequest(msg);
-        return true;
+        return this.handleRefreshProvidersSnapshotRequest(msg);
       case "provider_diagnostic_request":
-        await this.handleProviderDiagnosticRequest(msg);
-        return true;
+        return this.handleProviderDiagnosticRequest(msg);
       default:
-        return false;
+        return undefined;
     }
   }
 
-  private async dispatchTerminalMessage(msg: SessionInboundMessage): Promise<boolean> {
+  private dispatchTerminalMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "subscribe_terminals_request":
         this.handleSubscribeTerminalsRequest(msg);
-        return true;
+        return undefined;
       case "unsubscribe_terminals_request":
         this.handleUnsubscribeTerminalsRequest(msg);
-        return true;
+        return undefined;
       case "list_terminals_request":
-        await this.handleListTerminalsRequest(msg);
-        return true;
+        return this.handleListTerminalsRequest(msg);
       case "create_terminal_request":
-        await this.handleCreateTerminalRequest(msg);
-        return true;
+        return this.handleCreateTerminalRequest(msg);
       case "start_workspace_script_request":
-        await this.handleStartWorkspaceScriptRequest(msg);
-        return true;
+        return this.handleStartWorkspaceScriptRequest(msg);
       case "subscribe_terminal_request":
-        await this.handleSubscribeTerminalRequest(msg);
-        return true;
+        return this.handleSubscribeTerminalRequest(msg);
       case "unsubscribe_terminal_request":
         this.handleUnsubscribeTerminalRequest(msg);
-        return true;
+        return undefined;
       case "terminal_input":
         this.handleTerminalInput(msg);
-        return true;
+        return undefined;
       case "kill_terminal_request":
-        await this.handleKillTerminalRequest(msg);
-        return true;
+        return this.handleKillTerminalRequest(msg);
       case "capture_terminal_request":
-        await this.handleCaptureTerminalRequest(msg);
-        return true;
+        return this.handleCaptureTerminalRequest(msg);
       default:
-        return false;
+        return undefined;
     }
   }
 
-  private async dispatchChatScheduleLoopMessage(msg: SessionInboundMessage): Promise<boolean> {
+  private dispatchChatScheduleLoopMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "chat/create":
-        await this.handleChatCreateRequest(msg);
-        return true;
+        return this.handleChatCreateRequest(msg);
       case "chat/list":
-        await this.handleChatListRequest(msg);
-        return true;
+        return this.handleChatListRequest(msg);
       case "chat/inspect":
-        await this.handleChatInspectRequest(msg);
-        return true;
+        return this.handleChatInspectRequest(msg);
       case "chat/delete":
-        await this.handleChatDeleteRequest(msg);
-        return true;
+        return this.handleChatDeleteRequest(msg);
       case "chat/post":
-        await this.handleChatPostRequest(msg);
-        return true;
+        return this.handleChatPostRequest(msg);
       case "chat/read":
-        await this.handleChatReadRequest(msg);
-        return true;
+        return this.handleChatReadRequest(msg);
       case "chat/wait":
-        await this.handleChatWaitRequest(msg);
-        return true;
+        return this.handleChatWaitRequest(msg);
       case "schedule/create":
-        await this.handleScheduleCreateRequest(msg);
-        return true;
+        return this.handleScheduleCreateRequest(msg);
       case "schedule/list":
-        await this.handleScheduleListRequest(msg);
-        return true;
+        return this.handleScheduleListRequest(msg);
       case "schedule/inspect":
-        await this.handleScheduleInspectRequest(msg);
-        return true;
+        return this.handleScheduleInspectRequest(msg);
       case "schedule/logs":
-        await this.handleScheduleLogsRequest(msg);
-        return true;
+        return this.handleScheduleLogsRequest(msg);
       case "schedule/pause":
-        await this.handleSchedulePauseRequest(msg);
-        return true;
+        return this.handleSchedulePauseRequest(msg);
       case "schedule/resume":
-        await this.handleScheduleResumeRequest(msg);
-        return true;
+        return this.handleScheduleResumeRequest(msg);
       case "schedule/delete":
-        await this.handleScheduleDeleteRequest(msg);
-        return true;
+        return this.handleScheduleDeleteRequest(msg);
       case "loop/run":
-        await this.handleLoopRunRequest(msg);
-        return true;
+        return this.handleLoopRunRequest(msg);
       case "loop/list":
-        await this.handleLoopListRequest(msg);
-        return true;
+        return this.handleLoopListRequest(msg);
       case "loop/inspect":
-        await this.handleLoopInspectRequest(msg);
-        return true;
+        return this.handleLoopInspectRequest(msg);
       case "loop/logs":
-        await this.handleLoopLogsRequest(msg);
-        return true;
+        return this.handleLoopLogsRequest(msg);
       case "loop/stop":
-        await this.handleLoopStopRequest(msg);
-        return true;
+        return this.handleLoopStopRequest(msg);
       default:
-        return false;
+        return undefined;
     }
   }
 
