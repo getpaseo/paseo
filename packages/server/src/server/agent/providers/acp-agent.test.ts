@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import type { PromptResponse, SessionUpdate } from "@agentclientprotocol/sdk";
 
 import {
   ACPAgentClient,
@@ -12,6 +13,13 @@ import {
 } from "./acp-agent.js";
 import { transformPiModels } from "./pi-direct-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+
+interface ACPSessionInternals {
+  sessionId: string | null;
+  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  activeForegroundTurnId: string | null;
+  translateSessionUpdate(update: SessionUpdate): unknown;
+}
 
 function createSession(): ACPAgentSession {
   return new ACPAgentSession(
@@ -521,7 +529,7 @@ describe("ACPAgentSession slash commands", () => {
 
     const listCommandsPromise = session.listCommands();
 
-    (session as any).translateSessionUpdate({
+    (session as unknown as ACPSessionInternals).translateSessionUpdate({
       sessionUpdate: "available_commands_update",
       availableCommands: [
         {
@@ -567,7 +575,7 @@ describe("ACPAgentSession", () => {
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {
     const session = createSession();
     const events: Array<{ type: string; item?: { type: string; text?: string } }> = [];
-    (session as any).sessionId = "session-1";
+    (session as unknown as ACPSessionInternals).sessionId = "session-1";
 
     session.subscribe((event) => {
       events.push(event as { type: string; item?: { type: string; text?: string } });
@@ -579,7 +587,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "agent_message_chunk",
         messageId: "assistant-1",
         content: { type: "text", text: "Hey!" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -587,7 +595,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "agent_message_chunk",
         messageId: "assistant-1",
         content: { type: "text", text: " How are you?" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -595,7 +603,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "agent_thought_chunk",
         messageId: "thought-1",
         content: { type: "text", text: "Thinking" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -603,7 +611,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "agent_thought_chunk",
         messageId: "thought-1",
         content: { type: "text", text: " more" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -611,7 +619,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "user_message_chunk",
         messageId: "user-1",
         content: { type: "text", text: "hel" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -619,7 +627,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "user_message_chunk",
         messageId: "user-1",
         content: { type: "text", text: "lo" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
 
     const timeline = events
@@ -640,7 +648,7 @@ describe("ACPAgentSession", () => {
   test("startTurn returns before the ACP prompt settles and completes later via subscribers", async () => {
     const session = createSession();
     const events: Array<{ type: string; turnId?: string }> = [];
-    let resolvePrompt!: (value: any) => void;
+    let resolvePrompt!: (value: PromptResponse) => void;
     const prompt = vi.fn(
       () =>
         new Promise((resolve) => {
@@ -648,8 +656,8 @@ describe("ACPAgentSession", () => {
         }),
     );
 
-    (session as any).sessionId = "session-1";
-    (session as any).connection = { prompt };
+    (session as unknown as ACPSessionInternals).sessionId = "session-1";
+    (session as unknown as ACPSessionInternals).connection = { prompt };
 
     session.subscribe((event) => {
       events.push(event as { type: string; turnId?: string });
@@ -662,7 +670,7 @@ describe("ACPAgentSession", () => {
       type: "turn_started",
       turnId,
     });
-    expect((session as any).activeForegroundTurnId).toBe(turnId);
+    expect((session as unknown as ACPSessionInternals).activeForegroundTurnId).toBe(turnId);
 
     resolvePrompt({ stopReason: "end_turn", usage: { outputTokens: 3 } });
     await Promise.resolve();
@@ -672,7 +680,7 @@ describe("ACPAgentSession", () => {
       type: "turn_completed",
       turnId,
     });
-    expect((session as any).activeForegroundTurnId).toBeNull();
+    expect((session as unknown as ACPSessionInternals).activeForegroundTurnId).toBeNull();
   });
 
   test("startTurn converts background prompt rejections into turn_failed events", async () => {
@@ -686,8 +694,8 @@ describe("ACPAgentSession", () => {
         }),
     );
 
-    (session as any).sessionId = "session-1";
-    (session as any).connection = { prompt };
+    (session as unknown as ACPSessionInternals).sessionId = "session-1";
+    (session as unknown as ACPSessionInternals).connection = { prompt };
 
     session.subscribe((event) => {
       events.push(event as { type: string; turnId?: string; error?: string });
@@ -705,6 +713,6 @@ describe("ACPAgentSession", () => {
       turnId,
       error: "prompt failed",
     });
-    expect((session as any).activeForegroundTurnId).toBeNull();
+    expect((session as unknown as ACPSessionInternals).activeForegroundTurnId).toBeNull();
   });
 });
