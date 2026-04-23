@@ -196,6 +196,16 @@ interface WorkspaceRowInnerProps {
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }
 
+function getWorkspaceArchiveStatus(
+  isWorktree: boolean,
+  archiveStatus: "idle" | "pending" | "success",
+  isArchivingWorkspace: boolean,
+): "idle" | "pending" | "success" {
+  if (isWorktree) return archiveStatus;
+  if (isArchivingWorkspace) return "pending";
+  return "idle";
+}
+
 function useSidebarWorkspaceEntry(
   serverId: string | null,
   workspaceId: string | null,
@@ -369,8 +379,10 @@ function WorkspaceStatusIndicator({
     );
   }
 
-  const KindIcon =
-    workspaceKind === "local_checkout" ? Monitor : workspaceKind === "worktree" ? FolderGit2 : null;
+  let KindIcon: typeof Monitor | typeof FolderGit2 | null;
+  if (workspaceKind === "local_checkout") KindIcon = Monitor;
+  else if (workspaceKind === "worktree") KindIcon = FolderGit2;
+  else KindIcon = null;
   if (!KindIcon) return null;
 
   const dotColor = getStatusDotColor({ theme, bucket, showDoneAsInactive: false });
@@ -1187,7 +1199,8 @@ function WorkspaceRowInner({
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-              ) : workspace.diffStat ? (
+              ) : null}
+              {!(onArchive && (isHovered || isTouchPlatform)) && workspace.diffStat ? (
                 <DiffStat
                   additions={workspace.diffStat.additions}
                   deletions={workspace.diffStat.deletions}
@@ -1413,7 +1426,7 @@ function WorkspaceRowWithMenu({
       dragHandleProps={dragHandleProps}
       menuController={null}
       archiveLabel={isWorktree ? "Archive worktree" : "Hide from sidebar"}
-      archiveStatus={isWorktree ? archiveStatus : isArchivingWorkspace ? "pending" : "idle"}
+      archiveStatus={getWorkspaceArchiveStatus(isWorktree, archiveStatus, isArchivingWorkspace)}
       archivePendingLabel={isWorktree ? "Archiving..." : "Hiding..."}
       onArchive={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
       onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}

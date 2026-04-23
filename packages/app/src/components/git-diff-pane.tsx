@@ -1238,12 +1238,14 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const hasChanges = files.length > 0;
   const diffErrorMessage = diffPayloadError?.message ?? null;
   const prErrorMessage = githubFeaturesEnabled ? (prPayloadError?.message ?? null) : null;
-  const branchLabel =
-    gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD"
-      ? gitStatus.currentBranch
-      : notGit
-        ? "Not a git repository"
-        : "Unknown";
+  let branchLabel: string;
+  if (gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD") {
+    branchLabel = gitStatus.currentBranch;
+  } else if (notGit) {
+    branchLabel = "Not a git repository";
+  } else {
+    branchLabel = "Unknown";
+  }
   const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
   const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
   const behindBaseCount = gitStatus?.aheadBehind?.behind ?? 0;
@@ -1313,15 +1315,17 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       </View>
     );
   } else if (!hasChanges) {
+    let emptyMessage: string;
+    if (changesPreferences.hideWhitespace) {
+      emptyMessage = "No visible changes after hiding whitespace";
+    } else if (diffMode === "uncommitted") {
+      emptyMessage = "No uncommitted changes";
+    } else {
+      emptyMessage = `No changes vs ${baseRefLabel}`;
+    }
     bodyContent = (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>
-          {changesPreferences.hideWhitespace
-            ? "No visible changes after hiding whitespace"
-            : diffMode === "uncommitted"
-              ? "No uncommitted changes"
-              : `No changes vs ${baseRefLabel}`}
-        </Text>
+        <Text style={styles.emptyText}>{emptyMessage}</Text>
       </View>
     );
   } else {

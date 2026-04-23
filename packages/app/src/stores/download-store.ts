@@ -216,11 +216,10 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
           updated.delete(id);
         }
       }
-      const newActiveId = state.activeDownloadId
-        ? updated.has(state.activeDownloadId)
-          ? state.activeDownloadId
-          : findMostRecentDownloadId(updated)
-        : null;
+      let newActiveId: string | null;
+      if (!state.activeDownloadId) newActiveId = null;
+      else if (updated.has(state.activeDownloadId)) newActiveId = state.activeDownloadId;
+      else newActiveId = findMostRecentDownloadId(updated);
       return { downloads: updated, activeDownloadId: newActiveId };
     });
   },

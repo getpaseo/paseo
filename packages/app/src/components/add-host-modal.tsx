@@ -222,12 +222,14 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       handleClose();
     } catch (error) {
       const { title, detail, raw: rawDetail } = buildConnectionFailureCopy(endpoint, error);
-      const combined =
-        rawDetail && detail && rawDetail !== detail
-          ? `${title}\n${detail}\nDetails: ${rawDetail}`
-          : detail
-            ? `${title}\n${detail}`
-            : title;
+      let combined: string;
+      if (rawDetail && detail && rawDetail !== detail) {
+        combined = `${title}\n${detail}\nDetails: ${rawDetail}`;
+      } else if (detail) {
+        combined = `${title}\n${detail}`;
+      } else {
+        combined = title;
+      }
       setErrorMessage(combined);
       if (!isMobile) {
         // Desktop/web: also surface it as a dialog for quick visibility.

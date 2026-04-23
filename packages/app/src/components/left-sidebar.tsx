@@ -145,12 +145,11 @@ export const LeftSidebar = memo(function LeftSidebar({
   const activeHostStatus = activeServerId
     ? (activeHostSnapshot?.connectionStatus ?? "connecting")
     : "idle";
-  const activeHostStatusColor =
-    activeHostStatus === "online"
-      ? theme.colors.palette.green[400]
-      : activeHostStatus === "connecting"
-        ? theme.colors.palette.amber[500]
-        : theme.colors.palette.red[500];
+  let activeHostStatusColor: string;
+  if (activeHostStatus === "online") activeHostStatusColor = theme.colors.palette.green[400];
+  else if (activeHostStatus === "connecting")
+    activeHostStatusColor = theme.colors.palette.amber[500];
+  else activeHostStatusColor = theme.colors.palette.red[500];
   const hostOptions = useMemo(
     () =>
       daemons.map((daemon) => ({
@@ -523,7 +522,10 @@ function MobileSidebar({
     pointerEvents: backdropOpacity.value > 0.01 ? "auto" : "none",
   }));
 
-  const overlayPointerEvents = isWeb ? (isOpen ? "auto" : "none") : "box-none";
+  let overlayPointerEvents: "auto" | "none" | "box-none";
+  if (!isWeb) overlayPointerEvents = "box-none";
+  else if (isOpen) overlayPointerEvents = "auto";
+  else overlayPointerEvents = "none";
 
   const backdropStyle = useMemo(
     () => [staticStyles.backdrop, backdropAnimatedStyle],

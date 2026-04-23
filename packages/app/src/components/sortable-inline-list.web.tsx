@@ -27,6 +27,11 @@ const restrictToHorizontalAxis: Modifier = ({ transform }) => ({
 
 const DND_MODIFIERS: Modifier[] = [restrictToHorizontalAxis];
 
+function computeDragOpacity(hasExternalContext: boolean, isDragging: boolean): number {
+  if (!isDragging) return 1;
+  return hasExternalContext ? 0.3 : 0.9;
+}
+
 function SortableItem<T>({
   id,
   item,
@@ -77,7 +82,7 @@ function SortableItem<T>({
     () => ({
       transform: combinedTransform || undefined,
       transition,
-      opacity: externalDndContext && isDragging ? 0.3 : isDragging ? 0.9 : 1,
+      opacity: computeDragOpacity(Boolean(externalDndContext), isDragging),
       zIndex: isDragging ? 1000 : 1,
     }),
     [combinedTransform, transition, externalDndContext, isDragging],

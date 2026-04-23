@@ -583,13 +583,11 @@ export default function TerminalEmulator({
 
   const handleVisible =
     scrollbarGeometry.isVisible && (isDraggingScrollbar || isScrollVisible || isHandleHovered);
-  const handleOpacity = isDraggingScrollbar
-    ? SCROLLBAR_HANDLE_OPACITY_DRAGGING
-    : isHandleHovered
-      ? SCROLLBAR_HANDLE_OPACITY_HOVERED
-      : isScrollVisible
-        ? SCROLLBAR_HANDLE_OPACITY_VISIBLE
-        : 0;
+  let handleOpacity: number;
+  if (isDraggingScrollbar) handleOpacity = SCROLLBAR_HANDLE_OPACITY_DRAGGING;
+  else if (isHandleHovered) handleOpacity = SCROLLBAR_HANDLE_OPACITY_HOVERED;
+  else if (isScrollVisible) handleOpacity = SCROLLBAR_HANDLE_OPACITY_VISIBLE;
+  else handleOpacity = 0;
   const handleWidth =
     isDraggingScrollbar || isHandleHovered
       ? SCROLLBAR_HANDLE_WIDTH_ACTIVE

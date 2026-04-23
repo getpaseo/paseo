@@ -8,12 +8,10 @@ export function lineNumberGutterWidth(maxLineNumber: number): number {
 }
 
 export function getCodeInsets(theme: any) {
-  const padding =
-    typeof theme.spacing?.[3] === "number"
-      ? theme.spacing[3]
-      : typeof theme.spacing?.[4] === "number"
-        ? theme.spacing[4]
-        : 12;
+  let padding: number;
+  if (typeof theme.spacing?.[3] === "number") padding = theme.spacing[3];
+  else if (typeof theme.spacing?.[4] === "number") padding = theme.spacing[4];
+  else padding = 12;
   const extraRight = theme.spacing[4];
   const extraBottom = theme.spacing[3];
 

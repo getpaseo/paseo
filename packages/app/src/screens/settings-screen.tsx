@@ -344,6 +344,15 @@ function AboutSection({ appVersionText, isDesktopApp }: AboutSectionProps) {
   );
 }
 
+function getUpdateButtonLabel(
+  isInstalling: boolean,
+  latestVersion: string | null | undefined,
+): string {
+  if (isInstalling) return "Installing...";
+  if (latestVersion) return `Update to ${formatVersionWithPrefix(latestVersion)}`;
+  return "Update";
+}
+
 function DesktopAppUpdateRow() {
   const { settings, updateSettings } = useAppSettings();
   const {
@@ -451,11 +460,7 @@ function DesktopAppUpdateRow() {
             onPress={handleInstallUpdate}
             disabled={isChecking || isInstalling || !availableUpdate}
           >
-            {isInstalling
-              ? "Installing..."
-              : availableUpdate?.latestVersion
-                ? `Update to ${formatVersionWithPrefix(availableUpdate.latestVersion)}`
-                : "Update"}
+            {getUpdateButtonLabel(isInstalling, availableUpdate?.latestVersion)}
           </Button>
         </View>
       </View>

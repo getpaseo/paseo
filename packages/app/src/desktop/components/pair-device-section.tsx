@@ -79,7 +79,8 @@ export function PairDeviceSection() {
             <ActivityIndicator size="small" />
             <Text style={styles.hint}>Loading pairing offer…</Text>
           </View>
-        ) : pairingQuery.isError ? (
+        ) : null}
+        {!pairingQuery.isPending && pairingQuery.isError ? (
           <View style={styles.centered}>
             <Text style={styles.hint}>
               {pairingQuery.error instanceof Error
@@ -90,7 +91,8 @@ export function PairDeviceSection() {
               Retry
             </Button>
           </View>
-        ) : !pairingQuery.data?.url ? (
+        ) : null}
+        {!pairingQuery.isPending && !pairingQuery.isError && !pairingQuery.data?.url ? (
           <View style={styles.centered}>
             <Text style={styles.hint}>
               {pairingQuery.data?.relayEnabled === false
@@ -101,7 +103,8 @@ export function PairDeviceSection() {
               Retry
             </Button>
           </View>
-        ) : (
+        ) : null}
+        {!pairingQuery.isPending && !pairingQuery.isError && pairingQuery.data?.url ? (
           <View style={styles.content}>
             <Text style={styles.hint}>
               Scan this QR code with Paseo on your phone, or copy the link below.
@@ -109,11 +112,11 @@ export function PairDeviceSection() {
             <View style={styles.qrContainer}>
               {qrImageSource ? (
                 <Image source={qrImageSource} style={styles.qrImage} resizeMode="contain" />
-              ) : qrQuery.isError ? (
+              ) : null}
+              {!qrImageSource && qrQuery.isError ? (
                 <Text style={styles.hint}>QR code unavailable.</Text>
-              ) : (
-                <ActivityIndicator size="small" />
-              )}
+              ) : null}
+              {!qrImageSource && !qrQuery.isError ? <ActivityIndicator size="small" /> : null}
             </View>
             <View style={styles.linkRow}>
               <View style={styles.inputWrapper}>
@@ -135,7 +138,7 @@ export function PairDeviceSection() {
               </Button>
             </View>
           </View>
-        )}
+        ) : null}
       </View>
     </View>
   );

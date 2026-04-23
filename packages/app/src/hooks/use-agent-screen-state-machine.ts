@@ -158,13 +158,11 @@ export function deriveAgentScreenViewState({
     };
   }
 
-  const source: "authoritative" | "optimistic" | "stale" = useOptimisticCreateFlowAgent
-    ? "optimistic"
-    : input.agent
-      ? "authoritative"
-      : input.shouldUseOptimisticStream
-        ? "optimistic"
-        : "stale";
+  let source: "authoritative" | "optimistic" | "stale";
+  if (useOptimisticCreateFlowAgent) source = "optimistic";
+  else if (input.agent) source = "authoritative";
+  else if (input.shouldUseOptimisticStream) source = "optimistic";
+  else source = "stale";
 
   let sync: AgentScreenReadySyncState;
   if (!input.isConnected) {

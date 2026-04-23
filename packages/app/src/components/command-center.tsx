@@ -101,12 +101,12 @@ function CommandCenterActionRow({
   const { theme } = useUnistyles();
   const handlePress = useCallback(() => onSelect(item), [onSelect, item]);
   const action = item.action;
-  const actionIcon =
-    action.icon === "plus" ? (
-      <Plus size={16} strokeWidth={2.4} color={theme.colors.foregroundMuted} />
-    ) : action.icon === "settings" ? (
-      <Settings size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
-    ) : null;
+  let actionIcon: React.ReactNode = null;
+  if (action.icon === "plus") {
+    actionIcon = <Plus size={16} strokeWidth={2.4} color={theme.colors.foregroundMuted} />;
+  } else if (action.icon === "settings") {
+    actionIcon = <Settings size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />;
+  }
   const titleStyle = useMemo(
     () => [styles.title, { color: theme.colors.foreground }],
     [theme.colors.foreground],

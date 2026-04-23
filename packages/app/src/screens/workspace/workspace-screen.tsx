@@ -2183,33 +2183,41 @@ function WorkspaceScreenContent({
     },
     [buildPaneContentModel],
   );
-  const content = shouldRenderMissingWorkspaceDescriptor({
+  const showMissingWorkspaceDescriptor = shouldRenderMissingWorkspaceDescriptor({
     workspace: workspaceDescriptor,
     hasHydratedWorkspaces,
-  }) ? (
-    <View style={styles.emptyState}>
-      <ActivityIndicator color={theme.colors.foregroundMuted} />
-    </View>
-  ) : isMissingWorkspaceExecutionAuthority ? (
-    <View style={styles.emptyState}>
-      <Text style={styles.emptyStateText}>
-        Workspace execution directory is missing. Reload workspace data before opening tabs.
-      </Text>
-    </View>
-  ) : !activeTabDescriptor ? (
-    !hasHydratedAgents ? (
+  });
+  let content: React.ReactNode;
+  if (showMissingWorkspaceDescriptor) {
+    content = (
       <View style={styles.emptyState}>
         <ActivityIndicator color={theme.colors.foregroundMuted} />
       </View>
-    ) : (
+    );
+  } else if (isMissingWorkspaceExecutionAuthority) {
+    content = (
+      <View style={styles.emptyState}>
+        <Text style={styles.emptyStateText}>
+          Workspace execution directory is missing. Reload workspace data before opening tabs.
+        </Text>
+      </View>
+    );
+  } else if (!activeTabDescriptor && !hasHydratedAgents) {
+    content = (
+      <View style={styles.emptyState}>
+        <ActivityIndicator color={theme.colors.foregroundMuted} />
+      </View>
+    );
+  } else if (!activeTabDescriptor) {
+    content = (
       <View style={styles.emptyState}>
         <Text style={styles.emptyStateText}>
           No tabs are available yet. Use New tab to create an agent or terminal.
         </Text>
       </View>
-    )
-  ) : (
-    mountedFocusedPaneTabIds.map((tabId) => {
+    );
+  } else {
+    content = mountedFocusedPaneTabIds.map((tabId) => {
       const tabDescriptor = focusedPaneTabDescriptorMap.get(tabId);
       if (!tabDescriptor) {
         return null;
@@ -2226,8 +2234,8 @@ function WorkspaceScreenContent({
           buildPaneContentModel={buildMobilePaneContentModel}
         />
       );
-    })
-  );
+    });
+  }
 
   const buildDesktopPaneContentModel = useCallback(
     function buildDesktopPaneContentModel(input: { paneId: string; tab: WorkspaceTabDescriptor }) {

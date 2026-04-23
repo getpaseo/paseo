@@ -140,11 +140,13 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
           <View style={EMPTY_CARD_STYLE}>
             <Text style={styles.emptyText}>Connect to this host to see providers</Text>
           </View>
-        ) : isLoading ? (
+        ) : null}
+        {hasServer && isConnected && isLoading ? (
           <View style={EMPTY_CARD_STYLE}>
             <Text style={styles.emptyText}>Loading...</Text>
           </View>
-        ) : (
+        ) : null}
+        {hasServer && isConnected && !isLoading ? (
           <View style={settingsStyles.card}>
             {providerDefinitions.map((def, index) => (
               <ProviderRow
@@ -156,7 +158,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
               />
             ))}
           </View>
-        )}
+        ) : null}
       </SettingsSection>
 
       {diagnosticProvider ? (

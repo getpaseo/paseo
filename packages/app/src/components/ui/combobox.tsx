@@ -200,17 +200,22 @@ export function ComboboxItem({
 }: ComboboxItemProps): ReactElement {
   const { theme } = useUnistyles();
 
-  const leadingContent = leadingSlot ? (
-    <View style={styles.comboboxItemLeadingSlot}>{leadingSlot}</View>
-  ) : kind === "directory" || kind === "file" ? (
-    <View style={styles.comboboxItemLeadingSlot}>
-      {kind === "directory" ? (
+  let leadingContent: ReactElement | null = null;
+  if (leadingSlot) {
+    leadingContent = <View style={styles.comboboxItemLeadingSlot}>{leadingSlot}</View>;
+  } else if (kind === "directory") {
+    leadingContent = (
+      <View style={styles.comboboxItemLeadingSlot}>
         <Folder size={16} color={theme.colors.foregroundMuted} />
-      ) : (
+      </View>
+    );
+  } else if (kind === "file") {
+    leadingContent = (
+      <View style={styles.comboboxItemLeadingSlot}>
         <File size={16} color={theme.colors.foregroundMuted} />
-      )}
-    </View>
-  ) : null;
+      </View>
+    );
+  }
 
   const itemPressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -482,30 +487,36 @@ export function Combobox({
   const measuredTopStartBottom = useMeasuredTopStartPosition
     ? Math.max(windowHeight - referenceTop + 5, collisionPadding)
     : null;
+  let resolvedPositionReady: boolean;
+  if (isDesktopAboveSearch) {
+    resolvedPositionReady = floatingLeft !== null && desktopAboveSearchBottom !== null;
+  } else if (useMeasuredTopStartPosition) {
+    resolvedPositionReady = clampedMeasuredTopStartLeft !== null && measuredTopStartBottom !== null;
+  } else {
+    resolvedPositionReady =
+      floatingLeft !== null &&
+      floatingTop !== null &&
+      (hasNonZeroFloatingPosition || referenceAtOrigin);
+  }
   const hasResolvedDesktopPosition =
-    referenceWidth !== null &&
-    referenceWidth > 0 &&
-    (isDesktopAboveSearch
-      ? floatingLeft !== null && desktopAboveSearchBottom !== null
-      : useMeasuredTopStartPosition
-        ? clampedMeasuredTopStartLeft !== null && measuredTopStartBottom !== null
-        : floatingLeft !== null &&
-          floatingTop !== null &&
-          (hasNonZeroFloatingPosition || referenceAtOrigin));
+    referenceWidth !== null && referenceWidth > 0 && resolvedPositionReady;
   const shouldHideDesktopContent = desktopPreventInitialFlash && !hasResolvedDesktopPosition;
   const shouldUseDesktopFade = !desktopPreventInitialFlash;
 
-  const desktopPositionStyle = isDesktopAboveSearch
-    ? {
-        left: floatingLeft ?? 0,
-        bottom: desktopAboveSearchBottom ?? 0,
-      }
-    : useMeasuredTopStartPosition
-      ? {
-          left: clampedMeasuredTopStartLeft ?? 0,
-          bottom: measuredTopStartBottom ?? 0,
-        }
-      : floatingStyles;
+  let desktopPositionStyle: { left: number; bottom: number } | typeof floatingStyles;
+  if (isDesktopAboveSearch) {
+    desktopPositionStyle = {
+      left: floatingLeft ?? 0,
+      bottom: desktopAboveSearchBottom ?? 0,
+    };
+  } else if (useMeasuredTopStartPosition) {
+    desktopPositionStyle = {
+      left: clampedMeasuredTopStartLeft ?? 0,
+      bottom: measuredTopStartBottom ?? 0,
+    };
+  } else {
+    desktopPositionStyle = floatingStyles;
+  }
 
   const { sheetRef: bottomSheetRef, handleSheetChange } = useIsolatedBottomSheetVisibility({
     visible: isOpen,

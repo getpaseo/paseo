@@ -171,14 +171,11 @@ function SetupPanel() {
     return null;
   })();
 
-  const statusLabel =
-    snapshot?.status === "running"
-      ? "Running"
-      : snapshot?.status === "completed"
-        ? "Completed"
-        : snapshot?.status === "failed"
-          ? "Failed"
-          : "Waiting for setup output";
+  let statusLabel: string;
+  if (snapshot?.status === "running") statusLabel = "Running";
+  else if (snapshot?.status === "completed") statusLabel = "Completed";
+  else if (snapshot?.status === "failed") statusLabel = "Failed";
+  else statusLabel = "Waiting for setup output";
 
   return (
     <ScrollView
@@ -196,7 +193,8 @@ function SetupPanel() {
           <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
           <Text style={styles.waitingText}>Setting up workspace...</Text>
         </View>
-      ) : hasNoSetupCommands ? (
+      ) : null}
+      {!isWaiting && hasNoSetupCommands ? (
         <View style={styles.emptyContainer}>
           <Text
             style={styles.emptyText}
@@ -206,7 +204,8 @@ function SetupPanel() {
             No setup commands ran for this workspace.
           </Text>
         </View>
-      ) : (
+      ) : null}
+      {!isWaiting && !hasNoSetupCommands ? (
         <View style={styles.commandList}>
           {commands.map((command) => {
             const isExpanded = expandedIndices.has(command.index);
@@ -275,7 +274,7 @@ function SetupPanel() {
             </View>
           ) : null}
         </View>
-      )}
+      ) : null}
     </ScrollView>
   );
 }

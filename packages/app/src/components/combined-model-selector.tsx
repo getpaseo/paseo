@@ -217,19 +217,19 @@ function ModelRow({
           accessibilityLabel={isFavorite ? "Unfavorite model" : "Favorite model"}
           testID={`favorite-model-${row.provider}-${row.modelId}`}
         >
-          {({ hovered }) => (
-            <Star
-              size={16}
-              color={
-                isFavorite
-                  ? theme.colors.palette.amber[500]
-                  : hovered
-                    ? theme.colors.foregroundMuted
-                    : theme.colors.border
-              }
-              fill={isFavorite ? theme.colors.palette.amber[500] : "transparent"}
-            />
-          )}
+          {({ hovered }) => {
+            let starColor: string;
+            if (isFavorite) starColor = theme.colors.palette.amber[500];
+            else if (hovered) starColor = theme.colors.foregroundMuted;
+            else starColor = theme.colors.border;
+            return (
+              <Star
+                size={16}
+                color={starColor}
+                fill={isFavorite ? theme.colors.palette.amber[500] : "transparent"}
+              />
+            );
+          }}
         </Pressable>
       ) : null,
     [

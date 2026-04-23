@@ -280,12 +280,14 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const pushDisabled = actionsDisabled || pushStatus === "pending";
   const archiveDisabled = actionsDisabled || archiveStatus === "pending";
 
-  const branchLabel =
-    gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD"
-      ? gitStatus.currentBranch
-      : notGit
-        ? "Not a git repository"
-        : "Unknown";
+  let branchLabel: string;
+  if (gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD") {
+    branchLabel = gitStatus.currentBranch;
+  } else if (notGit) {
+    branchLabel = "Not a git repository";
+  } else {
+    branchLabel = "Unknown";
+  }
 
   // Build actions
   const gitActions: GitActions = useMemo(() => {

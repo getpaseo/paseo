@@ -112,12 +112,10 @@ function buildAudioPlaybackSource(chunks: BufferedAudioChunk[]): AudioPlaybackSo
   }
 
   const format = chunks[0]?.format ?? "pcm";
-  const mimeType =
-    format === "pcm"
-      ? "audio/pcm;rate=24000;bits=16"
-      : format === "mp3"
-        ? "audio/mpeg"
-        : `audio/${format}`;
+  let mimeType: string;
+  if (format === "pcm") mimeType = "audio/pcm;rate=24000;bits=16";
+  else if (format === "mp3") mimeType = "audio/mpeg";
+  else mimeType = `audio/${format}`;
 
   const bytes = output.slice();
   return {

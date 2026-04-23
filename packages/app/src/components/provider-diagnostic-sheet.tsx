@@ -215,7 +215,8 @@ export function ProviderDiagnosticSheet({
               <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
               <Text style={sheetStyles.mutedText}>Running diagnostic…</Text>
             </View>
-          ) : diagnostic ? (
+          ) : null}
+          {!(loading && !diagnostic) && diagnostic ? (
             <ScrollView
               style={sheetStyles.codeScroll}
               contentContainerStyle={sheetStyles.codeContent}
@@ -227,11 +228,12 @@ export function ProviderDiagnosticSheet({
                 </Text>
               </ScrollView>
             </ScrollView>
-          ) : (
+          ) : null}
+          {!(loading && !diagnostic) && !diagnostic ? (
             <View style={sheetStyles.codeBlockLoading}>
               <Text style={sheetStyles.mutedText}>No diagnostic available.</Text>
             </View>
-          )}
+          ) : null}
         </View>
       </View>
 

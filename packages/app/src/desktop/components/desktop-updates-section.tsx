@@ -21,6 +21,20 @@ import {
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 import { resolveAppVersion } from "@/utils/app-version";
 
+function getDaemonManagementButtonLabel(isUpdating: boolean, isPaused: boolean): string {
+  if (isUpdating) return isPaused ? "Resuming..." : "Pausing...";
+  return isPaused ? "Resume" : "Pause";
+}
+
+function getDaemonRestartButtonLabel(
+  isRestarting: boolean,
+  daemonStatus: string | undefined,
+  actionLabel: string,
+): string {
+  if (!isRestarting) return actionLabel;
+  return daemonStatus === "running" ? "Restarting..." : "Starting...";
+}
+
 export function LocalDaemonSection() {
   const { theme } = useUnistyles();
   const showSection = shouldUseDesktopDaemon();
@@ -338,13 +352,10 @@ export function LocalDaemonSection() {
                 onPress={handleToggleDaemonManagement}
                 disabled={isUpdatingDaemonManagement}
               >
-                {isUpdatingDaemonManagement
-                  ? isDaemonManagementPaused
-                    ? "Resuming..."
-                    : "Pausing..."
-                  : isDaemonManagementPaused
-                    ? "Resume"
-                    : "Pause"}
+                {getDaemonManagementButtonLabel(
+                  isUpdatingDaemonManagement,
+                  isDaemonManagementPaused,
+                )}
               </Button>
             </View>
             <View style={ROW_WITH_BORDER_STYLE}>
@@ -360,11 +371,11 @@ export function LocalDaemonSection() {
                 onPress={handleUpdateLocalDaemon}
                 disabled={isRestartingDaemon}
               >
-                {isRestartingDaemon
-                  ? daemonStatus?.status === "running"
-                    ? "Restarting..."
-                    : "Starting..."
-                  : daemonActionLabel}
+                {getDaemonRestartButtonLabel(
+                  isRestartingDaemon,
+                  daemonStatus?.status,
+                  daemonActionLabel,
+                )}
               </Button>
             </View>
             <View style={ROW_WITH_BORDER_STYLE}>

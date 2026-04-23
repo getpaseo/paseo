@@ -695,20 +695,22 @@ export function ContextMenuItem({
   }, [isDisabled, closeOnSelect, setOpen, onSelect]);
 
   const itemPressableStyle = useCallback(
-    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.item,
-      selected
-        ? selectedVariant === "accent"
-          ? styles.itemSelectedAccent
-          : styles.itemSelected
-        : null,
-      selected && (hovered || pressed) && selectedVariant !== "accent"
-        ? styles.itemSelectedInteractive
-        : null,
-      isDisabled ? styles.itemDisabled : null,
-      hovered && !pressed && !isDisabled ? styles.itemHovered : null,
-      pressed && !isDisabled ? styles.itemPressed : null,
-    ],
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+      let selectedStyle: typeof styles.itemSelectedAccent | typeof styles.itemSelected | null;
+      if (!selected) selectedStyle = null;
+      else if (selectedVariant === "accent") selectedStyle = styles.itemSelectedAccent;
+      else selectedStyle = styles.itemSelected;
+      return [
+        styles.item,
+        selectedStyle,
+        selected && (hovered || pressed) && selectedVariant !== "accent"
+          ? styles.itemSelectedInteractive
+          : null,
+        isDisabled ? styles.itemDisabled : null,
+        hovered && !pressed && !isDisabled ? styles.itemHovered : null,
+        pressed && !isDisabled ? styles.itemPressed : null,
+      ];
+    },
     [selected, selectedVariant, isDisabled],
   );
 

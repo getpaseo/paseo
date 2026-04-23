@@ -70,14 +70,16 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
         <View style={styles.loadingContainer}>
           <LoadingSpinner size="large" color={theme.colors.foregroundMuted} />
         </View>
-      ) : sortedAgents.length === 0 ? (
+      ) : null}
+      {!isInitialLoad && sortedAgents.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>No sessions yet</Text>
           <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
             Back
           </Button>
         </View>
-      ) : (
+      ) : null}
+      {!isInitialLoad && sortedAgents.length > 0 ? (
         <AgentList
           agents={sortedAgents}
           showCheckoutInfo={false}
@@ -86,7 +88,7 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
           listFooterComponent={listFooterComponent}
           showAttentionIndicator={false}
         />
-      )}
+      ) : null}
     </View>
   );
 }

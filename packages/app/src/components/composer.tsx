@@ -782,8 +782,10 @@ export function Composer({
     }
     void voice.startVoice(serverId, agentId).catch((error) => {
       console.error("[Composer] Failed to start voice mode", error);
-      const message =
-        error instanceof Error ? error.message : typeof error === "string" ? error : null;
+      let message: string | null;
+      if (error instanceof Error) message = error.message;
+      else if (typeof error === "string") message = error;
+      else message = null;
       if (message && message.trim().length > 0) {
         toastErrorRef.current(message);
       }
