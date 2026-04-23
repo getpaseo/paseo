@@ -7,7 +7,7 @@ import {
   View,
   type PressableStateCallbackType,
 } from "react-native";
-import { memo, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Plus, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useCommandCenter } from "@/hooks/use-command-center";
@@ -107,6 +107,10 @@ function CommandCenterActionRow({
     ) : action.icon === "settings" ? (
       <Settings size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
     ) : null;
+  const titleStyle = useMemo(
+    () => [styles.title, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
   return (
     <CommandCenterRowContainer
       rowIndex={rowIndex}
@@ -118,7 +122,7 @@ function CommandCenterActionRow({
         <View style={styles.rowMain}>
           {actionIcon ? <View style={styles.iconSlot}>{actionIcon}</View> : null}
           <View style={styles.textContent}>
-            <Text style={[styles.title, { color: theme.colors.foreground }]} numberOfLines={1}>
+            <Text style={titleStyle} numberOfLines={1}>
               {action.title}
             </Text>
           </View>
@@ -158,6 +162,43 @@ function CommandCenterAgentRow({
     >
       {children}
     </CommandCenterRowContainer>
+  );
+}
+
+interface CommandCenterAgentRowContentProps {
+  agent: AggregatedAgent;
+}
+
+function CommandCenterAgentRowContent({ agent }: CommandCenterAgentRowContentProps) {
+  const { theme } = useUnistyles();
+  const titleStyle = useMemo(
+    () => [styles.title, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const subtitleStyle = useMemo(
+    () => [styles.subtitle, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+  return (
+    <View style={styles.rowContent}>
+      <View style={styles.rowMain}>
+        <View style={styles.iconSlot}>
+          <AgentStatusDot
+            status={agent.status}
+            requiresAttention={agent.requiresAttention}
+            showInactive
+          />
+        </View>
+        <View style={styles.textContent}>
+          <Text style={titleStyle} numberOfLines={1}>
+            {agent.title || "New agent"}
+          </Text>
+          <Text style={subtitleStyle} numberOfLines={1}>
+            {shortenPath(agent.cwd)} · {formatTimeAgo(agent.lastActivityAt)}
+          </Text>
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -207,24 +248,46 @@ export function CommandCenter() {
     }
   }, [activeIndex, open]);
 
-  if (isNative || !open) return null;
-
   const actionItems = items.filter((item) => item.kind === "action");
   const agentItems = items.filter((item) => item.kind === "agent");
+
+  const panelStyle = useMemo(
+    () => [
+      styles.panel,
+      { borderColor: theme.colors.border, backgroundColor: theme.colors.surface0 },
+    ],
+    [theme.colors.border, theme.colors.surface0],
+  );
+  const headerStyle = useMemo(
+    () => [styles.header, { borderBottomColor: theme.colors.border }],
+    [theme.colors.border],
+  );
+  const inputStyle = useMemo(
+    () => [styles.input, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const emptyTextStyle = useMemo(
+    () => [styles.emptyText, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+  const sectionLabelStyle = useMemo(
+    () => [styles.sectionLabel, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+  const sectionDividerStyle = useMemo(
+    () => [styles.sectionDivider, { backgroundColor: theme.colors.border }],
+    [theme.colors.border],
+  );
+
+  if (isNative || !open) return null;
 
   return (
     <Modal visible={open} transparent animationType="fade" onRequestClose={handleClose}>
       <View style={styles.overlay}>
         <Pressable style={styles.backdrop} onPress={handleClose} />
 
-        <View
-          testID="command-center-panel"
-          style={[
-            styles.panel,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.surface0 },
-          ]}
-        >
-          <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+        <View testID="command-center-panel" style={panelStyle}>
+          <View style={headerStyle}>
             <TextInput
               testID="command-center-input"
               ref={inputRef}
@@ -232,7 +295,7 @@ export function CommandCenter() {
               onChangeText={setQuery}
               placeholder="Type a command or search agents..."
               placeholderTextColor={theme.colors.foregroundMuted}
-              style={[styles.input, { color: theme.colors.foreground }]}
+              style={inputStyle}
               autoCapitalize="none"
               autoCorrect={false}
               autoFocus
@@ -247,16 +310,12 @@ export function CommandCenter() {
             showsVerticalScrollIndicator={false}
           >
             {items.length === 0 ? (
-              <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
-                No matches
-              </Text>
+              <Text style={emptyTextStyle}>No matches</Text>
             ) : (
               <>
                 {actionItems.length > 0 ? (
                   <>
-                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
-                      Actions
-                    </Text>
+                    <Text style={sectionLabelStyle}>Actions</Text>
                     {actionItems.map((item, index) => (
                       <CommandCenterActionRow
                         key={`action:${item.action.id}`}
@@ -272,14 +331,8 @@ export function CommandCenter() {
 
                 {agentItems.length > 0 ? (
                   <>
-                    {actionItems.length > 0 ? (
-                      <View
-                        style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
-                      />
-                    ) : null}
-                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
-                      Agents
-                    </Text>
+                    {actionItems.length > 0 ? <View style={sectionDividerStyle} /> : null}
+                    <Text style={sectionLabelStyle}>Agents</Text>
                     {agentItems.map((item, index) => {
                       const rowIndex = actionItems.length + index;
                       const agent = item.agent;
@@ -292,31 +345,7 @@ export function CommandCenter() {
                           rowRefs={rowRefs}
                           onSelect={handleSelectItem}
                         >
-                          <View style={styles.rowContent}>
-                            <View style={styles.rowMain}>
-                              <View style={styles.iconSlot}>
-                                <AgentStatusDot
-                                  status={agent.status}
-                                  requiresAttention={agent.requiresAttention}
-                                  showInactive
-                                />
-                              </View>
-                              <View style={styles.textContent}>
-                                <Text
-                                  style={[styles.title, { color: theme.colors.foreground }]}
-                                  numberOfLines={1}
-                                >
-                                  {agent.title || "New agent"}
-                                </Text>
-                                <Text
-                                  style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
-                                  numberOfLines={1}
-                                >
-                                  {shortenPath(agent.cwd)} · {formatTimeAgo(agent.lastActivityAt)}
-                                </Text>
-                              </View>
-                            </View>
-                          </View>
+                          <CommandCenterAgentRowContent agent={agent} />
                         </CommandCenterAgentRow>
                       );
                     })}
