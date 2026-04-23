@@ -456,16 +456,16 @@ export function Composer({
   }, [focusInput, onFocusInput]);
 
   const submitMessage = useCallback(
-    async (text: string, attachments: ComposerAttachment[]) => {
+    async (text: string, submitAttachments: ComposerAttachment[]) => {
       onMessageSent?.();
       if (onSubmitMessageRef.current) {
-        await onSubmitMessageRef.current({ text, attachments, cwd });
+        await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
         return;
       }
       if (!sendAgentMessageRef.current) {
         throw new Error("Host is not connected");
       }
-      await sendAgentMessageRef.current(agentIdRef.current, text, attachments);
+      await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments);
     },
     [cwd, onMessageSent],
   );
@@ -476,15 +476,15 @@ export function Composer({
 
   useEffect(() => {
     sendAgentMessageRef.current = async (
-      agentId: string,
+      targetAgentId: string,
       text: string,
-      attachments: ComposerAttachment[],
+      sendAttachments: ComposerAttachment[],
     ) => {
       if (!client) {
         throw new Error("Host is not connected");
       }
 
-      const wirePayload = splitComposerAttachmentsForSubmit(attachments);
+      const wirePayload = splitComposerAttachmentsForSubmit(sendAttachments);
       const clientMessageId = generateMessageId();
       const userMessage: StreamItem = {
         kind: "user_message",
@@ -499,24 +499,24 @@ export function Composer({
       // Otherwise append to tail.
       const currentHead = useSessionStore
         .getState()
-        .sessions[serverId]?.agentStreamHead?.get(agentId);
+        .sessions[serverId]?.agentStreamHead?.get(targetAgentId);
       if (currentHead && currentHead.length > 0) {
         setAgentStreamHead(serverId, (prev) => {
-          const head = prev.get(agentId) || [];
+          const head = prev.get(targetAgentId) || [];
           const updated = new Map(prev);
-          updated.set(agentId, [...head, userMessage]);
+          updated.set(targetAgentId, [...head, userMessage]);
           return updated;
         });
       } else {
         setAgentStreamTail(serverId, (prev) => {
-          const currentStream = prev.get(agentId) || [];
+          const currentStream = prev.get(targetAgentId) || [];
           const updated = new Map(prev);
-          updated.set(agentId, [...currentStream, userMessage]);
+          updated.set(targetAgentId, [...currentStream, userMessage]);
           return updated;
         });
       }
       const imagesData = await encodeImages(wirePayload.images);
-      await client.sendAgentMessage(agentId, text, {
+      await client.sendAgentMessage(targetAgentId, text, {
         messageId: clientMessageId,
         images: imagesData ?? [],
         attachments: wirePayload.attachments,
@@ -544,14 +544,14 @@ export function Composer({
   );
 
   const queueMessage = useCallback(
-    (message: string, attachments: ComposerAttachment[]) => {
-      const trimmedMessage = message.trim();
-      if (!trimmedMessage && attachments.length === 0) return;
+    (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
+      const trimmedMessage = queuedMessage.trim();
+      if (!trimmedMessage && queuedAttachments.length === 0) return;
 
       const newItem = {
         id: generateMessageId(),
         text: trimmedMessage,
-        attachments,
+        attachments: queuedAttachments,
       };
 
       setQueuedMessages(serverId, (prev: Map<string, QueuedMessage[]>) => {
@@ -567,10 +567,14 @@ export function Composer({
   );
 
   const sendMessageWithContent = useCallback(
-    async (message: string, attachments: ComposerAttachment[], forceSend?: boolean) => {
+    async (
+      outgoingMessage: string,
+      outgoingAttachments: ComposerAttachment[],
+      forceSend?: boolean,
+    ) => {
       await submitAgentInput({
-        message,
-        attachments,
+        message: outgoingMessage,
+        attachments: outgoingAttachments,
         hasExternalContent,
         allowEmptySubmit,
         forceSend,
@@ -579,11 +583,11 @@ export function Composer({
         // Parent-managed submits are still valid submit paths even when the
         // transport is disconnected, because the parent decides the failure mode.
         canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
-        queueMessage: ({ message, attachments }) => {
-          queueMessage(message, attachments);
+        queueMessage: ({ message: queuedText, attachments: queuedAttachments }) => {
+          queueMessage(queuedText, queuedAttachments);
         },
-        submitMessage: async ({ message, attachments }) => {
-          await submitMessage(message, attachments);
+        submitMessage: async ({ message: submitText, attachments: submitAttachments }) => {
+          await submitMessage(submitText, submitAttachments);
         },
         clearDraft,
         setUserInput,
