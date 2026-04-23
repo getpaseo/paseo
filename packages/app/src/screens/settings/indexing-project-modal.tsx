@@ -50,7 +50,7 @@ export function IndexingProjectModal({
   onClose,
 }: IndexingProjectModalProps) {
   const { theme } = useUnistyles();
-  const indexing = useIndexing(serverId);
+  const indexing = useIndexing();
   const cliAgents = useCliAgents(serverId);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
 
@@ -124,15 +124,22 @@ export function IndexingProjectModal({
           <View style={settingsStyles.card}>
             <StatusLine label="Workspace enabled" value={state?.enabled ? "yes" : "no"} firstRow />
             <StatusLine label="Phase" value={state?.status.phase ?? "idle"} />
-            {state?.status.nodeCount != null ? (
-              <StatusLine label="Nodes" value={String(state.status.nodeCount)} />
-            ) : null}
             {state?.status.fileCount != null ? (
-              <StatusLine label="Files" value={String(state.status.fileCount)} />
+              <StatusLine label="Files" value={state.status.fileCount.toLocaleString()} />
+            ) : null}
+            {state?.status.nodeCount != null ? (
+              <StatusLine label="Nodes" value={state.status.nodeCount.toLocaleString()} />
+            ) : null}
+            {state?.status.indexBytes != null ? (
+              <StatusLine label="Index size" value={formatBytesShort(state.status.indexBytes)} />
             ) : null}
             {state?.status.lastIndexedAt ? (
-              <StatusLine label="Last indexed" value={state.status.lastIndexedAt} />
+              <StatusLine
+                label="Last indexed"
+                value={formatTimestamp(state.status.lastIndexedAt)}
+              />
             ) : null}
+            {state?.status.error ? <StatusLine label="Error" value={state.status.error} /> : null}
           </View>
         </View>
 
@@ -574,4 +581,29 @@ function StatusLine({
       <Text style={settingsStyles.rowHint}>{value}</Text>
     </View>
   );
+}
+
+function formatBytesShort(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(gb < 10 ? 2 : 1)} GB`;
+}
+
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  const relative =
+    sec < 60
+      ? `${sec}s ago`
+      : sec < 3600
+        ? `${Math.floor(sec / 60)}m ago`
+        : sec < 86400
+          ? `${Math.floor(sec / 3600)}h ago`
+          : `${Math.floor(sec / 86400)}d ago`;
+  return `${d.toLocaleString()} (${relative})`;
 }

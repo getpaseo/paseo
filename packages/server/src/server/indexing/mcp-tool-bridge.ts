@@ -36,6 +36,13 @@ export interface CrgToolBridgeDeps {
   agentId: string | null;
   /** Resolve the workspace state at *call* time, so mid-session toggles apply. */
   getIndexingState: () => Promise<IndexingState | null> | IndexingState | null;
+  /**
+   * Resolve the workspace cwd at call time. Injected into `repo_root` when
+   * the tool accepts it and the caller didn't supply one, so agents get
+   * scoped to their own workspace instead of crg's auto-detected root
+   * (which is the daemon's cwd — usually the wrong repo).
+   */
+  getWorkspaceCwd?: () => Promise<string | null> | string | null;
 }
 
 /**
@@ -71,7 +78,7 @@ export function registerCrgToolsOnServer(deps: CrgToolBridgeDeps): {
         tool.name,
         {
           title: prettifyTitle(tool.name),
-          description: tool.description ?? `Forwarded to code-review-graph: ${tool.name}`,
+          description: decorateDescription(tool),
           inputSchema: passthroughInputSchema(tool),
         },
         async (args: unknown) => handleCall(deps, agentId, tool, args),
@@ -110,7 +117,20 @@ async function handleCall(
   try {
     const raw =
       typeof args === "object" && args !== null ? (args as Record<string, unknown>) : undefined;
-    const result = await mcpClient.callTool(tool.name, raw);
+    // Inject repo_root when the tool accepts it and the caller didn't set one.
+    // crg's _resolve_repo_root(None) auto-detects from the subprocess cwd,
+    // which is the daemon's cwd — almost always NOT the agent's workspace.
+    const schemaProps = (tool.inputSchema as { properties?: Record<string, unknown> } | undefined)
+      ?.properties;
+    const acceptsRepoRoot = !!schemaProps && "repo_root" in schemaProps;
+    let finalArgs = raw;
+    if (acceptsRepoRoot && (!raw || !("repo_root" in raw)) && deps.getWorkspaceCwd) {
+      const cwd = await deps.getWorkspaceCwd();
+      if (cwd) {
+        finalArgs = { ...(raw ?? {}), repo_root: cwd };
+      }
+    }
+    const result = await mcpClient.callTool(tool.name, finalArgs);
     return normalizeToolResult(result);
   } catch (err) {
     logger.warn({ err, name: tool.name }, "crg tool call failed");
@@ -121,6 +141,49 @@ async function handleCall(
 
 function prettifyTitle(name: string): string {
   return name.replace(/^crg_/, "").replace(/_/g, " ");
+}
+
+// Tools that answer "where is X in the codebase?" / "what's the structure?"
+// — these should be preferred over raw Read/Grep/Glob because they query a
+// pre-built structural + semantic graph that's orders of magnitude faster
+// and returns richer results.
+const SEARCH_PREFERRED_TOOLS = new Set([
+  "crg_semantic_search_nodes",
+  "crg_semantic_search_nodes_tool",
+  "crg_query_graph",
+  "crg_query_graph_tool",
+  "crg_get_minimal_context",
+  "crg_get_minimal_context_tool",
+  "crg_get_impact_radius",
+  "crg_get_impact_radius_tool",
+  "crg_get_review_context",
+  "crg_get_review_context_tool",
+  "crg_find_large_functions",
+  "crg_find_large_functions_tool",
+  "crg_list_graph_stats",
+  "crg_list_graph_stats_tool",
+  "crg_get_architecture_overview",
+  "crg_get_architecture_overview_tool",
+  "crg_traverse_graph",
+  "crg_traverse_graph_tool",
+  "crg_get_hub_nodes",
+  "crg_get_hub_nodes_tool",
+  "crg_get_bridge_nodes",
+  "crg_get_bridge_nodes_tool",
+]);
+
+const SEARCH_PREFIX =
+  "PREFERRED for codebase exploration — use this BEFORE Read/Grep/Glob when answering " +
+  "questions about structure, dependencies, impact, or semantic search. The code-review-graph " +
+  "holds a pre-built structural + semantic index of the repo, queries are O(log n), and " +
+  "results carry node/edge context that plain text search doesn't. ";
+
+function decorateDescription(tool: CrgToolManifest): string {
+  const base = tool.description ?? `Forwarded to code-review-graph: ${tool.name}`;
+  if (SEARCH_PREFERRED_TOOLS.has(tool.name)) {
+    return `${SEARCH_PREFIX}\n\n${base}`;
+  }
+  return base;
 }
 
 /**

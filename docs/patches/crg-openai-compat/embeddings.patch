@@ -1,0 +1,92 @@
+--- a/code_review_graph/embeddings.py
++++ b/code_review_graph/embeddings.py
+@@ -1,6 +1,11 @@
+ from __future__ import annotations
+
+ ... (existing imports unchanged) ...
++
++from .embeddings_openai_compat import (
++    OpenAICompatEmbeddingProvider,
++    provider_from_env as _openai_compat_from_env,
++    is_loopback_url as _is_loopback_url,
++)
+
+ ... (LocalEmbeddingProvider, GoogleEmbeddingProvider, MiniMaxEmbeddingProvider unchanged) ...
+
+@@ -247,7 +252,7 @@ class MiniMaxEmbeddingProvider(EmbeddingProvider):
+         return f"minimax:{self._MODEL}"
+
+
+-CLOUD_PROVIDERS = {"google", "minimax"}
++CLOUD_PROVIDERS = {"google", "minimax", "openai-compat"}
+
+
+ def _warn_cloud_egress(provider_name: str) -> None:
+@@ -281,13 +286,15 @@ def get_provider(
+     model: str | None = None,
+ ) -> EmbeddingProvider | None:
+     """Get an embedding provider by name.
+
+     Args:
+-        provider: Provider name. One of "local", "google", "minimax", or None for local.
++        provider: Provider name. One of "local", "google", "minimax",
++                  "openai-compat", or None to auto-select from env
++                  (CRG_EMBEDDINGS_PROVIDER, falling back to "local").
+                   Google requires GOOGLE_API_KEY env var and explicit opt-in.
+                   MiniMax requires MINIMAX_API_KEY env var and explicit opt-in.
++                  openai-compat requires CRG_OPENAI_BASE_URL and CRG_OPENAI_MODEL.
+                   Cloud providers emit a one-time stderr warning before use
+                   unless ``CRG_ACCEPT_CLOUD_EMBEDDINGS=1`` is set. See: #174
+         model: Model name/path to use. For local provider this is any
+                sentence-transformers compatible model. Falls back to
+                CRG_EMBEDDING_MODEL env var, then to all-MiniLM-L6-v2.
+                For Google provider this is a Gemini model ID.
+     """
++    # Env-driven default selection when caller didn't specify.
++    if provider is None:
++        provider = os.environ.get("CRG_EMBEDDINGS_PROVIDER", "").strip() or None
++
+     if provider == "minimax":
+         api_key = os.environ.get("MINIMAX_API_KEY")
+         if not api_key:
+             raise ValueError(
+                 "MINIMAX_API_KEY environment variable is required for "
+                 "the MiniMax embedding provider."
+             )
+         _warn_cloud_egress("minimax")
+         return MiniMaxEmbeddingProvider(api_key=api_key)
+
++    if provider == "openai-compat":
++        built = _openai_compat_from_env()
++        if not built:
++            raise ValueError(
++                "CRG_OPENAI_BASE_URL and CRG_OPENAI_MODEL environment variables "
++                "are required for the openai-compat embedding provider."
++            )
++        # Only warn when talking to a non-loopback endpoint — LiteLLM/Ollama/
++        # Hubcode-local sidecars are common and don't leak code.
++        if not _is_loopback_url(os.environ.get("CRG_OPENAI_BASE_URL", "")):
++            _warn_cloud_egress("openai-compat")
++        return built
++
+     if provider == "google":
+         api_key = os.environ.get("GOOGLE_API_KEY")
+         if not api_key:
+             raise ValueError(
+                 "GOOGLE_API_KEY environment variable is required for "
+                 "the Google embedding provider."
+             )
+         _warn_cloud_egress("google")
+         try:
+             return GoogleEmbeddingProvider(
+                 api_key=api_key,
+                 **({"model": model} if model else {}),
+             )
+         except ImportError:
+             return None
+
+     # Default: local
+     try:
+         return LocalEmbeddingProvider(model_name=model)
+     except ImportError:
+         return None

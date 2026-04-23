@@ -12,8 +12,14 @@ import {
 } from "lucide-react-native";
 
 import { Button } from "@/components/ui/button";
+import { isWeb } from "@/constants/platform";
 import { IndexingStatusBar } from "@/components/indexing-status-bar";
-import { useIndexing, type FsTriggerInfo, type IndexingWorkspaceEntry } from "@/hooks/use-indexing";
+import {
+  IndexingProvider,
+  useIndexing,
+  type FsTriggerInfo,
+  type IndexingWorkspaceEntry,
+} from "@/hooks/use-indexing";
 import { settingsStyles } from "@/styles/settings";
 import { IndexingProjectModal } from "@/screens/settings/indexing-project-modal";
 
@@ -22,9 +28,18 @@ interface IndexingSectionProps {
 }
 
 export function IndexingSection({ routeServerId }: IndexingSectionProps) {
+  return (
+    <IndexingProvider serverId={routeServerId}>
+      <IndexingSectionInner routeServerId={routeServerId} />
+    </IndexingProvider>
+  );
+}
+
+function IndexingSectionInner({ routeServerId }: IndexingSectionProps) {
   const { theme } = useUnistyles();
-  const indexing = useIndexing(routeServerId);
+  const indexing = useIndexing();
   const [detailWorkspaceId, setDetailWorkspaceId] = useState<string | null>(null);
+  const [logsOpen, setLogsOpen] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [installLog, setInstallLog] = useState<string>("");
   const [installSteps, setInstallSteps] = useState<
@@ -389,17 +404,39 @@ export function IndexingSection({ routeServerId }: IndexingSectionProps) {
               onReindex={() => {
                 void indexing.reindex(entry.workspaceId);
               }}
+              onCancel={() => {
+                void indexing.cancelReindex(entry.workspaceId);
+              }}
             />
           ))}
         </View>
       )}
 
-      <View style={{ marginTop: 12, flexDirection: "row" }}>
+      <View style={{ marginTop: 12, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
         <Button variant="ghost" onPress={indexing.refetch} size="sm">
           <RefreshCw size={14} color={theme.colors.foreground} />
           <Text style={{ color: theme.colors.foreground, marginLeft: 6 }}>Refresh</Text>
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onPress={() => {
+            void indexing.restartSubprocess();
+          }}
+        >
+          <RefreshCw size={14} color={theme.colors.foreground} />
+          <Text style={{ color: theme.colors.foreground, marginLeft: 6 }}>Restart crg</Text>
+        </Button>
+        <Button variant="ghost" size="sm" onPress={() => setLogsOpen(true)}>
+          <Text style={{ color: theme.colors.foreground }}>View logs</Text>
+        </Button>
       </View>
+
+      <StderrLogsDrawer
+        visible={logsOpen}
+        fetchStderrTail={indexing.fetchStderrTail}
+        onClose={() => setLogsOpen(false)}
+      />
 
       <IndexingProjectModal
         serverId={routeServerId}
@@ -445,6 +482,7 @@ function ProjectRow({
   onToggle,
   onOpenDetails,
   onReindex,
+  onCancel,
   firstRow,
   fsTrigger,
 }: {
@@ -452,6 +490,7 @@ function ProjectRow({
   onToggle: (enabled: boolean) => void;
   onOpenDetails: () => void;
   onReindex: () => void;
+  onCancel: () => void;
   firstRow?: boolean;
   fsTrigger: FsTriggerInfo | null;
 }) {
@@ -481,6 +520,25 @@ function ProjectRow({
         {fsTrigger ? <FsTriggerHint trigger={fsTrigger} /> : null}
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        {enabled && phase === "indexing" ? (
+          <Pressable
+            onPress={(e) => {
+              e.stopPropagation?.();
+              onCancel();
+            }}
+            hitSlop={6}
+            accessibilityLabel="Cancel indexing"
+            style={{
+              paddingVertical: 4,
+              paddingHorizontal: 8,
+              borderRadius: 6,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>Cancel</Text>
+          </Pressable>
+        ) : null}
         {enabled ? (
           <Pressable
             onPress={(e) => {
@@ -564,7 +622,8 @@ function IndexingProgressBar({ progress }: { progress?: number }): React.JSX.Ele
         toValue: 1,
         duration: 1200,
         easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
+        // Gate: native driver isn't implemented on RN web/Electron.
+        useNativeDriver: !isWeb,
       }),
     );
     loop.start();
@@ -613,6 +672,108 @@ function IndexingProgressBar({ progress }: { progress?: number }): React.JSX.Ele
           transform: [{ translateX: translate as unknown as number }],
         }}
       />
+    </View>
+  );
+}
+
+/**
+ * Modal overlay showing the last ~16 KB of crg's stderr, polled every 2s
+ * while visible. Raw text is fine for now — if people start hitting this a
+ * lot, add search/filter/copy-to-clipboard. The poll is intentionally simple:
+ * a push event would cost WS bandwidth for what's rarely viewed.
+ */
+function StderrLogsDrawer({
+  visible,
+  fetchStderrTail,
+  onClose,
+}: {
+  visible: boolean;
+  fetchStderrTail: () => Promise<string>;
+  onClose: () => void;
+}): React.JSX.Element | null {
+  const { theme } = useUnistyles();
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    const poll = async () => {
+      setLoading(true);
+      try {
+        const next = await fetchStderrTail();
+        if (!cancelled) setText(next);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void poll();
+    const id = setInterval(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [visible, fetchStderrTail]);
+  if (!visible) return null;
+  return (
+    <View
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: "rgba(0,0,0,0.6)",
+        justifyContent: "center",
+        alignItems: "center",
+        padding: 20,
+      }}
+    >
+      <View
+        style={{
+          width: "100%",
+          maxWidth: 720,
+          maxHeight: "80%",
+          backgroundColor: theme.colors.surface1,
+          borderRadius: 10,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          padding: 16,
+          gap: 8,
+        }}
+      >
+        <View
+          style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+        >
+          <Text style={[settingsStyles.rowTitle, { fontSize: 14 }]}>code-review-graph logs</Text>
+          <Pressable onPress={onClose} hitSlop={8}>
+            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 18 }}>×</Text>
+          </Pressable>
+        </View>
+        <Text style={[settingsStyles.rowHint, { fontSize: 11 }]}>
+          Last ~16 KB of stderr from the crg subprocess.{" "}
+          {loading ? "Refreshing…" : "Polling every 2s."}
+        </Text>
+        <ScrollView
+          style={{
+            flex: 1,
+            padding: 10,
+            borderRadius: 6,
+            backgroundColor: theme.colors.surface2,
+          }}
+        >
+          <Text
+            selectable
+            style={{
+              fontFamily: "monospace",
+              color: theme.colors.foregroundMuted,
+              fontSize: 11,
+              lineHeight: 15,
+            }}
+          >
+            {text.trim().length === 0 ? "(empty)" : text}
+          </Text>
+        </ScrollView>
+      </View>
     </View>
   );
 }

@@ -72,6 +72,22 @@ export const IndexingReindexRequestSchema = z.object({
   workspaceId: z.string(),
 });
 
+export const IndexingCancelReindexRequestSchema = z.object({
+  type: z.literal("indexing/cancel-reindex"),
+  requestId: z.string(),
+  workspaceId: z.string(),
+});
+
+export const IndexingRestartSubprocessRequestSchema = z.object({
+  type: z.literal("indexing/restart-subprocess"),
+  requestId: z.string(),
+});
+
+export const IndexingStderrTailRequestSchema = z.object({
+  type: z.literal("indexing/stderr-tail"),
+  requestId: z.string(),
+});
+
 // ---------------------------------------------------------------------------
 // Response payloads
 // ---------------------------------------------------------------------------
@@ -166,6 +182,27 @@ export const IndexingStatusEventSchema = z.object({
   payload: z.object({
     workspaceId: z.string(),
     status: IndexingStatusSchema,
+  }),
+});
+
+export const IndexingCancelReindexResponseSchema = z.object({
+  type: z.literal("indexing/cancel-reindex/response"),
+  payload: baseResponseError.extend({
+    cancelled: z.boolean(),
+  }),
+});
+
+export const IndexingRestartSubprocessResponseSchema = z.object({
+  type: z.literal("indexing/restart-subprocess/response"),
+  payload: baseResponseError.extend({
+    restarted: z.boolean(),
+  }),
+});
+
+export const IndexingStderrTailResponseSchema = z.object({
+  type: z.literal("indexing/stderr-tail/response"),
+  payload: baseResponseError.extend({
+    text: z.string(),
   }),
 });
 
@@ -277,12 +314,22 @@ export type IndexingDetectRequest = z.infer<typeof IndexingDetectRequestSchema>;
 export type IndexingInstallRequest = z.infer<typeof IndexingInstallRequestSchema>;
 export type IndexingToolsListRequest = z.infer<typeof IndexingToolsListRequestSchema>;
 export type IndexingReindexRequest = z.infer<typeof IndexingReindexRequestSchema>;
+export type IndexingCancelReindexRequest = z.infer<typeof IndexingCancelReindexRequestSchema>;
+export type IndexingRestartSubprocessRequest = z.infer<
+  typeof IndexingRestartSubprocessRequestSchema
+>;
+export type IndexingStderrTailRequest = z.infer<typeof IndexingStderrTailRequestSchema>;
 
 export type IndexingListResponse = z.infer<typeof IndexingListResponseSchema>;
 export type IndexingToolsListResponse = z.infer<typeof IndexingToolsListResponseSchema>;
 export type IndexingGetResponse = z.infer<typeof IndexingGetResponseSchema>;
 export type IndexingStateResponse = z.infer<typeof IndexingStateResponseSchema>;
 export type IndexingDetectResponse = z.infer<typeof IndexingDetectResponseSchema>;
+export type IndexingCancelReindexResponse = z.infer<typeof IndexingCancelReindexResponseSchema>;
+export type IndexingRestartSubprocessResponse = z.infer<
+  typeof IndexingRestartSubprocessResponseSchema
+>;
+export type IndexingStderrTailResponse = z.infer<typeof IndexingStderrTailResponseSchema>;
 export type IndexingStatusEvent = z.infer<typeof IndexingStatusEventSchema>;
 export type IndexingInstallEvent = z.infer<typeof IndexingInstallEventSchema>;
 export type IndexingProcessStateEvent = z.infer<typeof IndexingProcessStateEventSchema>;
@@ -299,7 +346,10 @@ export type IndexingInboundRequest =
   | IndexingDetectRequest
   | IndexingInstallRequest
   | IndexingToolsListRequest
-  | IndexingReindexRequest;
+  | IndexingReindexRequest
+  | IndexingCancelReindexRequest
+  | IndexingRestartSubprocessRequest
+  | IndexingStderrTailRequest;
 
 export type IndexingOutboundMessage =
   | IndexingListResponse
@@ -307,6 +357,9 @@ export type IndexingOutboundMessage =
   | IndexingStateResponse
   | IndexingDetectResponse
   | IndexingToolsListResponse
+  | IndexingCancelReindexResponse
+  | IndexingRestartSubprocessResponse
+  | IndexingStderrTailResponse
   | IndexingStatusEvent
   | IndexingInstallEvent
   | IndexingProcessStateEvent

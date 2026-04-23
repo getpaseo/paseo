@@ -66,6 +66,10 @@ export interface AgentMcpServerOptions {
     resolveState: (
       callerAgentId: string | undefined,
     ) => Promise<import("../indexing/types.js").IndexingState | null>;
+    /** Workspace cwd for the caller, used to scope crg tools (repo_root). */
+    resolveWorkspaceCwd?: (
+      callerAgentId: string | undefined,
+    ) => Promise<string | null> | string | null;
   };
   hubcodeHome?: string;
   /**
@@ -209,10 +213,24 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   const waitTracker = new WaitForAgentTracker(logger);
   const callerContext = callerAgentId ? (resolveCallerContext?.(callerAgentId) ?? null) : null;
 
-  const server = new McpServer({
-    name: "agent-mcp",
-    version: "2.0.0",
-  });
+  // When crg is wired up, tell the agent to reach for `crg_*` tools first
+  // for code exploration. MCP clients (Claude Code, Codex) surface the
+  // `instructions` field in the agent's system prompt, so this is the
+  // lightest-touch way to steer behavior without patching per-agent prompts.
+  const serverInstructions = options.indexingBridge
+    ? [
+        "When crg_* tools are available, PREFER them over Read/Grep/Glob for",
+        "any question about code structure, dependencies, semantic similarity,",
+        "or impact analysis. The crg tools query a pre-built graph of the",
+        "repo — faster, structured, and returns node/edge context that plain",
+        "text search lacks. Fall back to Read/Grep only when crg can't answer.",
+      ].join(" ")
+    : undefined;
+
+  const server = new McpServer(
+    { name: "agent-mcp", version: "2.0.0" },
+    serverInstructions ? { instructions: serverInstructions } : undefined,
+  );
 
   const resolveCallerAgent = () => {
     if (!callerAgentId) {
@@ -1681,6 +1699,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         mcpClient: bridge.mcpClient,
         agentId,
         getIndexingState: () => bridge.resolveState(callerAgentId),
+        getWorkspaceCwd: () =>
+          bridge.resolveWorkspaceCwd ? bridge.resolveWorkspaceCwd(callerAgentId) : null,
       });
       if (outcome.registered > 0) {
         childLogger.debug(

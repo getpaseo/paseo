@@ -1,5 +1,13 @@
 import { spawn as nodeSpawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { promisify } from "node:util";
+import { execFile as execFileCb } from "node:child_process";
 import type { Logger } from "pino";
+
+import { OPENAI_COMPAT_PROVIDER_SOURCE } from "./openai-compat-patch-source.js";
+
+const execFile = promisify(execFileCb);
 
 /**
  * Installer for `code-review-graph`.
@@ -151,6 +159,31 @@ export async function* runCrgInstall(
       return;
     }
   }
+
+  // Post-install: inject the openai-compat embedding provider patch into the
+  // freshly-installed crg. Without this, `CRG_EMBEDDINGS_PROVIDER=openai-compat`
+  // (which Hubcode sets when user picks "Hubcode Local" or "OpenAI-compatible")
+  // has no effect on stock crg 2.3.2 → zero embeddings. Idempotent: safe to
+  // run on every install/upgrade; if the file already exists with the same
+  // content, it's a no-op.
+  try {
+    await injectOpenAICompatPatch(deps.logger);
+  } catch (err) {
+    // Patch failure shouldn't fail the overall install — structural tools
+    // still work without embeddings. Log and surface a note in the final
+    // event so the UI can show a warning.
+    deps.logger?.warn({ err }, "Failed to inject openai-compat patch into crg");
+    yield {
+      type: "completed",
+      success: true,
+      error:
+        "Install succeeded, but the embedding patch couldn't be applied. " +
+        "Structural tools will work; semantic search will not until the " +
+        "patch is applied or upstream crg ships the openai-compat provider.",
+    };
+    return;
+  }
+
   yield { type: "completed", success: true };
 }
 
@@ -197,4 +230,138 @@ async function* defaultRunCommand(command: string, args: string[]): AsyncIterabl
     }
   }
   if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+// openai-compat patch — applied post-install to the freshly-installed crg.
+//
+// Rationale: crg 2.3.x ships only `local` / `google` / `minimax` embedding
+// providers. Hubcode's UI exposes "Hubcode Local" and "OpenAI-compatible"
+// options that assume an `openai-compat` provider exists. Rather than fork
+// crg or require users to run a script, we bundle the provider module inside
+// the daemon and copy it into the installed pipx venv after install.
+//
+// The patch is idempotent and safe to run on every install/upgrade. It
+// detects the pipx venv path via `pipx environment --value PIPX_LOCAL_VENVS`,
+// writes the provider module, and rewrites `embeddings.py` with the import +
+// dispatch hook if they aren't already present.
+//
+// When upstream crg ships the provider natively, this whole block can be
+// deleted — the bundled module + rewrites become no-ops against a patched
+// embeddings.py (the marker-guards below skip duplicate edits).
+// ---------------------------------------------------------------------------
+
+async function injectOpenAICompatPatch(logger: Logger | undefined): Promise<void> {
+  const sitePackagesDir = await findCrgSitePackagesDir();
+  if (!sitePackagesDir) {
+    logger?.debug("Skipping openai-compat patch — crg venv not found");
+    return;
+  }
+  const providerPath = path.join(sitePackagesDir, "embeddings_openai_compat.py");
+  const embeddingsPath = path.join(sitePackagesDir, "embeddings.py");
+
+  // 1. Drop the provider module (idempotent overwrite).
+  await fs.writeFile(providerPath, OPENAI_COMPAT_PROVIDER_SOURCE, "utf8");
+
+  // 2. Rewrite embeddings.py with the dispatch hook, guarded by a marker so
+  //    repeat installs don't stack edits.
+  const contents = await fs.readFile(embeddingsPath, "utf8");
+  if (contents.includes("# HUBCODE_OPENAI_COMPAT_PATCH")) {
+    logger?.debug("openai-compat patch already applied");
+    return;
+  }
+  const patched = applyEmbeddingsDispatchPatch(contents);
+  if (patched === contents) {
+    logger?.warn(
+      { path: embeddingsPath },
+      "openai-compat patch skipped — embeddings.py didn't match expected shape",
+    );
+    return;
+  }
+  await fs.writeFile(embeddingsPath, patched, "utf8");
+  logger?.info({ sitePackagesDir }, "Applied openai-compat provider patch to crg");
+}
+
+async function findCrgSitePackagesDir(): Promise<string | null> {
+  // Preferred: ask pipx where the venv lives.
+  try {
+    const { stdout } = await execFile("pipx", ["environment", "--value", "PIPX_LOCAL_VENVS"]);
+    const venvsRoot = stdout.trim();
+    if (venvsRoot) {
+      const candidate = await resolveSitePackages(path.join(venvsRoot, "code-review-graph"));
+      if (candidate) return candidate;
+    }
+  } catch {
+    // Fall through to default-location probes.
+  }
+  // Fallback: try the documented default locations.
+  const candidates = [
+    path.join(process.env.HOME ?? "", ".local", "pipx", "venvs", "code-review-graph"),
+    path.join(process.env.HOME ?? "", "Library", "pipx", "venvs", "code-review-graph"),
+  ];
+  for (const base of candidates) {
+    const sp = await resolveSitePackages(base);
+    if (sp) return sp;
+  }
+  return null;
+}
+
+async function resolveSitePackages(venvRoot: string): Promise<string | null> {
+  // venv layout: <venvRoot>/lib/python<ver>/site-packages/code_review_graph/
+  try {
+    const libDir = path.join(venvRoot, "lib");
+    const entries = await fs.readdir(libDir);
+    for (const name of entries) {
+      if (!name.startsWith("python")) continue;
+      const candidate = path.join(libDir, name, "site-packages", "code_review_graph");
+      try {
+        const stat = await fs.stat(candidate);
+        if (stat.isDirectory()) return candidate;
+      } catch {
+        // skip
+      }
+    }
+  } catch {
+    // venv doesn't exist / unreadable
+  }
+  return null;
+}
+
+function applyEmbeddingsDispatchPatch(contents: string): string {
+  let next = contents;
+
+  // Import the provider module + helpers right after `logger = logging.getLogger(__name__)`.
+  const loggerMarker = "logger = logging.getLogger(__name__)";
+  const importBlock = `\n\n# HUBCODE_OPENAI_COMPAT_PATCH\nfrom .embeddings_openai_compat import (\n    OpenAICompatEmbeddingProvider,\n    is_loopback_url as _is_loopback_url,\n    provider_from_env as _openai_compat_from_env,\n)`;
+  if (!next.includes(loggerMarker)) return contents;
+  next = next.replace(loggerMarker, loggerMarker + importBlock);
+
+  // Add openai-compat to the CLOUD_PROVIDERS set.
+  next = next.replace(
+    /CLOUD_PROVIDERS\s*=\s*\{\s*"google"\s*,\s*"minimax"\s*\}/,
+    'CLOUD_PROVIDERS = {"google", "minimax", "openai-compat"}',
+  );
+
+  // Inject dispatch block inside `get_provider(...)`. We key on the existing
+  // minimax branch: insert env-driven default + openai-compat branch right
+  // before it.
+  const minimaxMarker = 'if provider == "minimax":';
+  if (!next.includes(minimaxMarker)) return contents;
+  const dispatchBlock =
+    "# HUBCODE_OPENAI_COMPAT_PATCH — env-driven default + openai-compat branch\n" +
+    "    if provider is None:\n" +
+    '        provider = os.environ.get("CRG_EMBEDDINGS_PROVIDER", "").strip() or None\n\n' +
+    '    if provider == "openai-compat":\n' +
+    "        built = _openai_compat_from_env()\n" +
+    "        if not built:\n" +
+    "            raise ValueError(\n" +
+    '                "CRG_OPENAI_BASE_URL and CRG_OPENAI_MODEL environment variables "\n' +
+    '                "are required for the openai-compat embedding provider."\n' +
+    "            )\n" +
+    '        if not _is_loopback_url(os.environ.get("CRG_OPENAI_BASE_URL", "")):\n' +
+    '            _warn_cloud_egress("openai-compat")\n' +
+    "        return built\n\n    ";
+  next = next.replace(minimaxMarker, dispatchBlock + minimaxMarker);
+
+  return next;
 }

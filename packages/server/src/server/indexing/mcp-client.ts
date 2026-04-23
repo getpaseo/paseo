@@ -42,7 +42,11 @@ export interface CrgMcpBackend {
       outputSchema?: unknown;
     }>;
   }>;
-  callTool(params: { name: string; arguments?: Record<string, unknown> }): Promise<unknown>;
+  callTool(
+    params: { name: string; arguments?: Record<string, unknown> },
+    resultSchema?: unknown,
+    options?: { signal?: AbortSignal },
+  ): Promise<unknown>;
 }
 
 export interface CrgMcpClientDeps {
@@ -111,8 +115,13 @@ export class CrgMcpClient {
       const backend = this.backendFactory();
       await backend.connect(transport);
       this.backend = backend;
-      this.transition({ phase: "connected", connectedAt: Date.now() });
+      // Populate the tool-name cache BEFORE announcing "connected" so that
+      // listeners (runInitialReindex etc.) can safely call `callTool` and
+      // have `resolveToolName` hit the cache. Otherwise there's a race where
+      // the first call goes out with the unresolved name and crg replies
+      // "Unknown tool".
       await this.refreshTools();
+      this.transition({ phase: "connected", connectedAt: Date.now() });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error({ err }, "crg MCP connect failed");
@@ -161,9 +170,16 @@ export class CrgMcpClient {
   }
 
   /**
-   * Invoke a namespaced tool (strips prefix before forwarding).
+   * Invoke a namespaced tool (strips prefix before forwarding). Optional
+   * AbortSignal lets callers cancel long-running calls — the MCP SDK turns
+   * the signal into a `notifications/cancelled` on the wire so crg can
+   * release resources instead of running to completion in the background.
    */
-  async callTool(namespacedName: string, args?: Record<string, unknown>): Promise<unknown> {
+  async callTool(
+    namespacedName: string,
+    args?: Record<string, unknown>,
+    options?: { signal?: AbortSignal },
+  ): Promise<unknown> {
     if (!this.backend) {
       throw new Error("CrgMcpClient not connected");
     }
@@ -171,7 +187,45 @@ export class CrgMcpClient {
     const rawName = namespacedName.startsWith(CRG_TOOL_PREFIX)
       ? namespacedName.slice(CRG_TOOL_PREFIX.length)
       : namespacedName;
-    return this.backend.callTool({ name: rawName, arguments: args });
+    const resolvedName = this.resolveToolName(rawName);
+    if (resolvedName !== rawName) {
+      this.logger.debug(
+        { requested: rawName, resolved: resolvedName },
+        "crg tool name resolved via cached manifest",
+      );
+    }
+    return this.backend.callTool(
+      { name: resolvedName, arguments: args },
+      undefined,
+      options ? { signal: options.signal } : undefined,
+    );
+  }
+
+  /**
+   * Resolve a caller-supplied bare tool name against the cached manifest so
+   * we survive upstream renames. crg 2.3.2 introduced a `_tool` suffix on
+   * every registered name (`build_or_update_graph` → `build_or_update_graph_tool`);
+   * a naïve call with the old name gets "tool not found" and the daemon
+   * hangs waiting for a response that never comes.
+   *
+   * Order of precedence:
+   *   1. Exact name exists → pass through.
+   *   2. `<name>_tool` exists → use it.
+   *   3. Unique candidate ending in `_tool` whose base matches → use it.
+   *   4. Otherwise, pass the original name (MCP will error; caller decides).
+   */
+  private resolveToolName(rawName: string): string {
+    const tools = this.cachedTools;
+    if (!tools || tools.length === 0) return rawName;
+    const bareSet = new Set(tools.map((t) => this.stripNamespace(t.name)));
+    if (bareSet.has(rawName)) return rawName;
+    if (bareSet.has(`${rawName}_tool`)) return `${rawName}_tool`;
+    return rawName;
+  }
+
+  private stripNamespace(name: string): string {
+    // tool-filter namespaces as `crg_<raw>`. Strip for cache comparison.
+    return name.startsWith("crg_") ? name.slice("crg_".length) : name;
   }
 
   private transition(next: CrgMcpConnectionState): void {

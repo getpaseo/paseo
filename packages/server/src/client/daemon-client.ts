@@ -3075,6 +3075,41 @@ export class DaemonClient {
     return { tools: payload.tools, error: payload.error };
   }
 
+  async indexingCancelReindex(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<{ cancelled: boolean; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/cancel-reindex", workspaceId },
+      responseType: "indexing/cancel-reindex/response",
+      timeout: 10_000,
+    });
+    return { cancelled: payload.cancelled, error: payload.error };
+  }
+
+  async indexingRestartSubprocess(
+    requestId?: string,
+  ): Promise<{ restarted: boolean; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/restart-subprocess" },
+      responseType: "indexing/restart-subprocess/response",
+      timeout: 15_000,
+    });
+    return { restarted: payload.restarted, error: payload.error };
+  }
+
+  async indexingStderrTail(requestId?: string): Promise<{ text: string; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/stderr-tail" },
+      responseType: "indexing/stderr-tail/response",
+      timeout: 5_000,
+    });
+    return { text: payload.text, error: payload.error };
+  }
+
   async indexingDetect(options?: {
     force?: boolean;
     requestId?: string;
@@ -3111,8 +3146,13 @@ export class DaemonClient {
     return new Promise((resolve, reject) => {
       let settled = false;
       let ackReceived = false;
-      const unsubscribe = this.on("status", (msg) => {
-        if (msg.type !== "indexing/install/event") return;
+      // Subscribe to the EXACT message type. `client.on("status", ...)` only
+      // catches top-level `StatusMessage`s — `indexing/install/event` is a
+      // different bucket. Using the wrong key silently drops every event,
+      // leaving `indexingInstall` spinning until the timeout (looks like
+      // "Installing…" hanging in the UI).
+      const unsubscribe = this.on("indexing/install/event", (raw) => {
+        const msg = raw as Extract<typeof raw, { type: "indexing/install/event" }>;
         if (msg.payload.requestId !== requestId) return;
         ackReceived = true;
         clearTimeout(ackTimer);

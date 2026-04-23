@@ -152,6 +152,7 @@ import {
 import { syncNavigationActiveWorkspace } from "@/stores/navigation-active-workspace-store";
 import { isWeb, isNative } from "@/constants/platform";
 import { ImageLightbox } from "@/components/chat/image-lightbox";
+import { IndexingInstallPrompt } from "@/components/indexing-install-prompt";
 
 polyfillCrypto();
 
@@ -933,6 +934,7 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
       chromeEnabled={shouldShowAppChrome}
     >
       {children}
+      <IndexingInstallPrompt serverId={activeServerId} />
     </AppContainer>
   );
 }

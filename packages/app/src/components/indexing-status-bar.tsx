@@ -55,7 +55,8 @@ function pickStatus(entries: IndexingWorkspaceEntry[]): VisibleStatus | null {
  */
 export function IndexingStatusBar({ serverId }: { serverId: string | null }) {
   const { theme } = useUnistyles();
-  const indexing = useIndexing(serverId);
+  const indexing = useIndexing();
+  void serverId; // kept in signature for API compat; data comes from provider
   const active = useMemo(() => pickStatus(indexing.entries), [indexing.entries]);
 
   // Subprocess health is surfaced only when it's NOT healthy (running = quiet).

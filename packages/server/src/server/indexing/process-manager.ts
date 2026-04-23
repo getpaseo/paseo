@@ -6,7 +6,7 @@ import type { Logger } from "pino";
  * Manages the long-running `code-review-graph` MCP subprocess.
  *
  * Responsibilities:
- *   - Spawn `code-review-graph serve --stdio` once per daemon
+ *   - Spawn `code-review-graph serve` once per daemon (stdio MCP server)
  *   - Watch its lifecycle and auto-restart on unexpected exit (with backoff)
  *   - Surface state transitions via events for the IndexingService
  *
@@ -56,7 +56,9 @@ export interface CrgProcessManagerDeps {
   maxBackoffMs?: number;
   /** Max consecutive failures before giving up (default 5). */
   maxConsecutiveFailures?: number;
-  /** Subcommand args (default `["serve", "--stdio"]`). */
+  /** Subcommand args (default `["serve"]` for crg ≥ 2.3.0 — older builds
+   *  required `["serve", "--stdio"]` but the flag was removed when fastmcp
+   *  became the default transport). */
   args?: string[];
   /** Inject scheduler for tests. Defaults to setTimeout. */
   scheduleRestart?: (fn: () => void, delayMs: number) => { cancel(): void };
@@ -65,7 +67,7 @@ export interface CrgProcessManagerDeps {
 const DEFAULT_INITIAL_BACKOFF = 500;
 const DEFAULT_MAX_BACKOFF = 30_000;
 const DEFAULT_MAX_FAILURES = 5;
-const DEFAULT_ARGS = ["serve", "--stdio"];
+const DEFAULT_ARGS = ["serve"];
 
 interface PendingRestart {
   cancel(): void;
@@ -79,7 +81,7 @@ export interface CrgProcessManagerEvents {
 
 export class CrgProcessManager extends EventEmitter {
   private readonly logger: Logger;
-  private readonly binPath: string | null;
+  private binPath: string | null;
   private readonly spawnFn: NonNullable<CrgProcessManagerDeps["spawn"]>;
   private readonly env: NodeJS.ProcessEnv;
   private readonly envOverlay: (() => Record<string, string>) | null;
@@ -111,6 +113,16 @@ export class CrgProcessManager extends EventEmitter {
 
   getState(): CrgProcessState {
     return { ...this.state };
+  }
+
+  /**
+   * Update the path to the crg binary. Needed after the user installs crg
+   * from the UI mid-session — the original constructor path may have been
+   * null (crg wasn't installed at boot), and `start()` would otherwise keep
+   * failing with "code-review-graph not installed".
+   */
+  setBinPath(binPath: string | null): void {
+    this.binPath = binPath;
   }
 
   isRunning(): boolean {
@@ -222,12 +234,41 @@ export class CrgProcessManager extends EventEmitter {
   private attachChild(child: CrgSpawnHandle): void {
     this.child = child;
     child.stdout?.on("data", (chunk: Buffer) => this.emit("stdout", chunk));
-    child.stderr?.on("data", (chunk: Buffer) => this.emit("stderr", chunk));
+    // Surface stderr to the logger — crg prints diagnostics there. Without
+    // this the subprocess is a black box when the MCP call hangs.
+    child.stderr?.on("data", (chunk: Buffer) => {
+      this.emit("stderr", chunk);
+      const text = chunk.toString("utf8").trimEnd();
+      if (text.length > 0) {
+        this.logger.debug({ pid: child.pid }, `crg stderr: ${text}`);
+      }
+    });
+    // Capture `child` in closure and compare against `this.child` before
+    // handling — restarts spawn a new child before the old one's `exit`
+    // event fires, and without this guard the stale event would nuke the
+    // fresh subprocess's state and trigger another auto-restart → double
+    // subprocesses after every Restart click.
+    const isStale = () => this.child !== child;
     child.on("error", (err) => {
+      if (isStale()) {
+        this.logger.debug(
+          { err, pid: child.pid },
+          "ignoring error from stale (already-replaced) crg subprocess",
+        );
+        return;
+      }
       this.logger.error({ err }, "crg subprocess emitted error");
       this.handleExit(null, null, err.message);
     });
     child.on("exit", (code, signal) => {
+      if (isStale()) {
+        this.logger.info(
+          { code, signal, pid: child.pid },
+          "stale crg subprocess exited (already replaced by restart)",
+        );
+        return;
+      }
+      this.logger.info({ code, signal, pid: child.pid }, "crg subprocess exited");
       this.handleExit(code, signal, null);
     });
   }

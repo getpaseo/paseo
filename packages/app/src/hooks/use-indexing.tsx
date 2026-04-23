@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   EmbeddingProvider,
@@ -66,9 +74,17 @@ export interface UseIndexingResult {
   refreshTools: () => Promise<void>;
   processState: CrgProcessState | null;
   lastFsTrigger: FsTriggerInfo | null;
+  cancelReindex: (workspaceId: string) => Promise<boolean>;
+  restartSubprocess: () => Promise<boolean>;
+  fetchStderrTail: () => Promise<string>;
 }
 
-export function useIndexing(serverId: string | null): UseIndexingResult {
+/**
+ * Internal hook — does all the heavy lifting (queries + WS subscriptions).
+ * Only called ONCE per serverId by `IndexingProvider`; consumers read from
+ * the context via `useIndexing()` to avoid duplicate subscriptions.
+ */
+function useIndexingInternal(serverId: string | null): UseIndexingResult {
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
@@ -113,15 +129,43 @@ export function useIndexing(serverId: string | null): UseIndexingResult {
   });
 
   // Subscribe to push status updates so the list reflects live progress.
+  //
+  // IMPORTANT:
+  // 1. The first arg to `client.on` is the EXACT message type — `"status"`
+  //    matches only `{ type: "status" }` messages, NOT `"indexing/status"`.
+  //    Getting this wrong silently drops every push.
+  // 2. Dependencies must NOT include `listQuery` — the query object gets a
+  //    new reference on every render, which tears down + rebuilds the WS
+  //    subscription on every tick and drops messages mid-swap. Use
+  //    `queryClient.invalidateQueries` (stable) to trigger a refetch.
   useEffect(() => {
     if (!client || !isConnected || !serverId) return;
-    return client.on("status", (msg) => {
-      if (msg.type !== "indexing/status") return;
+    return client.on("indexing/status", (raw) => {
+      const msg = raw as Extract<typeof raw, { type: "indexing/status" }>;
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log(
+          "[indexing/status]",
+          msg.payload.workspaceId,
+          msg.payload.status.phase,
+          msg.payload.status.progress,
+        );
+      }
       queryClient.setQueryData<IndexingWorkspaceEntry[]>(listKey, (prev) => {
-        if (!prev) return prev;
+        if (!prev) {
+          void queryClient.invalidateQueries({ queryKey: listKey });
+          return prev;
+        }
+        const found = prev.some((e) => e.workspaceId === msg.payload.workspaceId);
+        if (!found) {
+          void queryClient.invalidateQueries({ queryKey: listKey });
+          return prev;
+        }
         return prev.map((entry) => {
           if (entry.workspaceId !== msg.payload.workspaceId) return entry;
-          if (!entry.indexing) return entry;
+          if (!entry.indexing) {
+            void queryClient.invalidateQueries({ queryKey: listKey });
+            return entry;
+          }
           return {
             ...entry,
             indexing: { ...entry.indexing, status: msg.payload.status },
@@ -135,8 +179,8 @@ export function useIndexing(serverId: string | null): UseIndexingResult {
   const [processState, setProcessState] = useState<CrgProcessState | null>(null);
   useEffect(() => {
     if (!client || !isConnected || !serverId) return;
-    return client.on("status", (msg) => {
-      if (msg.type !== "indexing/process-state") return;
+    return client.on("indexing/process-state", (raw) => {
+      const msg = raw as Extract<typeof raw, { type: "indexing/process-state" }>;
       setProcessState(msg.payload as CrgProcessState);
     });
   }, [client, isConnected, serverId]);
@@ -146,8 +190,7 @@ export function useIndexing(serverId: string | null): UseIndexingResult {
   // cooldown.
   useEffect(() => {
     if (!client || !isConnected || !serverId) return;
-    return client.on("status", (msg) => {
-      if (msg.type !== "indexing/tools-changed") return;
+    return client.on("indexing/tools-changed", () => {
       void queryClient.invalidateQueries({ queryKey: toolsKey });
     });
   }, [client, isConnected, serverId, toolsKey, queryClient]);
@@ -157,8 +200,8 @@ export function useIndexing(serverId: string | null): UseIndexingResult {
   const [lastFsTrigger, setLastFsTrigger] = useState<FsTriggerInfo | null>(null);
   useEffect(() => {
     if (!client || !isConnected || !serverId) return;
-    return client.on("status", (msg) => {
-      if (msg.type !== "indexing/fs-trigger") return;
+    return client.on("indexing/fs-trigger", (raw) => {
+      const msg = raw as Extract<typeof raw, { type: "indexing/fs-trigger" }>;
       const p = msg.payload as
         | { kind: "change"; workspaceId: string; changedPaths: string[] }
         | { kind: "error"; workspaceId: string; error: string };
@@ -246,6 +289,28 @@ export function useIndexing(serverId: string | null): UseIndexingResult {
     [client, listQuery],
   );
 
+  const cancelReindex = useCallback(
+    async (workspaceId: string) => {
+      if (!client) return false;
+      const { cancelled } = await client.indexingCancelReindex(workspaceId);
+      await listQuery.refetch();
+      return cancelled;
+    },
+    [client, listQuery],
+  );
+
+  const restartSubprocess = useCallback(async () => {
+    if (!client) return false;
+    const { restarted } = await client.indexingRestartSubprocess();
+    return restarted;
+  }, [client]);
+
+  const fetchStderrTail = useCallback(async () => {
+    if (!client) return "";
+    const { text } = await client.indexingStderrTail();
+    return text;
+  }, [client]);
+
   return {
     isConnected,
     entries: listQuery.data ?? [],
@@ -264,5 +329,44 @@ export function useIndexing(serverId: string | null): UseIndexingResult {
     refreshTools,
     processState,
     lastFsTrigger,
+    cancelReindex,
+    restartSubprocess,
+    fetchStderrTail,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Provider + context consumer
+//
+// Multiple indexing UI components (section, status bar, detail modal) all
+// need the same data. Without a provider, each one calls `useIndexing` and
+// registers its own WS subscription — N identical handlers running per tick.
+// The provider centralizes the internal hook so only ONE subscription exists
+// per tree, and consumers read the result from context.
+// ---------------------------------------------------------------------------
+
+const IndexingContext = createContext<UseIndexingResult | null>(null);
+
+export function IndexingProvider({
+  serverId,
+  children,
+}: {
+  serverId: string | null;
+  children: ReactNode;
+}) {
+  const value = useIndexingInternal(serverId);
+  return <IndexingContext.Provider value={value}>{children}</IndexingContext.Provider>;
+}
+
+/**
+ * Consume the indexing state populated by the nearest `IndexingProvider`.
+ * Throws in development if used outside a provider so the missing wrapper
+ * is obvious rather than silently returning stale data.
+ */
+export function useIndexing(): UseIndexingResult {
+  const ctx = useContext(IndexingContext);
+  if (!ctx) {
+    throw new Error("useIndexing must be used inside <IndexingProvider>");
+  }
+  return ctx;
 }

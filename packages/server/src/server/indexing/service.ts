@@ -95,6 +95,29 @@ export class IndexingService {
     manager.on("state", (state: CrgProcessState) => {
       this.events.emit("process-state", state);
     });
+    // Ring buffer of the subprocess's recent stderr — surfaced in the UI via
+    // `getStderrTail()` so users can see real error messages instead of a
+    // generic "failed" when crg crashes or hangs. Kept to a small cap so long
+    // runs don't leak memory.
+    manager.on("stderr", (chunk: Buffer) => {
+      this.appendStderr(chunk.toString("utf8"));
+    });
+  }
+
+  private stderrBuffer = "";
+  private static readonly STDERR_BUFFER_CAP = 16 * 1024; // 16 KB
+
+  private appendStderr(chunk: string): void {
+    this.stderrBuffer += chunk;
+    if (this.stderrBuffer.length > IndexingService.STDERR_BUFFER_CAP) {
+      this.stderrBuffer = this.stderrBuffer.slice(
+        this.stderrBuffer.length - IndexingService.STDERR_BUFFER_CAP,
+      );
+    }
+  }
+
+  getStderrTail(): string {
+    return this.stderrBuffer;
   }
 
   getProcessState(): CrgProcessState | null {
@@ -128,9 +151,19 @@ export class IndexingService {
   private reindexTrigger:
     | ((workspaceId: string) => Promise<{ ok: boolean; error?: string }>)
     | null = null;
+  private reindexCanceller: ((workspaceId: string) => boolean) | null = null;
 
   setReindexTrigger(fn: (workspaceId: string) => Promise<{ ok: boolean; error?: string }>): void {
     this.reindexTrigger = fn;
+  }
+
+  /**
+   * Hook that lets the bootstrap layer wire its AbortController registry into
+   * the service. Returns true when there was a running reindex that got
+   * cancelled, false when there was nothing to cancel.
+   */
+  setReindexCanceller(fn: (workspaceId: string) => boolean): void {
+    this.reindexCanceller = fn;
   }
 
   async reindex(workspaceId: string): Promise<{ ok: boolean; error?: string }> {
@@ -138,6 +171,11 @@ export class IndexingService {
       return { ok: false, error: "Reindex trigger not wired" };
     }
     return this.reindexTrigger(workspaceId);
+  }
+
+  cancelReindex(workspaceId: string): { ok: boolean; cancelled: boolean } {
+    if (!this.reindexCanceller) return { ok: false, cancelled: false };
+    return { ok: true, cancelled: this.reindexCanceller(workspaceId) };
   }
 
   /**
@@ -249,8 +287,31 @@ export class IndexingService {
    * events. The caller (Session) forwards them to the client as
    * `indexing/install/event` push messages.
    */
+  private installInFlight = false;
   async *runInstall(): AsyncGenerator<InstallEvent, void, void> {
+    // Concurrency guard — quick double-clicks on Install (or UI retries)
+    // used to spawn multiple pipx installs in series, each one restarting
+    // the crg subprocess and killing the prior handshake. One install at
+    // a time; subsequent ones get a clear "already running" completion.
+    if (this.installInFlight) {
+      yield {
+        type: "completed",
+        success: false,
+        error: "An install is already in progress — wait for it to finish.",
+      };
+      return;
+    }
+    this.installInFlight = true;
+    try {
+      yield* this.runInstallInner();
+    } finally {
+      this.installInFlight = false;
+    }
+  }
+
+  private async *runInstallInner(): AsyncGenerator<InstallEvent, void, void> {
     const detection = await this.getDetection(true);
+    let lastSuccess = false;
     for await (const event of runCrgInstall({
       logger: this.logger,
       pipxAvailable: detection.pipx.installed,
@@ -259,11 +320,110 @@ export class IndexingService {
         detection.python3.installed && detection.python3.meetsMinimumVersion === true,
       platform: process.platform,
     })) {
+      if (event.type === "completed") lastSuccess = event.success;
       yield event;
     }
     // Refresh detection snapshot so subsequent UI reads reflect the new state.
     this.cachedDetection = null;
-    await this.getDetection(true).catch(() => undefined);
+    const fresh = await this.getDetection(true).catch(() => null);
+    // If install succeeded and crg is now detected, wire the freshly-found
+    // binary into the process manager and start it. Otherwise the subprocess
+    // never boots (binPath was null at daemon-start time) and the user sees
+    // a stuck "Ready with 0 files" because the MCP client can't connect.
+    if (lastSuccess && fresh?.codeReviewGraph.installed && fresh.codeReviewGraph.path) {
+      this.processManager?.setBinPath(fresh.codeReviewGraph.path);
+      try {
+        // Force a restart in case the manager is in "failed" phase from the
+        // pre-install null-binPath attempt — `start()` would no-op there.
+        this.processManager?.restart();
+      } catch (err) {
+        this.logger.warn(
+          { err },
+          "Failed to start crg subprocess after install; manual restart may be required",
+        );
+      }
+      // Kick off reindex for every enabled workspace. Unlike the boot-time
+      // `runInitialReindex` that only picks "never indexed" workspaces, a
+      // post-install user just clicked Install and expects visible action on
+      // workspaces they already enabled — even if they have a stale
+      // lastIndexedAt from a previous daemon run. We wait for the crg MCP
+      // client to actually signal "connected" (fastmcp boot takes ~4s), not
+      // a hardcoded timeout — otherwise the reindex fires while the
+      // subprocess is still handshaking and gets skipped with
+      // "crg subprocess not connected".
+      this.waitConnectedThenReindexAll(30_000).catch((err) =>
+        this.logger.warn({ err }, "Post-install reindex-all failed"),
+      );
+    }
+  }
+
+  private async waitConnectedThenReindexAll(timeoutMs: number): Promise<void> {
+    const client = this.mcpClient;
+    if (!client) return;
+    // Already connected — fire reindex now, no need to wait.
+    if (client.getConnectionState().phase === "connected") {
+      await this.reindexAllEnabled();
+      return;
+    }
+    // Otherwise subscribe to state changes. Handle three outcomes:
+    //   1. connected → reindex
+    //   2. failed   → log + give up (no point waiting further)
+    //   3. timeout  → log + give up (last resort)
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        unsub();
+        this.logger.warn(
+          { timeoutMs },
+          "crg did not connect within post-install window; reindex-all skipped",
+        );
+        resolve();
+      }, timeoutMs);
+      const unsub = client.onConnectionState((s) => {
+        if (s.phase === "failed") {
+          clearTimeout(timer);
+          unsub();
+          this.logger.warn(
+            { error: s.error },
+            "crg entered failed state after install; reindex-all skipped",
+          );
+          resolve();
+          return;
+        }
+        if (s.phase !== "connected") return;
+        clearTimeout(timer);
+        unsub();
+        this.reindexAllEnabled()
+          .catch((err) => this.logger.warn({ err }, "reindexAllEnabled failed"))
+          .finally(() => resolve());
+      });
+    });
+  }
+
+  /**
+   * Reindex every workspace that has indexing enabled. Callers: the
+   * post-install hook above, and (future) a "Reindex all" action in the UI.
+   * No-op for disabled workspaces; concurrent reindex of the same workspace
+   * is rejected by the bootstrap trigger's in-flight guard.
+   */
+  async reindexAllEnabled(): Promise<void> {
+    if (!this.reindexTrigger) return;
+    const records = await this.adapter.list().catch(() => []);
+    // Default indexing state has `enabled: true`, and workspaces without an
+    // explicit `indexing` block inherit that default on the UI side. Match
+    // that semantics here: treat missing-block as enabled. Otherwise a
+    // workspace the user sees as ON in Settings wouldn't get reindexed,
+    // which is the exact post-install scenario — the workspace may have no
+    // `indexing` field persisted yet because the user never flipped the
+    // toggle (install alone should trigger it implicitly).
+    const targets = records
+      .filter((r) => (r.indexing ?? defaultIndexingState()).enabled)
+      .map((r) => r.workspaceId);
+    this.logger.info({ count: targets.length }, "Reindexing all enabled workspaces");
+    for (const id of targets) {
+      await this.reindexTrigger(id).catch((err) =>
+        this.logger.warn({ err, workspaceId: id }, "Reindex one failed"),
+      );
+    }
   }
 
   private async brewAvailable(): Promise<boolean> {

@@ -50,7 +50,10 @@ export function buildEmbeddingEnv(
         source: { workspaceId: chosen.workspaceId, providerKind: "openai-compat" },
       };
     case "sentence-transformers": {
-      const env: Record<string, string> = {};
+      // Explicit "local" selection — crg uses sentence-transformers via its
+      // built-in LocalEmbeddingProvider. Pins the provider so we're not at
+      // the mercy of crg's default changing.
+      const env: Record<string, string> = { CRG_EMBEDDINGS_PROVIDER: "local" };
       if (provider.config?.model) env.CRG_EMBEDDING_MODEL = provider.config.model;
       return {
         env,
@@ -58,13 +61,19 @@ export function buildEmbeddingEnv(
       };
     }
     case "hubcode-local":
-      // The actual env (CRG_OPENAI_BASE_URL pointing at the loopback
-      // embedding server) is injected separately by `IndexingService`
-      // because the URL/token aren't known at this layer. Here we emit a
-      // marker so the diff logic detects the kind change and triggers a
-      // restart; the service overlays the loopback details later.
+      // Reuses the openai-compat provider under the hood — Hubcode runs a
+      // loopback embedding server that speaks /v1/embeddings, and crg's
+      // openai-compat provider points at it. The loopback URL/token aren't
+      // known at this layer, so IndexingService.getCachedEmbeddingEnv
+      // overlays CRG_OPENAI_BASE_URL + CRG_OPENAI_API_KEY when it spawns
+      // the subprocess. We emit the provider selector + marker here so
+      // the diff logic detects the kind change and triggers a restart.
       return {
-        env: { CRG_HUBCODE_LOCAL: "1" },
+        env: {
+          CRG_HUBCODE_LOCAL: "1",
+          CRG_EMBEDDINGS_PROVIDER: "openai-compat",
+          CRG_ACCEPT_CLOUD_EMBEDDINGS: "1",
+        },
         source: { workspaceId: chosen.workspaceId, providerKind: "hubcode-local" },
       };
     default:
@@ -76,7 +85,11 @@ export function buildEmbeddingEnv(
 }
 
 function openaiCompatEnv(provider: EmbeddingProvider): Record<string, string> {
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = {
+    // Tell crg to pick the openai-compat provider. Required by the patch
+    // in docs/patches/crg-openai-compat/ for the provider to be selected.
+    CRG_EMBEDDINGS_PROVIDER: "openai-compat",
+  };
   if (provider.config?.baseUrl) env.CRG_OPENAI_BASE_URL = provider.config.baseUrl;
   if (provider.config?.model) env.CRG_OPENAI_MODEL = provider.config.model;
   if (provider.config?.apiKey) env.CRG_OPENAI_API_KEY = provider.config.apiKey;

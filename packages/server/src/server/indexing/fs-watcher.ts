@@ -34,15 +34,14 @@ export interface WorkspaceWatcherEvents {
 }
 
 const DEFAULT_DEBOUNCE_MS = 1500;
-const DEFAULT_IGNORES = [
-  ".code-review-graph/",
-  ".git/",
-  "node_modules/",
-  "dist/",
-  "build/",
-  ".next/",
-  "__pycache__/",
-];
+// Opt-out-able ignore patterns. These are the "nice defaults" the user can
+// replace with a custom watchlist (empty array explicitly means "watch
+// everything except the essentials").
+const DEFAULT_IGNORES = [".git/", "node_modules/", "dist/", "build/", ".next/", "__pycache__/"];
+// Essential ignores — ALWAYS applied, cannot be disabled by user config.
+// `.code-review-graph/` is crg's own SQLite store: if we don't ignore it,
+// the index writes trigger another reindex → infinite loop.
+const ESSENTIAL_IGNORES = [".code-review-graph/"];
 
 export class WorkspaceFsWatcher {
   private readonly logger: Logger;
@@ -62,7 +61,13 @@ export class WorkspaceFsWatcher {
     this.logger = deps.logger.child({ module: "fs-watcher", workspaceId: deps.workspaceId });
     this.workspaceId = deps.workspaceId;
     this.cwd = deps.cwd;
-    this.ignorePatterns = deps.ignorePatterns ?? DEFAULT_IGNORES;
+    // Merge rules:
+    //   - When user passes undefined, use DEFAULT_IGNORES (classic behavior).
+    //   - When user passes an explicit array (even empty), treat it as their
+    //     chosen baseline. Either way, always prepend ESSENTIAL_IGNORES so
+    //     `.code-review-graph/` self-triggers can't be accidentally disabled.
+    const userPatterns = deps.ignorePatterns ?? DEFAULT_IGNORES;
+    this.ignorePatterns = [...ESSENTIAL_IGNORES, ...userPatterns];
     this.debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.watchFactory = deps.watchFactory ?? defaultWatchFactory;
   }
@@ -145,8 +150,23 @@ export class WorkspaceFsWatcher {
   }
 
   private shouldIgnore(relpath: string): boolean {
-    for (const pattern of this.ignorePatterns) {
-      if (relpath.includes(pattern)) return true;
+    // Normalize the candidate path so a bare directory event (e.g. the
+    // crg store firing `.code-review-graph` without a trailing `/`) still
+    // matches patterns that end in `/`. Without this, every write inside
+    // `.code-review-graph/` that bubbles up as a parent-dir event slipped
+    // through the filter → infinite reindex loop.
+    for (const rawPattern of this.ignorePatterns) {
+      const pattern = rawPattern.replace(/\/+$/, "");
+      if (!pattern) continue;
+      // Match exact dir, dir as prefix, or dir anywhere mid-path.
+      if (
+        relpath === pattern ||
+        relpath.startsWith(`${pattern}/`) ||
+        relpath.includes(`/${pattern}/`) ||
+        relpath.endsWith(`/${pattern}`)
+      ) {
+        return true;
+      }
     }
     return false;
   }

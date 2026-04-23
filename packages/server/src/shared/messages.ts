@@ -59,11 +59,17 @@ import {
   IndexingInstallRequestSchema,
   IndexingToolsListRequestSchema,
   IndexingReindexRequestSchema,
+  IndexingCancelReindexRequestSchema,
+  IndexingRestartSubprocessRequestSchema,
+  IndexingStderrTailRequestSchema,
   IndexingListResponseSchema,
   IndexingGetResponseSchema,
   IndexingStateResponseSchema,
   IndexingDetectResponseSchema,
   IndexingToolsListResponseSchema,
+  IndexingCancelReindexResponseSchema,
+  IndexingRestartSubprocessResponseSchema,
+  IndexingStderrTailResponseSchema,
   IndexingStatusEventSchema,
   IndexingInstallEventSchema,
   IndexingProcessStateEventSchema,
@@ -2187,6 +2193,9 @@ const _sessionInboundRaw: any = z.union([
   IndexingInstallRequestSchema,
   IndexingToolsListRequestSchema,
   IndexingReindexRequestSchema,
+  IndexingCancelReindexRequestSchema,
+  IndexingRestartSubprocessRequestSchema,
+  IndexingStderrTailRequestSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 115-member union
 export type SessionInboundMessage =
@@ -2323,7 +2332,10 @@ export type SessionInboundMessage =
   | IndexingDetectRequest
   | IndexingInstallRequest
   | IndexingToolsListRequest
-  | IndexingReindexRequest;
+  | IndexingReindexRequest
+  | IndexingCancelReindexRequest
+  | IndexingRestartSubprocessRequest
+  | IndexingStderrTailRequest;
 export const SessionInboundMessageSchema: z.ZodType<SessionInboundMessage> =
   _sessionInboundRaw as z.ZodType<SessionInboundMessage>;
 
@@ -3839,6 +3851,9 @@ const _sessionOutboundRaw: any = z.union([
   IndexingToolsChangedEventSchema,
   IndexingFsTriggerEventSchema,
   IndexingToolsListResponseSchema,
+  IndexingCancelReindexResponseSchema,
+  IndexingRestartSubprocessResponseSchema,
+  IndexingStderrTailResponseSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 118-member union
 export type SessionOutboundMessage =
@@ -3979,6 +3994,9 @@ export type SessionOutboundMessage =
   | IndexingProcessStateEvent
   | IndexingToolsChangedEvent
   | IndexingFsTriggerEvent
+  | IndexingCancelReindexResponse
+  | IndexingRestartSubprocessResponse
+  | IndexingStderrTailResponse
   | IndexingToolsListResponse;
 export const SessionOutboundMessageSchema: z.ZodType<SessionOutboundMessage> =
   _sessionOutboundRaw as z.ZodType<SessionOutboundMessage>;
@@ -4145,6 +4163,16 @@ export type IndexingInstallEvent = z.infer<typeof IndexingInstallEventSchema>;
 export type IndexingProcessStateEvent = z.infer<typeof IndexingProcessStateEventSchema>;
 export type IndexingToolsChangedEvent = z.infer<typeof IndexingToolsChangedEventSchema>;
 export type IndexingFsTriggerEvent = z.infer<typeof IndexingFsTriggerEventSchema>;
+export type IndexingCancelReindexRequest = z.infer<typeof IndexingCancelReindexRequestSchema>;
+export type IndexingCancelReindexResponse = z.infer<typeof IndexingCancelReindexResponseSchema>;
+export type IndexingRestartSubprocessRequest = z.infer<
+  typeof IndexingRestartSubprocessRequestSchema
+>;
+export type IndexingRestartSubprocessResponse = z.infer<
+  typeof IndexingRestartSubprocessResponseSchema
+>;
+export type IndexingStderrTailRequest = z.infer<typeof IndexingStderrTailRequestSchema>;
+export type IndexingStderrTailResponse = z.infer<typeof IndexingStderrTailResponseSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;

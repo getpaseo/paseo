@@ -477,13 +477,45 @@ export async function createHubcodeDaemon(
     // fs watcher registry — one watcher per indexing-enabled workspace.
     // On a debounced change, ask crg to update its graph via MCP.
     const fsWatchers = new WorkspaceFsWatcherRegistry({ logger });
+
+    // Hard cap for a single reindex. If crg doesn't return within this window
+    // we assume it's wedged, abort (reject the Promise), and surface error.
+    // Tunable via HUBCODE_CRG_REINDEX_TIMEOUT_MS; default 10 min, which covers
+    // large monorepos on slow machines without letting the daemon freeze on a
+    // deadlocked subprocess.
+    const CRG_REINDEX_TIMEOUT_MS = Number.parseInt(
+      process.env.HUBCODE_CRG_REINDEX_TIMEOUT_MS ?? "",
+      10,
+    );
+    const reindexTimeoutMs =
+      Number.isFinite(CRG_REINDEX_TIMEOUT_MS) && CRG_REINDEX_TIMEOUT_MS > 0
+        ? CRG_REINDEX_TIMEOUT_MS
+        : 10 * 60 * 1000;
+    const reindexWarnAtMs = [60_000, 180_000, 300_000]; // 1, 3, 5 minutes
+
+    // Concurrency guard: one reindex per workspace at a time. Extra calls
+    // while one is running are rejected fast — callers can retry after the
+    // current one finishes, and fs-watcher re-triggers bounce harmlessly.
+    // The AbortController maps so `cancelReindex` can abort a pending MCP
+    // call (triggers a `notifications/cancelled` through the SDK).
+    const reindexInFlight = new Map<string, AbortController>();
+
     const triggerReindex = async (
       workspaceId: string,
       cwd: string,
     ): Promise<{ ok: boolean; error?: string; fileCount?: number; nodeCount?: number }> => {
+      const reindexLog = logger.child({ module: "reindex", workspaceId });
       if (!crgMcpClient.isConnected()) {
+        reindexLog.warn("Reindex skipped — crg subprocess not connected");
         return { ok: false, error: "code-review-graph subprocess is not connected" };
       }
+      if (reindexInFlight.has(workspaceId)) {
+        reindexLog.info("Reindex skipped — another reindex is already in flight");
+        return { ok: false, error: "Reindex already in progress for this workspace" };
+      }
+      const abortController = new AbortController();
+      reindexInFlight.set(workspaceId, abortController);
+
       // crg doesn't stream progress, so we emit a calibrated asymptotic
       // estimate. Rises 0 → ~85% smoothly, snaps to 100% on success (via
       // phase=ready) or stops on error. Time constant τ is sourced from the
@@ -494,29 +526,195 @@ export async function createHubcodeDaemon(
       const tauMs = Math.max(5_000, Math.min(120_000, priorFileCount * 40));
       const startedAt = Date.now();
       let progressTimer: NodeJS.Timeout | null = null;
+      const warnTimers: NodeJS.Timeout[] = [];
+      const elapsed = () => Date.now() - startedAt;
       const tickProgress = () => {
-        const elapsed = Date.now() - startedAt;
-        const estimated = 85 * (1 - Math.exp(-elapsed / tauMs));
+        // Curve: 2% floor (so the bar is always visible) + 83% asymptote.
+        // Even at elapsed≈0 the bar shows ~2% instead of 0, which matters
+        // because fast reindexes may finish before the ticker nudges it up.
+        const estimated = 2 + 83 * (1 - Math.exp(-elapsed() / tauMs));
         void indexingService
           .setStatus(workspaceId, { phase: "indexing", progress: estimated })
-          .catch(() => undefined);
+          .catch((err) => reindexLog.debug({ err }, "progress tick setStatus failed (non-fatal)"));
       };
+      const cleanupTimers = () => {
+        if (progressTimer) {
+          clearInterval(progressTimer);
+          progressTimer = null;
+        }
+        for (const t of warnTimers) clearTimeout(t);
+        warnTimers.length = 0;
+      };
+
+      reindexLog.info(
+        { cwd, priorFileCount, tauMs, timeoutMs: reindexTimeoutMs },
+        "Reindex starting",
+      );
+
       try {
-        await indexingService.setStatus(workspaceId, { phase: "indexing", progress: 0 });
-        // 1s cadence — each tick persists through setStatus, and more frequent
-        // writes aren't justified by visible UI smoothness for a wishful bar.
-        progressTimer = setInterval(tickProgress, 1000);
-        const result = (await crgMcpClient.callTool("crg_build_or_update_graph", {
-          repo_path: cwd,
-        })) as { content?: Array<{ text?: string }> } | null | undefined;
-        // Parse counts from the tool result text when present (best-effort).
+        // Start at 2% (not 0) so fast reindexes still show visible activity.
+        // Even if the MCP call finishes before the first tick, the bar has a
+        // non-zero initial state.
+        await indexingService.setStatus(workspaceId, { phase: "indexing", progress: 2 });
+        // 300ms cadence — fast enough that small repos (indexing takes
+        // <1s) get at least a few ticks, so the user sees a moving bar
+        // instead of a stuck 0%. Each tick persists via setStatus (2–3 ms
+        // fs write) + emits a WS event (few hundred bytes). Acceptable
+        // overhead for the visibility win.
+        progressTimer = setInterval(tickProgress, 300);
+        // Fire first tick right away so there's a non-zero progress even
+        // if the reindex finishes before the first setInterval firing.
+        tickProgress();
+
+        // Progressive "still running" warnings so we can see in logs whether
+        // a reindex is just slow vs. wedged, without tailing every second.
+        for (const at of reindexWarnAtMs) {
+          warnTimers.push(
+            setTimeout(() => {
+              reindexLog.warn(
+                { elapsedMs: elapsed(), connected: crgMcpClient.isConnected() },
+                `Reindex still running after ${Math.round(at / 1000)}s`,
+              );
+            }, at),
+          );
+        }
+
+        // Race the MCP call against a hard timeout. If crg hangs, reject so
+        // the UI flips to error instead of showing an eternal spinner. The
+        // AbortSignal also lets user-initiated cancel abort the MCP call
+        // cleanly (sends `notifications/cancelled` on the wire).
+        //
+        // Arg name is `repo_root` in crg 2.3+ (was `repo_path` in older
+        // builds). If you see a pydantic validation error mentioning the
+        // other name in `rawResultPreview`, the upstream tool changed again.
+        //
+        // `full_rebuild: true` on the first reindex (no prior `lastIndexedAt`)
+        // — crg's default incremental diff against HEAD~1 can yield zero
+        // nodes on a fresh clone where the recent delta only touched non-
+        // parseable files (markdown, images). A full rebuild guarantees the
+        // graph is populated once; subsequent runs fall back to incremental.
+        const isFirstBuild = !prior?.indexing?.status?.lastIndexedAt;
+        if (isFirstBuild) {
+          reindexLog.info("First build for this workspace — using full_rebuild");
+        }
+        const callPromise = crgMcpClient.callTool(
+          "crg_build_or_update_graph",
+          { repo_root: cwd, full_rebuild: isFirstBuild },
+          { signal: abortController.signal },
+        ) as Promise<{ content?: Array<{ text?: string }>; isError?: boolean } | null | undefined>;
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reindexLog.error(
+              { elapsedMs: elapsed(), timeoutMs: reindexTimeoutMs },
+              "Reindex timed out — aborting",
+            );
+            reject(
+              new Error(
+                `crg_build_or_update_graph timed out after ${Math.round(reindexTimeoutMs / 1000)}s`,
+              ),
+            );
+          }, reindexTimeoutMs);
+        });
+        let result: { content?: Array<{ text?: string }>; isError?: boolean } | null | undefined;
+        try {
+          result = await Promise.race([callPromise, timeoutPromise]);
+        } finally {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+        }
+
+        // MCP tool errors come back with `isError: true` — treat them as
+        // thrown so the UI gets a proper error state instead of a confused
+        // "ready with no counts". The text is the human-readable error.
+        if (result?.isError) {
+          const errText = result.content?.[0]?.text ?? "unknown crg error";
+          throw new Error(`crg tool error: ${errText.slice(0, 400)}`);
+        }
+        // crg 2.3.2 returns a JSON dict with explicit keys
+        // (`files_parsed`/`total_nodes`/`files_updated`/`total_edges`).
+        // FastMCP serializes it as `content[0].text = JSON`. Fall back to a
+        // prose regex for older builds that printed a human summary.
         const text = result?.content?.[0]?.text ?? "";
-        const fileMatch = text.match(/(\d+)\s+files?\b/i);
-        const nodeMatch = text.match(/(\d+)\s+nodes?\b/i);
-        const fileCount = fileMatch?.[1] ? Number.parseInt(fileMatch[1], 10) : undefined;
-        const nodeCount = nodeMatch?.[1] ? Number.parseInt(nodeMatch[1], 10) : undefined;
-        if (progressTimer) clearInterval(progressTimer);
-        progressTimer = null;
+        let fileCount: number | undefined;
+        let nodeCount: number | undefined;
+        try {
+          const parsed = JSON.parse(text) as {
+            files_parsed?: number;
+            files_updated?: number;
+            total_nodes?: number;
+            total_edges?: number;
+          };
+          if (typeof parsed.files_parsed === "number") fileCount = parsed.files_parsed;
+          else if (typeof parsed.files_updated === "number") fileCount = parsed.files_updated;
+          if (typeof parsed.total_nodes === "number") nodeCount = parsed.total_nodes;
+        } catch {
+          // Not JSON — try the prose format used by older crg versions.
+          const fileMatch = text.match(/(\d+)\s+files?\b/i);
+          const nodeMatch = text.match(/(\d+)\s+nodes?\b/i);
+          if (fileMatch?.[1]) fileCount = Number.parseInt(fileMatch[1], 10);
+          if (nodeMatch?.[1]) nodeCount = Number.parseInt(nodeMatch[1], 10);
+        }
+        // Auto-embed when the workspace has a real embedding provider
+        // configured. crg's `build_or_update_graph` does NOT run embeddings
+        // by default (only signatures/FTS/flows/communities). Without this
+        // call, semantic_search_nodes returns empty and the UI shows
+        // "Embeddings: 0" despite the graph being ready. Best-effort; a
+        // failed embed doesn't fail the overall reindex.
+        const providerKind = prior?.indexing?.embeddingProvider?.kind;
+        if (providerKind && providerKind !== "none") {
+          try {
+            await crgMcpClient.callTool(
+              "crg_embed_graph",
+              { repo_root: cwd },
+              { signal: abortController.signal },
+            );
+            reindexLog.info({ providerKind }, "Embeddings computed");
+          } catch (err) {
+            reindexLog.warn(
+              { err, providerKind },
+              "Auto-embed after build failed (semantic search may be stale)",
+            );
+          }
+        }
+
+        // `build_or_update_graph` returns diff-oriented counts
+        // (`files_updated` = files touched this run, not total). Follow up
+        // with `list_graph_stats` to get the authoritative totals so the UI
+        // shows the whole-graph size, not just what changed. Best-effort —
+        // if stats call fails, fall back to whatever we parsed.
+        try {
+          const statsResult = (await crgMcpClient.callTool(
+            "crg_list_graph_stats",
+            { repo_root: cwd },
+            { signal: abortController.signal },
+          )) as { content?: Array<{ text?: string }> } | null | undefined;
+          const statsText = statsResult?.content?.[0]?.text ?? "";
+          if (statsText) {
+            try {
+              const stats = JSON.parse(statsText) as {
+                files_count?: number;
+                total_nodes?: number;
+              };
+              if (typeof stats.files_count === "number") fileCount = stats.files_count;
+              if (typeof stats.total_nodes === "number") nodeCount = stats.total_nodes;
+            } catch {
+              // Stats call returned non-JSON — ignore, keep build counts.
+            }
+          }
+        } catch (err) {
+          reindexLog.debug({ err }, "list_graph_stats call failed — falling back to build counts");
+        }
+
+        // Incremental runs with no changes return `files_updated: 0` — preserve
+        // the previous known counts so the UI doesn't flash "0 files" for a
+        // no-op reindex.
+        if (fileCount === 0 && priorFileCount > 0) fileCount = priorFileCount;
+        if (nodeCount === 0 && prior?.indexing?.status?.nodeCount) {
+          nodeCount = prior.indexing.status.nodeCount;
+        }
+
+        cleanupTimers();
+
         // Compute on-disk size of the crg index for this workspace. Best-effort
         // — undefined on any fs error so the UI falls back to "—" instead of 0.
         const indexBytes = await computeCrgIndexBytes(cwd);
@@ -527,18 +725,46 @@ export async function createHubcodeDaemon(
           ...(nodeCount != null ? { nodeCount } : {}),
           ...(indexBytes != null ? { indexBytes } : {}),
         });
+        reindexLog.info(
+          {
+            elapsedMs: elapsed(),
+            fileCount,
+            nodeCount,
+            indexBytes,
+            rawResultPreview: text.slice(0, 200),
+          },
+          "Reindex completed",
+        );
         return { ok: true, fileCount, nodeCount };
       } catch (err) {
-        if (progressTimer) clearInterval(progressTimer);
-        progressTimer = null;
+        cleanupTimers();
         const message = err instanceof Error ? err.message : String(err);
-        logger.warn({ err, workspaceId }, "Reindex failed");
+        const wasAborted = abortController.signal.aborted;
+        reindexLog[wasAborted ? "info" : "error"](
+          { err, elapsedMs: elapsed(), connected: crgMcpClient.isConnected(), wasAborted },
+          wasAborted ? "Reindex cancelled by user" : "Reindex failed",
+        );
         await indexingService
-          .setStatus(workspaceId, { phase: "error", error: message })
-          .catch(() => undefined);
-        return { ok: false, error: message };
+          .setStatus(workspaceId, {
+            phase: wasAborted ? "idle" : "error",
+            ...(wasAborted ? {} : { error: message }),
+          })
+          .catch((inner) => reindexLog.warn({ err: inner }, "Failed to persist error status"));
+        return { ok: false, error: wasAborted ? "Cancelled" : message };
+      } finally {
+        reindexInFlight.delete(workspaceId);
       }
     };
+
+    // Wire the cancel path so `indexingService.cancelReindex(wsId)` aborts the
+    // in-flight MCP call. Returns whether there was actually a reindex to
+    // cancel.
+    indexingService.setReindexCanceller((workspaceId) => {
+      const controller = reindexInFlight.get(workspaceId);
+      if (!controller) return false;
+      controller.abort();
+      return true;
+    });
     // Service-level trigger (UI Re-index button + on-enable auto). Looks up
     // the cwd from the registry so callers don't have to.
     indexingService.setReindexTrigger(async (workspaceId: string) => {
@@ -564,12 +790,38 @@ export async function createHubcodeDaemon(
               workspaceId: info.workspaceId,
               changedPaths: info.changedPaths ?? [],
             });
+            if (reindexInFlight.has(info.workspaceId)) {
+              // A reindex is already running — let the in-flight one finish.
+              // This is intentional: the debounced watcher batches rapid file
+              // changes, but a second burst mid-indexing would pile a second
+              // call which serializes behind the first anyway. Logging so the
+              // daemon.log shows we intentionally dropped it.
+              logger.debug(
+                { workspaceId: info.workspaceId, changedCount: info.changedPaths?.length ?? 0 },
+                "fs-watcher: reindex already in flight, coalescing",
+              );
+              return;
+            }
+            logger.info(
+              {
+                workspaceId: info.workspaceId,
+                changedCount: info.changedPaths?.length ?? 0,
+                // Show the actual paths so we can identify what's triggering
+                // a reindex loop. Truncate to first 10 to keep logs readable.
+                changedPaths: (info.changedPaths ?? []).slice(0, 10),
+              },
+              "fs-watcher: triggering reindex",
+            );
             void indexingService
               .setStatus(info.workspaceId, { phase: "indexing" })
               .then(() => triggerReindex(info.workspaceId, ws.cwd))
               .catch((err) => logger.warn({ err }, "fs-watcher reindex trigger failed"));
           },
-          ws.indexing?.watchlist,
+          // Empty watchlist == user hasn't configured → use fs-watcher's
+          // sensible defaults (node_modules, .git, etc.) by passing undefined.
+          ws.indexing?.watchlist && ws.indexing.watchlist.length > 0
+            ? ws.indexing.watchlist
+            : undefined,
           (workspaceId, err) => {
             indexingService.emitFsTrigger({
               kind: "error",
@@ -584,26 +836,77 @@ export async function createHubcodeDaemon(
         if (!seen.has(active)) fsWatchers.clear(active);
       }
     };
-    indexingService.onStatus(() => {
+    // Only reconcile fs-watchers on phase transitions — not on every progress
+    // tick (the ticker fires setStatus every 1s and used to re-list all
+    // workspaces each time, costing dozens of disk reads/min per indexing
+    // workspace for no benefit).
+    const lastPhaseByWorkspace = new Map<string, string>();
+    indexingService.onStatus((event) => {
+      const prevPhase = lastPhaseByWorkspace.get(event.workspaceId);
+      if (prevPhase === event.status.phase) return;
+      lastPhaseByWorkspace.set(event.workspaceId, event.status.phase);
       void reconcileWatchers().catch((err) => logger.warn({ err }, "reconcileWatchers failed"));
     });
     await reconcileWatchers().catch((err) =>
       logger.warn({ err }, "Initial reconcileWatchers failed"),
     );
+
+    // Recover from daemon restarts mid-indexing: any workspace still marked
+    // `indexing` in persistent state was orphaned by the old process. Flip it
+    // back to `idle` so the UI isn't stuck on a ghost spinner. The normal
+    // initial-reindex pass (or user action) kicks off a fresh run.
+    const recoverStalePhases = async () => {
+      const records = await workspaceRegistry.list().catch(() => []);
+      for (const ws of records) {
+        const phase = ws.indexing?.status?.phase;
+        if (phase === "indexing" || phase === "installing") {
+          logger.warn(
+            { workspaceId: ws.workspaceId, phase },
+            "Found stale indexing phase on startup — resetting to idle",
+          );
+          await indexingService
+            .setStatus(ws.workspaceId, { phase: "idle" })
+            .catch((err) =>
+              logger.warn({ err, workspaceId: ws.workspaceId }, "Failed to reset stale phase"),
+            );
+        }
+      }
+    };
+    await recoverStalePhases();
     // Once the crg client connects, auto-trigger initial reindex for any
     // enabled workspace that has never been indexed (or is stale). Runs
     // sequentially so we don't slam crg with parallel build calls.
     const runInitialReindex = async () => {
-      if (!crgMcpClient.isConnected()) return;
-      const records = await workspaceRegistry.list().catch(() => []);
-      for (const ws of records) {
-        if (!ws.indexing?.enabled) continue;
-        if (ws.indexing.status?.lastIndexedAt) continue;
-        if (ws.archivedAt !== null) continue;
-        await triggerReindex(ws.workspaceId, ws.cwd).catch(() => undefined);
+      if (!crgMcpClient.isConnected()) {
+        logger.debug("Initial reindex skipped — crg not connected yet");
+        return;
+      }
+      const records = await workspaceRegistry
+        .list()
+        .catch((err): Awaited<ReturnType<typeof workspaceRegistry.list>> => {
+          logger.warn({ err }, "Failed to list workspaces for initial reindex");
+          return [];
+        });
+      const candidates = records.filter(
+        (ws) =>
+          ws.indexing?.enabled && !ws.indexing.status?.lastIndexedAt && ws.archivedAt === null,
+      );
+      if (candidates.length === 0) {
+        logger.info("No workspaces require initial indexing");
+        return;
+      }
+      logger.info(
+        { count: candidates.length, workspaceIds: candidates.map((c) => c.workspaceId) },
+        "Running initial reindex for never-indexed workspaces",
+      );
+      for (const ws of candidates) {
+        await triggerReindex(ws.workspaceId, ws.cwd).catch((err) =>
+          logger.warn({ err, workspaceId: ws.workspaceId }, "Initial reindex errored"),
+        );
       }
     };
     crgMcpClient.onConnectionState((s) => {
+      logger.info({ phase: s.phase, error: s.error }, "crg MCP connection state changed");
       if (s.phase !== "connected") return;
       void runInitialReindex();
     });
@@ -621,11 +924,22 @@ export async function createHubcodeDaemon(
       }
     });
     if (indexingDetection?.codeReviewGraph.installed) {
-      crgProcess.start();
-      logger.info(
-        { binPath: indexingDetection.codeReviewGraph.path },
-        "code-review-graph subprocess started",
-      );
+      // Indexing is optional. If the installed binary is broken (stale pipx
+      // shim, missing venv, wrong architecture), spawn may throw — but that
+      // must NOT bring down the daemon. Wrap so users without a working crg
+      // still get agents/chat/etc., and can re-install from the UI.
+      try {
+        crgProcess.start();
+        logger.info(
+          { binPath: indexingDetection.codeReviewGraph.path },
+          "code-review-graph subprocess started",
+        );
+      } catch (err) {
+        logger.error(
+          { err, binPath: indexingDetection.codeReviewGraph.path },
+          "code-review-graph spawn failed at boot; indexing disabled until reinstall",
+        );
+      }
     } else {
       logger.info("code-review-graph not installed; subprocess deferred until install completes");
     }
@@ -674,6 +988,11 @@ export async function createHubcodeDaemon(
               const agent = agentManager.getAgent(id);
               if (!agent?.cwd) return null;
               return resolveIndexingStateForCwd(workspaceRegistry, indexingService, agent.cwd);
+            },
+            resolveWorkspaceCwd: (id) => {
+              if (!id) return null;
+              const agent = agentManager.getAgent(id);
+              return agent?.cwd ?? null;
             },
           },
           logger,

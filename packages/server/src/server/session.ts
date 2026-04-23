@@ -2468,6 +2468,15 @@ export class Session {
           case "indexing/reindex":
             await this.handleIndexingReindexRequest(msg);
             break;
+          case "indexing/cancel-reindex":
+            await this.handleIndexingCancelReindexRequest(msg);
+            break;
+          case "indexing/restart-subprocess":
+            await this.handleIndexingRestartSubprocessRequest(msg);
+            break;
+          case "indexing/stderr-tail":
+            await this.handleIndexingStderrTailRequest(msg);
+            break;
 
           // Integration RPC
           case "integration_list_status_request":
@@ -9942,6 +9951,82 @@ export class Session {
     } catch (err) {
       this.emitIndexingError(request.requestId, "indexing/state/response", err);
     }
+  }
+
+  private async handleIndexingCancelReindexRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/cancel-reindex" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emit({
+        type: "indexing/cancel-reindex/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Indexing service unavailable",
+          cancelled: false,
+        },
+      });
+      return;
+    }
+    const result = svc.cancelReindex(request.workspaceId);
+    this.emit({
+      type: "indexing/cancel-reindex/response",
+      payload: {
+        requestId: request.requestId,
+        error: result.ok ? null : "Cancel not wired",
+        cancelled: result.cancelled,
+      },
+    });
+  }
+
+  private async handleIndexingRestartSubprocessRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/restart-subprocess" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emit({
+        type: "indexing/restart-subprocess/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Indexing service unavailable",
+          restarted: false,
+        },
+      });
+      return;
+    }
+    try {
+      await svc.restartProcess();
+      this.emit({
+        type: "indexing/restart-subprocess/response",
+        payload: { requestId: request.requestId, error: null, restarted: true },
+      });
+    } catch (err) {
+      this.emit({
+        type: "indexing/restart-subprocess/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          restarted: false,
+        },
+      });
+    }
+  }
+
+  private async handleIndexingStderrTailRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/stderr-tail" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emit({
+        type: "indexing/stderr-tail/response",
+        payload: { requestId: request.requestId, error: "Indexing service unavailable", text: "" },
+      });
+      return;
+    }
+    this.emit({
+      type: "indexing/stderr-tail/response",
+      payload: { requestId: request.requestId, error: null, text: svc.getStderrTail() },
+    });
   }
 
   private async handleIndexingInstallRequest(
