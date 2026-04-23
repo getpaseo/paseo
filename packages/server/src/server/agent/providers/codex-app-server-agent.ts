@@ -568,6 +568,11 @@ type RequestHandler = (params: unknown) => Promise<unknown> | unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
 
 // Codex app-server API response types
+interface CodexReasoningEffortEntry {
+  reasoningEffort?: string;
+  description?: string;
+}
+
 interface CodexModel {
   id: string;
   displayName?: string;
@@ -575,7 +580,7 @@ interface CodexModel {
   isDefault?: boolean;
   model?: string;
   defaultReasoningEffort?: string;
-  supportedReasoningEfforts?: string[];
+  supportedReasoningEfforts?: CodexReasoningEffortEntry[];
 }
 
 interface CodexModelListResponse {
@@ -4332,7 +4337,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       await client.request("initialize", buildCodexAppServerInitializeParams());
       client.notify("initialized", {});
 
-      const response = (await client.request("model/list", {})) as { data?: Array<any> };
+      const response = (await client.request("model/list", {})) as CodexModelListResponse;
       const models = Array.isArray(response?.data) ? response.data : [];
       const configuredDefaults = await readCodexConfiguredDefaults(client, this.logger);
       const configuredDefaultModelId = configuredDefaults.model;
@@ -4389,7 +4394,7 @@ export class CodexAppServerAgentClient implements AgentClient {
         return {
           provider: CODEX_PROVIDER,
           id: model.id,
-          label: normalizeCodexModelLabel(model.displayName),
+          label: normalizeCodexModelLabel(model.displayName ?? ""),
           description: model.description,
           isDefault: isDefaultModel,
           thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
