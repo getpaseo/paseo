@@ -310,13 +310,11 @@ export function ExplorerSidebar({
   }
 
   return (
-    <Animated.View
-      style={[explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }]}
-    >
-      <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
+    <Animated.View style={desktopSidebarStyle}>
+      <View style={DESKTOP_SIDEBAR_BORDER_STYLE}>
         {/* Resize handle - absolutely positioned over left border */}
         <GestureDetector gesture={resizeGesture}>
-          <View style={[styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as any)]} />
+          <View style={RESIZE_HANDLE_STYLE} />
         </GestureDetector>
 
         <SidebarContent
@@ -354,16 +352,12 @@ function ExplorerTabButton({
   children,
 }: ExplorerTabButtonProps) {
   const handlePress = useCallback(() => onTabPress(tab), [onTabPress, tab]);
+  const tabStyle = useMemo(() => [styles.tab, active && styles.tabActive], [active]);
+  const tabTextStyle = useMemo(() => [styles.tabText, active && styles.tabTextActive], [active]);
   return (
-    <Pressable
-      testID={testID}
-      style={[styles.tab, active && styles.tabActive]}
-      onPress={handlePress}
-    >
+    <Pressable testID={testID} style={tabStyle} onPress={handlePress}>
       {children}
-      {label !== undefined ? (
-        <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
-      ) : null}
+      {label !== undefined ? <Text style={tabTextStyle}>{label}</Text> : null}
     </Pressable>
   );
 }
@@ -409,10 +403,15 @@ function SidebarContent({
     requestedTab === "pr" && !hasPullRequest ? "changes" : requestedTab;
   const prTabLabel = prPane.prNumber === null ? "" : `#${prPane.prNumber}`;
 
+  const headerStyle = useMemo(
+    () => [styles.header, { paddingRight: padding.right }],
+    [padding.right],
+  );
+
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
-      <View style={[styles.header, { paddingRight: padding.right }]} testID="explorer-header">
+      <View style={headerStyle} testID="explorer-header">
         <TitlebarDragRegion />
         <View style={styles.tabsContainer}>
           {isGit && (
@@ -570,3 +569,6 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
 }));
+
+const DESKTOP_SIDEBAR_BORDER_STYLE = [styles.desktopSidebarBorder, { flex: 1 }];
+const RESIZE_HANDLE_STYLE = [styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as any)];
