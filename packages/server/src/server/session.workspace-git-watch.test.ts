@@ -1,15 +1,39 @@
 import { describe, expect, test, vi } from "vitest";
-import { Session } from "./session.js";
+import type pino from "pino";
+import { Session, type SessionOptions } from "./session.js";
 import type {
   WorkspaceGitListener,
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitService,
 } from "./workspace-git-service.js";
+import type { SessionOutboundMessage } from "./messages.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
+
+interface SessionInternals {
+  workspaceUpdatesSubscription: {
+    subscriptionId: string;
+    filter: undefined;
+    isBootstrapping: boolean;
+    pendingUpdatesByWorkspaceId: Map<string, unknown>;
+    lastEmittedByWorkspaceId: Map<string, unknown>;
+  };
+  buildWorkspaceDescriptorMap: () => Promise<Map<string, unknown>>;
+  syncWorkspaceGitObserver(cwd: string, details: { isGit: boolean }): void;
+  listAgentPayloads: () => Promise<unknown[]>;
+}
+
+type CheckoutStatusUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "checkout_status_update" }
+>["payload"];
+type WorkspaceUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace_update" }
+>["payload"];
 
 function createWorkspaceRuntimeSnapshot(
   cwd: string,
@@ -125,20 +149,20 @@ function createSessionForWorkspaceGitWatchTests(): {
 
   const session = new Session({
     clientId: "test-client",
-    onMessage: (message) => emitted.push(message as any),
-    logger: logger as any,
-    downloadTokenStore: {} as any,
-    pushTokenStore: {} as any,
+    onMessage: (message) => emitted.push(message as { type: string; payload: unknown }),
+    logger: logger as unknown as pino.Logger,
+    downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
+    pushTokenStore: {} as SessionOptions["pushTokenStore"],
     paseoHome: "/tmp/paseo-test",
     agentManager: {
       subscribe: () => () => {},
       listAgents: () => [],
       getAgent: () => null,
-    } as any,
+    } as unknown as SessionOptions["agentManager"],
     agentStorage: {
       list: async () => [],
       get: async () => null,
-    } as any,
+    } as unknown as SessionOptions["agentStorage"],
     projectRegistry: {
       initialize: async () => {},
       existsOnDisk: async () => true,
@@ -155,7 +179,7 @@ function createSessionForWorkspaceGitWatchTests(): {
       remove: async (projectId: string) => {
         projects.delete(projectId);
       },
-    } as any,
+    } as unknown as SessionOptions["projectRegistry"],
     workspaceRegistry: {
       initialize: async () => {},
       existsOnDisk: async () => true,
@@ -172,7 +196,7 @@ function createSessionForWorkspaceGitWatchTests(): {
       remove: async (workspaceId: string) => {
         workspaces.delete(workspaceId);
       },
-    } as any,
+    } as unknown as SessionOptions["workspaceRegistry"],
     checkoutDiffManager: {
       subscribe: async () => ({
         initial: { cwd: "/tmp", files: [], error: null },
@@ -186,15 +210,15 @@ function createSessionForWorkspaceGitWatchTests(): {
         checkoutDiffFallbackRefreshTargetCount: 0,
       }),
       dispose: () => {},
-    } as any,
+    } as unknown as SessionOptions["checkoutDiffManager"],
     workspaceGitService,
     mcpBaseUrl: null,
     stt: null,
     tts: null,
     terminalManager: null,
-  }) as any;
+  } as unknown as SessionOptions);
 
-  (session as any).listAgentPayloads = async () => [];
+  (session as unknown as SessionInternals).listAgentPayloads = async () => [];
 
   return {
     session,
@@ -243,7 +267,7 @@ describe("workspace git watch targets", () => {
   test("emits one workspace_update when the workspace git service emits a changed snapshot", async () => {
     const { session, emitted, projects, workspaces, workspaceGitService, subscriptions } =
       createSessionForWorkspaceGitWatchTests();
-    const sessionAny = session as any;
+    const sessionAny = session as unknown as SessionInternals;
     seedGitWorkspace({
       projects,
       workspaces,
@@ -301,7 +325,7 @@ describe("workspace git watch targets", () => {
 
     const workspaceUpdates = emitted.filter(
       (message) => message.type === "workspace_update",
-    ) as any[];
+    ) as Array<{ type: "workspace_update"; payload: WorkspaceUpdatePayload }>;
     expect(workspaceUpdates).toHaveLength(1);
     expect(workspaceUpdates[0]?.payload).toMatchObject({
       kind: "upsert",
@@ -318,7 +342,7 @@ describe("workspace git watch targets", () => {
   test("emits checkout_status_update to a client subscribed to the workspace git target", async () => {
     const { session, emitted, projects, workspaces, workspaceGitService, subscriptions } =
       createSessionForWorkspaceGitWatchTests();
-    const sessionAny = session as any;
+    const sessionAny = session as unknown as SessionInternals;
     seedGitWorkspace({
       projects,
       workspaces,
@@ -352,7 +376,7 @@ describe("workspace git watch targets", () => {
 
     const statusUpdates = emitted.filter(
       (message) => message.type === "checkout_status_update",
-    ) as any[];
+    ) as Array<{ type: "checkout_status_update"; payload: CheckoutStatusUpdatePayload }>;
     expect(statusUpdates).toHaveLength(1);
     expect(statusUpdates[0]?.payload).toMatchObject({
       cwd: "/tmp/repo",
@@ -381,7 +405,7 @@ describe("workspace git watch targets", () => {
   test("embeds PR status in checkout_status_update for GitHub-inclusive snapshot pushes", async () => {
     const { session, emitted, projects, workspaces, subscriptions } =
       createSessionForWorkspaceGitWatchTests();
-    const sessionAny = session as any;
+    const sessionAny = session as unknown as SessionInternals;
     seedGitWorkspace({
       projects,
       workspaces,
@@ -429,7 +453,7 @@ describe("workspace git watch targets", () => {
     );
 
     const statusUpdate = emitted.find((message) => message.type === "checkout_status_update") as
-      | { payload: any }
+      | { payload: CheckoutStatusUpdatePayload }
       | undefined;
     expect(statusUpdate?.payload.prStatus).toEqual({
       cwd: "/tmp/repo",
