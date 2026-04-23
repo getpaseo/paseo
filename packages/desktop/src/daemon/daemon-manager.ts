@@ -134,11 +134,13 @@ function sleep(ms: number): Promise<void> {
 
 async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  async function poll(): Promise<boolean> {
     if (!isProcessRunning(pid)) return true;
+    if (Date.now() >= deadline) return !isProcessRunning(pid);
     await sleep(PID_POLL_INTERVAL_MS);
+    return poll();
   }
-  return !isProcessRunning(pid);
+  return poll();
 }
 
 function tailFile(filePath: string, lines = 50): string {
@@ -262,7 +264,8 @@ function buildStartupFailureError(
 }
 
 async function pollForRunningDaemon(): Promise<DesktopDaemonStatus> {
-  for (let attempt = 0; attempt < STARTUP_POLL_MAX_ATTEMPTS; attempt++) {
+  async function poll(attempt: number): Promise<DesktopDaemonStatus> {
+    if (attempt >= STARTUP_POLL_MAX_ATTEMPTS) return resolveStatus();
     const status = await resolveStatus();
     if (attempt === 0 || attempt === STARTUP_POLL_MAX_ATTEMPTS - 1 || attempt % 10 === 9) {
       logDesktopDaemonLifecycle("polling daemon status after detached start", {
@@ -275,8 +278,9 @@ async function pollForRunningDaemon(): Promise<DesktopDaemonStatus> {
     }
     if (status.status === "running" && status.serverId && status.listen) return status;
     await sleep(STARTUP_POLL_INTERVAL_MS);
+    return poll(attempt + 1);
   }
-  return resolveStatus();
+  return poll(0);
 }
 
 async function startDaemon(): Promise<DesktopDaemonStatus> {

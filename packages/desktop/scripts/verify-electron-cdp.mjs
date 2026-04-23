@@ -351,7 +351,7 @@ async function inspectFullscreenResizer(page) {
 }
 
 async function findAppPage(browser) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  function findMatchingPage() {
     for (const context of browser.contexts()) {
       for (const page of context.pages()) {
         if (page.url().includes(APP_URL_FRAGMENT) && !page.url().startsWith("devtools://")) {
@@ -359,9 +359,18 @@ async function findAppPage(browser) {
         }
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    return null;
   }
-  throw new Error(`Unable to find Electron app page for ${APP_URL_FRAGMENT}`);
+  async function poll(attempt) {
+    const page = findMatchingPage();
+    if (page) return page;
+    if (attempt >= 29) {
+      throw new Error(`Unable to find Electron app page for ${APP_URL_FRAGMENT}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return poll(attempt + 1);
+  }
+  return poll(0);
 }
 
 function attachConsoleCollector(page, consoleMessages) {
