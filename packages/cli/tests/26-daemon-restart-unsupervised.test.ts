@@ -44,14 +44,14 @@ async function waitFor(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
-  while (Date.now() < deadline) {
-    if (await check()) {
-      return;
-    }
+  async function poll(): Promise<void> {
+    if (await check()) return;
+    if (Date.now() >= deadline) throw new Error(message);
     await sleep(pollIntervalMs);
+    return poll();
   }
 
-  throw new Error(message);
+  return poll();
 }
 
 interface ExitResult {
@@ -75,16 +75,18 @@ function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): Promis
 async function canConnectToDaemon(host: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 
-  while (Date.now() < deadline) {
+  async function poll(): Promise<boolean> {
     const client = await tryConnectToDaemon({ host, timeout: 500 }).catch(() => null);
     if (client) {
       await client.close().catch(() => undefined);
       return true;
     }
+    if (Date.now() >= deadline) return false;
     await sleep(pollIntervalMs);
+    return poll();
   }
 
-  return false;
+  return poll();
 }
 
 async function readPidLockPid(paseoHome: string): Promise<number | null> {

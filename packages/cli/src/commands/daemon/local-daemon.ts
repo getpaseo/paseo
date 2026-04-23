@@ -287,13 +287,13 @@ function signalProcessGroupSafely(pid: number, signal: NodeJS.Signals): boolean 
 
 async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isProcessRunning(pid)) {
-      return true;
-    }
+  async function poll(): Promise<boolean> {
+    if (!isProcessRunning(pid)) return true;
+    if (Date.now() >= deadline) return !isProcessRunning(pid);
     await sleep(PID_POLL_INTERVAL_MS);
+    return poll();
   }
-  return !isProcessRunning(pid);
+  return poll();
 }
 
 type LifecycleShutdownAttempt = { requested: true } | { requested: false; reason: string };

@@ -44,7 +44,7 @@ export async function runLoopLogsCommand(
 ): Promise<void> {
   const host = getDaemonHost({ host: options.host as string | undefined });
   const pollInterval = parsePollInterval(options.pollInterval ?? "1000");
-  let client;
+  let client: LoopDaemonClient;
   try {
     client = (await connectToDaemon({
       host: options.host as string | undefined,
@@ -56,23 +56,24 @@ export async function runLoopLogsCommand(
     process.exit(1);
   }
 
-  let cursor = 0;
-  try {
-    for (;;) {
-      const payload = await client.loopLogs(id, cursor);
-      if (payload.error || !payload.loop) {
-        throw new Error(payload.error ?? `Loop not found: ${id}`);
-      }
-      cursor = payload.nextCursor;
-      for (const entry of payload.entries) {
-        console.log(renderLogEntry(entry));
-      }
-      if (payload.loop.status !== "running") {
-        await client.close();
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+  async function streamLogs(cursor: number): Promise<void> {
+    const payload = await client.loopLogs(id, cursor);
+    if (payload.error || !payload.loop) {
+      throw new Error(payload.error ?? `Loop not found: ${id}`);
     }
+    for (const entry of payload.entries) {
+      console.log(renderLogEntry(entry));
+    }
+    if (payload.loop.status !== "running") {
+      await client.close();
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    return streamLogs(payload.nextCursor);
+  }
+
+  try {
+    await streamLogs(0);
   } catch (error) {
     await client.close().catch(() => {});
     const message = error instanceof Error ? error.message : String(error);

@@ -130,18 +130,22 @@ async function test_wait_for_permission_request(agentId: string): Promise<void> 
   // Poll for permission requests with timeout
   const maxWait = 60000; // 60 seconds max
   const pollInterval = 1000; // 1 second
-  const startTime = Date.now();
+  const deadline = Date.now() + maxWait;
 
-  while (Date.now() - startTime < maxWait) {
+  async function pollPermission(): Promise<boolean> {
     const result = await ctx.paseo(["permit", "ls", "--json"]);
     const ourPermission = findMatchingPermission(result, agentId);
     if (ourPermission) {
       console.log("Permission request detected:", ourPermission);
       console.log("PASS: Agent requested permission");
-      return;
+      return true;
     }
+    if (Date.now() >= deadline) return false;
     await sleep(pollInterval);
+    return pollPermission();
   }
+
+  if (await pollPermission()) return;
 
   // If we get here, check agent status - it might have already completed
   const statusResult = await ctx.paseo(["inspect", agentId]);

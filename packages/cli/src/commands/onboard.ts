@@ -199,60 +199,85 @@ function renderProgressLine(progress: DownloadProgress): string {
   return `Downloading speech model${modelSuffix}: ${progress.pct}%`;
 }
 
+type ProbeResult = { kind: "ready"; listen: string; host: string | null } | { kind: "pending" };
+
+async function probeDaemonReady(home: string): Promise<ProbeResult> {
+  const state = resolveLocalDaemonState({ home });
+  const host = resolveTcpHostFromListen(state.listen);
+
+  if (state.running && host) {
+    const client = await tryConnectToDaemon({ host, timeout: 1200 });
+    if (client) {
+      try {
+        await client.fetchAgents();
+        return { kind: "ready", listen: state.listen, host };
+      } catch {
+        // Daemon process is alive but not API-ready yet.
+      } finally {
+        await client.close().catch(() => {});
+      }
+    }
+  } else if (state.running && !host) {
+    return { kind: "ready", listen: state.listen, host: null };
+  }
+
+  return { kind: "pending" };
+}
+
+interface ProgressState {
+  lastStatus: string;
+  lastPrintedAt: number;
+}
+
+function announceProgress(
+  home: string,
+  state: ProgressState,
+  onStatus: ((message: string) => void) | undefined,
+): ProgressState {
+  const progress = parseDownloadProgress(tailDaemonLog(home, 120) ?? "");
+  const progressLine = progress ? renderProgressLine(progress) : null;
+  const statusMessage = progressLine ?? "Waiting for daemon to become ready...";
+
+  if (statusMessage !== state.lastStatus) {
+    onStatus?.(statusMessage);
+    return { lastStatus: statusMessage, lastPrintedAt: Date.now() };
+  }
+  if (!onStatus && Date.now() - state.lastPrintedAt >= 3000) {
+    console.log(statusMessage);
+    return { lastStatus: state.lastStatus, lastPrintedAt: Date.now() };
+  }
+  return state;
+}
+
 async function waitForDaemonReady(args: {
   home: string;
   timeoutMs: number;
   onStatus?: (message: string) => void;
 }): Promise<{ listen: string; host: string | null }> {
   const deadline = Date.now() + args.timeoutMs;
-  let lastStatus = "";
-  let lastPrintedAt = 0;
 
-  while (Date.now() < deadline) {
-    const state = resolveLocalDaemonState({ home: args.home });
-    const host = resolveTcpHostFromListen(state.listen);
-
-    if (state.running && host) {
-      const client = await tryConnectToDaemon({ host, timeout: 1200 });
-      if (client) {
-        try {
-          await client.fetchAgents();
-          return { listen: state.listen, host };
-        } catch {
-          // Daemon process is alive but not API-ready yet.
-        } finally {
-          await client.close().catch(() => {});
-        }
-      }
-    } else if (state.running && !host) {
-      return { listen: state.listen, host: null };
+  async function poll(state: ProgressState): Promise<{ listen: string; host: string | null }> {
+    const probe = await probeDaemonReady(args.home);
+    if (probe.kind === "ready") {
+      return { listen: probe.listen, host: probe.host };
     }
-
-    const progress = parseDownloadProgress(tailDaemonLog(args.home, 120) ?? "");
-    const progressLine = progress ? renderProgressLine(progress) : null;
-    const statusMessage = progressLine ?? "Waiting for daemon to become ready...";
-
-    if (statusMessage !== lastStatus) {
-      args.onStatus?.(statusMessage);
-      lastStatus = statusMessage;
-      lastPrintedAt = Date.now();
-    } else if (!args.onStatus && Date.now() - lastPrintedAt >= 3000) {
-      console.log(statusMessage);
-      lastPrintedAt = Date.now();
+    const nextState = announceProgress(args.home, state, args.onStatus);
+    if (Date.now() >= deadline) {
+      const recentLogs = tailDaemonLog(args.home, 60);
+      throw new Error(
+        [
+          `Timed out after ${Math.ceil(args.timeoutMs / 1000)}s waiting for daemon readiness.`,
+          recentLogs ? `Recent daemon logs:\n${recentLogs}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      );
     }
-
     await sleep(200);
+    return poll(nextState);
   }
 
-  const recentLogs = tailDaemonLog(args.home, 60);
-  throw new Error(
-    [
-      `Timed out after ${Math.ceil(args.timeoutMs / 1000)}s waiting for daemon readiness.`,
-      recentLogs ? `Recent daemon logs:\n${recentLogs}` : null,
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
-  );
+  return poll({ lastStatus: "", lastPrintedAt: 0 });
 }
 
 function printNextSteps(pairingUrl: string | null, paseoHome: string, richUi: boolean): void {

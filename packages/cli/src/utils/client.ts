@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { loadConfig, resolvePaseoHome, DaemonClient } from "@getpaseo/server";
 import path from "node:path";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
 import { resolveCliVersion } from "../version.js";
 
@@ -195,45 +195,54 @@ function createNodeWebSocketFactory() {
  * Create and connect a daemon client
  * Returns the connected client or throws if connection fails
  */
+async function tryConnectHost(
+  host: string,
+  clientId: string,
+  timeout: number,
+  nodeWebSocketFactory: ReturnType<typeof createNodeWebSocketFactory>,
+): Promise<{ client: DaemonClient } | { error: unknown }> {
+  const target = resolveDaemonTarget(host);
+  const client = new DaemonClient({
+    url: target.url,
+    clientId,
+    clientType: "cli",
+    appVersion: resolveCliVersion(),
+    connectTimeoutMs: timeout,
+    webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
+      nodeWebSocketFactory(url, {
+        headers: config?.headers,
+        ...(target.type === "ipc" ? { socketPath: target.socketPath } : {}),
+      }),
+    reconnect: { enabled: false },
+  } as unknown as ConstructorParameters<typeof DaemonClient>[0]);
+
+  try {
+    await client.connect();
+    return { client };
+  } catch (error) {
+    await client.close().catch(() => {});
+    return { error };
+  }
+}
+
 export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonClient> {
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
   const clientId = await getOrCreateCliClientId();
   const hosts = resolveDaemonHostCandidates(options);
   const nodeWebSocketFactory = createNodeWebSocketFactory();
-  let lastError: unknown = null;
 
-  for (const host of hosts) {
-    const target = resolveDaemonTarget(host);
-    const client = new DaemonClient({
-      url: target.url,
-      clientId,
-      clientType: "cli",
-      appVersion: resolveCliVersion(),
-      connectTimeoutMs: timeout,
-      webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
-        nodeWebSocketFactory(url, {
-          headers: config?.headers,
-          ...(target.type === "ipc" ? { socketPath: target.socketPath } : {}),
-        }),
-      reconnect: { enabled: false },
-    } as unknown as ConstructorParameters<typeof DaemonClient>[0]);
-
-    const connectPromise = client.connect();
-
-    try {
-      await connectPromise;
-      return client;
-    } catch (err) {
-      lastError = err;
-      await client.close().catch(() => {});
+  async function tryNext(index: number, lastError: unknown): Promise<DaemonClient> {
+    if (index >= hosts.length) {
+      if (lastError instanceof Error) throw lastError;
+      throw new Error(`Unable to connect to Paseo daemon via ${hosts.join(", ")}`);
     }
+    const host = hosts[index] as string;
+    const result = await tryConnectHost(host, clientId, timeout, nodeWebSocketFactory);
+    if ("client" in result) return result.client;
+    return tryNext(index + 1, result.error);
   }
 
-  if (lastError instanceof Error) {
-    throw lastError;
-  }
-
-  throw new Error(`Unable to connect to Paseo daemon via ${hosts.join(", ")}`);
+  return tryNext(0, null);
 }
 
 /**
