@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
@@ -34,14 +34,18 @@ export function AttachmentPill({
     () => [styles.closeButton, !showRemove && styles.closeButtonHidden],
     [showRemove],
   );
+  const handleBodyHoverIn = useCallback(() => setIsBodyHovered(true), []);
+  const handleBodyHoverOut = useCallback(() => setIsBodyHovered(false), []);
+  const handleCloseHoverIn = useCallback(() => setIsCloseHovered(true), []);
+  const handleCloseHoverOut = useCallback(() => setIsCloseHovered(false), []);
   return (
     <View style={styles.wrapper}>
       <Pressable
         testID={testID}
         onPress={onOpen}
         disabled={disabled}
-        onHoverIn={() => setIsBodyHovered(true)}
-        onHoverOut={() => setIsBodyHovered(false)}
+        onHoverIn={handleBodyHoverIn}
+        onHoverOut={handleBodyHoverOut}
         accessibilityRole="button"
         accessibilityLabel={openAccessibilityLabel}
         style={styles.body}
@@ -51,8 +55,8 @@ export function AttachmentPill({
       <Pressable
         onPress={onRemove}
         disabled={disabled}
-        onHoverIn={() => setIsCloseHovered(true)}
-        onHoverOut={() => setIsCloseHovered(false)}
+        onHoverIn={handleCloseHoverIn}
+        onHoverOut={handleCloseHoverOut}
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel={removeAccessibilityLabel}

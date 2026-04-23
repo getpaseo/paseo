@@ -22,7 +22,9 @@ import {
   StatusBar,
   Text,
   View,
+  type GestureResponderEvent,
   type PressableProps,
+  type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
@@ -295,6 +297,42 @@ export function ContextMenuTrigger({
     [ctx.triggerRef, triggerRef],
   );
 
+  const propsOnLongPress = props.onLongPress;
+  const handleLongPress = useCallback(
+    (event: GestureResponderEvent) => {
+      if (isWeb) {
+        propsOnLongPress?.(event);
+        return;
+      }
+      openAtEvent(event);
+      propsOnLongPress?.(event);
+    },
+    [propsOnLongPress, openAtEvent],
+  );
+
+  const handleContextMenu = useCallback(
+    (event: unknown) => {
+      if (isNative) {
+        return;
+      }
+      const e: any = event;
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      openAtEvent(event as GestureResponderEvent);
+    },
+    [openAtEvent],
+  );
+
+  const pressableStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+      if (typeof style === "function") {
+        return style({ pressed, hovered: Boolean(hovered), open: ctx.open });
+      }
+      return style;
+    },
+    [style, ctx.open],
+  );
+
   return (
     <Pressable
       {...props}
@@ -302,30 +340,10 @@ export function ContextMenuTrigger({
       collapsable={false}
       disabled={disabled}
       delayLongPress={longPressDelayMs}
-      onLongPress={(event) => {
-        if (isWeb) {
-          props.onLongPress?.(event);
-          return;
-        }
-        openAtEvent(event);
-        props.onLongPress?.(event);
-      }}
+      onLongPress={handleLongPress}
       // @ts-ignore - onContextMenu is web-only and not in RN types.
-      onContextMenu={(event: unknown) => {
-        if (isNative) {
-          return;
-        }
-        const e: any = event;
-        e?.preventDefault?.();
-        e?.stopPropagation?.();
-        openAtEvent(event);
-      }}
-      style={({ pressed, hovered = false }) => {
-        if (typeof style === "function") {
-          return style({ pressed, hovered: Boolean(hovered), open: ctx.open });
-        }
-        return style;
-      }}
+      onContextMenu={handleContextMenu}
+      style={pressableStyle}
     >
       {children}
     </Pressable>
@@ -651,32 +669,39 @@ export function ContextMenuItem({
       <Check size={16} color={theme.colors.foregroundMuted} />
     ) : null);
 
+  const handleItemPress = useCallback(() => {
+    if (isDisabled) return;
+    if (closeOnSelect) {
+      setOpen(false);
+    }
+    onSelect?.();
+  }, [isDisabled, closeOnSelect, setOpen, onSelect]);
+
+  const itemPressableStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.item,
+      selected
+        ? selectedVariant === "accent"
+          ? styles.itemSelectedAccent
+          : styles.itemSelected
+        : null,
+      selected && (hovered || pressed) && selectedVariant !== "accent"
+        ? styles.itemSelectedInteractive
+        : null,
+      isDisabled ? styles.itemDisabled : null,
+      hovered && !pressed && !isDisabled ? styles.itemHovered : null,
+      pressed && !isDisabled ? styles.itemPressed : null,
+    ],
+    [selected, selectedVariant, isDisabled],
+  );
+
   const content = (
     <Pressable
       testID={testID}
       accessibilityRole="button"
       disabled={isDisabled}
-      onPress={() => {
-        if (isDisabled) return;
-        if (closeOnSelect) {
-          setOpen(false);
-        }
-        onSelect?.();
-      }}
-      style={({ pressed, hovered }) => [
-        styles.item,
-        selected
-          ? selectedVariant === "accent"
-            ? styles.itemSelectedAccent
-            : styles.itemSelected
-          : null,
-        selected && (hovered || pressed) && selectedVariant !== "accent"
-          ? styles.itemSelectedInteractive
-          : null,
-        isDisabled ? styles.itemDisabled : null,
-        hovered && !pressed && !isDisabled ? styles.itemHovered : null,
-        pressed && !isDisabled ? styles.itemPressed : null,
-      ]}
+      onPress={handleItemPress}
+      style={itemPressableStyle}
     >
       {showSelectedCheck ? (
         <View style={styles.checkSlot}>

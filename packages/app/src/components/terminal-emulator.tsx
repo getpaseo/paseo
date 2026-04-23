@@ -1,6 +1,15 @@
 "use dom";
 
-import { useEffect, useMemo, useRef, useState, type Ref } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type Ref,
+} from "react";
 import type { DOMProps } from "expo/dom";
 import { useDOMImperativeHandle, type DOMImperativeFactory } from "expo/dom";
 import "@xterm/xterm/css/xterm.css";
@@ -568,7 +577,7 @@ export default function TerminalEmulator({
   const handleInsetTop = Math.max(0, (thumbRegionHeight - scrollbarGeometry.handleSize) / 2);
   const handleTravelDurationMs =
     isDraggingScrollbar || isScrollActive ? 0 : SCROLLBAR_HANDLE_TRAVEL_DURATION_MS;
-  const handleContextMenu = () => {
+  const showTerminalContextMenu = useCallback(() => {
     const showContextMenu = window.paseoDesktop?.menu?.showContextMenu;
     if (typeof showContextMenu !== "function") {
       return;
@@ -579,7 +588,42 @@ export default function TerminalEmulator({
       kind: "terminal",
       hasSelection,
     });
-  };
+  }, []);
+
+  const handleRootPointerDown = useCallback(() => {
+    runtimeRef.current?.focus();
+  }, []);
+
+  const handleRootContextMenu = useCallback(
+    (event: ReactMouseEvent) => {
+      event.preventDefault();
+      showTerminalContextMenu();
+    },
+    [showTerminalContextMenu],
+  );
+
+  const scrollbarMaxOffset = scrollbarGeometry.maxScrollOffset;
+  const handleScrollbarPointerDown = useCallback(
+    (event: ReactPointerEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dragStartOffsetRef.current = clamp(viewportMetrics.offset, 0, scrollbarMaxOffset);
+      dragStartClientYRef.current = event.clientY;
+      setIsDraggingScrollbar(true);
+    },
+    [scrollbarMaxOffset, viewportMetrics.offset],
+  );
+
+  const handleScrollbarPointerEnter = useCallback(() => {
+    if (!isScrollVisible && !isDraggingScrollbar) {
+      return;
+    }
+    setIsHandleHovered(true);
+  }, [isScrollVisible, isDraggingScrollbar]);
+
+  const handleScrollbarPointerLeave = useCallback(() => {
+    setIsHandleHovered(false);
+  }, []);
 
   return (
     <div
@@ -598,13 +642,8 @@ export default function TerminalEmulator({
         overscrollBehavior: "none",
         touchAction: "pan-y",
       }}
-      onPointerDown={() => {
-        runtimeRef.current?.focus();
-      }}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        handleContextMenu();
-      }}
+      onPointerDown={handleRootPointerDown}
+      onContextMenu={handleRootContextMenu}
     >
       <div
         ref={hostRef}
@@ -653,26 +692,9 @@ export default function TerminalEmulator({
               transitionTimingFunction: "linear",
               pointerEvents: handleVisible ? "auto" : "none",
             }}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              dragStartOffsetRef.current = clamp(
-                viewportMetrics.offset,
-                0,
-                scrollbarGeometry.maxScrollOffset,
-              );
-              dragStartClientYRef.current = event.clientY;
-              setIsDraggingScrollbar(true);
-            }}
-            onPointerEnter={() => {
-              if (!isScrollVisible && !isDraggingScrollbar) {
-                return;
-              }
-              setIsHandleHovered(true);
-            }}
-            onPointerLeave={() => {
-              setIsHandleHovered(false);
-            }}
+            onPointerDown={handleScrollbarPointerDown}
+            onPointerEnter={handleScrollbarPointerEnter}
+            onPointerLeave={handleScrollbarPointerLeave}
           >
             <div
               style={{

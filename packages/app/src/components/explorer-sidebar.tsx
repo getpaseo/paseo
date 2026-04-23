@@ -126,6 +126,9 @@ export function ExplorerSidebar({
     [isGit, serverId, setExplorerTabForCheckout, workspaceRoot],
   );
 
+  const handleHeaderClose = useCallback(() => handleClose("header-close-button"), [handleClose]);
+  const handleDesktopClose = useCallback(() => handleClose("desktop-close-button"), [handleClose]);
+
   // Swipe gesture to close (swipe right on mobile)
   const closeGesture = useMemo(
     () =>
@@ -286,7 +289,7 @@ export function ExplorerSidebar({
             <SidebarContent
               activeTab={explorerTab}
               onTabPress={handleTabPress}
-              onClose={() => handleClose("header-close-button")}
+              onClose={handleHeaderClose}
               serverId={serverId}
               workspaceId={workspaceId}
               workspaceRoot={workspaceRoot}
@@ -319,7 +322,7 @@ export function ExplorerSidebar({
         <SidebarContent
           activeTab={explorerTab}
           onTabPress={handleTabPress}
-          onClose={() => handleClose("desktop-close-button")}
+          onClose={handleDesktopClose}
           serverId={serverId}
           workspaceId={workspaceId}
           workspaceRoot={workspaceRoot}
@@ -330,6 +333,38 @@ export function ExplorerSidebar({
         />
       </View>
     </Animated.View>
+  );
+}
+
+interface ExplorerTabButtonProps {
+  tab: ExplorerTab;
+  active: boolean;
+  label?: string;
+  onTabPress: (tab: ExplorerTab) => void;
+  testID: string;
+  children?: React.ReactNode;
+}
+
+function ExplorerTabButton({
+  tab,
+  active,
+  label,
+  onTabPress,
+  testID,
+  children,
+}: ExplorerTabButtonProps) {
+  const handlePress = useCallback(() => onTabPress(tab), [onTabPress, tab]);
+  return (
+    <Pressable
+      testID={testID}
+      style={[styles.tab, active && styles.tabActive]}
+      onPress={handlePress}
+    >
+      {children}
+      {label !== undefined ? (
+        <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -381,30 +416,28 @@ function SidebarContent({
         <TitlebarDragRegion />
         <View style={styles.tabsContainer}>
           {isGit && (
-            <Pressable
+            <ExplorerTabButton
+              tab="changes"
+              active={resolvedTab === "changes"}
+              label="Changes"
+              onTabPress={onTabPress}
               testID="explorer-tab-changes"
-              style={[styles.tab, resolvedTab === "changes" && styles.tabActive]}
-              onPress={() => onTabPress("changes")}
-            >
-              <Text style={[styles.tabText, resolvedTab === "changes" && styles.tabTextActive]}>
-                Changes
-              </Text>
-            </Pressable>
+            />
           )}
-          <Pressable
+          <ExplorerTabButton
+            tab="files"
+            active={resolvedTab === "files"}
+            label="Files"
+            onTabPress={onTabPress}
             testID="explorer-tab-files"
-            style={[styles.tab, resolvedTab === "files" && styles.tabActive]}
-            onPress={() => onTabPress("files")}
-          >
-            <Text style={[styles.tabText, resolvedTab === "files" && styles.tabTextActive]}>
-              Files
-            </Text>
-          </Pressable>
+          />
           {isGit && hasPullRequest && (
-            <Pressable
+            <ExplorerTabButton
+              tab="pr"
+              active={resolvedTab === "pr"}
+              label={prTabLabel}
+              onTabPress={onTabPress}
               testID="explorer-tab-pr"
-              style={[styles.tab, resolvedTab === "pr" && styles.tabActive]}
-              onPress={() => onTabPress("pr")}
             >
               <GitHubIcon
                 size={13}
@@ -412,10 +445,7 @@ function SidebarContent({
                   resolvedTab === "pr" ? theme.colors.foreground : theme.colors.foregroundMuted
                 }
               />
-              <Text style={[styles.tabText, resolvedTab === "pr" && styles.tabTextActive]}>
-                {prTabLabel}
-              </Text>
-            </Pressable>
+            </ExplorerTabButton>
           )}
         </View>
         <View style={styles.headerRightSection}>

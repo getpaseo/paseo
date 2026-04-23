@@ -275,6 +275,19 @@ function WorkspaceDocumentTitleEffect({
   return null;
 }
 
+function noop() {}
+
+function mobileTabMenuTriggerStyle({ open, pressed }: { open?: boolean; pressed?: boolean }) {
+  return [
+    styles.mobileTabMenuTrigger,
+    (Boolean(open) || Boolean(pressed)) && styles.mobileTabMenuTriggerActive,
+  ];
+}
+
+function switcherTriggerStyle({ pressed }: { pressed?: boolean }) {
+  return [styles.switcherTrigger, Boolean(pressed) && styles.switcherTriggerPressed];
+}
+
 function MobileWorkspaceTabOption({
   tab,
   tabIndex,
@@ -344,10 +357,7 @@ function MobileWorkspaceTabOption({
                 accessibilityRole="button"
                 accessibilityLabel={`Open menu for ${presentation.label}`}
                 hitSlop={8}
-                style={({ open, pressed }) => [
-                  styles.mobileTabMenuTrigger,
-                  (open || pressed) && styles.mobileTabMenuTriggerActive,
-                ]}
+                style={mobileTabMenuTriggerStyle}
               >
                 <Ellipsis size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
               </DropdownMenuTrigger>
@@ -429,6 +439,67 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
     return map;
   }, [tabs]);
 
+  const handleOpenSwitcher = useCallback(() => {
+    Keyboard.dismiss();
+    setIsOpen(true);
+  }, []);
+
+  const renderTabOption = useCallback(
+    ({
+      option,
+      selected,
+      active,
+      onPress,
+    }: {
+      option: ComboboxOption;
+      selected: boolean;
+      active: boolean;
+      onPress: () => void;
+    }) => {
+      const tab = tabByKey.get(option.id);
+      if (!tab) {
+        return <View />;
+      }
+      const tabIndex = tabIndexByKey.get(tab.key) ?? -1;
+      if (tabIndex < 0) {
+        return <View />;
+      }
+      return (
+        <MobileWorkspaceTabOption
+          tab={tab}
+          tabIndex={tabIndex}
+          tabCount={tabs.length}
+          normalizedServerId={normalizedServerId}
+          normalizedWorkspaceId={normalizedWorkspaceId}
+          selected={selected}
+          active={active}
+          onPress={onPress}
+          onCopyResumeCommand={onCopyResumeCommand}
+          onCopyAgentId={onCopyAgentId}
+          onReloadAgent={onReloadAgent}
+          onCloseTab={onCloseTab}
+          onCloseTabsAbove={onCloseTabsAbove}
+          onCloseTabsBelow={onCloseTabsBelow}
+          onCloseOtherTabs={onCloseOtherTabs}
+        />
+      );
+    },
+    [
+      tabByKey,
+      tabIndexByKey,
+      tabs.length,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      onCopyResumeCommand,
+      onCopyAgentId,
+      onReloadAgent,
+      onCloseTab,
+      onCloseTabsAbove,
+      onCloseTabsBelow,
+      onCloseOtherTabs,
+    ],
+  );
+
   return (
     <View style={styles.mobileTabsRow} testID="workspace-tabs-row">
       <Pressable
@@ -436,11 +507,8 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
         testID="workspace-tab-switcher-trigger"
         accessibilityRole="button"
         accessibilityLabel={`Switch tabs (${tabs.length} open)`}
-        style={({ pressed }) => [styles.switcherTrigger, pressed && styles.switcherTriggerPressed]}
-        onPress={() => {
-          Keyboard.dismiss();
-          setIsOpen(true);
-        }}
+        style={switcherTriggerStyle}
+        onPress={handleOpenSwitcher}
       >
         <View style={styles.switcherTriggerLeft}>
           <MobileActiveTabTrigger
@@ -462,35 +530,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
         open={isOpen}
         onOpenChange={setIsOpen}
         anchorRef={anchorRef}
-        renderOption={({ option, selected, active, onPress }) => {
-          const tab = tabByKey.get(option.id);
-          if (!tab) {
-            return <View />;
-          }
-          const tabIndex = tabIndexByKey.get(tab.key) ?? -1;
-          if (tabIndex < 0) {
-            return <View />;
-          }
-          return (
-            <MobileWorkspaceTabOption
-              tab={tab}
-              tabIndex={tabIndex}
-              tabCount={tabs.length}
-              normalizedServerId={normalizedServerId}
-              normalizedWorkspaceId={normalizedWorkspaceId}
-              selected={selected}
-              active={active}
-              onPress={onPress}
-              onCopyResumeCommand={onCopyResumeCommand}
-              onCopyAgentId={onCopyAgentId}
-              onReloadAgent={onReloadAgent}
-              onCloseTab={onCloseTab}
-              onCloseTabsAbove={onCloseTabsAbove}
-              onCloseTabsBelow={onCloseTabsBelow}
-              onCloseOtherTabs={onCloseOtherTabs}
-            />
-          );
-        }}
+        renderOption={renderTabOption}
       />
     </View>
   );
@@ -944,6 +984,16 @@ function WorkspaceScreenContent({
       checkout: activeExplorerCheckout,
     });
   }, [activeExplorerCheckout, isMobile, toggleFileExplorerForCheckout]);
+
+  const hasDiffStat = Boolean(workspaceDescriptor?.diffStat);
+  const explorerToggleStyle = useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+      styles.sourceControlButton,
+      hasDiffStat && styles.sourceControlButtonWithStats,
+      (Boolean(hovered) || Boolean(pressed) || isExplorerOpen) && styles.sourceControlButtonHovered,
+    ],
+    [hasDiffStat, isExplorerOpen],
+  );
 
   const explorerOpenGesture = useExplorerOpenGesture({
     enabled: isMobile && canOpenExplorerFromAgentView,
@@ -2378,12 +2428,7 @@ function WorkspaceScreenContent({
                             accessibilityRole="button"
                             accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
                             accessibilityState={{ expanded: isExplorerOpen }}
-                            style={({ hovered, pressed }) => [
-                              styles.sourceControlButton,
-                              workspaceDescriptor?.diffStat && styles.sourceControlButtonWithStats,
-                              (hovered || pressed || isExplorerOpen) &&
-                                styles.sourceControlButtonHovered,
-                            ]}
+                            style={explorerToggleStyle}
                           >
                             {({ hovered, pressed }) => {
                               const active = isExplorerOpen || hovered || pressed;
@@ -2520,8 +2565,8 @@ function WorkspaceScreenContent({
               disableCreateTerminal={createTerminalMutation.isPending}
               isWaitingOnTerminalReadiness={pendingTerminalCreateInput !== null}
               onReorderTabs={handleReorderTabsInFocusedPane}
-              onSplitRight={() => {}}
-              onSplitDown={() => {}}
+              onSplitRight={noop}
+              onSplitDown={noop}
               showPaneSplitActions={false}
             />
           ) : null}

@@ -8,6 +8,7 @@ import {
   StatusBar,
   ScrollView,
   type GestureResponderEvent,
+  type PressableStateCallbackType,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useQueries } from "@tanstack/react-query";
@@ -226,6 +227,9 @@ export function PrBadge({ hint }: { hint: PrHint }) {
     [hint.url],
   );
 
+  const handleHoverIn = useCallback(() => setIsHovered(true), []);
+  const handleHoverOut = useCallback(() => setIsHovered(false), []);
+
   return (
     <Pressable
       accessibilityRole="link"
@@ -233,9 +237,9 @@ export function PrBadge({ hint }: { hint: PrHint }) {
       hitSlop={4}
       onPressIn={handlePressIn}
       onPress={handlePress}
-      onHoverIn={() => setIsHovered(true)}
-      onHoverOut={() => setIsHovered(false)}
-      style={({ pressed }) => [prBadgeStyles.badge, pressed && prBadgeStyles.badgePressed]}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
+      style={prBadgePressableStyle}
     >
       {isHovered ? (
         <ExternalLink size={12} color={activeColor} />
@@ -248,6 +252,24 @@ export function PrBadge({ hint }: { hint: PrHint }) {
     </Pressable>
   );
 }
+
+function prBadgePressableStyle({ pressed }: PressableStateCallbackType) {
+  return [prBadgeStyles.badge, pressed && prBadgeStyles.badgePressed];
+}
+
+function projectKebabStyle({
+  hovered = false,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.projectKebabButton, hovered && styles.projectKebabButtonHovered];
+}
+
+function workspaceKebabStyle({
+  hovered = false,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.kebabButton, hovered && styles.kebabButtonHovered];
+}
+
+function noop() {}
 
 const prBadgeStyles = StyleSheet.create((theme) => ({
   badge: {
@@ -514,20 +536,30 @@ function NewWorktreeButton({
   const { theme } = useUnistyles();
   const newWorktreeKeys = useShortcutKeys("new-worktree");
 
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.projectIconActionButton,
+      !visible && styles.projectIconActionButtonHidden,
+      (Boolean(hovered) || pressed) && !loading && styles.projectIconActionButtonHovered,
+    ],
+    [visible, loading],
+  );
+
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onPress();
+    },
+    [onPress],
+  );
+
   return (
     <View style={styles.projectTrailingControlSlot} pointerEvents={visible ? "auto" : "none"}>
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild disabled={!visible}>
           <Pressable
-            style={({ hovered, pressed }) => [
-              styles.projectIconActionButton,
-              !visible && styles.projectIconActionButtonHidden,
-              (hovered || pressed) && !loading && styles.projectIconActionButtonHovered,
-            ]}
-            onPress={(event) => {
-              event.stopPropagation();
-              onPress();
-            }}
+            style={pressableStyle}
+            onPress={handlePress}
             disabled={loading}
             accessibilityRole="button"
             accessibilityLabel={`Create a new workspace for ${displayName}`}
@@ -828,6 +860,20 @@ function ProjectHeaderRow({
     onPress();
   }, [interaction.didLongPressRef, onPress]);
 
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+
+  const projectRowStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.projectRow,
+      isDragging && styles.projectRowDragging,
+      selected && styles.sidebarRowSelected,
+      isHovered && styles.projectRowHovered,
+      pressed && styles.projectRowPressed,
+    ],
+    [isDragging, selected, isHovered],
+  );
+
   const rowChildren = (
     <>
       <View style={styles.projectRowLeft}>
@@ -867,10 +913,7 @@ function ProjectHeaderRow({
             <DropdownMenu>
               <DropdownMenuTrigger
                 hitSlop={8}
-                style={({ hovered = false }) => [
-                  styles.projectKebabButton,
-                  hovered && styles.projectKebabButtonHovered,
-                ]}
+                style={projectKebabStyle}
                 accessibilityRole="button"
                 accessibilityLabel="Project actions"
                 testID={`sidebar-project-kebab-${project.projectKey}`}
@@ -911,18 +954,12 @@ function ProjectHeaderRow({
         {...(dragHandleProps?.attributes as any)}
         {...(dragHandleProps?.listeners as any)}
         ref={dragHandleProps?.setActivatorNodeRef as any}
-        onPointerEnter={() => setIsHovered(true)}
-        onPointerLeave={() => setIsHovered(false)}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
       >
         <ContextMenuTrigger
           enabledOnMobile={false}
-          style={({ pressed }) => [
-            styles.projectRow,
-            isDragging && styles.projectRowDragging,
-            selected && styles.sidebarRowSelected,
-            isHovered && styles.projectRowHovered,
-            pressed && styles.projectRowPressed,
-          ]}
+          style={projectRowStyle}
           onPressIn={interaction.handlePressIn}
           onTouchMove={interaction.handleTouchMove}
           onPressOut={interaction.handlePressOut}
@@ -940,17 +977,11 @@ function ProjectHeaderRow({
       {...(dragHandleProps?.attributes as any)}
       {...(dragHandleProps?.listeners as any)}
       ref={dragHandleProps?.setActivatorNodeRef as any}
-      onPointerEnter={() => setIsHovered(true)}
-      onPointerLeave={() => setIsHovered(false)}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
     >
       <Pressable
-        style={({ pressed }) => [
-          styles.projectRow,
-          isDragging && styles.projectRowDragging,
-          selected && styles.sidebarRowSelected,
-          isHovered && styles.projectRowHovered,
-          pressed && styles.projectRowPressed,
-        ]}
+        style={projectRowStyle}
         onPressIn={interaction.handlePressIn}
         onTouchMove={interaction.handleTouchMove}
         onPressOut={interaction.handlePressOut}
@@ -1008,6 +1039,20 @@ function WorkspaceRowInner({
     onPress();
   }, [interaction.didLongPressRef, onPress]);
 
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+
+  const workspaceRowStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.workspaceRow,
+      isDragging && styles.workspaceRowDragging,
+      selected && styles.sidebarRowSelected,
+      isHovered && styles.workspaceRowHovered,
+      pressed && styles.workspaceRowPressed,
+    ],
+    [isDragging, selected, isHovered],
+  );
+
   const isDesktop = !isTouchPlatform;
   const showScriptsIcon = isDesktop && workspace.hasRunningScripts;
   const hasRunningService = workspace.scripts.some(
@@ -1021,21 +1066,15 @@ function WorkspaceRowInner({
         {...(dragHandleProps?.listeners as any)}
         ref={dragHandleProps?.setActivatorNodeRef as any}
         style={styles.workspaceRowContainer}
-        onPointerEnter={() => setIsHovered(true)}
-        onPointerLeave={() => setIsHovered(false)}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
       >
         <Pressable
           disabled={isArchiving}
           aria-selected={selected}
           accessibilityRole="button"
           accessibilityState={{ selected }}
-          style={({ pressed }) => [
-            styles.workspaceRow,
-            isDragging && styles.workspaceRowDragging,
-            selected && styles.sidebarRowSelected,
-            isHovered && styles.workspaceRowHovered,
-            pressed && styles.workspaceRowPressed,
-          ]}
+          style={workspaceRowStyle}
           onPressIn={interaction.handlePressIn}
           onTouchMove={interaction.handleTouchMove}
           onPressOut={interaction.handlePressOut}
@@ -1075,10 +1114,7 @@ function WorkspaceRowInner({
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     hitSlop={8}
-                    style={({ hovered = false }) => [
-                      styles.kebabButton,
-                      hovered && styles.kebabButtonHovered,
-                    ]}
+                    style={workspaceKebabStyle}
                     accessibilityRole="button"
                     accessibilityLabel="Workspace actions"
                     testID={`sidebar-workspace-kebab-${workspace.workspaceKey}`}
@@ -1594,6 +1630,59 @@ function FlattenedProjectRow({
   );
 }
 
+interface WorkspaceRowItemProps {
+  workspace: SidebarWorkspaceEntry;
+  shortcutNumber: number | null;
+  showShortcutBadge: boolean;
+  canCopyBranchName: boolean;
+  isCreating?: boolean;
+  selectionEnabled: boolean;
+  serverId: string | null;
+  currentPathname: string | null;
+  onWorkspacePress?: () => void;
+  drag?: () => void;
+  isDragging?: boolean;
+  dragHandleProps?: DraggableListDragHandleProps;
+}
+
+function WorkspaceRowItem({
+  workspace,
+  shortcutNumber,
+  showShortcutBadge,
+  canCopyBranchName,
+  isCreating = false,
+  selectionEnabled,
+  serverId,
+  currentPathname,
+  onWorkspacePress,
+  drag,
+  isDragging = false,
+  dragHandleProps,
+}: WorkspaceRowItemProps) {
+  const handlePress = useCallback(() => {
+    if (!serverId) {
+      return;
+    }
+    onWorkspacePress?.();
+    navigateToWorkspace(serverId, workspace.workspaceId, { currentPathname });
+  }, [serverId, onWorkspacePress, workspace.workspaceId, currentPathname]);
+
+  return (
+    <WorkspaceRow
+      workspace={workspace}
+      shortcutNumber={shortcutNumber}
+      showShortcutBadge={showShortcutBadge}
+      canCopyBranchName={canCopyBranchName}
+      isCreating={isCreating}
+      selectionEnabled={selectionEnabled}
+      onPress={handlePress}
+      drag={drag ?? noop}
+      isDragging={isDragging}
+      dragHandleProps={dragHandleProps}
+    />
+  );
+}
+
 function WorkspaceRow({
   workspace,
   shortcutNumber,
@@ -1674,7 +1763,7 @@ function ProjectBlock({
   showShortcutBadges: boolean;
   shortcutIndexByWorkspaceKey: Map<string, number>;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  onToggleCollapsed: () => void;
+  onToggleCollapsed: (projectKey: string) => void;
   onWorkspacePress?: () => void;
   onWorkspaceReorder: (projectKey: string, workspaces: SidebarWorkspaceEntry[]) => void;
   onWorktreeCreated?: (workspaceId: string) => void;
@@ -1714,22 +1803,18 @@ function ProjectBlock({
       },
     ) => {
       return (
-        <WorkspaceRow
+        <WorkspaceRowItem
           workspace={item}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={project.projectKind === "git"}
           isCreating={creatingWorkspaceIds.has(item.workspaceId)}
           selectionEnabled={selectionEnabled}
-          onPress={() => {
-            if (!serverId) {
-              return;
-            }
-            onWorkspacePress?.();
-            navigateToWorkspace(serverId, item.workspaceId, { currentPathname });
-          }}
-          drag={input?.drag ?? (() => {})}
-          isDragging={input?.isDragging ?? false}
+          serverId={serverId}
+          currentPathname={currentPathname}
+          onWorkspacePress={onWorkspacePress}
+          drag={input?.drag}
+          isDragging={input?.isDragging}
           dragHandleProps={input?.dragHandleProps}
         />
       );
@@ -1814,6 +1899,22 @@ function ProjectBlock({
     })();
   }, [isRemovingProject, serverId, displayName, toast, project.workspaces]);
 
+  const flattenedRowWorkspaceId =
+    rowModel.kind === "workspace_link" ? rowModel.workspace.workspaceId : null;
+  const handleFlattenedRowPress = useCallback(() => {
+    if (!serverId || !flattenedRowWorkspaceId) {
+      return;
+    }
+    onWorkspacePress?.();
+    navigateToWorkspace(serverId, flattenedRowWorkspaceId, {
+      currentPathname,
+    });
+  }, [serverId, flattenedRowWorkspaceId, onWorkspacePress, currentPathname]);
+
+  const handleToggleCollapsed = useCallback(() => {
+    onToggleCollapsed(project.projectKey);
+  }, [onToggleCollapsed, project.projectKey]);
+
   return (
     <View style={styles.projectBlock}>
       {rowModel.kind === "workspace_link" ? (
@@ -1822,15 +1923,7 @@ function ProjectBlock({
           displayName={displayName}
           iconDataUri={iconDataUri}
           rowModel={rowModel}
-          onPress={() => {
-            if (!serverId) {
-              return;
-            }
-            onWorkspacePress?.();
-            navigateToWorkspace(serverId, rowModel.workspace.workspaceId, {
-              currentPathname,
-            });
-          }}
+          onPress={handleFlattenedRowPress}
           serverId={serverId}
           onWorkspacePress={onWorkspacePress}
           onWorktreeCreated={onWorktreeCreated}
@@ -1853,7 +1946,7 @@ function ProjectBlock({
             workspace={null}
             selected={false}
             chevron={rowModel.chevron}
-            onPress={onToggleCollapsed}
+            onPress={handleToggleCollapsed}
             serverId={serverId}
             canCreateWorktree={rowModel.trailingAction === "new_worktree"}
             isProjectActive={isProjectActive}
@@ -2126,7 +2219,7 @@ export function SidebarWorkspaceList({
           showShortcutBadges={showShortcutBadges}
           shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
           parentGestureRef={parentGestureRef}
-          onToggleCollapsed={() => onToggleProjectCollapsed(item.projectKey)}
+          onToggleCollapsed={onToggleProjectCollapsed}
           onWorkspacePress={onWorkspacePress}
           onWorkspaceReorder={handleWorkspaceReorder}
           onWorktreeCreated={handleWorktreeCreated}

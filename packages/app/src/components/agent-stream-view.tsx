@@ -7,8 +7,16 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
 } from "react";
-import { View, Text, Pressable, Platform, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  Pressable,
+  Platform,
+  ActivityIndicator,
+  type PressableStateCallbackType,
+} from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
@@ -281,9 +289,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [],
     );
 
-    function scrollToBottom() {
+    const scrollToBottom = useCallback(() => {
       viewportRef.current?.scrollToBottom("jump-to-bottom");
-    }
+    }, []);
 
     const tightGap = theme.spacing[1]; // 4px
     const assistantBlockGap = theme.spacing[3]; // 12px
@@ -318,6 +326,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [assistantBlockGap, looseGap, tightGap],
     );
 
+    const setInlineDetailsExpanded = useCallback(
+      (itemId: string, expanded: boolean) => {
+        if (!streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion()) {
+          return;
+        }
+        setExpandedInlineToolCallIds((previous) => {
+          const next = new Set(previous);
+          if (expanded) {
+            next.add(itemId);
+          } else {
+            next.delete(itemId);
+          }
+          return next;
+        });
+      },
+      [streamRenderStrategy],
+    );
+
     const renderStreamItemContent = useCallback(
       (
         item: StreamItem,
@@ -325,21 +351,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         items: StreamItem[],
         seamAboveItem: StreamItem | null = null,
       ) => {
-        const handleInlineDetailsExpandedChange = (expanded: boolean) => {
-          if (!streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion()) {
-            return;
-          }
-          setExpandedInlineToolCallIds((previous) => {
-            const next = new Set(previous);
-            if (expanded) {
-              next.add(item.id);
-            } else {
-              next.delete(item.id);
-            }
-            return next;
-          });
-        };
-
         switch (item.kind) {
           case "user_message": {
             const aboveItem =
@@ -412,12 +423,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             });
             const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
             return (
-              <ToolCall
+              <ToolCallSlot
+                itemId={item.id}
+                onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
                 toolName="thinking"
                 args={item.text}
                 status={item.status === "ready" ? "completed" : "executing"}
                 isLastInSequence={isLastInSequence}
-                onInlineDetailsExpandedChange={handleInlineDetailsExpandedChange}
               />
             );
           }
@@ -447,7 +459,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               }
 
               return (
-                <ToolCall
+                <ToolCallSlot
+                  itemId={item.id}
+                  onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
                   toolName={data.name}
                   error={data.error}
                   status={data.status}
@@ -455,20 +469,20 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   cwd={agent.cwd}
                   metadata={data.metadata}
                   isLastInSequence={isLastInSequence}
-                  onInlineDetailsExpandedChange={handleInlineDetailsExpandedChange}
                 />
               );
             }
 
             const data = payload.data;
             return (
-              <ToolCall
+              <ToolCallSlot
+                itemId={item.id}
+                onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
                 toolName={data.toolName}
                 args={data.arguments}
                 result={data.result}
                 status={data.status}
                 isLastInSequence={isLastInSequence}
-                onInlineDetailsExpandedChange={handleInlineDetailsExpandedChange}
               />
             );
           }
@@ -493,7 +507,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return null;
         }
       },
-      [handleInlinePathPress, agent.cwd, streamRenderStrategy],
+      [handleInlinePathPress, agent.cwd, streamRenderStrategy, setInlineDetailsExpanded],
     );
 
     const renderStreamItem = useCallback(
@@ -519,17 +533,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           item.kind === "assistant_message" &&
           (nextItem?.kind === "user_message" ||
             (nextItem === undefined && agent.status !== "running"));
-        const getTurnContent = () =>
-          collectAssistantTurnContentForStreamRenderStrategy({
-            strategy: streamRenderStrategy,
-            items,
-            startIndex: index,
-          });
 
         return (
           <View style={[stylesheet.streamItemWrapper, { marginBottom: gapBelow }]}>
             {content}
-            {isEndOfAssistantTurn ? <TurnCopyButton getContent={getTurnContent} /> : null}
+            {isEndOfAssistantTurn ? (
+              <TurnCopyButtonSlot
+                strategy={streamRenderStrategy}
+                items={items}
+                startIndex={index}
+              />
+            ) : null}
           </View>
         );
       },
@@ -786,6 +800,100 @@ function WorkingIndicator() {
 }
 
 // Permission Request Card Component
+type TurnContentStrategy = Parameters<
+  typeof collectAssistantTurnContentForStreamRenderStrategy
+>[0]["strategy"];
+
+interface TurnCopyButtonSlotProps {
+  strategy: TurnContentStrategy;
+  items: StreamItem[];
+  startIndex: number;
+}
+
+function TurnCopyButtonSlot({ strategy, items, startIndex }: TurnCopyButtonSlotProps) {
+  const getContent = useCallback(
+    () =>
+      collectAssistantTurnContentForStreamRenderStrategy({
+        strategy,
+        items,
+        startIndex,
+      }),
+    [strategy, items, startIndex],
+  );
+  return <TurnCopyButton getContent={getContent} />;
+}
+
+interface ToolCallSlotProps extends Omit<
+  ComponentProps<typeof ToolCall>,
+  "onInlineDetailsExpandedChange"
+> {
+  itemId: string;
+  onInlineDetailsExpandedChangeByItemId: (itemId: string, expanded: boolean) => void;
+}
+
+function ToolCallSlot({
+  itemId,
+  onInlineDetailsExpandedChangeByItemId,
+  ...rest
+}: ToolCallSlotProps) {
+  const handleExpandedChange = useCallback(
+    (expanded: boolean) => onInlineDetailsExpandedChangeByItemId(itemId, expanded),
+    [onInlineDetailsExpandedChangeByItemId, itemId],
+  );
+  return <ToolCall {...rest} onInlineDetailsExpandedChange={handleExpandedChange} />;
+}
+
+interface PermissionActionButtonProps {
+  action: AgentPermissionAction;
+  isRespondingAction: boolean;
+  isResponding: boolean;
+  textColor: string;
+  iconColor: string;
+  isDanger: boolean;
+  Icon: typeof Check;
+  testID: string;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+  onPress: (action: AgentPermissionAction) => void;
+}
+
+function PermissionActionButton({
+  action,
+  isRespondingAction,
+  isResponding,
+  textColor,
+  iconColor,
+  isDanger,
+  Icon,
+  testID,
+  theme,
+  onPress,
+}: PermissionActionButtonProps) {
+  const handlePress = useCallback(() => onPress(action), [onPress, action]);
+  const pressableStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      permissionStyles.optionButton,
+      {
+        backgroundColor: hovered ? theme.colors.surface2 : theme.colors.surface1,
+        borderColor: isDanger ? theme.colors.borderAccent : theme.colors.borderAccent,
+      },
+      pressed ? permissionStyles.optionButtonPressed : null,
+    ],
+    [theme.colors.surface2, theme.colors.surface1, theme.colors.borderAccent, isDanger],
+  );
+  return (
+    <Pressable testID={testID} style={pressableStyle} onPress={handlePress} disabled={isResponding}>
+      {isRespondingAction ? (
+        <ActivityIndicator size="small" color={textColor} />
+      ) : (
+        <View style={permissionStyles.optionContent}>
+          <Icon size={14} color={iconColor} />
+          <Text style={[permissionStyles.optionText, { color: textColor }]}>{action.label}</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
 function PermissionRequestCard({
   permission,
   client,
@@ -940,31 +1048,19 @@ function PermissionRequestCard({
                 : `permission-request-action-${action.id}`;
 
           return (
-            <Pressable
+            <PermissionActionButton
               key={action.id}
+              action={action}
+              isRespondingAction={isRespondingAction}
+              isResponding={isResponding}
+              textColor={textColor}
+              iconColor={iconColor}
+              isDanger={isDanger}
+              Icon={Icon}
               testID={testID}
-              style={({ pressed, hovered = false }) => [
-                permissionStyles.optionButton,
-                {
-                  backgroundColor: hovered ? theme.colors.surface2 : theme.colors.surface1,
-                  borderColor: isDanger ? theme.colors.borderAccent : theme.colors.borderAccent,
-                },
-                pressed ? permissionStyles.optionButtonPressed : null,
-              ]}
-              onPress={() => handleActionPress(action)}
-              disabled={isResponding}
-            >
-              {isRespondingAction ? (
-                <ActivityIndicator size="small" color={textColor} />
-              ) : (
-                <View style={permissionStyles.optionContent}>
-                  <Icon size={14} color={iconColor} />
-                  <Text style={[permissionStyles.optionText, { color: textColor }]}>
-                    {action.label}
-                  </Text>
-                </View>
-              )}
-            </Pressable>
+              theme={theme}
+              onPress={handleActionPress}
+            />
           );
         })}
       </View>

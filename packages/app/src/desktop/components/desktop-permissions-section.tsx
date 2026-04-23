@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { RotateCw } from "lucide-react-native";
@@ -22,25 +22,40 @@ export function DesktopPermissionsSection() {
     sendTestNotification,
   } = useDesktopPermissions();
 
+  const errorTextStyle = useMemo(
+    () => [styles.errorText, { color: theme.colors.destructive }],
+    [theme.colors.destructive],
+  );
+
+  const handleRefreshPress = useCallback(() => {
+    void refreshPermissions();
+  }, [refreshPermissions]);
+
+  const handleRequestNotifications = useCallback(() => {
+    void requestPermission("notifications");
+  }, [requestPermission]);
+
+  const handleRequestMicrophone = useCallback(() => {
+    void requestPermission("microphone");
+  }, [requestPermission]);
+
+  const handleSendTestNotification = useCallback(() => {
+    void sendTestNotification();
+  }, [sendTestNotification]);
+
   if (!isDesktopApp) {
     return null;
   }
 
   const isBusy = isRefreshing || requestingPermission !== null;
   const notificationsGranted = snapshot?.notifications.state === "granted";
-  const errorTextStyle = useMemo(
-    () => [styles.errorText, { color: theme.colors.destructive }],
-    [theme.colors.destructive],
-  );
 
   const refreshButton = (
     <Button
       variant="ghost"
       size="sm"
       leftIcon={<RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
-      onPress={() => {
-        void refreshPermissions();
-      }}
+      onPress={handleRefreshPress}
       disabled={isBusy}
       accessibilityLabel="Refresh desktop permissions"
     >
@@ -55,15 +70,11 @@ export function DesktopPermissionsSection() {
           title="Notifications"
           status={snapshot?.notifications ?? null}
           isRequesting={requestingPermission === "notifications"}
-          onRequest={() => {
-            void requestPermission("notifications");
-          }}
+          onRequest={handleRequestNotifications}
           extraActionLabel="Test"
           isExtraActionBusy={isSendingTestNotification}
           isExtraActionDisabled={!notificationsGranted || isBusy}
-          onExtraAction={() => {
-            void sendTestNotification();
-          }}
+          onExtraAction={handleSendTestNotification}
         />
         {testNotificationError ? <Text style={errorTextStyle}>{testNotificationError}</Text> : null}
         <DesktopPermissionRow
@@ -71,9 +82,7 @@ export function DesktopPermissionsSection() {
           showBorder
           status={snapshot?.microphone ?? null}
           isRequesting={requestingPermission === "microphone"}
-          onRequest={() => {
-            void requestPermission("microphone");
-          }}
+          onRequest={handleRequestMicrophone}
         />
       </View>
     </SettingsSection>

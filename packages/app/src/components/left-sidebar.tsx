@@ -18,6 +18,9 @@ import {
   Text,
   useWindowDimensions,
   View,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -288,6 +291,44 @@ export const LeftSidebar = memo(function LeftSidebar({
   );
 });
 
+interface HostPickerTriggerProps {
+  triggerRef: React.Ref<View>;
+  setIsHostPickerOpen: Dispatch<SetStateAction<boolean>>;
+  hostOptionsEmpty: boolean;
+  hostStatusDotStyle: StyleProp<ViewStyle>;
+  activeHostLabel: string;
+}
+
+function HostPickerTrigger({
+  triggerRef,
+  setIsHostPickerOpen,
+  hostOptionsEmpty,
+  hostStatusDotStyle,
+  activeHostLabel,
+}: HostPickerTriggerProps) {
+  const pressableStyle = useCallback(
+    ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.hostTrigger,
+      Boolean(hovered) && styles.hostTriggerHovered,
+    ],
+    [],
+  );
+  const handlePress = useCallback(() => setIsHostPickerOpen(true), [setIsHostPickerOpen]);
+  return (
+    <Pressable
+      ref={triggerRef}
+      style={pressableStyle}
+      onPress={handlePress}
+      disabled={hostOptionsEmpty}
+    >
+      <View style={hostStatusDotStyle} />
+      <Text style={styles.hostTriggerText} numberOfLines={1}>
+        {activeHostLabel}
+      </Text>
+    </Pressable>
+  );
+}
+
 function HostSwitchOption({
   serverId,
   label,
@@ -526,20 +567,13 @@ function MobileSidebar({
 
             <View style={styles.sidebarFooter}>
               <View style={styles.footerHostSlot}>
-                <Pressable
-                  ref={hostTriggerRef}
-                  style={({ hovered = false }) => [
-                    styles.hostTrigger,
-                    hovered && styles.hostTriggerHovered,
-                  ]}
-                  onPress={() => setIsHostPickerOpen(true)}
-                  disabled={hostOptions.length === 0}
-                >
-                  <View style={hostStatusDotStyle} />
-                  <Text style={styles.hostTriggerText} numberOfLines={1}>
-                    {activeHostLabel}
-                  </Text>
-                </Pressable>
+                <HostPickerTrigger
+                  triggerRef={hostTriggerRef}
+                  setIsHostPickerOpen={setIsHostPickerOpen}
+                  hostOptionsEmpty={hostOptions.length === 0}
+                  hostStatusDotStyle={hostStatusDotStyle}
+                  activeHostLabel={activeHostLabel}
+                />
               </View>
               <View style={styles.footerIconRow}>
                 <Tooltip delayDuration={300}>
@@ -719,20 +753,13 @@ function DesktopSidebar({
 
         <View style={styles.sidebarFooter}>
           <View style={styles.footerHostSlot}>
-            <Pressable
-              ref={hostTriggerRef}
-              style={({ hovered = false }) => [
-                styles.hostTrigger,
-                hovered && styles.hostTriggerHovered,
-              ]}
-              onPress={() => setIsHostPickerOpen(true)}
-              disabled={hostOptions.length === 0}
-            >
-              <View style={hostStatusDotStyle} />
-              <Text style={styles.hostTriggerText} numberOfLines={1}>
-                {activeHostLabel}
-              </Text>
-            </Pressable>
+            <HostPickerTrigger
+              triggerRef={hostTriggerRef}
+              setIsHostPickerOpen={setIsHostPickerOpen}
+              hostOptionsEmpty={hostOptions.length === 0}
+              hostStatusDotStyle={hostStatusDotStyle}
+              activeHostLabel={activeHostLabel}
+            />
           </View>
           <View style={styles.footerIconRow}>
             <Tooltip delayDuration={300}>

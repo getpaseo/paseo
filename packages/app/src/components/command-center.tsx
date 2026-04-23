@@ -1,5 +1,13 @@
-import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { memo, useEffect, useRef, type ReactNode } from "react";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+  type PressableStateCallbackType,
+} from "react-native";
+import { memo, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { Plus, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useCommandCenter } from "@/hooks/use-command-center";
@@ -29,21 +37,129 @@ const CommandCenterRow = memo(function CommandCenterRow({
 }: CommandCenterRowProps) {
   const { theme } = useUnistyles();
 
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.row,
+      (Boolean(hovered) || pressed || active) && {
+        backgroundColor: theme.colors.surface1,
+      },
+    ],
+    [active, theme.colors.surface1],
+  );
+
   return (
-    <Pressable
-      ref={registerRow}
-      style={({ hovered, pressed }) => [
-        styles.row,
-        (hovered || pressed || active) && {
-          backgroundColor: theme.colors.surface1,
-        },
-      ]}
-      onPress={onPress}
-    >
+    <Pressable ref={registerRow} style={pressableStyle} onPress={onPress}>
       {children}
     </Pressable>
   );
 });
+
+interface CommandCenterRowContainerProps {
+  rowIndex: number;
+  active: boolean;
+  rowRefs: React.MutableRefObject<Map<number, View>>;
+  onPress: () => void;
+  children: ReactNode;
+}
+
+function CommandCenterRowContainer({
+  rowIndex,
+  active,
+  rowRefs,
+  onPress,
+  children,
+}: CommandCenterRowContainerProps) {
+  const registerRow = useCallback(
+    (el: View | null) => {
+      if (el) rowRefs.current.set(rowIndex, el);
+      else rowRefs.current.delete(rowIndex);
+    },
+    [rowRefs, rowIndex],
+  );
+  return (
+    <CommandCenterRow active={active} registerRow={registerRow} onPress={onPress}>
+      {children}
+    </CommandCenterRow>
+  );
+}
+
+interface CommandCenterActionRowProps {
+  item: Extract<ReturnType<typeof useCommandCenter>["items"][number], { kind: "action" }>;
+  rowIndex: number;
+  active: boolean;
+  rowRefs: React.MutableRefObject<Map<number, View>>;
+  onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
+}
+
+function CommandCenterActionRow({
+  item,
+  rowIndex,
+  active,
+  rowRefs,
+  onSelect,
+}: CommandCenterActionRowProps) {
+  const { theme } = useUnistyles();
+  const handlePress = useCallback(() => onSelect(item), [onSelect, item]);
+  const action = item.action;
+  const actionIcon =
+    action.icon === "plus" ? (
+      <Plus size={16} strokeWidth={2.4} color={theme.colors.foregroundMuted} />
+    ) : action.icon === "settings" ? (
+      <Settings size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
+    ) : null;
+  return (
+    <CommandCenterRowContainer
+      rowIndex={rowIndex}
+      active={active}
+      rowRefs={rowRefs}
+      onPress={handlePress}
+    >
+      <View style={styles.rowContent}>
+        <View style={styles.rowMain}>
+          {actionIcon ? <View style={styles.iconSlot}>{actionIcon}</View> : null}
+          <View style={styles.textContent}>
+            <Text style={[styles.title, { color: theme.colors.foreground }]} numberOfLines={1}>
+              {action.title}
+            </Text>
+          </View>
+        </View>
+        {action.shortcutKeys ? (
+          <Shortcut chord={action.shortcutKeys} style={styles.rowShortcut} />
+        ) : null}
+      </View>
+    </CommandCenterRowContainer>
+  );
+}
+
+interface CommandCenterAgentRowProps {
+  item: Extract<ReturnType<typeof useCommandCenter>["items"][number], { kind: "agent" }>;
+  rowIndex: number;
+  active: boolean;
+  rowRefs: React.MutableRefObject<Map<number, View>>;
+  onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
+  children: ReactNode;
+}
+
+function CommandCenterAgentRow({
+  rowIndex,
+  active,
+  rowRefs,
+  onSelect,
+  item,
+  children,
+}: CommandCenterAgentRowProps) {
+  const handlePress = useCallback(() => onSelect(item), [onSelect, item]);
+  return (
+    <CommandCenterRowContainer
+      rowIndex={rowIndex}
+      active={active}
+      rowRefs={rowRefs}
+      onPress={handlePress}
+    >
+      {children}
+    </CommandCenterRowContainer>
+  );
+}
 
 export function CommandCenter() {
   const { theme } = useUnistyles();
@@ -141,50 +257,16 @@ export function CommandCenter() {
                     <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
                       Actions
                     </Text>
-                    {actionItems.map((item, index) => {
-                      const active = index === activeIndex;
-                      const action = item.action;
-                      const actionIcon =
-                        action.icon === "plus" ? (
-                          <Plus size={16} strokeWidth={2.4} color={theme.colors.foregroundMuted} />
-                        ) : action.icon === "settings" ? (
-                          <Settings
-                            size={16}
-                            strokeWidth={2.2}
-                            color={theme.colors.foregroundMuted}
-                          />
-                        ) : null;
-                      return (
-                        <CommandCenterRow
-                          key={`action:${action.id}`}
-                          registerRow={(el: View | null) => {
-                            if (el) rowRefs.current.set(index, el);
-                            else rowRefs.current.delete(index);
-                          }}
-                          active={active}
-                          onPress={() => handleSelectItem(item)}
-                        >
-                          <View style={styles.rowContent}>
-                            <View style={styles.rowMain}>
-                              {actionIcon ? (
-                                <View style={styles.iconSlot}>{actionIcon}</View>
-                              ) : null}
-                              <View style={styles.textContent}>
-                                <Text
-                                  style={[styles.title, { color: theme.colors.foreground }]}
-                                  numberOfLines={1}
-                                >
-                                  {action.title}
-                                </Text>
-                              </View>
-                            </View>
-                            {action.shortcutKeys ? (
-                              <Shortcut chord={action.shortcutKeys} style={styles.rowShortcut} />
-                            ) : null}
-                          </View>
-                        </CommandCenterRow>
-                      );
-                    })}
+                    {actionItems.map((item, index) => (
+                      <CommandCenterActionRow
+                        key={`action:${item.action.id}`}
+                        item={item}
+                        rowIndex={index}
+                        active={index === activeIndex}
+                        rowRefs={rowRefs}
+                        onSelect={handleSelectItem}
+                      />
+                    ))}
                   </>
                 ) : null}
 
@@ -200,17 +282,15 @@ export function CommandCenter() {
                     </Text>
                     {agentItems.map((item, index) => {
                       const rowIndex = actionItems.length + index;
-                      const active = rowIndex === activeIndex;
                       const agent = item.agent;
                       return (
-                        <CommandCenterRow
+                        <CommandCenterAgentRow
                           key={agentKey(agent)}
-                          registerRow={(el: View | null) => {
-                            if (el) rowRefs.current.set(rowIndex, el);
-                            else rowRefs.current.delete(rowIndex);
-                          }}
-                          active={active}
-                          onPress={() => handleSelectItem(item)}
+                          item={item}
+                          rowIndex={rowIndex}
+                          active={rowIndex === activeIndex}
+                          rowRefs={rowRefs}
+                          onSelect={handleSelectItem}
                         >
                           <View style={styles.rowContent}>
                             <View style={styles.rowMain}>
@@ -237,7 +317,7 @@ export function CommandCenter() {
                               </View>
                             </View>
                           </View>
-                        </CommandCenterRow>
+                        </CommandCenterAgentRow>
                       );
                     })}
                   </>

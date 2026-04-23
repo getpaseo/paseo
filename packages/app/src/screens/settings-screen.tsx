@@ -1,6 +1,13 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type PressableStateCallbackType,
+} from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -133,6 +140,22 @@ function ThemeSwatch({ color, size }: { color: string; size: number }) {
   );
 }
 
+function themeTriggerStyle({ pressed }: PressableStateCallbackType) {
+  return [styles.themeTrigger, pressed && { opacity: 0.85 }];
+}
+
+function sidebarItemStyle({ hovered }: PressableStateCallbackType & { hovered?: boolean }) {
+  return [sidebarStyles.item, Boolean(hovered) && sidebarStyles.itemHovered];
+}
+
+function selectedSidebarItemStyle({ hovered }: PressableStateCallbackType & { hovered?: boolean }) {
+  return [
+    sidebarStyles.item,
+    Boolean(hovered) && sidebarStyles.itemHovered,
+    sidebarStyles.itemSelected,
+  ];
+}
+
 const THEME_LABELS: Record<AppSettings["theme"], string> = {
   light: "Light",
   dark: "Dark",
@@ -153,6 +176,35 @@ interface GeneralSectionProps {
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
 }
 
+interface ThemeMenuItemProps {
+  themeValue: AppSettings["theme"];
+  selected: boolean;
+  iconSize: number;
+  iconColor: string;
+  onChange: (theme: AppSettings["theme"]) => void;
+}
+
+function ThemeMenuItem({
+  themeValue,
+  selected,
+  iconSize,
+  iconColor,
+  onChange,
+}: ThemeMenuItemProps) {
+  const handleSelect = useCallback(() => {
+    onChange(themeValue);
+  }, [onChange, themeValue]);
+  return (
+    <DropdownMenuItem
+      selected={selected}
+      onSelect={handleSelect}
+      leading={<ThemeIcon theme={themeValue} size={iconSize} color={iconColor} />}
+    >
+      {THEME_LABELS[themeValue]}
+    </DropdownMenuItem>
+  );
+}
+
 function GeneralSection({
   settings,
   handleThemeChange,
@@ -170,34 +222,32 @@ function GeneralSection({
             <Text style={settingsStyles.rowTitle}>Theme</Text>
           </View>
           <DropdownMenu>
-            <DropdownMenuTrigger
-              style={({ pressed }) => [styles.themeTrigger, pressed && { opacity: 0.85 }]}
-            >
+            <DropdownMenuTrigger style={themeTriggerStyle}>
               <ThemeIcon theme={settings.theme} size={iconSize} color={iconColor} />
               <Text style={styles.themeTriggerText}>{THEME_LABELS[settings.theme]}</Text>
               <ChevronDown size={theme.iconSize.sm} color={iconColor} />
             </DropdownMenuTrigger>
             <DropdownMenuContent side="bottom" align="end" width={200}>
               {(["light", "dark", "auto"] as const).map((t) => (
-                <DropdownMenuItem
+                <ThemeMenuItem
                   key={t}
+                  themeValue={t}
                   selected={settings.theme === t}
-                  onSelect={() => handleThemeChange(t)}
-                  leading={<ThemeIcon theme={t} size={iconSize} color={iconColor} />}
-                >
-                  {THEME_LABELS[t]}
-                </DropdownMenuItem>
+                  iconSize={iconSize}
+                  iconColor={iconColor}
+                  onChange={handleThemeChange}
+                />
               ))}
               <DropdownMenuSeparator />
               {(["zinc", "midnight", "claude", "ghostty"] as const).map((t) => (
-                <DropdownMenuItem
+                <ThemeMenuItem
                   key={t}
+                  themeValue={t}
                   selected={settings.theme === t}
-                  onSelect={() => handleThemeChange(t)}
-                  leading={<ThemeIcon theme={t} size={iconSize} color={iconColor} />}
-                >
-                  {THEME_LABELS[t]}
-                </DropdownMenuItem>
+                  iconSize={iconSize}
+                  iconColor={iconColor}
+                  onChange={handleThemeChange}
+                />
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -237,6 +287,9 @@ function DiagnosticsSection({
   playbackTestResult,
   handlePlaybackTest,
 }: DiagnosticsSectionProps) {
+  const handlePlayPress = useCallback(() => {
+    void handlePlaybackTest();
+  }, [handlePlaybackTest]);
   return (
     <SettingsSection title="Diagnostics">
       <View style={settingsStyles.card}>
@@ -250,7 +303,7 @@ function DiagnosticsSection({
           <Button
             variant="secondary"
             size="sm"
-            onPress={() => void handlePlaybackTest()}
+            onPress={handlePlayPress}
             disabled={!voiceAudioEngine || isPlaybackTestRunning}
           >
             {isPlaybackTestRunning ? "Playing..." : "Play test"}
@@ -431,6 +484,86 @@ function useAnyOnlineHostServerId(serverIds: string[]): string | null {
   );
 }
 
+interface SidebarSectionButtonProps {
+  itemId: SettingsSectionSlug;
+  label: string;
+  icon: ComponentType<{ size: number; color: string }>;
+  isSelected: boolean;
+  onSelect: (section: SettingsSectionSlug) => void;
+}
+
+function SidebarSectionButton({
+  itemId,
+  label,
+  icon: IconComponent,
+  isSelected,
+  onSelect,
+}: SidebarSectionButtonProps) {
+  const { theme } = useUnistyles();
+  const handlePress = useCallback(() => {
+    onSelect(itemId);
+  }, [onSelect, itemId]);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: isSelected }}
+      onPress={handlePress}
+      style={isSelected ? selectedSidebarItemStyle : sidebarItemStyle}
+    >
+      <IconComponent
+        size={theme.iconSize.md}
+        color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
+      />
+      <Text
+        style={[sidebarStyles.label, isSelected && { color: theme.colors.foreground }]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+interface SidebarHostItemProps {
+  serverId: string;
+  label: string;
+  isSelected: boolean;
+  isLocal: boolean;
+  onSelect: (serverId: string) => void;
+}
+
+function SidebarHostItem({ serverId, label, isSelected, isLocal, onSelect }: SidebarHostItemProps) {
+  const { theme } = useUnistyles();
+  const handlePress = useCallback(() => {
+    onSelect(serverId);
+  }, [onSelect, serverId]);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: isSelected }}
+      onPress={handlePress}
+      testID={`settings-host-entry-${serverId}`}
+      style={isSelected ? selectedSidebarItemStyle : sidebarItemStyle}
+    >
+      <Server
+        size={theme.iconSize.md}
+        color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
+      />
+      <Text
+        style={[sidebarStyles.label, isSelected && { color: theme.colors.foreground }]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      {isLocal ? (
+        <Text style={sidebarStyles.localMarker} testID="settings-host-local-marker">
+          Local
+        </Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
 interface SettingsSidebarProps {
   view: SettingsView;
   onSelectSection: (section: SettingsSectionSlug) => void;
@@ -489,80 +622,35 @@ function SettingsSidebar({
         />
       ) : null}
       <View style={sidebarStyles.list}>
-        {items.map((item) => {
-          const isSelected = selectedSectionId === item.id;
-          const IconComponent = item.icon;
-          return (
-            <Pressable
-              key={item.id}
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected }}
-              onPress={() => onSelectSection(item.id)}
-              style={({ hovered = false }) => [
-                sidebarStyles.item,
-                hovered && sidebarStyles.itemHovered,
-                isSelected && sidebarStyles.itemSelected,
-              ]}
-            >
-              <IconComponent
-                size={theme.iconSize.md}
-                color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
-              />
-              <Text
-                style={[sidebarStyles.label, isSelected && { color: theme.colors.foreground }]}
-                numberOfLines={1}
-              >
-                {item.label}
-              </Text>
-            </Pressable>
-          );
-        })}
+        {items.map((item) => (
+          <SidebarSectionButton
+            key={item.id}
+            itemId={item.id}
+            label={item.label}
+            icon={item.icon}
+            isSelected={selectedSectionId === item.id}
+            onSelect={onSelectSection}
+          />
+        ))}
       </View>
       <SidebarSeparator />
       <View style={sidebarStyles.list}>
-        {sortedHosts.map((host) => {
-          const isSelected = selectedServerId === host.serverId;
-          const isLocal = localServerId !== null && host.serverId === localServerId;
-          return (
-            <Pressable
-              key={host.serverId}
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected }}
-              onPress={() => onSelectHost(host.serverId)}
-              testID={`settings-host-entry-${host.serverId}`}
-              style={({ hovered = false }) => [
-                sidebarStyles.item,
-                hovered && sidebarStyles.itemHovered,
-                isSelected && sidebarStyles.itemSelected,
-              ]}
-            >
-              <Server
-                size={theme.iconSize.md}
-                color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
-              />
-              <Text
-                style={[sidebarStyles.label, isSelected && { color: theme.colors.foreground }]}
-                numberOfLines={1}
-              >
-                {host.label}
-              </Text>
-              {isLocal ? (
-                <Text style={sidebarStyles.localMarker} testID="settings-host-local-marker">
-                  Local
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
+        {sortedHosts.map((host) => (
+          <SidebarHostItem
+            key={host.serverId}
+            serverId={host.serverId}
+            label={host.label}
+            isSelected={selectedServerId === host.serverId}
+            isLocal={localServerId !== null && host.serverId === localServerId}
+            onSelect={onSelectHost}
+          />
+        ))}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Add host"
           onPress={onAddHost}
           testID="settings-add-host"
-          style={({ hovered = false }) => [
-            sidebarStyles.item,
-            hovered && sidebarStyles.itemHovered,
-          ]}
+          style={sidebarItemStyle}
         >
           <Plus size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
           <Text style={sidebarStyles.label} numberOfLines={1}>
@@ -658,6 +746,16 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
 
   const handleAddHost = useCallback(() => {
     setIsAddHostMethodVisible(true);
+  }, []);
+
+  const handleSelectDirectConnection = useCallback(() => {
+    setIsAddHostMethodVisible(false);
+    setIsDirectHostVisible(true);
+  }, []);
+
+  const handleSelectPasteLink = useCallback(() => {
+    setIsAddHostMethodVisible(false);
+    setIsPasteLinkVisible(true);
   }, []);
 
   const handleHostAdded = useCallback(
@@ -813,14 +911,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
       <AddHostMethodModal
         visible={isAddHostMethodVisible}
         onClose={closeAddConnectionFlow}
-        onDirectConnection={() => {
-          setIsAddHostMethodVisible(false);
-          setIsDirectHostVisible(true);
-        }}
-        onPasteLink={() => {
-          setIsAddHostMethodVisible(false);
-          setIsPasteLinkVisible(true);
-        }}
+        onDirectConnection={handleSelectDirectConnection}
+        onPasteLink={handleSelectPasteLink}
         onScanQr={handleScanQr}
       />
       <AddHostModal

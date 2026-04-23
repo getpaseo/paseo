@@ -873,6 +873,37 @@ function SplitPaneView({
     };
   }, [stableOnFocusPane, pane.id]);
 
+  const paneId = pane.id;
+  const handleCloseTabsToLeft = useCallback(
+    (tabId: string) => onCloseTabsToLeft(tabId, paneTabs),
+    [onCloseTabsToLeft, paneTabs],
+  );
+  const handleCloseTabsToRight = useCallback(
+    (tabId: string) => onCloseTabsToRight(tabId, paneTabs),
+    [onCloseTabsToRight, paneTabs],
+  );
+  const handleCloseOtherTabs = useCallback(
+    (tabId: string) => onCloseOtherTabs(tabId, paneTabs),
+    [onCloseOtherTabs, paneTabs],
+  );
+  const handleReorderTabs = useCallback(
+    (nextTabs: WorkspaceTabDescriptor[]) => {
+      onReorderTabsInPane(
+        paneId,
+        nextTabs.map((tab) => tab.tabId),
+      );
+    },
+    [onReorderTabsInPane, paneId],
+  );
+  const handleSplitRight = useCallback(
+    () => onSplitPaneEmpty({ targetPaneId: paneId, position: "right" }),
+    [onSplitPaneEmpty, paneId],
+  );
+  const handleSplitDown = useCallback(
+    () => onSplitPaneEmpty({ targetPaneId: paneId, position: "bottom" }),
+    [onSplitPaneEmpty, paneId],
+  );
+
   return (
     <View ref={paneRef} collapsable={false} style={styles.pane}>
       <View style={[styles.paneTabs, { paddingLeft: padding.left, paddingRight: padding.right }]}>
@@ -890,19 +921,14 @@ function SplitPaneView({
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onReloadAgent={onReloadAgent}
-          onCloseTabsToLeft={(tabId) => onCloseTabsToLeft(tabId, paneTabs)}
-          onCloseTabsToRight={(tabId) => onCloseTabsToRight(tabId, paneTabs)}
-          onCloseOtherTabs={(tabId) => onCloseOtherTabs(tabId, paneTabs)}
+          onCloseTabsToLeft={handleCloseTabsToLeft}
+          onCloseTabsToRight={handleCloseTabsToRight}
+          onCloseOtherTabs={handleCloseOtherTabs}
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminalTab={onCreateTerminalTab}
-          onReorderTabs={(nextTabs) => {
-            onReorderTabsInPane(
-              pane.id,
-              nextTabs.map((tab) => tab.tabId),
-            );
-          }}
-          onSplitRight={() => onSplitPaneEmpty({ targetPaneId: pane.id, position: "right" })}
-          onSplitDown={() => onSplitPaneEmpty({ targetPaneId: pane.id, position: "bottom" })}
+          onReorderTabs={handleReorderTabs}
+          onSplitRight={handleSplitRight}
+          onSplitDown={handleSplitDown}
           externalDndContext
           activeDragTabId={activeDragTabId}
           tabDropPreviewIndex={

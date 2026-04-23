@@ -375,6 +375,10 @@ export const UserMessage = memo(function UserMessage({
   const hasImages = images.length > 0;
   const showCopyButton = hasText && (isCompact || messageHovered || copyButtonHovered);
 
+  const handleHoverIn = useCallback(() => setMessageHovered(true), []);
+  const handleHoverOut = useCallback(() => setMessageHovered(false), []);
+  const getMessageContent = useCallback(() => message, [message]);
+
   return (
     <View
       style={[
@@ -388,8 +392,8 @@ export const UserMessage = memo(function UserMessage({
     >
       <Pressable
         style={userMessageStylesheet.content}
-        onHoverIn={() => setMessageHovered(true)}
-        onHoverOut={() => setMessageHovered(false)}
+        onHoverIn={handleHoverIn}
+        onHoverOut={handleHoverOut}
       >
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
@@ -414,7 +418,7 @@ export const UserMessage = memo(function UserMessage({
         </View>
         {hasText ? (
           <TurnCopyButton
-            getContent={() => message}
+            getContent={getMessageContent}
             containerStyle={[
               userMessageStylesheet.copyButton,
               showCopyButton
@@ -717,6 +721,25 @@ function AssistantMarkdownImage({
   );
 }
 
+interface InlinePathChipProps {
+  content: string;
+  parsed: InlinePathTarget;
+  onPress: (target: InlinePathTarget) => void;
+}
+
+function InlinePathChip({ content, parsed, onPress }: InlinePathChipProps) {
+  const handlePress = useCallback(() => onPress(parsed), [onPress, parsed]);
+  return (
+    <Text
+      onPress={handlePress}
+      selectable={isWeb ? undefined : false}
+      style={[assistantMessageStylesheet.pathChip, assistantMessageStylesheet.pathChipText]}
+    >
+      {content}
+    </Text>
+  );
+}
+
 function MarkdownLink({
   href,
   style,
@@ -729,9 +752,12 @@ function MarkdownLink({
   children: ReactNode;
 }) {
   const [hovered, setHovered] = useState(false);
+  const handlePress = useCallback(() => onPress(href), [onPress, href]);
+  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const handleHoverOut = useCallback(() => setHovered(false), []);
   if (isNative) {
     return (
-      <Text accessibilityRole="link" onPress={() => onPress(href)} style={style}>
+      <Text accessibilityRole="link" onPress={handlePress} style={style}>
         {children}
       </Text>
     );
@@ -740,9 +766,9 @@ function MarkdownLink({
   return (
     <Pressable
       accessibilityRole="link"
-      onPress={() => onPress(href)}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
+      onPress={handlePress}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
     >
       <Text style={[style, hovered && { textDecorationLine: "underline" }]}>{children}</Text>
     </Pressable>
@@ -848,11 +874,14 @@ export const TurnCopyButton = memo(function TurnCopyButton({
     };
   }, []);
 
+  const handleHoverIn = useCallback(() => onHoverChange?.(true), [onHoverChange]);
+  const handleHoverOut = useCallback(() => onHoverChange?.(false), [onHoverChange]);
+
   return (
     <Pressable
       onPress={handleCopy}
-      onHoverIn={() => onHoverChange?.(true)}
-      onHoverOut={() => onHoverChange?.(false)}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
       style={[turnCopyButtonStylesheet.container, containerStyle]}
       accessibilityRole="button"
       accessibilityLabel={
@@ -1247,16 +1276,14 @@ export const AssistantMessage = memo(function AssistantMessage({
         const parsed =
           onInlinePathPress && !isLinkedInlineCode ? parseInlinePathToken(content) : null;
 
-        if (parsed) {
+        if (parsed && onInlinePathPress) {
           return (
-            <Text
+            <InlinePathChip
               key={node.key}
-              onPress={() => parsed && onInlinePathPress?.(parsed)}
-              selectable={isWeb ? undefined : false}
-              style={[assistantMessageStylesheet.pathChip, assistantMessageStylesheet.pathChipText]}
-            >
-              {content}
-            </Text>
+              content={content}
+              parsed={parsed}
+              onPress={onInlinePathPress}
+            />
           );
         }
 
@@ -1564,13 +1591,13 @@ export const ActivityLog = memo(function ActivityLog({
   const config = typeConfig[type];
   const IconComponent = config.Icon;
 
-  const handlePress = () => {
+  const handlePress = useCallback(() => {
     if (type === "artifact" && artifactId && onArtifactClick) {
       onArtifactClick(artifactId);
     } else if (metadata) {
-      setIsExpanded(!isExpanded);
+      setIsExpanded((prev) => !prev);
     }
-  };
+  }, [type, artifactId, onArtifactClick, metadata]);
 
   const displayMessage =
     type === "artifact" && artifactType && title ? `${artifactType}: ${title}` : message;
@@ -1828,6 +1855,19 @@ const ExpandableBadge = memo(function ExpandableBadge({
   const detailWrapperRef = useRef<View | null>(null);
   const wheelInvestigationComponentId = `ExpandableBadgeWheel:${testID ?? label}`;
 
+  const handleHoverIn = useCallback(() => setIsHovered(true), []);
+  const handleHoverOut = useCallback(() => {
+    setIsHovered(false);
+    setIsPressed(false);
+  }, []);
+  const handlePressIn = useCallback(() => setIsPressed(true), []);
+  const handlePressOut = useCallback(() => setIsPressed(false), []);
+  const handleDetailHoverIn = useCallback(() => onDetailHoverChange?.(true), [onDetailHoverChange]);
+  const handleDetailHoverOut = useCallback(
+    () => onDetailHoverChange?.(false),
+    [onDetailHoverChange],
+  );
+
   const nativeGradientIdRef = useRef(
     `shimmer-gradient-${Math.random().toString(36).substring(2, 9)}`,
   );
@@ -2053,17 +2093,10 @@ const ExpandableBadge = memo(function ExpandableBadge({
     <View style={containerStyle} testID={testID}>
       <Pressable
         onPress={isInteractive ? onToggle : undefined}
-        onHoverIn={isInteractive ? () => setIsHovered(true) : undefined}
-        onHoverOut={
-          isInteractive
-            ? () => {
-                setIsHovered(false);
-                setIsPressed(false);
-              }
-            : undefined
-        }
-        onPressIn={isInteractive ? () => setIsPressed(true) : undefined}
-        onPressOut={isInteractive ? () => setIsPressed(false) : undefined}
+        onHoverIn={isInteractive ? handleHoverIn : undefined}
+        onHoverOut={isInteractive ? handleHoverOut : undefined}
+        onPressIn={isInteractive ? handlePressIn : undefined}
+        onPressOut={isInteractive ? handlePressOut : undefined}
         disabled={!isInteractive}
         accessibilityRole={isInteractive ? "button" : undefined}
         accessibilityState={accessibilityState}
@@ -2128,8 +2161,8 @@ const ExpandableBadge = memo(function ExpandableBadge({
         <Pressable
           ref={detailWrapperRef}
           style={expandableBadgeStylesheet.detailWrapper}
-          onHoverIn={() => onDetailHoverChange?.(true)}
-          onHoverOut={() => onDetailHoverChange?.(false)}
+          onHoverIn={handleDetailHoverIn}
+          onHoverOut={handleDetailHoverOut}
         >
           {detailContent}
         </Pressable>

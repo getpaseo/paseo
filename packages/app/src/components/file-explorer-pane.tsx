@@ -7,6 +7,7 @@ import {
   Pressable,
   Text,
   View,
+  type PressableStateCallbackType,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -59,6 +60,157 @@ function formatFileSize({ size }: { size: number }): string {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+interface TreeRowItemProps {
+  entry: ExplorerEntry;
+  depth: number;
+  isExpanded: boolean;
+  isSelected: boolean;
+  loading: boolean;
+  onEntryPress: (entry: ExplorerEntry) => void;
+  onCopyPath: (path: string) => void;
+  onDownloadEntry: (entry: ExplorerEntry) => void;
+}
+
+function stopPressInPropagation(event: { stopPropagation?: () => void }) {
+  event.stopPropagation?.();
+}
+
+function menuButtonStyle({
+  hovered,
+  pressed,
+  open,
+}: PressableStateCallbackType & { hovered?: boolean; open?: boolean }) {
+  return [
+    styles.menuButton,
+    (Boolean(hovered) || pressed || Boolean(open)) && styles.menuButtonActive,
+  ];
+}
+
+function sortTriggerStyle({
+  hovered,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.sortTrigger, (Boolean(hovered) || pressed) && styles.sortTriggerHovered];
+}
+
+function iconButtonStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.iconButton, (Boolean(hovered) || pressed) && styles.iconButtonHovered];
+}
+
+function treeRowKeyExtractor(row: TreeRow) {
+  return row.entry.path;
+}
+
+function TreeRowItem({
+  entry,
+  depth,
+  isExpanded,
+  isSelected,
+  loading,
+  onEntryPress,
+  onCopyPath,
+  onDownloadEntry,
+}: TreeRowItemProps) {
+  const { theme } = useUnistyles();
+  const isDirectory = entry.kind === "directory";
+
+  const handlePress = useCallback(() => {
+    onEntryPress(entry);
+  }, [onEntryPress, entry]);
+
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.entryRow,
+      { paddingLeft: theme.spacing[2] + depth * INDENT_PER_LEVEL },
+      (Boolean(hovered) || pressed || isSelected) && styles.entryRowActive,
+    ],
+    [depth, isSelected, theme.spacing],
+  );
+
+  const handleCopy = useCallback(() => {
+    void onCopyPath(entry.path);
+  }, [onCopyPath, entry.path]);
+
+  const handleDownload = useCallback(() => {
+    onDownloadEntry(entry);
+  }, [onDownloadEntry, entry]);
+
+  return (
+    <Pressable onPress={handlePress} style={pressableStyle}>
+      {depth > 0 &&
+        Array.from({ length: depth }, (_, i) => (
+          <View
+            key={i}
+            style={[
+              styles.indentGuide,
+              {
+                left: theme.spacing[3] + i * INDENT_PER_LEVEL + 4,
+              },
+            ]}
+          />
+        ))}
+      <View style={styles.entryInfo}>
+        <View style={styles.entryIcon}>
+          {isDirectory ? (
+            loading ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <View style={[styles.chevron, isExpanded && styles.chevronExpanded]}>
+                <ChevronRight size={16} color={theme.colors.foregroundMuted} />
+              </View>
+            )
+          ) : (
+            <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />
+          )}
+        </View>
+        <Text style={styles.entryName} numberOfLines={1}>
+          {entry.name}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownMenuTrigger hitSlop={8} onPressIn={stopPressInPropagation} style={menuButtonStyle}>
+          <MoreVertical size={16} color={theme.colors.foregroundMuted} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" width={220}>
+          <View style={styles.contextMetaBlock}>
+            <View style={styles.contextMetaRow}>
+              <Text style={styles.contextMetaLabel} numberOfLines={1}>
+                Size
+              </Text>
+              <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+                {formatFileSize({ size: entry.size })}
+              </Text>
+            </View>
+            <View style={styles.contextMetaRow}>
+              <Text style={styles.contextMetaLabel} numberOfLines={1}>
+                Modified
+              </Text>
+              <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
+                {formatTimeAgo(new Date(entry.modifiedAt))}
+              </Text>
+            </View>
+          </View>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
+            onSelect={handleCopy}
+          >
+            Copy path
+          </DropdownMenuItem>
+          {entry.kind === "file" ? (
+            <DropdownMenuItem
+              leading={<Download size={14} color={theme.colors.foregroundMuted} />}
+              onSelect={handleDownload}
+            >
+              Download
+            </DropdownMenuItem>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </Pressable>
+  );
 }
 
 interface FileExplorerPaneProps {
@@ -335,94 +487,16 @@ export function FileExplorerPane({
       const loading = isDirectory && isDirectoryLoading(entry.path);
 
       return (
-        <Pressable
-          onPress={() => handleEntryPress(entry)}
-          style={({ hovered, pressed }) => [
-            styles.entryRow,
-            { paddingLeft: theme.spacing[2] + depth * INDENT_PER_LEVEL },
-            (hovered || pressed || isSelected) && styles.entryRowActive,
-          ]}
-        >
-          {depth > 0 &&
-            Array.from({ length: depth }, (_, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.indentGuide,
-                  {
-                    left: theme.spacing[3] + i * INDENT_PER_LEVEL + 4,
-                  },
-                ]}
-              />
-            ))}
-          <View style={styles.entryInfo}>
-            <View style={styles.entryIcon}>
-              {isDirectory ? (
-                loading ? (
-                  <ActivityIndicator size="small" />
-                ) : (
-                  <View style={[styles.chevron, isExpanded && styles.chevronExpanded]}>
-                    <ChevronRight size={16} color={theme.colors.foregroundMuted} />
-                  </View>
-                )
-              ) : (
-                <SvgXml xml={getFileIconSvg(entry.name)} width={16} height={16} />
-              )}
-            </View>
-            <Text style={styles.entryName} numberOfLines={1}>
-              {entry.name}
-            </Text>
-          </View>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              hitSlop={8}
-              onPressIn={(event) => event.stopPropagation?.()}
-              style={({ hovered, pressed, open }) => [
-                styles.menuButton,
-                (hovered || pressed || open) && styles.menuButtonActive,
-              ]}
-            >
-              <MoreVertical size={16} color={theme.colors.foregroundMuted} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" width={220}>
-              <View style={styles.contextMetaBlock}>
-                <View style={styles.contextMetaRow}>
-                  <Text style={styles.contextMetaLabel} numberOfLines={1}>
-                    Size
-                  </Text>
-                  <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-                    {formatFileSize({ size: entry.size })}
-                  </Text>
-                </View>
-                <View style={styles.contextMetaRow}>
-                  <Text style={styles.contextMetaLabel} numberOfLines={1}>
-                    Modified
-                  </Text>
-                  <Text style={styles.contextMetaValue} numberOfLines={1} ellipsizeMode="tail">
-                    {formatTimeAgo(new Date(entry.modifiedAt))}
-                  </Text>
-                </View>
-              </View>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
-                onSelect={() => {
-                  void handleCopyPath(entry.path);
-                }}
-              >
-                Copy path
-              </DropdownMenuItem>
-              {entry.kind === "file" ? (
-                <DropdownMenuItem
-                  leading={<Download size={14} color={theme.colors.foregroundMuted} />}
-                  onSelect={() => handleDownloadEntry(entry)}
-                >
-                  Download
-                </DropdownMenuItem>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </Pressable>
+        <TreeRowItem
+          entry={entry}
+          depth={depth}
+          isExpanded={isExpanded}
+          isSelected={isSelected}
+          loading={loading}
+          onEntryPress={handleEntryPress}
+          onCopyPath={handleCopyPath}
+          onDownloadEntry={handleDownloadEntry}
+        />
       );
     },
     [
@@ -432,8 +506,6 @@ export function FileExplorerPane({
       handleDownloadEntry,
       isDirectoryLoading,
       selectedEntryPath,
-      theme.colors,
-      theme.spacing,
     ],
   );
 
@@ -447,6 +519,13 @@ export function FileExplorerPane({
       setCurrentPath: true,
     });
   }, [errorRecoveryPath, hasWorkspaceScope, requestDirectoryListing, selectExplorerEntry]);
+
+  const handleRetry = useCallback(() => {
+    void requestDirectoryListing(".", {
+      recordHistory: false,
+      setCurrentPath: false,
+    });
+  }, [requestDirectoryListing]);
 
   if (!hasWorkspaceScope) {
     return (
@@ -467,15 +546,7 @@ export function FileExplorerPane({
                 <Text style={styles.retryButtonText}>Back</Text>
               </Pressable>
             ) : null}
-            <Pressable
-              style={styles.retryButton}
-              onPress={() => {
-                void requestDirectoryListing(".", {
-                  recordHistory: false,
-                  setCurrentPath: false,
-                });
-              }}
-            >
+            <Pressable style={styles.retryButton} onPress={handleRetry}>
               <Text style={styles.retryButtonText}>Retry</Text>
             </Pressable>
           </View>
@@ -492,13 +563,7 @@ export function FileExplorerPane({
       ) : (
         <View style={[styles.treePane, styles.treePaneFill]}>
           <View style={styles.paneHeader} testID="files-pane-header">
-            <Pressable
-              onPress={handleSortCycle}
-              style={({ hovered, pressed }) => [
-                styles.sortTrigger,
-                (hovered || pressed) && styles.sortTriggerHovered,
-              ]}
-            >
+            <Pressable onPress={handleSortCycle} style={sortTriggerStyle}>
               <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
               <ChevronDown size={12} color={theme.colors.foregroundMuted} />
             </Pressable>
@@ -506,10 +571,7 @@ export function FileExplorerPane({
               onPress={handleRefresh}
               disabled={isRefreshFetching}
               hitSlop={8}
-              style={({ hovered, pressed }) => [
-                styles.iconButton,
-                (hovered || pressed) && styles.iconButtonHovered,
-              ]}
+              style={iconButtonStyle}
               accessibilityRole="button"
               accessibilityLabel={isRefreshFetching ? "Refreshing files" : "Refresh files"}
             >
@@ -527,7 +589,7 @@ export function FileExplorerPane({
             style={styles.treeList}
             data={treeRows}
             renderItem={renderTreeRow}
-            keyExtractor={(row) => row.entry.path}
+            keyExtractor={treeRowKeyExtractor}
             testID="file-explorer-tree-scroll"
             contentContainerStyle={styles.entriesContent}
             onLayout={scrollbar.onLayout}

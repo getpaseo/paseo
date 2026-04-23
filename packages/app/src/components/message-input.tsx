@@ -826,13 +826,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     };
   }, [getWebTextArea]);
 
-  function setBoundedInputHeight(nextHeight: number) {
-    const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, nextHeight));
-    if (Math.abs(inputHeightRef.current - bounded) < 1) return;
-    inputHeightRef.current = bounded;
-    setInputHeight(bounded);
-    onHeightChange?.(bounded);
-  }
+  const setBoundedInputHeight = useCallback(
+    (nextHeight: number) => {
+      const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(MAX_INPUT_HEIGHT, nextHeight));
+      if (Math.abs(inputHeightRef.current - bounded) < 1) return;
+      inputHeightRef.current = bounded;
+      setInputHeight(bounded);
+      onHeightChange?.(bounded);
+    },
+    [onHeightChange],
+  );
 
   useComposerHeightMirror({
     value,
@@ -842,29 +845,33 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onHeight: setBoundedInputHeight,
   });
 
-  function handleContentSizeChange(
-    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
-  ) {
-    if (isWeb) return;
-    setBoundedInputHeight(event.nativeEvent.contentSize.height);
-  }
+  const handleContentSizeChange = useCallback(
+    (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
+      if (isWeb) return;
+      setBoundedInputHeight(event.nativeEvent.contentSize.height);
+    },
+    [setBoundedInputHeight],
+  );
 
-  function handleSelectionChange(event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) {
-    const start = event.nativeEvent.selection?.start ?? 0;
-    const end = event.nativeEvent.selection?.end ?? start;
-    if (isWeb) {
-      const textarea = getWebTextArea();
-      logWebStickyBottom("composer_selection_changed", {
-        now: getDebugNow(),
-        start,
-        end,
-        textareaScrollTop: textarea?.scrollTop ?? null,
-        textareaClientHeight: textarea?.clientHeight ?? null,
-        textareaScrollHeight: textarea?.scrollHeight ?? null,
-      });
-    }
-    onSelectionChangeCallback?.({ start, end });
-  }
+  const handleSelectionChange = useCallback(
+    (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
+      const start = event.nativeEvent.selection?.start ?? 0;
+      const end = event.nativeEvent.selection?.end ?? start;
+      if (isWeb) {
+        const textarea = getWebTextArea();
+        logWebStickyBottom("composer_selection_changed", {
+          now: getDebugNow(),
+          start,
+          end,
+          textareaScrollTop: textarea?.scrollTop ?? null,
+          textareaClientHeight: textarea?.clientHeight ?? null,
+          textareaScrollHeight: textarea?.scrollHeight ?? null,
+        });
+      }
+      onSelectionChangeCallback?.({ start, end });
+    },
+    [getWebTextArea, onSelectionChangeCallback],
+  );
 
   const shouldHandleDesktopSubmit = isWeb;
 
@@ -939,6 +946,41 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     [investigationComponentId, onChangeText],
   );
 
+  const handleInputFocus = useCallback(() => {
+    isInputFocusedRef.current = true;
+    setIsInputFocused(true);
+    onFocusChange?.(true);
+  }, [onFocusChange]);
+
+  const handleInputBlur = useCallback(() => {
+    isInputFocusedRef.current = false;
+    setIsInputFocused(false);
+    onFocusChange?.(false);
+  }, [onFocusChange]);
+
+  const attachButtonStyle = useCallback(
+    ({ hovered }: { hovered?: boolean }) => [
+      styles.attachButton,
+      Boolean(hovered) && styles.iconButtonHovered,
+      (!isConnected || disabled) && styles.buttonDisabled,
+    ],
+    [isConnected, disabled],
+  );
+
+  const voiceButtonStyle = useCallback(
+    ({ hovered }: { hovered?: boolean }) => [
+      styles.voiceButton,
+      Boolean(hovered) && !isDictating && styles.iconButtonHovered,
+      !isDictationStartEnabled && styles.buttonDisabled,
+      isDictating && styles.voiceButtonRecording,
+    ],
+    [isDictating, isDictationStartEnabled],
+  );
+
+  const handleRealtimeVoiceStop = useCallback(() => {
+    void handleStopRealtimeVoice();
+  }, [handleStopRealtimeVoice]);
+
   return (
     <View ref={rootRef} style={styles.container} testID="message-input-root">
       {/* Regular input */}
@@ -955,16 +997,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
             placeholder={placeholder}
             placeholderTextColor={theme.colors.surface4}
             accessibilityLabel="Message agent..."
-            onFocus={() => {
-              isInputFocusedRef.current = true;
-              setIsInputFocused(true);
-              onFocusChange?.(true);
-            }}
-            onBlur={() => {
-              isInputFocusedRef.current = false;
-              setIsInputFocused(false);
-              onFocusChange?.(false);
-            }}
+            onFocus={handleInputFocus}
+            onBlur={handleInputBlur}
             style={[
               styles.textInput,
               isWeb
@@ -1006,11 +1040,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                     accessibilityLabel="Add attachment"
                     accessibilityRole="button"
                     testID="message-input-attach-button"
-                    style={({ hovered }) => [
-                      styles.attachButton,
-                      hovered && styles.iconButtonHovered,
-                      (!isConnected || disabled) && styles.buttonDisabled,
-                    ]}
+                    style={attachButtonStyle}
                   >
                     {({ hovered }) => (
                       <View
@@ -1070,12 +1100,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                       ? "Stop dictation"
                       : "Start dictation"
                 }
-                style={({ hovered }) => [
-                  styles.voiceButton,
-                  hovered && !isDictating && styles.iconButtonHovered,
-                  !isDictationStartEnabled && styles.buttonDisabled,
-                  isDictating && styles.voiceButtonRecording,
-                ]}
+                style={voiceButtonStyle}
               >
                 {({ hovered }) =>
                   isDictating ? (
@@ -1168,9 +1193,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
             isMuted={voice.isMuted}
             isSwitching={voice.isVoiceSwitching}
             onToggleMute={voice.toggleMute}
-            onStop={() => {
-              void handleStopRealtimeVoice();
-            }}
+            onStop={handleRealtimeVoiceStop}
           />
         ) : null}
       </Animated.View>

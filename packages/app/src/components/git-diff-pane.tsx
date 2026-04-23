@@ -10,6 +10,7 @@ import {
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  type PressableStateCallbackType,
   TextStyle,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -85,6 +86,29 @@ export type { GitActionId, GitAction, GitActions } from "@/components/git-action
 
 function openURLInNewTab(url: string): void {
   void openExternalUrl(url);
+}
+
+function fileHeaderPressableStyle({ pressed }: PressableStateCallbackType) {
+  return [styles.fileHeader, pressed && styles.fileHeaderPressed];
+}
+
+function diffModeTriggerStyle({
+  hovered,
+  pressed,
+  open,
+}: PressableStateCallbackType & { hovered?: boolean; open?: boolean }) {
+  return [
+    styles.diffModeTrigger,
+    Boolean(hovered) && styles.diffModeTriggerHovered,
+    (pressed || Boolean(open)) && styles.diffModeTriggerPressed,
+  ];
+}
+
+function expandAllButtonStyle({
+  hovered,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.expandAllButton, (Boolean(hovered) || pressed) && styles.diffStatusRowHovered];
 }
 
 type HighlightStyle = NonNullable<HighlightToken["style"]>;
@@ -430,46 +454,51 @@ const DiffFileHeader = memo(function DiffFileHeader({
     onToggle(file.path);
   }, [file.path, onToggle]);
 
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      layoutYRef.current = event.nativeEvent.layout.y;
+      onHeaderHeightChange?.(file.path, event.nativeEvent.layout.height);
+    },
+    [file.path, onHeaderHeightChange],
+  );
+
+  const handlePressIn = useCallback((event: { nativeEvent: { pageX: number; pageY: number } }) => {
+    pressHandledRef.current = false;
+    pressInRef.current = {
+      ts: Date.now(),
+      pageX: event.nativeEvent.pageX,
+      pageY: event.nativeEvent.pageY,
+    };
+  }, []);
+
+  const handlePressOut = useCallback(
+    (event: { nativeEvent: { pageX: number; pageY: number } }) => {
+      if (isNative && !pressHandledRef.current && layoutYRef.current === 0 && pressInRef.current) {
+        const durationMs = Date.now() - pressInRef.current.ts;
+        const dx = event.nativeEvent.pageX - pressInRef.current.pageX;
+        const dy = event.nativeEvent.pageY - pressInRef.current.pageY;
+        const distance = Math.hypot(dx, dy);
+        if (durationMs <= 500 && distance <= 12) {
+          toggleExpanded();
+        }
+      }
+    },
+    [toggleExpanded],
+  );
+
   return (
     <View
       style={[styles.fileSectionHeaderContainer, isExpanded && styles.fileSectionHeaderExpanded]}
-      onLayout={(event) => {
-        layoutYRef.current = event.nativeEvent.layout.y;
-        onHeaderHeightChange?.(file.path, event.nativeEvent.layout.height);
-      }}
+      onLayout={handleLayout}
       testID={testID}
     >
       <Pressable
         testID={testID ? `${testID}-toggle` : undefined}
-        style={({ pressed }) => [styles.fileHeader, pressed && styles.fileHeaderPressed]}
+        style={fileHeaderPressableStyle}
         // Android: prevent parent pan/scroll gestures from canceling the tap release.
         cancelable={false}
-        onPressIn={(event) => {
-          pressHandledRef.current = false;
-          pressInRef.current = {
-            ts: Date.now(),
-            pageX: event.nativeEvent.pageX,
-            pageY: event.nativeEvent.pageY,
-          };
-        }}
-        onPressOut={(event) => {
-          if (
-            isNative &&
-            !pressHandledRef.current &&
-            layoutYRef.current === 0 &&
-            pressInRef.current
-          ) {
-            const durationMs = Date.now() - pressInRef.current.ts;
-            const dx = event.nativeEvent.pageX - pressInRef.current.pageX;
-            const dy = event.nativeEvent.pageY - pressInRef.current.pageY;
-            const distance = Math.hypot(dx, dy);
-            // Sticky headers on Android can emit pressIn/pressOut without onPress.
-            // Treat short, low-movement interactions as taps.
-            if (durationMs <= 500 && distance <= 12) {
-              toggleExpanded();
-            }
-          }
-        }}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
         onPress={toggleExpanded}
       >
         <View style={styles.fileHeaderLeft}>
@@ -512,13 +541,18 @@ function DiffFileBody({
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const [bodyWidth, setBodyWidth] = useState(0);
 
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      setBodyWidth(event.nativeEvent.layout.width);
+      onBodyHeightChange?.(file.path, event.nativeEvent.layout.height);
+    },
+    [file.path, onBodyHeightChange],
+  );
+
   return (
     <View
       style={[styles.fileSectionBodyContainer, styles.fileSectionBorder]}
-      onLayout={(event) => {
-        setBodyWidth(event.nativeEvent.layout.width);
-        onBodyHeightChange?.(file.path, event.nativeEvent.layout.height);
-      }}
+      onLayout={handleLayout}
       testID={testID}
     >
       {(() => {
@@ -657,6 +691,60 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const handleToggleHideWhitespace = useCallback(() => {
     void updateChangesPreferences({ hideWhitespace: !changesPreferences.hideWhitespace });
   }, [changesPreferences.hideWhitespace, updateChangesPreferences]);
+
+  const handleSelectUncommitted = useCallback(() => {
+    setDiffModeOverride("uncommitted");
+  }, []);
+
+  const handleSelectBase = useCallback(() => {
+    setDiffModeOverride("base");
+  }, []);
+
+  const handleLayoutUnified = useCallback(() => {
+    handleLayoutChange("unified");
+  }, [handleLayoutChange]);
+
+  const handleLayoutSplit = useCallback(() => {
+    handleLayoutChange("split");
+  }, [handleLayoutChange]);
+
+  const unifiedToggleStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.toggleButton,
+      styles.toggleButtonGroupStart,
+      changesPreferences.layout === "unified" && styles.toggleButtonSelected,
+      (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
+    ],
+    [changesPreferences.layout],
+  );
+
+  const splitToggleStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.toggleButton,
+      styles.toggleButtonGroupEnd,
+      changesPreferences.layout === "split" && styles.toggleButtonSelected,
+      (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
+    ],
+    [changesPreferences.layout],
+  );
+
+  const hideWhitespaceToggleStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.expandAllButton,
+      changesPreferences.hideWhitespace && styles.toggleButtonSelected,
+      (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
+    ],
+    [changesPreferences.hideWhitespace],
+  );
+
+  const wrapLinesToggleStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.expandAllButton,
+      wrapLines && styles.toggleButtonSelected,
+      (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
+    ],
+    [wrapLines],
+  );
 
   const {
     status,
@@ -1327,11 +1415,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
           <View style={styles.diffStatusInner}>
             <DropdownMenu>
               <DropdownMenuTrigger
-                style={({ hovered, pressed, open }) => [
-                  styles.diffModeTrigger,
-                  hovered && styles.diffModeTriggerHovered,
-                  (pressed || open) && styles.diffModeTriggerPressed,
-                ]}
+                style={diffModeTriggerStyle}
                 testID="changes-diff-status"
                 accessibilityRole="button"
                 accessibilityLabel="Diff mode"
@@ -1345,7 +1429,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
                 <DropdownMenuItem
                   testID="changes-diff-mode-uncommitted"
                   selected={diffMode === "uncommitted"}
-                  onSelect={() => setDiffModeOverride("uncommitted")}
+                  onSelect={handleSelectUncommitted}
                 >
                   Uncommitted
                 </DropdownMenuItem>
@@ -1354,7 +1438,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
                   testID="changes-diff-mode-committed"
                   selected={diffMode === "base"}
                   description={committedDiffDescription}
-                  onSelect={() => setDiffModeOverride("base")}
+                  onSelect={handleSelectBase}
                 >
                   Committed
                 </DropdownMenuItem>
@@ -1369,13 +1453,8 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
                         accessibilityRole="button"
                         accessibilityLabel="Unified diff"
                         testID="changes-layout-unified"
-                        onPress={() => handleLayoutChange("unified")}
-                        style={({ hovered, pressed }) => [
-                          styles.toggleButton,
-                          styles.toggleButtonGroupStart,
-                          changesPreferences.layout === "unified" && styles.toggleButtonSelected,
-                          (hovered || pressed) && styles.diffStatusRowHovered,
-                        ]}
+                        onPress={handleLayoutUnified}
+                        style={unifiedToggleStyle}
                       >
                         <AlignJustify
                           size={14}
@@ -1397,13 +1476,8 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
                         accessibilityRole="button"
                         accessibilityLabel="Side-by-side diff"
                         testID="changes-layout-split"
-                        onPress={() => handleLayoutChange("split")}
-                        style={({ hovered, pressed }) => [
-                          styles.toggleButton,
-                          styles.toggleButtonGroupEnd,
-                          changesPreferences.layout === "split" && styles.toggleButtonSelected,
-                          (hovered || pressed) && styles.diffStatusRowHovered,
-                        ]}
+                        onPress={handleLayoutSplit}
+                        style={splitToggleStyle}
                       >
                         <Columns2
                           size={14}
@@ -1427,11 +1501,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
                     accessibilityRole="button"
                     accessibilityLabel="Hide whitespace"
                     testID="changes-toggle-whitespace"
-                    style={({ hovered, pressed }) => [
-                      styles.expandAllButton,
-                      changesPreferences.hideWhitespace && styles.toggleButtonSelected,
-                      (hovered || pressed) && styles.diffStatusRowHovered,
-                    ]}
+                    style={hideWhitespaceToggleStyle}
                     onPress={handleToggleHideWhitespace}
                   >
                     <Pilcrow
@@ -1452,14 +1522,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
                 <View style={styles.diffStatusButtons}>
                   <Tooltip delayDuration={300}>
                     <TooltipTrigger asChild>
-                      <Pressable
-                        style={({ hovered, pressed }) => [
-                          styles.expandAllButton,
-                          wrapLines && styles.toggleButtonSelected,
-                          (hovered || pressed) && styles.diffStatusRowHovered,
-                        ]}
-                        onPress={handleToggleWrapLines}
-                      >
+                      <Pressable style={wrapLinesToggleStyle} onPress={handleToggleWrapLines}>
                         <WrapText
                           size={isMobile ? 18 : 14}
                           color={wrapLines ? theme.colors.foreground : theme.colors.foregroundMuted}
@@ -1474,13 +1537,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
                   </Tooltip>
                   <Tooltip delayDuration={300}>
                     <TooltipTrigger asChild>
-                      <Pressable
-                        style={({ hovered, pressed }) => [
-                          styles.expandAllButton,
-                          (hovered || pressed) && styles.diffStatusRowHovered,
-                        ]}
-                        onPress={handleToggleExpandAll}
-                      >
+                      <Pressable style={expandAllButtonStyle} onPress={handleToggleExpandAll}>
                         {allExpanded ? (
                           <ListChevronsDownUp
                             size={isMobile ? 18 : 14}

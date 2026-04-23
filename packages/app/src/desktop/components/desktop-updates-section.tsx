@@ -230,6 +230,16 @@ export function LocalDaemonSection() {
       });
   }, [cliStatusOutput]);
 
+  const handleOpenAdvancedSettings = useCallback(
+    () => void openExternalUrl(ADVANCED_DAEMON_SETTINGS_URL),
+    [],
+  );
+  const handleRunCliStatus = useCallback(() => {
+    void handleOpenCliStatus();
+  }, [handleOpenCliStatus]);
+  const handleCloseLogsModal = useCallback(() => setIsLogsModalOpen(false), []);
+  const handleCloseCliStatusModal = useCallback(() => setIsCliStatusModalOpen(false), []);
+
   if (!showSection) {
     return null;
   }
@@ -241,7 +251,7 @@ export function LocalDaemonSection() {
       leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
       textStyle={settingsStyles.sectionHeaderLinkText}
       style={settingsStyles.sectionHeaderLink}
-      onPress={() => void openExternalUrl(ADVANCED_DAEMON_SETTINGS_URL)}
+      onPress={handleOpenAdvancedSettings}
       accessibilityLabel="Open advanced daemon settings"
     >
       Advanced settings
@@ -364,7 +374,7 @@ export function LocalDaemonSection() {
                 variant="outline"
                 size="sm"
                 leftIcon={<Activity size={theme.iconSize.sm} color={theme.colors.foreground} />}
-                onPress={() => void handleOpenCliStatus()}
+                onPress={handleRunCliStatus}
                 disabled={isLoadingCliStatus}
               >
                 {isLoadingCliStatus ? "Loading..." : "View status"}
@@ -385,7 +395,7 @@ export function LocalDaemonSection() {
 
       <AdaptiveModalSheet
         visible={isLogsModalOpen}
-        onClose={() => setIsLogsModalOpen(false)}
+        onClose={handleCloseLogsModal}
         title="Daemon logs"
         testID="managed-daemon-logs-dialog"
         snapPoints={["70%", "92%"]}
@@ -402,7 +412,7 @@ export function LocalDaemonSection() {
 
       <AdaptiveModalSheet
         visible={isCliStatusModalOpen}
-        onClose={() => setIsCliStatusModalOpen(false)}
+        onClose={handleCloseCliStatusModal}
         title="Daemon status"
         testID="daemon-cli-status-dialog"
         snapPoints={["60%", "85%"]}
@@ -412,7 +422,7 @@ export function LocalDaemonSection() {
             {cliStatusOutput ?? ""}
           </Text>
           <View style={styles.modalActions}>
-            <Button variant="outline" size="sm" onPress={() => setIsCliStatusModalOpen(false)}>
+            <Button variant="outline" size="sm" onPress={handleCloseCliStatusModal}>
               Close
             </Button>
             <Button size="sm" onPress={handleCopyCliStatus}>

@@ -274,30 +274,77 @@ vi.mock("@/hooks/use-keyboard-shift-style", () => ({
   useKeyboardShiftStyle: () => ({ style: { transform: "translateY(-216px)" } }),
 }));
 
-vi.mock("@/components/composer", () => ({
-  Composer: ({
-    onSubmitMessage,
-    submitBehavior,
-    submitIcon,
-    isSubmitLoading,
-    value,
-    onChangeText,
-    attachments,
-    onChangeAttachments,
-  }: {
-    onSubmitMessage: (payload: {
-      text: string;
-      attachments: ComposerAttachment[];
-      cwd: string;
-    }) => void;
-    submitBehavior?: "clear" | "preserve-and-lock";
-    submitIcon?: "arrow" | "return";
-    isSubmitLoading?: boolean;
-    value: string;
-    onChangeText: (text: string) => void;
+interface ComposerMockProps {
+  onSubmitMessage: (payload: {
+    text: string;
     attachments: ComposerAttachment[];
-    onChangeAttachments: (attachments: ComposerAttachment[]) => void;
-  }) => (
+    cwd: string;
+  }) => void;
+  submitBehavior?: "clear" | "preserve-and-lock";
+  submitIcon?: "arrow" | "return";
+  isSubmitLoading?: boolean;
+  value: string;
+  onChangeText: (text: string) => void;
+  attachments: ComposerAttachment[];
+  onChangeAttachments: (attachments: ComposerAttachment[]) => void;
+}
+
+interface AttachmentPillProps {
+  attachment: Extract<ComposerAttachment, { kind: "github_pr" | "github_issue" }>;
+  attachments: ComposerAttachment[];
+  isDisabled: boolean;
+  onChangeAttachments: (attachments: ComposerAttachment[]) => void;
+}
+
+function ComposerMockAttachmentPill({
+  attachment,
+  attachments,
+  isDisabled,
+  onChangeAttachments,
+}: AttachmentPillProps) {
+  const handleRemove = React.useCallback(() => {
+    onChangeAttachments(
+      attachments.filter(
+        (candidate) =>
+          candidate.kind !== attachment.kind || candidate.item.number !== attachment.item.number,
+      ),
+    );
+  }, [attachment, attachments, onChangeAttachments]);
+  return (
+    <div data-testid="composer-github-attachment-pill">
+      #{attachment.item.number} {attachment.item.title}
+      <button
+        type="button"
+        aria-label={`Remove ${attachment.kind === "github_pr" ? "PR" : "issue"} #${attachment.item.number}`}
+        disabled={isDisabled}
+        onClick={handleRemove}
+      >
+        Remove
+      </button>
+    </div>
+  );
+}
+
+function ComposerMock({
+  onSubmitMessage,
+  submitBehavior,
+  submitIcon,
+  isSubmitLoading,
+  value,
+  onChangeText,
+  attachments,
+  onChangeAttachments,
+}: ComposerMockProps) {
+  const isDisabled = submitBehavior === "preserve-and-lock" && Boolean(isSubmitLoading);
+  const handleTextareaChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLTextAreaElement>) => onChangeText(event.currentTarget.value),
+    [onChangeText],
+  );
+  const handleSubmit = React.useCallback(
+    () => onSubmitMessage({ text: value, attachments, cwd: "/repo" }),
+    [onSubmitMessage, value, attachments],
+  );
+  return (
     <div
       data-testid="test-composer"
       data-submit-behavior={submitBehavior}
@@ -305,54 +352,33 @@ vi.mock("@/components/composer", () => ({
     >
       <textarea
         aria-label="Message agent..."
-        disabled={submitBehavior === "preserve-and-lock" && isSubmitLoading}
+        disabled={isDisabled}
         value={value}
-        onChange={(event) => onChangeText(event.currentTarget.value)}
+        onChange={handleTextareaChange}
       />
-      <button
-        type="button"
-        data-testid="message-input-attach-button"
-        disabled={submitBehavior === "preserve-and-lock" && isSubmitLoading}
-      >
+      <button type="button" data-testid="message-input-attach-button" disabled={isDisabled}>
         Attach
       </button>
       {attachments.map((attachment) =>
         attachment.kind === "github_pr" || attachment.kind === "github_issue" ? (
-          <div
-            data-testid="composer-github-attachment-pill"
+          <ComposerMockAttachmentPill
             key={`${attachment.kind}-${attachment.item.number}`}
-          >
-            #{attachment.item.number} {attachment.item.title}
-            <button
-              type="button"
-              aria-label={`Remove ${attachment.kind === "github_pr" ? "PR" : "issue"} #${
-                attachment.item.number
-              }`}
-              disabled={submitBehavior === "preserve-and-lock" && isSubmitLoading}
-              onClick={() =>
-                onChangeAttachments(
-                  attachments.filter(
-                    (candidate) =>
-                      candidate.kind !== attachment.kind ||
-                      candidate.item.number !== attachment.item.number,
-                  ),
-                )
-              }
-            >
-              Remove
-            </button>
-          </div>
+            attachment={attachment}
+            attachments={attachments}
+            isDisabled={isDisabled}
+            onChangeAttachments={onChangeAttachments}
+          />
         ) : null,
       )}
-      <button
-        type="button"
-        data-testid="test-composer-submit"
-        onClick={() => onSubmitMessage({ text: value, attachments, cwd: "/repo" })}
-      >
+      <button type="button" data-testid="test-composer-submit" onClick={handleSubmit}>
         Submit
       </button>
     </div>
-  ),
+  );
+}
+
+vi.mock("@/components/composer", () => ({
+  Composer: ComposerMock,
 }));
 
 vi.mock("@/components/composer-attachments", () => ({
@@ -404,6 +430,48 @@ vi.mock("@/components/ui/tooltip", () => ({
   TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+function ComboboxOptionButton({
+  option,
+  onSelect,
+}: {
+  option: { id: string; label: string };
+  onSelect: (id: string) => void;
+}) {
+  const handleClick = React.useCallback(() => onSelect(option.id), [onSelect, option.id]);
+  return (
+    <button type="button" onClick={handleClick}>
+      {option.label}
+    </button>
+  );
+}
+
+function ComboboxOptionRenderWrapper({
+  option,
+  onSelect,
+  renderOption,
+}: {
+  option: { id: string; label: string };
+  onSelect: (id: string) => void;
+  renderOption: (input: {
+    option: { id: string; label: string };
+    selected: boolean;
+    active: boolean;
+    onPress: () => void;
+  }) => React.ReactElement;
+}) {
+  const handlePress = React.useCallback(() => onSelect(option.id), [onSelect, option.id]);
+  return (
+    <>
+      {renderOption({
+        option,
+        selected: false,
+        active: false,
+        onPress: handlePress,
+      })}
+    </>
+  );
+}
+
 vi.mock("@/components/ui/combobox", () => ({
   Combobox: ({
     open,
@@ -426,18 +494,14 @@ vi.mock("@/components/ui/combobox", () => ({
       <div data-testid="ref-picker-combobox">
         {options.map((option) =>
           renderOption ? (
-            <React.Fragment key={option.id}>
-              {renderOption({
-                option,
-                selected: false,
-                active: false,
-                onPress: () => onSelect(option.id),
-              })}
-            </React.Fragment>
+            <ComboboxOptionRenderWrapper
+              key={option.id}
+              option={option}
+              onSelect={onSelect}
+              renderOption={renderOption}
+            />
           ) : (
-            <button type="button" key={option.id} onClick={() => onSelect(option.id)}>
-              {option.label}
-            </button>
+            <ComboboxOptionButton key={option.id} option={option} onSelect={onSelect} />
           ),
         )}
       </div>

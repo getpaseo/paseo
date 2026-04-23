@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
@@ -24,10 +24,30 @@ import type {
   PrState,
 } from "@/utils/pr-pane-data";
 
+function rowPressableStyle({ hovered }: { hovered?: boolean }) {
+  return [styles.row, Boolean(hovered) && styles.hoverable];
+}
+
+function activityPressableStyle({ hovered }: { hovered?: boolean }) {
+  return [styles.activityRow, Boolean(hovered) && styles.hoverable];
+}
+
 export function PrPane({ data }: { data: PrPaneData }) {
   const { theme } = useUnistyles();
   const [checksOpen, setChecksOpen] = useState(true);
   const [reviewsOpen, setReviewsOpen] = useState(true);
+
+  const handleOpenPrUrl = useCallback(() => {
+    void openExternalUrl(data.url);
+  }, [data.url]);
+
+  const handleToggleChecks = useCallback(() => {
+    setChecksOpen((o) => !o);
+  }, []);
+
+  const handleToggleReviews = useCallback(() => {
+    setReviewsOpen((o) => !o);
+  }, []);
 
   const passed = data.checks.filter((c) => c.status === "success").length;
   const failed = data.checks.filter((c) => c.status === "failure").length;
@@ -49,7 +69,7 @@ export function PrPane({ data }: { data: PrPaneData }) {
 
   return (
     <View style={styles.root}>
-      <Pressable onPress={() => void openExternalUrl(data.url)} style={styles.header}>
+      <Pressable onPress={handleOpenPrUrl} style={styles.header}>
         {({ hovered }) => (
           <>
             <View style={styles.stateLine}>
@@ -74,7 +94,7 @@ export function PrPane({ data }: { data: PrPaneData }) {
       <Section
         title="Checks"
         open={checksOpen}
-        onToggle={() => setChecksOpen((o) => !o)}
+        onToggle={handleToggleChecks}
         summary={
           <>
             <SummaryPill
@@ -105,7 +125,7 @@ export function PrPane({ data }: { data: PrPaneData }) {
       <Section
         title="Reviews"
         open={reviewsOpen}
-        onToggle={() => setReviewsOpen((o) => !o)}
+        onToggle={handleToggleReviews}
         summary={
           <>
             <SummaryPill
@@ -187,11 +207,11 @@ function SummaryPill({
 }
 
 function CheckRow({ check }: { check: PrPaneCheck }) {
+  const handlePress = useCallback(() => {
+    void openExternalUrl(check.url);
+  }, [check.url]);
   return (
-    <Pressable
-      onPress={() => void openExternalUrl(check.url)}
-      style={({ hovered }) => [styles.row, hovered && styles.hoverable]}
-    >
+    <Pressable onPress={handlePress} style={rowPressableStyle}>
       <CheckStatusIcon status={check.status} />
       <Text style={styles.rowTitle} numberOfLines={1}>
         {check.name}
@@ -216,11 +236,11 @@ function CheckStatusIcon({ status }: { status: CheckStatus }) {
 
 function ActivityRow({ item }: { item: PrPaneActivity }) {
   const verb = getActivityVerb(item);
+  const handlePress = useCallback(() => {
+    void openExternalUrl(item.url);
+  }, [item.url]);
   return (
-    <Pressable
-      onPress={() => void openExternalUrl(item.url)}
-      style={({ hovered }) => [styles.activityRow, hovered && styles.hoverable]}
-    >
+    <Pressable onPress={handlePress} style={activityPressableStyle}>
       <View style={[styles.avatar, { backgroundColor: item.avatarColor }]}>
         <Text style={styles.avatarText}>{item.author.slice(0, 1).toUpperCase()}</Text>
       </View>

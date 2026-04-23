@@ -1,4 +1,11 @@
-import { View, Pressable, Text, ActivityIndicator, Image } from "react-native";
+import {
+  View,
+  Pressable,
+  Text,
+  ActivityIndicator,
+  Image,
+  type PressableStateCallbackType,
+} from "react-native";
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -81,12 +88,171 @@ type AttachmentListUpdater =
   | ComposerAttachment[]
   | ((prev: ComposerAttachment[]) => ComposerAttachment[]);
 
+function noop() {}
+
+interface QueuedMessageRowProps {
+  item: QueuedMessage;
+  onEdit: (id: string) => void;
+  onSendNow: (id: string) => void;
+}
+
+function QueuedMessageRow({ item, onEdit, onSendNow }: QueuedMessageRowProps) {
+  const { theme } = useUnistyles();
+  const handleEdit = useCallback(() => {
+    onEdit(item.id);
+  }, [onEdit, item.id]);
+  const handleSendNow = useCallback(() => {
+    onSendNow(item.id);
+  }, [onSendNow, item.id]);
+  return (
+    <View style={styles.queueItem}>
+      <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+        {item.text}
+      </Text>
+      <View style={styles.queueActions}>
+        <Pressable onPress={handleEdit} style={styles.queueActionButton}>
+          <Pencil size={theme.iconSize.sm} color={theme.colors.foreground} />
+        </Pressable>
+        <Pressable
+          onPress={handleSendNow}
+          style={[styles.queueActionButton, styles.queueSendButton]}
+        >
+          <ArrowUp size={theme.iconSize.sm} color="white" />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function ImageAttachmentThumbnail({ image }: { image: ImageAttachment }) {
   const uri = useAttachmentPreviewUrl(image);
   if (!uri) {
     return <View style={styles.imageThumbnailPlaceholder} />;
   }
   return <Image source={{ uri }} style={styles.imageThumbnail} />;
+}
+
+interface ImageAttachmentPillProps {
+  attachment: Extract<ComposerAttachment, { kind: "image" }>;
+  index: number;
+  disabled: boolean;
+  onOpen: (attachment: ComposerAttachment) => void;
+  onRemove: (index: number) => void;
+}
+
+function ImageAttachmentPill({
+  attachment,
+  index,
+  disabled,
+  onOpen,
+  onRemove,
+}: ImageAttachmentPillProps) {
+  const handleOpen = useCallback(() => {
+    onOpen(attachment);
+  }, [onOpen, attachment]);
+  const handleRemove = useCallback(() => {
+    onRemove(index);
+  }, [onRemove, index]);
+  return (
+    <AttachmentPill
+      testID="composer-image-attachment-pill"
+      onOpen={handleOpen}
+      onRemove={handleRemove}
+      openAccessibilityLabel="Open image attachment"
+      removeAccessibilityLabel="Remove image attachment"
+      disabled={disabled}
+    >
+      <ImageAttachmentThumbnail image={attachment.metadata} />
+    </AttachmentPill>
+  );
+}
+
+interface GithubAttachmentPillProps {
+  attachment: Exclude<ComposerAttachment, { kind: "image" }>;
+  index: number;
+  disabled: boolean;
+  onOpen: (attachment: ComposerAttachment) => void;
+  onRemove: (index: number) => void;
+}
+
+function GithubAttachmentPill({
+  attachment,
+  index,
+  disabled,
+  onOpen,
+  onRemove,
+}: GithubAttachmentPillProps) {
+  const { theme } = useUnistyles();
+  const item = attachment.item;
+  const kindLabel = item.kind === "pr" ? "PR" : "issue";
+  const handleOpen = useCallback(() => {
+    onOpen(attachment);
+  }, [onOpen, attachment]);
+  const handleRemove = useCallback(() => {
+    onRemove(index);
+  }, [onRemove, index]);
+  return (
+    <AttachmentPill
+      testID="composer-github-attachment-pill"
+      onOpen={handleOpen}
+      onRemove={handleRemove}
+      openAccessibilityLabel={`Open ${kindLabel} #${item.number}`}
+      removeAccessibilityLabel={`Remove ${kindLabel} #${item.number}`}
+      disabled={disabled}
+    >
+      <View style={styles.githubPillBody}>
+        <View style={styles.githubPillIcon}>
+          {item.kind === "pr" ? (
+            <GitPullRequest size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          ) : (
+            <CircleDot size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          )}
+        </View>
+        <Text style={styles.githubPillText} numberOfLines={1}>
+          #{item.number} {item.title}
+        </Text>
+      </View>
+    </AttachmentPill>
+  );
+}
+
+interface GithubPickerOptionProps {
+  label: string;
+  testID: string;
+  active: boolean;
+  selected: boolean;
+  item: GitHubSearchItem;
+  onToggle: (item: GitHubSearchItem) => void;
+}
+
+function GithubPickerOption({
+  label,
+  testID,
+  active,
+  selected,
+  item,
+  onToggle,
+}: GithubPickerOptionProps) {
+  const { theme } = useUnistyles();
+  const handlePress = useCallback(() => {
+    onToggle(item);
+  }, [onToggle, item]);
+  return (
+    <ComboboxItem
+      testID={testID}
+      label={label}
+      selected={selected}
+      active={active}
+      onPress={handlePress}
+      leadingSlot={
+        item.kind === "pr" ? (
+          <GitPullRequest size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        ) : (
+          <CircleDot size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        )
+      }
+    />
+  );
 }
 
 interface ComposerProps {
@@ -482,23 +648,26 @@ export function Composer({
     addImages(newImages);
   }, [addImages, pickImages]);
 
-  function handleRemoveAttachment(index: number) {
-    setSelectedAttachments((prev) => {
-      const removed = prev[index];
-      if (removed?.kind === "image") {
-        void deleteAttachments([removed.metadata]);
-      }
-      return prev.filter((_, i) => i !== index);
-    });
-  }
+  const handleRemoveAttachment = useCallback(
+    (index: number) => {
+      setSelectedAttachments((prev) => {
+        const removed = prev[index];
+        if (removed?.kind === "image") {
+          void deleteAttachments([removed.metadata]);
+        }
+        return prev.filter((_, i) => i !== index);
+      });
+    },
+    [deleteAttachments, setSelectedAttachments],
+  );
 
-  function handleOpenAttachment(attachment: ComposerAttachment) {
+  const handleOpenAttachment = useCallback((attachment: ComposerAttachment) => {
     if (attachment.kind === "image") {
       setLightboxMetadata(attachment.metadata);
       return;
     }
     void openExternalUrl(attachment.item.url);
-  }
+  }, []);
 
   useEffect(() => {
     if (!isAgentRunning || !isConnected) {
@@ -616,30 +785,36 @@ export function Composer({
     });
   }, [agentId, hasAgent, isConnected, serverId, voice]);
 
-  function handleEditQueuedMessage(id: string) {
-    const item = queuedMessages.find((q) => q.id === id);
-    if (!item) return;
+  const handleEditQueuedMessage = useCallback(
+    (id: string) => {
+      const item = queuedMessages.find((q) => q.id === id);
+      if (!item) return;
 
-    updateQueue((current) => current.filter((q) => q.id !== id));
-    setUserInput(item.text);
-    setSelectedAttachments(item.attachments);
-  }
+      updateQueue((current) => current.filter((q) => q.id !== id));
+      setUserInput(item.text);
+      setSelectedAttachments(item.attachments);
+    },
+    [queuedMessages, setSelectedAttachments, setUserInput, updateQueue],
+  );
 
-  async function handleSendQueuedNow(id: string) {
-    const item = queuedMessages.find((q) => q.id === id);
-    if (!item) return;
-    if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
+  const handleSendQueuedNow = useCallback(
+    async (id: string) => {
+      const item = queuedMessages.find((q) => q.id === id);
+      if (!item) return;
+      if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
 
-    updateQueue((current) => current.filter((q) => q.id !== id));
+      updateQueue((current) => current.filter((q) => q.id !== id));
 
-    // Reuse the regular send path; server-side send atomically interrupts any active run.
-    try {
-      await submitMessage(item.text, item.attachments);
-    } catch (error) {
-      updateQueue((current) => [item, ...current]);
-      setSendError(error instanceof Error ? error.message : "Failed to send message");
-    }
-  }
+      // Reuse the regular send path; server-side send atomically interrupts any active run.
+      try {
+        await submitMessage(item.text, item.attachments);
+      } catch (error) {
+        updateQueue((current) => [item, ...current]);
+        setSendError(error instanceof Error ? error.message : "Failed to send message");
+      }
+    },
+    [queuedMessages, submitMessage, updateQueue],
+  );
 
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
@@ -712,13 +887,7 @@ export function Composer({
                 disabled={!isConnected || voice?.isVoiceSwitching}
                 accessibilityLabel="Enable Voice mode"
                 accessibilityRole="button"
-                style={({ hovered }) => [
-                  styles.realtimeVoiceButton as any,
-                  (hovered ? styles.iconButtonHovered : undefined) as any,
-                  (!isConnected || voice?.isVoiceSwitching
-                    ? styles.buttonDisabled
-                    : undefined) as any,
-                ]}
+                style={realtimeVoiceButtonStyle}
               >
                 {({ hovered }) =>
                   voice?.isVoiceSwitching ? (
@@ -877,9 +1046,63 @@ export function Composer({
     [onAttentionInputFocus],
   );
 
+  const handleLightboxClose = useCallback(() => {
+    setLightboxMetadata(null);
+  }, []);
+
+  const handleGithubPickerOpenChange = useCallback(
+    (open: boolean) => {
+      setIsGithubPickerOpen(open);
+      if (!open) {
+        setGithubSearchQuery("");
+      }
+    },
+    [setGithubSearchQuery],
+  );
+
+  const renderGithubPickerOption = useCallback(
+    ({ option, active }: { option: ComboboxOption; selected: boolean; active: boolean }) => {
+      const item = githubSearchItems.find((candidate) => {
+        return `${candidate.kind}:${candidate.number}` === option.id;
+      });
+      if (!item) {
+        return <View key={option.id} />;
+      }
+      const selected = selectedAttachments.some(
+        (attachment) =>
+          attachment.kind !== "image" &&
+          attachment.item.kind === item.kind &&
+          attachment.item.number === item.number,
+      );
+      return (
+        <GithubPickerOption
+          key={option.id}
+          testID={`composer-github-option-${option.id}`}
+          label={option.label}
+          selected={selected}
+          active={active}
+          item={item}
+          onToggle={handleToggleGithubItem}
+        />
+      );
+    },
+    [githubSearchItems, selectedAttachments, handleToggleGithubItem],
+  );
+
+  const isVoiceSwitching = voice?.isVoiceSwitching ?? false;
+  const voiceButtonDisabled = !isConnected || isVoiceSwitching;
+  const realtimeVoiceButtonStyle = useCallback(
+    ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.realtimeVoiceButton as any,
+      (Boolean(hovered) ? styles.iconButtonHovered : undefined) as any,
+      (voiceButtonDisabled ? styles.buttonDisabled : undefined) as any,
+    ],
+    [voiceButtonDisabled],
+  );
+
   return (
     <Animated.View style={[styles.container, keyboardAnimatedStyle]}>
-      <AttachmentLightbox metadata={lightboxMetadata} onClose={() => setLightboxMetadata(null)} />
+      <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
       {/* Input area */}
       <View style={[styles.inputAreaContainer, isComposerLocked && styles.inputAreaLocked]}>
         <View style={styles.inputAreaContent}>
@@ -887,25 +1110,12 @@ export function Composer({
           {queuedMessages.length > 0 && (
             <View style={styles.queueContainer}>
               {queuedMessages.map((item) => (
-                <View key={item.id} style={styles.queueItem}>
-                  <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
-                    {item.text}
-                  </Text>
-                  <View style={styles.queueActions}>
-                    <Pressable
-                      onPress={() => handleEditQueuedMessage(item.id)}
-                      style={styles.queueActionButton}
-                    >
-                      <Pencil size={theme.iconSize.sm} color={theme.colors.foreground} />
-                    </Pressable>
-                    <Pressable
-                      onPress={() => handleSendQueuedNow(item.id)}
-                      style={[styles.queueActionButton, styles.queueSendButton]}
-                    >
-                      <ArrowUp size={theme.iconSize.sm} color="white" />
-                    </Pressable>
-                  </View>
-                </View>
+                <QueuedMessageRow
+                  key={item.id}
+                  item={item}
+                  onEdit={handleEditQueuedMessage}
+                  onSendNow={handleSendQueuedNow}
+                />
               ))}
             </View>
           )}
@@ -933,51 +1143,25 @@ export function Composer({
                 {selectedAttachments.map((attachment, index) => {
                   if (attachment.kind === "image") {
                     return (
-                      <AttachmentPill
+                      <ImageAttachmentPill
                         key={`${attachment.metadata.id}-${index}`}
-                        testID="composer-image-attachment-pill"
-                        onOpen={() => handleOpenAttachment(attachment)}
-                        onRemove={() => handleRemoveAttachment(index)}
-                        openAccessibilityLabel="Open image attachment"
-                        removeAccessibilityLabel="Remove image attachment"
+                        attachment={attachment}
+                        index={index}
                         disabled={isComposerLocked}
-                      >
-                        <ImageAttachmentThumbnail image={attachment.metadata} />
-                      </AttachmentPill>
+                        onOpen={handleOpenAttachment}
+                        onRemove={handleRemoveAttachment}
+                      />
                     );
                   }
-
-                  const item = attachment.item;
-                  const kindLabel = item.kind === "pr" ? "PR" : "issue";
                   return (
-                    <AttachmentPill
-                      key={`${item.kind}:${item.number}`}
-                      testID="composer-github-attachment-pill"
-                      onOpen={() => handleOpenAttachment(attachment)}
-                      onRemove={() => handleRemoveAttachment(index)}
-                      openAccessibilityLabel={`Open ${kindLabel} #${item.number}`}
-                      removeAccessibilityLabel={`Remove ${kindLabel} #${item.number}`}
+                    <GithubAttachmentPill
+                      key={`${attachment.item.kind}:${attachment.item.number}`}
+                      attachment={attachment}
+                      index={index}
                       disabled={isComposerLocked}
-                    >
-                      <View style={styles.githubPillBody}>
-                        <View style={styles.githubPillIcon}>
-                          {item.kind === "pr" ? (
-                            <GitPullRequest
-                              size={theme.iconSize.sm}
-                              color={theme.colors.foregroundMuted}
-                            />
-                          ) : (
-                            <CircleDot
-                              size={theme.iconSize.sm}
-                              color={theme.colors.foregroundMuted}
-                            />
-                          )}
-                        </View>
-                        <Text style={styles.githubPillText} numberOfLines={1}>
-                          #{item.number} {item.title}
-                        </Text>
-                      </View>
-                    </AttachmentPill>
+                      onOpen={handleOpenAttachment}
+                      onRemove={handleRemoveAttachment}
+                    />
                   );
                 })}
               </View>
@@ -1025,56 +1209,18 @@ export function Composer({
             <Combobox
               options={githubSearchOptions}
               value=""
-              onSelect={() => {}}
+              onSelect={noop}
               keepOpenOnSelect
               searchable
               searchPlaceholder="Search issues and PRs..."
               title="Attach issue or PR"
               open={isGithubPickerOpen}
-              onOpenChange={(open) => {
-                setIsGithubPickerOpen(open);
-                if (!open) {
-                  setGithubSearchQuery("");
-                }
-              }}
+              onOpenChange={handleGithubPickerOpenChange}
               onSearchQueryChange={setGithubSearchQuery}
               desktopPlacement="top-start"
               anchorRef={attachButtonRef}
               emptyText={githubSearchResultsQuery.isFetching ? "Searching..." : "No results found."}
-              renderOption={({ option, active }) => {
-                const item = githubSearchItems.find((candidate) => {
-                  return `${candidate.kind}:${candidate.number}` === option.id;
-                });
-                if (!item) {
-                  return <View key={option.id} />;
-                }
-                const selected = selectedAttachments.some(
-                  (attachment) =>
-                    attachment.kind !== "image" &&
-                    attachment.item.kind === item.kind &&
-                    attachment.item.number === item.number,
-                );
-                return (
-                  <ComboboxItem
-                    key={option.id}
-                    testID={`composer-github-option-${option.id}`}
-                    label={option.label}
-                    selected={selected}
-                    active={active}
-                    onPress={() => handleToggleGithubItem(item)}
-                    leadingSlot={
-                      item.kind === "pr" ? (
-                        <GitPullRequest
-                          size={theme.iconSize.sm}
-                          color={theme.colors.foregroundMuted}
-                        />
-                      ) : (
-                        <CircleDot size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-                      )
-                    }
-                  />
-                );
-              }}
+              renderOption={renderGithubPickerOption}
             />
           </View>
         </View>

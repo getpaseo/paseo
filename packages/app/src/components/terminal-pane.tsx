@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type PressableStateCallbackType,
+} from "react-native";
 import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { encodeTerminalKeyInput } from "@server/shared/terminal-key-input";
@@ -81,6 +88,54 @@ const EMPTY_MODIFIERS: ModifierState = {
 
 function terminalScopeKey(input: { serverId: string; cwd: string }): string {
   return `${input.serverId}:${input.cwd}`;
+}
+
+interface ModifierButtonProps {
+  modifier: keyof ModifierState;
+  active: boolean;
+  onToggle: (modifier: keyof ModifierState) => void;
+}
+
+function ModifierButton({ modifier, active, onToggle }: ModifierButtonProps) {
+  const handlePress = useCallback(() => onToggle(modifier), [onToggle, modifier]);
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.keyButton,
+      active && styles.keyButtonActive,
+      (Boolean(hovered) || pressed) && styles.keyButtonHovered,
+    ],
+    [active],
+  );
+  return (
+    <Pressable testID={`terminal-key-${modifier}`} onPress={handlePress} style={pressableStyle}>
+      <Text style={[styles.keyButtonText, active && styles.keyButtonTextActive]}>
+        {MODIFIER_LABELS[modifier]}
+      </Text>
+    </Pressable>
+  );
+}
+
+interface VirtualKeyButtonProps {
+  id: string;
+  label: string;
+  keyValue: string;
+  onSend: (key: string) => void;
+}
+
+function VirtualKeyButton({ id, label, keyValue, onSend }: VirtualKeyButtonProps) {
+  const handlePress = useCallback(() => onSend(keyValue), [onSend, keyValue]);
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.keyButton,
+      (Boolean(hovered) || pressed) && styles.keyButtonHovered,
+    ],
+    [],
+  );
+  return (
+    <Pressable testID={`terminal-key-${id}`} onPress={handlePress} style={pressableStyle}>
+      <Text style={styles.keyButtonText}>{label}</Text>
+    </Pressable>
+  );
 }
 
 export function TerminalPane({
@@ -548,6 +603,16 @@ export function TerminalPane({
     [keyboardPaddingStyle],
   );
 
+  const handleSwipeRight = useCallback(() => {
+    if (!swipeGesturesEnabled) return;
+    showMobileAgentList();
+  }, [swipeGesturesEnabled, showMobileAgentList]);
+
+  const handleSwipeLeft = useCallback(() => {
+    if (!swipeGesturesEnabled) return;
+    onOpenFileExplorer();
+  }, [swipeGesturesEnabled, onOpenFileExplorer]);
+
   if (!client || !isConnected) {
     return (
       <View style={styles.centerState}>
@@ -578,18 +643,8 @@ export function TerminalPane({
               xtermTheme={xtermTheme}
               swipeGesturesEnabled={swipeGesturesEnabled}
               initialSnapshot={initialSnapshot}
-              onSwipeRight={() => {
-                if (!swipeGesturesEnabled) {
-                  return;
-                }
-                showMobileAgentList();
-              }}
-              onSwipeLeft={() => {
-                if (!swipeGesturesEnabled) {
-                  return;
-                }
-                onOpenFileExplorer();
-              }}
+              onSwipeRight={handleSwipeRight}
+              onSwipeLeft={handleSwipeLeft}
               onInput={handleTerminalData}
               onResize={handleTerminalResize}
               onTerminalKey={handleTerminalKey}
@@ -623,39 +678,22 @@ export function TerminalPane({
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.keyboardRow}>
               {(Object.keys(MODIFIER_LABELS) as Array<keyof ModifierState>).map((modifier) => (
-                <Pressable
+                <ModifierButton
                   key={modifier}
-                  testID={`terminal-key-${modifier}`}
-                  onPress={() => toggleModifier(modifier)}
-                  style={({ hovered, pressed }) => [
-                    styles.keyButton,
-                    modifiers[modifier] && styles.keyButtonActive,
-                    (hovered || pressed) && styles.keyButtonHovered,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.keyButtonText,
-                      modifiers[modifier] && styles.keyButtonTextActive,
-                    ]}
-                  >
-                    {MODIFIER_LABELS[modifier]}
-                  </Text>
-                </Pressable>
+                  modifier={modifier}
+                  active={modifiers[modifier]}
+                  onToggle={toggleModifier}
+                />
               ))}
 
               {KEY_BUTTONS.map((button) => (
-                <Pressable
+                <VirtualKeyButton
                   key={button.id}
-                  testID={`terminal-key-${button.id}`}
-                  onPress={() => sendVirtualKey(button.key)}
-                  style={({ hovered, pressed }) => [
-                    styles.keyButton,
-                    (hovered || pressed) && styles.keyButtonHovered,
-                  ]}
-                >
-                  <Text style={styles.keyButtonText}>{button.label}</Text>
-                </Pressable>
+                  id={button.id}
+                  label={button.label}
+                  keyValue={button.key}
+                  onSend={sendVirtualKey}
+                />
               ))}
             </View>
           </ScrollView>
