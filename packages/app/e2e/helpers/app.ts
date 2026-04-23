@@ -33,20 +33,23 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
       try {
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed) || parsed.length !== 1) return true;
-        const entry = parsed[0] as any;
+        const entry = parsed[0] as { serverId?: string; connections?: unknown };
         if (entry?.serverId !== serverId) return true;
         const connections = entry?.connections;
         if (!Array.isArray(connections)) return true;
         if (
           connections.some(
-            (c: any) =>
+            (c: { type?: string; endpoint?: string }) =>
               c?.type === "directTcp" &&
               typeof c?.endpoint === "string" &&
               /:6767\b/.test(c.endpoint),
           )
         )
           return true;
-        return !connections.some((c: any) => c?.type === "directTcp" && c?.endpoint === endpoint);
+        return !connections.some(
+          (c: { type?: string; endpoint?: string }) =>
+            c?.type === "directTcp" && c?.endpoint === endpoint,
+        );
       } catch {
         return true;
       }
@@ -96,7 +99,7 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
     throw new Error("E2E expected @paseo:daemon-registry to be set before app load.");
   }
 
-  let registry: any;
+  let registry: unknown;
   try {
     registry = JSON.parse(snapshot.registryRaw);
   } catch {
@@ -109,7 +112,7 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
     );
   }
 
-  const daemon = registry[0];
+  const daemon = registry[0] as { serverId?: string; connections?: unknown };
   if (typeof daemon?.serverId !== "string" || daemon.serverId.length === 0) {
     throw new Error(
       `E2E expected seeded daemon to have a string serverId (got ${String(daemon?.serverId)}).`,
@@ -124,7 +127,10 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
   const connections: unknown = daemon?.connections;
   if (
     !Array.isArray(connections) ||
-    !connections.some((c: any) => c?.type === "directTcp" && c?.endpoint === expectedEndpoint)
+    !connections.some(
+      (c: { type?: string; endpoint?: string }) =>
+        c?.type === "directTcp" && c?.endpoint === expectedEndpoint,
+    )
   ) {
     throw new Error(
       `E2E expected seeded daemon connections to include directTcp ${expectedEndpoint} (got ${JSON.stringify(connections)}).`,
@@ -133,7 +139,7 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
   if (
     Array.isArray(connections) &&
     connections.some(
-      (c: any) =>
+      (c: { type?: string; endpoint?: string }) =>
         c?.type === "directTcp" && typeof c?.endpoint === "string" && /:6767\b/.test(c.endpoint),
     )
   ) {
@@ -146,7 +152,7 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
     throw new Error("E2E expected @paseo:create-agent-preferences to be set before app load.");
   }
   try {
-    const prefs = JSON.parse(snapshot.prefsRaw) as any;
+    const prefs = JSON.parse(snapshot.prefsRaw) as { serverId?: string };
     if (prefs?.serverId !== daemon.serverId) {
       throw new Error(
         `E2E expected create-agent-preferences.serverId to match seeded daemon serverId (${daemon.serverId}) (got ${String(prefs?.serverId)}).`,
@@ -343,8 +349,8 @@ export const ensureHostSelected = async (page: Page) => {
       const registryRaw = localStorage.getItem("@paseo:daemon-registry");
       const prefsRaw = localStorage.getItem("@paseo:create-agent-preferences");
       if (!registryRaw || !prefsRaw) return { ok: false, reason: "missing storage" } as const;
-      const registry = JSON.parse(registryRaw) as any[];
-      const prefs = JSON.parse(prefsRaw) as any;
+      const registry = JSON.parse(registryRaw) as Array<{ serverId?: string }>;
+      const prefs = JSON.parse(prefsRaw) as { serverId?: string };
       if (!Array.isArray(registry) || registry.length !== 1)
         return { ok: false, reason: "registry shape" } as const;
       const serverId = registry[0]?.serverId;

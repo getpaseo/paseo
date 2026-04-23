@@ -30,7 +30,10 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { SortableInlineList } from "@/components/sortable-inline-list";
-import type { DraggableRenderItemInfo } from "@/components/draggable-list.types";
+import type {
+  DraggableListDragHandleProps,
+  DraggableRenderItemInfo,
+} from "@/components/draggable-list.types";
 import { isNative, isWeb } from "@/constants/platform";
 import {
   ContextMenu,
@@ -220,7 +223,7 @@ function TabChip({
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
-  dragHandleProps: any;
+  dragHandleProps: DraggableListDragHandleProps | undefined;
 }) {
   const { theme } = useUnistyles();
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
@@ -243,7 +246,7 @@ function TabChip({
   const tabChipStyle = useCallback(
     () => [
       styles.tab,
-      isWeb && isDragging && ({ cursor: "grabbing" } as const),
+      isWeb && isDragging && ({ cursor: "grabbing" } as object),
       {
         minWidth: resolvedTabWidth,
         width: resolvedTabWidth,
@@ -322,10 +325,10 @@ function TabChip({
         <Tooltip delayDuration={400} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger asChild triggerRefProp="triggerRef">
             <ContextMenuTrigger
-              {...(dragHandleProps?.attributes as any)}
-              {...(dragHandleProps?.listeners as any)}
+              {...(dragHandleProps?.attributes as object | undefined)}
+              {...(dragHandleProps?.listeners as object | undefined)}
               testID={`workspace-tab-${tab.key}`}
-              triggerRef={dragHandleProps?.setActivatorNodeRef as any}
+              triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
               enabledOnMobile={false}
               style={tabChipStyle}
               onHoverIn={handleTabHoverIn}
@@ -359,7 +362,7 @@ function TabChip({
 
               {showCloseButton ? (
                 <Pressable
-                  {...(closeButtonDragBlockers as any)}
+                  {...(closeButtonDragBlockers as object | undefined)}
                   testID={closeButtonTestId}
                   disabled={isClosingTab}
                   onPressIn={handleCloseButtonPressIn}
@@ -771,7 +774,7 @@ function ResolvedDesktopTabChip({
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
-  dragHandleProps: any;
+  dragHandleProps: DraggableListDragHandleProps | undefined;
   showDropIndicatorBefore: boolean;
   showDropIndicatorAfter: boolean;
 }) {

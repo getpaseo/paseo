@@ -307,24 +307,24 @@ export function TooltipTrigger({
   }, [clearOpenTimer]);
 
   const handleHoverIn = useCallback(
-    (e?: any) => {
-      onHoverIn?.(e);
+    (e?: unknown) => {
+      onHoverIn?.(e as never);
       scheduleOpen();
     },
     [onHoverIn, scheduleOpen],
   );
 
   const handleHoverOut = useCallback(
-    (e?: any) => {
-      onHoverOut?.(e);
+    (e?: unknown) => {
+      onHoverOut?.(e as never);
       close();
     },
     [onHoverOut, close],
   );
 
   const handleFocus = useCallback(
-    (e: any) => {
-      onFocus?.(e);
+    (e: unknown) => {
+      onFocus?.(e as never);
       if (!ctx.enabled || disabled) return;
       if (!shouldOpenOnFocus()) return;
       clearOpenTimer();
@@ -334,16 +334,16 @@ export function TooltipTrigger({
   );
 
   const handleBlur = useCallback(
-    (e: any) => {
-      onBlur?.(e);
+    (e: unknown) => {
+      onBlur?.(e as never);
       close();
     },
     [close, onBlur],
   );
 
   const handlePress = useCallback(
-    (e: any) => {
-      onPress?.(e);
+    (e: unknown) => {
+      onPress?.(e as never);
       if (!ctx.enabled || disabled) {
         return;
       }
@@ -372,7 +372,7 @@ export function TooltipTrigger({
           onPointerLeave: handleHoverOut,
           onMouseEnter: handleHoverIn,
           onMouseLeave: handleHoverOut,
-        } as any)
+        } as object)
       : null),
   };
 
@@ -382,21 +382,21 @@ export function TooltipTrigger({
       throw new Error("TooltipTrigger with asChild expects a single React element child");
     }
 
-    const childProps = child.props as Record<string, any>;
+    const childProps = child.props as Record<string, unknown>;
     const mergedProps = {
       ...childProps,
       ...triggerProps,
       disabled: childProps.disabled || disabled,
-      onHoverIn: composeEventHandlers(childProps.onHoverIn, handleHoverIn),
-      onHoverOut: composeEventHandlers(childProps.onHoverOut, handleHoverOut),
-      onFocus: composeEventHandlers(childProps.onFocus, handleFocus),
-      onBlur: composeEventHandlers(childProps.onBlur, handleBlur),
-      onPress: composeEventHandlers(childProps.onPress, handlePress),
-      onPointerEnter: composeEventHandlers(childProps.onPointerEnter, handleHoverIn),
-      onPointerLeave: composeEventHandlers(childProps.onPointerLeave, handleHoverOut),
-      onMouseEnter: composeEventHandlers(childProps.onMouseEnter, handleHoverIn),
-      onMouseLeave: composeEventHandlers(childProps.onMouseLeave, handleHoverOut),
-    } as Record<string, any>;
+      onHoverIn: composeEventHandlers(childProps.onHoverIn as never, handleHoverIn),
+      onHoverOut: composeEventHandlers(childProps.onHoverOut as never, handleHoverOut),
+      onFocus: composeEventHandlers(childProps.onFocus as never, handleFocus),
+      onBlur: composeEventHandlers(childProps.onBlur as never, handleBlur),
+      onPress: composeEventHandlers(childProps.onPress as never, handlePress),
+      onPointerEnter: composeEventHandlers(childProps.onPointerEnter as never, handleHoverIn),
+      onPointerLeave: composeEventHandlers(childProps.onPointerLeave as never, handleHoverOut),
+      onMouseEnter: composeEventHandlers(childProps.onMouseEnter as never, handleHoverIn),
+      onMouseLeave: composeEventHandlers(childProps.onMouseLeave as never, handleHoverOut),
+    } as Record<string, unknown>;
 
     const existingRefProp = childProps[triggerRefProp] as Ref<View | null> | undefined;
     mergedProps[triggerRefProp] = (node: View | null) => {

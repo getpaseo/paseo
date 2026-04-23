@@ -842,8 +842,8 @@ export function Composer({
 
   const cancelButtonStyle = useMemo(
     () => [
-      styles.cancelButton as any,
-      (!isConnected || isCancellingAgent ? styles.buttonDisabled : undefined) as any,
+      styles.cancelButton as object,
+      (!isConnected || isCancellingAgent ? styles.buttonDisabled : undefined) as object | undefined,
     ],
     [isConnected, isCancellingAgent],
   );
@@ -1105,9 +1105,9 @@ export function Composer({
   const voiceButtonDisabled = !isConnected || isVoiceSwitching;
   const realtimeVoiceButtonStyle = useCallback(
     ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.realtimeVoiceButton as any,
-      (Boolean(hovered) ? styles.iconButtonHovered : undefined) as any,
-      (voiceButtonDisabled ? styles.buttonDisabled : undefined) as any,
+      styles.realtimeVoiceButton as object,
+      (Boolean(hovered) ? styles.iconButtonHovered : undefined) as object | undefined,
+      (voiceButtonDisabled ? styles.buttonDisabled : undefined) as object | undefined,
     ],
     [voiceButtonDisabled],
   );
@@ -1250,7 +1250,7 @@ export function Composer({
   );
 }
 
-const styles = StyleSheet.create(((theme: Theme) => ({
+const styles = StyleSheet.create((theme: Theme) => ({
   container: {
     flexDirection: "column",
     position: "relative",
@@ -1415,6 +1415,6 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     color: theme.colors.palette.red[500],
     fontSize: theme.fontSize.sm,
   },
-})) as any) as Record<string, any>;
+})) as unknown as Record<string, object>;
 
 const QUEUE_SEND_BUTTON_STYLE = [styles.queueActionButton, styles.queueSendButton];

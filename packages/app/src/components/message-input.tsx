@@ -19,6 +19,7 @@ import {
   forwardRef,
 } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import type { Theme } from "@/styles/theme";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useDictation } from "@/hooks/use-dictation";
@@ -657,8 +658,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const getWebTextArea = useCallback((): TextAreaHandle | null => {
     const current = textInputRef.current;
     if (!current) return null;
-    if (typeof (current as any).getNativeRef === "function") {
-      const native = (current as any).getNativeRef();
+    const candidate = current as { getNativeRef?: () => unknown };
+    if (typeof candidate.getNativeRef === "function") {
+      const native = candidate.getNativeRef();
       if (isTextAreaLike(native)) return native;
     }
     if (isTextAreaLike(current)) return current;
@@ -692,11 +694,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
       return;
     }
 
-    const textarea = getWebTextArea();
+    const textarea = getWebTextArea() as
+      | (TextAreaHandle & {
+          addEventListener?: (type: string, listener: (e: ClipboardEvent) => void) => void;
+          removeEventListener?: (type: string, listener: (e: ClipboardEvent) => void) => void;
+        })
+      | null;
     if (
       !textarea ||
-      typeof (textarea as any).addEventListener !== "function" ||
-      typeof (textarea as any).removeEventListener !== "function"
+      typeof textarea.addEventListener !== "function" ||
+      typeof textarea.removeEventListener !== "function"
     ) {
       return;
     }
@@ -727,10 +734,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         });
     };
 
-    (textarea as any).addEventListener("paste", handlePaste);
+    textarea.addEventListener("paste", handlePaste);
     return () => {
       disposed = true;
-      (textarea as any).removeEventListener("paste", handlePaste);
+      textarea.removeEventListener?.("paste", handlePaste);
     };
   }, [
     disabled,
@@ -1227,7 +1234,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   );
 });
 
-const styles = StyleSheet.create(((theme: any) => ({
+const styles = StyleSheet.create((theme: Theme) => ({
   container: {
     position: "relative",
   },
@@ -1272,11 +1279,11 @@ const styles = StyleSheet.create(((theme: any) => ({
     fontWeight: theme.fontWeight.normal,
     lineHeight: theme.fontSize.base * 1.4,
     ...(isWeb
-      ? {
-          outlineStyle: "none" as const,
+      ? ({
+          outlineStyle: "none",
           outlineWidth: 0,
           outlineColor: "transparent",
-        }
+        } as object)
       : {}),
   },
   buttonRow: {
@@ -1362,4 +1369,4 @@ const styles = StyleSheet.create(((theme: any) => ({
     right: 0,
     bottom: 0,
   },
-})) as any) as Record<string, any>;
+})) as unknown as Record<string, object>;
