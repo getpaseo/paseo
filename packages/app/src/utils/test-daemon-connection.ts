@@ -59,10 +59,9 @@ export async function buildClientConfig(
     suppressSendErrors: true,
     reconnect: { enabled: false },
     ...(isDev ? { runtimeMetricsIntervalMs: 10_000 } : {}),
-    ...(connection.type === "directSocket" || connection.type === "directPipe"
-      ? localTransportFactory
-        ? { transportFactory: localTransportFactory }
-        : {}
+    ...((connection.type === "directSocket" || connection.type === "directPipe") &&
+    localTransportFactory
+      ? { transportFactory: localTransportFactory }
       : {}),
   };
 

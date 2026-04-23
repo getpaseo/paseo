@@ -119,7 +119,10 @@ export function VolumeMeter({
   // Create animated styles unconditionally at top level
   const line1Style = useAnimatedStyle(() => {
     const isActive = isSpeaking;
-    const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
+    let baseOpacity: number;
+    if (isMuted) baseOpacity = 0.3;
+    else if (isActive) baseOpacity = 0.9;
+    else baseOpacity = 0.5;
     const currentVolume = isMuted ? 0 : animatedVolume.value;
     const currentHeight = MIN_HEIGHT + MAX_HEIGHT * currentVolume * 1.2;
     const volumeBoost = isMuted || !isActive ? 0 : currentVolume * 0.3;
@@ -131,7 +134,10 @@ export function VolumeMeter({
 
   const line2Style = useAnimatedStyle(() => {
     const isActive = isSpeaking;
-    const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
+    let baseOpacity: number;
+    if (isMuted) baseOpacity = 0.3;
+    else if (isActive) baseOpacity = 0.9;
+    else baseOpacity = 0.5;
     const currentVolume = isMuted ? 0 : animatedVolume.value;
     const currentHeight = MIN_HEIGHT + MAX_HEIGHT * currentVolume * 1.05;
     const volumeBoost = isMuted || !isActive ? 0 : currentVolume * 0.3;
@@ -143,7 +149,10 @@ export function VolumeMeter({
 
   const line3Style = useAnimatedStyle(() => {
     const isActive = isSpeaking;
-    const baseOpacity = isMuted ? 0.3 : isActive ? 0.9 : 0.5;
+    let baseOpacity: number;
+    if (isMuted) baseOpacity = 0.3;
+    else if (isActive) baseOpacity = 0.9;
+    else baseOpacity = 0.5;
     const currentVolume = isMuted ? 0 : animatedVolume.value;
     const currentHeight = MIN_HEIGHT + MAX_HEIGHT * currentVolume * 0.9;
     const volumeBoost = isMuted || !isActive ? 0 : currentVolume * 0.3;

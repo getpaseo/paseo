@@ -338,13 +338,11 @@ export function WebDesktopScrollbarOverlay({
   }
 
   const handleVisible = isDragging || isScrollVisible || isHandleHovered;
-  const handleOpacity = isDragging
-    ? HANDLE_OPACITY_DRAGGING
-    : isHandleHovered
-      ? HANDLE_OPACITY_HOVERED
-      : isScrollVisible
-        ? HANDLE_OPACITY_VISIBLE
-        : 0;
+  let handleOpacity: number;
+  if (isDragging) handleOpacity = HANDLE_OPACITY_DRAGGING;
+  else if (isHandleHovered) handleOpacity = HANDLE_OPACITY_HOVERED;
+  else if (isScrollVisible) handleOpacity = HANDLE_OPACITY_VISIBLE;
+  else handleOpacity = 0;
   const handleWidth = isDragging || isHandleHovered ? HANDLE_WIDTH_ACTIVE : HANDLE_WIDTH_IDLE;
   const handleColor = theme.colors.scrollbarHandle;
   const handleCursor = isDragging ? "grabbing" : "grab";

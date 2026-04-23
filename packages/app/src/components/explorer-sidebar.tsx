@@ -286,7 +286,10 @@ export function ExplorerSidebar({
 
   // Mobile: full-screen overlay with gesture.
   // On web, keep it interactive only while open so closed sidebars don't eat taps.
-  const overlayPointerEvents = isWeb ? (isOpen ? "auto" : "none") : "box-none";
+  let overlayPointerEvents: "auto" | "none" | "box-none";
+  if (!isWeb) overlayPointerEvents = "box-none";
+  else if (isOpen) overlayPointerEvents = "auto";
+  else overlayPointerEvents = "none";
 
   // Navigation stacks can keep previous screens mounted; hide sidebars for unfocused
   // screens so only the active screen exposes explorer/terminal surfaces.

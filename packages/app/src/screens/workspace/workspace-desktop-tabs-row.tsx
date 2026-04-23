@@ -342,19 +342,18 @@ function TabChip({
                 <View style={styles.tabIcon}>
                   <WorkspaceTabIcon presentation={presentation} active={isHighlighted} />
                 </View>
-                {showLabel ? (
-                  presentation.titleState === "loading" ? (
-                    <View style={tabLabelSkeletonStyle} />
-                  ) : (
-                    <Text
-                      style={tabLabelStyle}
-                      selectable={false}
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                    >
-                      {presentation.label}
-                    </Text>
-                  )
+                {showLabel && presentation.titleState === "loading" ? (
+                  <View style={tabLabelSkeletonStyle} />
+                ) : null}
+                {showLabel && presentation.titleState !== "loading" ? (
+                  <Text
+                    style={tabLabelStyle}
+                    selectable={false}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {presentation.label}
+                  </Text>
                 ) : null}
               </View>
 

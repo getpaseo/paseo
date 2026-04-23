@@ -205,25 +205,25 @@ export const useWorkspaceTabsStore = create<WorkspaceTabsState>()(
           const currentOrder = state.tabOrderByWorkspace[key] ?? [];
           const nextOrder = currentOrder.filter((value) => value !== normalizedTabId);
 
-          const nextUiTabsByWorkspace =
-            nextTabs.length === 0
-              ? (() => {
-                  const { [key]: _removed, ...rest } = state.uiTabsByWorkspace;
-                  return rest;
-                })()
-              : nextTabs.length === currentTabs.length
-                ? state.uiTabsByWorkspace
-                : { ...state.uiTabsByWorkspace, [key]: nextTabs };
+          let nextUiTabsByWorkspace: typeof state.uiTabsByWorkspace;
+          if (nextTabs.length === 0) {
+            const { [key]: _removed, ...rest } = state.uiTabsByWorkspace;
+            nextUiTabsByWorkspace = rest;
+          } else if (nextTabs.length === currentTabs.length) {
+            nextUiTabsByWorkspace = state.uiTabsByWorkspace;
+          } else {
+            nextUiTabsByWorkspace = { ...state.uiTabsByWorkspace, [key]: nextTabs };
+          }
 
-          const nextTabOrderByWorkspace =
-            nextOrder.length === 0
-              ? (() => {
-                  const { [key]: _removed, ...rest } = state.tabOrderByWorkspace;
-                  return rest;
-                })()
-              : nextOrder.length === currentOrder.length
-                ? state.tabOrderByWorkspace
-                : { ...state.tabOrderByWorkspace, [key]: nextOrder };
+          let nextTabOrderByWorkspace: typeof state.tabOrderByWorkspace;
+          if (nextOrder.length === 0) {
+            const { [key]: _removed, ...rest } = state.tabOrderByWorkspace;
+            nextTabOrderByWorkspace = rest;
+          } else if (nextOrder.length === currentOrder.length) {
+            nextTabOrderByWorkspace = state.tabOrderByWorkspace;
+          } else {
+            nextTabOrderByWorkspace = { ...state.tabOrderByWorkspace, [key]: nextOrder };
+          }
 
           const currentFocused = state.focusedTabIdByWorkspace[key] ?? null;
           const nextFocused =

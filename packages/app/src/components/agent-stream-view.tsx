@@ -649,17 +649,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderStreamItem(item, index, items, index === 0 ? lastHistoryItem : null),
       [lastHistoryItem, renderStreamItem],
     );
-    const liveAuxiliaryHeaderStyle = useMemo(
-      () => [
-        stylesheet.listHeaderContent,
-        boundary.hasLiveHead
-          ? streamRenderStrategy.getFlatListInverted()
-            ? { paddingBottom: looseGap }
-            : { paddingTop: looseGap }
-          : null,
-      ],
-      [boundary.hasLiveHead, streamRenderStrategy, looseGap],
-    );
+    const liveAuxiliaryHeaderStyle = useMemo(() => {
+      let headerPadding: { paddingBottom: number } | { paddingTop: number } | null;
+      if (!boundary.hasLiveHead) headerPadding = null;
+      else if (streamRenderStrategy.getFlatListInverted())
+        headerPadding = { paddingBottom: looseGap };
+      else headerPadding = { paddingTop: looseGap };
+      return [stylesheet.listHeaderContent, headerPadding];
+    }, [boundary.hasLiveHead, streamRenderStrategy, looseGap]);
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {
       if (!auxiliary.pendingPermissions && !auxiliary.workingIndicator) {
         return null;
@@ -1080,12 +1077,11 @@ function PermissionRequestCard({
           const textColor = isPrimary ? theme.colors.foreground : theme.colors.foregroundMuted;
           const iconColor = textColor;
           const Icon = action.behavior === "allow" ? Check : X;
-          const testID =
-            action.behavior === "deny"
-              ? "permission-request-deny"
-              : action.id === "accept" || action.id === "implement"
-                ? "permission-request-accept"
-                : `permission-request-action-${action.id}`;
+          let testID: string;
+          if (action.behavior === "deny") testID = "permission-request-deny";
+          else if (action.id === "accept" || action.id === "implement")
+            testID = "permission-request-accept";
+          else testID = `permission-request-action-${action.id}`;
 
           return (
             <PermissionActionButton

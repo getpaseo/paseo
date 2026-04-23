@@ -98,7 +98,8 @@ export function DictationControls({
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="small" color={theme.colors.foreground} />
           </View>
-        ) : isFailed ? (
+        ) : null}
+        {!actionsDisabled && isFailed ? (
           <Pressable
             onPress={onRetry}
             accessibilityLabel="Retry dictation"
@@ -106,7 +107,8 @@ export function DictationControls({
           >
             <RefreshCcw size={theme.iconSize.sm} color={theme.colors.surface0} />
           </Pressable>
-        ) : (
+        ) : null}
+        {!actionsDisabled && !isFailed ? (
           <>
             <Pressable
               onPress={onAccept}
@@ -123,7 +125,7 @@ export function DictationControls({
               <ArrowUp size={theme.iconSize.sm} color={theme.colors.surface0} />
             </Pressable>
           </>
-        )}
+        ) : null}
       </View>
     </View>
   );
@@ -216,7 +218,8 @@ export function DictationOverlay({
           <View style={overlayStyles.loadingContainer}>
             <ActivityIndicator size="small" color={theme.colors.palette.white} />
           </View>
-        ) : isFailed ? (
+        ) : null}
+        {!actionsDisabled && isFailed ? (
           <Pressable
             onPress={onRetry}
             accessibilityRole="button"
@@ -225,7 +228,8 @@ export function DictationOverlay({
           >
             <RefreshCcw size={theme.iconSize.lg} color={theme.colors.accent} strokeWidth={2.5} />
           </Pressable>
-        ) : (
+        ) : null}
+        {!actionsDisabled && !isFailed ? (
           <>
             <Pressable
               onPress={onAccept}
@@ -248,7 +252,7 @@ export function DictationOverlay({
               <ArrowUp size={theme.iconSize.lg} color={theme.colors.accent} strokeWidth={2.5} />
             </Pressable>
           </>
-        )}
+        ) : null}
       </View>
     </View>
   );

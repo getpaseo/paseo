@@ -242,13 +242,13 @@ export function ToastViewport({
     return null;
   }
 
-  const icon =
-    toast.icon ??
-    (toast.variant === "success" ? (
-      <CheckCircle2 size={18} color={theme.colors.primary} />
-    ) : toast.variant === "error" ? (
-      <AlertTriangle size={18} color={theme.colors.destructive} />
-    ) : null);
+  let defaultIcon: ReactNode = null;
+  if (toast.variant === "success") {
+    defaultIcon = <CheckCircle2 size={18} color={theme.colors.primary} />;
+  } else if (toast.variant === "error") {
+    defaultIcon = <AlertTriangle size={18} color={theme.colors.destructive} />;
+  }
+  const icon = toast.icon ?? defaultIcon;
 
   const content = (
     <View style={styles.container} pointerEvents="box-none">

@@ -3,9 +3,20 @@ import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check, X, XCircle } from "lucide-react-native";
-import { useDownloadStore, formatSpeed, formatEta } from "@/stores/download-store";
+import { useDownloadStore, formatSpeed, formatEta, type Download } from "@/stores/download-store";
 
 const AUTO_DISMISS_DELAY = 3000;
+
+function getDownloadStatusText(download: Download): string {
+  if (download.status === "downloading") {
+    if (download.progress) {
+      return `${Math.round(download.progress.percent * 100)}% · ${formatSpeed(download.progress.speed)} · ${formatEta(download.progress.eta)}`;
+    }
+    return "Starting...";
+  }
+  if (download.status === "complete") return "Download complete";
+  return download.message ?? "Download failed";
+}
 
 export function DownloadToast() {
   const { theme } = useUnistyles();
@@ -56,24 +67,18 @@ export function DownloadToast() {
       <View style={styles.toast}>
         {activeDownload.status === "downloading" ? (
           <ActivityIndicator size="small" color={theme.colors.foreground} />
-        ) : activeDownload.status === "complete" ? (
+        ) : null}
+        {activeDownload.status === "complete" ? (
           <Check size={18} color={theme.colors.primary} />
-        ) : (
+        ) : null}
+        {activeDownload.status !== "downloading" && activeDownload.status !== "complete" ? (
           <XCircle size={18} color={theme.colors.destructive} />
-        )}
+        ) : null}
         <View style={styles.textContainer}>
           <Text style={styles.fileName} numberOfLines={1}>
             {activeDownload.fileName}
           </Text>
-          <Text style={styles.status}>
-            {activeDownload.status === "downloading"
-              ? activeDownload.progress
-                ? `${Math.round(activeDownload.progress.percent * 100)}% · ${formatSpeed(activeDownload.progress.speed)} · ${formatEta(activeDownload.progress.eta)}`
-                : "Starting..."
-              : activeDownload.status === "complete"
-                ? "Download complete"
-                : (activeDownload.message ?? "Download failed")}
-          </Text>
+          <Text style={styles.status}>{getDownloadStatusText(activeDownload)}</Text>
           {activeDownload.status === "downloading" && activeDownload.progress && (
             <View style={styles.progressBar}>
               <ProgressFill percent={activeDownload.progress.percent} />

@@ -285,8 +285,14 @@ export function DropdownMenuTrigger({
 }
 
 function getTransformOrigin(placement: Placement, alignment: Alignment): string {
-  const vertical = placement === "bottom" ? "top" : placement === "top" ? "bottom" : "center";
-  const horizontal = alignment === "start" ? "left" : alignment === "end" ? "right" : "center";
+  let vertical: string;
+  if (placement === "bottom") vertical = "top";
+  else if (placement === "top") vertical = "bottom";
+  else vertical = "center";
+  let horizontal: string;
+  if (alignment === "start") horizontal = "left";
+  else if (alignment === "end") horizontal = "right";
+  else horizontal = "center";
   return `${vertical} ${horizontal}`;
 }
 
@@ -610,21 +616,23 @@ export function DropdownMenuItem({
   }, [isDisabled, selectItem, onSelect, closeOnSelect]);
 
   const itemPressableStyle = useCallback(
-    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.item,
-      selected
-        ? selectedVariant === "accent"
-          ? styles.itemSelectedAccent
-          : styles.itemSelected
-        : null,
-      selected && (Boolean(hovered) || pressed) && selectedVariant !== "accent"
-        ? styles.itemSelectedInteractive
-        : null,
-      isDisabled ? styles.itemDisabled : null,
-      muted && !isDisabled ? styles.itemMuted : null,
-      Boolean(hovered) && !pressed && !isDisabled ? styles.itemHovered : null,
-      pressed && !isDisabled ? styles.itemPressed : null,
-    ],
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+      let selectedStyle: typeof styles.itemSelectedAccent | typeof styles.itemSelected | null;
+      if (!selected) selectedStyle = null;
+      else if (selectedVariant === "accent") selectedStyle = styles.itemSelectedAccent;
+      else selectedStyle = styles.itemSelected;
+      return [
+        styles.item,
+        selectedStyle,
+        selected && (Boolean(hovered) || pressed) && selectedVariant !== "accent"
+          ? styles.itemSelectedInteractive
+          : null,
+        isDisabled ? styles.itemDisabled : null,
+        muted && !isDisabled ? styles.itemMuted : null,
+        Boolean(hovered) && !pressed && !isDisabled ? styles.itemHovered : null,
+        pressed && !isDisabled ? styles.itemPressed : null,
+      ];
+    },
     [selected, selectedVariant, isDisabled, muted],
   );
 

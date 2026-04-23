@@ -192,14 +192,18 @@ export function WorkspaceDraftAgentTab({
       if (!provider) {
         throw new Error("Select a model");
       }
+      let modeIdOverride: { modeId: string } | Record<string, never>;
+      if (autoSubmitConfig?.modeId) {
+        modeIdOverride = { modeId: autoSubmitConfig.modeId };
+      } else if (composerState.modeOptions.length > 0 && composerState.selectedMode !== "") {
+        modeIdOverride = { modeId: composerState.selectedMode };
+      } else {
+        modeIdOverride = {};
+      }
       const config = buildWorkspaceDraftAgentConfig({
         provider,
         cwd: workspaceDirectory,
-        ...(autoSubmitConfig?.modeId
-          ? { modeId: autoSubmitConfig.modeId }
-          : composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
-            ? { modeId: composerState.selectedMode }
-            : {}),
+        ...modeIdOverride,
         model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
         thinkingOptionId:
           autoSubmitConfig?.thinkingOptionId ??

@@ -183,7 +183,10 @@ function getElementDescriptor(element: HTMLElement | null): string | null {
   const id = element.id ? `#${element.id}` : "";
   const testId = element.getAttribute?.("data-testid");
   const label = element.getAttribute?.("aria-label");
-  const suffix = testId ? `[data-testid="${testId}"]` : label ? `[aria-label="${label}"]` : "";
+  let suffix: string;
+  if (testId) suffix = `[data-testid="${testId}"]`;
+  else if (label) suffix = `[aria-label="${label}"]`;
+  else suffix = "";
   return `${tag}${id}${suffix}`;
 }
 
@@ -576,8 +579,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     }
     void voice.startVoice(voiceServerId, voiceAgentId).catch((error) => {
       console.error("[MessageInput] Failed to start realtime voice", error);
-      const message =
-        error instanceof Error ? error.message : typeof error === "string" ? error : null;
+      let message: string | null;
+      if (error instanceof Error) message = error.message;
+      else if (typeof error === "string") message = error;
+      else message = null;
       if (message && message.trim().length > 0) {
         toast.error(message);
       }
@@ -675,11 +680,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const getWebElement = useCallback((target: "root" | "wrapper"): HTMLElement | null => {
     const current = target === "root" ? rootRef.current : inputWrapperRef.current;
     if (!current) return null;
-    return current instanceof HTMLElement
-      ? current
-      : (current as unknown as { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect
-        ? (current as unknown as HTMLElement)
-        : null;
+    if (current instanceof HTMLElement) return current;
+    if ((current as unknown as { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect) {
+      return current as unknown as HTMLElement;
+    }
+    return null;
   }, []);
 
   useEffect(() => {
@@ -924,15 +929,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const isSendButtonDisabled =
     disabled || (!canPressLoadingButton && (isSubmitDisabled || isSubmitLoading));
   const defaultActionQueues = defaultSendBehavior === "queue" && isAgentRunning;
-  const defaultSubmitAccessibilityLabel = canPressLoadingButton
-    ? "Interrupt agent"
-    : defaultActionQueues
-      ? "Queue message"
-      : isAgentRunning
-        ? "Send and interrupt"
-        : "Send message";
+  let defaultSubmitAccessibilityLabel: string;
+  if (canPressLoadingButton) defaultSubmitAccessibilityLabel = "Interrupt agent";
+  else if (defaultActionQueues) defaultSubmitAccessibilityLabel = "Queue message";
+  else if (isAgentRunning) defaultSubmitAccessibilityLabel = "Send and interrupt";
+  else defaultSubmitAccessibilityLabel = "Send message";
   const submitAccessibilityLabel =
     submitButtonAccessibilityLabel ?? defaultSubmitAccessibilityLabel;
+
+  let voiceButtonAccessibilityLabel: string;
+  if (isRealtimeVoiceForCurrentAgent) {
+    voiceButtonAccessibilityLabel = voice?.isMuted ? "Unmute Voice mode" : "Mute Voice mode";
+  } else if (isDictating) {
+    voiceButtonAccessibilityLabel = "Stop dictation";
+  } else {
+    voiceButtonAccessibilityLabel = "Start dictation";
+  }
+
+  let voiceTooltipText: string;
+  if (isRealtimeVoiceForCurrentAgent) {
+    voiceTooltipText = voice?.isMuted ? "Unmute voice" : "Mute voice";
+  } else {
+    voiceTooltipText = "Dictation";
+  }
 
   const handleInputChange = useCallback(
     (nextValue: string) => {
@@ -1107,42 +1126,32 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                 onPress={handleVoicePress}
                 disabled={!isDictationStartEnabled}
                 accessibilityRole="button"
-                accessibilityLabel={
-                  isRealtimeVoiceForCurrentAgent
-                    ? voice?.isMuted
-                      ? "Unmute Voice mode"
-                      : "Mute Voice mode"
-                    : isDictating
-                      ? "Stop dictation"
-                      : "Start dictation"
-                }
+                accessibilityLabel={voiceButtonAccessibilityLabel}
                 style={voiceButtonStyle}
               >
-                {({ hovered }) =>
-                  isDictating ? (
-                    <Square size={buttonIconSize} color="white" fill="white" />
-                  ) : isRealtimeVoiceForCurrentAgent && voice?.isMuted ? (
-                    <MicOff
-                      size={buttonIconSize}
-                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                    />
-                  ) : (
+                {({ hovered }) => {
+                  if (isDictating) {
+                    return <Square size={buttonIconSize} color="white" fill="white" />;
+                  }
+                  if (isRealtimeVoiceForCurrentAgent && voice?.isMuted) {
+                    return (
+                      <MicOff
+                        size={buttonIconSize}
+                        color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+                      />
+                    );
+                  }
+                  return (
                     <Mic
                       size={buttonIconSize}
                       color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
                     />
-                  )
-                }
+                  );
+                }}
               </TooltipTrigger>
               <TooltipContent side="top" align="center" offset={8}>
                 <View style={styles.tooltipRow}>
-                  <Text style={styles.tooltipText}>
-                    {isRealtimeVoiceForCurrentAgent
-                      ? voice?.isMuted
-                        ? "Unmute voice"
-                        : "Mute voice"
-                      : "Dictation"}
-                  </Text>
+                  <Text style={styles.tooltipText}>{voiceTooltipText}</Text>
                   {(isRealtimeVoiceForCurrentAgent ? voiceMuteToggleKeys : dictationToggleKeys) ? (
                     <Shortcut
                       chord={
@@ -1166,13 +1175,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                   accessibilityRole="button"
                   style={sendButtonCombinedStyle}
                 >
-                  {isSubmitLoading ? (
-                    <ActivityIndicator size="small" color="white" />
-                  ) : submitIcon === "return" ? (
+                  {isSubmitLoading ? <ActivityIndicator size="small" color="white" /> : null}
+                  {!isSubmitLoading && submitIcon === "return" ? (
                     <CornerDownLeft size={buttonIconSize} color="white" />
-                  ) : (
+                  ) : null}
+                  {!isSubmitLoading && submitIcon !== "return" ? (
                     <ArrowUp size={buttonIconSize} color="white" />
-                  )}
+                  ) : null}
                 </TooltipTrigger>
                 <TooltipContent side="top" align="center" offset={8}>
                   <View style={styles.tooltipRow}>
@@ -1204,7 +1213,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
             onRetry={dictationStatus === "failed" ? handleRetryFailedRecording : undefined}
             onDiscard={dictationStatus === "failed" ? handleDiscardFailedRecording : undefined}
           />
-        ) : showRealtimeOverlay && voice ? (
+        ) : null}
+        {!showDictationOverlay && showRealtimeOverlay && voice ? (
           <RealtimeVoiceOverlay
             isMuted={voice.isMuted}
             isSwitching={voice.isVoiceSwitching}

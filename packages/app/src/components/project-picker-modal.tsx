@@ -248,11 +248,11 @@ export function ProjectPickerModal() {
             keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
           >
-            {isSubmitting ? (
-              <Text style={emptyTextStyle}>Opening project...</Text>
-            ) : options.length === 0 && !query.trim() ? (
+            {isSubmitting ? <Text style={emptyTextStyle}>Opening project...</Text> : null}
+            {!isSubmitting && options.length === 0 && !query.trim() ? (
               <Text style={emptyTextStyle}>Start typing a path</Text>
-            ) : (
+            ) : null}
+            {!isSubmitting && !(options.length === 0 && !query.trim()) ? (
               <>
                 {options.map((path, index) => (
                   <PathRow
@@ -263,7 +263,7 @@ export function ProjectPickerModal() {
                   />
                 ))}
               </>
-            )}
+            ) : null}
           </ScrollView>
         </View>
       </View>

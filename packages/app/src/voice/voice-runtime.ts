@@ -271,12 +271,10 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     bytes: Uint8Array,
     format: string,
   ): { arrayBuffer(): Promise<ArrayBuffer>; size: number; type: string } {
-    const mimeType =
-      format === "pcm"
-        ? "audio/pcm;rate=24000;bits=16"
-        : format === "mp3"
-          ? "audio/mpeg"
-          : `audio/${format}`;
+    let mimeType: string;
+    if (format === "pcm") mimeType = "audio/pcm;rate=24000;bits=16";
+    else if (format === "mp3") mimeType = "audio/mpeg";
+    else mimeType = `audio/${format}`;
 
     return {
       size: bytes.byteLength,

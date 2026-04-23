@@ -83,12 +83,11 @@ export function CalloutCard({
           </View>
         ) : null}
 
-        {hasDescription ? (
-          typeof description === "string" ? (
-            <CalloutDescriptionText>{description}</CalloutDescriptionText>
-          ) : (
-            <View style={styles.descriptionSlot}>{description}</View>
-          )
+        {hasDescription && typeof description === "string" ? (
+          <CalloutDescriptionText>{description}</CalloutDescriptionText>
+        ) : null}
+        {hasDescription && typeof description !== "string" ? (
+          <View style={styles.descriptionSlot}>{description}</View>
         ) : null}
 
         {visibleActions.length > 0 ? (

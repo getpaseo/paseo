@@ -229,22 +229,22 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
     };
   }, [isError]);
 
-  const progressSteps =
-    phase === "starting-daemon"
-      ? [{ key: "starting-daemon", label: "Starting local server...", status: "active" as const }]
-      : phase === "connecting"
-        ? [
-            { key: "starting-daemon", label: "Started local server", status: "complete" as const },
-            {
-              key: "connecting",
-              label: "Connecting to local server...",
-              status: "active" as const,
-            },
-          ]
-        : [
-            { key: "starting-daemon", label: "Started local server", status: "complete" as const },
-            { key: "connecting", label: "Connected to local server", status: "complete" as const },
-          ];
+  let progressSteps: { key: string; label: string; status: "active" | "complete" }[];
+  if (phase === "starting-daemon") {
+    progressSteps = [
+      { key: "starting-daemon", label: "Starting local server...", status: "active" },
+    ];
+  } else if (phase === "connecting") {
+    progressSteps = [
+      { key: "starting-daemon", label: "Started local server", status: "complete" },
+      { key: "connecting", label: "Connecting to local server...", status: "active" },
+    ];
+  } else {
+    progressSteps = [
+      { key: "starting-daemon", label: "Started local server", status: "complete" },
+      { key: "connecting", label: "Connected to local server", status: "complete" },
+    ];
+  }
 
   const logsText = useMemo(() => {
     if (isLoadingLogs) {

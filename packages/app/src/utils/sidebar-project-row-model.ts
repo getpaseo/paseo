@@ -43,9 +43,14 @@ export function buildSidebarProjectRowModel(input: {
 
   const collapsible = input.project.projectKind === "git" || input.project.workspaces.length > 1;
 
+  let chevron: "expand" | "collapse" | null;
+  if (!collapsible) chevron = null;
+  else if (input.collapsed) chevron = "expand";
+  else chevron = "collapse";
+
   return {
     kind: "project_section",
-    chevron: collapsible ? (input.collapsed ? "expand" : "collapse") : null,
+    chevron,
     trailingAction: input.project.projectKind === "git" ? "new_worktree" : "none",
   };
 }
