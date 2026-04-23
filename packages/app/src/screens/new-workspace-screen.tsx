@@ -50,6 +50,55 @@ interface PickerSelection {
 const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
 
+function PickerOptionItem({
+  testID,
+  label,
+  description,
+  selected,
+  active,
+  disabled,
+  onPress,
+  isBranch,
+  iconColor,
+  iconSize,
+}: {
+  testID: string;
+  label: string;
+  description: string | undefined;
+  selected: boolean;
+  active: boolean;
+  disabled: boolean;
+  onPress: () => void;
+  isBranch: boolean;
+  iconColor: string;
+  iconSize: number;
+}) {
+  const leadingSlot = useMemo(
+    () => (
+      <View style={styles.rowIconBox}>
+        {isBranch ? (
+          <GitBranch size={iconSize} color={iconColor} />
+        ) : (
+          <GitPullRequest size={iconSize} color={iconColor} />
+        )}
+      </View>
+    ),
+    [isBranch, iconSize, iconColor],
+  );
+  return (
+    <ComboboxItem
+      testID={testID}
+      label={label}
+      description={description}
+      selected={selected}
+      active={active}
+      disabled={disabled}
+      onPress={onPress}
+      leadingSlot={leadingSlot}
+    />
+  );
+}
+
 function branchOptionId(name: string): string {
   return `${BRANCH_OPTION_PREFIX}${name}`;
 }
@@ -433,16 +482,6 @@ export function NewWorkspaceScreen({
 
       const isBranch = item.kind === "branch";
 
-      const leadingSlot = (
-        <View style={styles.rowIconBox}>
-          {isBranch ? (
-            <GitBranch size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          ) : (
-            <GitPullRequest size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          )}
-        </View>
-      );
-
       const testID = isBranch
         ? `new-workspace-ref-picker-branch-${item.name}`
         : `new-workspace-ref-picker-pr-${item.item.number}`;
@@ -451,7 +490,7 @@ export function NewWorkspaceScreen({
         !isBranch && item.item.baseRefName ? `into ${item.item.baseRefName}` : undefined;
 
       return (
-        <ComboboxItem
+        <PickerOptionItem
           testID={testID}
           label={pickerItemLabel(item)}
           description={description}
@@ -459,7 +498,9 @@ export function NewWorkspaceScreen({
           active={active}
           disabled={isPending}
           onPress={onPress}
-          leadingSlot={leadingSlot}
+          isBranch={isBranch}
+          iconColor={theme.colors.foregroundMuted}
+          iconSize={theme.iconSize.sm}
         />
       );
     },

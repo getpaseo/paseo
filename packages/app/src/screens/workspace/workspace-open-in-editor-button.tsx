@@ -38,11 +38,19 @@ interface EditorMenuItemProps {
 
 function EditorMenuItem({ editor, isPreferred, onOpen, foregroundMuted }: EditorMenuItemProps) {
   const handleSelect = useCallback(() => onOpen(editor.id), [onOpen, editor.id]);
+  const leading = useMemo(
+    () => <EditorAppIcon editorId={editor.id} size={16} color={foregroundMuted} />,
+    [editor.id, foregroundMuted],
+  );
+  const trailing = useMemo(
+    () => (isPreferred ? <Check size={16} color={foregroundMuted} /> : undefined),
+    [isPreferred, foregroundMuted],
+  );
   return (
     <DropdownMenuItem
       testID={`workspace-open-in-editor-item-${editor.id}`}
-      leading={<EditorAppIcon editorId={editor.id} size={16} color={foregroundMuted} />}
-      trailing={isPreferred ? <Check size={16} color={foregroundMuted} /> : undefined}
+      leading={leading}
+      trailing={trailing}
       onSelect={handleSelect}
     >
       {editor.label}

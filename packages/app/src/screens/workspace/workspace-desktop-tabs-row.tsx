@@ -52,6 +52,7 @@ import {
 import {
   buildWorkspaceDesktopTabActions,
   type WorkspaceDesktopTabActions,
+  type WorkspaceTabMenuEntry,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
@@ -60,6 +61,50 @@ const LOADING_TAB_LABEL_SKELETON_WIDTH = 80;
 
 function newTabActionButtonStyle({ hovered, pressed }: PressableStateCallbackType) {
   return [styles.newTabActionButton, (hovered || pressed) && styles.newTabActionButtonHovered];
+}
+
+function TabContextMenuItem({
+  entry,
+  iconColor,
+}: {
+  entry: Extract<WorkspaceTabMenuEntry, { kind: "item" }>;
+  iconColor: string;
+}) {
+  const leading = useMemo(() => {
+    switch (entry.icon) {
+      case "copy":
+        return <Copy size={16} color={iconColor} />;
+      case "rotate-cw":
+        return <RotateCw size={16} color={iconColor} />;
+      case "arrow-left-to-line":
+        return <ArrowLeftToLine size={16} color={iconColor} />;
+      case "arrow-right-to-line":
+        return <ArrowRightToLine size={16} color={iconColor} />;
+      case "copy-x":
+        return <CopyX size={16} color={iconColor} />;
+      case "x":
+        return <X size={16} color={iconColor} />;
+      default:
+        return undefined;
+    }
+  }, [entry.icon, iconColor]);
+  const trailing = useMemo(
+    () => (entry.hint ? <Text style={styles.menuItemHint}>{entry.hint}</Text> : undefined),
+    [entry.hint],
+  );
+  return (
+    <ContextMenuItem
+      testID={entry.testID}
+      disabled={entry.disabled}
+      destructive={entry.destructive}
+      onSelect={entry.onSelect}
+      tooltip={entry.tooltip}
+      leading={leading}
+      trailing={trailing}
+    >
+      {entry.label}
+    </ContextMenuItem>
+  );
 }
 
 function tabKeyExtractor(tab: WorkspaceDesktopTabRowItem) {
@@ -366,38 +411,11 @@ function TabChip({
             entry.kind === "separator" ? (
               <ContextMenuSeparator key={entry.key} />
             ) : (
-              <ContextMenuItem
+              <TabContextMenuItem
                 key={entry.key}
-                testID={entry.testID}
-                disabled={entry.disabled}
-                destructive={entry.destructive}
-                onSelect={entry.onSelect}
-                tooltip={entry.tooltip}
-                leading={(() => {
-                  const iconColor = theme.colors.foregroundMuted;
-                  switch (entry.icon) {
-                    case "copy":
-                      return <Copy size={16} color={iconColor} />;
-                    case "rotate-cw":
-                      return <RotateCw size={16} color={iconColor} />;
-                    case "arrow-left-to-line":
-                      return <ArrowLeftToLine size={16} color={iconColor} />;
-                    case "arrow-right-to-line":
-                      return <ArrowRightToLine size={16} color={iconColor} />;
-                    case "copy-x":
-                      return <CopyX size={16} color={iconColor} />;
-                    case "x":
-                      return <X size={16} color={iconColor} />;
-                    default:
-                      return undefined;
-                  }
-                })()}
-                trailing={
-                  entry.hint ? <Text style={styles.menuItemHint}>{entry.hint}</Text> : undefined
-                }
-              >
-                {entry.label}
-              </ContextMenuItem>
+                entry={entry}
+                iconColor={theme.colors.foregroundMuted}
+              />
             ),
           )}
         </ContextMenuContent>
