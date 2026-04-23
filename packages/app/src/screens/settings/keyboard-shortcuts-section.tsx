@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View, Text } from "react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { StyleSheet } from "react-native-unistyles";
@@ -23,6 +23,8 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 
+const EMPTY_CAPTURED_COMBOS: string[] = [];
+
 function ShortcutSequence({
   chord,
   heldModifiers,
@@ -30,16 +32,19 @@ function ShortcutSequence({
   chord: string[] | null;
   heldModifiers: string | null;
 }) {
+  const displayChord = useMemo(() => {
+    const combos = [...(chord ?? [])];
+    if (heldModifiers) {
+      combos.push(heldModifiers);
+    }
+    return combos.map(comboStringToShortcutKeys);
+  }, [chord, heldModifiers]);
+
   if ((!chord || chord.length === 0) && !heldModifiers) {
     return <Text style={styles.capturingText}>Press shortcut...</Text>;
   }
 
-  const displayCombos = [...(chord ?? [])];
-  if (heldModifiers) {
-    displayCombos.push(heldModifiers);
-  }
-
-  return <Shortcut chord={displayCombos.map(comboStringToShortcutKeys)} />;
+  return <Shortcut chord={displayChord} />;
 }
 
 function ShortcutRow({
@@ -65,10 +70,17 @@ function ShortcutRow({
   onCancel: () => void;
   onReset: () => void;
 }) {
-  const displayChord = overrideCombo ? chordStringToShortcutKeys(overrideCombo) : [row.keys];
+  const displayChord = useMemo(
+    () => (overrideCombo ? chordStringToShortcutKeys(overrideCombo) : [row.keys]),
+    [overrideCombo, row.keys],
+  );
+  const rowStyle = useMemo(
+    () => [styles.row, isCapturing && styles.rowCapturing],
+    [isCapturing],
+  );
 
   return (
-    <View style={[styles.row, isCapturing && styles.rowCapturing]}>
+    <View style={rowStyle}>
       <Text style={styles.rowLabel}>{row.label}</Text>
       <View style={styles.rowActions}>
         {isCapturing ? (
@@ -178,7 +190,7 @@ export function KeyboardShortcutsSection() {
   if (isNative) {
     return (
       <SettingsSection title="Shortcuts">
-        <View style={[settingsStyles.card, styles.mobileCard]}>
+        <View style={mobileCardStyle}>
           <Text style={styles.mobileText}>Keyboard shortcuts are only available on desktop</Text>
         </View>
       </SettingsSection>
@@ -215,7 +227,9 @@ export function KeyboardShortcutsSection() {
                       bindingId={bindingId}
                       overrideCombo={overrideCombo}
                       isCapturing={capturingBindingId === bindingId}
-                      capturedCombos={capturingBindingId === bindingId ? capturedCombos : []}
+                      capturedCombos={
+                        capturingBindingId === bindingId ? capturedCombos : EMPTY_CAPTURED_COMBOS
+                      }
                       heldModifiers={capturingBindingId === bindingId ? heldModifiers : null}
                       onRebind={() => {
                         if (bindingId) {
@@ -280,3 +294,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
 }));
+
+const mobileCardStyle = [settingsStyles.card, styles.mobileCard];

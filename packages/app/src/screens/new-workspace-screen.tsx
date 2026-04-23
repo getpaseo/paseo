@@ -444,6 +444,20 @@ export function NewWorkspaceScreen({
     [isPending, itemById, theme.colors.foregroundMuted, theme.iconSize.sm],
   );
 
+  const contentStyle = useMemo(
+    () => [
+      styles.content,
+      isCompact ? styles.contentCompact : styles.contentCentered,
+      isCompact ? { paddingBottom: insets.bottom } : null,
+    ],
+    [isCompact, insets.bottom],
+  );
+
+  const optionsRowStyle = useMemo(
+    () => [styles.optionsRow, keyboardAnimatedStyle],
+    [keyboardAnimatedStyle],
+  );
+
   return (
     <View style={styles.container}>
       <ScreenHeader
@@ -463,13 +477,7 @@ export function NewWorkspaceScreen({
         leftStyle={styles.headerLeft}
         borderless
       />
-      <View
-        style={[
-          styles.content,
-          isCompact ? styles.contentCompact : styles.contentCentered,
-          isCompact ? { paddingBottom: insets.bottom } : null,
-        ]}
-      >
+      <View style={contentStyle}>
         <TitlebarDragRegion />
         <View style={styles.centered}>
           <Composer
@@ -503,10 +511,7 @@ export function NewWorkspaceScreen({
             }
             onAddImages={handleAddImagesCallback}
           />
-          <Animated.View
-            testID="new-workspace-ref-picker-row"
-            style={[styles.optionsRow, keyboardAnimatedStyle]}
-          >
+          <Animated.View testID="new-workspace-ref-picker-row" style={optionsRowStyle}>
             <View>
               <Tooltip>
                 <TooltipTrigger asChild triggerRefProp="ref">

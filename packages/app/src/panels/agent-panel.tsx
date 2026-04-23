@@ -860,6 +860,11 @@ function ChatAgentContent({
     shouldUseOptimisticStream,
   ]);
 
+  const animatedContentStyle = useMemo(
+    () => [styles.content, animatedKeyboardStyle],
+    [animatedKeyboardStyle],
+  );
+
   if (viewState.tag === "not_found") {
     return (
       <View style={styles.container} testID="agent-not-found">
@@ -896,7 +901,7 @@ function ChatAgentContent({
       <FileDropZone onFilesDropped={handleFilesDropped} disabled={isArchivingCurrentAgent}>
         <View style={styles.container}>
           <View style={styles.contentContainer}>
-            <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
+            <ReanimatedAnimated.View style={animatedContentStyle}>
               <AgentStreamSection
                 streamViewRef={streamViewRef}
                 serverId={serverId}
@@ -1192,8 +1197,13 @@ function ActiveAgentComposer({
     initialCwd,
   });
 
+  const inputAreaStyle = useMemo(
+    () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }],
+    [insets.bottom],
+  );
+
   return (
-    <View style={[styles.inputAreaWrapper, { paddingBottom: insets.bottom }]}>
+    <View style={inputAreaStyle}>
       <Composer
         agentId={agentId}
         serverId={serverId}
