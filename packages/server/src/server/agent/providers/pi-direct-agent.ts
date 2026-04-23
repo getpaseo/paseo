@@ -1127,10 +1127,7 @@ export class PiDirectAgentSession implements AgentSession {
 
       if (message.role === "assistant") {
         for (const content of message.content) {
-          if (content.type === "text") {
-            if (!content.text) {
-              continue;
-            }
+          if (content.type === "text" && content.text) {
             yield {
               type: "timeline",
               provider: PI_PROVIDER,
@@ -1139,10 +1136,7 @@ export class PiDirectAgentSession implements AgentSession {
             continue;
           }
 
-          if (content.type === "thinking") {
-            if (!content.thinking) {
-              continue;
-            }
+          if (content.type === "thinking" && content.thinking) {
             yield {
               type: "timeline",
               provider: PI_PROVIDER,

@@ -118,7 +118,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     execSync("git add .", { cwd: varRepoDir });
     execSync('git -c commit.gpgsign=false commit -m "initial"', { cwd: varRepoDir });
 
-    const result = await createLegacyWorktreeForTest({
+    await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: varRepoDir,
       baseBranch: "main",

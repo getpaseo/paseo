@@ -2288,24 +2288,24 @@ class OpenCodeAgentSession implements AgentSession {
       } else {
         let emittedAssistantText = false;
         for (const part of parts) {
-          if (part.type === "text") {
-            if (part.text) {
-              emittedAssistantText = true;
-              yield {
-                type: "timeline",
-                provider: "opencode",
-                item: { type: "assistant_message", text: part.text },
-              };
-            }
-          } else if (part.type === "reasoning") {
-            if (part.text) {
-              yield {
-                type: "timeline",
-                provider: "opencode",
-                item: { type: "reasoning", text: part.text },
-              };
-            }
-          } else if (part.type === "tool") {
+          if (part.type === "text" && part.text) {
+            emittedAssistantText = true;
+            yield {
+              type: "timeline",
+              provider: "opencode",
+              item: { type: "assistant_message", text: part.text },
+            };
+            continue;
+          }
+          if (part.type === "reasoning" && part.text) {
+            yield {
+              type: "timeline",
+              provider: "opencode",
+              item: { type: "reasoning", text: part.text },
+            };
+            continue;
+          }
+          if (part.type === "tool") {
             const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
             if (parsedToolPart.success && parsedToolPart.data) {
               yield {
