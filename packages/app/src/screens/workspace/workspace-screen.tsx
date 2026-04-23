@@ -656,7 +656,7 @@ function WorkspaceScreenContent({
   isRouteFocused,
 }: WorkspaceScreenContentProps) {
   const { theme } = useUnistyles();
-  const insets = useSafeAreaInsets();
+  const _insets = useSafeAreaInsets();
   const mainBackgroundColor = theme.colors.surfaceWorkspace;
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
@@ -783,7 +783,7 @@ function WorkspaceScreenContent({
     [scriptTerminalIds, terminals],
   );
   const createTerminalMutation = useMutation({
-    mutationFn: async (input?: { paneId?: string }) => {
+    mutationFn: async (_input?: { paneId?: string }) => {
       if (!client || !workspaceDirectory) {
         throw new Error("Host is not connected");
       }
@@ -1100,12 +1100,12 @@ function WorkspaceScreenContent({
   const paneFocusSuppressedRef = useRef(false);
   const resizeWorkspaceSplit = useWorkspaceLayoutStore((state) => state.resizeSplit);
   const reorderWorkspaceTabsInPane = useWorkspaceLayoutStore((state) => state.reorderTabsInPane);
-  const pinnedAgentIds = useWorkspaceLayoutStore((state) =>
+  const _pinnedAgentIds = useWorkspaceLayoutStore((state) =>
     persistenceKey
       ? (state.pinnedAgentIdsByWorkspace[persistenceKey] ?? EMPTY_PINNED_AGENT_IDS)
       : EMPTY_PINNED_AGENT_IDS,
   );
-  const hiddenAgentIds = useWorkspaceLayoutStore((state) =>
+  const _hiddenAgentIds = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.hiddenAgentIdsByWorkspace[persistenceKey] ?? EMPTY_SET) : EMPTY_SET,
   );
   const pendingByDraftId = useCreateFlowStore((state) => state.pendingByDraftId);
@@ -1163,16 +1163,6 @@ function WorkspaceScreenContent({
       setFocusedAgentId(normalizedServerId, null);
     };
   }, [isRouteFocused, normalizedServerId, setFocusedAgentId]);
-
-  const ensureWorkspaceTab = useCallback(
-    function ensureWorkspaceTab(target: WorkspaceTabTarget): string | null {
-      if (!persistenceKey) {
-        return null;
-      }
-      return openWorkspaceTabInBackground(persistenceKey, target);
-    },
-    [openWorkspaceTabInBackground, persistenceKey],
-  );
 
   const openWorkspaceDraftTab = useCallback(
     function openWorkspaceDraftTab(input?: { draftId?: string; focus?: boolean }) {
@@ -1429,7 +1419,7 @@ function WorkspaceScreenContent({
     [handleOpenFileFromExplorer],
   );
 
-  const [hoveredTabKey, setHoveredTabKey] = useState<string | null>(null);
+  const [_hoveredTabKey, setHoveredTabKey] = useState<string | null>(null);
   const [hoveredCloseTabKey, setHoveredCloseTabKey] = useState<string | null>(null);
 
   const tabByKey = useMemo(() => {

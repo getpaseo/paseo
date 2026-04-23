@@ -165,21 +165,7 @@ const getLatestPermissionRequest = (
   return null;
 };
 
-type FileExplorerPayload = Extract<
-  SessionOutboundMessage,
-  { type: "file_explorer_response" }
->["payload"];
-
-type FileDownloadTokenPayload = Extract<
-  SessionOutboundMessage,
-  { type: "file_download_token_response" }
->["payload"];
-
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
-type WorkspaceUpdatePayload = Extract<
-  SessionOutboundMessage,
-  { type: "workspace_update" }
->["payload"];
 type WorkspaceSetupProgressPayload = Extract<
   SessionOutboundMessage,
   { type: "workspace_setup_progress" }
@@ -310,7 +296,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       ) => Promise<void>)
     | null
   >(null);
-  const sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const _sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
   const revalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1583,7 +1569,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   // Keep the ref updated so the agent_update handler can call it
   sendAgentMessageRef.current = sendAgentMessage;
 
-  const cancelAgentRun = useCallback(
+  const _cancelAgentRun = useCallback(
     (agentId: string) => {
       if (!client) {
         console.warn("[Session] cancelAgent skipped: daemon unavailable");
@@ -1596,7 +1582,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [client],
   );
 
-  const deleteAgent = useCallback(
+  const _deleteAgent = useCallback(
     (agentId: string) => {
       if (!client) {
         console.warn("[Session] deleteAgent skipped: daemon unavailable");
@@ -1609,7 +1595,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [client],
   );
 
-  const archiveAgent = useCallback(
+  const _archiveAgent = useCallback(
     (agentId: string) => {
       if (!client) {
         console.warn("[Session] archiveAgent skipped: daemon unavailable");
@@ -1622,7 +1608,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [client],
   );
 
-  const restartServer = useCallback(
+  const _restartServer = useCallback(
     (reason?: string) => {
       if (!client) {
         console.warn("[Session] restartServer skipped: daemon unavailable");
@@ -1635,7 +1621,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [client],
   );
 
-  const createAgent = useCallback(
+  const _createAgent = useCallback(
     async ({
       config,
       initialPrompt,
@@ -1677,7 +1663,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [client],
   );
 
-  const setAgentMode = useCallback(
+  const _setAgentMode = useCallback(
     (agentId: string, modeId: string) => {
       if (!client) {
         console.warn("[Session] setAgentMode skipped: daemon unavailable");
@@ -1691,7 +1677,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [client, toast],
   );
 
-  const setAgentModel = useCallback(
+  const _setAgentModel = useCallback(
     (agentId: string, modelId: string | null) => {
       if (!client) {
         console.warn("[Session] setAgentModel skipped: daemon unavailable");
@@ -1705,7 +1691,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [client, toast],
   );
 
-  const setAgentThinkingOption = useCallback(
+  const _setAgentThinkingOption = useCallback(
     (agentId: string, thinkingOptionId: string | null) => {
       if (!client) {
         console.warn("[Session] setAgentThinkingOption skipped: daemon unavailable");
@@ -1719,7 +1705,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [client, toast],
   );
 
-  const respondToPermission = useCallback(
+  const _respondToPermission = useCallback(
     (agentId: string, requestId: string, response: any) => {
       if (!client) {
         console.warn("[Session] respondToPermission skipped: daemon unavailable");

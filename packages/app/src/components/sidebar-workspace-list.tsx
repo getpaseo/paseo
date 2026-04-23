@@ -709,7 +709,7 @@ function useLongPressDragInteraction(input: {
   }, [clearTimers, input.menuController, openContextMenuAtStartPoint]);
 
   const handleDragIntent = useCallback(
-    (details: { dx: number; dy: number; distance: number }) => {
+    (_details: { dx: number; dy: number; distance: number }) => {
       if (!dragActivatedRef.current) {
         return;
       }
@@ -722,7 +722,7 @@ function useLongPressDragInteraction(input: {
   );
 
   const handleScrollIntent = useCallback(
-    (details: { dx: number; dy: number; distance: number }) => {
+    (_details: { dx: number; dy: number; distance: number }) => {
       scrollIntentRef.current = true;
       didLongPressRef.current = true;
       clearTimers();
@@ -731,7 +731,7 @@ function useLongPressDragInteraction(input: {
   );
 
   const handleSwipeIntent = useCallback(
-    (details: { dx: number; dy: number; distance: number }) => {
+    (_details: { dx: number; dy: number; distance: number }) => {
       didLongPressRef.current = true;
       clearTimers();
     },
@@ -831,7 +831,7 @@ function ProjectHeaderRow({
   canCreateWorktree,
   isProjectActive = false,
   onWorkspacePress,
-  onWorktreeCreated,
+  onWorktreeCreated: _onWorktreeCreated,
   shortcutNumber = null,
   showShortcutBadge = false,
   drag,
@@ -854,8 +854,8 @@ function ProjectHeaderRow({
     );
     onWorkspacePress?.();
   }, [displayName, onWorkspacePress, project.iconWorkingDir, serverId]);
-  const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
-  const toast = useToast();
+  const _mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
+  const _toast = useToast();
 
   const interaction = useLongPressDragInteraction({
     drag,
@@ -1025,7 +1025,7 @@ function WorkspaceRowInner({
   archiveShortcutKeys,
 }: WorkspaceRowInnerProps) {
   const { theme } = useUnistyles();
-  const isCompact = useIsCompactFormFactor();
+  const _isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
   const isTouchPlatform = platformIsNative;
   const workspaceDirectory = resolveWorkspaceExecutionDirectory({
@@ -2000,8 +2000,8 @@ export function SidebarWorkspaceList({
   collapsedProjectKeys,
   onToggleProjectCollapsed,
   shortcutIndexByWorkspaceKey,
-  isRefreshing = false,
-  onRefresh,
+  isRefreshing: _isRefreshing = false,
+  onRefresh: _onRefresh,
   onWorkspacePress,
   onAddProject,
   listFooterComponent,

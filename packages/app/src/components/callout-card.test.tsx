@@ -63,10 +63,7 @@ function buildSingleAction(onPress: () => void): CalloutCardActions {
   return [{ label: "Undo", onPress }];
 }
 
-function buildTwoActions(
-  onWhatsNew: () => void,
-  onInstall: () => void,
-): CalloutCardActions {
+function buildTwoActions(onWhatsNew: () => void, onInstall: () => void): CalloutCardActions {
   return [
     { label: "What's new", onPress: onWhatsNew },
     { label: "Install & restart", onPress: onInstall, variant: "primary" },

@@ -238,7 +238,6 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     if (snapshotsEqual(next, state.snapshot)) {
       return;
     }
-    const previous = state.snapshot;
     state.snapshot = next;
     emit();
   }

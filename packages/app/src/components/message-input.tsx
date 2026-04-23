@@ -430,7 +430,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   const {
     isRecording: isDictating,
     isProcessing: isDictationProcessing,
-    partialTranscript: dictationPartialTranscript,
+    partialTranscript: _dictationPartialTranscript,
     volume: dictationVolume,
     duration: dictationDuration,
     error: dictationError,

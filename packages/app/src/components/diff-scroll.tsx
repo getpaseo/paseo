@@ -20,7 +20,7 @@ interface DiffScrollProps {
 
 export function DiffScroll({
   children,
-  scrollViewWidth,
+  scrollViewWidth: _scrollViewWidth,
   onScrollViewWidthChange,
   style,
   contentContainerStyle,

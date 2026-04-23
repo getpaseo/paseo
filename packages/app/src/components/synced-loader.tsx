@@ -13,7 +13,6 @@ const SYNCED_LOADER_DURATION_MS = 950;
 const SYNCED_LOADER_EPOCH_MS = 0;
 const DOT_SEQUENCE = [0, 1, 3, 5, 4, 2] as const;
 const DOT_COUNT = DOT_SEQUENCE.length;
-const GRID_ROWS = 3;
 const GRID_COLUMNS = 2;
 const SNAKE_SEGMENT_OFFSETS = [0, -1, -2, -3, -4] as const;
 const SNAKE_OPACITIES = [1, 0.78, 0.56, 0.34, 0] as const;

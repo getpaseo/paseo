@@ -814,7 +814,7 @@ function SplitPaneView({
   onCreateTerminalTab,
   buildPaneContentModel,
   onFocusPane,
-  onSplitPane,
+  onSplitPane: _onSplitPane,
   onSplitPaneEmpty,
   onReorderTabsInPane,
   renderPaneEmptyState,
@@ -823,7 +823,7 @@ function SplitPaneView({
   dropPreview,
   tabDropPreview,
 }: SplitPaneViewProps) {
-  const { theme } = useUnistyles();
+  const { theme: _theme } = useUnistyles();
   const paneRef = useRef<View | null>(null);
   const stableOnFocusPane = useStableEvent(onFocusPane);
   const padding = useWindowControlsPadding("tabRow");

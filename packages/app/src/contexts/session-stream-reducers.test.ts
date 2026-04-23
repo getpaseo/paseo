@@ -37,14 +37,6 @@ function makeTimelineEvent(
   } as AgentStreamEventPayload;
 }
 
-function makeUserTimelineEvent(text: string): AgentStreamEventPayload {
-  return {
-    type: "timeline",
-    provider: "claude",
-    item: { type: "user_message", text },
-  } as AgentStreamEventPayload;
-}
-
 function makeToolCallTimelineEvent(callId: string): AgentStreamEventPayload {
   return {
     type: "timeline",

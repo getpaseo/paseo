@@ -614,7 +614,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [renderModel, emptyStateStyle]);
 
     const historyItems = renderModel.history;
-    const liveHeadItems = renderModel.segments.liveHead;
+    const _liveHeadItems = renderModel.segments.liveHead;
     const { boundary, auxiliary } = renderModel;
     const lastHistoryItem = historyItems.at(-1) ?? null;
 
@@ -1130,10 +1130,7 @@ function PermissionRequestCard({
       ) : null}
 
       {!isPlanRequest ? (
-        <ToolCallDetailsContent
-          detail={resolvedToolCallDetail}
-          maxHeight={200}
-        />
+        <ToolCallDetailsContent detail={resolvedToolCallDetail} maxHeight={200} />
       ) : null}
 
       {footer}

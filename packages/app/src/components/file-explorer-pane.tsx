@@ -144,10 +144,7 @@ function TreeRowItem({
 
   return (
     <Pressable onPress={handlePress} style={pressableStyle}>
-      {depth > 0 &&
-        Array.from({ length: depth }, (_, i) => (
-          <IndentGuide key={i} index={i} />
-        ))}
+      {depth > 0 && Array.from({ length: depth }, (_, i) => <IndentGuide key={i} index={i} />)}
       <View style={styles.entryInfo}>
         <View style={styles.entryIcon}>
           {(() => {
@@ -968,10 +965,7 @@ interface IndentGuideProps {
 function IndentGuide({ index }: IndentGuideProps) {
   const { theme } = useUnistyles();
   const guideStyle = useMemo(
-    () => [
-      styles.indentGuide,
-      { left: theme.spacing[3] + index * INDENT_PER_LEVEL + 4 },
-    ],
+    () => [styles.indentGuide, { left: theme.spacing[3] + index * INDENT_PER_LEVEL + 4 }],
     [index, theme.spacing],
   );
   return <View style={guideStyle} />;

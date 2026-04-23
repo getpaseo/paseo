@@ -226,7 +226,7 @@ function ControlledStatusBar({
 
   const providerAnchorRef = useRef<View>(null);
   const modeAnchorRef = useRef<View>(null);
-  const modelAnchorRef = useRef<View>(null);
+  const _modelAnchorRef = useRef<View>(null);
   const thinkingAnchorRef = useRef<View>(null);
 
   const canSelectProvider = Boolean(
@@ -277,7 +277,7 @@ function ControlledStatusBar({
     () => (modeOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
     [modeOptions],
   );
-  const comboboxModelOptions = useMemo<ComboboxOption[]>(
+  const _comboboxModelOptions = useMemo<ComboboxOption[]>(
     () => (modelOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
     [modelOptions],
   );
@@ -462,11 +462,7 @@ function ControlledStatusBar({
   );
   const renderSheetModelTrigger = useCallback(
     ({ selectedModelLabel }: { selectedModelLabel: string }) => (
-      <View
-        style={sheetSelectStyle}
-        pointerEvents="none"
-        testID="agent-preferences-model"
-      >
+      <View style={sheetSelectStyle} pointerEvents="none" testID="agent-preferences-model">
         {ProviderIcon ? (
           <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
         ) : null}
@@ -1309,14 +1305,14 @@ export const AgentStatusBar = memo(function AgentStatusBar({
 export function DraftAgentStatusBar({
   providerDefinitions,
   selectedProvider,
-  onSelectProvider,
+  onSelectProvider: _onSelectProvider,
   modeOptions,
   selectedMode,
   onSelectMode,
   models,
   selectedModel,
   onSelectModel,
-  isModelLoading,
+  isModelLoading: _isModelLoading,
   allProviderModels,
   isAllModelsLoading,
   onSelectProviderAndModel,

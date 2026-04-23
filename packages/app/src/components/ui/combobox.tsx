@@ -440,7 +440,7 @@ export function Combobox({
     }
 
     const measure = () => {
-      referenceEl.measureInWindow((x, y, width, height) => {
+      referenceEl.measureInWindow((x, y, width, _height) => {
         setReferenceLeft((prev) => (prev === x ? prev : x));
         setReferenceAtOrigin(Math.abs(x) <= 1 && Math.abs(y) <= 1);
         setReferenceTop((prev) => (prev === y ? prev : y));

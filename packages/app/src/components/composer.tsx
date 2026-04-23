@@ -1241,8 +1241,6 @@ export function Composer({
   );
 }
 
-const BUTTON_SIZE = 40;
-
 const styles = StyleSheet.create(((theme: Theme) => ({
   container: {
     flexDirection: "column",

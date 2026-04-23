@@ -1177,10 +1177,7 @@ function AssistantMessageBlockContainer({
   marginBottom,
   children,
 }: AssistantMessageBlockContainerProps) {
-  const style = useMemo(
-    () => (marginBottom > 0 ? { marginBottom } : undefined),
-    [marginBottom],
-  );
+  const style = useMemo(() => (marginBottom > 0 ? { marginBottom } : undefined), [marginBottom]);
   return <View style={style}>{children}</View>;
 }
 
@@ -1773,18 +1770,13 @@ function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
     [completed],
   );
   const textStyle = useMemo(
-    () => [
-      todoListCardStylesheet.itemText,
-      completed && todoListCardStylesheet.itemTextCompleted,
-    ],
+    () => [todoListCardStylesheet.itemText, completed && todoListCardStylesheet.itemTextCompleted],
     [completed],
   );
   return (
     <View style={todoListCardStylesheet.itemRow}>
       <View style={badgeStyle}>
-        {completed ? (
-          <Check size={12} color={todoUnistylesTheme.colors.primaryForeground} />
-        ) : null}
+        {completed ? <Check size={12} color={todoUnistylesTheme.colors.primaryForeground} /> : null}
       </View>
       <Text style={textStyle}>{text}</Text>
     </View>
@@ -1836,7 +1828,7 @@ export const TodoListCard = memo(function TodoListCard({
   items,
   disableOuterSpacing,
 }: TodoListCardProps) {
-  const { theme: unistylesTheme } = useUnistyles();
+  const { theme: _unistylesTheme } = useUnistyles();
   const [isExpanded, setIsExpanded] = useState(false);
 
   const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);

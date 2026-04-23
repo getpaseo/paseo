@@ -123,7 +123,7 @@ function resolveActionShortcutKeys(
 }
 
 export function useCommandCenter() {
-  const pathname = usePathname();
+  const _pathname = usePathname();
   const routeActiveServerId = useActiveServerId();
   const { overrides } = useKeyboardShortcutOverrides();
   const open = useKeyboardShortcutsStore((s) => s.commandCenterOpen);

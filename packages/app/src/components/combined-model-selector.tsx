@@ -295,7 +295,7 @@ function FavoritesSection({
   canSelectProvider: (provider: string) => boolean;
   onToggleFavorite?: (provider: string, modelId: string) => void;
 }) {
-  const { theme } = useUnistyles();
+  const { theme: _theme } = useUnistyles();
 
   if (favoriteRows.length === 0) {
     return null;
@@ -465,7 +465,7 @@ function SelectorContent({
   selectedProvider,
   selectedModel,
   searchQuery,
-  onSearchChange,
+  onSearchChange: _onSearchChange,
   favoriteKeys,
   onSelect,
   canSelectProvider,
@@ -492,7 +492,7 @@ function SelectorContent({
     [normalizedQuery, scopedRows],
   );
 
-  const { favoriteRows, regularRows } = useMemo(
+  const { favoriteRows, regularRows: _regularRows } = useMemo(
     () => partitionRows(visibleRows, favoriteKeys),
     [favoriteKeys, visibleRows],
   );

@@ -311,7 +311,7 @@ function AgentPanelBody({
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
 }) {
   const { theme } = useUnistyles();
-  const { isArchivingAgent } = useArchiveAgent();
+  const { isArchivingAgent: _isArchivingAgent } = useArchiveAgent();
   const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
   const projectPlacement = useStoreWithEqualityFn(
     useSessionStore,
@@ -444,8 +444,6 @@ function AgentPanelBody({
       </View>
     );
   }
-
-  const isArchivingCurrentAgent = Boolean(agentId && isArchivingAgent({ serverId, agentId }));
 
   return (
     <ChatAgentContent

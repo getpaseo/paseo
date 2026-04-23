@@ -371,7 +371,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     initialValues,
     isVisible = true,
     isCreateFlow = true,
-    isTargetDaemonReady = true,
+    isTargetDaemonReady: _isTargetDaemonReady = true,
     onlineServerIds = [],
   } = options;
 

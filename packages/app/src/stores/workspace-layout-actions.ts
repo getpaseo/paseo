@@ -48,11 +48,6 @@ interface ReorderTabsForPaneInput {
   tabIds: string[];
 }
 
-interface UpdateTabInTreeInput {
-  tabId: string;
-  target: WorkspaceTabTarget;
-}
-
 interface UpdateGroupSizesInTreeInput {
   groupId: string;
   sizes: number[];
@@ -755,23 +750,6 @@ function focusTabInPane(root: SplitNodeInternal, paneId: string, tabId: string):
       pane: normalizePaneAfterTabChange({
         ...node.pane,
         focusedTabId: tabId,
-      }),
-    };
-  });
-}
-
-function updateTabInTree(root: SplitNodeInternal, input: UpdateTabInTreeInput): SplitNodeInternal {
-  const panePath = findPanePathContainingTab(root, input.tabId);
-  invariant(panePath, `Tab not found: ${input.tabId}`);
-  return replaceNodeAtPath(root, panePath, (node) => {
-    invariant(node.kind === "pane", "Expected pane while retargeting tab");
-    return {
-      kind: "pane",
-      pane: normalizePaneAfterTabChange({
-        ...node.pane,
-        tabs: node.pane.tabs.map((tab) =>
-          tab.tabId === input.tabId ? { ...tab, target: input.target } : tab,
-        ),
       }),
     };
   });
