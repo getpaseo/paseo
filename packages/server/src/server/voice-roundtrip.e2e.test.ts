@@ -296,10 +296,10 @@ for (const targetProvider of [
         });
 
         const format = "audio/pcm;rate=24000;bits=16";
-        const chunkBytes = 4800; // 100ms @ 24kHz mono PCM16
-        for (let offset = 0; offset < inputPcm.length; offset += chunkBytes) {
-          const chunk = inputPcm.subarray(offset, Math.min(inputPcm.length, offset + chunkBytes));
-          const isLast = offset + chunkBytes >= inputPcm.length;
+        const CHUNK_SIZE = 4800; // 100ms @ 24kHz mono PCM16
+        for (let offset = 0; offset < inputPcm.length; offset += CHUNK_SIZE) {
+          const chunk = inputPcm.subarray(offset, Math.min(inputPcm.length, offset + CHUNK_SIZE));
+          const isLast = offset + CHUNK_SIZE >= inputPcm.length;
           await withTimeout(
             ctx.client.sendVoiceAudioChunk(chunk.toString("base64"), format, isLast),
             5000,

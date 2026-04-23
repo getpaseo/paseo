@@ -2630,12 +2630,7 @@ class CodexAppServerAgentSession implements AgentSession {
           if (typeof skill?.name !== "string" || typeof skill?.path !== "string") continue;
           skills.push({
             name: skill.name,
-            description:
-              typeof skill.description === "string"
-                ? skill.description
-                : typeof skill.shortDescription === "string"
-                  ? skill.shortDescription
-                  : "Skill",
+            description: resolveSkillDescription(skill),
             path: skill.path,
           });
         }
@@ -4456,6 +4451,16 @@ export class CodexAppServerAgentClient implements AgentClient {
       };
     }
   }
+}
+
+function resolveSkillDescription(skill: Record<string, unknown>): string {
+  if (typeof skill.description === "string") {
+    return skill.description;
+  }
+  if (typeof skill.shortDescription === "string") {
+    return skill.shortDescription;
+  }
+  return "Skill";
 }
 
 export const __codexAppServerInternals = {

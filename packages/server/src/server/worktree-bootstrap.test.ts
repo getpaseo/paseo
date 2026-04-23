@@ -694,9 +694,9 @@ describe("runAsyncWorktreeBootstrap", () => {
     terminalRecords: StubTerminalRecord[];
     repoDir: string;
   }): void {
-    const { createTerminalCalls, terminalRecords, repoDir } = params;
+    const { createTerminalCalls, terminalRecords, repoDir: testRepoDir } = params;
     expect(createTerminalCalls).toHaveLength(1);
-    expect(createTerminalCalls[0]?.cwd).toBe(repoDir);
+    expect(createTerminalCalls[0]?.cwd).toBe(testRepoDir);
     expect(createTerminalCalls[0]?.name).toBe("api");
     expect(terminalRecords[0]?.sentInputs).toEqual(["npm run api\r"]);
     expect(createTerminalCalls[0]?.env).not.toHaveProperty("PORT");
@@ -717,9 +717,9 @@ describe("runAsyncWorktreeBootstrap", () => {
     createTerminalCalls: CreateTerminalCall[];
     repoDir: string;
   }): Promise<void> {
-    const { createTerminalCalls, repoDir } = params;
+    const { createTerminalCalls, repoDir: testRepoDir } = params;
     const plannedPorts = await ensureWorkspaceServicePortPlan({
-      workspaceId: repoDir,
+      workspaceId: testRepoDir,
       services: [{ scriptName: "api" }, { scriptName: "app-server" }],
       allocatePort: async () => {
         throw new Error("Peer env test should reuse the existing service port plan");
