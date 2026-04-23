@@ -9,8 +9,8 @@ import { buildProviderRegistry } from "./agent/provider-registry.js";
 
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
-  error(...args: any[]): void;
-  warn(...args: any[]): void;
+  error(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
 }
 
 const DEFAULT_AGENT_PROVIDER = "claude";

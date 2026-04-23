@@ -4,8 +4,8 @@ import { randomBytes } from "node:crypto";
 
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
-  info(...args: any[]): void;
-  warn(...args: any[]): void;
+  info(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
 }
 
 const SERVER_ID_FILENAME = "server-id";

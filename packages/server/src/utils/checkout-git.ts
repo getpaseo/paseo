@@ -1924,7 +1924,7 @@ async function detectAndThrowMergeToBaseConflict(
   const { operationCwd, error, baseRef, currentBranch } = input;
   const errorDetails =
     error instanceof Error
-      ? `${error.message}\n${(error as any).stderr ?? ""}\n${(error as any).stdout ?? ""}`
+      ? `${error.message}\n${(error as { stderr?: string }).stderr ?? ""}\n${(error as { stdout?: string }).stdout ?? ""}`
       : String(error);
   try {
     const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
@@ -2107,7 +2107,7 @@ async function detectAndThrowMergeFromBaseConflict(
   const { cwd, error, baseRef, currentBranch } = input;
   const errorDetails =
     error instanceof Error
-      ? `${error.message}\n${(error as any).stderr ?? ""}\n${(error as any).stdout ?? ""}`
+      ? `${error.message}\n${(error as { stderr?: string }).stderr ?? ""}\n${(error as { stdout?: string }).stdout ?? ""}`
       : String(error);
   try {
     const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([

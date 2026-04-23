@@ -27,8 +27,8 @@ interface RelaySocketLike {
   readyState: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
-  on: (event: "message" | "close" | "error", listener: (...args: any[]) => void) => void;
-  once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
+  on: (event: "message" | "close" | "error", listener: (...args: unknown[]) => void) => void;
+  once: (event: "close" | "error", listener: (...args: unknown[]) => void) => void;
 }
 
 type ControlMessage =
@@ -64,7 +64,7 @@ function tryParseControlMessage(raw: unknown): ControlMessage | null {
     } else {
       text = String(raw);
     }
-    const parsed = JSON.parse(text) as any;
+    const parsed = JSON.parse(text) as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object") return null;
     if (parsed.type === "ping") return { type: "ping" };
     if (parsed.type === "pong") return { type: "pong" };
