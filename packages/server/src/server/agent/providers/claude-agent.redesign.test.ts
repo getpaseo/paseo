@@ -154,17 +154,6 @@ async function collectUntilTerminal(
   return events;
 }
 
-async function waitForCondition(check: () => boolean, timeoutMs: number): Promise<void> {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    if (check()) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("Timed out waiting for condition");
-}
-
 beforeEach(() => {
   sdkQueryFactory.mockReset();
 });

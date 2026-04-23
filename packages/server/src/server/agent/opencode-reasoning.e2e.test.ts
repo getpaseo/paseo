@@ -52,19 +52,10 @@ describe("OpenCode reasoning events (e2e)", () => {
     // Wait for agent to complete
     const finalState = await ctx.client.waitForFinish(agent.id, 120_000);
 
-    // Log all events
-
-    for (let i = 0; i < allEvents.length; i++) {
-      const { event, timestamp } = allEvents[i];
-    }
-
     // Group by type
     const byType = new Map<string, number>();
     for (const { event } of allEvents) {
       byType.set(event.type, (byType.get(event.type) ?? 0) + 1);
-    }
-
-    for (const [type, count] of byType) {
     }
 
     // Check timeline events breakdown
@@ -74,9 +65,6 @@ describe("OpenCode reasoning events (e2e)", () => {
       if (event.type === "timeline") {
         itemTypes.set(event.item.type, (itemTypes.get(event.item.type) ?? 0) + 1);
       }
-    }
-
-    for (const [type, count] of itemTypes) {
     }
 
     // Find reasoning events

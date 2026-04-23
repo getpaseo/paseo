@@ -82,18 +82,6 @@ async function waitForPathExists(options: {
   });
 }
 
-async function waitForPathRemoved(options: {
-  targetPath: string;
-  timeoutMs: number;
-  label: string;
-}): Promise<void> {
-  await waitForCondition({
-    timeoutMs: options.timeoutMs,
-    label: `removal of ${options.label}: ${options.targetPath}`,
-    predicate: () => !existsSync(options.targetPath),
-  });
-}
-
 async function waitForCondition(options: {
   timeoutMs: number;
   label: string;

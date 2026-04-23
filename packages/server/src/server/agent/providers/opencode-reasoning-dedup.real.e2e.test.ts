@@ -39,7 +39,7 @@ describe("OpenCode reasoning dedup", () => {
         streamedEvents.push(event);
       });
 
-      const result = await session.run("What is 2+2? Think step by step.");
+      await session.run("What is 2+2? Think step by step.");
 
       const reasoningTexts: string[] = [];
       const assistantTexts: string[] = [];

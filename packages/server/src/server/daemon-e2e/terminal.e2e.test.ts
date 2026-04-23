@@ -376,16 +376,6 @@ function getFrameText(frame: TerminalStreamFrame): string {
   return "";
 }
 
-function sendRawTerminalInput(input: { ws: WebSocket; slot: number; text: string }): void {
-  input.ws.send(
-    encodeTerminalStreamFrame({
-      opcode: TerminalStreamOpcode.Input,
-      slot: input.slot,
-      payload: new Uint8Array(Buffer.from(input.text, "utf8")),
-    }),
-  );
-}
-
 async function subscribeRawTerminal(
   ws: WebSocket,
   terminalId: string,
