@@ -74,7 +74,9 @@ export async function findLargestDebugWavFixture(): Promise<string> {
   let currentLevel: string[] = [base];
   while (currentLevel.length > 0) {
     const levelResults = await Promise.all(
-      currentLevel.map((dir) => fs.readdir(dir, { withFileTypes: true }).then((entries) => ({ dir, entries }))),
+      currentLevel.map((dir) =>
+        fs.readdir(dir, { withFileTypes: true }).then((entries) => ({ dir, entries })),
+      ),
     );
     const wavPaths: string[] = [];
     const nextLevel: string[] = [];

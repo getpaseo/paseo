@@ -1194,9 +1194,7 @@ export class ClaudeAgentClient implements AgentClient {
     const limit = options?.limit ?? 20;
     const candidates = await collectRecentClaudeSessions(projectsRoot, limit * 3);
     const parsed = await Promise.all(
-      candidates.map((candidate) =>
-        parseClaudeSessionDescriptor(candidate.path, candidate.mtime),
-      ),
+      candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
     );
     return parsed
       .filter((descriptor): descriptor is PersistedAgentDescriptor => descriptor !== null)

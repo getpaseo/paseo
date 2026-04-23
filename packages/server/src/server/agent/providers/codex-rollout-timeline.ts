@@ -37,8 +37,7 @@ async function findRolloutFile(threadId: string, root: string): Promise<string |
           if (entry.isFile()) {
             const matchesThread = entry.name.includes(threadId);
             const matchesPrefix = entry.name.startsWith("rollout-");
-            const matchesExtension =
-              entry.name.endsWith(".json") || entry.name.endsWith(".jsonl");
+            const matchesExtension = entry.name.endsWith(".json") || entry.name.endsWith(".jsonl");
             if (matchesThread && matchesPrefix && matchesExtension && match === null) {
               match = entryPath;
             }
