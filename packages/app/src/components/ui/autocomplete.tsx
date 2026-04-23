@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   ScrollView,
   Text,
@@ -206,9 +206,14 @@ export function Autocomplete({
     [ensureActiveItemVisible],
   );
 
+  const containerStyle = useMemo(
+    () => [styles.container, { maxHeight }],
+    [maxHeight],
+  );
+
   if (isLoading) {
     return (
-      <View style={[styles.container, { maxHeight }]}>
+      <View style={containerStyle}>
         <View style={styles.emptyItem}>
           <Text style={styles.emptyText}>{loadingText}</Text>
         </View>
@@ -218,7 +223,7 @@ export function Autocomplete({
 
   if (errorMessage) {
     return (
-      <View style={[styles.container, { maxHeight }]}>
+      <View style={containerStyle}>
         <View style={styles.emptyItem}>
           <Text style={styles.emptyText}>Error: {errorMessage}</Text>
         </View>
@@ -228,7 +233,7 @@ export function Autocomplete({
 
   if (options.length === 0) {
     return (
-      <View style={[styles.container, { maxHeight }]}>
+      <View style={containerStyle}>
         <View style={styles.emptyItem}>
           <Text style={styles.emptyText}>{emptyText}</Text>
         </View>
@@ -253,7 +258,7 @@ export function Autocomplete({
           ) : null}
         </View>
       ) : null}
-      <View style={[styles.container, { maxHeight }]}>
+      <View style={containerStyle}>
         <ScrollView
           ref={scrollRef}
           onLayout={handleScrollViewLayout}

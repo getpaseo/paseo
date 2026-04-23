@@ -15,6 +15,7 @@ import {
   useEffect,
   useLayoutEffect,
   useImperativeHandle,
+  useMemo,
   forwardRef,
 } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -981,13 +982,39 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     void handleStopRealtimeVoice();
   }, [handleStopRealtimeVoice]);
 
+  const inputWrapperCombinedStyle = useMemo(
+    () => [styles.inputWrapper, inputWrapperStyle, inputAnimatedStyle],
+    [inputWrapperStyle, inputAnimatedStyle],
+  );
+  const textInputStyle = useMemo(
+    () => [
+      styles.textInput,
+      isWeb
+        ? {
+            height: inputHeight,
+            minHeight: MIN_INPUT_HEIGHT,
+            maxHeight: MAX_INPUT_HEIGHT,
+          }
+        : {
+            minHeight: MIN_INPUT_HEIGHT,
+            maxHeight: MAX_INPUT_HEIGHT,
+          },
+    ],
+    [inputHeight],
+  );
+  const sendButtonCombinedStyle = useMemo(
+    () => [styles.sendButton, isSendButtonDisabled && styles.buttonDisabled],
+    [isSendButtonDisabled],
+  );
+  const overlayContainerStyle = useMemo(
+    () => [styles.overlayContainer, overlayAnimatedStyle],
+    [overlayAnimatedStyle],
+  );
+
   return (
     <View ref={rootRef} style={styles.container} testID="message-input-root">
       {/* Regular input */}
-      <Animated.View
-        ref={inputWrapperRef}
-        style={[styles.inputWrapper, inputWrapperStyle, inputAnimatedStyle]}
-      >
+      <Animated.View ref={inputWrapperRef} style={inputWrapperCombinedStyle}>
         {/* Text input */}
         <View style={styles.textInputScrollWrapper}>
           <TextInput
@@ -999,19 +1026,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
             accessibilityLabel="Message agent..."
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
-            style={[
-              styles.textInput,
-              isWeb
-                ? {
-                    height: inputHeight,
-                    minHeight: MIN_INPUT_HEIGHT,
-                    maxHeight: MAX_INPUT_HEIGHT,
-                  }
-                : {
-                    minHeight: MIN_INPUT_HEIGHT,
-                    maxHeight: MAX_INPUT_HEIGHT,
-                  },
-            ]}
+            style={textInputStyle}
             multiline
             scrollEnabled={isWeb ? inputHeight >= MAX_INPUT_HEIGHT : true}
             onContentSizeChange={handleContentSizeChange}
@@ -1148,7 +1163,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                   disabled={isSendButtonDisabled}
                   accessibilityLabel={submitAccessibilityLabel}
                   accessibilityRole="button"
-                  style={[styles.sendButton, isSendButtonDisabled && styles.buttonDisabled]}
+                  style={sendButtonCombinedStyle}
                 >
                   {isSubmitLoading ? (
                     <ActivityIndicator size="small" color="white" />
@@ -1173,7 +1188,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
       </Animated.View>
 
       {/* Dictation overlay */}
-      <Animated.View style={[styles.overlayContainer, overlayAnimatedStyle]}>
+      <Animated.View style={overlayContainerStyle}>
         {showDictationOverlay ? (
           <DictationOverlay
             volume={dictationVolume}

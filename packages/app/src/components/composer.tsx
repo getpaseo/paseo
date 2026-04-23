@@ -115,7 +115,7 @@ function QueuedMessageRow({ item, onEdit, onSendNow }: QueuedMessageRowProps) {
         </Pressable>
         <Pressable
           onPress={handleSendNow}
-          style={[styles.queueActionButton, styles.queueSendButton]}
+          style={QUEUE_SEND_BUTTON_STYLE}
         >
           <ArrowUp size={theme.iconSize.sm} color="white" />
         </Pressable>
@@ -126,10 +126,11 @@ function QueuedMessageRow({ item, onEdit, onSendNow }: QueuedMessageRowProps) {
 
 function ImageAttachmentThumbnail({ image }: { image: ImageAttachment }) {
   const uri = useAttachmentPreviewUrl(image);
+  const source = useMemo(() => ({ uri: uri ?? "" }), [uri]);
   if (!uri) {
     return <View style={styles.imageThumbnailPlaceholder} />;
   }
-  return <Image source={{ uri }} style={styles.imageThumbnail} />;
+  return <Image source={source} style={styles.imageThumbnail} />;
 }
 
 interface ImageAttachmentPillProps {
@@ -833,6 +834,14 @@ export function Composer({
     [],
   );
 
+  const cancelButtonStyle = useMemo(
+    () => [
+      styles.cancelButton as any,
+      (!isConnected || isCancellingAgent ? styles.buttonDisabled : undefined) as any,
+    ],
+    [isConnected, isCancellingAgent],
+  );
+
   const cancelButton = useMemo(
     () =>
       isAgentRunning && !hasSendableContent && !isProcessing ? (
@@ -842,10 +851,7 @@ export function Composer({
             disabled={!isConnected || isCancellingAgent}
             accessibilityLabel={isCancellingAgent ? "Canceling agent" : "Stop agent"}
             accessibilityRole="button"
-            style={[
-              styles.cancelButton as any,
-              (!isConnected || isCancellingAgent ? styles.buttonDisabled : undefined) as any,
-            ]}
+            style={cancelButtonStyle}
           >
             {isCancellingAgent ? (
               <ActivityIndicator size="small" color="white" />
@@ -1100,11 +1106,20 @@ export function Composer({
     [voiceButtonDisabled],
   );
 
+  const composerContainerStyle = useMemo(
+    () => [styles.container, keyboardAnimatedStyle],
+    [keyboardAnimatedStyle],
+  );
+  const inputAreaContainerStyle = useMemo(
+    () => [styles.inputAreaContainer, isComposerLocked && styles.inputAreaLocked],
+    [isComposerLocked],
+  );
+
   return (
-    <Animated.View style={[styles.container, keyboardAnimatedStyle]}>
+    <Animated.View style={composerContainerStyle}>
       <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
       {/* Input area */}
-      <View style={[styles.inputAreaContainer, isComposerLocked && styles.inputAreaLocked]}>
+      <View style={inputAreaContainerStyle}>
         <View style={styles.inputAreaContent}>
           {/* Queue list */}
           {queuedMessages.length > 0 && (
@@ -1397,3 +1412,5 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     fontSize: theme.fontSize.sm,
   },
 })) as any) as Record<string, any>;
+
+const QUEUE_SEND_BUTTON_STYLE = [styles.queueActionButton, styles.queueSendButton];
