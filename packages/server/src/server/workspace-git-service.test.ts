@@ -650,10 +650,7 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("requestWorkingTreeWatch reference-counts watchers by cwd", async () => {
     const watchers = [createWatcher(), createWatcher()];
-    const watch = vi
-      .fn()
-      .mockReturnValueOnce(watchers[0])
-      .mockReturnValueOnce(watchers[1]);
+    const watch = vi.fn().mockReturnValueOnce(watchers[0]).mockReturnValueOnce(watchers[1]);
     const service = createService({ watch });
 
     const firstListener = vi.fn();
@@ -697,7 +694,9 @@ describe("WorkspaceGitServiceImpl", () => {
 
     const service = createService({ watch });
     const subscription = await service.requestWorkingTreeWatch("/tmp/repo", vi.fn());
-    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get("/tmp/repo");
+    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get(
+      "/tmp/repo",
+    );
 
     expect(target?.fallbackRefreshInterval).not.toBeNull();
 
@@ -718,7 +717,9 @@ describe("WorkspaceGitServiceImpl", () => {
     });
 
     const subscription = await service.requestWorkingTreeWatch("/tmp/plain", vi.fn());
-    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get("/tmp/plain");
+    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get(
+      "/tmp/plain",
+    );
 
     expect(subscription.repoRoot).toBeNull();
     const expectedRecursive = process.platform !== "linux";
@@ -743,10 +744,7 @@ describe("WorkspaceGitServiceImpl", () => {
       },
     );
     const service = createService({ watch });
-    const refreshSpy = vi.spyOn(
-      service as unknown as ServiceInternals,
-      "scheduleWorkspaceRefresh",
-    );
+    const refreshSpy = vi.spyOn(service as unknown as ServiceInternals, "scheduleWorkspaceRefresh");
     const listener = vi.fn();
 
     const subscription = await service.requestWorkingTreeWatch("/tmp/repo", listener);

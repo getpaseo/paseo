@@ -410,7 +410,10 @@ describe("relay external socket reconnect behavior", () => {
       closeReason = typeof reason === "string" ? reason : String(reason ?? "");
     });
 
-    await (server as unknown as WebSocketServerInternals).attachSocket(socket, createDirectRequest());
+    await (server as unknown as WebSocketServerInternals).attachSocket(
+      socket,
+      createDirectRequest(),
+    );
     await vi.advanceTimersByTimeAsync(15_000);
 
     expect(closeCode).toBe(4001);
