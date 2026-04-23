@@ -4445,7 +4445,11 @@ function extractClaudeUserText(messageRaw: unknown): string | null {
   }
   if (Array.isArray(message.content)) {
     for (const block of message.content) {
-      if (block && typeof block === "object" && typeof (block as { text?: unknown }).text === "string") {
+      if (
+        block &&
+        typeof block === "object" &&
+        typeof (block as { text?: unknown }).text === "string"
+      ) {
         const normalized = (block as { text: string }).text.trim();
         if (normalized && !isClaudeTranscriptNoiseText(normalized)) {
           return normalized;
