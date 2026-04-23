@@ -256,6 +256,30 @@ export function ExplorerSidebar({
     width: resizeWidth.value,
   }));
 
+  const backdropCombinedStyle = useMemo(
+    () => [explorerStaticStyles.backdrop, backdropAnimatedStyle],
+    [backdropAnimatedStyle],
+  );
+  const mobileSidebarStyle = useMemo(
+    () => [
+      explorerStaticStyles.mobileSidebar,
+      {
+        width: windowWidth,
+        paddingTop: insets.top,
+        backgroundColor: theme.colors.surfaceSidebar,
+      },
+      sidebarAnimatedStyle,
+      mobileKeyboardInsetStyle,
+    ],
+    [
+      windowWidth,
+      insets.top,
+      theme.colors.surfaceSidebar,
+      sidebarAnimatedStyle,
+      mobileKeyboardInsetStyle,
+    ],
+  );
+
   // Mobile: full-screen overlay with gesture.
   // On web, keep it interactive only while open so closed sidebars don't eat taps.
   const overlayPointerEvents = isWeb ? (isOpen ? "auto" : "none") : "box-none";
@@ -270,22 +294,10 @@ export function ExplorerSidebar({
     return (
       <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
         {/* Backdrop */}
-        <Animated.View style={[explorerStaticStyles.backdrop, backdropAnimatedStyle]} />
+        <Animated.View style={backdropCombinedStyle} />
 
         <GestureDetector gesture={closeGesture} touchAction="pan-y">
-          <Animated.View
-            style={[
-              explorerStaticStyles.mobileSidebar,
-              {
-                width: windowWidth,
-                paddingTop: insets.top,
-                backgroundColor: theme.colors.surfaceSidebar,
-              },
-              sidebarAnimatedStyle,
-              mobileKeyboardInsetStyle,
-            ]}
-            pointerEvents="auto"
-          >
+          <Animated.View style={mobileSidebarStyle} pointerEvents="auto">
             <SidebarContent
               activeTab={explorerTab}
               onTabPress={handleTabPress}
