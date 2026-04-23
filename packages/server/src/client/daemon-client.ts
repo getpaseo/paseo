@@ -639,7 +639,7 @@ export class DaemonClient {
     Set<(message: SessionOutboundMessage) => void>
   > = new Map();
   private eventListeners: Set<DaemonEventHandler> = new Set();
-  private waiters: Set<Waiter<any>> = new Set();
+  private waiters: Set<Waiter<unknown>> = new Set();
   private checkoutStatusInFlight: Map<string, Promise<CheckoutStatusPayload>> = new Map();
   private connectionListeners: Set<(status: ConnectionState) => void> = new Set();
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -4142,7 +4142,7 @@ export class DaemonClient {
         timeout > 0
           ? setTimeout(() => {
               if (waiter) {
-                this.waiters.delete(waiter);
+                this.waiters.delete(waiter as Waiter<unknown>);
               }
               wrappedReject(timeoutError);
             }, timeout)
@@ -4154,7 +4154,7 @@ export class DaemonClient {
         reject: wrappedReject,
         timeoutHandle,
       };
-      this.waiters.add(waiter);
+      this.waiters.add(waiter as Waiter<unknown>);
     });
 
     const cancel = (error: Error) => {
@@ -4163,7 +4163,7 @@ export class DaemonClient {
       }
 
       if (waiter) {
-        this.waiters.delete(waiter);
+        this.waiters.delete(waiter as Waiter<unknown>);
         if (waiter.timeoutHandle) {
           clearTimeout(waiter.timeoutHandle);
         }
