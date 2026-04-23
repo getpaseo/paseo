@@ -1193,19 +1193,14 @@ export class ClaudeAgentClient implements AgentClient {
     }
     const limit = options?.limit ?? 20;
     const candidates = await collectRecentClaudeSessions(projectsRoot, limit * 3);
-    const descriptors: PersistedAgentDescriptor[] = [];
-
-    for (const candidate of candidates) {
-      const descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime);
-      if (descriptor) {
-        descriptors.push(descriptor);
-      }
-      if (descriptors.length >= limit) {
-        break;
-      }
-    }
-
-    return descriptors;
+    const parsed = await Promise.all(
+      candidates.map((candidate) =>
+        parseClaudeSessionDescriptor(candidate.path, candidate.mtime),
+      ),
+    );
+    return parsed
+      .filter((descriptor): descriptor is PersistedAgentDescriptor => descriptor !== null)
+      .slice(0, limit);
   }
 
   async isAvailable(): Promise<boolean> {
