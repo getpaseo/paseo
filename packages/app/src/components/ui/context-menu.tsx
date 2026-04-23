@@ -402,6 +402,21 @@ export function ContextMenuContent({
     [],
   );
 
+  const sheetBackgroundStyle = useMemo(
+    () => [
+      styles.sheetBackground,
+      {
+        backgroundColor: theme.colors.surface0,
+        borderColor: theme.colors.border,
+      },
+    ],
+    [theme.colors.surface0, theme.colors.border],
+  );
+  const sheetHandleStyle = useMemo(
+    () => [styles.sheetHandle, { backgroundColor: theme.colors.surface2 }],
+    [theme.colors.surface2],
+  );
+
   // Measure trigger when opening (fallback) and capture point anchors.
   useEffect(() => {
     if (useMobileSheet) {
@@ -489,14 +504,8 @@ export function ContextMenuContent({
           onChange={handleSheetChange}
           backdropComponent={renderSheetBackdrop}
           enablePanDownToClose
-          backgroundStyle={[
-            styles.sheetBackground,
-            {
-              backgroundColor: theme.colors.surface0,
-              borderColor: theme.colors.border,
-            },
-          ]}
-          handleIndicatorStyle={[styles.sheetHandle, { backgroundColor: theme.colors.surface2 }]}
+          backgroundStyle={sheetBackgroundStyle}
+          handleIndicatorStyle={sheetHandleStyle}
           keyboardBehavior="extend"
           keyboardBlurBehavior="restore"
         >
@@ -513,8 +522,6 @@ export function ContextMenuContent({
     );
   }
 
-  if (!open) return null;
-
   const { width: screenWidth } = Dimensions.get("window");
   const resolvedWidthStyle: ViewStyle = fullWidth
     ? { width: screenWidth - horizontalPadding * 2 }
@@ -523,6 +530,21 @@ export function ContextMenuContent({
         ...(typeof minWidth === "number" ? { minWidth } : null),
         ...(typeof maxWidth === "number" ? { maxWidth } : null),
       };
+
+  const animatedContentStyle = useMemo(
+    () => [
+      styles.content,
+      resolvedWidthStyle,
+      {
+        position: "absolute" as const,
+        top: position?.y ?? -9999,
+        left: position?.x ?? -9999,
+      },
+    ],
+    [resolvedWidthStyle, position?.y, position?.x],
+  );
+
+  if (!open) return null;
 
   return (
     <Modal
@@ -546,21 +568,13 @@ export function ContextMenuContent({
           collapsable={false}
           testID={testID}
           onLayout={handleContentLayout}
-          style={[
-            styles.content,
-            resolvedWidthStyle,
-            {
-              position: "absolute",
-              top: position?.y ?? -9999,
-              left: position?.x ?? -9999,
-            },
-          ]}
+          style={animatedContentStyle}
         >
           <ScrollView
             bounces={false}
             showsVerticalScrollIndicator
             style={webScrollbarStyle}
-            contentContainerStyle={{ flexGrow: 1 }}
+            contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
           >
             {children}
           </ScrollView>
@@ -575,8 +589,9 @@ export function ContextMenuLabel({
   style,
   testID,
 }: PropsWithChildren<{ style?: ViewStyle | ViewStyle[]; testID?: string }>): ReactElement {
+  const containerStyle = useMemo(() => [styles.labelContainer, style], [style]);
   return (
-    <View style={[styles.labelContainer, style]} testID={testID}>
+    <View style={containerStyle} testID={testID}>
       <Text style={styles.labelText}>{children}</Text>
     </View>
   );
@@ -589,7 +604,8 @@ export function ContextMenuSeparator({
   style?: ViewStyle;
   testID?: string;
 }): ReactElement {
-  return <View style={[styles.separator, style]} testID={testID} />;
+  const separatorStyle = useMemo(() => [styles.separator, style], [style]);
+  return <View style={separatorStyle} testID={testID} />;
 }
 
 export function ContextMenuHint({
@@ -695,6 +711,23 @@ export function ContextMenuItem({
     [selected, selectedVariant, isDisabled],
   );
 
+  const itemTextStyle = useMemo(
+    () => [
+      styles.itemText,
+      destructive && !isSuccess ? styles.itemTextDestructive : null,
+      isSuccess ? styles.itemTextSuccess : null,
+      selected && selectedVariant === "accent" ? styles.itemTextSelectedAccent : null,
+    ],
+    [destructive, isSuccess, selected, selectedVariant],
+  );
+  const itemDescriptionStyle = useMemo(
+    () => [
+      styles.itemDescription,
+      selected && selectedVariant === "accent" ? styles.itemDescriptionSelectedAccent : null,
+    ],
+    [selected, selectedVariant],
+  );
+
   const content = (
     <Pressable
       testID={testID}
@@ -710,27 +743,11 @@ export function ContextMenuItem({
       ) : null}
       {leadingContent ? <View style={styles.leadingSlot}>{leadingContent}</View> : null}
       <View style={styles.itemContent}>
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.itemText,
-            destructive && !isSuccess ? styles.itemTextDestructive : null,
-            isSuccess ? styles.itemTextSuccess : null,
-            selected && selectedVariant === "accent" ? styles.itemTextSelectedAccent : null,
-          ]}
-        >
+        <Text numberOfLines={1} style={itemTextStyle}>
           {label}
         </Text>
         {description && !isPending && !isSuccess ? (
-          <Text
-            numberOfLines={2}
-            style={[
-              styles.itemDescription,
-              selected && selectedVariant === "accent"
-                ? styles.itemDescriptionSelectedAccent
-                : null,
-            ]}
-          >
+          <Text numberOfLines={2} style={itemDescriptionStyle}>
             {description}
           </Text>
         ) : null}
@@ -883,3 +900,5 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.85,
   },
 }));
+
+const SCROLL_CONTENT_CONTAINER_STYLE = { flexGrow: 1 };
