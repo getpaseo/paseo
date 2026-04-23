@@ -2588,21 +2588,25 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     let consecutiveInterruptAbortRecoveries = 0;
+    const logRawMessage = (message: SDKMessage): void => {
+      if (!claudeDebug) {
+        return;
+      }
+      this.logger.trace(
+        {
+          claudeSessionId: this.claudeSessionId,
+          messageType: message.type,
+          messageSubtype: "subtype" in message ? message.subtype : undefined,
+          messageUuid: "uuid" in message ? message.uuid : undefined,
+        },
+        "Claude query pump: raw SDK message",
+      );
+    };
     try {
       while (!this.closed && this.query === activeQuery) {
         try {
           for await (const message of activeQuery) {
-            if (claudeDebug) {
-              this.logger.trace(
-                {
-                  claudeSessionId: this.claudeSessionId,
-                  messageType: message.type,
-                  messageSubtype: "subtype" in message ? message.subtype : undefined,
-                  messageUuid: "uuid" in message ? message.uuid : undefined,
-                },
-                "Claude query pump: raw SDK message",
-              );
-            }
+            logRawMessage(message);
             consecutiveInterruptAbortRecoveries = 0;
             if (await this.handleMissingResumedConversation(message, activeQuery)) {
               return;
@@ -4329,13 +4333,17 @@ function isFinishedAccumulator(acc: ClaudeSessionDescriptorAccumulator): boolean
 }
 
 function applyClaudeSessionEntryToAccumulator(
-  entry: any,
+  entryRaw: unknown,
   acc: ClaudeSessionDescriptorAccumulator,
 ): void {
-  if (entry?.isSidechain) {
+  if (!entryRaw || typeof entryRaw !== "object") {
     return;
   }
-  if (entry?.type === "user" && isSyntheticUserEntry(entry)) {
+  const entry = entryRaw as Record<string, unknown> & { message?: unknown };
+  if (entry.isSidechain) {
+    return;
+  }
+  if (entry.type === "user" && isSyntheticUserEntry(entry)) {
     return;
   }
   if (!acc.sessionId && typeof entry.sessionId === "string") {
@@ -4383,7 +4391,7 @@ async function parseClaudeSessionDescriptor(
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
-    let entry: any;
+    let entry: unknown;
     try {
       entry = JSON.parse(line);
     } catch {
@@ -4422,10 +4430,11 @@ async function parseClaudeSessionDescriptor(
   };
 }
 
-function extractClaudeUserText(message: any): string | null {
-  if (!message) {
+function extractClaudeUserText(messageRaw: unknown): string | null {
+  if (!messageRaw || typeof messageRaw !== "object") {
     return null;
   }
+  const message = messageRaw as Record<string, unknown>;
   if (typeof message.content === "string") {
     const normalized = message.content.trim();
     return normalized && !isClaudeTranscriptNoiseText(normalized) ? normalized : null;
@@ -4436,8 +4445,8 @@ function extractClaudeUserText(message: any): string | null {
   }
   if (Array.isArray(message.content)) {
     for (const block of message.content) {
-      if (block && typeof block.text === "string") {
-        const normalized = block.text.trim();
+      if (block && typeof block === "object" && typeof (block as { text?: unknown }).text === "string") {
+        const normalized = (block as { text: string }).text.trim();
         if (normalized && !isClaudeTranscriptNoiseText(normalized)) {
           return normalized;
         }
