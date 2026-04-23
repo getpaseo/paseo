@@ -238,8 +238,8 @@ interface WebSocketLike {
   bufferedAmount?: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
-  on: (event: "message" | "close" | "error", listener: (...args: any[]) => void) => void;
-  once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
+  on: (event: "message" | "close" | "error", listener: (...args: unknown[]) => void) => void;
+  once: (event: "close" | "error", listener: (...args: unknown[]) => void) => void;
 }
 
 interface SessionConnection {
@@ -1036,18 +1036,22 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private bindSocketHandlers(ws: WebSocketLike): void {
-    ws.on("message", (data) => {
+    ws.on("message", (...args: unknown[]) => {
+      const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
       void this.handleRawMessage(ws, data);
     });
 
-    ws.on("close", async (code: number, reason: unknown) => {
+    ws.on("close", async (...args: unknown[]) => {
+      const code = args[0];
+      const reason = args[1];
       await this.detachSocket(ws, {
         code: typeof code === "number" ? code : undefined,
         reason,
       });
     });
 
-    ws.on("error", async (error) => {
+    ws.on("error", async (...args: unknown[]) => {
+      const error = args[0];
       const err = error instanceof Error ? error : new Error(String(error));
       const active = this.sessions.get(ws);
       const pending = this.pendingConnections.get(ws);
