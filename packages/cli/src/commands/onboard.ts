@@ -315,6 +315,102 @@ export function onboardCommand(): Command {
     });
 }
 
+async function resolveAndPersistVoice(
+  paseoHome: string,
+  options: OnboardOptions,
+): Promise<boolean> {
+  let persisted = loadPersistedConfig(paseoHome) as OnboardPersistedConfig;
+  const persistedVoiceSelection = resolvePersistedVoiceSelection(persisted);
+  const shouldPrompt = options.voice === "ask" || options.voice === undefined;
+  let voiceEnabled: boolean;
+  try {
+    voiceEnabled =
+      shouldPrompt && persistedVoiceSelection !== null
+        ? persistedVoiceSelection
+        : await resolveVoiceSelection(options.voice);
+  } catch (error) {
+    if (error instanceof OnboardCancelledError) {
+      cancel("Onboarding cancelled.");
+      process.exit(0);
+    }
+    throw error;
+  }
+
+  if (shouldPrompt && persistedVoiceSelection !== null) {
+    log.message(`Using saved voice setup from config (${voiceEnabled ? "enabled" : "disabled"}).`);
+  }
+
+  persisted = applyVoiceSelection(persisted, voiceEnabled);
+  savePersistedConfig(paseoHome, persisted);
+  return voiceEnabled;
+}
+
+async function ensureDaemonStarted(options: OnboardOptions, richUi: boolean): Promise<void> {
+  const stateBeforeStart = resolveLocalDaemonState({ home: options.home });
+  if (stateBeforeStart.running) {
+    log.message(`Daemon already running (PID ${stateBeforeStart.pidInfo?.pid ?? "unknown"}).`);
+    return;
+  }
+
+  const startSpinner = richUi ? spinner() : null;
+  try {
+    if (startSpinner) {
+      startSpinner.start("Starting daemon...");
+    } else {
+      log.message("Starting daemon...");
+    }
+    const startup = await startLocalDaemonDetached(options);
+    if (startSpinner) {
+      startSpinner.stop(`Daemon started (PID ${startup.pid ?? "unknown"})`);
+    } else {
+      log.message(`Daemon started (PID ${startup.pid ?? "unknown"})`);
+    }
+    log.message(`Logs: ${startup.logPath}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (startSpinner) {
+      startSpinner.error(message);
+    } else {
+      log.error(message);
+    }
+    process.exit(1);
+  }
+}
+
+async function waitForDaemonReadyWithUi(args: {
+  home: string;
+  timeoutMs: number;
+  richUi: boolean;
+}): Promise<{ listen: string; host: string | null }> {
+  const readySpinner = args.richUi ? spinner() : null;
+  try {
+    if (readySpinner) {
+      readySpinner.start("Waiting for daemon to become ready...");
+    } else {
+      log.message("Waiting for daemon to become ready...");
+    }
+    const readyState = await waitForDaemonReady({
+      home: args.home,
+      timeoutMs: args.timeoutMs,
+      onStatus: readySpinner ? (message) => readySpinner.message(message) : undefined,
+    });
+    if (readySpinner) {
+      readySpinner.stop(`Daemon ready on ${readyState.listen}`);
+    } else {
+      log.message(`Daemon ready on ${readyState.listen}`);
+    }
+    return readyState;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (readySpinner) {
+      readySpinner.error(message);
+    } else {
+      log.error(message);
+    }
+    process.exit(1);
+  }
+}
+
 export async function runOnboard(options: OnboardOptions): Promise<void> {
   const richUi = process.stdin.isTTY && process.stdout.isTTY;
   if (richUi) {
@@ -340,96 +436,21 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     renderNote(paseoHome, "Paseo home");
   }
 
-  let persisted = loadPersistedConfig(paseoHome) as OnboardPersistedConfig;
-  const persistedVoiceSelection = resolvePersistedVoiceSelection(persisted);
-  const shouldPrompt = options.voice === "ask" || options.voice === undefined;
-  let voiceEnabled: boolean;
-  try {
-    voiceEnabled =
-      shouldPrompt && persistedVoiceSelection !== null
-        ? persistedVoiceSelection
-        : await resolveVoiceSelection(options.voice);
-  } catch (error) {
-    if (error instanceof OnboardCancelledError) {
-      cancel("Onboarding cancelled.");
-      process.exit(0);
-      return;
-    }
-    throw error;
-  }
-
-  if (shouldPrompt && persistedVoiceSelection !== null) {
-    log.message(`Using saved voice setup from config (${voiceEnabled ? "enabled" : "disabled"}).`);
-  }
-
-  persisted = applyVoiceSelection(persisted, voiceEnabled);
-  savePersistedConfig(paseoHome, persisted);
-
+  const voiceEnabled = await resolveAndPersistVoice(paseoHome, options);
   const config = loadConfig(paseoHome, { cli: toCliOverrides(options) });
 
-  const voiceStatus = voiceEnabled
-    ? "Voice features enabled. Local speech models will be downloaded automatically if missing."
-    : "Voice features disabled. Local speech models will not be downloaded.";
-  log.message(voiceStatus);
+  log.message(
+    voiceEnabled
+      ? "Voice features enabled. Local speech models will be downloaded automatically if missing."
+      : "Voice features disabled. Local speech models will not be downloaded.",
+  );
 
-  const stateBeforeStart = resolveLocalDaemonState({ home: options.home });
-  const startSpinner = richUi ? spinner() : null;
-
-  if (!stateBeforeStart.running) {
-    try {
-      if (startSpinner) {
-        startSpinner.start("Starting daemon...");
-      } else {
-        log.message("Starting daemon...");
-      }
-      const startup = await startLocalDaemonDetached(options);
-      if (startSpinner) {
-        startSpinner.stop(`Daemon started (PID ${startup.pid ?? "unknown"})`);
-      } else {
-        log.message(`Daemon started (PID ${startup.pid ?? "unknown"})`);
-      }
-      log.message(`Logs: ${startup.logPath}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (startSpinner) {
-        startSpinner.error(message);
-      } else {
-        log.error(message);
-      }
-      process.exit(1);
-    }
-  } else {
-    log.message(`Daemon already running (PID ${stateBeforeStart.pidInfo?.pid ?? "unknown"}).`);
-  }
-
-  let readyState: { listen: string; host: string | null };
-  const readySpinner = richUi ? spinner() : null;
-  try {
-    if (readySpinner) {
-      readySpinner.start("Waiting for daemon to become ready...");
-    } else {
-      log.message("Waiting for daemon to become ready...");
-    }
-    readyState = await waitForDaemonReady({
-      home: options.home ?? paseoHome,
-      timeoutMs,
-      onStatus: readySpinner ? (message) => readySpinner.message(message) : undefined,
-    });
-    if (readySpinner) {
-      readySpinner.stop(`Daemon ready on ${readyState.listen}`);
-    } else {
-      log.message(`Daemon ready on ${readyState.listen}`);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (readySpinner) {
-      readySpinner.error(message);
-    } else {
-      log.error(message);
-    }
-    process.exit(1);
-    return;
-  }
+  await ensureDaemonStarted(options, richUi);
+  await waitForDaemonReadyWithUi({
+    home: options.home ?? paseoHome,
+    timeoutMs,
+    richUi,
+  });
 
   if (config.relayEnabled === false) {
     log.warn("Relay is disabled; pairing offer is unavailable for this daemon.");

@@ -85,11 +85,9 @@ function readPidSocketTarget(paseoHome: string): string | null {
       listen?: unknown;
       sockPath?: unknown;
     };
-    return typeof parsed.listen === "string"
-      ? parsed.listen
-      : typeof parsed.sockPath === "string"
-        ? parsed.sockPath
-        : null;
+    if (typeof parsed.listen === "string") return parsed.listen;
+    if (typeof parsed.sockPath === "string") return parsed.sockPath;
+    return null;
   } catch {
     return null;
   }
@@ -143,6 +141,12 @@ function resolveDaemonHostCandidates(options?: ConnectOptions): string[] {
   return resolveDefaultDaemonHosts();
 }
 
+function stripIpcPrefix(trimmed: string): string {
+  if (trimmed.startsWith("unix://")) return trimmed.slice("unix://".length).trim();
+  if (trimmed.startsWith("pipe://")) return trimmed.slice("pipe://".length).trim();
+  return trimmed;
+}
+
 export function resolveDaemonTarget(host: string): DaemonTarget {
   const trimmed = host.trim();
   if (
@@ -150,11 +154,7 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
     trimmed.startsWith("pipe://") ||
     trimmed.startsWith("\\\\.\\pipe\\")
   ) {
-    const socketPath = trimmed.startsWith("unix://")
-      ? trimmed.slice("unix://".length).trim()
-      : trimmed.startsWith("pipe://")
-        ? trimmed.slice("pipe://".length).trim()
-        : trimmed;
+    const socketPath = stripIpcPrefix(trimmed);
     if (!socketPath) {
       throw new Error("Invalid IPC daemon target: missing socket path");
     }

@@ -64,6 +64,29 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+interface PermitResult {
+  exitCode: number;
+  stdout: string;
+}
+
+function findMatchingPermission(
+  result: PermitResult,
+  agentId: string,
+): { agentId?: string } | undefined {
+  if (result.exitCode !== 0) return undefined;
+  try {
+    const permissions = JSON.parse(result.stdout.trim());
+    if (!Array.isArray(permissions) || permissions.length === 0) return undefined;
+    return permissions.find(
+      (p: { agentId?: string }) =>
+        p.agentId?.startsWith(agentId.slice(0, 7)) ||
+        agentId.startsWith(p.agentId?.slice(0, 7) || ""),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 async function test_create_agent_with_permissions(): Promise<string> {
   console.log("\n--- Test: Create agent in default mode (will request permissions) ---");
 
@@ -111,28 +134,12 @@ async function test_wait_for_permission_request(agentId: string): Promise<void> 
 
   while (Date.now() - startTime < maxWait) {
     const result = await ctx.paseo(["permit", "ls", "--json"]);
-
-    if (result.exitCode === 0) {
-      try {
-        const permissions = JSON.parse(result.stdout.trim());
-        if (Array.isArray(permissions) && permissions.length > 0) {
-          // Check if any permission is for our agent
-          const ourPermission = permissions.find(
-            (p: { agentId?: string }) =>
-              p.agentId?.startsWith(agentId.slice(0, 7)) ||
-              agentId.startsWith(p.agentId?.slice(0, 7) || ""),
-          );
-          if (ourPermission) {
-            console.log("Permission request detected:", ourPermission);
-            console.log("PASS: Agent requested permission");
-            return;
-          }
-        }
-      } catch {
-        // JSON parse failed, continue polling
-      }
+    const ourPermission = findMatchingPermission(result, agentId);
+    if (ourPermission) {
+      console.log("Permission request detected:", ourPermission);
+      console.log("PASS: Agent requested permission");
+      return;
     }
-
     await sleep(pollInterval);
   }
 

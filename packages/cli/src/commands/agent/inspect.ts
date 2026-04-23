@@ -104,30 +104,28 @@ function resolveModel(snapshot: AgentSnapshotPayload): string | null {
   return normalizeModelId(snapshot.runtimeInfo?.model) ?? normalizeModelId(snapshot.model);
 }
 
+function buildLastUsage(snapshot: AgentSnapshotPayload): AgentInspect["LastUsage"] {
+  if (!snapshot.lastUsage) return null;
+  return {
+    InputTokens: snapshot.lastUsage.inputTokens ?? 0,
+    OutputTokens: snapshot.lastUsage.outputTokens ?? 0,
+    CachedTokens: snapshot.lastUsage.cachedInputTokens ?? 0,
+    CostUsd: snapshot.lastUsage.totalCostUsd ?? 0,
+  };
+}
+
+function buildCapabilities(snapshot: AgentSnapshotPayload): AgentInspect["Capabilities"] {
+  if (!snapshot.capabilities) return null;
+  return {
+    Streaming: snapshot.capabilities.supportsStreaming ?? false,
+    Persistence: snapshot.capabilities.supportsSessionPersistence ?? false,
+    DynamicModes: snapshot.capabilities.supportsDynamicModes ?? false,
+    McpServers: snapshot.capabilities.supportsMcpServers ?? false,
+  };
+}
+
 /** Convert agent snapshot to inspection data */
 function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
-  const lastUsage = snapshot.lastUsage
-    ? {
-        InputTokens: snapshot.lastUsage.inputTokens ?? 0,
-        OutputTokens: snapshot.lastUsage.outputTokens ?? 0,
-        CachedTokens: snapshot.lastUsage.cachedInputTokens ?? 0,
-        CostUsd: snapshot.lastUsage.totalCostUsd ?? 0,
-      }
-    : null;
-
-  const capabilities = snapshot.capabilities
-    ? {
-        Streaming: snapshot.capabilities.supportsStreaming ?? false,
-        Persistence: snapshot.capabilities.supportsSessionPersistence ?? false,
-        DynamicModes: snapshot.capabilities.supportsDynamicModes ?? false,
-        McpServers: snapshot.capabilities.supportsMcpServers ?? false,
-      }
-    : null;
-
-  // Extract worktree and parentAgentId from labels if they exist
-  const worktree = snapshot.labels?.["paseo.worktree"] ?? null;
-  const parentAgentId = snapshot.labels?.["paseo.parent-agent-id"] ?? null;
-
   return {
     Id: snapshot.id,
     Name: snapshot.title ?? "-",
@@ -141,8 +139,8 @@ function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
     Cwd: snapshot.cwd,
     CreatedAt: snapshot.createdAt,
     UpdatedAt: snapshot.updatedAt,
-    LastUsage: lastUsage,
-    Capabilities: capabilities,
+    LastUsage: buildLastUsage(snapshot),
+    Capabilities: buildCapabilities(snapshot),
     AvailableModes: snapshot.availableModes
       ? snapshot.availableModes.map((m) => ({ id: m.id, label: m.label }))
       : null,
@@ -150,8 +148,8 @@ function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
       id: p.id,
       tool: p.name ?? "unknown",
     })),
-    Worktree: worktree,
-    ParentAgentId: parentAgentId,
+    Worktree: snapshot.labels?.["paseo.worktree"] ?? null,
+    ParentAgentId: snapshot.labels?.["paseo.parent-agent-id"] ?? null,
   };
 }
 

@@ -87,16 +87,27 @@ export async function runDeleteCommand(
       agents = [fetchResult.agent];
     }
 
-    for (const agent of agents) {
-      try {
-        if (agent.status === "running") {
-          await client.cancelAgent(agent.id);
+    const deleteResults = await Promise.all(
+      agents.map(async (agent) => {
+        try {
+          if (agent.status === "running") {
+            await client.cancelAgent(agent.id);
+          }
+          await client.deleteAgent(agent.id);
+          return { ok: true as const, id: agent.id };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { ok: false as const, id: agent.id, message };
         }
-        await client.deleteAgent(agent.id);
-        deletedIds.push(agent.id);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`Warning: Failed to delete agent ${agent.id.slice(0, 7)}: ${message}`);
+      }),
+    );
+    for (const result of deleteResults) {
+      if (result.ok) {
+        deletedIds.push(result.id);
+      } else {
+        console.error(
+          `Warning: Failed to delete agent ${result.id.slice(0, 7)}: ${result.message}`,
+        );
       }
     }
 

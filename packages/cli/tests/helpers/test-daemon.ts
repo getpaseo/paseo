@@ -126,24 +126,17 @@ async function terminateProcessTree(processRef: ChildProcess, timeoutMs: number)
   signalProcessTree(pid, "SIGTERM");
 
   await new Promise<void>((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
+    const done = () => resolve();
+    const onExit = () => {
       clearTimeout(timeoutId);
-      resolve();
+      done();
     };
-
     const timeoutId = setTimeout(() => {
       signalProcessTree(pid, "SIGKILL");
-      finish();
+      processRef.removeListener("exit", onExit);
+      done();
     }, timeoutMs);
-
-    processRef.once("exit", () => {
-      finish();
-    });
+    processRef.once("exit", onExit);
   });
 }
 

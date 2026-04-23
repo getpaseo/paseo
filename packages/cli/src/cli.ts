@@ -33,6 +33,12 @@ import { resolveCliVersion } from "./version.js";
 
 const VERSION = resolveCliVersion();
 
+function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
+  if (typeof hostnames === "string") return hostnames;
+  if (typeof allowedHosts === "string") return allowedHosts;
+  return undefined;
+}
+
 export function createCli(): Command {
   const program = new Command();
 
@@ -120,12 +126,7 @@ export function createCli(): Command {
         return runDaemonRestartCommand(
           {
             ...options,
-            hostnames:
-              typeof options.hostnames === "string"
-                ? options.hostnames
-                : typeof options.allowedHosts === "string"
-                  ? options.allowedHosts
-                  : undefined,
+            hostnames: resolveHostnamesOption(options.hostnames, options.allowedHosts),
           },
           command,
         );

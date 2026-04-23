@@ -174,6 +174,40 @@ class StructuredRunStatusError extends Error {
   }
 }
 
+async function fetchStructuredOutput(
+  caller: (structuredPrompt: string) => Promise<string>,
+  prompt: string,
+  outputSchema: ReturnType<typeof loadOutputSchema>,
+): Promise<Record<string, unknown>> {
+  try {
+    return await getStructuredAgentResponse<Record<string, unknown>>({
+      caller,
+      prompt,
+      schema: outputSchema,
+      schemaName: "RunOutput",
+      maxRetries: 2,
+    });
+  } catch (err) {
+    if (err instanceof StructuredRunStatusError) {
+      throw {
+        code: "OUTPUT_SCHEMA_FAILED",
+        message: err.message,
+      } satisfies CommandError;
+    }
+    if (err instanceof StructuredAgentResponseError) {
+      throw {
+        code: "OUTPUT_SCHEMA_FAILED",
+        message: "Agent response did not match the required output schema",
+        details:
+          err.validationErrors.length > 0
+            ? err.validationErrors.join("\n")
+            : err.lastResponse || "No response",
+      } satisfies CommandError;
+    }
+    throw err;
+  }
+}
+
 type ConnectedDaemonClient = Awaited<ReturnType<typeof connectToDaemon>>;
 
 export interface StructuredResponseTimelineClient {
@@ -219,6 +253,107 @@ function structuredRunSchema(output: Record<string, unknown>): OutputSchema<Agen
   };
 }
 
+function validateRunOptions(prompt: string, options: AgentRunOptions, outputSchema: unknown): void {
+  if (!prompt || prompt.trim().length === 0) {
+    throw {
+      code: "MISSING_PROMPT",
+      message: "A prompt is required",
+      details: "Usage: paseo agent run [options] <prompt>",
+    } satisfies CommandError;
+  }
+
+  if (options.base && !options.worktree) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--base can only be used with --worktree",
+      details: "Usage: paseo agent run --worktree <name> --base <branch> <prompt>",
+    } satisfies CommandError;
+  }
+
+  if (outputSchema && options.detach) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--output-schema cannot be used with --detach",
+      details: "Structured output requires waiting for the agent to finish",
+    } satisfies CommandError;
+  }
+}
+
+function parseWaitTimeoutOption(waitTimeout: string | undefined): number {
+  if (!waitTimeout) return 0;
+  try {
+    const ms = parseDuration(waitTimeout);
+    if (ms <= 0) {
+      throw new Error("Timeout must be positive");
+    }
+    return ms;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw {
+      code: "INVALID_TIMEOUT",
+      message: "Invalid wait timeout value",
+      details: message,
+    } satisfies CommandError;
+  }
+}
+
+function loadRunImages(
+  imagePaths: string[] | undefined,
+): Array<{ data: string; mimeType: string }> | undefined {
+  if (!imagePaths || imagePaths.length === 0) return undefined;
+  return imagePaths.map((imagePath) => {
+    const resolvedPath = resolve(imagePath);
+    try {
+      const imageData = readFileSync(resolvedPath);
+      const mimeType = lookup(resolvedPath) || "application/octet-stream";
+      if (!mimeType.startsWith("image/")) {
+        throw new Error(`File is not an image: ${imagePath} (detected type: ${mimeType})`);
+      }
+      return {
+        data: imageData.toString("base64"),
+        mimeType,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to read image ${imagePath}: ${message}`, { cause: err });
+    }
+  });
+}
+
+function parseRunLabels(labelFlags: string[] | undefined): Record<string, string> {
+  const labels: Record<string, string> = {};
+  if (!labelFlags) return labels;
+  for (const labelStr of labelFlags) {
+    const eqIndex = labelStr.indexOf("=");
+    if (eqIndex === -1) {
+      throw {
+        code: "INVALID_LABEL",
+        message: `Invalid label format: ${labelStr}`,
+        details: "Labels must be in key=value format",
+      } satisfies CommandError;
+    }
+    const key = labelStr.slice(0, eqIndex);
+    labels[key] = labelStr.slice(eqIndex + 1);
+  }
+  return labels;
+}
+
+async function connectToDaemonOrThrow(
+  hostOption: string | undefined,
+  host: string,
+): Promise<ConnectedDaemonClient> {
+  try {
+    return await connectToDaemon({ host: hostOption });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw {
+      code: "DAEMON_NOT_RUNNING",
+      message: `Cannot connect to daemon at ${host}: ${message}`,
+      details: "Start the daemon with: paseo daemon start",
+    } satisfies CommandError;
+  }
+}
+
 export async function runRunCommand(
   prompt: string,
   options: AgentRunOptions,
@@ -226,70 +361,14 @@ export async function runRunCommand(
 ): Promise<SingleResult<AgentRunResult>> {
   const host = getDaemonHost({ host: options.host as string | undefined });
   const outputSchema = options.outputSchema ? loadOutputSchema(options.outputSchema) : undefined;
-  let waitTimeoutMs = 0;
 
-  // Validate prompt is provided
-  if (!prompt || prompt.trim().length === 0) {
-    const error: CommandError = {
-      code: "MISSING_PROMPT",
-      message: "A prompt is required",
-      details: "Usage: paseo agent run [options] <prompt>",
-    };
-    throw error;
-  }
-
-  // Validate --base is only used with --worktree
-  if (options.base && !options.worktree) {
-    const error: CommandError = {
-      code: "INVALID_OPTIONS",
-      message: "--base can only be used with --worktree",
-      details: "Usage: paseo agent run --worktree <name> --base <branch> <prompt>",
-    };
-    throw error;
-  }
-
-  // --output-schema always runs in attached/wait mode
-  if (outputSchema && options.detach) {
-    const error: CommandError = {
-      code: "INVALID_OPTIONS",
-      message: "--output-schema cannot be used with --detach",
-      details: "Structured output requires waiting for the agent to finish",
-    };
-    throw error;
-  }
-
-  if (options.waitTimeout) {
-    try {
-      waitTimeoutMs = parseDuration(options.waitTimeout);
-      if (waitTimeoutMs <= 0) {
-        throw new Error("Timeout must be positive");
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const error: CommandError = {
-        code: "INVALID_TIMEOUT",
-        message: "Invalid wait timeout value",
-        details: message,
-      };
-      throw error;
-    }
-  }
+  validateRunOptions(prompt, options, outputSchema);
+  const waitTimeoutMs = parseWaitTimeoutOption(options.waitTimeout);
 
   const resolvedProviderModel = resolveProviderAndModel(options);
   const resolvedTitle = options.title ?? options.name;
 
-  let client;
-  try {
-    client = await connectToDaemon({ host: options.host as string | undefined });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const error: CommandError = {
-      code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
-    };
-    throw error;
-  }
+  const client = await connectToDaemonOrThrow(options.host as string | undefined, host);
 
   try {
     // Resolve working directory
@@ -305,32 +384,8 @@ export async function runRunCommand(
       throw error;
     }
 
-    // Process images if provided
-    let images: Array<{ data: string; mimeType: string }> | undefined;
-    if (options.image && options.image.length > 0) {
-      images = options.image.map((imagePath) => {
-        const resolvedPath = resolve(imagePath);
-        try {
-          const imageData = readFileSync(resolvedPath);
-          const mimeType = lookup(resolvedPath) || "application/octet-stream";
+    const images = loadRunImages(options.image);
 
-          // Verify it's an image MIME type
-          if (!mimeType.startsWith("image/")) {
-            throw new Error(`File is not an image: ${imagePath} (detected type: ${mimeType})`);
-          }
-
-          return {
-            data: imageData.toString("base64"),
-            mimeType,
-          };
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(`Failed to read image ${imagePath}: ${message}`, { cause: err });
-        }
-      });
-    }
-
-    // Build git options if worktree is specified
     const git = options.worktree
       ? {
           createWorktree: true,
@@ -339,24 +394,7 @@ export async function runRunCommand(
         }
       : undefined;
 
-    // Build labels from --label flags
-    const labels: Record<string, string> = {};
-    if (options.label) {
-      for (const labelStr of options.label) {
-        const eqIndex = labelStr.indexOf("=");
-        if (eqIndex === -1) {
-          const error: CommandError = {
-            code: "INVALID_LABEL",
-            message: `Invalid label format: ${labelStr}`,
-            details: "Labels must be in key=value format",
-          };
-          throw error;
-        }
-        const key = labelStr.slice(0, eqIndex);
-        const value = labelStr.slice(eqIndex + 1);
-        labels[key] = value;
-      }
-    }
+    const labels = parseRunLabels(options.label);
 
     if (outputSchema) {
       let structuredAgent: AgentSnapshotPayload | null = null;
@@ -413,36 +451,7 @@ export async function runRunCommand(
         return lastMessage;
       };
 
-      let output: Record<string, unknown>;
-      try {
-        output = await getStructuredAgentResponse<Record<string, unknown>>({
-          caller: callStructuredTurn,
-          prompt,
-          schema: outputSchema,
-          schemaName: "RunOutput",
-          maxRetries: 2,
-        });
-      } catch (err) {
-        if (err instanceof StructuredRunStatusError) {
-          const error: CommandError = {
-            code: "OUTPUT_SCHEMA_FAILED",
-            message: err.message,
-          };
-          throw error;
-        }
-        if (err instanceof StructuredAgentResponseError) {
-          const error: CommandError = {
-            code: "OUTPUT_SCHEMA_FAILED",
-            message: "Agent response did not match the required output schema",
-            details:
-              err.validationErrors.length > 0
-                ? err.validationErrors.join("\n")
-                : err.lastResponse || "No response",
-          };
-          throw error;
-        }
-        throw err;
-      }
+      const output = await fetchStructuredOutput(callStructuredTurn, prompt, outputSchema);
 
       if (!structuredAgent) {
         const error: CommandError = {

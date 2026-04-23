@@ -119,25 +119,30 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   return childEnv;
 }
 
+function resolveServerRunnerFromDir(currentDir: string): string | null {
+  const packageJsonPath = path.join(currentDir, "package.json");
+  if (!existsSync(packageJsonPath)) return null;
+  try {
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: string };
+    if (packageJson.name !== "@getpaseo/server") return null;
+    const distRunner = path.join(currentDir, "dist", "scripts", "supervisor-entrypoint.js");
+    if (existsSync(distRunner)) {
+      return distRunner;
+    }
+    return path.join(currentDir, "scripts", "supervisor-entrypoint.ts");
+  } catch {
+    return null;
+  }
+}
+
 function resolveDaemonRunnerEntry(): string {
   const serverExportPath = require.resolve("@getpaseo/server");
   let currentDir = path.dirname(serverExportPath);
 
   while (true) {
-    const packageJsonPath = path.join(currentDir, "package.json");
-    if (existsSync(packageJsonPath)) {
-      try {
-        const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: string };
-        if (packageJson.name === "@getpaseo/server") {
-          const distRunner = path.join(currentDir, "dist", "scripts", "supervisor-entrypoint.js");
-          if (existsSync(distRunner)) {
-            return distRunner;
-          }
-          return path.join(currentDir, "scripts", "supervisor-entrypoint.ts");
-        }
-      } catch {
-        // Continue searching up if package.json exists but is invalid.
-      }
+    const entry = resolveServerRunnerFromDir(currentDir);
+    if (entry) {
+      return entry;
     }
 
     const parentDir = path.dirname(currentDir);
@@ -154,6 +159,22 @@ function pidFilePath(paseoHome: string): string {
   return path.join(paseoHome, DAEMON_PID_FILENAME);
 }
 
+function resolveListenField(listen: unknown, sockPath: unknown): string | undefined {
+  if (typeof listen === "string") return listen;
+  if (typeof sockPath === "string") return sockPath;
+  return undefined;
+}
+
+function resolveStopMessage(
+  forced: boolean,
+  lifecycleRequested: boolean,
+  fallbackMessage: string | null | undefined,
+): string {
+  if (forced) return "Daemon owner process was force-stopped";
+  if (lifecycleRequested) return "Daemon stopped gracefully";
+  return fallbackMessage ?? "Daemon stopped via owner PID signal";
+}
+
 function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
   try {
     const parsed = JSON.parse(readFileSync(pidPath, "utf-8")) as Record<string, unknown>;
@@ -167,12 +188,7 @@ function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
       startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : undefined,
       hostname: typeof parsed.hostname === "string" ? parsed.hostname : undefined,
       uid: typeof parsed.uid === "number" ? parsed.uid : undefined,
-      listen:
-        typeof parsed.listen === "string"
-          ? parsed.listen
-          : typeof parsed.sockPath === "string"
-            ? parsed.sockPath
-            : undefined,
+      listen: resolveListenField(parsed.listen, parsed.sockPath),
       desktopManaged: parsed.desktopManaged === true ? true : undefined,
     };
   } catch {
@@ -528,10 +544,6 @@ export async function stopLocalDaemon(
     home: state.home,
     pid,
     forced,
-    message: forced
-      ? "Daemon owner process was force-stopped"
-      : lifecycleRequested
-        ? "Daemon stopped gracefully"
-        : (fallbackMessage ?? "Daemon stopped via owner PID signal"),
+    message: resolveStopMessage(forced, lifecycleRequested, fallbackMessage),
   };
 }
