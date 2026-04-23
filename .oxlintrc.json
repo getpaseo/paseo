@@ -54,6 +54,8 @@
     "typescript/no-this-alias": "warn",
     "typescript/consistent-type-definitions": ["warn", "interface"],
 
+    "import/no-unassigned-import": ["warn", { "allow": ["**/*.css"] }],
+
     "no-nested-ternary": "warn",
     "no-unneeded-ternary": "warn",
 

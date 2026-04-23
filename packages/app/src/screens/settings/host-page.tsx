@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight, Globe, Monitor, Pencil, RotateCw, Trash2 } from "lucide-react-native";
@@ -115,10 +115,20 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
   const connectionError =
     typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
 
+  const statusPillStyle = useMemo(
+    () => [styles.statusPill, { backgroundColor: statusPillBg }],
+    [statusPillBg],
+  );
+  const statusDotStyle = useMemo(
+    () => [styles.statusDot, { backgroundColor: statusColor }],
+    [statusColor],
+  );
+  const statusTextStyle = useMemo(() => [styles.statusText, { color: statusColor }], [statusColor]);
+
   if (!host) {
     return (
       <View testID={`settings-host-page-${serverId}`}>
-        <View style={[settingsStyles.card, styles.emptyCard]}>
+        <View style={EMPTY_CARD_STYLE}>
           <Text style={styles.emptyText}>Host not found</Text>
         </View>
       </View>
@@ -128,9 +138,9 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
   return (
     <View testID={`settings-host-page-${serverId}`}>
       <View style={styles.identityBadges} testID="host-page-identity">
-        <View style={[styles.statusPill, { backgroundColor: statusPillBg }]}>
-          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-          <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+        <View style={statusPillStyle}>
+          <View style={statusDotStyle} />
+          <Text style={statusTextStyle}>{statusLabel}</Text>
         </View>
         {connectionBadge ? (
           <View style={styles.badgePill}>
@@ -256,7 +266,7 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
             <Button
               variant="secondary"
               size="sm"
-              style={{ flex: 1 }}
+              style={FLEX_1_STYLE}
               onPress={handleCancel}
               disabled={isSaving}
             >
@@ -264,7 +274,7 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
             </Button>
             <Button
               size="sm"
-              style={{ flex: 1 }}
+              style={FLEX_1_STYLE}
               onPress={handleSavePress}
               disabled={isSaving}
               testID="host-page-label-save"
@@ -350,7 +360,7 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
             <Button
               variant="secondary"
               size="sm"
-              style={{ flex: 1 }}
+              style={FLEX_1_STYLE}
               onPress={handleCancelConfirm}
               disabled={isRemovingConnection}
             >
@@ -359,7 +369,7 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
             <Button
               variant="destructive"
               size="sm"
-              style={{ flex: 1 }}
+              style={FLEX_1_STYLE}
               onPress={handleConfirmRemove}
               disabled={isRemovingConnection}
               testID="remove-connection-confirm"
@@ -403,18 +413,31 @@ function ConnectionRow({
     onRemove(connection);
   }, [onRemove, connection]);
 
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder],
+    [showBorder],
+  );
+  const latencyTextStyle = useMemo(
+    () => [styles.connectionLatency, { color: latencyColor }],
+    [latencyColor],
+  );
+  const destructiveTextStyle = useMemo(
+    () => ({ color: theme.colors.destructive }),
+    [theme.colors.destructive],
+  );
+
   return (
-    <View style={[settingsStyles.row, showBorder && settingsStyles.rowBorder]}>
+    <View style={rowStyle}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle} numberOfLines={1}>
           {title}
         </Text>
       </View>
-      <Text style={[styles.connectionLatency, { color: latencyColor }]}>{latencyText}</Text>
+      <Text style={latencyTextStyle}>{latencyText}</Text>
       <Button
         variant="ghost"
         size="sm"
-        textStyle={{ color: theme.colors.destructive }}
+        textStyle={destructiveTextStyle}
         onPress={handlePressRemove}
       >
         Remove
@@ -643,6 +666,11 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
   const [isConfirming, setIsConfirming] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
 
+  const destructiveTextStyle = useMemo(
+    () => ({ color: theme.colors.destructive }),
+    [theme.colors.destructive],
+  );
+
   const handleOpenConfirm = useCallback(() => setIsConfirming(true), []);
   const handleCloseConfirm = useCallback(() => {
     if (isRemoving) return;
@@ -677,7 +705,7 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
             variant="outline"
             size="sm"
             leftIcon={<Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />}
-            textStyle={{ color: theme.colors.destructive }}
+            textStyle={destructiveTextStyle}
             onPress={handleOpenConfirm}
             testID="host-page-remove-host-button"
           >
@@ -700,7 +728,7 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
             <Button
               variant="secondary"
               size="sm"
-              style={{ flex: 1 }}
+              style={FLEX_1_STYLE}
               onPress={handleCancel}
               disabled={isRemoving}
             >
@@ -709,7 +737,7 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
             <Button
               variant="destructive"
               size="sm"
-              style={{ flex: 1 }}
+              style={FLEX_1_STYLE}
               onPress={handleConfirmRemove}
               disabled={isRemoving}
               testID="remove-host-confirm"
@@ -817,3 +845,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
 }));
+
+const FLEX_1_STYLE = { flex: 1 };
+const EMPTY_CARD_STYLE = [settingsStyles.card, styles.emptyCard];
