@@ -106,19 +106,19 @@ function toNumericStyleValue(value: unknown): number | null {
 function ComboboxSheetBackground({ style }: BottomSheetBackgroundProps) {
   const { theme } = useUnistyles();
 
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        style,
-        {
-          backgroundColor: theme.colors.surface0,
-          borderTopLeftRadius: theme.borderRadius["2xl"],
-          borderTopRightRadius: theme.borderRadius["2xl"],
-        },
-      ]}
-    />
+  const combinedStyle = useMemo(
+    () => [
+      style,
+      {
+        backgroundColor: theme.colors.surface0,
+        borderTopLeftRadius: theme.borderRadius["2xl"],
+        borderTopRightRadius: theme.borderRadius["2xl"],
+      },
+    ],
+    [style, theme.colors.surface0, theme.borderRadius],
   );
+
+  return <Animated.View pointerEvents="none" style={combinedStyle} />;
 }
 
 export interface SearchInputProps {
@@ -157,7 +157,7 @@ export function SearchInput({
       <InputComponent
         ref={inputRef as any}
         // @ts-expect-error - outlineStyle is web-only
-        style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
+        style={SEARCH_INPUT_STYLE}
         placeholder={placeholder}
         placeholderTextColor={theme.colors.foregroundMuted}
         value={value}
@@ -224,10 +224,15 @@ export function ComboboxItem({
     [elevated, active, disabled],
   );
 
+  const itemContentStyle = useMemo(
+    () => [styles.comboboxItemContent, description && styles.comboboxItemContentInline],
+    [description],
+  );
+
   return (
     <Pressable testID={testID} disabled={disabled} onPress={onPress} style={itemPressableStyle}>
       {leadingContent}
-      <View style={[styles.comboboxItemContent, description && styles.comboboxItemContentInline]}>
+      <View style={itemContentStyle}>
         <Text numberOfLines={1} style={styles.comboboxItemLabel}>
           {label}
         </Text>
@@ -722,6 +727,48 @@ export function Combobox({
 
   const content = children ?? defaultContent;
 
+  const handleIndicatorStyle = useMemo(
+    () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
+    [theme.colors.palette.zinc],
+  );
+
+  const comboboxTitleStyle = useMemo(
+    () => [styles.comboboxTitle, { color: titleColor }],
+    [titleColor],
+  );
+
+  const desktopContainerStyle = useMemo(
+    () => [
+      styles.desktopContainer,
+      {
+        position: "absolute" as const,
+        minWidth: desktopMinWidth ?? referenceWidth ?? 200,
+        maxWidth: Math.max(400, desktopMinWidth ?? 0),
+      },
+      desktopFixedHeight != null
+        ? { minHeight: desktopFixedHeight, maxHeight: desktopFixedHeight }
+        : null,
+      desktopPositionStyle,
+      shouldHideDesktopContent ? { opacity: 0 } : null,
+      typeof availableSize?.height === "number"
+        ? { maxHeight: Math.min(availableSize.height, desktopFixedHeight ?? 400) }
+        : null,
+    ],
+    [
+      desktopMinWidth,
+      referenceWidth,
+      desktopFixedHeight,
+      desktopPositionStyle,
+      shouldHideDesktopContent,
+      availableSize?.height,
+    ],
+  );
+
+  const desktopAboveSearchContentContainerStyle = useMemo(
+    () => [styles.desktopScrollContent, styles.desktopScrollContentAboveSearch],
+    [],
+  );
+
   if (isMobile) {
     return (
       <IsolatedBottomSheetModal
@@ -733,12 +780,12 @@ export function Combobox({
         backdropComponent={renderBackdrop}
         enablePanDownToClose
         backgroundComponent={ComboboxSheetBackground}
-        handleIndicatorStyle={{ backgroundColor: theme.colors.palette.zinc[600] }}
+        handleIndicatorStyle={handleIndicatorStyle}
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
       >
         <View style={styles.bottomSheetHeader}>
-          <Text key={titleColor} style={[styles.comboboxTitle, { color: titleColor }]}>
+          <Text key={titleColor} style={comboboxTitleStyle}>
             {title}
           </Text>
         </View>
@@ -765,22 +812,7 @@ export function Combobox({
           testID="combobox-desktop-container"
           entering={shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
           exiting={shouldUseDesktopFade ? FadeOut.duration(100) : undefined}
-          style={[
-            styles.desktopContainer,
-            {
-              position: "absolute",
-              minWidth: desktopMinWidth ?? referenceWidth ?? 200,
-              maxWidth: Math.max(400, desktopMinWidth ?? 0),
-            },
-            desktopFixedHeight != null
-              ? { minHeight: desktopFixedHeight, maxHeight: desktopFixedHeight }
-              : null,
-            desktopPositionStyle,
-            shouldHideDesktopContent ? { opacity: 0 } : null,
-            typeof availableSize?.height === "number"
-              ? { maxHeight: Math.min(availableSize.height, desktopFixedHeight ?? 400) }
-              : null,
-          ]}
+          style={desktopContainerStyle}
           ref={refs.setFloating}
           collapsable={false}
           onLayout={handleDesktopContentLayout}
@@ -804,10 +836,7 @@ export function Combobox({
               {effectiveOptionsPosition === "above-search" ? (
                 <ScrollView
                   ref={desktopOptionsScrollRef}
-                  contentContainerStyle={[
-                    styles.desktopScrollContent,
-                    styles.desktopScrollContentAboveSearch,
-                  ]}
+                  contentContainerStyle={desktopAboveSearchContentContainerStyle}
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
                   style={styles.desktopScroll}
@@ -972,3 +1001,5 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
   },
 }));
+
+const SEARCH_INPUT_STYLE = [styles.searchInput, IS_WEB && { outlineStyle: "none" }];
