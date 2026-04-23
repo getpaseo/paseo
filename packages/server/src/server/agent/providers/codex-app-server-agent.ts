@@ -2810,17 +2810,7 @@ class CodexAppServerAgentSession implements AgentSession {
       if (thread && Array.isArray(thread.turns)) {
         for (const turn of thread.turns) {
           const items = Array.isArray(turn.items) ? turn.items : [];
-          for (const item of items) {
-            const timelineItem = threadItemToTimeline(item, {
-              cwd: this.config.cwd ?? null,
-            });
-            if (timelineItem) {
-              if (timelineItem.type === "tool_call") {
-                this.warnOnIncompleteEditToolCall(timelineItem, "thread_read", item);
-              }
-              threadTimeline.push(timelineItem);
-            }
-          }
+          this.collectThreadTurnTimelineItems(items, threadTimeline);
         }
       }
 
@@ -4013,6 +4003,21 @@ class CodexAppServerAgentSession implements AgentSession {
     }
     this.emittedTerminalInteractionKeys.add(key);
     return true;
+  }
+
+  private collectThreadTurnTimelineItems(items: unknown[], target: AgentTimelineItem[]): void {
+    for (const item of items) {
+      const timelineItem = threadItemToTimeline(item, {
+        cwd: this.config.cwd ?? null,
+      });
+      if (!timelineItem) {
+        continue;
+      }
+      if (timelineItem.type === "tool_call") {
+        this.warnOnIncompleteEditToolCall(timelineItem, "thread_read", item);
+      }
+      target.push(timelineItem);
+    }
   }
 
   private warnOnIncompleteEditToolCall(

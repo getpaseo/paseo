@@ -341,6 +341,20 @@ function normalizeMessageId(messageId: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function isDuplicateLegacyUserMessage(
+  item: AgentTimelineItem,
+  canonicalUserMessagesById: Map<string, string>,
+): boolean {
+  if (item.type !== "user_message") {
+    return false;
+  }
+  const eventMessageId = normalizeMessageId(item.messageId);
+  if (!eventMessageId) {
+    return false;
+  }
+  return canonicalUserMessagesById.get(eventMessageId) === item.text;
+}
+
 function buildExplicitTimelineSeedForRegister(
   now: Date,
   options:
@@ -2393,17 +2407,9 @@ export class AgentManager {
         if (event.type !== "timeline") {
           continue;
         }
-
-        if (event.item.type === "user_message") {
-          const eventMessageId = normalizeMessageId(event.item.messageId);
-          if (eventMessageId) {
-            const canonicalText = canonicalUserMessagesById.get(eventMessageId);
-            if (canonicalText === event.item.text) {
-              continue;
-            }
-          }
+        if (isDuplicateLegacyUserMessage(event.item, canonicalUserMessagesById)) {
+          continue;
         }
-
         this.recordTimeline(agent.id, event.item);
       }
     } catch {

@@ -359,11 +359,12 @@ function isOpenCodeHeadersTimeoutFailure(error: unknown): boolean {
       };
 
       for (const value of [record.message, record.code, record.name]) {
-        if (typeof value === "string") {
-          const diagnostic = value.trim().toLowerCase();
-          if (diagnostic) {
-            diagnostics.add(diagnostic);
-          }
+        if (typeof value !== "string") {
+          continue;
+        }
+        const diagnostic = value.trim().toLowerCase();
+        if (diagnostic) {
+          diagnostics.add(diagnostic);
         }
       }
 
@@ -2305,15 +2306,16 @@ class OpenCodeAgentSession implements AgentSession {
             };
             continue;
           }
-          if (part.type === "tool") {
-            const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
-            if (parsedToolPart.success && parsedToolPart.data) {
-              yield {
-                type: "timeline",
-                provider: "opencode",
-                item: parsedToolPart.data,
-              };
-            }
+          if (part.type !== "tool") {
+            continue;
+          }
+          const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
+          if (parsedToolPart.success && parsedToolPart.data) {
+            yield {
+              type: "timeline",
+              provider: "opencode",
+              item: parsedToolPart.data,
+            };
           }
         }
 

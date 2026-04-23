@@ -2602,16 +2602,28 @@ class ClaudeAgentSession implements AgentSession {
         "Claude query pump: raw SDK message",
       );
     };
+    const handlePumpedMessage = async (message: SDKMessage): Promise<boolean> => {
+      logRawMessage(message);
+      consecutiveInterruptAbortRecoveries = 0;
+      if (await this.handleMissingResumedConversation(message, activeQuery)) {
+        return true;
+      }
+      this.routeSdkMessageFromPump(message);
+      return false;
+    };
+    const drainActiveQuery = async (): Promise<boolean> => {
+      for await (const message of activeQuery) {
+        if (await handlePumpedMessage(message)) {
+          return true;
+        }
+      }
+      return false;
+    };
     try {
       while (!this.closed && this.query === activeQuery) {
         try {
-          for await (const message of activeQuery) {
-            logRawMessage(message);
-            consecutiveInterruptAbortRecoveries = 0;
-            if (await this.handleMissingResumedConversation(message, activeQuery)) {
-              return;
-            }
-            this.routeSdkMessageFromPump(message);
+          if (await drainActiveQuery()) {
+            return;
           }
           if (!this.closed && this.query === activeQuery) {
             this.failActiveTurns("Claude stream ended before terminal result");
