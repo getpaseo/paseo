@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PropsWithChildren,
@@ -248,6 +249,19 @@ function WorkspaceHoverCardContent({
     [],
   );
 
+  const cardStyle = useMemo(
+    () => [
+      styles.card,
+      {
+        width: HOVER_CARD_WIDTH,
+        position: "absolute" as const,
+        top: position?.y ?? -9999,
+        left: position?.x ?? -9999,
+      },
+    ],
+    [position?.x, position?.y],
+  );
+
   return (
     <Portal hostName={bottomSheetInternal?.hostName}>
       <View pointerEvents="box-none" style={styles.portalOverlay}>
@@ -260,15 +274,7 @@ function WorkspaceHoverCardContent({
           accessibilityRole="menu"
           accessibilityLabel="Workspace scripts"
           testID="workspace-hover-card"
-          style={[
-            styles.card,
-            {
-              width: HOVER_CARD_WIDTH,
-              position: "absolute",
-              top: position?.y ?? -9999,
-              left: position?.x ?? -9999,
-            },
-          ]}
+          style={cardStyle}
         >
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle} numberOfLines={1} testID="hover-card-workspace-name">
@@ -298,6 +304,62 @@ function WorkspaceHoverCardContent({
   );
 }
 
+function ChecksSummaryContent({
+  checks,
+  theme,
+  hovered,
+}: {
+  checks: NonNullable<PrHint["checks"]>;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+  hovered: boolean;
+}) {
+  const failed = checks.filter((c) => c.status === "failure").length;
+  const pending = checks.filter((c) => c.status === "pending").length;
+
+  let badgeColor: string;
+  let badgeLabel: string;
+
+  if (failed > 0) {
+    badgeColor = theme.colors.palette.red[500];
+    badgeLabel = `${failed} failed`;
+  } else if (pending > 0) {
+    badgeColor = theme.colors.palette.amber[500];
+    badgeLabel = `${pending} running`;
+  } else {
+    badgeColor = theme.colors.palette.green[500];
+    badgeLabel = `${checks.length} passed`;
+  }
+
+  const iconColor = hovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+  const labelStyle = useMemo(
+    () => [styles.checksSummaryLabel, hovered && styles.checksSummaryLabelHovered],
+    [hovered],
+  );
+  const dotStyle = useMemo(
+    () => [styles.checksDot, { backgroundColor: badgeColor }],
+    [badgeColor],
+  );
+  const statusTextStyle = useMemo(
+    () => [styles.checksStatusText, { color: badgeColor }],
+    [badgeColor],
+  );
+
+  return (
+    <>
+      {hovered ? (
+        <ExternalLink size={12} color={iconColor} />
+      ) : (
+        <GitHubIcon size={12} color={iconColor} />
+      )}
+      <Text style={labelStyle}>Checks</Text>
+      <View style={styles.checksSummaryCounts}>
+        <View style={dotStyle} />
+        <Text style={statusTextStyle}>{badgeLabel}</Text>
+      </View>
+    </>
+  );
+}
+
 function ChecksSummaryPressable({
   checks,
   url,
@@ -320,47 +382,9 @@ function ChecksSummaryPressable({
   );
 
   const renderChildren = useCallback(
-    ({ hovered }: { pressed: boolean; hovered?: boolean }) => {
-      const failed = checks.filter((c) => c.status === "failure").length;
-      const pending = checks.filter((c) => c.status === "pending").length;
-
-      let badgeColor: string;
-      let badgeLabel: string;
-
-      if (failed > 0) {
-        badgeColor = theme.colors.palette.red[500];
-        badgeLabel = `${failed} failed`;
-      } else if (pending > 0) {
-        badgeColor = theme.colors.palette.amber[500];
-        badgeLabel = `${pending} running`;
-      } else {
-        badgeColor = theme.colors.palette.green[500];
-        badgeLabel = `${checks.length} passed`;
-      }
-
-      const iconColor = hovered ? theme.colors.foreground : theme.colors.foregroundMuted;
-      return (
-        <>
-          {hovered ? (
-            <ExternalLink size={12} color={iconColor} />
-          ) : (
-            <GitHubIcon size={12} color={iconColor} />
-          )}
-          <Text
-            style={[
-              styles.checksSummaryLabel,
-              Boolean(hovered) && styles.checksSummaryLabelHovered,
-            ]}
-          >
-            Checks
-          </Text>
-          <View style={styles.checksSummaryCounts}>
-            <View style={[styles.checksDot, { backgroundColor: badgeColor }]} />
-            <Text style={[styles.checksStatusText, { color: badgeColor }]}>{badgeLabel}</Text>
-          </View>
-        </>
-      );
-    },
+    ({ hovered }: { pressed: boolean; hovered?: boolean }) => (
+      <ChecksSummaryContent checks={checks} theme={theme} hovered={Boolean(hovered)} />
+    ),
     [checks, theme],
   );
 
