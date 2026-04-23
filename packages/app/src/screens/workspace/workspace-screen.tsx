@@ -1281,6 +1281,7 @@ function WorkspaceScreenContent({
           serverId: normalizedServerId,
           payload: { workspaceId: response.workspaceId, ...response.snapshot },
         });
+        return;
       })
       .catch(() => {
         if (requestedWorkspaceSetupStatusKeyRef.current === persistenceKey) {

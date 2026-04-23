@@ -125,6 +125,7 @@ function SetupPanel() {
             payload: { workspaceId: response.workspaceId, ...response.snapshot },
           });
         }
+        return;
       })
       .catch(() => {
         // Server may not support this yet — ignore

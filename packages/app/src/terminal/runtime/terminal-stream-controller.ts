@@ -107,6 +107,7 @@ export class TerminalStreamController {
           isAttaching: false,
           error: null,
         });
+        return;
       })
       .catch((error: unknown) => {
         if (this.disposed || this.terminalId !== nextTerminalId) {

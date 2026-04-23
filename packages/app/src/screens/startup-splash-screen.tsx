@@ -208,6 +208,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
           return;
         }
         setDaemonLogs(logs);
+        return;
       })
       .catch((error) => {
         if (isCancelled) {

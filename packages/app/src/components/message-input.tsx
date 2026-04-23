@@ -715,6 +715,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
             return;
           }
           onAddImages(attachments);
+          return;
         })
         .catch((error) => {
           console.error("[MessageInput] Failed to process pasted images:", error);

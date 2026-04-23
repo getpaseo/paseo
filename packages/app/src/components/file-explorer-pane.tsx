@@ -328,6 +328,7 @@ export function FileExplorerPane({
           }
         }
       }
+      return;
     });
   }, [hasWorkspaceScope, requestDirectoryListing, workspaceStateKey]);
 

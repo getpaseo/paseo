@@ -135,6 +135,7 @@ export function connectAndProbe(
             serverId: serverInfo.serverId,
             hostname: serverInfo.hostname,
           });
+          return;
         })
         .catch((error) => {
           clearTimeout(timer);

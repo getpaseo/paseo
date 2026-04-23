@@ -167,6 +167,7 @@ export function useFileDropZone({
                 return;
               }
               onFilesDroppedRef.current(attachments);
+              return;
             })
             .catch((error) => {
               console.error("[useFileDropZone] Failed to persist dropped files:", error);

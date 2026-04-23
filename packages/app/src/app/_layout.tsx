@@ -191,6 +191,7 @@ function PushNotificationRouter() {
             return;
           }
           removeDesktopNotificationListener = unlisten;
+          return;
         });
       }
 
@@ -240,6 +241,7 @@ function PushNotificationRouter() {
       if (response) {
         openFromResponse(response);
       }
+      return;
     });
 
     return () => {
@@ -681,6 +683,7 @@ function OfferLinkListener({
           const serverId = (profile as any)?.serverId;
           if (typeof serverId !== "string" || !serverId) return;
           router.replace(buildHostRootRoute(serverId));
+          return;
         })
         .catch((error) => {
           if (cancelled) return;
@@ -752,6 +755,7 @@ function OpenProjectListener() {
         if (!disposed && pending) {
           maybeOpenProject(pending);
         }
+        return;
       })
       .catch(() => undefined);
 
@@ -769,6 +773,7 @@ function OpenProjectListener() {
           return;
         }
         unlisten = dispose;
+        return;
       })
       .catch(() => undefined);
 

@@ -450,6 +450,7 @@ export function TooltipContent({
     measureElement(ctx.triggerRef.current).then((rect) => {
       if (cancelled) return;
       setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
+      return;
     });
 
     return () => {

@@ -118,6 +118,7 @@ export function SidebarCalloutProvider({ children }: { children: ReactNode }) {
         const nextKeys = parseDismissedCalloutKeys(value);
         dismissedKeysRef.current = nextKeys;
         setDismissedKeys(nextKeys);
+        return;
       })
       .catch((error) => {
         console.error("[SidebarCallouts] Failed to load dismissed callouts", error);

@@ -592,6 +592,7 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
               text: frameText(bytes),
               bytes: bytes.byteLength - 2,
             });
+            return;
           });
           void eventDataText(event.data).then((text) => {
             if (text === null) {
@@ -602,6 +603,7 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
               bytes: new TextEncoder().encode(text).byteLength,
               kind: textMessageKind(text),
             });
+            return;
           });
         });
       }

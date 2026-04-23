@@ -895,6 +895,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
         if (value === "pr" || value === "merge") {
           setShipDefault(value);
         }
+        return;
       })
       .catch(() => undefined);
     return () => {
@@ -1093,6 +1094,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     void runCommit({ serverId, cwd })
       .then(() => {
         toastActionSuccess("Committed");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to commit");
@@ -1103,6 +1105,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     void runPull({ serverId, cwd })
       .then(() => {
         toastActionSuccess("Pulled");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to pull");
@@ -1113,6 +1116,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     void runPush({ serverId, cwd })
       .then(() => {
         toastActionSuccess("Pushed");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to push");
@@ -1124,6 +1128,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     void runCreatePr({ serverId, cwd })
       .then(() => {
         toastActionSuccess("PR created");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to create PR");
@@ -1140,6 +1145,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       .then(() => {
         setPostShipArchiveSuggested(true);
         toastActionSuccess("Merged");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to merge");
@@ -1163,6 +1169,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     void runMergeFromBase({ serverId, cwd, baseRef })
       .then(() => {
         toastActionSuccess("Updated");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to merge from base");
@@ -1179,6 +1186,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     void runArchiveWorktree({ serverId, cwd, worktreePath })
       .then(() => {
         router.replace(buildNewAgentRoute(serverId, targetWorkingDir));
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to archive worktree");

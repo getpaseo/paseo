@@ -112,6 +112,7 @@ function HostAgentReadyRouteContent() {
           return;
         }
         router.replace(buildHostRootRoute(serverId));
+        return;
       })
       .catch(() => {
         if (cancelled || redirectedRef.current) {

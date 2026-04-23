@@ -1908,6 +1908,7 @@ function ProjectBlock({
           toast.error("Failed to remove some workspaces");
         }
         setIsRemovingProject(false);
+        return;
       });
     })();
   }, [isRemovingProject, serverId, displayName, toast, project.workspaces]);

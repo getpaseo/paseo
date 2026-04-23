@@ -563,6 +563,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
             );
           });
         void waitForDaemonRestart();
+        return;
       })
       .catch((error) => {
         console.error(`[HostPage] Failed to open restart confirmation for ${host.label}`, error);
@@ -687,6 +688,7 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
       .then(() => {
         setIsConfirming(false);
         onRemoved?.();
+        return;
       })
       .catch((error) => {
         console.error("[HostPage] Failed to remove host", error);

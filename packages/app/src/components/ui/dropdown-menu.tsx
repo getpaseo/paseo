@@ -379,6 +379,7 @@ export function DropdownMenuContent({
         ...rect,
         y: rect.y + statusBarHeight,
       });
+      return;
     });
 
     return () => {

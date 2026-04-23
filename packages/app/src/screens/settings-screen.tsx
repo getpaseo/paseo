@@ -397,6 +397,7 @@ function DesktopAppUpdateRow() {
           return;
         }
         void installUpdate();
+        return;
       })
       .catch((error) => {
         console.error("[Settings] Failed to open app update confirmation", error);

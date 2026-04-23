@@ -388,6 +388,7 @@ function AgentPanelBody({
 
         storeFetchedAgentDetail({ serverId, result });
         setLookupState({ tag: "idle" });
+        return;
       })
       .catch((error) => {
         if (attemptToken !== lookupAttemptTokenRef.current) {
@@ -834,6 +835,7 @@ function ChatAgentContent({
           return;
         }
         setMissingAgentState({ kind: "idle" });
+        return;
       })
       .catch((error) => {
         if (attemptToken !== initAttemptTokenRef.current) {

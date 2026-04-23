@@ -82,6 +82,7 @@ export function LocalDaemonSection() {
               daemonStatus?.status === "running" ? "Daemon restarted." : "Daemon started.",
             );
             refetch();
+            return;
           })
           .catch((error) => {
             console.error("[Settings] Failed to change desktop daemon state", error);
@@ -91,6 +92,7 @@ export function LocalDaemonSection() {
           .finally(() => {
             setIsRestartingDaemon(false);
           });
+        return;
       })
       .catch((error) => {
         console.error("[Settings] Failed to open desktop daemon action confirmation", error);
@@ -116,6 +118,7 @@ export function LocalDaemonSection() {
       void updateSettings({ manageBuiltInDaemon: true })
         .then(() => {
           setStatusMessage("Built-in daemon management resumed.");
+          return;
         })
         .catch((error) => {
           console.error("[Settings] Failed to update built-in daemon management", error);
@@ -158,6 +161,7 @@ export function LocalDaemonSection() {
           .then(() => {
             refetch();
             setStatusMessage("Built-in daemon paused and stopped.");
+            return;
           })
           .catch((error) => {
             console.error("[Settings] Failed to pause built-in daemon management", error);
@@ -166,6 +170,7 @@ export function LocalDaemonSection() {
           .finally(() => {
             setIsUpdatingDaemonManagement(false);
           });
+        return;
       })
       .catch((error) => {
         console.error("[Settings] Failed to open built-in daemon pause confirmation", error);
@@ -189,6 +194,7 @@ export function LocalDaemonSection() {
     void Clipboard.setStringAsync(logPath)
       .then(() => {
         Alert.alert("Copied", "Log path copied.");
+        return;
       })
       .catch((error) => {
         console.error("[Settings] Failed to copy log path", error);
@@ -224,6 +230,7 @@ export function LocalDaemonSection() {
     void Clipboard.setStringAsync(cliStatusOutput)
       .then(() => {
         Alert.alert("Copied", "Status copied to clipboard.");
+        return;
       })
       .catch((error) => {
         console.error("[Settings] Failed to copy daemon status", error);

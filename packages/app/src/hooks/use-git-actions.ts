@@ -75,6 +75,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
         if (value === "pr" || value === "merge") {
           setShipDefault(value);
         }
+        return;
       })
       .catch(() => undefined);
     return () => {
@@ -150,6 +151,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runCommit({ serverId, cwd })
       .then(() => {
         toastActionSuccess("Committed");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to commit");
@@ -160,6 +162,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runPull({ serverId, cwd })
       .then(() => {
         toastActionSuccess("Pulled");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to pull");
@@ -170,6 +173,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runPush({ serverId, cwd })
       .then(() => {
         toastActionSuccess("Pushed");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to push");
@@ -181,6 +185,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runCreatePr({ serverId, cwd })
       .then(() => {
         toastActionSuccess("PR created");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to create PR");
@@ -197,6 +202,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       .then(() => {
         setPostShipArchiveSuggested(true);
         toastActionSuccess("Merged");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to merge");
@@ -220,6 +226,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runMergeFromBase({ serverId, cwd, baseRef })
       .then(() => {
         toastActionSuccess("Updated");
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to merge from base");
@@ -236,6 +243,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     void runArchiveWorktree({ serverId, cwd, worktreePath })
       .then(() => {
         router.replace(buildNewAgentRoute(serverId, targetWorkingDir));
+        return;
       })
       .catch((err) => {
         toastActionError(err, "Failed to archive worktree");

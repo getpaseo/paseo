@@ -452,6 +452,7 @@ export function ContextMenuContent({
         ...rect,
         y: rect.y + statusBarHeight,
       });
+      return;
     });
 
     return () => {

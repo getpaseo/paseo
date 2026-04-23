@@ -221,6 +221,7 @@ function WorkspaceHoverCardContent({
     measureElement(triggerRef.current).then((rect) => {
       if (cancelled) return;
       setTriggerRect(rect);
+      return;
     });
 
     return () => {

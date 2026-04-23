@@ -303,6 +303,7 @@ export class TerminalEmulatorRuntime {
             if (text) {
               terminal.paste(text);
             }
+            return;
           });
           return false;
         }
@@ -393,6 +394,7 @@ export class TerminalEmulatorRuntime {
     void fontSet?.ready
       .then(() => {
         fitAndEmitResize(true);
+        return;
       })
       .catch(() => {
         // no-op
