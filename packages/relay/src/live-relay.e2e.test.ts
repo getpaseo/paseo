@@ -29,6 +29,62 @@ async function withRetry<T>(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+function waitOpen(ws: WebSocket, label: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error(`Timed out opening ${label} websocket`)),
+      10_000,
+    );
+    const onOpen = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    const onError = (err: Error) => {
+      clearTimeout(timeout);
+      reject(err);
+    };
+    ws.once("open", onOpen);
+    ws.once("error", onError);
+  });
+}
+
+function waitForConnected(ws: WebSocket, connectionId: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Timed out waiting for connected")), 10_000);
+    const onMessage = (raw: WebSocket.RawData) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg && msg.type === "connected" && msg.connectionId === connectionId) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      } catch {
+        // ignore
+      }
+    };
+    ws.on("message", onMessage);
+  });
+}
+
+function waitForOnceMessage<T extends "string" | "buffer">(
+  ws: WebSocket,
+  mode: T,
+  timeoutError: string,
+): Promise<T extends "string" ? string : Buffer> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(timeoutError)), 10_000);
+    const onMessage = (data: WebSocket.RawData) => {
+      clearTimeout(timeout);
+      resolve(
+        (mode === "string" ? data.toString() : (data as Buffer)) as T extends "string"
+          ? string
+          : Buffer,
+      );
+    };
+    ws.once("message", onMessage);
+  });
+}
+
 describe("Live relay (relay.paseo.sh) E2E", () => {
   const liveIt = process.env.RUN_LIVE_RELAY_E2E === "1" ? it : it.skip;
 
@@ -63,45 +119,13 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
         const clientWs = new WebSocket(clientUrl);
         let daemonWs: WebSocket | null = null;
 
-        const waitOpen = (ws: WebSocket, label: string) =>
-          new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(
-              () => reject(new Error(`Timed out opening ${label} websocket`)),
-              10_000,
-            );
-            ws.once("open", () => {
-              clearTimeout(timeout);
-              resolve();
-            });
-            ws.once("error", (err) => {
-              clearTimeout(timeout);
-              reject(err);
-            });
-          });
-
         try {
           await Promise.all([
             waitOpen(daemonControlWs, "server-control"),
             waitOpen(clientWs, "client"),
           ]);
 
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(
-              () => reject(new Error("Timed out waiting for connected")),
-              10_000,
-            );
-            daemonControlWs.on("message", (raw) => {
-              try {
-                const msg = JSON.parse(raw.toString());
-                if (msg && msg.type === "connected" && msg.connectionId === connectionId) {
-                  clearTimeout(timeout);
-                  resolve();
-                }
-              } catch {
-                // ignore
-              }
-            });
-          });
+          await waitForConnected(daemonControlWs, connectionId);
 
           daemonWs = new WebSocket(serverDataUrl);
           await waitOpen(daemonWs, "server-data");
@@ -110,16 +134,11 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
           // Client sends hello with its public key (not encrypted).
           clientWs.send(JSON.stringify({ type: "hello", key: clientPubKeyB64 }));
 
-          const daemonReceivedHello = await new Promise<string>((resolve, reject) => {
-            const timeout = setTimeout(
-              () => reject(new Error("Timed out waiting for hello")),
-              10_000,
-            );
-            daemonWs!.once("message", (data) => {
-              clearTimeout(timeout);
-              resolve(data.toString());
-            });
-          });
+          const daemonReceivedHello = await waitForOnceMessage(
+            daemonWs,
+            "string",
+            "Timed out waiting for hello",
+          );
 
           const hello = JSON.parse(daemonReceivedHello) as {
             type: string;
@@ -139,16 +158,11 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
           const ciphertextFromClient = await encrypt(clientSharedKey, plaintextFromClient);
           clientWs.send(Buffer.from(ciphertextFromClient));
 
-          const daemonReceivedCiphertext = await new Promise<Buffer>((resolve, reject) => {
-            const timeout = setTimeout(
-              () => reject(new Error("Timed out waiting for encrypted message")),
-              10_000,
-            );
-            daemonWs!.once("message", (data) => {
-              clearTimeout(timeout);
-              resolve(data as Buffer);
-            });
-          });
+          const daemonReceivedCiphertext = await waitForOnceMessage(
+            daemonWs,
+            "buffer",
+            "Timed out waiting for encrypted message",
+          );
 
           const decryptedOnDaemon = await decrypt(
             daemonSharedKey,
@@ -163,16 +177,11 @@ describe("Live relay (relay.paseo.sh) E2E", () => {
           const ciphertextFromDaemon = await encrypt(daemonSharedKey, plaintextFromDaemon);
           daemonWs!.send(Buffer.from(ciphertextFromDaemon));
 
-          const clientReceivedCiphertext = await new Promise<Buffer>((resolve, reject) => {
-            const timeout = setTimeout(
-              () => reject(new Error("Timed out waiting for encrypted response")),
-              10_000,
-            );
-            clientWs.once("message", (data) => {
-              clearTimeout(timeout);
-              resolve(data as Buffer);
-            });
-          });
+          const clientReceivedCiphertext = await waitForOnceMessage(
+            clientWs,
+            "buffer",
+            "Timed out waiting for encrypted response",
+          );
 
           const decryptedOnClient = await decrypt(
             clientSharedKey,

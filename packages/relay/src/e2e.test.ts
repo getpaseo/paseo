@@ -38,6 +38,14 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function rawToText(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  if (raw && typeof (raw as { toString?: unknown }).toString === "function") {
+    return (raw as { toString(): string }).toString();
+  }
+  return "";
+}
+
 function spawnRelayDevServer(port: number): ChildProcess {
   return spawn(
     process.execPath,
@@ -69,6 +77,16 @@ function assertRelayStillRunning(relayProcess: ChildProcess): void {
   }
 }
 
+function tryConnect(port: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.end();
+      resolve();
+    });
+    socket.on("error", reject);
+  });
+}
+
 async function waitForServer(
   port: number,
   relayProcess: ChildProcess,
@@ -78,13 +96,7 @@ async function waitForServer(
   while (Date.now() - start < timeout) {
     assertRelayStillRunning(relayProcess);
     try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.connect(port, "127.0.0.1", () => {
-          socket.end();
-          resolve();
-        });
-        socket.on("error", reject);
-      });
+      await tryConnect(port);
       return;
     } catch {
       await sleep(100);
@@ -105,18 +117,24 @@ async function waitForRelayWebSocketReady(
     const probeUrl = `ws://127.0.0.1:${port}/ws?serverId=${serverId}&role=server&v=2`;
     const opened = await new Promise<boolean>((resolve) => {
       const ws = new WebSocket(probeUrl);
+      let settled = false;
+      const settle = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
       const timer = setTimeout(() => {
         ws.terminate();
-        resolve(false);
+        settle(false);
       }, 5000);
       ws.once("open", () => {
         clearTimeout(timer);
         ws.close(1000, "probe");
-        resolve(true);
+        settle(true);
       });
       ws.once("error", () => {
         clearTimeout(timer);
-        resolve(false);
+        settle(false);
       });
     });
     if (opened) {
@@ -161,21 +179,16 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
     relayPort = await getAvailablePort();
     relayProcess = spawnRelayDevServer(relayPort);
 
+    const hasContent = (line: string) => line.trim().length > 0;
     relayProcess.stdout?.on("data", (data: Buffer) => {
-      const lines = data
-        .toString()
-        .split("\n")
-        .filter((l) => l.trim());
+      const lines = data.toString().split("\n").filter(hasContent);
       for (const line of lines) {
         // eslint-disable-next-line no-console
         console.log(`[relay] ${line}`);
       }
     });
     relayProcess.stderr?.on("data", (data: Buffer) => {
-      const lines = data
-        .toString()
-        .split("\n")
-        .filter((l) => l.trim());
+      const lines = data.toString().split("\n").filter(hasContent);
       for (const line of lines) {
         // eslint-disable-next-line no-console
         console.error(`[relay] ${line}`);
@@ -242,12 +255,7 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
         );
         const onMessage = (raw: unknown) => {
           try {
-            const text =
-              typeof raw === "string"
-                ? raw
-                : raw && typeof (raw as any).toString === "function"
-                  ? (raw as any).toString()
-                  : "";
+            const text = rawToText(raw);
             const msg = JSON.parse(text);
             if (msg?.type === "connected" && msg.connectionId === connectionId) {
               clearTimeout(timeout);
@@ -396,12 +404,7 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
       const timeout = setTimeout(() => reject(new Error("timed out waiting for connected")), 5000);
       const onMessage = (raw: unknown) => {
         try {
-          const text =
-            typeof raw === "string"
-              ? raw
-              : raw && typeof (raw as any).toString === "function"
-                ? (raw as any).toString()
-                : "";
+          const text = rawToText(raw);
           const msg = JSON.parse(text);
           if (msg?.type === "connected" && msg.connectionId === connectionId) {
             clearTimeout(timeout);
@@ -469,8 +472,6 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
   });
 
   it("wrong key cannot decrypt", async () => {
-    const serverId = "wrong-key-test-" + Date.now();
-
     // Setup - daemon and client with correct keys
     const daemonKeyPair = await generateKeyPair();
     const clientKeyPair = await generateKeyPair();
