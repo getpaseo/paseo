@@ -24,26 +24,26 @@ type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
 
 const { mockRuntime, mockClient, checkoutStatusUpdateHandlers } = vi.hoisted(() => {
-  const checkoutStatusUpdateHandlers = new Set<(message: unknown) => void>();
-  const mockClient = {
+  const hoistedHandlers = new Set<(message: unknown) => void>();
+  const hoistedClient = {
     checkoutPrStatus: vi.fn(),
     pullRequestTimeline: vi.fn(),
     on: vi.fn((type: string, handler: (message: unknown) => void) => {
       if (type !== "checkout_status_update") {
         return () => {};
       }
-      checkoutStatusUpdateHandlers.add(handler);
+      hoistedHandlers.add(handler);
       return () => {
-        checkoutStatusUpdateHandlers.delete(handler);
+        hoistedHandlers.delete(handler);
       };
     }),
   };
 
   return {
-    mockClient,
-    checkoutStatusUpdateHandlers,
+    mockClient: hoistedClient,
+    checkoutStatusUpdateHandlers: hoistedHandlers,
     mockRuntime: {
-      client: mockClient,
+      client: hoistedClient,
       isConnected: true,
     },
   };

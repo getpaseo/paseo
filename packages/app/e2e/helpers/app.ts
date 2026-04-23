@@ -27,14 +27,14 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
   }
 
   const needsReset = await page.evaluate(
-    ({ expectedEndpoint, expectedServerId }) => {
+    ({ expectedEndpoint: endpoint, expectedServerId: serverId }) => {
       const raw = localStorage.getItem("@paseo:daemon-registry");
       if (!raw) return true;
       try {
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed) || parsed.length !== 1) return true;
         const entry = parsed[0] as any;
-        if (entry?.serverId !== expectedServerId) return true;
+        if (entry?.serverId !== serverId) return true;
         const connections = entry?.connections;
         if (!Array.isArray(connections)) return true;
         if (
@@ -46,9 +46,7 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
           )
         )
           return true;
-        return !connections.some(
-          (c: any) => c?.type === "directTcp" && c?.endpoint === expectedEndpoint,
-        );
+        return !connections.some((c: any) => c?.type === "directTcp" && c?.endpoint === endpoint);
       } catch {
         return true;
       }
@@ -68,10 +66,10 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
   });
   const preferences = buildCreateAgentPreferences(expectedServerId);
   await page.evaluate(
-    ({ daemon, preferences }) => {
+    ({ daemon: seededDaemon, preferences: seededPreferences }) => {
       localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededDaemon]));
+      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(seededPreferences));
       localStorage.removeItem("@paseo:settings");
     },
     { daemon, preferences },

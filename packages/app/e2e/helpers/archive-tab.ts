@@ -148,21 +148,21 @@ export async function primeAdditionalPage(page: Page): Promise<void> {
     await ws.close({ code: 1008, reason: "Blocked connection to localhost:6767 during e2e." });
   });
   await page.addInitScript(
-    ({ daemon, preferences, seedNonce }) => {
+    ({ daemon: seededDaemon, preferences: seededPreferences, seedNonce: nonce }) => {
       const disableOnceKey = "@paseo:e2e-disable-default-seed-once";
       const disableValue = localStorage.getItem(disableOnceKey);
       if (disableValue) {
         localStorage.removeItem(disableOnceKey);
-        if (disableValue === seedNonce) {
+        if (disableValue === nonce) {
           return;
         }
       }
 
       localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:e2e-seed-nonce", seedNonce);
-      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
+      localStorage.setItem("@paseo:e2e-seed-nonce", nonce);
+      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededDaemon]));
       localStorage.removeItem("@paseo:settings");
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(seededPreferences));
     },
     { daemon, preferences, seedNonce },
   );
@@ -173,11 +173,11 @@ export async function resetSeededPageState(page: Page): Promise<void> {
   const { daemon, preferences } = buildSeededStoragePayload();
   await page.goto("/");
   await page.evaluate(
-    ({ daemon, preferences }) => {
+    ({ daemon: seededDaemon, preferences: seededPreferences }) => {
       localStorage.clear();
       localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededDaemon]));
+      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(seededPreferences));
       localStorage.removeItem("@paseo:settings");
     },
     { daemon, preferences },

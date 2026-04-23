@@ -650,13 +650,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   }
 
   const getWebTextArea = useCallback((): TextAreaHandle | null => {
-    const ref = textInputRef.current;
-    if (!ref) return null;
-    if (typeof (ref as any).getNativeRef === "function") {
-      const native = (ref as any).getNativeRef();
+    const current = textInputRef.current;
+    if (!current) return null;
+    if (typeof (current as any).getNativeRef === "function") {
+      const native = (current as any).getNativeRef();
       if (isTextAreaLike(native)) return native;
     }
-    if (isTextAreaLike(ref)) return ref;
+    if (isTextAreaLike(current)) return current;
     return null;
   }, []);
 
@@ -673,12 +673,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   });
 
   const getWebElement = useCallback((target: "root" | "wrapper"): HTMLElement | null => {
-    const ref = target === "root" ? rootRef.current : inputWrapperRef.current;
-    if (!ref) return null;
-    return ref instanceof HTMLElement
-      ? ref
-      : (ref as unknown as { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect
-        ? (ref as unknown as HTMLElement)
+    const current = target === "root" ? rootRef.current : inputWrapperRef.current;
+    if (!current) return null;
+    return current instanceof HTMLElement
+      ? current
+      : (current as unknown as { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect
+        ? (current as unknown as HTMLElement)
         : null;
   }, []);
 
@@ -710,11 +710,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
       event.preventDefault();
 
       void filesToImageAttachments(imageFiles)
-        .then((attachments) => {
-          if (disposed || attachments.length === 0) {
+        .then((pastedAttachments) => {
+          if (disposed || pastedAttachments.length === 0) {
             return;
           }
-          onAddImages(attachments);
+          onAddImages(pastedAttachments);
           return;
         })
         .catch((error) => {
