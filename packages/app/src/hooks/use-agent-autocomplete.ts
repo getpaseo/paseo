@@ -143,17 +143,22 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
 
-  const mode: "command" | "file" | null = showFileAutocomplete
-    ? "file"
-    : showCommandAutocomplete
-      ? "command"
-      : null;
-  const isVisible =
-    mode === "command"
-      ? canLoadCommands
-      : mode === "file"
-        ? Boolean(serverId) && autocompleteCwd.length > 0
-        : false;
+  let mode: "command" | "file" | null;
+  if (showFileAutocomplete) {
+    mode = "file";
+  } else if (showCommandAutocomplete) {
+    mode = "command";
+  } else {
+    mode = null;
+  }
+  let isVisible: boolean;
+  if (mode === "command") {
+    isVisible = canLoadCommands;
+  } else if (mode === "file") {
+    isVisible = Boolean(serverId) && autocompleteCwd.length > 0;
+  } else {
+    isVisible = false;
+  }
 
   const {
     commands,
@@ -258,22 +263,24 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onEscape: mode === "command" ? () => setUserInput("") : undefined,
   });
 
-  const isLoading =
-    mode === "command"
-      ? isCommandsLoading
-      : mode === "file"
-        ? fileSuggestionsQuery.isPending || (fileSuggestionsQuery.isLoading && options.length === 0)
-        : false;
-  const errorMessage =
-    mode === "command"
-      ? isError
-        ? (error?.message ?? "Failed to load")
-        : undefined
-      : mode === "file"
-        ? fileSuggestionsQuery.error instanceof Error
-          ? fileSuggestionsQuery.error.message
-          : undefined
-        : undefined;
+  let isLoading: boolean;
+  if (mode === "command") {
+    isLoading = isCommandsLoading;
+  } else if (mode === "file") {
+    isLoading =
+      fileSuggestionsQuery.isPending || (fileSuggestionsQuery.isLoading && options.length === 0);
+  } else {
+    isLoading = false;
+  }
+  let errorMessage: string | undefined;
+  if (mode === "command") {
+    errorMessage = isError ? (error?.message ?? "Failed to load") : undefined;
+  } else if (mode === "file") {
+    errorMessage =
+      fileSuggestionsQuery.error instanceof Error ? fileSuggestionsQuery.error.message : undefined;
+  } else {
+    errorMessage = undefined;
+  }
 
   const loadingText = mode === "file" ? "Searching workspace..." : "Loading commands...";
   const emptyText = mode === "file" ? "No files or directories found" : "No commands found";

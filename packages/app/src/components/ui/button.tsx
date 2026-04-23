@@ -118,18 +118,27 @@ export function Button({
   const [hovered, setHovered] = useState(false);
   const { theme } = useUnistyles();
 
-  const variantStyle =
-    variant === "default"
-      ? styles.default
-      : variant === "secondary"
-        ? styles.secondary
-        : variant === "outline"
-          ? styles.outline
-          : variant === "ghost"
-            ? styles.ghost
-            : styles.destructive;
+  let variantStyle: ViewStyle;
+  if (variant === "default") {
+    variantStyle = styles.default;
+  } else if (variant === "secondary") {
+    variantStyle = styles.secondary;
+  } else if (variant === "outline") {
+    variantStyle = styles.outline;
+  } else if (variant === "ghost") {
+    variantStyle = styles.ghost;
+  } else {
+    variantStyle = styles.destructive;
+  }
 
-  const sizeStyle = size === "sm" ? styles.sm : size === "lg" ? styles.lg : styles.md;
+  let sizeStyle: ViewStyle;
+  if (size === "sm") {
+    sizeStyle = styles.sm;
+  } else if (size === "lg") {
+    sizeStyle = styles.lg;
+  } else {
+    sizeStyle = styles.md;
+  }
   const isGhostHovered = hovered && variant === "ghost";
 
   const handleHoverIn = useCallback(() => setHovered(true), []);
@@ -167,14 +176,14 @@ export function Button({
       return <View>{leftIcon}</View>;
     }
 
-    const color =
-      variant === "default"
-        ? theme.colors.accentForeground
-        : variant === "ghost"
-          ? isGhostHovered
-            ? theme.colors.foreground
-            : theme.colors.foregroundMuted
-          : theme.colors.foreground;
+    let color: string;
+    if (variant === "default") {
+      color = theme.colors.accentForeground;
+    } else if (variant === "ghost") {
+      color = isGhostHovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+    } else {
+      color = theme.colors.foreground;
+    }
     const iconSize = ICON_SIZE[size];
 
     // Render function

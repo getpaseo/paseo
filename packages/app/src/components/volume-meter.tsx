@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { View } from "react-native";
 import ReanimatedAnimated, {
   useSharedValue,
@@ -33,8 +33,18 @@ export function VolumeMeter({
   // Base dimensions
   const LINE_SPACING = isCompact ? 6 : 8;
   const LINE_WIDTH = isCompact ? 6 : 8;
-  const MAX_HEIGHT = orientation === "horizontal" ? (isCompact ? 18 : 30) : isCompact ? 32 : 50;
-  const MIN_HEIGHT = orientation === "horizontal" ? (isCompact ? 8 : 12) : isCompact ? 14 : 20;
+  let MAX_HEIGHT: number;
+  if (orientation === "horizontal") {
+    MAX_HEIGHT = isCompact ? 18 : 30;
+  } else {
+    MAX_HEIGHT = isCompact ? 32 : 50;
+  }
+  let MIN_HEIGHT: number;
+  if (orientation === "horizontal") {
+    MIN_HEIGHT = isCompact ? 8 : 12;
+  } else {
+    MIN_HEIGHT = isCompact ? 14 : 20;
+  }
 
   // Create shared values for 3 dots unconditionally
   const animatedVolume = useSharedValue(0);
@@ -99,8 +109,12 @@ export function VolumeMeter({
   }, [animatedVolume, isMuted, volume]);
 
   const lineColor = color ?? theme.colors.foreground;
-  const containerHeight =
-    orientation === "horizontal" ? (isCompact ? 32 : 60) : isCompact ? 64 : 100;
+  let containerHeight: number;
+  if (orientation === "horizontal") {
+    containerHeight = isCompact ? 32 : 60;
+  } else {
+    containerHeight = isCompact ? 64 : 100;
+  }
 
   // Create animated styles unconditionally at top level
   const line1Style = useAnimatedStyle(() => {
@@ -139,19 +153,35 @@ export function VolumeMeter({
     };
   });
 
+  const containerStyle = useMemo(
+    () => [styles.container, { height: containerHeight }],
+    [containerHeight],
+  );
+  const lineBase = useMemo(
+    () => ({ width: LINE_WIDTH, backgroundColor: lineColor }),
+    [LINE_WIDTH, lineColor],
+  );
+  const spacerStyle = useMemo(() => ({ width: LINE_SPACING }), [LINE_SPACING]);
+  const line1CombinedStyle = useMemo(
+    () => [styles.line, lineBase, line1Style],
+    [lineBase, line1Style],
+  );
+  const line2CombinedStyle = useMemo(
+    () => [styles.line, lineBase, line2Style],
+    [lineBase, line2Style],
+  );
+  const line3CombinedStyle = useMemo(
+    () => [styles.line, lineBase, line3Style],
+    [lineBase, line3Style],
+  );
+
   return (
-    <View style={[styles.container, { height: containerHeight }]}>
-      <ReanimatedAnimated.View
-        style={[styles.line, { width: LINE_WIDTH, backgroundColor: lineColor }, line1Style]}
-      />
-      <View style={{ width: LINE_SPACING }} />
-      <ReanimatedAnimated.View
-        style={[styles.line, { width: LINE_WIDTH, backgroundColor: lineColor }, line2Style]}
-      />
-      <View style={{ width: LINE_SPACING }} />
-      <ReanimatedAnimated.View
-        style={[styles.line, { width: LINE_WIDTH, backgroundColor: lineColor }, line3Style]}
-      />
+    <View style={containerStyle}>
+      <ReanimatedAnimated.View style={line1CombinedStyle} />
+      <View style={spacerStyle} />
+      <ReanimatedAnimated.View style={line2CombinedStyle} />
+      <View style={spacerStyle} />
+      <ReanimatedAnimated.View style={line3CombinedStyle} />
     </View>
   );
 }
