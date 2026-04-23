@@ -399,7 +399,7 @@ async function execSetupCommandStreamed(options: {
   total: number;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolvePromise) => {
     const startedAt = Date.now();
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
@@ -450,7 +450,7 @@ async function execSetupCommandStreamed(options: {
         stdout: result.stdout,
         stderr: result.stderr,
       });
-      resolve(result);
+      resolvePromise(result);
     };
 
     options.onEvent?.({
@@ -513,7 +513,7 @@ async function execSetupCommandStreamed(options: {
 }
 
 async function getAvailablePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolvePromise, reject) => {
     const server = net.createServer();
     server.once("error", reject);
     server.listen(0, () => {
@@ -527,14 +527,14 @@ async function getAvailablePort(): Promise<number> {
           reject(error);
           return;
         }
-        resolve(address.port);
+        resolvePromise(address.port);
       });
     });
   });
 }
 
 async function assertPortAvailable(port: number): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolvePromise, reject) => {
     const server = net.createServer();
     server.once("error", (error: NodeJS.ErrnoException) => {
       let message: string;
@@ -553,7 +553,7 @@ async function assertPortAvailable(port: number): Promise<void> {
           reject(error);
           return;
         }
-        resolve();
+        resolvePromise();
       });
     });
   });
@@ -1183,7 +1183,7 @@ async function removeDirectoryWithRetries(path: string): Promise<void> {
   let lastError: unknown = null;
   for (const delay of delaysMs) {
     if (delay > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, delay));
     }
     try {
       await rm(path, { recursive: true, force: true });

@@ -166,9 +166,11 @@ function isObjectSchemaNode(schema: Record<string, unknown>): boolean {
   );
 }
 
-function normalizeCodexOutputSchemaNode(schema: unknown, path: string): unknown {
+function normalizeCodexOutputSchemaNode(schema: unknown, schemaPath: string): unknown {
   if (Array.isArray(schema)) {
-    return schema.map((entry, index) => normalizeCodexOutputSchemaNode(entry, `${path}[${index}]`));
+    return schema.map((entry, index) =>
+      normalizeCodexOutputSchemaNode(entry, `${schemaPath}[${index}]`),
+    );
   }
   if (!isSchemaRecord(schema)) {
     return schema;
@@ -176,7 +178,7 @@ function normalizeCodexOutputSchemaNode(schema: unknown, path: string): unknown 
 
   const normalized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(schema)) {
-    normalized[key] = normalizeCodexOutputSchemaNode(value, `${path}.${key}`);
+    normalized[key] = normalizeCodexOutputSchemaNode(value, `${schemaPath}.${key}`);
   }
 
   if (!isObjectSchemaNode(normalized)) {
@@ -187,7 +189,7 @@ function normalizeCodexOutputSchemaNode(schema: unknown, path: string): unknown 
     normalized.additionalProperties = false;
   } else if (normalized.additionalProperties !== false) {
     throw new Error(
-      `Codex structured outputs require ${path} to set additionalProperties to false for object schemas.`,
+      `Codex structured outputs require ${schemaPath} to set additionalProperties to false for object schemas.`,
     );
   }
 
@@ -1264,8 +1266,8 @@ function parseCodexPatchChanges(changes: unknown): CodexPatchFileChange[] {
   }
 
   return Object.entries(recordChanges)
-    .map(([path, value]): CodexPatchFileChange | null => {
-      const normalizedPath = path.trim();
+    .map(([entryPath, value]): CodexPatchFileChange | null => {
+      const normalizedPath = entryPath.trim();
       if (!normalizedPath) {
         return null;
       }

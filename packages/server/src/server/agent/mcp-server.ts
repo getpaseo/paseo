@@ -307,7 +307,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return parentAgent;
   };
 
-  const resolveScopedCwd = (requestedCwd?: string, options?: { required?: boolean }): string => {
+  const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
       return resolveChildAgentCwd({
@@ -320,7 +320,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
     const trimmedCwd = requestedCwd?.trim();
     if (!trimmedCwd) {
-      if (options?.required) {
+      if (opts?.required) {
         throw new Error("cwd is required");
       }
       throw new Error("cwd is required when no caller agent is available");

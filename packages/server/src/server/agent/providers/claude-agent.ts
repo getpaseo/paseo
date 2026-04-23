@@ -1729,8 +1729,8 @@ class ClaudeAgentSession implements AgentSession {
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
     const previousMode = this.currentMode;
-    const query = await this.ensureQuery();
-    await query.setPermissionMode(normalized);
+    const activeQuery = await this.ensureQuery();
+    await activeQuery.setPermissionMode(normalized);
     if (normalized === "plan") {
       if (previousMode !== "plan") {
         this.planResumeMode = previousMode;
@@ -1744,8 +1744,8 @@ class ClaudeAgentSession implements AgentSession {
   async setModel(modelId: string | null): Promise<void> {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
-    const query = await this.ensureQuery();
-    await query.setModel(normalizedModelId ?? undefined);
+    const activeQuery = await this.ensureQuery();
+    await activeQuery.setModel(normalizedModelId ?? undefined);
     this.config.model = normalizedModelId ?? undefined;
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
@@ -2020,8 +2020,8 @@ class ClaudeAgentSession implements AgentSession {
     deletions?: number;
   }> {
     try {
-      const query = await this.ensureFreshQuery();
-      return await query.rewindFiles(messageId, { dryRun: false });
+      const activeQuery = await this.ensureFreshQuery();
+      return await activeQuery.rewindFiles(messageId, { dryRun: false });
     } catch (error) {
       // The Claude SDK transport can close after a rewind call.
       // If that happens, mark the query stale so a follow-up attempt uses a fresh query.
@@ -2732,7 +2732,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private async handleMissingResumedConversation(
     message: SDKMessage,
-    query: Query,
+    activeQuery: Query,
   ): Promise<boolean> {
     const staleResumeError = this.readMissingResumedConversationError(message);
     if (!staleResumeError) {
@@ -2750,10 +2750,10 @@ class ClaudeAgentSession implements AgentSession {
     this.failActiveTurns(staleResumeError);
     this.input?.end();
     await this.awaitWithTimeout(
-      query.return?.(),
+      activeQuery.return?.(),
       "query pump return on missing resumed conversation",
     );
-    if (this.query === query) {
+    if (this.query === activeQuery) {
       this.query = null;
       this.input = null;
     }
@@ -4017,12 +4017,12 @@ export function convertClaudeHistoryEntry(
       : null;
 
   if (entry.type === "user") {
-    const taskNotificationItem = mapTaskNotificationUserContentToToolCall({
+    const userTaskNotificationItem = mapTaskNotificationUserContentToToolCall({
       content,
       messageId: userMessageId,
     });
-    if (taskNotificationItem) {
-      return [taskNotificationItem];
+    if (userTaskNotificationItem) {
+      return [userTaskNotificationItem];
     }
   }
 

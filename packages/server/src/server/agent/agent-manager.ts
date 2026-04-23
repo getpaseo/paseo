@@ -816,10 +816,10 @@ export class AgentManager {
     try {
       return await Promise.race([
         operation,
-        new Promise<TimeoutResult>((resolve) => {
+        new Promise<TimeoutResult>((resolvePromise) => {
           timer = setTimeout(() => {
             didTimeOut = true;
-            resolve("timed_out");
+            resolvePromise("timed_out");
           }, options.timeoutMs);
         }),
       ]);
@@ -1261,8 +1261,8 @@ export class AgentManager {
       let queueResolve: (() => void) | null = null;
       let done = false;
       let resolveSettled!: () => void;
-      const settledPromise = new Promise<void>((resolve) => {
-        resolveSettled = resolve;
+      const settledPromise = new Promise<void>((resolvePromise) => {
+        resolveSettled = resolvePromise;
       });
 
       waiter = {
@@ -1294,8 +1294,8 @@ export class AgentManager {
             if (waiter.settled) {
               break;
             }
-            await new Promise<void>((resolve) => {
-              queueResolve = resolve;
+            await new Promise<void>((resolvePromise) => {
+              queueResolve = resolvePromise;
             });
           }
         }
@@ -1417,7 +1417,7 @@ export class AgentManager {
       throw createAbortError(options.signal, "wait_for_agent_start aborted");
     }
 
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolvePromise, reject) => {
       if (options?.signal?.aborted) {
         reject(createAbortError(options.signal, "wait_for_agent_start aborted"));
         return;
@@ -1447,7 +1447,7 @@ export class AgentManager {
 
       const finishOk = () => {
         cleanup();
-        resolve();
+        resolvePromise();
       };
 
       const finishErr = (error: unknown) => {
@@ -1559,12 +1559,12 @@ export class AgentManager {
       const waiter = Array.from(agent.foregroundTurnWaiters).find(
         (candidate) => candidate.turnId === foregroundTurnId,
       );
-      const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2000));
+      const timeout = new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 2000));
       if (waiter) {
         await Promise.race([waiter.settledPromise, timeout]);
       } else if (agent.activeForegroundTurnId === foregroundTurnId) {
         await Promise.race([
-          new Promise<void>((resolve) => {
+          new Promise<void>((resolvePromise) => {
             const unsubscribe = this.subscribe(
               (event) => {
                 if (
@@ -1573,7 +1573,7 @@ export class AgentManager {
                   !event.agent.activeForegroundTurnId
                 ) {
                   unsubscribe();
-                  resolve();
+                  resolvePromise();
                 }
               },
               { agentId, replayState: false },
@@ -1590,7 +1590,7 @@ export class AgentManager {
         await Promise.race([pendingRun.settledPromise, timeout]);
       }
     } else if (pendingRun) {
-      const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2000));
+      const timeout = new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 2000));
       await Promise.race([pendingRun.settledPromise, timeout]);
     }
 
@@ -1820,7 +1820,7 @@ export class AgentManager {
       throw createAbortError(options.signal, "wait_for_agent aborted");
     }
 
-    return await new Promise<WaitForAgentResult>((resolve, reject) => {
+    return await new Promise<WaitForAgentResult>((resolvePromise, reject) => {
       // Bug #1 Fix: Check abort signal AGAIN inside Promise constructor
       // to avoid race condition between pre-Promise check and abort listener registration
       if (options?.signal?.aborted) {
@@ -1870,7 +1870,7 @@ export class AgentManager {
         cleanup();
         void this.getLastAssistantMessage(agentId)
           .then((lastMessage) => {
-            resolve({
+            resolvePromise({
               status: currentStatus,
               permission,
               lastMessage,
@@ -2177,8 +2177,8 @@ export class AgentManager {
 
   private createPendingForegroundRun(): PendingForegroundRun {
     let resolveSettled!: () => void;
-    const settledPromise = new Promise<void>((resolve) => {
-      resolveSettled = resolve;
+    const settledPromise = new Promise<void>((resolvePromise) => {
+      resolveSettled = resolvePromise;
     });
     return {
       token: randomUUID(),

@@ -284,8 +284,8 @@ export function startRelayTransport({
       }
       if (msg.type === "pong") return;
       if (msg.type === "sync") {
-        for (const connectionId of msg.connectionIds) {
-          ensureClientDataSocket(connectionId);
+        for (const clientConnectionId of msg.connectionIds) {
+          ensureClientDataSocket(clientConnectionId);
         }
         return;
       }

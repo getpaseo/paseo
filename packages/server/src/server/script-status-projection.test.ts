@@ -403,8 +403,8 @@ describe("script-status-projection", () => {
       routeStore,
       runtimeStore,
       daemonPort: 6767,
-      resolveWorkspaceDirectory: async (workspaceId) =>
-        workspaceId === "workspace-emitter" ? workspace.repoDir : null,
+      resolveWorkspaceDirectory: async (requestedWorkspaceId) =>
+        requestedWorkspaceId === "workspace-emitter" ? workspace.repoDir : null,
     });
 
     try {

@@ -906,12 +906,12 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     });
   }
 
-  async function killAndWait(options?: {
+  async function killAndWait(killOptions?: {
     gracefulTimeoutMs?: number;
     forceTimeoutMs?: number;
   }): Promise<void> {
-    const gracefulTimeoutMs = options?.gracefulTimeoutMs ?? 2000;
-    const forceTimeoutMs = options?.forceTimeoutMs ?? 1000;
+    const gracefulTimeoutMs = killOptions?.gracefulTimeoutMs ?? 2000;
+    const forceTimeoutMs = killOptions?.forceTimeoutMs ?? 1000;
 
     if (processExited) {
       kill();

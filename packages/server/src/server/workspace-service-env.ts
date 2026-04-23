@@ -108,9 +108,9 @@ export function assertNoServiceEnvNameCollisions(scriptNames: readonly string[])
   }
 
   const collisions: string[] = [];
-  for (const [envName, scriptNames] of scriptNamesByEnvName) {
-    if (scriptNames.length > 1) {
-      collisions.push(`Service env name collision for ${envName}: ${scriptNames.join(", ")}`);
+  for (const [envName, names] of scriptNamesByEnvName) {
+    if (names.length > 1) {
+      collisions.push(`Service env name collision for ${envName}: ${names.join(", ")}`);
     }
   }
 

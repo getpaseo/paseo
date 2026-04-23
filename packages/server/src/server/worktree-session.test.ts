@@ -542,8 +542,8 @@ describe("runWorktreeSetupInBackground", () => {
       {
         paseoHome,
         emitWorkspaceUpdateForCwd,
-        cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
-          snapshots.set(workspaceId, snapshot),
+        cacheWorkspaceSetupSnapshot: (snapshotWorkspaceId, snapshot) =>
+          snapshots.set(snapshotWorkspaceId, snapshot),
         emit: (message) => emitted.push(message),
         sessionLogger: logger,
         terminalManager: null,
