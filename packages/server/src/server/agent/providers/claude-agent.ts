@@ -4285,37 +4285,35 @@ async function collectRecentClaudeSessions(
   } catch {
     return [];
   }
-  const candidates: ClaudeSessionCandidate[] = [];
-  for (const dirName of projectDirs) {
-    const projectPath = path.join(root, dirName);
-    let stats: fs.Stats;
-    try {
-      stats = await fsPromises.stat(projectPath);
-    } catch {
-      continue;
-    }
-    if (!stats.isDirectory()) {
-      continue;
-    }
-    let files: string[];
-    try {
-      files = await fsPromises.readdir(projectPath);
-    } catch {
-      continue;
-    }
-    for (const file of files) {
-      if (!file.endsWith(".jsonl")) {
-        continue;
+  const projectFileLists = await Promise.all(
+    projectDirs.map(async (dirName) => {
+      const projectPath = path.join(root, dirName);
+      try {
+        const stats = await fsPromises.stat(projectPath);
+        if (!stats.isDirectory()) return { projectPath, files: [] as string[] };
+        const files = await fsPromises.readdir(projectPath);
+        return { projectPath, files };
+      } catch {
+        return { projectPath, files: [] as string[] };
       }
-      const fullPath = path.join(projectPath, file);
+    }),
+  );
+  const fileEntries = projectFileLists.flatMap(({ projectPath, files }) =>
+    files.filter((f) => f.endsWith(".jsonl")).map((f) => path.join(projectPath, f)),
+  );
+  const statResults = await Promise.all(
+    fileEntries.map(async (fullPath) => {
       try {
         const fileStats = await fsPromises.stat(fullPath);
-        candidates.push({ path: fullPath, mtime: fileStats.mtime });
+        return { path: fullPath, mtime: fileStats.mtime };
       } catch {
-        // ignore stat errors for individual files
+        return null;
       }
-    }
-  }
+    }),
+  );
+  const candidates: ClaudeSessionCandidate[] = statResults.filter(
+    (entry): entry is ClaudeSessionCandidate => entry !== null,
+  );
   return candidates.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
 }
 

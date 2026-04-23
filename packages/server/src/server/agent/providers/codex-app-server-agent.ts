@@ -372,35 +372,33 @@ async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
     return [];
   }
 
-  const commands: AgentSlashCommand[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile()) {
-      continue;
-    }
-    if (!entry.name.endsWith(".md")) {
-      continue;
-    }
-    const name = entry.name.slice(0, -".md".length);
-    if (!name) {
-      continue;
-    }
-    const fullPath = path.join(promptsDir, entry.name);
-    let content: string;
-    try {
-      content = await fs.readFile(fullPath, "utf8");
-    } catch {
-      continue;
-    }
-    const parsed = parseFrontMatter(content);
-    const description = parsed.frontMatter["description"] ?? "Custom prompt";
-    const argumentHint =
-      parsed.frontMatter["argument-hint"] ?? parsed.frontMatter["argument_hint"] ?? "";
-    commands.push({
-      name: `prompts:${name}`,
-      description,
-      argumentHint,
-    });
-  }
+  const mdEntries = entries.filter(
+    (entry) => entry.isFile() && entry.name.endsWith(".md") && entry.name.slice(0, -".md".length),
+  );
+  const parsedCommands = await Promise.all(
+    mdEntries.map(async (entry): Promise<AgentSlashCommand | null> => {
+      const name = entry.name.slice(0, -".md".length);
+      const fullPath = path.join(promptsDir, entry.name);
+      let content: string;
+      try {
+        content = await fs.readFile(fullPath, "utf8");
+      } catch {
+        return null;
+      }
+      const parsed = parseFrontMatter(content);
+      const description = parsed.frontMatter["description"] ?? "Custom prompt";
+      const argumentHint =
+        parsed.frontMatter["argument-hint"] ?? parsed.frontMatter["argument_hint"] ?? "";
+      return {
+        name: `prompts:${name}`,
+        description,
+        argumentHint,
+      };
+    }),
+  );
+  const commands: AgentSlashCommand[] = parsedCommands.filter(
+    (cmd): cmd is AgentSlashCommand => cmd !== null,
+  );
   return commands.sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -431,18 +429,20 @@ async function listCodexSkills(
       continue;
     }
 
-    for (const entry of entries) {
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) {
-        continue;
-      }
-      const skillDir = path.join(dir, entry.name);
-      const skillPath = path.join(skillDir, "SKILL.md");
-      let content: string;
-      try {
-        content = await fs.readFile(skillPath, "utf8");
-      } catch {
-        continue;
-      }
+    const dirEntries = entries.filter((entry) => entry.isDirectory() || entry.isSymbolicLink());
+    const skillContents = await Promise.all(
+      dirEntries.map(async (entry) => {
+        const skillDir = path.join(dir, entry.name);
+        const skillPath = path.join(skillDir, "SKILL.md");
+        try {
+          return await fs.readFile(skillPath, "utf8");
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const content of skillContents) {
+      if (!content) continue;
       const { frontMatter } = parseFrontMatter(content);
       const name = frontMatter["name"];
       const description = frontMatter["description"];
@@ -2396,42 +2396,40 @@ export async function codexAppServerTurnInputFromPrompt(
   }
 
   const blocks = prompt as Array<unknown>;
-  const output: unknown[] = [];
-  for (const block of blocks) {
-    if (!block || typeof block !== "object") {
-      output.push(block);
-      continue;
-    }
-    const record = block as { type?: unknown; mimeType?: unknown; data?: unknown };
-    if (
-      record.type === "image" &&
-      typeof record.mimeType === "string" &&
-      typeof record.data === "string"
-    ) {
-      try {
-        const filePath = await writeImageAttachment(record.mimeType, record.data);
-        output.push({ type: "localImage", path: filePath });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.warn({ message }, "Failed to write Codex image attachment");
-        output.push({
-          type: "text",
-          text: `User attached image (failed to write temp file): ${message}`,
-        });
+  const output = await Promise.all(
+    blocks.map(async (block) => {
+      if (!block || typeof block !== "object") {
+        return block;
       }
-      continue;
-    }
-    if (record.type === "github_pr" || record.type === "github_issue") {
-      output.push({
-        type: "text",
-        text: renderPromptAttachmentAsText(
-          record as Extract<AgentPromptContentBlock, { type: "github_pr" | "github_issue" }>,
-        ),
-      });
-      continue;
-    }
-    output.push(block);
-  }
+      const record = block as { type?: unknown; mimeType?: unknown; data?: unknown };
+      if (
+        record.type === "image" &&
+        typeof record.mimeType === "string" &&
+        typeof record.data === "string"
+      ) {
+        try {
+          const filePath = await writeImageAttachment(record.mimeType, record.data);
+          return { type: "localImage", path: filePath };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn({ message }, "Failed to write Codex image attachment");
+          return {
+            type: "text",
+            text: `User attached image (failed to write temp file): ${message}`,
+          };
+        }
+      }
+      if (record.type === "github_pr" || record.type === "github_issue") {
+        return {
+          type: "text",
+          text: renderPromptAttachmentAsText(
+            record as Extract<AgentPromptContentBlock, { type: "github_pr" | "github_issue" }>,
+          ),
+        };
+      }
+      return block;
+    }),
+  );
   return output;
 }
 
@@ -4243,56 +4241,54 @@ export class CodexAppServerAgentClient implements AgentClient {
         data?: Array<any>;
       };
       const threads = Array.isArray(response?.data) ? response.data : [];
-      const descriptors: PersistedAgentDescriptor[] = [];
-
-      for (const thread of threads.slice(0, limit)) {
-        const threadId = thread.id;
-        const cwd = thread.cwd ?? process.cwd();
-        const title = thread.preview ?? null;
-        let timeline: AgentTimelineItem[] = [];
-        try {
-          const rolloutTimeline = await loadCodexPersistedTimeline(
-            threadId,
-            undefined,
-            this.logger,
-          );
-          const read = (await client.request("thread/read", {
-            threadId,
-            includeTurns: true,
-          })) as { thread?: { turns?: Array<{ items?: any[] }> } };
-          const turns = read.thread?.turns ?? [];
-          const itemsFromThreadRead: AgentTimelineItem[] = [];
-          for (const turn of turns) {
-            for (const item of turn.items ?? []) {
-              const timelineItem = threadItemToTimeline(item, { cwd });
-              if (timelineItem) itemsFromThreadRead.push(timelineItem);
+      const descriptors: PersistedAgentDescriptor[] = await Promise.all(
+        threads.slice(0, limit).map(async (thread) => {
+          const threadId = thread.id;
+          const cwd = thread.cwd ?? process.cwd();
+          const title = thread.preview ?? null;
+          let timeline: AgentTimelineItem[] = [];
+          try {
+            const [rolloutTimeline, read] = await Promise.all([
+              loadCodexPersistedTimeline(threadId, undefined, this.logger),
+              client.request("thread/read", {
+                threadId,
+                includeTurns: true,
+              }) as Promise<{ thread?: { turns?: Array<{ items?: any[] }> } }>,
+            ]);
+            const turns = read.thread?.turns ?? [];
+            const itemsFromThreadRead: AgentTimelineItem[] = [];
+            for (const turn of turns) {
+              for (const item of turn.items ?? []) {
+                const timelineItem = threadItemToTimeline(item, { cwd });
+                if (timelineItem) itemsFromThreadRead.push(timelineItem);
+              }
             }
+            timeline = rolloutTimeline.length > 0 ? rolloutTimeline : itemsFromThreadRead;
+          } catch {
+            timeline = [];
           }
-          timeline = rolloutTimeline.length > 0 ? rolloutTimeline : itemsFromThreadRead;
-        } catch {
-          timeline = [];
-        }
 
-        descriptors.push({
-          provider: CODEX_PROVIDER,
-          sessionId: threadId,
-          cwd,
-          title,
-          lastActivityAt: new Date((thread.updatedAt ?? thread.createdAt ?? 0) * 1000),
-          persistence: {
+          return {
             provider: CODEX_PROVIDER,
             sessionId: threadId,
-            nativeHandle: threadId,
-            metadata: {
+            cwd,
+            title,
+            lastActivityAt: new Date((thread.updatedAt ?? thread.createdAt ?? 0) * 1000),
+            persistence: {
               provider: CODEX_PROVIDER,
-              cwd,
-              title,
-              threadId,
+              sessionId: threadId,
+              nativeHandle: threadId,
+              metadata: {
+                provider: CODEX_PROVIDER,
+                cwd,
+                title,
+                threadId,
+              },
             },
-          },
-          timeline,
-        });
-      }
+            timeline,
+          };
+        }),
+      );
 
       return descriptors;
     } finally {

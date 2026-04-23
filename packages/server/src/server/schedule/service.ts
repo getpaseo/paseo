@@ -244,43 +244,45 @@ export class ScheduleService {
   private async recoverInterruptedRuns(): Promise<void> {
     const schedules = await this.store.list();
     const now = this.now();
-    for (const schedule of schedules) {
-      let updated = { ...schedule };
-      let dirty = false;
+    await Promise.all(
+      schedules.map(async (schedule) => {
+        let updated = { ...schedule };
+        let dirty = false;
 
-      // Mark any in-flight runs as failed
-      const runningIndex = updated.runs.findIndex((run) => run.status === "running");
-      if (runningIndex !== -1) {
-        const runs = [...updated.runs];
-        runs[runningIndex] = {
-          ...runs[runningIndex],
-          status: "failed",
-          endedAt: now.toISOString(),
-          error: "Daemon restarted before the scheduled run completed",
-        };
-        updated = { ...updated, runs };
-        dirty = true;
-      }
-
-      // Advance stale nextRunAt for active schedules
-      if (
-        updated.status === "active" &&
-        updated.nextRunAt &&
-        new Date(updated.nextRunAt).getTime() <= now.getTime()
-      ) {
-        let nextRunAt = computeNextRunAt(updated.cadence, new Date(updated.nextRunAt));
-        while (nextRunAt.getTime() <= now.getTime()) {
-          nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
+        // Mark any in-flight runs as failed
+        const runningIndex = updated.runs.findIndex((run) => run.status === "running");
+        if (runningIndex !== -1) {
+          const runs = [...updated.runs];
+          runs[runningIndex] = {
+            ...runs[runningIndex],
+            status: "failed",
+            endedAt: now.toISOString(),
+            error: "Daemon restarted before the scheduled run completed",
+          };
+          updated = { ...updated, runs };
+          dirty = true;
         }
-        updated = { ...updated, nextRunAt: nextRunAt.toISOString() };
-        dirty = true;
-      }
 
-      if (dirty) {
-        updated = { ...updated, updatedAt: now.toISOString() };
-        await this.store.put(updated);
-      }
-    }
+        // Advance stale nextRunAt for active schedules
+        if (
+          updated.status === "active" &&
+          updated.nextRunAt &&
+          new Date(updated.nextRunAt).getTime() <= now.getTime()
+        ) {
+          let nextRunAt = computeNextRunAt(updated.cadence, new Date(updated.nextRunAt));
+          while (nextRunAt.getTime() <= now.getTime()) {
+            nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
+          }
+          updated = { ...updated, nextRunAt: nextRunAt.toISOString() };
+          dirty = true;
+        }
+
+        if (dirty) {
+          updated = { ...updated, updatedAt: now.toISOString() };
+          await this.store.put(updated);
+        }
+      }),
+    );
   }
 
   private async runSchedule(schedule: StoredSchedule, now: Date): Promise<void> {

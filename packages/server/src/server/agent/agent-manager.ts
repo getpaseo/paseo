@@ -545,20 +545,23 @@ export class AgentManager {
       return client.listPersistedAgents({ limit: options.limit });
     }
 
-    const descriptors: PersistedAgentDescriptor[] = [];
-    for (const [provider, client] of this.clients.entries()) {
-      if (!client.listPersistedAgents) {
-        continue;
-      }
-      try {
-        const entries = await client.listPersistedAgents({
-          limit: options?.limit,
-        });
-        descriptors.push(...entries);
-      } catch (error) {
-        this.logger.warn({ err: error, provider }, "Failed to list persisted agents for provider");
-      }
-    }
+    const providerEntries = Array.from(this.clients.entries()).filter(
+      ([, client]) => !!client.listPersistedAgents,
+    );
+    const descriptorLists = await Promise.all(
+      providerEntries.map(async ([provider, client]) => {
+        try {
+          return await client.listPersistedAgents!({ limit: options?.limit });
+        } catch (error) {
+          this.logger.warn(
+            { err: error, provider },
+            "Failed to list persisted agents for provider",
+          );
+          return [];
+        }
+      }),
+    );
+    const descriptors: PersistedAgentDescriptor[] = descriptorLists.flat();
 
     const limit = options?.limit ?? 20;
     return descriptors

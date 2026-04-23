@@ -274,45 +274,42 @@ export class AgentStorage {
       throw error;
     }
 
-    for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith(".json")) {
-        const rootPath = path.join(this.baseDir, entry.name);
-        const rootRecord = await this.readRecordFile(rootPath);
-        if (!rootRecord) {
-          continue;
-        }
-        records.push(rootRecord);
-        this.cache.set(rootRecord.id, rootRecord);
-        this.pathById.set(rootRecord.id, rootPath);
-        this.addIndexedPath(rootRecord.id, rootPath);
-        continue;
-      }
+    const rootRecordPaths = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => path.join(this.baseDir, entry.name));
 
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      const projectDir = path.join(this.baseDir, entry.name);
-      let files: Array<import("node:fs").Dirent> = [];
-      try {
-        files = await fs.readdir(projectDir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
+    const projectDirs = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(this.baseDir, entry.name));
 
-      for (const file of files) {
-        if (!file.isFile() || !file.name.endsWith(".json")) {
-          continue;
+    const projectFileLists = await Promise.all(
+      projectDirs.map(async (projectDir) => {
+        try {
+          const files = await fs.readdir(projectDir, { withFileTypes: true });
+          return files
+            .filter((file) => file.isFile() && file.name.endsWith(".json"))
+            .map((file) => path.join(projectDir, file.name));
+        } catch {
+          return [];
         }
-        const filePath = path.join(projectDir, file.name);
+      }),
+    );
+
+    const allFilePaths = [...rootRecordPaths, ...projectFileLists.flat()];
+    const loaded = await Promise.all(
+      allFilePaths.map(async (filePath) => {
         const record = await this.readRecordFile(filePath);
-        if (!record) {
-          continue;
-        }
-        records.push(record);
-        this.cache.set(record.id, record);
-        this.pathById.set(record.id, filePath);
-        this.addIndexedPath(record.id, filePath);
-      }
+        return record ? { record, filePath } : null;
+      }),
+    );
+
+    for (const item of loaded) {
+      if (!item) continue;
+      const { record, filePath } = item;
+      records.push(record);
+      this.cache.set(record.id, record);
+      this.pathById.set(record.id, filePath);
+      this.addIndexedPath(record.id, filePath);
     }
 
     return records;

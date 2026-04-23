@@ -905,9 +905,7 @@ export class OpenCodeServerManager {
       ...(this.currentServer ? [this.currentServer] : []),
       ...Array.from(this.retiredServers),
     ];
-    for (const server of servers) {
-      await this.killServer(server);
-    }
+    await Promise.all(servers.map((server) => this.killServer(server)));
     this.currentServer = null;
     this.retiredServers.clear();
   }
