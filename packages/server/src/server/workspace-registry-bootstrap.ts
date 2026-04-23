@@ -95,6 +95,14 @@ export async function bootstrapWorkspaceRegistries(options: {
   }
 
   const projectRanges = new Map<string, { createdAt: string | null; updatedAt: string | null }>();
+  type Placement = Awaited<ReturnType<typeof buildProjectPlacementForCwd>>;
+  const workspaceUpsertInputs: {
+    workspaceId: string;
+    placement: Placement;
+    workspaceCwd: string;
+    createdAt: string;
+    updatedAt: string;
+  }[] = [];
 
   for (const [workspaceId, entry] of recordsByWorkspaceId.entries()) {
     const { placement, records: workspaceRecords } = entry;
@@ -108,20 +116,6 @@ export async function bootstrapWorkspaceRegistries(options: {
 
     const createdAt = workspaceCreatedAt ?? new Date().toISOString();
     const updatedAt = workspaceUpdatedAt ?? createdAt;
-    await options.workspaceRegistry.upsert(
-      createPersistedWorkspaceRecord({
-        workspaceId,
-        projectId: placement.projectKey,
-        cwd: workspaceCwd,
-        kind: deriveWorkspaceKind(placement.checkout),
-        displayName: deriveWorkspaceDisplayName({
-          cwd: workspaceCwd,
-          checkout: placement.checkout,
-        }),
-        createdAt,
-        updatedAt,
-      }),
-    );
 
     const existingProjectRange = projectRanges.get(placement.projectKey) ?? {
       createdAt: null,
@@ -131,20 +125,48 @@ export async function bootstrapWorkspaceRegistries(options: {
     existingProjectRange.updatedAt = maxIsoDate(existingProjectRange.updatedAt, updatedAt);
     projectRanges.set(placement.projectKey, existingProjectRange);
 
-    await options.projectRegistry.upsert(
-      createPersistedProjectRecord({
-        projectId: placement.projectKey,
-        rootPath: deriveProjectRootPath({
-          cwd: workspaceCwd,
-          checkout: placement.checkout,
-        }),
-        kind: deriveProjectKind(placement.checkout),
-        displayName: placement.projectName,
-        createdAt: existingProjectRange.createdAt ?? createdAt,
-        updatedAt: existingProjectRange.updatedAt ?? updatedAt,
-      }),
-    );
+    workspaceUpsertInputs.push({ workspaceId, placement, workspaceCwd, createdAt, updatedAt });
   }
+
+  await Promise.all(
+    workspaceUpsertInputs.flatMap(
+      ({ workspaceId, placement, workspaceCwd, createdAt, updatedAt }) => {
+        const projectRange = projectRanges.get(placement.projectKey) ?? {
+          createdAt: null,
+          updatedAt: null,
+        };
+        return [
+          options.workspaceRegistry.upsert(
+            createPersistedWorkspaceRecord({
+              workspaceId,
+              projectId: placement.projectKey,
+              cwd: workspaceCwd,
+              kind: deriveWorkspaceKind(placement.checkout),
+              displayName: deriveWorkspaceDisplayName({
+                cwd: workspaceCwd,
+                checkout: placement.checkout,
+              }),
+              createdAt,
+              updatedAt,
+            }),
+          ),
+          options.projectRegistry.upsert(
+            createPersistedProjectRecord({
+              projectId: placement.projectKey,
+              rootPath: deriveProjectRootPath({
+                cwd: workspaceCwd,
+                checkout: placement.checkout,
+              }),
+              kind: deriveProjectKind(placement.checkout),
+              displayName: placement.projectName,
+              createdAt: projectRange.createdAt ?? createdAt,
+              updatedAt: projectRange.updatedAt ?? updatedAt,
+            }),
+          ),
+        ];
+      },
+    ),
+  );
 
   options.logger.info(
     {
