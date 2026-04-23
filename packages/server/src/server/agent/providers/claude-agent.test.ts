@@ -1,8 +1,14 @@
 import { describe, expect, test, vi } from "vitest";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { ClaudeAgentClient, convertClaudeHistoryEntry } from "./claude-agent.js";
-import type { AgentTimelineItem } from "../agent-sdk-types.js";
+import type { AgentTimelineItem, AgentUsage, AgentStreamEvent } from "../agent-sdk-types.js";
+
+interface TestClaudeSession {
+  translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
+  convertUsage(message: SDKMessage): AgentUsage | undefined;
+}
 
 describe("convertClaudeHistoryEntry", () => {
   test("maps user tool results to timeline items", () => {
@@ -361,12 +367,13 @@ describe("ClaudeAgentClient.listModels", () => {
 describe("ClaudeAgentSession context window usage", () => {
   const logger = createTestLogger();
 
-  async function createSessionForTest(): Promise<any> {
+  async function createSessionForTest(): Promise<TestClaudeSession> {
     const client = new ClaudeAgentClient({ logger });
-    return client.createSession({
+    const session = await client.createSession({
       provider: "claude",
       cwd: process.cwd(),
     });
+    return session as unknown as TestClaudeSession;
   }
 
   function createQueryFactoryForTurns(turns: Array<Array<Record<string, unknown>>>) {
@@ -584,7 +591,7 @@ describe("ClaudeAgentSession context window usage", () => {
         duration_ms: 50,
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     expect(events).toContainEqual({
       type: "usage_updated",
@@ -611,7 +618,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     expect(events).toContainEqual({
       type: "usage_updated",
@@ -638,7 +645,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     const events = session.translateMessageToEvents({
       type: "stream_event",
@@ -649,7 +656,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     expect(events).toContainEqual({
       type: "usage_updated",
@@ -847,7 +854,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
     session.translateMessageToEvents({
       type: "stream_event",
       event: {
@@ -857,7 +864,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     const usage = session.convertUsage({
       type: "result",
@@ -895,7 +902,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
     session.translateMessageToEvents({
       type: "stream_event",
       event: {
@@ -905,7 +912,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     const secondStartEvents = session.translateMessageToEvents({
       type: "stream_event",
@@ -920,7 +927,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     expect(secondStartEvents).toContainEqual({
       type: "usage_updated",
@@ -939,7 +946,7 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       },
       session_id: "session-1",
-    } as any);
+    } as unknown as SDKMessage);
 
     const usage = session.convertUsage({
       type: "result",
