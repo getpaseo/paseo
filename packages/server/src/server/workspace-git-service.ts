@@ -1164,28 +1164,32 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private async listLinuxWatchDirectories(rootPath: string): Promise<string[]> {
     const directories: string[] = [];
-    const pending = [rootPath];
+    let currentLevel: string[] = [rootPath];
 
-    while (pending.length > 0) {
-      const directory = pending.pop();
-      if (!directory) {
-        continue;
-      }
-      directories.push(directory);
-
-      let entries;
-      try {
-        entries = await this.deps.readdir(directory, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name === ".git") {
-          continue;
+    while (currentLevel.length > 0) {
+      directories.push(...currentLevel);
+      const readResults = await Promise.all(
+        currentLevel.map(async (directory) => {
+          try {
+            return await this.deps.readdir(directory, { withFileTypes: true });
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const nextLevel: string[] = [];
+      for (let i = 0; i < currentLevel.length; i += 1) {
+        const directory = currentLevel[i];
+        const entries = readResults[i];
+        if (!directory || !entries) continue;
+        for (const entry of entries) {
+          if (!entry.isDirectory() || entry.name === ".git") {
+            continue;
+          }
+          nextLevel.push(join(directory, entry.name));
         }
-        pending.push(join(directory, entry.name));
       }
+      currentLevel = nextLevel;
     }
 
     return directories;
