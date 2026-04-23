@@ -137,6 +137,11 @@ function TreeRowItem({
     onDownloadEntry(entry);
   }, [onDownloadEntry, entry]);
 
+  const chevronStyle = useMemo(
+    () => [styles.chevron, isExpanded && styles.chevronExpanded],
+    [isExpanded],
+  );
+
   return (
     <Pressable onPress={handlePress} style={pressableStyle}>
       {depth > 0 &&
@@ -157,7 +162,7 @@ function TreeRowItem({
             loading ? (
               <ActivityIndicator size="small" />
             ) : (
-              <View style={[styles.chevron, isExpanded && styles.chevronExpanded]}>
+              <View style={chevronStyle}>
                 <ChevronRight size={16} color={theme.colors.foregroundMuted} />
               </View>
             )

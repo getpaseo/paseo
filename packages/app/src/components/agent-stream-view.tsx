@@ -593,6 +593,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       };
     }, [baseRenderModel, getGapBetween, pendingPermissionsNode, workingIndicatorNode]);
 
+    const emptyStateStyle = useMemo(() => [stylesheet.emptyState, stylesheet.contentWrapper], []);
     const listEmptyComponent = useMemo(() => {
       if (
         renderModel.boundary.hasVirtualizedHistory ||
@@ -605,11 +606,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       }
 
       return (
-        <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
+        <View style={emptyStateStyle}>
           <Text style={stylesheet.emptyStateText}>Start chatting with this agent...</Text>
         </View>
       );
-    }, [renderModel]);
+    }, [renderModel, emptyStateStyle]);
 
     const historyItems = renderModel.history;
     const liveHeadItems = renderModel.segments.liveHead;
@@ -647,34 +648,30 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderStreamItem(item, index, items, index === 0 ? lastHistoryItem : null),
       [lastHistoryItem, renderStreamItem],
     );
+    const liveAuxiliaryHeaderStyle = useMemo(
+      () => [
+        stylesheet.listHeaderContent,
+        boundary.hasLiveHead
+          ? streamRenderStrategy.getFlatListInverted()
+            ? { paddingBottom: looseGap }
+            : { paddingTop: looseGap }
+          : null,
+      ],
+      [boundary.hasLiveHead, streamRenderStrategy, looseGap],
+    );
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {
       if (!auxiliary.pendingPermissions && !auxiliary.workingIndicator) {
         return null;
       }
       return (
         <View style={stylesheet.contentWrapper}>
-          <View
-            style={[
-              stylesheet.listHeaderContent,
-              boundary.hasLiveHead
-                ? streamRenderStrategy.getFlatListInverted()
-                  ? { paddingBottom: looseGap }
-                  : { paddingTop: looseGap }
-                : null,
-            ]}
-          >
+          <View style={liveAuxiliaryHeaderStyle}>
             {auxiliary.pendingPermissions}
             {auxiliary.workingIndicator}
           </View>
         </View>
       );
-    }, [
-      auxiliary.pendingPermissions,
-      auxiliary.workingIndicator,
-      boundary.hasLiveHead,
-      looseGap,
-      streamRenderStrategy,
-    ]);
+    }, [auxiliary.pendingPermissions, auxiliary.workingIndicator, liveAuxiliaryHeaderStyle]);
 
     const renderers = useMemo<StreamSegmentRenderers>(
       () => ({
@@ -788,12 +785,19 @@ function WorkingIndicator() {
     };
   });
 
+  const dotOneCombinedStyle = useMemo(() => [stylesheet.workingDot, dotOneStyle], [dotOneStyle]);
+  const dotTwoCombinedStyle = useMemo(() => [stylesheet.workingDot, dotTwoStyle], [dotTwoStyle]);
+  const dotThreeCombinedStyle = useMemo(
+    () => [stylesheet.workingDot, dotThreeStyle],
+    [dotThreeStyle],
+  );
+
   return (
     <View style={stylesheet.workingIndicatorBubble}>
       <View style={stylesheet.workingDotsRow}>
-        <Animated.View style={[stylesheet.workingDot, dotOneStyle]} />
-        <Animated.View style={[stylesheet.workingDot, dotTwoStyle]} />
-        <Animated.View style={[stylesheet.workingDot, dotThreeStyle]} />
+        <Animated.View style={dotOneCombinedStyle} />
+        <Animated.View style={dotTwoCombinedStyle} />
+        <Animated.View style={dotThreeCombinedStyle} />
       </View>
     </View>
   );
@@ -880,6 +884,10 @@ function PermissionActionButton({
     ],
     [theme.colors.surface2, theme.colors.surface1, theme.colors.borderAccent, isDanger],
   );
+  const optionTextStyle = useMemo(
+    () => [permissionStyles.optionText, { color: textColor }],
+    [textColor],
+  );
   return (
     <Pressable testID={testID} style={pressableStyle} onPress={handlePress} disabled={isResponding}>
       {isRespondingAction ? (
@@ -887,7 +895,7 @@ function PermissionActionButton({
       ) : (
         <View style={permissionStyles.optionContent}>
           <Icon size={14} color={iconColor} />
-          <Text style={[permissionStyles.optionText, { color: textColor }]}>{action.label}</Text>
+          <Text style={optionTextStyle}>{action.label}</Text>
         </View>
       )}
     </Pressable>
@@ -1018,21 +1026,43 @@ function PermissionRequestCard({
     );
   }
 
+  const questionTextStyle = useMemo(
+    () => [permissionStyles.question, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+  const optionsContainerStyle = useMemo(
+    () => [
+      permissionStyles.optionsContainer,
+      !isMobile && permissionStyles.optionsContainerDesktop,
+    ],
+    [isMobile],
+  );
+  const cardContainerStyle = useMemo(
+    () => [
+      permissionStyles.container,
+      {
+        backgroundColor: theme.colors.surface1,
+        borderColor: theme.colors.border,
+      },
+    ],
+    [theme.colors.surface1, theme.colors.border],
+  );
+  const cardTitleStyle = useMemo(
+    () => [permissionStyles.title, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const cardDescriptionStyle = useMemo(
+    () => [permissionStyles.description, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+
   const footer = (
     <>
-      <Text
-        testID="permission-request-question"
-        style={[permissionStyles.question, { color: theme.colors.foregroundMuted }]}
-      >
+      <Text testID="permission-request-question" style={questionTextStyle}>
         How would you like to proceed?
       </Text>
 
-      <View
-        style={[
-          permissionStyles.optionsContainer,
-          !isMobile && permissionStyles.optionsContainerDesktop,
-        ]}
-      >
+      <View style={optionsContainerStyle}>
         {resolvedActions.map((action) => {
           const isDanger = action.variant === "danger" || action.behavior === "deny";
           const isPrimary = action.variant === "primary";
@@ -1080,22 +1110,10 @@ function PermissionRequestCard({
   }
 
   return (
-    <View
-      style={[
-        permissionStyles.container,
-        {
-          backgroundColor: theme.colors.surface1,
-          borderColor: theme.colors.border,
-        },
-      ]}
-    >
-      <Text style={[permissionStyles.title, { color: theme.colors.foreground }]}>{title}</Text>
+    <View style={cardContainerStyle}>
+      <Text style={cardTitleStyle}>{title}</Text>
 
-      {description ? (
-        <Text style={[permissionStyles.description, { color: theme.colors.foregroundMuted }]}>
-          {description}
-        </Text>
-      ) : null}
+      {description ? <Text style={cardDescriptionStyle}>{description}</Text> : null}
 
       {planMarkdown ? (
         <PlanCard title="Proposed plan" text={planMarkdown} disableOuterSpacing />

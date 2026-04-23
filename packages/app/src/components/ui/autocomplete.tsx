@@ -206,10 +206,7 @@ export function Autocomplete({
     [ensureActiveItemVisible],
   );
 
-  const containerStyle = useMemo(
-    () => [styles.container, { maxHeight }],
-    [maxHeight],
-  );
+  const containerStyle = useMemo(() => [styles.container, { maxHeight }], [maxHeight]);
 
   if (isLoading) {
     return (

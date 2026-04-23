@@ -6,6 +6,13 @@ import { usePaneContext } from "@/panels/pane-context";
 import type { PanelRegistration } from "@/panels/panel-registry";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 
+const CENTERED_PADDED_STYLE = {
+  flex: 1,
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 16,
+} as const;
+
 function useFilePanelDescriptor(target: { kind: "file"; path: string }) {
   const fileName = target.path.split("/").filter(Boolean).pop() ?? target.path;
   return {
@@ -26,7 +33,7 @@ function FilePanel() {
   invariant(target.kind === "file", "FilePanel requires file target");
   if (!workspaceDirectory) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <View style={CENTERED_PADDED_STYLE}>
         <Text>Workspace execution directory not found.</Text>
       </View>
     );

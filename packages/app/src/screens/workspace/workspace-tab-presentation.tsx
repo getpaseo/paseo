@@ -146,13 +146,7 @@ export function WorkspaceTabIcon({
         bottom: statusDotOffset,
       },
     ],
-    [
-      statusDotColor,
-      statusDotBorderColor,
-      theme.colors.surface0,
-      statusDotSize,
-      statusDotOffset,
-    ],
+    [statusDotColor, statusDotBorderColor, theme.colors.surface0, statusDotSize, statusDotOffset],
   );
 
   if (shouldShowLoader) {

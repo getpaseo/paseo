@@ -259,10 +259,7 @@ function TabChip({
     [isFocused],
   );
   const tabLabelSkeletonStyle = useMemo(
-    () => [
-      styles.tabLabelSkeleton,
-      showCloseButton && styles.tabLabelSkeletonWithCloseButton,
-    ],
+    () => [styles.tabLabelSkeleton, showCloseButton && styles.tabLabelSkeletonWithCloseButton],
     [showCloseButton],
   );
   const tabLabelStyle = useMemo(
@@ -801,9 +798,7 @@ function ResolvedDesktopTabChip({
 
         return (
           <View style={styles.tabSlot}>
-            {showDropIndicatorBefore ? (
-              <View style={TAB_DROP_INDICATOR_BEFORE_STYLE} />
-            ) : null}
+            {showDropIndicatorBefore ? <View style={TAB_DROP_INDICATOR_BEFORE_STYLE} /> : null}
             <TabChip
               tab={item.tab}
               isActive={item.isActive}
@@ -823,9 +818,7 @@ function ResolvedDesktopTabChip({
               onCloseTab={onCloseTab}
               dragHandleProps={dragHandleProps}
             />
-            {showDropIndicatorAfter ? (
-              <View style={TAB_DROP_INDICATOR_AFTER_STYLE} />
-            ) : null}
+            {showDropIndicatorAfter ? <View style={TAB_DROP_INDICATOR_AFTER_STYLE} /> : null}
           </View>
         );
       }}
@@ -996,11 +989,5 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-const TAB_DROP_INDICATOR_BEFORE_STYLE = [
-  styles.tabDropIndicator,
-  styles.tabDropIndicatorBefore,
-];
-const TAB_DROP_INDICATOR_AFTER_STYLE = [
-  styles.tabDropIndicator,
-  styles.tabDropIndicatorAfter,
-];
+const TAB_DROP_INDICATOR_BEFORE_STYLE = [styles.tabDropIndicator, styles.tabDropIndicatorBefore];
+const TAB_DROP_INDICATOR_AFTER_STYLE = [styles.tabDropIndicator, styles.tabDropIndicatorAfter];

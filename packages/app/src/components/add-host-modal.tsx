@@ -10,6 +10,8 @@ import { DaemonConnectionTestError, connectToDaemon } from "@/utils/test-daemon-
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 
+const FLEX_ONE_STYLE = { flex: 1 } as const;
+
 const styles = StyleSheet.create((theme) => ({
   field: {
     gap: theme.spacing[2],
@@ -274,11 +276,16 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       </View>
 
       <View style={styles.actions}>
-        <Button style={{ flex: 1 }} variant="secondary" onPress={handleCancel} disabled={isSaving}>
+        <Button
+          style={FLEX_ONE_STYLE}
+          variant="secondary"
+          onPress={handleCancel}
+          disabled={isSaving}
+        >
           Cancel
         </Button>
         <Button
-          style={{ flex: 1 }}
+          style={FLEX_ONE_STYLE}
           variant="default"
           onPress={handleSavePress}
           disabled={isSaving}

@@ -260,6 +260,17 @@ export function WorkspaceSetupDialog() {
     () => ({ backgroundColor: theme.colors.surface2 }),
     [theme.colors.surface2],
   );
+  const iconSource = useMemo(() => (iconDataUri ? { uri: iconDataUri } : null), [iconDataUri]);
+  const statusControlsWithDisabled = useMemo(
+    () =>
+      composerState
+        ? {
+            ...composerState.statusControls,
+            disabled: pendingAction !== null,
+          }
+        : undefined,
+    [composerState, pendingAction],
+  );
 
   if (!pendingWorkspaceSetup || !sourceDirectory) {
     return null;
@@ -267,8 +278,8 @@ export function WorkspaceSetupDialog() {
 
   const subtitleContent = (
     <View style={styles.subtitleRow}>
-      {iconDataUri ? (
-        <Image source={{ uri: iconDataUri }} style={styles.projectIcon} />
+      {iconSource ? (
+        <Image source={iconSource} style={styles.projectIcon} />
       ) : (
         <View style={styles.projectIconFallback}>
           <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
@@ -307,14 +318,7 @@ export function WorkspaceSetupDialog() {
           clearDraft={chatDraft.clear}
           autoFocus
           commandDraftConfig={composerState?.commandDraftConfig}
-          statusControls={
-            composerState
-              ? {
-                  ...composerState.statusControls,
-                  disabled: pendingAction !== null,
-                }
-              : undefined
-          }
+          statusControls={statusControlsWithDisabled}
           inputWrapperStyle={composerInputWrapperStyle}
           onAddImages={handleAddImagesCallback}
         />

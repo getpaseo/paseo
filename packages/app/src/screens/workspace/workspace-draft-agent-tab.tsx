@@ -342,6 +342,34 @@ export function WorkspaceDraftAgentTab({
     [insets.bottom],
   );
 
+  const handleDropdownCloseFocus = useCallback(() => {
+    focusInputRef.current?.();
+  }, []);
+  const composerStatusControls = useMemo(
+    () => ({
+      ...composerState.statusControls,
+      onSelectProvider: handleProviderSelectWithFocus,
+      onSelectMode: handleModeSelectWithFocus,
+      onSelectModel: handleModelSelectWithFocus,
+      onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
+      onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
+      onSetFeature: handleSetFeatureWithFocus,
+      onDropdownClose: handleDropdownCloseFocus,
+      disabled: isSubmitting,
+    }),
+    [
+      composerState.statusControls,
+      handleProviderSelectWithFocus,
+      handleModeSelectWithFocus,
+      handleModelSelectWithFocus,
+      handleProviderAndModelSelectWithFocus,
+      handleThinkingOptionSelectWithFocus,
+      handleSetFeatureWithFocus,
+      handleDropdownCloseFocus,
+      isSubmitting,
+    ],
+  );
+
   return (
     <FileDropZone onFilesDropped={handleFilesDropped}>
       <View style={styles.container}>
@@ -391,17 +419,7 @@ export function WorkspaceDraftAgentTab({
             onAddImages={handleAddImagesCallback}
             onFocusInput={handleFocusInputCallback}
             commandDraftConfig={composerState.commandDraftConfig}
-            statusControls={{
-              ...composerState.statusControls,
-              onSelectProvider: handleProviderSelectWithFocus,
-              onSelectMode: handleModeSelectWithFocus,
-              onSelectModel: handleModelSelectWithFocus,
-              onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
-              onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
-              onSetFeature: handleSetFeatureWithFocus,
-              onDropdownClose: () => focusInputRef.current?.(),
-              disabled: isSubmitting,
-            }}
+            statusControls={composerStatusControls}
           />
         </View>
       </View>

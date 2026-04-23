@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Pressable, Text, View, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -250,14 +250,16 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
 
   const isConnectingToSavedHosts = hosts.length > 0 && !anyOnlineServerId;
 
+  const scrollContentContainerStyle = useMemo(
+    () => [styles.container, { paddingBottom: theme.spacing[6] + insets.bottom }],
+    [theme.spacing, insets.bottom],
+  );
+
   return (
     <View style={styles.root}>
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={[
-          styles.container,
-          { paddingBottom: theme.spacing[6] + insets.bottom },
-        ]}
+        contentContainerStyle={scrollContentContainerStyle}
         showsVerticalScrollIndicator={false}
         testID="welcome-screen"
       >

@@ -320,13 +320,15 @@ function SetupCommandRow({
     [showDetail],
   );
 
+  const accessibilityState = useMemo(() => ({ expanded: showDetail }), [showDetail]);
+
   return (
     <View style={styles.commandItem}>
       <Pressable
         onPress={handlePress}
         style={pressableStyle}
         accessibilityRole="button"
-        accessibilityState={{ expanded: showDetail }}
+        accessibilityState={accessibilityState}
       >
         <View style={styles.commandStatusIcon}>
           <CommandStatusIcon status={command.status} />

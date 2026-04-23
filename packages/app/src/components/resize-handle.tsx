@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
@@ -107,34 +107,40 @@ export function ResizeHandle({
     setActive(false);
   }, []);
 
+  const handleStyle = useMemo(
+    () => [
+      styles.handle,
+      direction === "horizontal" ? styles.handleHorizontal : styles.handleVertical,
+      { backgroundColor: theme.colors.border },
+    ],
+    [direction, theme.colors.border],
+  );
+  const highlightStyle = useMemo(
+    () => [
+      styles.highlight,
+      direction === "horizontal" ? styles.highlightHorizontal : styles.highlightVertical,
+      { backgroundColor: theme.colors.accent },
+    ],
+    [direction, theme.colors.accent],
+  );
+  const hitAreaStyle = useMemo(
+    () => [
+      styles.hitArea,
+      direction === "horizontal" ? styles.hitAreaHorizontal : styles.hitAreaVertical,
+      {
+        cursor: direction === "horizontal" ? "col-resize" : "row-resize",
+      } as any,
+    ],
+    [direction],
+  );
+
   return (
-    <View
-      style={[
-        styles.handle,
-        direction === "horizontal" ? styles.handleHorizontal : styles.handleVertical,
-        { backgroundColor: theme.colors.border },
-      ]}
-    >
-      {highlighted && (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.highlight,
-            direction === "horizontal" ? styles.highlightHorizontal : styles.highlightVertical,
-            { backgroundColor: theme.colors.accent },
-          ]}
-        />
-      )}
+    <View style={handleStyle}>
+      {highlighted && <View pointerEvents="none" style={highlightStyle} />}
       <View
         role="separator"
         aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
-        style={[
-          styles.hitArea,
-          direction === "horizontal" ? styles.hitAreaHorizontal : styles.hitAreaVertical,
-          {
-            cursor: direction === "horizontal" ? "col-resize" : "row-resize",
-          } as any,
-        ]}
+        style={hitAreaStyle}
         onPointerDown={handlePointerDown}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}

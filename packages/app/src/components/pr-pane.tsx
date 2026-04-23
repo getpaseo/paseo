@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
@@ -66,6 +66,7 @@ export function PrPane({ data }: { data: PrPaneData }) {
   const stateColor = getStateColor(data.state, theme);
   const StateIcon = getStateIcon(data.state);
   const stateLabel = getStateLabel(data.state);
+  const stateLabelStyle = useMemo(() => [styles.stateLabel, { color: stateColor }], [stateColor]);
 
   return (
     <View style={styles.root}>
@@ -74,7 +75,7 @@ export function PrPane({ data }: { data: PrPaneData }) {
           <>
             <View style={styles.stateLine}>
               <StateIcon size={14} color={stateColor} />
-              <Text style={[styles.stateLabel, { color: stateColor }]}>{stateLabel}</Text>
+              <Text style={stateLabelStyle}>{stateLabel}</Text>
             </View>
             <Text style={styles.title} numberOfLines={3}>
               {data.title}
@@ -197,11 +198,12 @@ function SummaryPill({
   color: string;
   icon: React.ReactNode;
 }) {
+  const textStyle = useMemo(() => [styles.summaryPillText, { color }], [color]);
   if (count === 0) return null;
   return (
     <View style={styles.summaryPill}>
       {icon}
-      <Text style={[styles.summaryPillText, { color }]}>{count}</Text>
+      <Text style={textStyle}>{count}</Text>
     </View>
   );
 }
@@ -239,9 +241,13 @@ function ActivityRow({ item }: { item: PrPaneActivity }) {
   const handlePress = useCallback(() => {
     void openExternalUrl(item.url);
   }, [item.url]);
+  const avatarStyle = useMemo(
+    () => [styles.avatar, { backgroundColor: item.avatarColor }],
+    [item.avatarColor],
+  );
   return (
     <Pressable onPress={handlePress} style={activityPressableStyle}>
-      <View style={[styles.avatar, { backgroundColor: item.avatarColor }]}>
+      <View style={avatarStyle}>
         <Text style={styles.avatarText}>{item.author.slice(0, 1).toUpperCase()}</Text>
       </View>
       <View style={styles.activityMain}>

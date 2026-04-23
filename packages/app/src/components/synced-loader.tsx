@@ -71,15 +71,19 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
     [animatedStyle, gridWidth, gridHeight],
   );
 
-  return (
-    <View
-      style={{
+  const containerStyle = useMemo(
+    () =>
+      ({
         width: size,
         height: size,
         alignItems: "center",
         justifyContent: "center",
-      }}
-    >
+      }) as const,
+    [size],
+  );
+
+  return (
+    <View style={containerStyle}>
       <Animated.View style={gridStyle}>
         {Array.from({ length: DOT_COUNT }).map((_, dotIndex) => {
           const rowIndex = Math.floor(dotIndex / GRID_COLUMNS);

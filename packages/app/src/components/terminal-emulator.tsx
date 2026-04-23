@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type Ref,
@@ -43,6 +44,33 @@ const SCROLLBAR_HANDLE_TRAVEL_DURATION_MS = 90;
 const SCROLLBAR_HANDLE_SCROLL_VISIBILITY_MS = 1_200;
 const SCROLLBAR_HANDLE_SCROLL_ACTIVE_MS = 110;
 const WEBKIT_SCROLLBAR_STYLE_ID = "terminal-emulator-webkit-scrollbar-style";
+
+const HOST_DIV_STYLE: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  minWidth: 0,
+  width: "100%",
+  height: "100%",
+  overflow: "hidden",
+  overscrollBehavior: "none",
+  paddingTop: 0,
+  paddingBottom: 0,
+  paddingLeft: 0,
+  paddingRight: 0,
+};
+
+const SCROLLBAR_CONTAINER_STYLE: CSSProperties = {
+  position: "absolute",
+  top: 0,
+  right: 0,
+  bottom: 0,
+  width: 12,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "flex-start",
+  zIndex: 10,
+  pointerEvents: "none",
+};
 
 interface ViewportMetrics {
   offset: number;
@@ -625,91 +653,80 @@ export default function TerminalEmulator({
     setIsHandleHovered(false);
   }, []);
 
+  const rootDivStyle = useMemo<CSSProperties>(
+    () => ({
+      position: "relative",
+      display: "flex",
+      width: "100%",
+      height: "100%",
+      minHeight: 0,
+      minWidth: 0,
+      backgroundColor: xtermTheme.background ?? "#0b0b0b",
+      overflow: "hidden",
+      overscrollBehavior: "none",
+      touchAction: "pan-y",
+    }),
+    [xtermTheme.background],
+  );
+  const handleContainerStyle = useMemo<CSSProperties>(
+    () => ({
+      position: "absolute",
+      top: 0,
+      right: -3,
+      width: SCROLLBAR_HANDLE_GRAB_WIDTH,
+      height: thumbRegionHeight,
+      transform: `translateY(${thumbRegionOffset}px)`,
+      cursor: isDraggingScrollbar ? "grabbing" : "grab",
+      touchAction: "none",
+      userSelect: "none",
+      transitionProperty: "transform",
+      transitionDuration: `${handleTravelDurationMs}ms`,
+      transitionTimingFunction: "linear",
+      pointerEvents: handleVisible ? "auto" : "none",
+    }),
+    [
+      thumbRegionHeight,
+      thumbRegionOffset,
+      isDraggingScrollbar,
+      handleTravelDurationMs,
+      handleVisible,
+    ],
+  );
+  const handleInnerStyle = useMemo<CSSProperties>(
+    () => ({
+      marginTop: handleInsetTop,
+      height: scrollbarGeometry.handleSize,
+      width: handleWidth,
+      borderRadius: 999,
+      alignSelf: "center",
+      backgroundColor: "rgba(113, 113, 122, 1)",
+      opacity: handleOpacity,
+      transitionProperty: "opacity, width, background-color",
+      transitionDuration: `${SCROLLBAR_HANDLE_FADE_DURATION_MS}ms, ${SCROLLBAR_HANDLE_WIDTH_TRANSITION_DURATION_MS}ms, ${SCROLLBAR_HANDLE_FADE_DURATION_MS}ms`,
+      transitionTimingFunction: "ease-out, cubic-bezier(0.22, 0.75, 0.2, 1), ease-out",
+    }),
+    [handleInsetTop, scrollbarGeometry.handleSize, handleWidth, handleOpacity],
+  );
+
   return (
     <div
       ref={rootRef}
       data-testid={testId}
       data-terminal-scrollbar-root="true"
-      style={{
-        position: "relative",
-        display: "flex",
-        width: "100%",
-        height: "100%",
-        minHeight: 0,
-        minWidth: 0,
-        backgroundColor: xtermTheme.background ?? "#0b0b0b",
-        overflow: "hidden",
-        overscrollBehavior: "none",
-        touchAction: "pan-y",
-      }}
+      style={rootDivStyle}
       onPointerDown={handleRootPointerDown}
       onContextMenu={handleRootContextMenu}
     >
-      <div
-        ref={hostRef}
-        style={{
-          flex: 1,
-          minHeight: 0,
-          minWidth: 0,
-          width: "100%",
-          height: "100%",
-          overflow: "hidden",
-          overscrollBehavior: "none",
-          paddingTop: 0,
-          paddingBottom: 0,
-          paddingLeft: 0,
-          paddingRight: 0,
-        }}
-      />
+      <div ref={hostRef} style={HOST_DIV_STYLE} />
       {scrollbarGeometry.isVisible ? (
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            right: 0,
-            bottom: 0,
-            width: 12,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-start",
-            zIndex: 10,
-            pointerEvents: "none",
-          }}
-        >
+        <div style={SCROLLBAR_CONTAINER_STYLE}>
           <div
-            style={{
-              position: "absolute",
-              top: 0,
-              right: -3,
-              width: SCROLLBAR_HANDLE_GRAB_WIDTH,
-              height: thumbRegionHeight,
-              transform: `translateY(${thumbRegionOffset}px)`,
-              cursor: isDraggingScrollbar ? "grabbing" : "grab",
-              touchAction: "none",
-              userSelect: "none",
-              transitionProperty: "transform",
-              transitionDuration: `${handleTravelDurationMs}ms`,
-              transitionTimingFunction: "linear",
-              pointerEvents: handleVisible ? "auto" : "none",
-            }}
+            style={handleContainerStyle}
             onPointerDown={handleScrollbarPointerDown}
             onPointerEnter={handleScrollbarPointerEnter}
             onPointerLeave={handleScrollbarPointerLeave}
           >
-            <div
-              style={{
-                marginTop: handleInsetTop,
-                height: scrollbarGeometry.handleSize,
-                width: handleWidth,
-                borderRadius: 999,
-                alignSelf: "center",
-                backgroundColor: "rgba(113, 113, 122, 1)",
-                opacity: handleOpacity,
-                transitionProperty: "opacity, width, background-color",
-                transitionDuration: `${SCROLLBAR_HANDLE_FADE_DURATION_MS}ms, ${SCROLLBAR_HANDLE_WIDTH_TRANSITION_DURATION_MS}ms, ${SCROLLBAR_HANDLE_FADE_DURATION_MS}ms`,
-                transitionTimingFunction: "ease-out, cubic-bezier(0.22, 0.75, 0.2, 1), ease-out",
-              }}
-            />
+            <div style={handleInnerStyle} />
           </div>
         </div>
       ) : null}

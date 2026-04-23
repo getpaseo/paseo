@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback, useRef, type ReactNode } from "react";
+import { createContext, useContext, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { useSharedValue, type SharedValue } from "react-native-reanimated";
 
 interface HorizontalScrollContextValue {
@@ -42,14 +42,17 @@ export function HorizontalScrollProvider({ children }: { children: ReactNode }) 
     [updateIsAnyScrolled],
   );
 
+  const contextValue = useMemo(
+    () => ({
+      isAnyScrolledRight,
+      registerScrollOffset,
+      unregisterScrollOffset,
+    }),
+    [isAnyScrolledRight, registerScrollOffset, unregisterScrollOffset],
+  );
+
   return (
-    <HorizontalScrollContext.Provider
-      value={{
-        isAnyScrolledRight,
-        registerScrollOffset,
-        unregisterScrollOffset,
-      }}
-    >
+    <HorizontalScrollContext.Provider value={contextValue}>
       {children}
     </HorizontalScrollContext.Provider>
   );

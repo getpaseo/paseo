@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { ScrollView, View } from "react-native";
 import {
   DndContext,
@@ -28,6 +28,8 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
   ...transform,
   x: 0,
 });
+
+const DND_MODIFIERS = [restrictToVerticalAxis];
 
 interface SortableItemProps<T> {
   id: string;
@@ -183,12 +185,18 @@ export function DraggableList<T>({
     [clearDragState, items, keyExtractor, onDragEnd],
   );
 
-  const ids = items.map((item, index) => keyExtractor(item, index));
-  const wrapperStyle = [
-    { position: "relative" as const },
-    scrollEnabled ? { flex: 1, minHeight: 0 } : null,
-    containerStyle,
-  ];
+  const ids = useMemo(
+    () => items.map((item, index) => keyExtractor(item, index)),
+    [items, keyExtractor],
+  );
+  const wrapperStyle = useMemo(
+    () => [
+      { position: "relative" as const },
+      scrollEnabled ? { flex: 1, minHeight: 0 } : null,
+      containerStyle,
+    ],
+    [scrollEnabled, containerStyle],
+  );
 
   return (
     <View style={wrapperStyle}>
@@ -209,7 +217,7 @@ export function DraggableList<T>({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={[restrictToVerticalAxis]}
+            modifiers={DND_MODIFIERS}
             onDragStart={handleDragStart}
             onDragCancel={clearDragState}
             onDragEnd={handleDragEnd}
@@ -240,7 +248,7 @@ export function DraggableList<T>({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={[restrictToVerticalAxis]}
+            modifiers={DND_MODIFIERS}
             onDragStart={handleDragStart}
             onDragCancel={clearDragState}
             onDragEnd={handleDragEnd}

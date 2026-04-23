@@ -17,6 +17,63 @@ interface DiffViewerProps {
   fillAvailableHeight?: boolean;
 }
 
+function DiffLineRow({ line }: { line: DiffLine }) {
+  const lineContainerStyle = React.useMemo(
+    () => [
+      styles.line,
+      line.type === "header" && styles.headerLine,
+      line.type === "add" && styles.addLine,
+      line.type === "remove" && styles.removeLine,
+      line.type === "context" && styles.contextLine,
+    ],
+    [line.type],
+  );
+  const plainLineTextStyle = React.useMemo(
+    () => [
+      styles.lineText,
+      line.type === "header" && styles.headerText,
+      line.type === "add" && styles.addText,
+      line.type === "remove" && styles.removeText,
+      line.type === "context" && styles.contextText,
+    ],
+    [line.type],
+  );
+
+  return (
+    <View style={lineContainerStyle}>
+      {line.segments ? (
+        <Text style={styles.lineText}>
+          <Text style={line.type === "add" ? styles.addText : styles.removeText}>
+            {line.content[0]}
+          </Text>
+          {line.segments.map((segment, segIdx) => (
+            <DiffSegment key={segIdx} segment={segment} lineType={line.type} />
+          ))}
+        </Text>
+      ) : (
+        <Text style={plainLineTextStyle}>{line.content}</Text>
+      )}
+    </View>
+  );
+}
+
+function DiffSegment({
+  segment,
+  lineType,
+}: {
+  segment: NonNullable<DiffLine["segments"]>[number];
+  lineType: DiffLine["type"];
+}) {
+  const segmentStyle = React.useMemo(
+    () => [
+      lineType === "add" ? styles.addText : styles.removeText,
+      segment.changed && (lineType === "add" ? styles.addHighlight : styles.removeHighlight),
+    ],
+    [lineType, segment.changed],
+  );
+  return <Text style={segmentStyle}>{segment.text}</Text>;
+}
+
 export function DiffViewer({
   diffLines,
   maxHeight,
@@ -70,48 +127,7 @@ export function DiffViewer({
       >
         <View style={linesContainerStyle}>
           {diffLines.map((line, index) => (
-            <View
-              key={`${line.type}-${index}`}
-              style={[
-                styles.line,
-                line.type === "header" && styles.headerLine,
-                line.type === "add" && styles.addLine,
-                line.type === "remove" && styles.removeLine,
-                line.type === "context" && styles.contextLine,
-              ]}
-            >
-              {line.segments ? (
-                <Text style={styles.lineText}>
-                  <Text style={line.type === "add" ? styles.addText : styles.removeText}>
-                    {line.content[0]}
-                  </Text>
-                  {line.segments.map((segment, segIdx) => (
-                    <Text
-                      key={segIdx}
-                      style={[
-                        line.type === "add" ? styles.addText : styles.removeText,
-                        segment.changed &&
-                          (line.type === "add" ? styles.addHighlight : styles.removeHighlight),
-                      ]}
-                    >
-                      {segment.text}
-                    </Text>
-                  ))}
-                </Text>
-              ) : (
-                <Text
-                  style={[
-                    styles.lineText,
-                    line.type === "header" && styles.headerText,
-                    line.type === "add" && styles.addText,
-                    line.type === "remove" && styles.removeText,
-                    line.type === "context" && styles.contextText,
-                  ]}
-                >
-                  {line.content}
-                </Text>
-              )}
-            </View>
+            <DiffLineRow key={`${line.type}-${index}`} line={line} />
           ))}
         </View>
       </ScrollView>

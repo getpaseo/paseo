@@ -379,17 +379,36 @@ export const UserMessage = memo(function UserMessage({
   const handleHoverOut = useCallback(() => setMessageHovered(false), []);
   const getMessageContent = useCallback(() => message, [message]);
 
+  const containerStyle = useMemo(
+    () => [
+      userMessageStylesheet.container,
+      !resolvedDisableOuterSpacing && [
+        isFirstInGroup && { marginTop: theme.spacing[4] },
+        isLastInGroup && { marginBottom: theme.spacing[4] },
+        !isFirstInGroup || !isLastInGroup ? { marginBottom: theme.spacing[1] } : undefined,
+      ],
+    ],
+    [resolvedDisableOuterSpacing, isFirstInGroup, isLastInGroup, theme.spacing],
+  );
+  const imagePreviewContainerStyle = useMemo(
+    () => [
+      userMessageStylesheet.imagePreviewContainer,
+      hasText ? userMessageStylesheet.imagePreviewSpacing : undefined,
+    ],
+    [hasText],
+  );
+  const copyButtonStyle = useMemo(
+    () => [
+      userMessageStylesheet.copyButton,
+      showCopyButton
+        ? userMessageStylesheet.copyButtonVisible
+        : userMessageStylesheet.copyButtonHidden,
+    ],
+    [showCopyButton],
+  );
+
   return (
-    <View
-      style={[
-        userMessageStylesheet.container,
-        !resolvedDisableOuterSpacing && [
-          isFirstInGroup && { marginTop: theme.spacing[4] },
-          isLastInGroup && { marginBottom: theme.spacing[4] },
-          !isFirstInGroup || !isLastInGroup ? { marginBottom: theme.spacing[1] } : undefined,
-        ],
-      ]}
-    >
+    <View style={containerStyle}>
       <Pressable
         style={userMessageStylesheet.content}
         onHoverIn={handleHoverIn}
@@ -397,12 +416,7 @@ export const UserMessage = memo(function UserMessage({
       >
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
-            <View
-              style={[
-                userMessageStylesheet.imagePreviewContainer,
-                hasText ? userMessageStylesheet.imagePreviewSpacing : undefined,
-              ]}
-            >
+            <View style={imagePreviewContainerStyle}>
               {images.map((image, index) => (
                 <View key={`${image.id}-${index}`} style={userMessageStylesheet.imagePill}>
                   <UserMessageAttachmentThumbnail image={image} />
@@ -419,12 +433,7 @@ export const UserMessage = memo(function UserMessage({
         {hasText ? (
           <TurnCopyButton
             getContent={getMessageContent}
-            containerStyle={[
-              userMessageStylesheet.copyButton,
-              showCopyButton
-                ? userMessageStylesheet.copyButtonVisible
-                : userMessageStylesheet.copyButtonHidden,
-            ]}
+            containerStyle={copyButtonStyle}
             accessibilityLabel="Copy message"
             onHoverChange={setCopyButtonHovered}
           />
@@ -569,9 +578,13 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
     ],
     [aspectRatio],
   );
+  const frameStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [assistantMessageStylesheet.imageFrame, containerStyle],
+    [containerStyle],
+  );
 
   return (
-    <View style={[assistantMessageStylesheet.imageFrame, containerStyle]}>
+    <View style={frameStyle}>
       <View style={surfaceStyle}>
         <Image
           source={{ uri }}
@@ -675,6 +688,15 @@ function AssistantMarkdownImage({
   const directUri = resolution?.kind === "direct" && !dataImage ? resolution.uri : null;
   const resolvedUri = directUri ?? dataImageAssetUri ?? fileAssetUri ?? null;
 
+  const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [
+      assistantMessageStylesheet.imageFrame,
+      containerStyle,
+      assistantMessageStylesheet.imageState,
+    ],
+    [containerStyle],
+  );
+
   if (resolvedUri) {
     return (
       <AssistantMarkdownResolvedImage
@@ -690,26 +712,14 @@ function AssistantMarkdownImage({
 
   if (query.isLoading || dataImageQuery.isLoading) {
     return (
-      <View
-        style={[
-          assistantMessageStylesheet.imageFrame,
-          containerStyle,
-          assistantMessageStylesheet.imageState,
-        ]}
-      >
+      <View style={stateFrameStyle}>
         <ActivityIndicator size="small" />
       </View>
     );
   }
 
   return (
-    <View
-      style={[
-        assistantMessageStylesheet.imageFrame,
-        containerStyle,
-        assistantMessageStylesheet.imageState,
-      ]}
-    >
+    <View style={stateFrameStyle}>
       <Text style={assistantMessageStylesheet.imageErrorText}>
         {query.error instanceof Error
           ? query.error.message
@@ -727,13 +737,18 @@ interface InlinePathChipProps {
   onPress: (target: InlinePathTarget) => void;
 }
 
+const INLINE_PATH_CHIP_STYLE = [
+  assistantMessageStylesheet.pathChip,
+  assistantMessageStylesheet.pathChipText,
+];
+
 function InlinePathChip({ content, parsed, onPress }: InlinePathChipProps) {
   const handlePress = useCallback(() => onPress(parsed), [onPress, parsed]);
   return (
     <Text
       onPress={handlePress}
       selectable={isWeb ? undefined : false}
-      style={[assistantMessageStylesheet.pathChip, assistantMessageStylesheet.pathChipText]}
+      style={INLINE_PATH_CHIP_STYLE}
     >
       {content}
     </Text>
@@ -755,6 +770,10 @@ function MarkdownLink({
   const handlePress = useCallback(() => onPress(href), [onPress, href]);
   const handleHoverIn = useCallback(() => setHovered(true), []);
   const handleHoverOut = useCallback(() => setHovered(false), []);
+  const hoveredTextStyle = useMemo(
+    () => [style, hovered && { textDecorationLine: "underline" }],
+    [style, hovered],
+  );
   if (isNative) {
     return (
       <Text accessibilityRole="link" onPress={handlePress} style={style}>
@@ -770,7 +789,7 @@ function MarkdownLink({
       onHoverIn={handleHoverIn}
       onHoverOut={handleHoverOut}
     >
-      <Text style={[style, hovered && { textDecorationLine: "underline" }]}>{children}</Text>
+      <Text style={hoveredTextStyle}>{children}</Text>
     </Pressable>
   );
 }
@@ -876,13 +895,17 @@ export const TurnCopyButton = memo(function TurnCopyButton({
 
   const handleHoverIn = useCallback(() => onHoverChange?.(true), [onHoverChange]);
   const handleHoverOut = useCallback(() => onHoverChange?.(false), [onHoverChange]);
+  const pressableStyle = useMemo(
+    () => [turnCopyButtonStylesheet.container, containerStyle],
+    [containerStyle],
+  );
 
   return (
     <Pressable
       onPress={handleCopy}
       onHoverIn={handleHoverIn}
       onHoverOut={handleHoverOut}
-      style={[turnCopyButtonStylesheet.container, containerStyle]}
+      style={pressableStyle}
       accessibilityRole="button"
       accessibilityLabel={
         copied ? (copiedAccessibilityLabel ?? "Copied") : (accessibilityLabel ?? "Copy turn")
@@ -1377,18 +1400,20 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
 
+  const assistantContainerStyle = useMemo(
+    () => [
+      assistantMessageStylesheet.container,
+      (spacing === "compactTop" || spacing === "compactBoth") &&
+        assistantMessageStylesheet.containerCompactTop,
+      (spacing === "compactBottom" || spacing === "compactBoth") &&
+        assistantMessageStylesheet.containerCompactBottom,
+      !resolvedDisableOuterSpacing && assistantMessageStylesheet.containerSpacing,
+    ],
+    [spacing, resolvedDisableOuterSpacing],
+  );
+
   return (
-    <View
-      testID="assistant-message"
-      style={[
-        assistantMessageStylesheet.container,
-        (spacing === "compactTop" || spacing === "compactBoth") &&
-          assistantMessageStylesheet.containerCompactTop,
-        (spacing === "compactBottom" || spacing === "compactBoth") &&
-          assistantMessageStylesheet.containerCompactBottom,
-        !resolvedDisableOuterSpacing && assistantMessageStylesheet.containerSpacing,
-      ]}
-    >
+    <View testID="assistant-message" style={assistantContainerStyle}>
       {blocks.map((block, index) => (
         <View
           key={index}
@@ -1448,15 +1473,16 @@ export const SpeakMessage = memo(function SpeakMessage({
 }: SpeakMessageProps) {
   const { theme } = useUnistyles();
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
+  const containerStyle = useMemo(
+    () => [
+      speakMessageStylesheet.container,
+      !resolvedDisableOuterSpacing && speakMessageStylesheet.containerSpacing,
+    ],
+    [resolvedDisableOuterSpacing],
+  );
 
   return (
-    <View
-      testID="speak-message"
-      style={[
-        speakMessageStylesheet.container,
-        !resolvedDisableOuterSpacing && speakMessageStylesheet.containerSpacing,
-      ]}
-    >
+    <View testID="speak-message" style={containerStyle}>
       <View style={speakMessageStylesheet.header}>
         <MicVocal size={14} color={theme.colors.foregroundMuted} />
         <Text style={speakMessageStylesheet.headerLabel}>Spoke</Text>
@@ -1603,27 +1629,29 @@ export const ActivityLog = memo(function ActivityLog({
     type === "artifact" && artifactType && title ? `${artifactType}: ${title}` : message;
 
   const isInteractive = type === "artifact" || metadata;
+  const pressableStyle = useMemo(
+    () => [
+      activityLogStylesheet.pressable,
+      !resolvedDisableOuterSpacing && activityLogStylesheet.pressableSpacing,
+      config.bg,
+      isInteractive && activityLogStylesheet.pressableActive,
+    ],
+    [resolvedDisableOuterSpacing, config.bg, isInteractive],
+  );
+  const messageTextStyle = useMemo(
+    () => [activityLogStylesheet.messageText, { color: config.color }],
+    [config.color],
+  );
 
   return (
-    <Pressable
-      onPress={handlePress}
-      disabled={!isInteractive}
-      style={[
-        activityLogStylesheet.pressable,
-        !resolvedDisableOuterSpacing && activityLogStylesheet.pressableSpacing,
-        config.bg,
-        isInteractive && activityLogStylesheet.pressableActive,
-      ]}
-    >
+    <Pressable onPress={handlePress} disabled={!isInteractive} style={pressableStyle}>
       <View style={activityLogStylesheet.content}>
         <View style={activityLogStylesheet.row}>
           <View style={activityLogStylesheet.iconContainer}>
             <IconComponent size={16} color={config.color} />
           </View>
           <View style={activityLogStylesheet.textContainer}>
-            <Text style={[activityLogStylesheet.messageText, { color: config.color }]}>
-              {displayMessage}
-            </Text>
+            <Text style={messageTextStyle}>{displayMessage}</Text>
             {metadata && (
               <View style={activityLogStylesheet.detailsRow}>
                 <Text style={activityLogStylesheet.detailsText}>Details</Text>

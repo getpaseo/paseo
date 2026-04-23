@@ -169,9 +169,19 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
+const TITLE_ERROR_STYLE = [styles.title, styles.titleError];
+
 export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps) {
   const { theme } = useUnistyles();
   const webScrollbarStyle = useWebScrollbarStyle();
+  const errorScrollViewStyle = useMemo(
+    () => [styles.errorScrollView, webScrollbarStyle],
+    [webScrollbarStyle],
+  );
+  const logsScrollStyle = useMemo(
+    () => [styles.logsScroll, webScrollbarStyle],
+    [webScrollbarStyle],
+  );
   const [daemonLogs, setDaemonLogs] = useState<DesktopDaemonLogs | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -293,14 +303,14 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
     <View style={styles.errorScreen}>
       <TitlebarDragRegion />
       <ScrollView
-        style={[styles.errorScrollView, webScrollbarStyle]}
+        style={errorScrollViewStyle}
         contentContainerStyle={styles.errorScrollContent}
         showsVerticalScrollIndicator
       >
         <View style={styles.errorContent}>
           <View style={styles.errorHeader}>
             <PaseoLogo size={64} />
-            <Text style={[styles.title, styles.titleError]}>Something went wrong</Text>
+            <Text style={TITLE_ERROR_STYLE}>Something went wrong</Text>
           </View>
 
           <Text style={styles.errorDescription}>
@@ -314,7 +324,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
 
           <View style={styles.logsContainer}>
             <ScrollView
-              style={[styles.logsScroll, webScrollbarStyle]}
+              style={logsScrollStyle}
               contentContainerStyle={styles.logsContent}
               showsVerticalScrollIndicator
             >

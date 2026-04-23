@@ -183,6 +183,11 @@ function FilePreviewBody({
     return lineNumberGutterWidth(highlightedLines.length);
   }, [highlightedLines]);
 
+  const imageSource = useMemo(
+    () => (imagePreviewUri ? { uri: imagePreviewUri } : null),
+    [imagePreviewUri],
+  );
+
   if (isLoading && !preview) {
     return (
       <View style={styles.centerState}>
@@ -292,9 +297,7 @@ function FilePreviewBody({
           showsVerticalScrollIndicator={!showDesktopWebScrollbar}
         >
           <RNImage
-            source={{
-              uri: imagePreviewUri,
-            }}
+            source={imageSource ?? undefined}
             style={styles.previewImage}
             resizeMode="contain"
           />

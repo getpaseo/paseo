@@ -14,6 +14,14 @@ import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
+const FLEX_FILL_STYLE = { flex: 1 } as const;
+const CENTERED_PADDED_STYLE = {
+  flex: 1,
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 16,
+} as const;
+
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -84,12 +92,12 @@ function TerminalPanel() {
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 
   if (!isWorkspaceFocused) {
-    return <View style={{ flex: 1 }} />;
+    return <View style={FLEX_FILL_STYLE} />;
   }
 
   if (!workspaceDirectory) {
     return (
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <View style={CENTERED_PADDED_STYLE}>
         <Text>
           {workspaceAuthority.ok
             ? "Workspace execution directory not found."

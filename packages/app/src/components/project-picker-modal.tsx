@@ -40,13 +40,17 @@ function PathRow({ path, active, onSelect }: PathRowProps) {
     ],
     [active, theme.colors.surface1],
   );
+  const rowTextStyle = useMemo(
+    () => [styles.rowText, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
   return (
     <Pressable style={pressableStyle} onPress={handlePress}>
       <View style={styles.rowContent}>
         <View style={styles.iconSlot}>
           <Folder size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
         </View>
-        <Text style={[styles.rowText, { color: theme.colors.foreground }]} numberOfLines={1}>
+        <Text style={rowTextStyle} numberOfLines={1}>
           {shortenPath(path)}
         </Text>
       </View>
@@ -192,6 +196,29 @@ export function ProjectPickerModal() {
     return () => window.removeEventListener("keydown", handler, true);
   }, [activeIndex, handleSelectPath, handleSubmitCustom, open, options, query, setOpen]);
 
+  const panelStyle = useMemo(
+    () => [
+      styles.panel,
+      {
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.surface0,
+      },
+    ],
+    [theme.colors.border, theme.colors.surface0],
+  );
+  const headerStyle = useMemo(
+    () => [styles.header, { borderBottomColor: theme.colors.border }],
+    [theme.colors.border],
+  );
+  const inputStyle = useMemo(
+    () => [styles.input, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const emptyTextStyle = useMemo(
+    () => [styles.emptyText, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+
   if (!serverId) return null;
 
   return (
@@ -199,23 +226,15 @@ export function ProjectPickerModal() {
       <View style={styles.overlay}>
         <Pressable style={styles.backdrop} onPress={handleClose} />
 
-        <View
-          style={[
-            styles.panel,
-            {
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.surface0,
-            },
-          ]}
-        >
-          <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+        <View style={panelStyle}>
+          <View style={headerStyle}>
             <TextInput
               ref={inputRef}
               value={query}
               onChangeText={handleChangeQuery}
               placeholder="Type a directory path..."
               placeholderTextColor={theme.colors.foregroundMuted}
-              style={[styles.input, { color: theme.colors.foreground }]}
+              style={inputStyle}
               autoCapitalize="none"
               autoCorrect={false}
               autoFocus
@@ -230,13 +249,9 @@ export function ProjectPickerModal() {
             showsVerticalScrollIndicator={false}
           >
             {isSubmitting ? (
-              <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
-                Opening project...
-              </Text>
+              <Text style={emptyTextStyle}>Opening project...</Text>
             ) : options.length === 0 && !query.trim() ? (
-              <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
-                Start typing a path
-              </Text>
+              <Text style={emptyTextStyle}>Start typing a path</Text>
             ) : (
               <>
                 {options.map((path, index) => (

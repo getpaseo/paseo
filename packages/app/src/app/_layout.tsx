@@ -834,19 +834,23 @@ function FaviconStatusSync() {
   return null;
 }
 
+const AGENT_SCREEN_OPTIONS = { gestureEnabled: false };
+
 function RootStack() {
   const storeReady = useStoreReady();
   const { theme } = useUnistyles();
+  const stackScreenOptions = useMemo(
+    () => ({
+      headerShown: false,
+      animation: "none" as const,
+      contentStyle: {
+        backgroundColor: theme.colors.surface0,
+      },
+    }),
+    [theme.colors.surface0],
+  );
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        animation: "none",
-        contentStyle: {
-          backgroundColor: theme.colors.surface0,
-        },
-      }}
-    >
+    <Stack screenOptions={stackScreenOptions}>
       <Stack.Screen name="index" />
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
@@ -862,7 +866,7 @@ function RootStack() {
         outside this route-level native-stack API.
       */}
       <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
-      <Stack.Screen name="h/[serverId]/agent/[agentId]" options={{ gestureEnabled: false }} />
+      <Stack.Screen name="h/[serverId]/agent/[agentId]" options={AGENT_SCREEN_OPTIONS} />
       <Stack.Screen name="h/[serverId]/index" />
       <Stack.Screen name="h/[serverId]/sessions" />
       <Stack.Screen name="h/[serverId]/open-project" />

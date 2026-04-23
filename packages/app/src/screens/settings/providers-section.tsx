@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
@@ -47,12 +47,13 @@ function ProviderRow({ def, entry, isFirst, onPress }: ProviderRowProps) {
 
   const handlePress = useCallback(() => onPress(def.id), [def.id, onPress]);
 
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, !isFirst && settingsStyles.rowBorder],
+    [isFirst],
+  );
+
   return (
-    <Pressable
-      style={[settingsStyles.row, !isFirst && settingsStyles.rowBorder]}
-      onPress={handlePress}
-      accessibilityRole="button"
-    >
+    <Pressable style={rowStyle} onPress={handlePress} accessibilityRole="button">
       <View style={settingsStyles.rowContent}>
         <View style={styles.titleRow}>
           <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foreground} />
@@ -124,11 +125,11 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         style={styles.sectionSpacing}
       >
         {!hasServer || !isConnected ? (
-          <View style={[settingsStyles.card, styles.emptyCard]}>
+          <View style={EMPTY_CARD_STYLE}>
             <Text style={styles.emptyText}>Connect to this host to see providers</Text>
           </View>
         ) : isLoading ? (
-          <View style={[settingsStyles.card, styles.emptyCard]}>
+          <View style={EMPTY_CARD_STYLE}>
             <Text style={styles.emptyText}>Loading...</Text>
           </View>
         ) : (
@@ -181,3 +182,5 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: theme.spacing[1],
   },
 }));
+
+const EMPTY_CARD_STYLE = [settingsStyles.card, styles.emptyCard];

@@ -480,6 +480,17 @@ export function NewWorkspaceScreen({
     [keyboardAnimatedStyle],
   );
 
+  const statusControlsWithDisabled = useMemo(
+    () =>
+      composerState
+        ? {
+            ...composerState.statusControls,
+            disabled: isPending,
+          }
+        : undefined,
+    [composerState, isPending],
+  );
+
   return (
     <View style={styles.container}>
       <ScreenHeader
@@ -521,14 +532,7 @@ export function NewWorkspaceScreen({
             clearDraft={handleClearDraft}
             autoFocus
             commandDraftConfig={composerState?.commandDraftConfig}
-            statusControls={
-              composerState
-                ? {
-                    ...composerState.statusControls,
-                    disabled: isPending,
-                  }
-                : undefined
-            }
+            statusControls={statusControlsWithDisabled}
             onAddImages={handleAddImagesCallback}
           />
           <Animated.View testID="new-workspace-ref-picker-row" style={optionsRowStyle}>

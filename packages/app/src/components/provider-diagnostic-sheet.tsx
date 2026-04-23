@@ -26,6 +26,23 @@ interface ProviderDiagnosticSheetProps {
   serverId: string;
 }
 
+function ModelRow({ model, isFirst }: { model: AgentModelDefinition; isFirst: boolean }) {
+  const rowStyle = useMemo(
+    () => [sheetStyles.modelRow, !isFirst && sheetStyles.modelRowBorder],
+    [isFirst],
+  );
+  return (
+    <View style={rowStyle}>
+      <Text style={sheetStyles.modelLabel} numberOfLines={1}>
+        {model.label}
+      </Text>
+      <Text style={sheetStyles.modelId} numberOfLines={1} selectable>
+        {model.id}
+      </Text>
+    </View>
+  );
+}
+
 export function ProviderDiagnosticSheet({
   provider,
   visible,
@@ -148,14 +165,7 @@ export function ProviderDiagnosticSheet({
       );
     }
     return filteredModels.map((model: AgentModelDefinition, index) => (
-      <View key={model.id} style={[sheetStyles.modelRow, index > 0 && sheetStyles.modelRowBorder]}>
-        <Text style={sheetStyles.modelLabel} numberOfLines={1}>
-          {model.label}
-        </Text>
-        <Text style={sheetStyles.modelId} numberOfLines={1} selectable>
-          {model.id}
-        </Text>
-      </View>
+      <ModelRow key={model.id} model={model} isFirst={index === 0} />
     ));
   }
 
@@ -164,7 +174,7 @@ export function ProviderDiagnosticSheet({
       title={providerLabel}
       visible={visible}
       onClose={onClose}
-      snapPoints={["50%", "85%"]}
+      snapPoints={DIAGNOSTIC_SHEET_SNAP_POINTS}
       scrollable={false}
       headerActions={
         <Pressable
@@ -237,7 +247,7 @@ export function ProviderDiagnosticSheet({
               autoCapitalize="none"
               autoCorrect={false}
               // @ts-expect-error - outlineStyle is web-only
-              style={[sheetStyles.searchInput, isWeb && { outlineStyle: "none" }]}
+              style={DIAGNOSTIC_SEARCH_INPUT_STYLE}
             />
           </View>
         ) : null}
@@ -375,3 +385,6 @@ const sheetStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
 }));
+
+const DIAGNOSTIC_SHEET_SNAP_POINTS = ["50%", "85%"];
+const DIAGNOSTIC_SEARCH_INPUT_STYLE = [sheetStyles.searchInput, isWeb && { outlineStyle: "none" }];

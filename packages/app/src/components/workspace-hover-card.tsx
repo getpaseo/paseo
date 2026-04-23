@@ -335,10 +335,7 @@ function ChecksSummaryContent({
     () => [styles.checksSummaryLabel, hovered && styles.checksSummaryLabelHovered],
     [hovered],
   );
-  const dotStyle = useMemo(
-    () => [styles.checksDot, { backgroundColor: badgeColor }],
-    [badgeColor],
-  );
+  const dotStyle = useMemo(() => [styles.checksDot, { backgroundColor: badgeColor }], [badgeColor]);
   const statusTextStyle = useMemo(
     () => [styles.checksStatusText, { color: badgeColor }],
     [badgeColor],

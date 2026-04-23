@@ -11,6 +11,8 @@ import { ConnectionOfferSchema } from "@server/shared/connection-offer";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 
+const FLEX_ONE_STYLE = { flex: 1 } as const;
+
 const styles = StyleSheet.create((theme) => ({
   helper: {
     color: theme.colors.foregroundMuted,
@@ -189,7 +191,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
 
       <View style={styles.actions}>
         <Button
-          style={{ flex: 1 }}
+          style={FLEX_ONE_STYLE}
           variant="secondary"
           onPress={handleCancel}
           disabled={isSaving}
@@ -200,7 +202,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
           Cancel
         </Button>
         <Button
-          style={{ flex: 1 }}
+          style={FLEX_ONE_STYLE}
           variant="default"
           onPress={handleSavePress}
           disabled={isSaving}

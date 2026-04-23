@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { ActivityIndicator, Image, Text, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as QRCode from "qrcode";
@@ -50,6 +50,11 @@ export function PairDeviceSection() {
     void handleCopyLink();
   }, [handleCopyLink]);
 
+  const qrImageSource = useMemo(
+    () => (qrQuery.data ? { uri: qrQuery.data } : null),
+    [qrQuery.data],
+  );
+
   if (!showSection) return null;
 
   return (
@@ -98,8 +103,8 @@ export function PairDeviceSection() {
               Scan this QR code with Paseo on your phone, or copy the link below.
             </Text>
             <View style={styles.qrContainer}>
-              {qrQuery.data ? (
-                <Image source={{ uri: qrQuery.data }} style={styles.qrImage} resizeMode="contain" />
+              {qrImageSource ? (
+                <Image source={qrImageSource} style={styles.qrImage} resizeMode="contain" />
               ) : qrQuery.isError ? (
                 <Text style={styles.hint}>QR code unavailable.</Text>
               ) : (

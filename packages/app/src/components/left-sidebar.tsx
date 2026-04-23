@@ -525,20 +525,26 @@ function MobileSidebar({
 
   const overlayPointerEvents = isWeb ? (isOpen ? "auto" : "none") : "box-none";
 
+  const backdropStyle = useMemo(
+    () => [staticStyles.backdrop, backdropAnimatedStyle],
+    [backdropAnimatedStyle],
+  );
+  const mobileSidebarStyle = useMemo(
+    () => [
+      staticStyles.mobileSidebar,
+      mobileSidebarInsetStyle,
+      sidebarAnimatedStyle,
+      { backgroundColor: theme.colors.surfaceSidebar },
+    ],
+    [mobileSidebarInsetStyle, sidebarAnimatedStyle, theme.colors.surfaceSidebar],
+  );
+
   return (
     <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
-      <Animated.View style={[staticStyles.backdrop, backdropAnimatedStyle]} />
+      <Animated.View style={backdropStyle} />
 
       <GestureDetector gesture={closeGesture} touchAction="pan-y">
-        <Animated.View
-          style={[
-            staticStyles.mobileSidebar,
-            mobileSidebarInsetStyle,
-            sidebarAnimatedStyle,
-            { backgroundColor: theme.colors.surfaceSidebar },
-          ]}
-          pointerEvents="auto"
-        >
+        <Animated.View style={mobileSidebarStyle} pointerEvents="auto">
           <View style={styles.sidebarContent} pointerEvents="auto">
             <SidebarHeaderRow
               icon={MessagesSquare}
@@ -713,18 +719,27 @@ function DesktopSidebar({
     width: resizeWidth.value,
   }));
 
+  const paddingTopSpacerStyle = useMemo(() => ({ height: padding.top }), [padding.top]);
+  const desktopSidebarStyle = useMemo(
+    () => [staticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insetsTop }],
+    [resizeAnimatedStyle, insetsTop],
+  );
+  const desktopSidebarBorderStyle = useMemo(() => [styles.desktopSidebarBorder, { flex: 1 }], []);
+  const resizeHandleStyle = useMemo(
+    () => [styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as any)],
+    [],
+  );
+
   if (!isOpen) {
     return null;
   }
 
   return (
-    <Animated.View
-      style={[staticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insetsTop }]}
-    >
-      <View style={[styles.desktopSidebarBorder, { flex: 1 }]}>
+    <Animated.View style={desktopSidebarStyle}>
+      <View style={desktopSidebarBorderStyle}>
         <View style={styles.sidebarDragArea}>
           <TitlebarDragRegion />
-          {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
+          {padding.top > 0 ? <View style={paddingTopSpacerStyle} /> : null}
           <SidebarHeaderRow
             icon={MessagesSquare}
             label="Sessions"
@@ -823,7 +838,7 @@ function DesktopSidebar({
 
         {/* Resize handle - absolutely positioned over right border */}
         <GestureDetector gesture={resizeGesture}>
-          <View style={[styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as any)]} />
+          <View style={resizeHandleStyle} />
         </GestureDetector>
       </View>
     </Animated.View>

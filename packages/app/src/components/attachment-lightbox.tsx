@@ -49,6 +49,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
 
   const handleImageError = useCallback(() => setErrored(true), []);
   const noopPress = useCallback(() => {}, []);
+  const imageSource = useMemo(() => ({ uri: url ?? "" }), [url]);
 
   if (!metadata) {
     return null;
@@ -74,7 +75,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
               <Pressable onPress={noopPress} style={styles.imagePressable}>
                 <ExpoImage
                   testID="attachment-lightbox-image"
-                  source={{ uri: url }}
+                  source={imageSource}
                   contentFit="contain"
                   onError={handleImageError}
                   style={imageFillStyle}

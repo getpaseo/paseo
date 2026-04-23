@@ -60,10 +60,11 @@ function ScriptActionButtonChildren({
     ) : (
       <Play {...iconProps} fill="transparent" />
     );
+  const labelStyle = useMemo(() => [styles.actionButtonLabel, { color }], [color]);
   return (
     <>
       {iconElement}
-      <Text style={[styles.actionButtonLabel, { color }]}>{label}</Text>
+      <Text style={labelStyle}>{label}</Text>
     </>
   );
 }
@@ -133,9 +134,10 @@ function HostLinkChildren({
 }: HostLinkChildrenProps): ReactElement {
   const showIcon = !disabled && (hovered || isNative);
   const color = hovered && !disabled ? theme.colors.foreground : theme.colors.foregroundMuted;
+  const hostLabelStyle = useMemo(() => [styles.hostLabel, { color }], [color]);
   return (
     <>
-      <Text style={[styles.hostLabel, { color }]} numberOfLines={1}>
+      <Text style={hostLabelStyle} numberOfLines={1}>
         {label}
       </Text>
       <View style={styles.hostIconSlot}>
@@ -181,9 +183,10 @@ function HostLinkRow({ label, url, scriptName }: HostLinkProps): ReactElement {
 function ExitCodeBadge({ code }: { code: number }): ReactElement {
   const { theme } = useUnistyles();
   const color = code === 0 ? theme.colors.foregroundMuted : theme.colors.palette.red[300];
+  const exitTextStyle = useMemo(() => [styles.exitBadgeText, { color }], [color]);
   return (
     <View style={styles.exitBadge}>
-      <Text style={[styles.exitBadgeText, { color }]}>exit {code}</Text>
+      <Text style={exitTextStyle}>exit {code}</Text>
     </View>
   );
 }
@@ -272,6 +275,16 @@ function ScriptRow({
     onStartScript(script.scriptName);
   }, [onStartScript, script.scriptName]);
 
+  const scriptNameStyle = useMemo(
+    () => [
+      styles.scriptName,
+      {
+        color: isRunning ? theme.colors.foreground : theme.colors.foregroundMuted,
+      },
+    ],
+    [isRunning, theme.colors.foreground, theme.colors.foregroundMuted],
+  );
+
   let primaryAction: ReactElement | null = null;
   if (isRunning && liveTerminalId) {
     primaryAction = (
@@ -304,15 +317,7 @@ function ScriptRow({
     >
       <View style={styles.scriptHeader}>
         <ScriptIcon size={14} color={iconColor} style={styles.scriptIcon} />
-        <Text
-          style={[
-            styles.scriptName,
-            {
-              color: isRunning ? theme.colors.foreground : theme.colors.foregroundMuted,
-            },
-          ]}
-          numberOfLines={1}
-        >
+        <Text style={scriptNameStyle} numberOfLines={1}>
           {script.scriptName}
         </Text>
         {showExitBadge ? <ExitCodeBadge code={exitCode} /> : null}

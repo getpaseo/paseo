@@ -102,6 +102,11 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
     [openToolCall, closeToolCall],
   );
 
+  const handleIndicatorStyle = useMemo(
+    () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
+    [theme.colors.palette.zinc],
+  );
+
   return (
     <ToolCallSheetContext.Provider value={contextValue}>
       {children}
@@ -114,7 +119,7 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
         backdropComponent={renderBackdrop}
         enablePanDownToClose
         backgroundComponent={CustomSheetBackground}
-        handleIndicatorStyle={{ backgroundColor: theme.colors.palette.zinc[600] }}
+        handleIndicatorStyle={handleIndicatorStyle}
       >
         {sheetData && <ToolCallSheetContent data={sheetData} onClose={closeToolCall} />}
       </IsolatedBottomSheetModal>

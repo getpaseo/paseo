@@ -113,10 +113,7 @@ function QueuedMessageRow({ item, onEdit, onSendNow }: QueuedMessageRowProps) {
         <Pressable onPress={handleEdit} style={styles.queueActionButton}>
           <Pencil size={theme.iconSize.sm} color={theme.colors.foreground} />
         </Pressable>
-        <Pressable
-          onPress={handleSendNow}
-          style={QUEUE_SEND_BUTTON_STYLE}
-        >
+        <Pressable onPress={handleSendNow} style={QUEUE_SEND_BUTTON_STYLE}>
           <ArrowUp size={theme.iconSize.sm} color="white" />
         </Pressable>
       </View>

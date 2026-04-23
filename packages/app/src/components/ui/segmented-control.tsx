@@ -111,10 +111,14 @@ function SegmentItem<T extends string>({
     ],
     [isSelected, option.disabled, segmentSizeStyle],
   );
+  const accessibilityState = useMemo(
+    () => ({ selected: isSelected, disabled: option.disabled }),
+    [isSelected, option.disabled],
+  );
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ selected: isSelected, disabled: option.disabled }}
+      accessibilityState={accessibilityState}
       disabled={option.disabled}
       testID={option.testID}
       onPress={handlePress}
