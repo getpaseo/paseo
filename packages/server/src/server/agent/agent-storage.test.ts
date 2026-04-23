@@ -368,7 +368,7 @@ describe("AgentStorage", () => {
 
     const storageInternals = storage as unknown as {
       pendingWrites: Map<string, Promise<void>>;
-      cache: Map<string, any>;
+      cache: Map<string, unknown>;
     };
     storageInternals.pendingWrites.set(agentId, pendingWrite);
 
