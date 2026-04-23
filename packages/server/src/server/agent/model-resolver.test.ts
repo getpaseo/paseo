@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveAgentModel } from "./model-resolver.js";
@@ -9,12 +10,14 @@ vi.mock("./provider-registry.js", () => ({
 import { buildProviderRegistry } from "./provider-registry.js";
 
 const mockedBuildProviderRegistry = vi.mocked(buildProviderRegistry);
-const testLogger = { warn: vi.fn() } as any;
+const testLoggerWarn = vi.fn();
+const testLogger = { warn: testLoggerWarn } as unknown as Logger;
+type ProviderRegistryMock = ReturnType<typeof buildProviderRegistry>;
 
 describe("resolveAgentModel", () => {
   beforeEach(() => {
     mockedBuildProviderRegistry.mockReset();
-    testLogger.warn.mockClear();
+    testLoggerWarn.mockClear();
   });
 
   it("returns the trimmed requested model when provided", async () => {
@@ -38,7 +41,7 @@ describe("resolveAgentModel", () => {
       claude: { fetchModels },
       codex: { fetchModels: vi.fn() },
       opencode: { fetchModels: vi.fn() },
-    } as any);
+    } as unknown as ProviderRegistryMock);
 
     const result = await resolveAgentModel({
       provider: "claude",
@@ -62,7 +65,7 @@ describe("resolveAgentModel", () => {
       claude: { fetchModels: vi.fn() },
       codex: { fetchModels },
       opencode: { fetchModels: vi.fn() },
-    } as any);
+    } as unknown as ProviderRegistryMock);
 
     const result = await resolveAgentModel({ provider: "codex", logger: testLogger });
 
@@ -75,11 +78,11 @@ describe("resolveAgentModel", () => {
       claude: { fetchModels: vi.fn() },
       codex: { fetchModels },
       opencode: { fetchModels: vi.fn() },
-    } as any);
+    } as unknown as ProviderRegistryMock);
 
     const result = await resolveAgentModel({ provider: "codex", logger: testLogger });
 
     expect(result).toBeUndefined();
-    expect(testLogger.warn).toHaveBeenCalled();
+    expect(testLoggerWarn).toHaveBeenCalled();
   });
 });
