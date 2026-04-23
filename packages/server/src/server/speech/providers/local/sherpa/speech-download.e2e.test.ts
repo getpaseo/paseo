@@ -50,7 +50,7 @@ async function readAllChunks(
   stream: NodeJS.ReadableStream,
 ): Promise<{ chunks: Buffer[]; combined: Buffer }> {
   const chunks: Buffer[] = [];
-  for await (const chunk of stream as any) {
+  for await (const chunk of stream as AsyncIterable<Buffer | string>) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return { chunks, combined: Buffer.concat(chunks) };
