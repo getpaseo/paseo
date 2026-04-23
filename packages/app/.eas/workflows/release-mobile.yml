@@ -37,3 +37,16 @@ jobs:
     params:
       build_id: ${{ needs.build_android.outputs.build_id }}
       profile: production
+
+  submit_ios_for_review:
+    name: Submit iOS for App Store review
+    needs: [submit_ios]
+    environment: production
+    steps:
+      - uses: eas/checkout
+      - name: Install fastlane
+        working_directory: ./packages/app
+        run: bundle install
+      - name: Submit for review
+        working_directory: ./packages/app
+        run: bundle exec fastlane ios submit_review
