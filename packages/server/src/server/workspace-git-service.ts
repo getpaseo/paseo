@@ -83,13 +83,10 @@ export type WorkspaceGitRuntimeSnapshot = {
 };
 
 export interface WorkspaceGitService {
-  subscribe(
+  registerWorkspace(
     params: { cwd: string },
     listener: WorkspaceGitListener,
-  ): Promise<{
-    initial: WorkspaceGitRuntimeSnapshot;
-    unsubscribe: () => void;
-  }>;
+  ): WorkspaceGitSubscription;
 
   peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null;
   getSnapshot(
@@ -138,6 +135,10 @@ export interface WorkspaceGitService {
 }
 
 export type WorkspaceGitListener = (snapshot: WorkspaceGitRuntimeSnapshot) => void;
+
+export type WorkspaceGitSubscription = {
+  unsubscribe: () => void;
+};
 
 export type WorkspaceGitReadOptions =
   | {
@@ -246,6 +247,9 @@ interface WorkspaceGitTarget {
   latestFingerprint: string | null;
   lastShellOutAtMs: number | null;
   repoGitRoot: string | null;
+  observationSetupPromise: Promise<void> | null;
+  observationSetupComplete: boolean;
+  closed: boolean;
 }
 
 interface RepoGitTarget {
@@ -281,7 +285,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
-  private readonly workspaceTargetSetups = new Map<string, Promise<WorkspaceGitTarget>>();
   private readonly workingTreeWatchTargets = new Map<string, WorkingTreeWatchTarget>();
   private readonly workingTreeWatchSetups = new Map<string, Promise<WorkingTreeWatchTarget>>();
   private readonly branchValidationCache = new Map<
@@ -337,22 +340,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     };
   }
 
-  async subscribe(
+  registerWorkspace(
     params: { cwd: string },
     listener: WorkspaceGitListener,
-  ): Promise<{
-    initial: WorkspaceGitRuntimeSnapshot;
-    unsubscribe: () => void;
-  }> {
+  ): WorkspaceGitSubscription {
     const cwd = normalizeWorkspaceId(params.cwd);
-    const target = await this.ensureWorkspaceTarget(cwd);
+    const target = this.ensureWorkspaceTarget(cwd);
     target.listeners.add(listener);
     if (target.listeners.size === 1) {
       this.startWorkspaceSubscriptionTimers(target);
     }
+    if (!target.latestSnapshot) {
+      this.scheduleInitialWorkspaceRefresh(target);
+    }
+    this.scheduleWorkspaceObservationSetup(target);
 
     return {
-      initial: target.latestSnapshot ?? (await this.getSnapshot(cwd)),
       unsubscribe: () => {
         this.removeWorkspaceListener(cwd, listener);
       },
@@ -365,7 +368,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<WorkspaceGitRuntimeSnapshot> {
     cwd = normalizeWorkspaceId(cwd);
     const request = this.normalizeRefreshRequest(options, "getSnapshot", true);
-    const target = await this.ensureWorkspaceTarget(cwd);
+    const target = this.ensureWorkspaceTarget(cwd);
     if (!request.force && this.isSnapshotWarm(target)) {
       return target.latestSnapshot;
     }
@@ -544,18 +547,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   async refresh(cwd: string, _options?: { priority?: "normal" | "high" }): Promise<void> {
     cwd = normalizeWorkspaceId(cwd);
-    const target = this.workspaceTargets.get(cwd);
-    if (target) {
-      await this.refreshWorkspaceTarget(target, {
-        force: false,
-        includeGitHub: false,
-        reason: "refresh",
-        notify: true,
-      });
-      return;
-    }
-
-    await this.ensureWorkspaceTarget(cwd);
+    const target = this.ensureWorkspaceTarget(cwd);
+    await this.refreshWorkspaceTarget(target, {
+      force: false,
+      includeGitHub: false,
+      reason: "refresh",
+      notify: true,
+    });
+    this.scheduleWorkspaceObservationSetup(target);
   }
 
   async requestWorkingTreeWatch(
@@ -587,7 +586,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.closeWorkspaceTarget(target);
     }
     this.workspaceTargets.clear();
-    this.workspaceTargetSetups.clear();
 
     for (const target of this.repoTargets.values()) {
       this.closeRepoTarget(target);
@@ -601,22 +599,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchSetups.clear();
   }
 
-  private async ensureWorkspaceTarget(cwd: string): Promise<WorkspaceGitTarget> {
+  private ensureWorkspaceTarget(cwd: string): WorkspaceGitTarget {
     const existingTarget = this.workspaceTargets.get(cwd);
     if (existingTarget) {
       return existingTarget;
     }
 
-    const existingSetup = this.workspaceTargetSetups.get(cwd);
-    if (existingSetup) {
-      return existingSetup;
-    }
-
-    const setup = this.createWorkspaceTarget(cwd).finally(() => {
-      this.workspaceTargetSetups.delete(cwd);
-    });
-    this.workspaceTargetSetups.set(cwd, setup);
-    return setup;
+    return this.createWorkspaceTarget(cwd);
   }
 
   private readAuxiliaryCache<T>(
@@ -698,7 +687,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return setup;
   }
 
-  private async createWorkspaceTarget(cwd: string): Promise<WorkspaceGitTarget> {
+  private createWorkspaceTarget(cwd: string): WorkspaceGitTarget {
     const target: WorkspaceGitTarget = {
       cwd,
       listeners: new Set(),
@@ -713,33 +702,83 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       latestFingerprint: null,
       lastShellOutAtMs: null,
       repoGitRoot: null,
+      observationSetupPromise: null,
+      observationSetupComplete: false,
+      closed: false,
     };
 
     this.workspaceTargets.set(cwd, target);
+    return target;
+  }
 
-    try {
-      await this.requestWorkspaceSnapshot(target, {
+  private scheduleInitialWorkspaceRefresh(target: WorkspaceGitTarget): void {
+    queueMicrotask(() => {
+      if (!this.isActiveObservedWorkspaceTarget(target) || target.latestSnapshot) {
+        return;
+      }
+      void this.refreshWorkspaceTarget(target, {
         force: false,
         includeGitHub: true,
         reason: "initial",
-        notify: false,
+        notify: true,
       });
+    });
+  }
 
-      const gitDir = await this.deps.resolveAbsoluteGitDir(cwd);
+  private scheduleWorkspaceObservationSetup(target: WorkspaceGitTarget): void {
+    if (
+      target.observationSetupComplete ||
+      target.observationSetupPromise ||
+      !this.isActiveObservedWorkspaceTarget(target)
+    ) {
+      return;
+    }
+
+    target.observationSetupPromise = Promise.resolve()
+      .then(() => this.setupWorkspaceObservation(target))
+      .catch((error) => {
+        this.logger.warn(
+          { err: error, cwd: target.cwd },
+          "Failed to set up workspace git observation",
+        );
+      })
+      .finally(() => {
+        target.observationSetupPromise = null;
+      });
+  }
+
+  private async setupWorkspaceObservation(target: WorkspaceGitTarget): Promise<void> {
+    try {
+      const gitDir = await this.deps.resolveAbsoluteGitDir(target.cwd);
+      if (!this.isActiveObservedWorkspaceTarget(target)) {
+        return;
+      }
       if (!gitDir) {
-        return target;
+        target.observationSetupComplete = true;
+        return;
       }
 
       const repoGitRoot = await this.resolveWorkspaceGitRefsRoot(gitDir);
+      if (!this.isActiveObservedWorkspaceTarget(target)) {
+        return;
+      }
       target.repoGitRoot = repoGitRoot;
       this.startWorkspaceWatchers(target, gitDir, repoGitRoot);
       await this.ensureRepoTarget(target);
-      return target;
+      if (this.isActiveObservedWorkspaceTarget(target)) {
+        target.observationSetupComplete = true;
+      }
     } catch (error) {
-      this.closeWorkspaceTarget(target);
-      this.workspaceTargets.delete(cwd);
       throw error;
     }
+  }
+
+  private isActiveObservedWorkspaceTarget(target: WorkspaceGitTarget): boolean {
+    return (
+      !target.closed &&
+      target.listeners.size > 0 &&
+      this.workspaceTargets.get(target.cwd) === target
+    );
   }
 
   private async createWorkingTreeWatchTarget(cwd: string): Promise<WorkingTreeWatchTarget> {
@@ -862,7 +901,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private async ensureRepoTarget(workspaceTarget: WorkspaceGitTarget): Promise<void> {
     const repoGitRoot = workspaceTarget.repoGitRoot;
-    if (!repoGitRoot) {
+    if (!repoGitRoot || !this.isActiveObservedWorkspaceTarget(workspaceTarget)) {
       return;
     }
 
@@ -873,6 +912,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     const hasOrigin = await this.deps.hasOriginRemote(workspaceTarget.cwd);
+    if (!this.isActiveObservedWorkspaceTarget(workspaceTarget)) {
+      return;
+    }
     if (!hasOrigin) {
       return;
     }
@@ -904,7 +946,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       typeof targetOrCwd === "string"
         ? this.workspaceTargets.get(normalizeWorkspaceId(targetOrCwd))
         : targetOrCwd;
-    if (!target) {
+    if (!target || target.closed || this.workspaceTargets.get(target.cwd) !== target) {
       return;
     }
 
@@ -913,6 +955,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     target.debounceTimer = setTimeout(() => {
+      if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+        return;
+      }
       target.debounceTimer = null;
       void this.refreshWorkspaceTarget(target, {
         force: options?.force === true,
@@ -926,6 +971,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private startWorkspaceSubscriptionTimers(target: WorkspaceGitTarget): void {
     if (!target.selfHealTimer) {
       target.selfHealTimer = setInterval(() => {
+        this.scheduleWorkspaceObservationSetup(target);
         this.getSnapshot(target.cwd, { reason: "self-heal-git" }).catch((error) => {
           this.logger.warn(
             { err: error, cwd: target.cwd, reason: "self-heal-git" },
@@ -965,6 +1011,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       cwd: target.cwd,
       headRef,
       onStatus: () => {
+        if (!this.isActiveObservedWorkspaceTarget(target)) {
+          return;
+        }
         void this.refreshWorkspaceTarget(target, {
           force: false,
           includeGitHub: true,
@@ -1137,6 +1186,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
   ): Promise<void> {
+    if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+      return;
+    }
     try {
       await this.requestWorkspaceSnapshot(target, request);
     } catch (error) {
@@ -1397,6 +1449,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private closeWorkspaceTarget(target: WorkspaceGitTarget): void {
+    target.closed = true;
     if (target.debounceTimer) {
       clearTimeout(target.debounceTimer);
       target.debounceTimer = null;

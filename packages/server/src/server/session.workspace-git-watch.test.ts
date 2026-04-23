@@ -9,6 +9,7 @@ import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
+import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 
 function createWorkspaceRuntimeSnapshot(
   cwd: string,
@@ -68,7 +69,7 @@ function createSessionForWorkspaceGitWatchTests(): {
   projects: Map<string, ReturnType<typeof createPersistedProjectRecord>>;
   workspaces: Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>;
   workspaceGitService: WorkspaceGitService & {
-    subscribe: ReturnType<typeof vi.fn>;
+    registerWorkspace: ReturnType<typeof vi.fn>;
     peekSnapshot: ReturnType<typeof vi.fn>;
     getSnapshot: ReturnType<typeof vi.fn>;
     refresh: ReturnType<typeof vi.fn>;
@@ -99,7 +100,8 @@ function createSessionForWorkspaceGitWatchTests(): {
     error: vi.fn(),
   };
   const workspaceGitService = {
-    subscribe: vi.fn(async (params: { cwd: string }, listener: WorkspaceGitListener) => {
+    ...createNoopWorkspaceGitService(),
+    registerWorkspace: vi.fn((params: { cwd: string }, listener: WorkspaceGitListener) => {
       const unsubscribe = vi.fn();
       subscriptions.push({
         params,
@@ -107,7 +109,6 @@ function createSessionForWorkspaceGitWatchTests(): {
         unsubscribe,
       });
       return {
-        initial: createWorkspaceRuntimeSnapshot(params.cwd),
         unsubscribe,
       };
     }),
@@ -186,7 +187,7 @@ function createSessionForWorkspaceGitWatchTests(): {
       }),
       dispose: () => {},
     } as any,
-    workspaceGitService: workspaceGitService as any,
+    workspaceGitService,
     mcpBaseUrl: null,
     stt: null,
     tts: null,
@@ -200,7 +201,7 @@ function createSessionForWorkspaceGitWatchTests(): {
     emitted,
     projects,
     workspaces,
-    workspaceGitService: workspaceGitService as any,
+    workspaceGitService,
     subscriptions,
   };
 }
@@ -275,9 +276,9 @@ describe("workspace git watch targets", () => {
 
     sessionAny.buildWorkspaceDescriptorMap = async () => new Map([[descriptor.id, descriptor]]);
 
-    await sessionAny.syncWorkspaceGitWatchTarget("/tmp/repo", { isGit: true });
+    sessionAny.syncWorkspaceGitObserver("/tmp/repo", { isGit: true });
 
-    expect(workspaceGitService.subscribe).toHaveBeenCalledWith(
+    expect(workspaceGitService.registerWorkspace).toHaveBeenCalledWith(
       { cwd: "/tmp/repo" },
       expect.any(Function),
     );
@@ -334,7 +335,7 @@ describe("workspace git watch targets", () => {
       lastEmittedByWorkspaceId: new Map(),
     };
 
-    await sessionAny.syncWorkspaceGitWatchTarget("/tmp/repo", { isGit: true });
+    sessionAny.syncWorkspaceGitObserver("/tmp/repo", { isGit: true });
     emitted.length = 0;
 
     subscriptions[0]?.listener(
@@ -369,7 +370,7 @@ describe("workspace git watch targets", () => {
       error: null,
       requestId: "subscription:/tmp/repo",
     });
-    expect(workspaceGitService.subscribe).toHaveBeenCalledWith(
+    expect(workspaceGitService.registerWorkspace).toHaveBeenCalledWith(
       { cwd: "/tmp/repo" },
       expect.any(Function),
     );
@@ -397,7 +398,7 @@ describe("workspace git watch targets", () => {
       lastEmittedByWorkspaceId: new Map(),
     };
 
-    await sessionAny.syncWorkspaceGitWatchTarget("/tmp/repo", { isGit: true });
+    sessionAny.syncWorkspaceGitObserver("/tmp/repo", { isGit: true });
     emitted.length = 0;
 
     subscriptions[0]?.listener(

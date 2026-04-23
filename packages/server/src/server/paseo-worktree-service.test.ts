@@ -236,8 +236,7 @@ function createGitHubServiceStub(): GitHubService {
 
 function createWorkspaceGitServiceStub(): WorkspaceGitService {
   return {
-    subscribe: async (params) => ({
-      initial: createWorkspaceGitSnapshot(params.cwd),
+    registerWorkspace: () => ({
       unsubscribe: () => {},
     }),
     peekSnapshot: (cwd) => createWorkspaceGitSnapshot(cwd),

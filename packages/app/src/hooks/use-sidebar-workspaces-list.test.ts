@@ -85,6 +85,17 @@ function DisabledRenderCountProbe({
   return null;
 }
 
+function HookResultProbe({
+  onResult,
+  serverId,
+}: {
+  onResult: (result: ReturnType<typeof useSidebarWorkspacesList>) => void;
+  serverId: string;
+}): null {
+  onResult(useSidebarWorkspacesList({ serverId }));
+  return null;
+}
+
 describe("applyStoredOrdering", () => {
   it("keeps unknown items on the baseline while applying stored order", () => {
     const result = applyStoredOrdering({
@@ -206,6 +217,7 @@ describe("useSidebarWorkspacesList", () => {
     act(() => {
       getHostRuntimeStore().syncHosts([]);
       useSessionStore.getState().clearSession("srv-disabled");
+      useSessionStore.getState().clearSession("srv-loading");
       useSidebarOrderStore.setState({
         projectOrderByServerId: {},
         workspaceOrderByServerAndProject: {},
@@ -232,6 +244,30 @@ describe("useSidebarWorkspacesList", () => {
 
     expect(useSidebarOrderStore.getState().projectOrderByServerId).toEqual({});
     expect(useSidebarOrderStore.getState().workspaceOrderByServerAndProject).toEqual({});
+  });
+
+  it("keeps the sidebar in initial load until workspace hydration succeeds", async () => {
+    const onResult = vi.fn();
+
+    act(() => {
+      useSessionStore.getState().initializeSession("srv-loading", null as unknown as DaemonClient);
+    });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(React.createElement(HookResultProbe, { serverId: "srv-loading", onResult }));
+    });
+
+    expect(onResult).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        projects: [],
+        isLoading: true,
+        isInitialLoad: true,
+      }),
+    );
   });
 
   it("does not subscribe to order updates while disabled", async () => {

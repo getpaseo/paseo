@@ -295,6 +295,33 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     service.dispose();
   });
 
+  test("registerWorkspace returns a subscription without waiting for a cold snapshot", async () => {
+    const checkoutStatusDeferred = createDeferred<CheckoutStatusGit>();
+    const getCheckoutStatus = vi.fn(async () => checkoutStatusDeferred.promise);
+    const service = createService({ getCheckoutStatus });
+    const listener = vi.fn();
+
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
+
+    expect(subscription).toEqual({ unsubscribe: expect.any(Function) });
+    expect(getCheckoutStatus).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
+    expect(service.peekSnapshot("/tmp/repo")).toBeNull();
+
+    await flushPromises();
+
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    expect(service.peekSnapshot("/tmp/repo")).toBeNull();
+
+    checkoutStatusDeferred.resolve(createCheckoutStatus("/tmp/repo"));
+
+    await expect(service.getSnapshot("/tmp/repo")).resolves.toEqual(createSnapshot("/tmp/repo"));
+    expect(service.peekSnapshot("/tmp/repo")).toEqual(createSnapshot("/tmp/repo"));
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("forced getSnapshot bypasses the internal min-gap and re-shells", async () => {
     let nowMs = 0;
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
@@ -315,8 +342,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   test("forced getSnapshot emits even when the fingerprint matches", async () => {
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
     const service = createService({ getCheckoutStatus });
+    await service.getSnapshot("/tmp/repo");
+
     const listener = vi.fn();
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
 
     await service.getSnapshot("/tmp/repo", { force: true, reason: "test" });
 
@@ -336,8 +365,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
+    await service.getSnapshot("/tmp/repo");
+
     const listener = vi.fn();
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
 
     nowMs = 3_000;
     await service.refresh("/tmp/repo");
@@ -566,7 +597,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getPullRequestStatus,
       now: () => new Date(nowMs),
     });
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    await flushPromises();
 
     nowMs = 60_000;
     await vi.advanceTimersByTimeAsync(60_000);
@@ -579,6 +611,103 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     });
 
     subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("self-heal retries workspace observation setup while a listener remains active", async () => {
+    let nowMs = 0;
+    const resolveAbsoluteGitDir = vi
+      .fn<() => Promise<string | null>>()
+      .mockRejectedValueOnce(new Error("git dir temporarily unavailable"))
+      .mockResolvedValue("/tmp/repo/.git");
+    const watch = vi.fn(() => createWatcher() as never);
+    const service = createService({
+      resolveAbsoluteGitDir,
+      watch,
+      now: () => new Date(nowMs),
+    });
+
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    await flushPromises();
+
+    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
+    expect(watch).not.toHaveBeenCalled();
+
+    nowMs = 60_000;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await flushPromises();
+
+    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(2);
+    expect(resolveAbsoluteGitDir).toHaveBeenLastCalledWith("/tmp/repo");
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("stale workspace watcher callbacks do not refresh after unsubscribe", async () => {
+    const watchCallbacks: Array<() => void> = [];
+    const watch = vi.fn(
+      (_watchPath: string, _options: { recursive: boolean }, callback: () => void) => {
+        watchCallbacks.push(callback);
+        return createWatcher() as never;
+      },
+    );
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService({
+      getCheckoutStatus,
+      resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
+      watch,
+    });
+
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(watchCallbacks.length).toBeGreaterThan(0);
+    });
+    const callsBeforeStaleCallback = getCheckoutStatus.mock.calls.length;
+
+    subscription.unsubscribe();
+    watchCallbacks[0]?.();
+    await vi.advanceTimersByTimeAsync(500);
+    await flushPromises();
+
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(callsBeforeStaleCallback);
+
+    service.dispose();
+  });
+
+  test("stale GitHub poll callbacks do not refresh after unsubscribe", async () => {
+    let pollStatus: (() => void) | null = null;
+    const pollUnsubscribe = vi.fn();
+    const github = {
+      ...createGitHubServiceStub(),
+      retainCurrentPullRequestStatusPoll: vi.fn((options: { onStatus: () => void }) => {
+        pollStatus = options.onStatus;
+        return { unsubscribe: pollUnsubscribe };
+      }),
+    };
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService({
+      getCheckoutStatus,
+      github,
+    });
+
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(github.retainCurrentPullRequestStatusPoll).toHaveBeenCalledTimes(1);
+    });
+    const callsBeforeStaleCallback = getCheckoutStatus.mock.calls.length;
+
+    subscription.unsubscribe();
+    pollStatus?.();
+    await flushPromises();
+
+    expect(pollUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(callsBeforeStaleCallback);
+
     service.dispose();
   });
 
@@ -611,7 +740,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       github,
       now: () => new Date(nowMs),
     });
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    await flushPromises();
 
     nowMs = 20_000;
     await vi.advanceTimersByTimeAsync(20_000);
@@ -643,7 +773,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       github,
     });
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    await flushPromises();
 
     expect(retainCurrentPullRequestStatusPoll).not.toHaveBeenCalled();
 
@@ -658,8 +789,9 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    const first = await service.subscribe({ cwd: "/tmp/repo" }, vi.fn());
-    const second = await service.subscribe({ cwd: "/tmp/repo/." }, vi.fn());
+    const first = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const second = service.registerWorkspace({ cwd: "/tmp/repo/." }, vi.fn());
+    await flushPromises();
 
     nowMs = 60_000;
     await vi.advanceTimersByTimeAsync(60_000);
@@ -679,14 +811,14 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
 
     subscription.unsubscribe();
     nowMs = 60_000;
     await vi.advanceTimersByTimeAsync(60_000);
     await flushPromises();
 
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(0);
 
     service.dispose();
   });
@@ -698,14 +830,14 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    await service.subscribe({ cwd: "/tmp/repo" }, vi.fn());
+    service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
 
     service.dispose();
     nowMs = 60_000;
     await vi.advanceTimersByTimeAsync(60_000);
     await flushPromises();
 
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(0);
   });
 
   test("self-heal poll coalesces with a concurrent direct getSnapshot call", async () => {
@@ -719,7 +851,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getCheckoutStatus,
       now: () => new Date(nowMs),
     });
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    await flushPromises();
 
     nowMs = 60_000;
     await vi.advanceTimersByTimeAsync(60_000);

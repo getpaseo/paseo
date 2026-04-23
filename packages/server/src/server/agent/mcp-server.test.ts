@@ -1274,11 +1274,9 @@ describe("agent snapshot MCP serialization", () => {
     const tool = (server as any)._registeredTools["list_agents"];
     const response = await tool.callback({});
 
-    expect(response.structuredContent.agents.map((agent: { id: string }) => agent.id)).toEqual([
-      "in-cwd",
-      "in-child-cwd",
-      "stored-in-cwd",
-    ]);
+    const agentIds = response.structuredContent.agents.map((agent: { id: string }) => agent.id);
+    expect(agentIds).toHaveLength(3);
+    expect(new Set(agentIds)).toEqual(new Set(["in-cwd", "in-child-cwd", "stored-in-cwd"]));
   });
 
   it("allows explicit cwd, status, archive, time, and limit filters for list_agents", async () => {

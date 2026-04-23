@@ -217,7 +217,7 @@ import { killTerminalsUnderPath as killWorktreeTerminalsUnderPath } from "./pase
 import { toWorktreeWireError } from "./worktree-errors.js";
 
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
-const WORKSPACE_GIT_WATCH_REMOVED_FINGERPRINT = "__removed__";
+const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
 type GitMutationRefreshReason =
   | "commit-changes"
   | "pull"
@@ -326,7 +326,7 @@ type WorkspaceGitWatchTarget = {
   debounceTimer: ReturnType<typeof setTimeout> | null;
   refreshPromise: Promise<void> | null;
   refreshQueued: boolean;
-  latestFingerprint: string | null;
+  latestDescriptorStateKey: string | null;
   lastBranchName: string | null;
 };
 
@@ -897,11 +897,9 @@ export class Session {
     }
   }
 
-  async primeWorkspaceGitWatchFingerprintForWorkspace(
-    workspace: PersistedWorkspaceRecord,
-  ): Promise<void> {
+  async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     const descriptor = await this.describeWorkspaceRecordWithGitData(workspace);
-    await this.primeWorkspaceGitWatchFingerprints([descriptor]);
+    this.syncWorkspaceGitObservers([descriptor]);
   }
 
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
@@ -917,7 +915,7 @@ export class Session {
   }
 
   async warmWorkspaceGitDataForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
-    await this.primeWorkspaceGitWatchFingerprintForWorkspace(workspace);
+    await this.syncWorkspaceGitObserverForWorkspace(workspace);
     await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
   }
 
@@ -4360,9 +4358,9 @@ export class Session {
     this.workspaceGitSubscriptions.delete(normalizedCwd);
   }
 
-  private workspaceGitDescriptorFingerprint(workspace: WorkspaceDescriptorPayload | null): string {
+  private workspaceGitDescriptorStateKey(workspace: WorkspaceDescriptorPayload | null): string {
     if (!workspace) {
-      return WORKSPACE_GIT_WATCH_REMOVED_FINGERPRINT;
+      return WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY;
     }
     return JSON.stringify([
       workspace.name,
@@ -4378,15 +4376,15 @@ export class Session {
     if (!target) {
       return false;
     }
-    const nextFingerprint = this.workspaceGitDescriptorFingerprint(workspace);
-    if (target.latestFingerprint === nextFingerprint) {
+    const nextStateKey = this.workspaceGitDescriptorStateKey(workspace);
+    if (target.latestDescriptorStateKey === nextStateKey) {
       return true;
     }
-    target.latestFingerprint = nextFingerprint;
+    target.latestDescriptorStateKey = nextStateKey;
     return false;
   }
 
-  private rememberWorkspaceGitWatchFingerprint(
+  private rememberWorkspaceGitDescriptorState(
     workspaceId: string,
     workspace: WorkspaceDescriptorPayload | null,
   ): void {
@@ -4394,29 +4392,20 @@ export class Session {
     if (!target) {
       return;
     }
-    target.latestFingerprint = this.workspaceGitDescriptorFingerprint(workspace);
+    target.latestDescriptorStateKey = this.workspaceGitDescriptorStateKey(workspace);
     target.lastBranchName = workspace?.name ?? null;
   }
 
-  private async primeWorkspaceGitWatchFingerprints(
-    workspaces: Iterable<WorkspaceDescriptorPayload>,
-  ): Promise<void> {
+  private syncWorkspaceGitObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void {
     for (const workspace of workspaces) {
-      const persistedWorkspace = await this.workspaceRegistry.get(workspace.id);
-      if (!persistedWorkspace) {
-        continue;
-      }
-      await this.syncWorkspaceGitWatchTarget(persistedWorkspace.cwd, {
+      this.syncWorkspaceGitObserver(workspace.workspaceDirectory, {
         isGit: workspace.projectKind === "git",
       });
-      this.rememberWorkspaceGitWatchFingerprint(persistedWorkspace.cwd, workspace);
+      this.rememberWorkspaceGitDescriptorState(workspace.workspaceDirectory, workspace);
     }
   }
 
-  private async syncWorkspaceGitWatchTarget(
-    cwd: string,
-    options: { isGit: boolean },
-  ): Promise<void> {
+  private syncWorkspaceGitObserver(cwd: string, options: { isGit: boolean }): void {
     const normalizedCwd = normalizePersistedWorkspaceId(cwd);
     if (!options.isGit) {
       this.removeWorkspaceGitSubscription(normalizedCwd);
@@ -4427,7 +4416,7 @@ export class Session {
       return;
     }
 
-    const subscription = await this.workspaceGitService.subscribe(
+    const subscription = this.workspaceGitService.registerWorkspace(
       { cwd: normalizedCwd },
       (snapshot) => {
         void this.emitWorkspaceUpdateForCwd(normalizedCwd);
@@ -6523,7 +6512,7 @@ export class Session {
           this.onBranchChanged(workspaceId, watchTarget.lastBranchName, newBranchName);
         }
       }
-      this.rememberWorkspaceGitWatchFingerprint(workspaceId, nextWorkspace);
+      this.rememberWorkspaceGitDescriptorState(workspaceId, nextWorkspace);
 
       if (!nextWorkspace) {
         subscription.lastEmittedByWorkspaceId.delete(workspaceId);
@@ -6694,7 +6683,7 @@ export class Session {
       }
 
       const payload = await this.listFetchWorkspacesEntries(request);
-      await this.primeWorkspaceGitWatchFingerprints(payload.entries);
+      this.syncWorkspaceGitObservers(payload.entries);
       this.sessionLogger.debug(
         {
           requestId: request.requestId,

@@ -10,6 +10,7 @@ import type {
   SessionOutboundMessage,
 } from "../shared/messages.js";
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
+import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -110,67 +111,6 @@ function makeManagedAgent(input: {
 
 function agentIdsFromEntries(entries: Array<{ agent: Pick<AgentSnapshotPayload, "id"> }>) {
   return entries.map((entry) => entry.agent.id);
-}
-
-function createNoopWorkspaceGitService() {
-  return {
-    subscribe: async (params: { cwd: string }) => ({
-      initial: {
-        cwd: params.cwd,
-        git: {
-          isGit: false,
-          repoRoot: null,
-          mainRepoRoot: null,
-          currentBranch: null,
-          remoteUrl: null,
-          isPaseoOwnedWorktree: false,
-          isDirty: null,
-          aheadBehind: null,
-          aheadOfOrigin: null,
-          behindOfOrigin: null,
-          diffStat: null,
-        },
-        github: {
-          featuresEnabled: false,
-          pullRequest: null,
-          error: null,
-        },
-      },
-      unsubscribe: () => {},
-    }),
-    peekSnapshot: (_cwd: string) => null,
-    getSnapshot: async (cwd: string) => ({
-      cwd,
-      git: {
-        isGit: false,
-        repoRoot: null,
-        mainRepoRoot: null,
-        currentBranch: null,
-        remoteUrl: null,
-        isPaseoOwnedWorktree: false,
-        isDirty: null,
-        aheadBehind: null,
-        aheadOfOrigin: null,
-        behindOfOrigin: null,
-        diffStat: null,
-      },
-      github: {
-        featuresEnabled: false,
-        pullRequest: null,
-        error: null,
-      },
-    }),
-    resolveRepoRemoteUrl: async () => null,
-    resolveRepoRoot: async (cwd: string) => cwd,
-    resolveDefaultBranch: async () => "main",
-    refresh: async () => {},
-    requestWorkingTreeWatch: async (cwd: string) => ({
-      repoRoot: cwd,
-      unsubscribe: () => {},
-    }),
-    scheduleRefreshForCwd: () => {},
-    dispose: () => {},
-  };
 }
 
 function createWorkspaceRuntimeSnapshot(
@@ -301,7 +241,7 @@ function createSessionForWorkspaceTests(
       }),
       dispose: () => {},
     } as any,
-    workspaceGitService: (options.workspaceGitService ?? createNoopWorkspaceGitService()) as any,
+    workspaceGitService: options.workspaceGitService ?? createNoopWorkspaceGitService(),
     mcpBaseUrl: null,
     stt: null,
     tts: null,
@@ -593,7 +533,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      workspaceGitService: createNoopWorkspaceGitService() as any,
+      workspaceGitService: createNoopWorkspaceGitService(),
       mcpBaseUrl: null,
       stt: null,
       tts: null,
@@ -745,7 +685,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      workspaceGitService: createNoopWorkspaceGitService() as any,
+      workspaceGitService: createNoopWorkspaceGitService(),
       mcpBaseUrl: null,
       stt: null,
       tts: null,
@@ -924,7 +864,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      workspaceGitService: createNoopWorkspaceGitService() as any,
+      workspaceGitService: createNoopWorkspaceGitService(),
       mcpBaseUrl: null,
       stt: null,
       tts: null,
@@ -1066,7 +1006,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      workspaceGitService: createNoopWorkspaceGitService() as any,
+      workspaceGitService: createNoopWorkspaceGitService(),
       mcpBaseUrl: null,
       stt: null,
       tts: null,
@@ -1683,7 +1623,7 @@ describe("workspace aggregation", () => {
         }),
         dispose: () => {},
       } as any,
-      workspaceGitService: createNoopWorkspaceGitService() as any,
+      workspaceGitService: createNoopWorkspaceGitService(),
       mcpBaseUrl: null,
       stt: null,
       tts: null,
@@ -2646,8 +2586,7 @@ describe("workspace aggregation", () => {
     });
     const workspaceGitService = createNoopWorkspaceGitService();
     workspaceGitService.peekSnapshot = vi.fn(() => runtimeSnapshot);
-    workspaceGitService.subscribe = vi.fn(async () => ({
-      initial: runtimeSnapshot,
+    workspaceGitService.registerWorkspace = vi.fn(() => ({
       unsubscribe: () => {},
     }));
 
@@ -2726,6 +2665,64 @@ describe("workspace aggregation", () => {
         },
       }),
     ]);
+  });
+
+  test("fetch_workspaces_response emits before cold registration-triggered git work starts", async () => {
+    const events: string[] = [];
+    const emitted: Array<{ type: string; payload: any }> = [];
+    const workspaceGitService = createNoopWorkspaceGitService();
+    const getSnapshot = vi.fn(async (cwd: string) => {
+      events.push(`git:${cwd}`);
+      return createWorkspaceRuntimeSnapshot(cwd);
+    });
+    workspaceGitService.getSnapshot = getSnapshot;
+    workspaceGitService.registerWorkspace = vi.fn((params: { cwd: string }) => {
+      queueMicrotask(() => {
+        void getSnapshot(params.cwd);
+      });
+      return {
+        unsubscribe: () => {},
+      };
+    });
+    const session = createSessionForWorkspaceTests({
+      workspaceGitService,
+    }) as any;
+    const project = createPersistedProjectRecord({
+      projectId: "proj-fetch-boundary",
+      rootPath: "/tmp/repo",
+      kind: "git",
+      displayName: "repo",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-fetch-boundary",
+      projectId: project.projectId,
+      cwd: "/tmp/repo",
+      kind: "local_checkout",
+      displayName: "main",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    });
+
+    session.emit = (message: any) => {
+      if (message.type === "fetch_workspaces_response") {
+        events.push("response");
+      }
+      emitted.push(message);
+    };
+    session.listAgentPayloads = async () => [];
+    session.projectRegistry.list = async () => [project];
+    session.workspaceRegistry.list = async () => [workspace];
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "req-fetch-workspaces-boundary",
+      subscribe: {},
+    });
+
+    expect(emitted.find((message) => message.type === "fetch_workspaces_response")).toBeDefined();
+    expect(events[0]).toBe("response");
   });
 
   test("workspace_update includes updated runtime fields", async () => {
@@ -2865,6 +2862,7 @@ describe("workspace aggregation", () => {
       projectId: gitProject.projectId,
       projectDisplayName: gitProject.displayName,
       projectRootPath: gitProject.rootPath,
+      workspaceDirectory: gitWorkspace.cwd,
       projectKind: gitProject.kind,
       workspaceKind: gitWorkspace.kind,
       name: "main",
@@ -2881,6 +2879,7 @@ describe("workspace aggregation", () => {
       projectId: directoryProject.projectId,
       projectDisplayName: directoryProject.displayName,
       projectRootPath: directoryProject.rootPath,
+      workspaceDirectory: directoryWorkspace.cwd,
       projectKind: directoryProject.kind,
       workspaceKind: directoryWorkspace.kind,
       name: "docs",

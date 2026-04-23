@@ -303,8 +303,7 @@ export function useSidebarWorkspacesList(options?: {
     })();
   }, [connectionStatus, isActive, runtime, serverId]);
 
-  const isLoading =
-    isActive && Boolean(serverId) && connectionStatus === "online" && !hasHydratedWorkspaces;
+  const isLoading = isActive && Boolean(serverId) && !hasHydratedWorkspaces;
   const isInitialLoad = isLoading && projects.length === 0;
   const isRevalidating = false;
 

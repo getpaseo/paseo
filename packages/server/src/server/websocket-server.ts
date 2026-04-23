@@ -1,6 +1,6 @@
 import { WebSocketServer } from "ws";
 import type { Server as HTTPServer } from "http";
-import { join } from "path";
+import { basename, join } from "path";
 import { hostname as getHostname } from "node:os";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -35,7 +35,8 @@ import type {
 } from "./agent/provider-launch-config.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { buildProviderRegistry } from "./agent/provider-registry.js";
-import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { PushService } from "./push/push-service.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
@@ -67,62 +68,68 @@ type WebSocketServerConfig = {
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
 
-function createFallbackWorkspaceGitService(): WorkspaceGitServiceImpl {
+function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
-    subscribe: async ({ cwd }: { cwd: string }) => ({
-      initial: {
-        cwd,
-        git: {
-          isGit: false,
-          repoRoot: null,
-          mainRepoRoot: null,
-          currentBranch: null,
-          remoteUrl: null,
-          isPaseoOwnedWorktree: false,
-          isDirty: null,
-          aheadBehind: null,
-          aheadOfOrigin: null,
-          behindOfOrigin: null,
-          diffStat: null,
-        },
-        github: {
-          featuresEnabled: false,
-          pullRequest: null,
-          error: null,
-        },
-      },
+    cwd,
+    git: {
+      isGit: false,
+      repoRoot: null,
+      mainRepoRoot: null,
+      currentBranch: null,
+      remoteUrl: null,
+      isPaseoOwnedWorktree: false,
+      isDirty: null,
+      baseRef: null,
+      aheadBehind: null,
+      aheadOfOrigin: null,
+      behindOfOrigin: null,
+      hasRemote: false,
+      diffStat: null,
+    },
+    github: {
+      featuresEnabled: false,
+      pullRequest: null,
+      error: null,
+    },
+  };
+}
+
+function createFallbackWorkspaceGitService(): WorkspaceGitService {
+  return {
+    registerWorkspace: () => ({
       unsubscribe: () => {},
     }),
     peekSnapshot: () => null,
-    getSnapshot: async (cwd: string) => ({
-      cwd,
-      git: {
-        isGit: false,
-        repoRoot: null,
-        mainRepoRoot: null,
-        currentBranch: null,
-        remoteUrl: null,
-        isPaseoOwnedWorktree: false,
-        isDirty: null,
-        aheadBehind: null,
-        aheadOfOrigin: null,
-        behindOfOrigin: null,
-        diffStat: null,
-      },
-      github: {
-        featuresEnabled: false,
-        pullRequest: null,
-        error: null,
-      },
-    }),
+    getSnapshot: async (cwd: string) => createFallbackWorkspaceGitSnapshot(cwd),
+    getCheckoutDiff: async () => ({ diff: "" }),
+    validateBranchRef: async () => ({ kind: "not-found" }),
+    hasLocalBranch: async () => false,
+    suggestBranchesForCwd: async () => [],
+    listStashes: async () => [],
+    listWorktrees: async () => [],
+    getWorkspaceGitMetadata: async (cwd: string, options) => {
+      const snapshot = createFallbackWorkspaceGitSnapshot(cwd);
+      return buildWorkspaceGitMetadataFromSnapshot({
+        cwd,
+        directoryName: options?.directoryName ?? basename(cwd),
+        isGit: snapshot.git.isGit,
+        repoRoot: snapshot.git.repoRoot,
+        mainRepoRoot: snapshot.git.mainRepoRoot,
+        currentBranch: snapshot.git.currentBranch,
+        remoteUrl: snapshot.git.remoteUrl,
+      });
+    },
+    resolveRepoRoot: async (cwd: string) => cwd,
+    resolveDefaultBranch: async () => "main",
+    resolveRepoRemoteUrl: async () => null,
     refresh: async () => {},
-    requestWorkingTreeWatch: async (cwd: string) => ({
-      repoRoot: cwd,
+    requestWorkingTreeWatch: async () => ({
+      repoRoot: null,
       unsubscribe: () => {},
     }),
     scheduleRefreshForCwd: () => {},
     dispose: () => {},
-  } as unknown as WorkspaceGitServiceImpl;
+  };
 }
 
 function createNoopProjectRegistry(): ProjectRegistry {
@@ -297,7 +304,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly scheduleService: ScheduleService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: GitHubService;
-  private readonly workspaceGitService: WorkspaceGitServiceImpl;
+  private readonly workspaceGitService: WorkspaceGitService;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly daemonConfigStore: DaemonConfigStore;
@@ -394,7 +401,7 @@ export class VoiceAssistantWebSocketServer {
     getDaemonTcpPort?: () => number | null,
     getDaemonTcpHost?: () => string | null,
     resolveScriptHealth?: (hostname: string) => ScriptHealthState | null,
-    workspaceGitService?: WorkspaceGitServiceImpl,
+    workspaceGitService?: WorkspaceGitService,
     github?: GitHubService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
