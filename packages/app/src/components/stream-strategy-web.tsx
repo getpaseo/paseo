@@ -743,7 +743,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
           ) : null}
           {mountedHistoryRows}
           {boundary.hasMountedHistory && boundary.hasLiveHead && boundary.historyToHeadGap > 0 ? (
-            <div style={{ height: boundary.historyToHeadGap, width: "100%" }} />
+            <HistoryToHeadSpacer height={boundary.historyToHeadGap} />
           ) : null}
           {liveHeadRows}
           {liveAuxiliary}
@@ -788,4 +788,13 @@ export function createWebStreamStrategy(input: CreateWebStreamStrategyInput): St
     },
     getBottomOffset: (metrics) => Math.max(0, metrics.contentHeight - metrics.viewportHeight),
   });
+}
+
+interface HistoryToHeadSpacerProps {
+  height: number;
+}
+
+function HistoryToHeadSpacer({ height }: HistoryToHeadSpacerProps) {
+  const spacerStyle = useMemo(() => ({ height, width: "100%" as const }), [height]);
+  return <div style={spacerStyle} />;
 }

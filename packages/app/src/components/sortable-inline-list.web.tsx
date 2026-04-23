@@ -73,12 +73,15 @@ function SortableItem<T>({
   const scaleTransform = !externalDndContext && isDragging ? "scale(1.01)" : "";
   const combinedTransform = [baseTransform, scaleTransform].filter(Boolean).join(" ");
 
-  const style = {
-    transform: combinedTransform || undefined,
-    transition,
-    opacity: externalDndContext && isDragging ? 0.3 : isDragging ? 0.9 : 1,
-    zIndex: isDragging ? 1000 : 1,
-  };
+  const style = useMemo(
+    () => ({
+      transform: combinedTransform || undefined,
+      transition,
+      opacity: externalDndContext && isDragging ? 0.3 : isDragging ? 0.9 : 1,
+      zIndex: isDragging ? 1000 : 1,
+    }),
+    [combinedTransform, transition, externalDndContext, isDragging],
+  );
 
   const info: DraggableRenderItemInfo<T> = {
     item,

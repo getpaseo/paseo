@@ -112,17 +112,26 @@ const CodeLine = React.memo(function CodeLine({
       </View>
       <Text selectable style={codeLineStyles.lineText}>
         {tokens.map((token, index) => (
-          <Text
+          <CodeLineToken
             key={index}
-            style={{ color: token.style ? (colorMap[token.style] ?? baseColor) : baseColor }}
-          >
-            {token.text}
-          </Text>
+            color={token.style ? (colorMap[token.style] ?? baseColor) : baseColor}
+            text={token.text}
+          />
         ))}
       </Text>
     </View>
   );
 });
+
+interface CodeLineTokenProps {
+  color: string;
+  text: string;
+}
+
+function CodeLineToken({ color, text }: CodeLineTokenProps) {
+  const style = useMemo(() => ({ color }), [color]);
+  return <Text style={style}>{text}</Text>;
+}
 
 const codeLineStyles = StyleSheet.create((theme) => ({
   line: {

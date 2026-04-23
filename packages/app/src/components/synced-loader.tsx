@@ -97,11 +97,8 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
               dotSize={dotSize}
               sequenceIndex={sequenceIndex}
               progress={sharedStepProgress}
-              style={{
-                position: "absolute",
-                left: columnIndex * (dotSize + gap),
-                top: rowIndex * (dotSize + gap),
-              }}
+              left={columnIndex * (dotSize + gap)}
+              top={rowIndex * (dotSize + gap)}
             />
           );
         })}
@@ -115,17 +112,15 @@ function SpinnerDot({
   dotSize,
   sequenceIndex,
   progress,
-  style,
+  left,
+  top,
 }: {
   color: string;
   dotSize: number;
   sequenceIndex: number;
   progress: SharedValue<number>;
-  style: {
-    position: "absolute";
-    left: number;
-    top: number;
-  };
+  left: number;
+  top: number;
 }) {
   const animatedStyle = useAnimatedStyle(() => {
     const headIndex = Math.floor(progress.value) % DOT_COUNT;
@@ -153,10 +148,12 @@ function SpinnerDot({
         height: dotSize,
         borderRadius: dotSize / 2,
         backgroundColor: color,
+        position: "absolute" as const,
+        left,
+        top,
       },
-      style,
     ],
-    [animatedStyle, dotSize, color, style],
+    [animatedStyle, dotSize, color, left, top],
   );
 
   return <Animated.View style={dotStyle} />;

@@ -9,6 +9,8 @@ import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-li
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
+const SCROLL_ENABLED_FLEX_STYLE = { flex: 1 };
+
 export function DraggableList<T>({
   data,
   keyExtractor,
@@ -79,7 +81,8 @@ export function DraggableList<T>({
   }, []);
 
   const showRefreshControl = Boolean(onRefresh) && (!isDragging || Boolean(refreshing));
-  const resolvedContainerStyle = containerStyle ?? (scrollEnabled ? { flex: 1 } : undefined);
+  const resolvedContainerStyle =
+    containerStyle ?? (scrollEnabled ? SCROLL_ENABLED_FLEX_STYLE : undefined);
   const shouldShowRefreshControl = showRefreshControl && !nestable;
   const ListComponent: typeof DraggableFlatList = (
     nestable ? (NestableDraggableFlatList as any) : DraggableFlatList

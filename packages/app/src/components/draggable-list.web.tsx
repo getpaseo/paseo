@@ -80,12 +80,15 @@ function SortableItem<T>({
   const scaleTransform = isDragging ? "scale(1.02)" : "";
   const combinedTransform = [baseTransform, scaleTransform].filter(Boolean).join(" ");
 
-  const style = {
-    transform: combinedTransform || undefined,
-    transition,
-    opacity: isDragging ? 0.9 : 1,
-    zIndex: isDragging ? 1000 : 1,
-  };
+  const style = useMemo(
+    () => ({
+      transform: combinedTransform || undefined,
+      transition,
+      opacity: isDragging ? 0.9 : 1,
+      zIndex: isDragging ? 1000 : 1,
+    }),
+    [combinedTransform, transition, isDragging],
+  );
 
   const info: DraggableRenderItemInfo<T> = {
     item,
