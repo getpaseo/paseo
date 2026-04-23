@@ -635,12 +635,12 @@ export async function createPaseoDaemon(
               return;
             }
             const callerAgentIdRaw = req.query.callerAgentId;
-            const callerAgentId =
-              typeof callerAgentIdRaw === "string"
-                ? callerAgentIdRaw
-                : Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string"
-                  ? callerAgentIdRaw[0]
-                  : undefined;
+            let callerAgentId: string | undefined;
+            if (typeof callerAgentIdRaw === "string") {
+              callerAgentId = callerAgentIdRaw;
+            } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
+              callerAgentId = callerAgentIdRaw[0];
+            }
             transport = await createAgentMcpTransport(callerAgentId);
           }
 

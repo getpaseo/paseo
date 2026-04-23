@@ -238,6 +238,66 @@ const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
 const MIN_VERSION_FLEXIBLE_EDITOR_IDS = "0.1.50";
 
+function errorToFriendlyMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
+}
+
+function resolveSubscriptionId(
+  subscribe: unknown,
+  requestedSubscriptionId: string | undefined,
+): string | null {
+  if (!subscribe) return null;
+  if (requestedSubscriptionId && requestedSubscriptionId.length > 0) {
+    return requestedSubscriptionId;
+  }
+  return uuidv4();
+}
+
+function diffChangeTypeFor(file: { isNew?: boolean; isDeleted?: boolean }): "A" | "D" | "M" {
+  if (file.isNew) return "A";
+  if (file.isDeleted) return "D";
+  return "M";
+}
+
+function buildWorkspaceCheckout(
+  workspace: PersistedWorkspaceRecord,
+  project: PersistedProjectRecord,
+): ProjectPlacementPayload["checkout"] {
+  if (project.kind !== "git") {
+    return {
+      cwd: workspace.cwd,
+      isGit: false,
+      currentBranch: null,
+      remoteUrl: null,
+      worktreeRoot: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    };
+  }
+  if (workspace.kind === "worktree") {
+    return {
+      cwd: workspace.cwd,
+      isGit: true,
+      currentBranch: workspace.displayName,
+      remoteUrl: null,
+      worktreeRoot: workspace.cwd,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: project.rootPath,
+    };
+  }
+  return {
+    cwd: workspace.cwd,
+    isGit: true,
+    currentBranch: workspace.displayName,
+    remoteUrl: null,
+    worktreeRoot: workspace.cwd,
+    isPaseoOwnedWorktree: false,
+    mainRepoRoot: null,
+  };
+}
+
 function isAppVersionAtLeast(appVersion: string | null, minVersion: string): boolean {
   if (!appVersion) return false;
   // Strip prerelease suffix: "0.1.45-beta.4" -> "0.1.45"
@@ -1057,13 +1117,7 @@ export class Session {
       );
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to start agent run");
-      const message =
-        error instanceof Error
-          ? error.message
-          : typeof error === "string"
-            ? error
-            : "Unknown error";
-      return { ok: false, error: message };
+      return { ok: false, error: errorToFriendlyMessage(error) };
     }
 
     void (async () => {
@@ -1082,8 +1136,7 @@ export class Session {
   }
 
   private handleAgentRunError(agentId: string, error: unknown, context: string): void {
-    const message =
-      error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+    const message = errorToFriendlyMessage(error);
     this.sessionLogger.error({ err: error, agentId, context }, `${context} for agent ${agentId}`);
     this.emit({
       type: "activity_log",
@@ -1408,36 +1461,7 @@ export class Session {
     if (!project) {
       throw new Error(`Project not found for workspace ${workspace.workspaceId}`);
     }
-    const checkout =
-      project.kind !== "git"
-        ? {
-            cwd: workspace.cwd,
-            isGit: false as const,
-            currentBranch: null,
-            remoteUrl: null,
-            worktreeRoot: null,
-            isPaseoOwnedWorktree: false as const,
-            mainRepoRoot: null,
-          }
-        : workspace.kind === "worktree"
-          ? {
-              cwd: workspace.cwd,
-              isGit: true as const,
-              currentBranch: workspace.displayName,
-              remoteUrl: null,
-              worktreeRoot: workspace.cwd,
-              isPaseoOwnedWorktree: true as const,
-              mainRepoRoot: project.rootPath,
-            }
-          : {
-              cwd: workspace.cwd,
-              isGit: true as const,
-              currentBranch: workspace.displayName,
-              remoteUrl: null,
-              worktreeRoot: workspace.cwd,
-              isPaseoOwnedWorktree: false as const,
-              mainRepoRoot: null,
-            };
+    const checkout = buildWorkspaceCheckout(workspace, project);
     return {
       projectKey: project.projectId,
       projectName: project.displayName,
@@ -3538,7 +3562,7 @@ export class Session {
         ? [
             "Files changed:",
             ...diff.structured.map((file) => {
-              const changeType = file.isNew ? "A" : file.isDeleted ? "D" : "M";
+              const changeType = diffChangeTypeFor(file);
               const status = file.status && file.status !== "ok" ? ` [${file.status}]` : "";
               return `${changeType}\t${file.path}\t(+${file.additions} -${file.deletions})${status}`;
             }),
@@ -3604,7 +3628,7 @@ export class Session {
         ? [
             "Files changed:",
             ...diff.structured.map((file) => {
-              const changeType = file.isNew ? "A" : file.isDeleted ? "D" : "M";
+              const changeType = diffChangeTypeFor(file);
               const status = file.status && file.status !== "ok" ? ` [${file.status}]` : "";
               return `${changeType}\t${file.path}\t(+${file.additions} -${file.deletions})${status}`;
             }),
@@ -6569,11 +6593,7 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "fetch_agents_request" }>,
   ): Promise<void> {
     const requestedSubscriptionId = request.subscribe?.subscriptionId?.trim();
-    const subscriptionId = request.subscribe
-      ? requestedSubscriptionId && requestedSubscriptionId.length > 0
-        ? requestedSubscriptionId
-        : uuidv4()
-      : null;
+    const subscriptionId = resolveSubscriptionId(request.subscribe, requestedSubscriptionId);
 
     try {
       if (subscriptionId) {
@@ -6657,11 +6677,7 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "fetch_workspaces_request" }>,
   ): Promise<void> {
     const requestedSubscriptionId = request.subscribe?.subscriptionId?.trim();
-    const subscriptionId = request.subscribe
-      ? requestedSubscriptionId && requestedSubscriptionId.length > 0
-        ? requestedSubscriptionId
-        : uuidv4()
-      : null;
+    const subscriptionId = resolveSubscriptionId(request.subscribe, requestedSubscriptionId);
 
     try {
       this.sessionLogger.debug(
@@ -7297,19 +7313,13 @@ export class Session {
       try {
         await this.agentManager.waitForAgentRunStart(agentId, { signal: startAbort.signal });
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : typeof error === "string"
-              ? error
-              : "Unknown error";
         this.emit({
           type: "send_agent_message_response",
           payload: {
             requestId: msg.requestId,
             agentId,
             accepted: false,
-            error: message,
+            error: errorToFriendlyMessage(error),
           },
         });
         return;
@@ -7327,19 +7337,13 @@ export class Session {
         },
       });
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : typeof error === "string"
-            ? error
-            : "Unknown error";
       this.emit({
         type: "send_agent_message_response",
         payload: {
           requestId: msg.requestId,
           agentId: resolved.agentId,
           accepted: false,
-          error: message,
+          error: errorToFriendlyMessage(error),
         },
       });
     }
@@ -7383,12 +7387,14 @@ export class Session {
         return;
       }
       const final = this.buildStoredAgentPayload(record);
-      const status =
-        record.attentionReason === "permission"
-          ? "permission"
-          : record.lastStatus === "error"
-            ? "error"
-            : "idle";
+      let status: "permission" | "error" | "idle";
+      if (record.attentionReason === "permission") {
+        status = "permission";
+      } else if (record.lastStatus === "error") {
+        status = "error";
+      } else {
+        status = "idle";
+      }
       const error = resolveWaitForFinishError({ status, final });
       this.emit({
         type: "wait_for_finish_response",
@@ -7415,11 +7421,14 @@ export class Session {
         throw new Error(`Agent ${agentId} disappeared while waiting`);
       }
 
-      let status: "permission" | "error" | "idle" = result.permission
-        ? "permission"
-        : result.status === "error"
-          ? "error"
-          : "idle";
+      let status: "permission" | "error" | "idle";
+      if (result.permission) {
+        status = "permission";
+      } else if (result.status === "error") {
+        status = "error";
+      } else {
+        status = "idle";
+      }
       const error = resolveWaitForFinishError({ status, final });
 
       this.emit({
@@ -7431,12 +7440,7 @@ export class Session {
         error instanceof Error &&
         (error.name === "AbortError" || error.message.toLowerCase().includes("aborted"));
       if (!isAbort) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : typeof error === "string"
-              ? error
-              : "Unknown error";
+        const message = errorToFriendlyMessage(error);
         this.sessionLogger.error({ err: error, agentId }, "wait_for_finish_request failed");
         const final = await this.getAgentPayloadById(agentId);
         this.emit({

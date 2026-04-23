@@ -102,24 +102,28 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
       // from sherpa itself instead of trying to clone after generate() returns.
       enableExternalBuffer: false,
     });
-    const rawSamples: Float32Array | null =
-      audio && audio.samples instanceof Float32Array
-        ? audio.samples
-        : audio && Array.isArray(audio.samples)
-          ? Float32Array.from(audio.samples as number[])
-          : null;
+    let rawSamples: Float32Array | null = null;
+    if (audio && audio.samples instanceof Float32Array) {
+      rawSamples = audio.samples;
+    } else if (audio && Array.isArray(audio.samples)) {
+      rawSamples = Float32Array.from(audio.samples as number[]);
+    }
     // Copy to avoid "External buffers are not allowed" when sherpa-onnx
     // returns a Float32Array backed by native memory.
     const samples = rawSamples ? Float32Array.from(rawSamples) : null;
-    const sampleRate: number =
+    let sampleRate: number;
+    if (
       audio &&
       typeof audio.sampleRate === "number" &&
       Number.isFinite(audio.sampleRate) &&
       audio.sampleRate > 0
-        ? audio.sampleRate
-        : typeof this.tts.sampleRate === "number"
-          ? this.tts.sampleRate
-          : 24000;
+    ) {
+      sampleRate = audio.sampleRate;
+    } else if (typeof this.tts.sampleRate === "number") {
+      sampleRate = this.tts.sampleRate;
+    } else {
+      sampleRate = 24000;
+    }
 
     if (!samples) {
       throw new Error("Unexpected sherpa TTS output: missing Float32 samples");

@@ -331,12 +331,14 @@ function normalizeProcessToken(token: string): string {
     return token;
   }
 
-  const quote =
-    token.startsWith('"') && token.endsWith('"')
-      ? '"'
-      : token.startsWith("'") && token.endsWith("'")
-        ? "'"
-        : "";
+  let quote: "'" | '"' | "";
+  if (token.startsWith('"') && token.endsWith('"')) {
+    quote = '"';
+  } else if (token.startsWith("'") && token.endsWith("'")) {
+    quote = "'";
+  } else {
+    quote = "";
+  }
   const rawToken = quote ? token.slice(1, -1) : token;
   if (rawToken.length === 0) {
     return token;

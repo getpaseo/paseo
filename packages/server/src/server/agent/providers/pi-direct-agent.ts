@@ -870,37 +870,20 @@ export class PiDirectAgentSession implements AgentSession {
     error: unknown,
   ): void {
     const turnId = this.currentTurnIdForEvent();
+    const detail = mapToolDetail(toolCall, result);
+    const baseItem = {
+      type: "tool_call" as const,
+      callId: toolCallId,
+      name: toolCall.toolName,
+      detail,
+    };
+    const item =
+      status === "failed" ? { ...baseItem, status, error } : { ...baseItem, status, error: null };
     this.emit({
       type: "timeline",
       provider: PI_PROVIDER,
       turnId,
-      item:
-        status === "running"
-          ? {
-              type: "tool_call",
-              callId: toolCallId,
-              name: toolCall.toolName,
-              status,
-              detail: mapToolDetail(toolCall, result),
-              error: null,
-            }
-          : status === "completed"
-            ? {
-                type: "tool_call",
-                callId: toolCallId,
-                name: toolCall.toolName,
-                status,
-                detail: mapToolDetail(toolCall, result),
-                error: null,
-              }
-            : {
-                type: "tool_call",
-                callId: toolCallId,
-                name: toolCall.toolName,
-                status,
-                detail: mapToolDetail(toolCall, result),
-                error,
-              },
+      item,
     });
   }
 

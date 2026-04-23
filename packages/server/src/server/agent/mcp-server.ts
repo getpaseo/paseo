@@ -340,6 +340,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           })
         : null;
       const resolvedProvider = resolvedProviderModel?.provider ?? callerAgent.provider;
+      let resolvedModel: string | undefined;
+      if (resolvedProviderModel?.model) {
+        resolvedModel = resolvedProviderModel.model;
+      } else if (!hasProviderOverride && callerAgent.config.model) {
+        resolvedModel = callerAgent.config.model;
+      }
       return {
         type: "new-agent" as const,
         config: {
@@ -354,11 +360,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
                 ),
               }
             : {}),
-          ...(resolvedProviderModel?.model
-            ? { model: resolvedProviderModel.model }
-            : !hasProviderOverride && callerAgent.config.model
-              ? { model: callerAgent.config.model }
-              : {}),
+          ...(resolvedModel ? { model: resolvedModel } : {}),
           ...(callerAgent.config.thinkingOptionId
             ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
             : {}),

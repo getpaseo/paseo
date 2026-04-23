@@ -342,12 +342,14 @@ export function coerceTaskNotificationHistoryRecordToSystemMessage(
   }
 
   const normalizedStatus = parsed.status?.toLowerCase() ?? null;
-  const status =
-    normalizedStatus === "failed" || normalizedStatus === "error"
-      ? "failed"
-      : normalizedStatus === "canceled" || normalizedStatus === "cancelled"
-        ? "stopped"
-        : "completed";
+  let status: "failed" | "stopped" | "completed";
+  if (normalizedStatus === "failed" || normalizedStatus === "error") {
+    status = "failed";
+  } else if (normalizedStatus === "canceled" || normalizedStatus === "cancelled") {
+    status = "stopped";
+  } else {
+    status = "completed";
+  }
 
   return {
     type: "system",

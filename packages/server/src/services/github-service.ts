@@ -1667,8 +1667,14 @@ function toCurrentPullRequestStatus(
   const repoIdentity = parseGitHubPullRequestRepo(item.url);
   const mergedAt =
     typeof item.mergedAt === "string" && item.mergedAt.trim().length > 0 ? item.mergedAt : null;
-  const state =
-    mergedAt !== null ? "merged" : item.state.trim().length > 0 ? item.state.toLowerCase() : "";
+  let state: string;
+  if (mergedAt !== null) {
+    state = "merged";
+  } else if (item.state.trim().length > 0) {
+    state = item.state.toLowerCase();
+  } else {
+    state = "";
+  }
   const checks = parseStatusCheckRollup(item.statusCheckRollup);
   return {
     ...(typeof item.number === "number" ? { number: item.number } : {}),

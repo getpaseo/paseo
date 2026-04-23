@@ -296,12 +296,14 @@ describe("voice roundtrip e2e", () => {
         })();
 
         const outputRaw = Buffer.concat(outputAudio.chunks);
-        const outputFormat =
-          outputAudio.format === "pcm"
-            ? "audio/pcm;rate=24000;bits=16"
-            : outputAudio.format.includes("wav")
-              ? "audio/wav"
-              : `audio/${outputAudio.format}`;
+        let outputFormat: string;
+        if (outputAudio.format === "pcm") {
+          outputFormat = "audio/pcm;rate=24000;bits=16";
+        } else if (outputAudio.format.includes("wav")) {
+          outputFormat = "audio/wav";
+        } else {
+          outputFormat = `audio/${outputAudio.format}`;
+        }
         const transcription = await withTimeout(
           sttOutput.transcribe(outputRaw, outputFormat, {
             label: "voice-roundtrip-output",

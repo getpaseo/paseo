@@ -178,6 +178,41 @@ interface ClaudeAgentSessionOptions {
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
+function resolvePathEnvKey(): "Path" | "PATH" | null {
+  if (process.env["Path"] !== undefined) return "Path";
+  if (process.env["PATH"] !== undefined) return "PATH";
+  return null;
+}
+
+function errorToMessageString(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return "";
+}
+
+function firstStringField(
+  input: Record<string, unknown>,
+  primaryKey: string,
+  secondaryKey: string,
+): string | undefined {
+  const primary = input[primaryKey];
+  if (typeof primary === "string") return primary;
+  const secondary = input[secondaryKey];
+  if (typeof secondary === "string") return secondary;
+  return undefined;
+}
+
+function extractSessionIdRaw(msg: {
+  session_id?: unknown;
+  sessionId?: unknown;
+  session?: { id?: unknown } | null;
+}): string {
+  if (typeof msg.session_id === "string") return msg.session_id;
+  if (typeof msg.sessionId === "string") return msg.sessionId;
+  if (typeof msg.session?.id === "string") return msg.session.id;
+  return "";
+}
+
 function resolveClaudeSpawnCommand(
   spawnOptions: SpawnOptions,
   runtimeSettings?: ProviderRuntimeSettings,
@@ -534,6 +569,26 @@ interface ToolUseCacheEntry {
 }
 function isMetadata(value: unknown): value is AgentMetadata {
   return typeof value === "object" && value !== null;
+}
+
+function createDefaultToolUseCacheEntry(id: string, block: ClaudeContentChunk): ToolUseCacheEntry {
+  const nameFromBlock =
+    typeof block.name === "string" && block.name.length > 0 ? block.name : "tool";
+  let server: string;
+  if (typeof block.server === "string" && block.server.length > 0) {
+    server = block.server;
+  } else if (typeof block.name === "string" && block.name.length > 0) {
+    server = block.name;
+  } else {
+    server = "tool";
+  }
+  return {
+    id,
+    name: nameFromBlock,
+    server,
+    classification: "generic",
+    started: false,
+  };
 }
 
 function readTrimmedString(value: unknown): string | undefined {
@@ -2137,12 +2192,7 @@ class ClaudeAgentSession implements AgentSession {
     this.logger.debug(
       {
         claudeBinary,
-        pathEnvKey:
-          process.env["Path"] !== undefined
-            ? "Path"
-            : process.env["PATH"] !== undefined
-              ? "PATH"
-              : null,
+        pathEnvKey: resolvePathEnvKey(),
         pathIncludesClaudeLocalBin: (process.env["Path"] ?? process.env["PATH"] ?? "")
           .toLowerCase()
           .includes("\\.local\\bin"),
@@ -2333,7 +2383,7 @@ class ClaudeAgentSession implements AgentSession {
     if (this.getRecentStderrDiagnostic()) {
       return;
     }
-    const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+    const message = errorToMessageString(error);
     if (
       !/\bprocess exited with code\b/i.test(message) &&
       !/\bterminated by signal\b/i.test(message)
@@ -2414,12 +2464,14 @@ class ClaudeAgentSession implements AgentSession {
     if (consecutiveRecoveries >= 3) {
       return false;
     }
-    const message =
-      typeof error === "string"
-        ? error
-        : error instanceof Error
-          ? `${error.message}\n${error.stack ?? ""}`
-          : JSON.stringify(error);
+    let message: string;
+    if (typeof error === "string") {
+      message = error;
+    } else if (error instanceof Error) {
+      message = `${error.message}\n${error.stack ?? ""}`;
+    } else {
+      message = JSON.stringify(error);
+    }
     return message.toLowerCase().includes("request was aborted");
   }
 
@@ -2919,15 +2971,7 @@ class ClaudeAgentSession implements AgentSession {
       sessionId?: unknown;
       session?: { id?: unknown } | null;
     };
-    const sessionIdRaw =
-      typeof msg.session_id === "string"
-        ? msg.session_id
-        : typeof msg.sessionId === "string"
-          ? msg.sessionId
-          : typeof msg.session?.id === "string"
-            ? msg.session.id
-            : "";
-    const sessionId = sessionIdRaw.trim();
+    const sessionId = extractSessionIdRaw(msg).trim();
     if (!sessionId) {
       return null;
     }
@@ -2961,15 +3005,7 @@ class ClaudeAgentSession implements AgentSession {
       sessionId?: unknown;
       session?: { id?: unknown } | null;
     };
-    const newSessionIdRaw =
-      typeof msg.session_id === "string"
-        ? msg.session_id
-        : typeof msg.sessionId === "string"
-          ? msg.sessionId
-          : typeof msg.session?.id === "string"
-            ? msg.session.id
-            : "";
-    const newSessionId = newSessionIdRaw.trim();
+    const newSessionId = extractSessionIdRaw(msg).trim();
     if (!newSessionId) {
       return null;
     }
@@ -3600,27 +3636,13 @@ class ClaudeAgentSession implements AgentSession {
     ) {
       if (input && typeof input.file_path === "string") {
         // Support both old_str/new_str and old_string/new_string parameter names
-        const oldContent =
-          typeof input.old_str === "string"
-            ? input.old_str
-            : typeof input.old_string === "string"
-              ? input.old_string
-              : undefined;
-        const newContent =
-          typeof input.new_str === "string"
-            ? input.new_str
-            : typeof input.new_string === "string"
-              ? input.new_string
-              : undefined;
+        const oldContent = firstStringField(input, "old_str", "old_string");
+        const newContent = firstStringField(input, "new_str", "new_string");
+        const diff = firstStringField(input, "patch", "diff");
         return {
           type: "file_edit",
           filePath: input.file_path,
-          diff:
-            typeof input.patch === "string"
-              ? input.patch
-              : typeof input.diff === "string"
-                ? input.diff
-                : undefined,
+          diff,
           oldContent,
           newContent,
         };
@@ -3702,20 +3724,7 @@ class ClaudeAgentSession implements AgentSession {
     if (!id) {
       return null;
     }
-    const existing =
-      this.toolUseCache.get(id) ??
-      ({
-        id,
-        name: typeof block.name === "string" && block.name.length > 0 ? block.name : "tool",
-        server:
-          typeof block.server === "string" && block.server.length > 0
-            ? block.server
-            : typeof block.name === "string" && block.name.length > 0
-              ? block.name
-              : "tool",
-        classification: "generic",
-        started: false,
-      } satisfies ToolUseCacheEntry);
+    const existing = this.toolUseCache.get(id) ?? createDefaultToolUseCacheEntry(id, block);
 
     if (typeof block.name === "string" && block.name.length > 0) {
       existing.name = block.name;

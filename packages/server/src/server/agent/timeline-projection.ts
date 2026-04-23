@@ -241,12 +241,14 @@ export function selectTimelineWindowByProjectedLimit(input: {
     };
   }
 
-  const projectedEntries =
-    limit === 0 || limit >= projectedAll.length
-      ? projectedAll
-      : direction === "after"
-        ? projectedAll.slice(0, limit)
-        : projectedAll.slice(projectedAll.length - limit);
+  let projectedEntries: typeof projectedAll;
+  if (limit === 0 || limit >= projectedAll.length) {
+    projectedEntries = projectedAll;
+  } else if (direction === "after") {
+    projectedEntries = projectedAll.slice(0, limit);
+  } else {
+    projectedEntries = projectedAll.slice(projectedAll.length - limit);
+  }
 
   if (projectedEntries.length === 0) {
     return {

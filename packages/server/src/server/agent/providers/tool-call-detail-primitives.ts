@@ -31,14 +31,18 @@ export const ToolShellInputSchema = z
     const parsedCommand = CommandValueSchema.safeParse(
       "command" in value ? value.command : value.cmd,
     );
-    const command = parsedCommand.success
-      ? typeof parsedCommand.data === "string"
-        ? nonEmptyString(parsedCommand.data)
-        : parsedCommand.data
+    let command: string | undefined;
+    if (parsedCommand.success) {
+      if (typeof parsedCommand.data === "string") {
+        command = nonEmptyString(parsedCommand.data);
+      } else {
+        command =
+          parsedCommand.data
             .map((token) => token.trim())
             .filter((token) => token.length > 0)
-            .join(" ") || undefined
-      : undefined;
+            .join(" ") || undefined;
+      }
+    }
     return {
       command,
       cwd: nonEmptyString(value.cwd) ?? nonEmptyString(value.directory),
@@ -702,14 +706,11 @@ export function toWriteToolDetail(
     return undefined;
   }
 
+  const content = input?.content ?? output?.content;
   return {
     type: "write",
     filePath,
-    ...(input?.content
-      ? { content: input.content }
-      : output?.content
-        ? { content: output.content }
-        : {}),
+    ...(content ? { content } : {}),
   };
 }
 
@@ -723,20 +724,14 @@ export function toEditToolDetail(
     return undefined;
   }
 
+  const newString = input?.newString ?? output?.newString;
+  const unifiedDiff = input?.unifiedDiff ?? output?.unifiedDiff;
   return {
     type: "edit",
     filePath,
     ...(input?.oldString ? { oldString: input.oldString } : {}),
-    ...(input?.newString
-      ? { newString: input.newString }
-      : output?.newString
-        ? { newString: output.newString }
-        : {}),
-    ...(input?.unifiedDiff
-      ? { unifiedDiff: input.unifiedDiff }
-      : output?.unifiedDiff
-        ? { unifiedDiff: output.unifiedDiff }
-        : {}),
+    ...(newString ? { newString } : {}),
+    ...(unifiedDiff ? { unifiedDiff } : {}),
   };
 }
 
@@ -750,12 +745,10 @@ export function toSearchToolDetail(params: {
     return undefined;
   }
 
-  const filePaths =
-    isParsedToolGrepOutput(output) || isParsedToolGlobOutput(output)
-      ? output.filenames.length > 0
-        ? output.filenames
-        : undefined
-      : undefined;
+  let filePaths: string[] | undefined;
+  if (isParsedToolGrepOutput(output) || isParsedToolGlobOutput(output)) {
+    filePaths = output.filenames.length > 0 ? output.filenames : undefined;
+  }
   const webResults = isParsedToolWebSearchOutput(output)
     ? output.results.flatMap((entry) => (typeof entry === "string" ? [] : entry.content))
     : undefined;

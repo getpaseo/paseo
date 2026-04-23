@@ -536,12 +536,14 @@ async function assertPortAvailable(port: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const server = net.createServer();
     server.once("error", (error: NodeJS.ErrnoException) => {
-      const message =
-        error?.code === "EADDRINUSE"
-          ? `Persisted worktree port ${port} is already in use`
-          : error instanceof Error
-            ? error.message
-            : String(error);
+      let message: string;
+      if (error?.code === "EADDRINUSE") {
+        message = `Persisted worktree port ${port} is already in use`;
+      } else if (error instanceof Error) {
+        message = error.message;
+      } else {
+        message = String(error);
+      }
       reject(new Error(message));
     });
     server.listen(port, () => {

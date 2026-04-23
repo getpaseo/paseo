@@ -3782,12 +3782,14 @@ export class DaemonClient {
       if (frame) {
         const binaryStartMs = perfNow();
         this.handleBinaryFrame(frame);
+        let frameKind: "output" | "snapshot" | "other" = "other";
+        if (frame.opcode === TerminalStreamOpcode.Output) {
+          frameKind = "output";
+        } else if (frame.opcode === TerminalStreamOpcode.Snapshot) {
+          frameKind = "snapshot";
+        }
         this.runtimeMetrics?.recordBinaryFrame(
-          frame.opcode === TerminalStreamOpcode.Output
-            ? "output"
-            : frame.opcode === TerminalStreamOpcode.Snapshot
-              ? "snapshot"
-              : "other",
+          frameKind,
           rawBytes.byteLength,
           perfNow() - binaryStartMs,
         );

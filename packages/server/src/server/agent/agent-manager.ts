@@ -145,6 +145,17 @@ type AttentionState =
       attentionTimestamp: Date;
     };
 
+function resolveInitialAttention(input: AttentionState | undefined): AttentionState {
+  if (input == null || !input.requiresAttention) {
+    return { requiresAttention: false };
+  }
+  return {
+    requiresAttention: true,
+    attentionReason: input.attentionReason,
+    attentionTimestamp: new Date(input.attentionTimestamp),
+  };
+}
+
 interface ForegroundTurnWaiter {
   turnId: string;
   callback: (event: AgentStreamEvent) => void;
@@ -293,14 +304,14 @@ function isTurnTerminalEvent(event: AgentStreamEvent): boolean {
   );
 }
 
+function abortMessage(reason: unknown, fallbackMessage: string): string {
+  if (typeof reason === "string") return reason;
+  if (reason instanceof Error) return reason.message;
+  return fallbackMessage;
+}
+
 function createAbortError(signal: AbortSignal | undefined, fallbackMessage: string): Error {
-  const reason = signal?.reason;
-  const message =
-    typeof reason === "string"
-      ? reason
-      : reason instanceof Error
-        ? reason.message
-        : fallbackMessage;
+  const message = abortMessage(signal?.reason, fallbackMessage);
   return Object.assign(new Error(message), { name: "AbortError" });
 }
 
@@ -1311,11 +1322,15 @@ export class AgentManager {
     mutableAgent.activeForegroundTurnId = null;
     const terminalError = mutableAgent.lastError;
     const shouldHoldBusyForReplacement = mutableAgent.pendingReplacement && !terminalError;
-    mutableAgent.lifecycle = shouldHoldBusyForReplacement
-      ? "running"
-      : terminalError
-        ? "error"
-        : "idle";
+    let nextLifecycle: "running" | "error" | "idle";
+    if (shouldHoldBusyForReplacement) {
+      nextLifecycle = "running";
+    } else if (terminalError) {
+      nextLifecycle = "error";
+    } else {
+      nextLifecycle = "idle";
+    }
+    mutableAgent.lifecycle = nextLifecycle;
     const persistenceHandle =
       mutableAgent.session.describePersistence() ??
       (mutableAgent.runtimeInfo?.sessionId
@@ -2004,16 +2019,7 @@ export class AgentManager {
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
-      attention:
-        options?.attention != null
-          ? options.attention.requiresAttention
-            ? {
-                requiresAttention: true,
-                attentionReason: options.attention.attentionReason,
-                attentionTimestamp: new Date(options.attention.attentionTimestamp),
-              }
-            : { requiresAttention: false }
-          : { requiresAttention: false },
+      attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
     } as ActiveManagedAgent;

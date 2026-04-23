@@ -212,38 +212,43 @@ class NonPersistentReloadClient implements AgentClient {
   }
 }
 
+function resolveSpeechConfig() {
+  if (hasLocalSpeech) {
+    return {
+      providers: {
+        dictationStt: { provider: "local" as const, explicit: true },
+        voiceStt: { provider: "local" as const, explicit: true },
+        voiceTts: { provider: "local" as const, explicit: true },
+      },
+      local: {
+        modelsDir: localModelsDir,
+        models: {
+          dictationStt:
+            process.env.PASEO_DICTATION_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
+          voiceStt:
+            process.env.PASEO_VOICE_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
+          voiceTts: process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
+        },
+      },
+    };
+  }
+  if (openaiApiKey) {
+    return {
+      providers: {
+        dictationStt: { provider: "openai" as const, explicit: true },
+        voiceStt: { provider: "openai" as const, explicit: true },
+        voiceTts: { provider: "openai" as const, explicit: true },
+      },
+    };
+  }
+  return undefined;
+}
+
 describe("daemon client E2E", () => {
   let ctx: DaemonTestContext;
 
   beforeAll(async () => {
-    const speechConfig = hasLocalSpeech
-      ? {
-          providers: {
-            dictationStt: { provider: "local" as const, explicit: true },
-            voiceStt: { provider: "local" as const, explicit: true },
-            voiceTts: { provider: "local" as const, explicit: true },
-          },
-          local: {
-            modelsDir: localModelsDir,
-            models: {
-              dictationStt:
-                process.env.PASEO_DICTATION_LOCAL_STT_MODEL ??
-                "zipformer-bilingual-zh-en-2023-02-20",
-              voiceStt:
-                process.env.PASEO_VOICE_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
-              voiceTts: process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
-            },
-          },
-        }
-      : openaiApiKey
-        ? {
-            providers: {
-              dictationStt: { provider: "openai" as const, explicit: true },
-              voiceStt: { provider: "openai" as const, explicit: true },
-              voiceTts: { provider: "openai" as const, explicit: true },
-            },
-          }
-        : undefined;
+    const speechConfig = resolveSpeechConfig();
 
     ctx = await createDaemonTestContext({
       dictationFinalTimeoutMs: 5000,

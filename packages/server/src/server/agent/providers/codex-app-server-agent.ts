@@ -253,6 +253,30 @@ function resolveCodexHomeDir(): string {
   return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
 }
 
+function decodeEscapedChar(next: string): string {
+  if (next === "n") return "\n";
+  if (next === "t") return "\t";
+  return next;
+}
+
+function resolvePermissionDecision(
+  response: AgentPermissionResponse,
+): "accept" | "cancel" | "decline" {
+  if (response.behavior === "allow") return "accept";
+  if (response.interrupt) return "cancel";
+  return "decline";
+}
+
+function firstPositiveFiniteNumber(primary: unknown, secondary: unknown): number | undefined {
+  if (typeof primary === "number" && Number.isFinite(primary) && primary > 0) {
+    return primary;
+  }
+  if (typeof secondary === "number" && Number.isFinite(secondary) && secondary > 0) {
+    return secondary;
+  }
+  return undefined;
+}
+
 function tokenizeCommandArgs(args: string): string[] {
   const tokens: string[] = [];
   let current = "";
@@ -268,7 +292,7 @@ function tokenizeCommandArgs(args: string): string[] {
         const next = args[i + 1]!;
         if (next === quote || next === "\\" || next === "n" || next === "t") {
           i += 1;
-          current += next === "n" ? "\n" : next === "t" ? "\t" : next;
+          current += decodeEscapedChar(next);
           continue;
         }
       }
@@ -789,26 +813,14 @@ function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
       totalTokens?: number;
     };
   };
-  const contextWindowMaxTokens =
-    typeof usage.model_context_window === "number" &&
-    Number.isFinite(usage.model_context_window) &&
-    usage.model_context_window > 0
-      ? usage.model_context_window
-      : typeof usage.modelContextWindow === "number" &&
-          Number.isFinite(usage.modelContextWindow) &&
-          usage.modelContextWindow > 0
-        ? usage.modelContextWindow
-        : undefined;
-  const contextWindowUsedTokens =
-    typeof usage.last?.total_tokens === "number" &&
-    Number.isFinite(usage.last.total_tokens) &&
-    usage.last.total_tokens > 0
-      ? usage.last.total_tokens
-      : typeof usage.last?.totalTokens === "number" &&
-          Number.isFinite(usage.last.totalTokens) &&
-          usage.last.totalTokens > 0
-        ? usage.last.totalTokens
-        : undefined;
+  const contextWindowMaxTokens = firstPositiveFiniteNumber(
+    usage.model_context_window,
+    usage.modelContextWindow,
+  );
+  const contextWindowUsedTokens = firstPositiveFiniteNumber(
+    usage.last?.total_tokens,
+    usage.last?.totalTokens,
+  );
   return {
     inputTokens: usage.last?.inputTokens,
     cachedInputTokens: usage.last?.cachedInputTokens,
@@ -3188,12 +3200,14 @@ class CodexAppServerAgentSession implements AgentSession {
     this.resolvedPermissionRequests.add(requestId);
 
     if (response.behavior === "deny" && pendingRequest?.kind === "tool") {
-      const fallbackName =
-        pendingRequest.name === "CodexBash"
-          ? "shell"
-          : pendingRequest.name === "CodexFileChange"
-            ? "apply_patch"
-            : pendingRequest.name;
+      let fallbackName: string;
+      if (pendingRequest.name === "CodexBash") {
+        fallbackName = "shell";
+      } else if (pendingRequest.name === "CodexFileChange") {
+        fallbackName = "apply_patch";
+      } else {
+        fallbackName = pendingRequest.name;
+      }
       this.emitEvent({
         type: "timeline",
         provider: CODEX_PROVIDER,
@@ -3224,16 +3238,12 @@ class CodexAppServerAgentSession implements AgentSession {
     });
 
     if (pending.kind === "command") {
-      const decision =
-        response.behavior === "allow" ? "accept" : response.interrupt ? "cancel" : "decline";
-      pending.resolve({ decision });
+      pending.resolve({ decision: resolvePermissionDecision(response) });
       return;
     }
 
     if (pending.kind === "file") {
-      const decision =
-        response.behavior === "allow" ? "accept" : response.interrupt ? "cancel" : "decline";
-      pending.resolve({ decision });
+      pending.resolve({ decision: resolvePermissionDecision(response) });
       return;
     }
 

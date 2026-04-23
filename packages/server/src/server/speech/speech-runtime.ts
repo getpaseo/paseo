@@ -312,6 +312,15 @@ function describeRequestedProviders(providers: RequestedSpeechProviders): {
   };
 }
 
+function resolveVoiceTtsLabel(
+  ttsService: TextToSpeechProvider | null,
+  localVoiceTtsProvider: TextToSpeechProvider | null,
+): "unavailable" | "local" | "openai" {
+  if (!ttsService) return "unavailable";
+  if (ttsService === localVoiceTtsProvider) return "local";
+  return "openai";
+}
+
 function resolveEffectiveProviderIds(params: {
   turnDetectionService: TurnDetectionProvider | null;
   sttService: SpeechToTextProvider | null;
@@ -328,11 +337,7 @@ function resolveEffectiveProviderIds(params: {
     dictationStt: params.dictationSttService?.id ?? "unavailable",
     voiceTurnDetection: params.turnDetectionService?.id ?? "unavailable",
     voiceStt: params.sttService?.id ?? "unavailable",
-    voiceTts: !params.ttsService
-      ? "unavailable"
-      : params.ttsService === params.localVoiceTtsProvider
-        ? "local"
-        : "openai",
+    voiceTts: resolveVoiceTtsLabel(params.ttsService, params.localVoiceTtsProvider),
   };
 }
 

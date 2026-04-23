@@ -549,36 +549,36 @@ export async function parseRolloutFile(filePath: string): Promise<AgentTimelineI
     .reduce((map, record) => map.set(record.callId, record.output), new Map<string, unknown>());
   const terminalCommandsBySessionId = buildTerminalCommandBySessionId(parsedRecords);
 
-  const timeline = parsedRecords.flatMap((record): AgentTimelineItem[] =>
-    record.kind === "timeline"
-      ? [record.item]
-      : record.kind === "call"
-        ? (() => {
-            if (record.name === "write_stdin") {
-              const input =
-                record.input && typeof record.input === "object"
-                  ? (record.input as { session_id?: unknown; sessionId?: unknown })
-                  : null;
-              const sessionId =
-                readTerminalSessionId(input?.session_id) ?? readTerminalSessionId(input?.sessionId);
-              return [
-                mapCodexTerminalInteractionToToolCall({
-                  processId: sessionId,
-                  fallbackCallId: record.callId,
-                  command: sessionId ? terminalCommandsBySessionId.get(sessionId) : undefined,
-                }),
-              ];
-            }
-            const mapped = mapCodexRolloutToolCall({
-              callId: record.callId ?? null,
-              name: record.name,
-              input: record.input ?? null,
-              output: record.callId ? (outputsByCallId.get(record.callId) ?? null) : null,
-            });
-            return mapped ? [mapped] : [];
-          })()
-        : [],
-  );
+  const timeline = parsedRecords.flatMap((record): AgentTimelineItem[] => {
+    if (record.kind === "timeline") {
+      return [record.item];
+    }
+    if (record.kind !== "call") {
+      return [];
+    }
+    if (record.name === "write_stdin") {
+      const input =
+        record.input && typeof record.input === "object"
+          ? (record.input as { session_id?: unknown; sessionId?: unknown })
+          : null;
+      const sessionId =
+        readTerminalSessionId(input?.session_id) ?? readTerminalSessionId(input?.sessionId);
+      return [
+        mapCodexTerminalInteractionToToolCall({
+          processId: sessionId,
+          fallbackCallId: record.callId,
+          command: sessionId ? terminalCommandsBySessionId.get(sessionId) : undefined,
+        }),
+      ];
+    }
+    const mapped = mapCodexRolloutToolCall({
+      callId: record.callId ?? null,
+      name: record.name,
+      input: record.input ?? null,
+      output: record.callId ? (outputsByCallId.get(record.callId) ?? null) : null,
+    });
+    return mapped ? [mapped] : [];
+  });
   return dedupeMirroredTextTimelineItems(timeline);
 }
 

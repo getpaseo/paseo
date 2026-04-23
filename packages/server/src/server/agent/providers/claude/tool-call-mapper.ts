@@ -203,22 +203,29 @@ const ClaudeToolCallPass2Schema = z.discriminatedUnion("toolKind", [
 
 type ClaudeToolCallPass2 = z.infer<typeof ClaudeToolCallPass2Schema>;
 
+function resolveDetailName(normalized: ClaudeToolCallPass2): string {
+  switch (normalized.toolKind) {
+    case "shell":
+      return "shell";
+    case "read":
+      return "read_file";
+    case "write":
+      return "write_file";
+    case "edit":
+      return "apply_patch";
+    case "search":
+    case "fetch":
+      return normalized.name;
+    case "speak":
+      return "speak";
+    default:
+      return normalized.name;
+  }
+}
+
 function toToolCallTimelineItem(normalized: ClaudeToolCallPass2): ToolCallTimelineItem {
   const name = normalized.toolKind === "speak" ? ("speak" as const) : normalized.name;
-  const detailName =
-    normalized.toolKind === "shell"
-      ? "shell"
-      : normalized.toolKind === "read"
-        ? "read_file"
-        : normalized.toolKind === "write"
-          ? "write_file"
-          : normalized.toolKind === "edit"
-            ? "apply_patch"
-            : normalized.toolKind === "search" || normalized.toolKind === "fetch"
-              ? normalized.name
-              : normalized.toolKind === "speak"
-                ? "speak"
-                : normalized.name;
+  const detailName = resolveDetailName(normalized);
   const detail = deriveClaudeToolDetail(detailName, normalized.input, normalized.output);
   if (normalized.status === "failed") {
     return {

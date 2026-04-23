@@ -93,7 +93,7 @@ export function pcm16leToFloat32(pcm16le: Buffer, gain: number = 1): Float32Arra
   const out = new Float32Array(int16.length);
   for (let i = 0; i < int16.length; i += 1) {
     const v = (int16[i]! / 32768.0) * gain;
-    out[i] = v > 1 ? 1 : v < -1 ? -1 : v;
+    out[i] = Math.max(-1, Math.min(1, v));
   }
   return out;
 }
