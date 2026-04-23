@@ -319,564 +319,562 @@ vi.mock("./providers/generic-acp-agent.js", () => ({
 
 import { AGENT_PROVIDER_DEFINITIONS, buildProviderRegistry } from "./provider-registry.js";
 
-describe("buildProviderRegistry", () => {
-  const logger = createTestLogger();
+const logger = createTestLogger();
 
-  beforeEach(() => {
-    mockState.reset();
+beforeEach(() => {
+  mockState.reset();
+});
+
+test("builds registry with no overrides — same as built-in count", () => {
+  const registry = buildProviderRegistry(logger);
+
+  expect(Object.keys(registry)).toHaveLength(AGENT_PROVIDER_DEFINITIONS.length);
+});
+
+test("includes mock provider only for development builds", () => {
+  expect(buildProviderRegistry(logger).mock).toBeUndefined();
+  expect(buildProviderRegistry(logger, { isDev: false }).mock).toBeUndefined();
+
+  const registry = buildProviderRegistry(logger, { isDev: true });
+
+  expect(registry.mock).toMatchObject({
+    id: "mock",
+    label: "Mock Load Test",
+    defaultModeId: "load-test",
   });
+});
 
-  test("builds registry with no overrides — same as built-in count", () => {
-    const registry = buildProviderRegistry(logger);
-
-    expect(Object.keys(registry)).toHaveLength(AGENT_PROVIDER_DEFINITIONS.length);
-  });
-
-  test("includes mock provider only for development builds", () => {
-    expect(buildProviderRegistry(logger).mock).toBeUndefined();
-    expect(buildProviderRegistry(logger, { isDev: false }).mock).toBeUndefined();
-
-    const registry = buildProviderRegistry(logger, { isDev: true });
-
-    expect(registry.mock).toMatchObject({
-      id: "mock",
-      label: "Mock Load Test",
-      defaultModeId: "load-test",
-    });
-  });
-
-  test("built-in override applies command", () => {
-    buildProviderRegistry(logger, {
-      providerOverrides: {
-        claude: {
-          command: ["/opt/custom-claude", "--verbose"],
-        },
+test("built-in override applies command", () => {
+  buildProviderRegistry(logger, {
+    providerOverrides: {
+      claude: {
+        command: ["/opt/custom-claude", "--verbose"],
       },
-    });
-
-    expect(mockState.constructorArgs.claude[0]).toEqual({
-      runtimeSettings: {
-        command: {
-          mode: "replace",
-          argv: ["/opt/custom-claude", "--verbose"],
-        },
-        env: undefined,
-      },
-    });
+    },
   });
 
-  test("built-in override applies env", () => {
-    buildProviderRegistry(logger, {
-      providerOverrides: {
-        claude: {
-          env: {
-            CLAUDE_CONFIG_DIR: "/tmp/claude",
-          },
-        },
+  expect(mockState.constructorArgs.claude[0]).toEqual({
+    runtimeSettings: {
+      command: {
+        mode: "replace",
+        argv: ["/opt/custom-claude", "--verbose"],
       },
-    });
+      env: undefined,
+    },
+  });
+});
 
-    expect(mockState.constructorArgs.claude[0]).toEqual({
-      runtimeSettings: {
-        command: undefined,
+test("built-in override applies env", () => {
+  buildProviderRegistry(logger, {
+    providerOverrides: {
+      claude: {
         env: {
           CLAUDE_CONFIG_DIR: "/tmp/claude",
         },
       },
-    });
+    },
   });
 
-  test("new provider extending claude appears in registry", () => {
-    const registry = buildProviderRegistry(logger, {
-      providerOverrides: {
-        zai: {
-          extends: "claude",
-          label: "ZAI",
-          description: "Claude with ZAI defaults",
+  expect(mockState.constructorArgs.claude[0]).toEqual({
+    runtimeSettings: {
+      command: undefined,
+      env: {
+        CLAUDE_CONFIG_DIR: "/tmp/claude",
+      },
+    },
+  });
+});
+
+test("new provider extending claude appears in registry", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      zai: {
+        extends: "claude",
+        label: "ZAI",
+        description: "Claude with ZAI defaults",
+      },
+    },
+  });
+
+  expect(registry.zai).toBeDefined();
+  expect(registry.zai.label).toBe("ZAI");
+  expect(registry.zai.description).toBe("Claude with ZAI defaults");
+  expect(registry.zai.createClient(logger).provider).toBe("zai");
+});
+
+test("new provider extending acp uses GenericACPAgentClient", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "my-agent": {
+        extends: "acp",
+        label: "My Agent",
+        command: ["my-agent", "--acp"],
+        env: {
+          ACP_TOKEN: "secret",
         },
       },
-    });
-
-    expect(registry.zai).toBeDefined();
-    expect(registry.zai.label).toBe("ZAI");
-    expect(registry.zai.description).toBe("Claude with ZAI defaults");
-    expect(registry.zai.createClient(logger).provider).toBe("zai");
+    },
   });
 
-  test("new provider extending acp uses GenericACPAgentClient", () => {
-    const registry = buildProviderRegistry(logger, {
+  expect(registry["my-agent"].createClient(logger).provider).toBe("my-agent");
+  expect(mockState.constructorArgs.genericAcp).toEqual([
+    {
+      command: ["my-agent", "--acp"],
+      env: {
+        ACP_TOKEN: "secret",
+      },
+    },
+    {
+      command: ["my-agent", "--acp"],
+      env: {
+        ACP_TOKEN: "secret",
+      },
+    },
+  ]);
+});
+
+test('extends: "acp" without command throws', () => {
+  expect(() =>
+    buildProviderRegistry(logger, {
       providerOverrides: {
         "my-agent": {
           extends: "acp",
           label: "My Agent",
-          command: ["my-agent", "--acp"],
-          env: {
-            ACP_TOKEN: "secret",
-          },
         },
       },
-    });
+    }),
+  ).toThrowError("ACP provider 'my-agent' requires a command");
+});
 
-    expect(registry["my-agent"].createClient(logger).provider).toBe("my-agent");
-    expect(mockState.constructorArgs.genericAcp).toEqual([
-      {
-        command: ["my-agent", "--acp"],
-        env: {
-          ACP_TOKEN: "secret",
-        },
-      },
-      {
-        command: ["my-agent", "--acp"],
-        env: {
-          ACP_TOKEN: "secret",
-        },
-      },
-    ]);
-  });
-
-  test('extends: "acp" without command throws', () => {
-    expect(() =>
-      buildProviderRegistry(logger, {
-        providerOverrides: {
-          "my-agent": {
-            extends: "acp",
-            label: "My Agent",
-          },
-        },
-      }),
-    ).toThrowError("ACP provider 'my-agent' requires a command");
-  });
-
-  test("custom provider without label throws", () => {
-    expect(() =>
-      buildProviderRegistry(logger, {
-        providerOverrides: {
-          zai: {
-            extends: "claude",
-          },
-        },
-      }),
-    ).toThrowError("Custom provider 'zai' requires a label");
-  });
-
-  test("enabled: false excludes provider from registry", () => {
-    const registry = buildProviderRegistry(logger, {
-      providerOverrides: {
-        claude: {
-          enabled: false,
-        },
-      },
-    });
-
-    expect(registry.claude).toBeUndefined();
-  });
-
-  test("provider override command can be PATH-resolved and still report available", async () => {
-    mockState.isCommandAvailable.mockResolvedValue(true);
-
-    const registry = buildProviderRegistry(logger, {
-      providerOverrides: {
-        claude: {
-          command: ["claude", "--flag"],
-        },
-      },
-    });
-
-    await expect(registry.claude.createClient(logger).isAvailable()).resolves.toBe(true);
-    expect(mockState.isCommandAvailable).toHaveBeenCalledWith("claude");
-  });
-
-  test("disallowedTools flows through to runtime settings", () => {
+test("custom provider without label throws", () => {
+  expect(() =>
     buildProviderRegistry(logger, {
       providerOverrides: {
-        claude: {
-          disallowedTools: ["WebSearch", "WebFetch"],
+        zai: {
+          extends: "claude",
         },
       },
-    });
+    }),
+  ).toThrowError("Custom provider 'zai' requires a label");
+});
 
-    expect(mockState.constructorArgs.claude[0]).toEqual({
-      runtimeSettings: {
-        command: undefined,
-        env: undefined,
+test("enabled: false excludes provider from registry", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      claude: {
+        enabled: false,
+      },
+    },
+  });
+
+  expect(registry.claude).toBeUndefined();
+});
+
+test("provider override command can be PATH-resolved and still report available", async () => {
+  mockState.isCommandAvailable.mockResolvedValue(true);
+
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      claude: {
+        command: ["claude", "--flag"],
+      },
+    },
+  });
+
+  await expect(registry.claude.createClient(logger).isAvailable()).resolves.toBe(true);
+  expect(mockState.isCommandAvailable).toHaveBeenCalledWith("claude");
+});
+
+test("disallowedTools flows through to runtime settings", () => {
+  buildProviderRegistry(logger, {
+    providerOverrides: {
+      claude: {
         disallowedTools: ["WebSearch", "WebFetch"],
       },
-    });
+    },
   });
 
-  test("derived provider inherits and merges disallowedTools from base", () => {
-    buildProviderRegistry(logger, {
+  expect(mockState.constructorArgs.claude[0]).toEqual({
+    runtimeSettings: {
+      command: undefined,
+      env: undefined,
+      disallowedTools: ["WebSearch", "WebFetch"],
+    },
+  });
+});
+
+test("derived provider inherits and merges disallowedTools from base", () => {
+  buildProviderRegistry(logger, {
+    providerOverrides: {
+      claude: {
+        disallowedTools: ["WebSearch"],
+      },
+      zai: {
+        extends: "claude",
+        label: "ZAI",
+        disallowedTools: ["ComputerUse"],
+      },
+    },
+  });
+
+  const zaiArgs = mockState.constructorArgs.claude.find(
+    (entry) =>
+      Array.isArray((entry.runtimeSettings as { disallowedTools?: string[] })?.disallowedTools) &&
+      (entry.runtimeSettings as { disallowedTools: string[] }).disallowedTools.includes(
+        "ComputerUse",
+      ),
+  );
+  expect(zaiArgs).toBeDefined();
+  expect((zaiArgs!.runtimeSettings as { disallowedTools: string[] }).disallowedTools).toEqual([
+    "WebSearch",
+    "ComputerUse",
+  ]);
+});
+
+test("extension inherits base override — override claude command, zai extends claude gets overridden command", () => {
+  buildProviderRegistry(logger, {
+    providerOverrides: {
+      claude: {
+        command: ["/opt/custom-claude"],
+      },
+      zai: {
+        extends: "claude",
+        label: "ZAI",
+      },
+    },
+  });
+
+  expect(mockState.constructorArgs.claude).toHaveLength(2);
+  expect(
+    mockState.constructorArgs.claude.every(
+      (entry) =>
+        (entry.runtimeSettings as { command?: { argv?: string[] } }).command?.argv?.[0] ===
+        "/opt/custom-claude",
+    ),
+  ).toBe(true);
+});
+
+describe("model merging", () => {
+  test("profile models replace runtime models", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "runtime-pro",
+        label: "Runtime Pro",
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
       providerOverrides: {
         claude: {
-          disallowedTools: ["WebSearch"],
-        },
-        zai: {
-          extends: "claude",
-          label: "ZAI",
-          disallowedTools: ["ComputerUse"],
+          models: [
+            {
+              id: "profile-fast",
+              label: "Profile Fast",
+            },
+          ],
         },
       },
     });
 
-    const zaiArgs = mockState.constructorArgs.claude.find(
-      (entry) =>
-        Array.isArray((entry.runtimeSettings as { disallowedTools?: string[] })?.disallowedTools) &&
-        (entry.runtimeSettings as { disallowedTools: string[] }).disallowedTools.includes(
-          "ComputerUse",
-        ),
-    );
-    expect(zaiArgs).toBeDefined();
-    expect((zaiArgs!.runtimeSettings as { disallowedTools: string[] }).disallowedTools).toEqual([
-      "WebSearch",
-      "ComputerUse",
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models.map((model) => model.id)).toEqual(["profile-fast"]);
+  });
+
+  test("profile models exclude runtime models entirely", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "shared-model",
+        label: "Runtime Label",
+      },
+      {
+        provider: "claude",
+        id: "runtime-only",
+        label: "Runtime Only",
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          models: [
+            {
+              id: "shared-model",
+              label: "Profile Label",
+            },
+          ],
+        },
+      },
+    });
+
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models).toEqual([
+      {
+        provider: "claude",
+        id: "shared-model",
+        label: "Profile Label",
+      },
     ]);
   });
 
-  test("extension inherits base override — override claude command, zai extends claude gets overridden command", () => {
-    buildProviderRegistry(logger, {
+  test("profile isDefault preserved without runtime models", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "runtime-default",
+        label: "Runtime Default",
+        isDefault: true,
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
       providerOverrides: {
         claude: {
-          command: ["/opt/custom-claude"],
-        },
-        zai: {
-          extends: "claude",
-          label: "ZAI",
+          models: [
+            {
+              id: "profile-default",
+              label: "Profile Default",
+              isDefault: true,
+            },
+          ],
         },
       },
     });
 
-    expect(mockState.constructorArgs.claude).toHaveLength(2);
-    expect(
-      mockState.constructorArgs.claude.every(
-        (entry) =>
-          (entry.runtimeSettings as { command?: { argv?: string[] } }).command?.argv?.[0] ===
-          "/opt/custom-claude",
-      ),
-    ).toBe(true);
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models).toEqual([
+      {
+        provider: "claude",
+        id: "profile-default",
+        label: "Profile Default",
+        isDefault: true,
+      },
+    ]);
   });
 
-  describe("model merging", () => {
-    test("profile models replace runtime models", async () => {
-      mockState.runtimeModels.set("claude", [
-        {
-          provider: "claude",
-          id: "runtime-pro",
-          label: "Runtime Pro",
+  test("additional models append to runtime models", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "runtime-pro",
+        label: "Runtime Pro",
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          additionalModels: [
+            {
+              id: "profile-fast",
+              label: "Profile Fast",
+            },
+          ],
         },
-      ]);
-
-      const registry = buildProviderRegistry(logger, {
-        providerOverrides: {
-          claude: {
-            models: [
-              {
-                id: "profile-fast",
-                label: "Profile Fast",
-              },
-            ],
-          },
-        },
-      });
-
-      const models = await registry.claude.fetchModels({
-        cwd: "/tmp/registry-models",
-        force: false,
-      });
-
-      expect(models.map((model) => model.id)).toEqual(["profile-fast"]);
+      },
     });
 
-    test("profile models exclude runtime models entirely", async () => {
-      mockState.runtimeModels.set("claude", [
-        {
-          provider: "claude",
-          id: "shared-model",
-          label: "Runtime Label",
-        },
-        {
-          provider: "claude",
-          id: "runtime-only",
-          label: "Runtime Only",
-        },
-      ]);
-
-      const registry = buildProviderRegistry(logger, {
-        providerOverrides: {
-          claude: {
-            models: [
-              {
-                id: "shared-model",
-                label: "Profile Label",
-              },
-            ],
-          },
-        },
-      });
-
-      const models = await registry.claude.fetchModels({
-        cwd: "/tmp/registry-models",
-        force: false,
-      });
-
-      expect(models).toEqual([
-        {
-          provider: "claude",
-          id: "shared-model",
-          label: "Profile Label",
-        },
-      ]);
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
     });
 
-    test("profile isDefault preserved without runtime models", async () => {
-      mockState.runtimeModels.set("claude", [
-        {
-          provider: "claude",
-          id: "runtime-default",
-          label: "Runtime Default",
-          isDefault: true,
-        },
-      ]);
+    expect(models).toEqual([
+      {
+        provider: "claude",
+        id: "runtime-pro",
+        label: "Runtime Pro",
+      },
+      {
+        provider: "claude",
+        id: "profile-fast",
+        label: "Profile Fast",
+      },
+    ]);
+  });
 
-      const registry = buildProviderRegistry(logger, {
-        providerOverrides: {
-          claude: {
-            models: [
-              {
-                id: "profile-default",
-                label: "Profile Default",
-                isDefault: true,
-              },
-            ],
-          },
-        },
-      });
+  test("additional models merge onto profile replacement models", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "runtime-pro",
+        label: "Runtime Pro",
+      },
+    ]);
 
-      const models = await registry.claude.fetchModels({
-        cwd: "/tmp/registry-models",
-        force: false,
-      });
-
-      expect(models).toEqual([
-        {
-          provider: "claude",
-          id: "profile-default",
-          label: "Profile Default",
-          isDefault: true,
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          models: [
+            {
+              id: "profile-curated",
+              label: "Profile Curated",
+            },
+          ],
+          additionalModels: [
+            {
+              id: "profile-extra",
+              label: "Profile Extra",
+            },
+          ],
         },
-      ]);
+      },
     });
 
-    test("additional models append to runtime models", async () => {
-      mockState.runtimeModels.set("claude", [
-        {
-          provider: "claude",
-          id: "runtime-pro",
-          label: "Runtime Pro",
-        },
-      ]);
-
-      const registry = buildProviderRegistry(logger, {
-        providerOverrides: {
-          claude: {
-            additionalModels: [
-              {
-                id: "profile-fast",
-                label: "Profile Fast",
-              },
-            ],
-          },
-        },
-      });
-
-      const models = await registry.claude.fetchModels({
-        cwd: "/tmp/registry-models",
-        force: false,
-      });
-
-      expect(models).toEqual([
-        {
-          provider: "claude",
-          id: "runtime-pro",
-          label: "Runtime Pro",
-        },
-        {
-          provider: "claude",
-          id: "profile-fast",
-          label: "Profile Fast",
-        },
-      ]);
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
     });
 
-    test("additional models merge onto profile replacement models", async () => {
-      mockState.runtimeModels.set("claude", [
-        {
-          provider: "claude",
-          id: "runtime-pro",
-          label: "Runtime Pro",
+    expect(models.map((model) => model.id)).toEqual(["profile-curated", "profile-extra"]);
+  });
+
+  test("additional models override matching runtime models in place", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "shared-model",
+        label: "Runtime Label",
+        description: "Runtime description",
+        metadata: {
+          source: "runtime",
         },
-      ]);
+      },
+      {
+        provider: "claude",
+        id: "runtime-only",
+        label: "Runtime Only",
+      },
+    ]);
 
-      const registry = buildProviderRegistry(logger, {
-        providerOverrides: {
-          claude: {
-            models: [
-              {
-                id: "profile-curated",
-                label: "Profile Curated",
-              },
-            ],
-            additionalModels: [
-              {
-                id: "profile-extra",
-                label: "Profile Extra",
-              },
-            ],
-          },
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          additionalModels: [
+            {
+              id: "shared-model",
+              label: "Profile Label",
+            },
+          ],
         },
-      });
-
-      const models = await registry.claude.fetchModels({
-        cwd: "/tmp/registry-models",
-        force: false,
-      });
-
-      expect(models.map((model) => model.id)).toEqual(["profile-curated", "profile-extra"]);
+      },
     });
 
-    test("additional models override matching runtime models in place", async () => {
-      mockState.runtimeModels.set("claude", [
-        {
-          provider: "claude",
-          id: "shared-model",
-          label: "Runtime Label",
-          description: "Runtime description",
-          metadata: {
-            source: "runtime",
-          },
-        },
-        {
-          provider: "claude",
-          id: "runtime-only",
-          label: "Runtime Only",
-        },
-      ]);
-
-      const registry = buildProviderRegistry(logger, {
-        providerOverrides: {
-          claude: {
-            additionalModels: [
-              {
-                id: "shared-model",
-                label: "Profile Label",
-              },
-            ],
-          },
-        },
-      });
-
-      const models = await registry.claude.fetchModels({
-        cwd: "/tmp/registry-models",
-        force: false,
-      });
-
-      expect(models).toEqual([
-        {
-          provider: "claude",
-          id: "shared-model",
-          label: "Profile Label",
-          description: "Runtime description",
-          metadata: {
-            source: "runtime",
-          },
-        },
-        {
-          provider: "claude",
-          id: "runtime-only",
-          label: "Runtime Only",
-        },
-      ]);
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
     });
 
-    test("additional model default overrides runtime default", async () => {
-      mockState.runtimeModels.set("claude", [
-        {
-          provider: "claude",
-          id: "runtime-default",
-          label: "Runtime Default",
-          isDefault: true,
+    expect(models).toEqual([
+      {
+        provider: "claude",
+        id: "shared-model",
+        label: "Profile Label",
+        description: "Runtime description",
+        metadata: {
+          source: "runtime",
         },
-        {
-          provider: "claude",
-          id: "runtime-other",
-          label: "Runtime Other",
-        },
-      ]);
+      },
+      {
+        provider: "claude",
+        id: "runtime-only",
+        label: "Runtime Only",
+      },
+    ]);
+  });
 
-      const registry = buildProviderRegistry(logger, {
-        providerOverrides: {
-          claude: {
-            additionalModels: [
-              {
-                id: "profile-default",
-                label: "Profile Default",
-                isDefault: true,
-              },
-            ],
-          },
-        },
-      });
+  test("additional model default overrides runtime default", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "runtime-default",
+        label: "Runtime Default",
+        isDefault: true,
+      },
+      {
+        provider: "claude",
+        id: "runtime-other",
+        label: "Runtime Other",
+      },
+    ]);
 
-      const models = await registry.claude.fetchModels({
-        cwd: "/tmp/registry-models",
-        force: false,
-      });
-
-      expect(models).toEqual([
-        {
-          provider: "claude",
-          id: "runtime-default",
-          label: "Runtime Default",
-          isDefault: false,
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          additionalModels: [
+            {
+              id: "profile-default",
+              label: "Profile Default",
+              isDefault: true,
+            },
+          ],
         },
-        {
-          provider: "claude",
-          id: "runtime-other",
-          label: "Runtime Other",
-          isDefault: false,
-        },
-        {
-          provider: "claude",
-          id: "profile-default",
-          label: "Profile Default",
-          isDefault: true,
-        },
-      ]);
+      },
     });
 
-    test("no profile models — runtime models returned as-is", async () => {
-      mockState.runtimeModels.set("claude", [
-        {
-          provider: "claude",
-          id: "runtime-default",
-          label: "Runtime Default",
-          isDefault: true,
-        },
-      ]);
-
-      const registry = buildProviderRegistry(logger);
-      const models = await registry.claude.fetchModels({
-        cwd: "/tmp/registry-models",
-        force: false,
-      });
-
-      expect(models).toEqual([
-        {
-          provider: "claude",
-          id: "runtime-default",
-          label: "Runtime Default",
-          isDefault: true,
-        },
-      ]);
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
     });
+
+    expect(models).toEqual([
+      {
+        provider: "claude",
+        id: "runtime-default",
+        label: "Runtime Default",
+        isDefault: false,
+      },
+      {
+        provider: "claude",
+        id: "runtime-other",
+        label: "Runtime Other",
+        isDefault: false,
+      },
+      {
+        provider: "claude",
+        id: "profile-default",
+        label: "Profile Default",
+        isDefault: true,
+      },
+    ]);
+  });
+
+  test("no profile models — runtime models returned as-is", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "runtime-default",
+        label: "Runtime Default",
+        isDefault: true,
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger);
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models).toEqual([
+      {
+        provider: "claude",
+        id: "runtime-default",
+        label: "Runtime Default",
+        isDefault: true,
+      },
+    ]);
   });
 });

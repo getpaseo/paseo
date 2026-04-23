@@ -47,198 +47,196 @@ function isLiveAssistantTimeline(
   );
 }
 
-describe("daemon E2E - timeline reconnect contract", () => {
-  let ctx: DaemonTestContext;
+let ctx: DaemonTestContext;
 
-  beforeEach(async () => {
-    ctx = await createDaemonTestContext();
-  });
+beforeEach(async () => {
+  ctx = await createDaemonTestContext();
+});
 
-  afterEach(async () => {
-    await ctx.cleanup();
-  }, 60_000);
+afterEach(async () => {
+  await ctx.cleanup();
+}, 60_000);
 
-  test("reconnect catches up committed rows without replaying a provisional seed", async () => {
-    const cwd = tmpCwd();
-    const primaryCollector = createMessageCollector(ctx.client);
+test("reconnect catches up committed rows without replaying a provisional seed", async () => {
+  const cwd = tmpCwd();
+  const primaryCollector = createMessageCollector(ctx.client);
+
+  try {
+    const agent = await ctx.client.createAgent({
+      provider: "codex",
+      cwd,
+      title: "Reconnect Contract Test",
+      modeId: "full-access",
+    });
+
+    for (let seq = 1; seq <= 120; seq += 1) {
+      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: `committed row ${seq}`,
+      });
+    }
+    const baseline = await ctx.client.fetchAgentTimeline(agent.id, {
+      direction: "tail",
+      limit: 0,
+      projection: "canonical",
+    });
+    const epoch = baseline.epoch;
+    expect(epoch).not.toBe("");
+    expect(baseline.endCursor?.epoch).toBe(epoch);
+
+    primaryCollector.clear();
+    await ctx.daemon.daemon.agentManager.emitLiveTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "partial before disconnect",
+    });
+    await waitFor(() =>
+      primaryCollector.messages.some((message) =>
+        isLiveAssistantTimeline(message, agent.id, epoch, "partial before disconnect"),
+      ),
+    );
+
+    await ctx.client.close();
+
+    await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "finalized while disconnected",
+    });
+
+    const reconnectClient = new DaemonClient({
+      url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    });
+    await reconnectClient.connect();
+    const reconnectCollector = createMessageCollector(reconnectClient);
 
     try {
-      const agent = await ctx.client.createAgent({
-        provider: "codex",
-        cwd,
-        title: "Reconnect Contract Test",
-        modeId: "full-access",
+      await reconnectClient.fetchAgents({
+        subscribe: { subscriptionId: "timeline-reconnect-a" },
       });
 
-      for (let seq = 1; seq <= 120; seq += 1) {
-        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
-          type: "assistant_message",
-          text: `committed row ${seq}`,
-        });
-      }
-      const baseline = await ctx.client.fetchAgentTimeline(agent.id, {
-        direction: "tail",
+      expect(
+        reconnectCollector.messages.some((message) =>
+          isLiveAssistantTimeline(message, agent.id, epoch),
+        ),
+      ).toBe(false);
+
+      const catchUp = await reconnectClient.fetchAgentTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch, seq: 120 },
         limit: 0,
         projection: "canonical",
       });
-      const epoch = baseline.epoch;
-      expect(epoch).not.toBe("");
-      expect(baseline.endCursor?.epoch).toBe(epoch);
 
-      primaryCollector.clear();
-      await ctx.daemon.daemon.agentManager.emitLiveTimelineItem(agent.id, {
-        type: "assistant_message",
-        text: "partial before disconnect",
-      });
-      await waitFor(() =>
-        primaryCollector.messages.some((message) =>
-          isLiveAssistantTimeline(message, agent.id, epoch, "partial before disconnect"),
-        ),
-      );
-
-      await ctx.client.close();
-
-      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+      expect(catchUp.epoch).toBe(epoch);
+      expect(catchUp.reset).toBe(false);
+      expect(catchUp.staleCursor).toBe(false);
+      expect(catchUp.gap).toBe(false);
+      expect(catchUp.entries).toHaveLength(1);
+      expect(catchUp.startCursor).toEqual({ epoch, seq: 121 });
+      expect(catchUp.endCursor).toEqual({ epoch, seq: 121 });
+      expect(catchUp.entries[0]?.seqStart).toBe(121);
+      expect(catchUp.entries[0]?.seqEnd).toBe(121);
+      expect(catchUp.entries[0]?.item).toEqual({
         type: "assistant_message",
         text: "finalized while disconnected",
       });
-
-      const reconnectClient = new DaemonClient({
-        url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
-      });
-      await reconnectClient.connect();
-      const reconnectCollector = createMessageCollector(reconnectClient);
-
-      try {
-        await reconnectClient.fetchAgents({
-          subscribe: { subscriptionId: "timeline-reconnect-a" },
-        });
-
-        expect(
-          reconnectCollector.messages.some((message) =>
-            isLiveAssistantTimeline(message, agent.id, epoch),
-          ),
-        ).toBe(false);
-
-        const catchUp = await reconnectClient.fetchAgentTimeline(agent.id, {
-          direction: "after",
-          cursor: { epoch, seq: 120 },
-          limit: 0,
-          projection: "canonical",
-        });
-
-        expect(catchUp.epoch).toBe(epoch);
-        expect(catchUp.reset).toBe(false);
-        expect(catchUp.staleCursor).toBe(false);
-        expect(catchUp.gap).toBe(false);
-        expect(catchUp.entries).toHaveLength(1);
-        expect(catchUp.startCursor).toEqual({ epoch, seq: 121 });
-        expect(catchUp.endCursor).toEqual({ epoch, seq: 121 });
-        expect(catchUp.entries[0]?.seqStart).toBe(121);
-        expect(catchUp.entries[0]?.seqEnd).toBe(121);
-        expect(catchUp.entries[0]?.item).toEqual({
-          type: "assistant_message",
-          text: "finalized while disconnected",
-        });
-      } finally {
-        reconnectCollector.unsubscribe();
-        await reconnectClient.close();
-      }
     } finally {
-      primaryCollector.unsubscribe();
-      rmSync(cwd, { recursive: true, force: true });
+      reconnectCollector.unsubscribe();
+      await reconnectClient.close();
     }
-  }, 30_000);
+  } finally {
+    primaryCollector.unsubscribe();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30_000);
 
-  test("reconnect with no new committed rows resumes from future live provisional updates only", async () => {
-    const cwd = tmpCwd();
-    const primaryCollector = createMessageCollector(ctx.client);
+test("reconnect with no new committed rows resumes from future live provisional updates only", async () => {
+  const cwd = tmpCwd();
+  const primaryCollector = createMessageCollector(ctx.client);
+
+  try {
+    const agent = await ctx.client.createAgent({
+      provider: "codex",
+      cwd,
+      title: "Reconnect No Seed Test",
+      modeId: "full-access",
+    });
+
+    for (let seq = 1; seq <= 120; seq += 1) {
+      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: `committed row ${seq}`,
+      });
+    }
+    const baseline = await ctx.client.fetchAgentTimeline(agent.id, {
+      direction: "tail",
+      limit: 0,
+      projection: "canonical",
+    });
+    const epoch = baseline.epoch;
+    expect(epoch).not.toBe("");
+    expect(baseline.endCursor?.epoch).toBe(epoch);
+
+    primaryCollector.clear();
+    await ctx.daemon.daemon.agentManager.emitLiveTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "partial before disconnect",
+    });
+    await waitFor(() =>
+      primaryCollector.messages.some((message) =>
+        isLiveAssistantTimeline(message, agent.id, epoch, "partial before disconnect"),
+      ),
+    );
+
+    await ctx.client.close();
+
+    const reconnectClient = new DaemonClient({
+      url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    });
+    await reconnectClient.connect();
+    const reconnectCollector = createMessageCollector(reconnectClient);
 
     try {
-      const agent = await ctx.client.createAgent({
-        provider: "codex",
-        cwd,
-        title: "Reconnect No Seed Test",
-        modeId: "full-access",
+      await reconnectClient.fetchAgents({
+        subscribe: { subscriptionId: "timeline-reconnect-b" },
       });
 
-      for (let seq = 1; seq <= 120; seq += 1) {
-        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
-          type: "assistant_message",
-          text: `committed row ${seq}`,
-        });
-      }
-      const baseline = await ctx.client.fetchAgentTimeline(agent.id, {
-        direction: "tail",
+      expect(
+        reconnectCollector.messages.some((message) =>
+          isLiveAssistantTimeline(message, agent.id, epoch),
+        ),
+      ).toBe(false);
+
+      const catchUp = await reconnectClient.fetchAgentTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch, seq: 120 },
         limit: 0,
         projection: "canonical",
       });
-      const epoch = baseline.epoch;
-      expect(epoch).not.toBe("");
-      expect(baseline.endCursor?.epoch).toBe(epoch);
 
-      primaryCollector.clear();
+      expect(catchUp.epoch).toBe(epoch);
+      expect(catchUp.reset).toBe(false);
+      expect(catchUp.staleCursor).toBe(false);
+      expect(catchUp.gap).toBe(false);
+      expect(catchUp.entries).toHaveLength(0);
+      expect(catchUp.startCursor).toBeNull();
+      expect(catchUp.endCursor).toBeNull();
+
+      reconnectCollector.clear();
       await ctx.daemon.daemon.agentManager.emitLiveTimelineItem(agent.id, {
         type: "assistant_message",
-        text: "partial before disconnect",
+        text: "fresh live after reconnect",
       });
       await waitFor(() =>
-        primaryCollector.messages.some((message) =>
-          isLiveAssistantTimeline(message, agent.id, epoch, "partial before disconnect"),
+        reconnectCollector.messages.some((message) =>
+          isLiveAssistantTimeline(message, agent.id, epoch, "fresh live after reconnect"),
         ),
       );
-
-      await ctx.client.close();
-
-      const reconnectClient = new DaemonClient({
-        url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
-      });
-      await reconnectClient.connect();
-      const reconnectCollector = createMessageCollector(reconnectClient);
-
-      try {
-        await reconnectClient.fetchAgents({
-          subscribe: { subscriptionId: "timeline-reconnect-b" },
-        });
-
-        expect(
-          reconnectCollector.messages.some((message) =>
-            isLiveAssistantTimeline(message, agent.id, epoch),
-          ),
-        ).toBe(false);
-
-        const catchUp = await reconnectClient.fetchAgentTimeline(agent.id, {
-          direction: "after",
-          cursor: { epoch, seq: 120 },
-          limit: 0,
-          projection: "canonical",
-        });
-
-        expect(catchUp.epoch).toBe(epoch);
-        expect(catchUp.reset).toBe(false);
-        expect(catchUp.staleCursor).toBe(false);
-        expect(catchUp.gap).toBe(false);
-        expect(catchUp.entries).toHaveLength(0);
-        expect(catchUp.startCursor).toBeNull();
-        expect(catchUp.endCursor).toBeNull();
-
-        reconnectCollector.clear();
-        await ctx.daemon.daemon.agentManager.emitLiveTimelineItem(agent.id, {
-          type: "assistant_message",
-          text: "fresh live after reconnect",
-        });
-        await waitFor(() =>
-          reconnectCollector.messages.some((message) =>
-            isLiveAssistantTimeline(message, agent.id, epoch, "fresh live after reconnect"),
-          ),
-        );
-      } finally {
-        reconnectCollector.unsubscribe();
-        await reconnectClient.close();
-      }
     } finally {
-      primaryCollector.unsubscribe();
-      rmSync(cwd, { recursive: true, force: true });
+      reconnectCollector.unsubscribe();
+      await reconnectClient.close();
     }
-  }, 30_000);
-});
+  } finally {
+    primaryCollector.unsubscribe();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30_000);

@@ -7,6 +7,41 @@ import pino from "pino";
 import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
 import { OpenAITTS } from "./speech/providers/openai/tts.js";
+import type { SessionOutboundMessage } from "../shared/messages.js";
+
+type SessionMessage<T extends SessionOutboundMessage["type"]> = Extract<
+  SessionOutboundMessage,
+  { type: T }
+>;
+
+function makeTranscriptionHandler(resolve: (value: string) => void) {
+  return (msg: SessionMessage<"transcription_result">) => {
+    if (msg.type !== "transcription_result") return;
+    const text = String(msg.payload.text ?? "").trim();
+    if (!text) return;
+    resolve(text);
+  };
+}
+
+function makeErrorHandler(reject: (error: Error) => void) {
+  return (msg: SessionMessage<"activity_log">) => {
+    if (msg.type !== "activity_log") return;
+    if (msg.payload.type !== "error") return;
+    reject(new Error(String(msg.payload.content)));
+  };
+}
+
+function makeSpeakToolHandler(resolve: (value: string) => void) {
+  return (msg: SessionMessage<"agent_stream">) => {
+    if (msg.type !== "agent_stream") return;
+    if (msg.payload.event.type !== "timeline") return;
+    const item = msg.payload.event.item;
+    if (item.type !== "tool_call") return;
+    const name = String(item.name ?? "");
+    if (!name.toLowerCase().includes("speak")) return;
+    resolve(name);
+  };
+}
 
 const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 const shouldRun =
@@ -84,17 +119,11 @@ function waitForSignal<T>(
     expect(voiceMode.accepted).toBe(true);
 
     const transcriptionPromise = waitForSignal<string>(120000, (resolve, reject) => {
-      const offTranscript = ctx.client.on("transcription_result", (msg) => {
-        if (msg.type !== "transcription_result") return;
-        const text = String(msg.payload.text ?? "").trim();
-        if (!text) return;
-        resolve(text);
-      });
-      const offError = ctx.client.on("activity_log", (msg) => {
-        if (msg.type !== "activity_log") return;
-        if (msg.payload.type !== "error") return;
-        reject(new Error(String(msg.payload.content)));
-      });
+      const offTranscript = ctx.client.on(
+        "transcription_result",
+        makeTranscriptionHandler(resolve),
+      );
+      const offError = ctx.client.on("activity_log", makeErrorHandler(reject));
       return () => {
         offTranscript();
         offError();
@@ -102,20 +131,8 @@ function waitForSignal<T>(
     });
 
     const speakToolPromise = waitForSignal<string>(120000, (resolve, reject) => {
-      const offStream = ctx.client.on("agent_stream", (msg) => {
-        if (msg.type !== "agent_stream") return;
-        if (msg.payload.event.type !== "timeline") return;
-        const item = msg.payload.event.item;
-        if (item.type !== "tool_call") return;
-        const name = String(item.name ?? "");
-        if (!name.toLowerCase().includes("speak")) return;
-        resolve(name);
-      });
-      const offError = ctx.client.on("activity_log", (msg) => {
-        if (msg.type !== "activity_log") return;
-        if (msg.payload.type !== "error") return;
-        reject(new Error(String(msg.payload.content)));
-      });
+      const offStream = ctx.client.on("agent_stream", makeSpeakToolHandler(resolve));
+      const offError = ctx.client.on("activity_log", makeErrorHandler(reject));
       return () => {
         offStream();
         offError();

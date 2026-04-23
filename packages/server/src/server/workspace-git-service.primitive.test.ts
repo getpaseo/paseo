@@ -407,12 +407,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     const getCheckoutStatus = vi
       .fn<(cwd: string) => Promise<CheckoutStatusGit>>()
       .mockImplementationOnce(async (cwd: string) => createCheckoutStatus(cwd))
-      .mockImplementationOnce(async () =>
-        refreshStatus.promise.then((status) => ({
-          ...status,
-          currentBranch: "feature",
-        })),
-      );
+      .mockImplementationOnce(async () => {
+        const status = await refreshStatus.promise;
+        return { ...status, currentBranch: "feature" };
+      });
     const getCheckoutShortstat = vi.fn(async () => ({ additions: 4, deletions: 2 }));
     const service = createService({
       getCheckoutStatus,

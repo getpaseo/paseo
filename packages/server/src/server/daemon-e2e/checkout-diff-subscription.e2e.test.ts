@@ -60,83 +60,81 @@ async function waitForCheckoutDiffUpdate(
   });
 }
 
-describe("daemon E2E checkout diff subscriptions", () => {
-  let ctx: DaemonTestContext;
+let ctx: DaemonTestContext;
 
-  beforeEach(async () => {
-    ctx = await createDaemonTestContext();
-  });
-
-  afterEach(async () => {
-    await ctx.cleanup();
-  }, 60000);
-
-  test("pushes file-level checkout diff updates with deterministic path order", async () => {
-    const cwd = tmpCwd();
-
-    try {
-      initGitRepo(cwd);
-      commitFile(cwd, "base.txt", "base\n");
-
-      const subscriptionId = "checkout-diff-e2e-subscription";
-      const initial = await ctx.client.subscribeCheckoutDiff(
-        cwd,
-        { mode: "uncommitted" },
-        { subscriptionId },
-      );
-
-      expect(initial.error).toBeNull();
-      expect(initial.files).toEqual([]);
-
-      writeFileSync(path.join(cwd, "zeta.txt"), "zeta\n");
-      writeFileSync(path.join(cwd, "alpha.txt"), "alpha\n");
-
-      const update = await waitForCheckoutDiffUpdate(ctx, subscriptionId, (payload) => {
-        const paths = new Set(payload.files.map((file) => file.path));
-        return paths.has("alpha.txt") && paths.has("zeta.txt");
-      });
-
-      expect(update.error).toBeNull();
-      expect(update.files.map((file) => file.path)).toEqual(["alpha.txt", "zeta.txt"]);
-
-      ctx.client.unsubscribeCheckoutDiff(subscriptionId);
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  }, 60000);
-
-  test("pushes updates when subscribed from a subdirectory and files change outside it", async () => {
-    const cwd = tmpCwd();
-
-    try {
-      initGitRepo(cwd);
-      commitFile(cwd, "base.txt", "base\n");
-
-      const nestedDir = path.join(cwd, "nested", "dir");
-      mkdirSync(nestedDir, { recursive: true });
-
-      const subscriptionId = "checkout-diff-subdir-e2e-subscription";
-      const initial = await ctx.client.subscribeCheckoutDiff(
-        nestedDir,
-        { mode: "uncommitted" },
-        { subscriptionId },
-      );
-
-      expect(initial.error).toBeNull();
-      expect(initial.files).toEqual([]);
-
-      writeFileSync(path.join(cwd, "outside-subdir.txt"), "changed outside\n");
-
-      const update = await waitForCheckoutDiffUpdate(ctx, subscriptionId, (payload) =>
-        payload.files.some((file) => file.path === "outside-subdir.txt"),
-      );
-
-      expect(update.error).toBeNull();
-      expect(update.files.some((file) => file.path === "outside-subdir.txt")).toBe(true);
-
-      ctx.client.unsubscribeCheckoutDiff(subscriptionId);
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  }, 60000);
+beforeEach(async () => {
+  ctx = await createDaemonTestContext();
 });
+
+afterEach(async () => {
+  await ctx.cleanup();
+}, 60000);
+
+test("pushes file-level checkout diff updates with deterministic path order", async () => {
+  const cwd = tmpCwd();
+
+  try {
+    initGitRepo(cwd);
+    commitFile(cwd, "base.txt", "base\n");
+
+    const subscriptionId = "checkout-diff-e2e-subscription";
+    const initial = await ctx.client.subscribeCheckoutDiff(
+      cwd,
+      { mode: "uncommitted" },
+      { subscriptionId },
+    );
+
+    expect(initial.error).toBeNull();
+    expect(initial.files).toEqual([]);
+
+    writeFileSync(path.join(cwd, "zeta.txt"), "zeta\n");
+    writeFileSync(path.join(cwd, "alpha.txt"), "alpha\n");
+
+    const update = await waitForCheckoutDiffUpdate(ctx, subscriptionId, (payload) => {
+      const paths = new Set(payload.files.map((file) => file.path));
+      return paths.has("alpha.txt") && paths.has("zeta.txt");
+    });
+
+    expect(update.error).toBeNull();
+    expect(update.files.map((file) => file.path)).toEqual(["alpha.txt", "zeta.txt"]);
+
+    ctx.client.unsubscribeCheckoutDiff(subscriptionId);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 60000);
+
+test("pushes updates when subscribed from a subdirectory and files change outside it", async () => {
+  const cwd = tmpCwd();
+
+  try {
+    initGitRepo(cwd);
+    commitFile(cwd, "base.txt", "base\n");
+
+    const nestedDir = path.join(cwd, "nested", "dir");
+    mkdirSync(nestedDir, { recursive: true });
+
+    const subscriptionId = "checkout-diff-subdir-e2e-subscription";
+    const initial = await ctx.client.subscribeCheckoutDiff(
+      nestedDir,
+      { mode: "uncommitted" },
+      { subscriptionId },
+    );
+
+    expect(initial.error).toBeNull();
+    expect(initial.files).toEqual([]);
+
+    writeFileSync(path.join(cwd, "outside-subdir.txt"), "changed outside\n");
+
+    const update = await waitForCheckoutDiffUpdate(ctx, subscriptionId, (payload) =>
+      payload.files.some((file) => file.path === "outside-subdir.txt"),
+    );
+
+    expect(update.error).toBeNull();
+    expect(update.files.some((file) => file.path === "outside-subdir.txt")).toBe(true);
+
+    ctx.client.unsubscribeCheckoutDiff(subscriptionId);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 60000);
