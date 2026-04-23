@@ -114,8 +114,9 @@ export class WorkspaceReconciliationService {
     }
 
     // 1. Archive workspaces whose directories no longer exist
-    for (const workspace of activeWorkspaces) {
-      if (!existsSync(workspace.cwd)) {
+    const missingWorkspaces = activeWorkspaces.filter((workspace) => !existsSync(workspace.cwd));
+    await Promise.all(
+      missingWorkspaces.map(async (workspace) => {
         const timestamp = new Date().toISOString();
         await this.workspaceRegistry.archive(workspace.workspaceId, timestamp);
         changes.push({
@@ -131,13 +132,16 @@ export class WorkspaceReconciliationService {
           const updated = siblings.filter((w) => w.workspaceId !== workspace.workspaceId);
           workspacesByProject.set(workspace.projectId, updated);
         }
-      }
-    }
+      }),
+    );
 
     // 2. Archive orphaned projects (all workspaces archived/removed)
-    for (const project of activeProjects) {
+    const orphanedProjects = activeProjects.filter((project) => {
       const siblings = workspacesByProject.get(project.projectId) ?? [];
-      if (siblings.length === 0) {
+      return siblings.length === 0;
+    });
+    await Promise.all(
+      orphanedProjects.map(async (project) => {
         const timestamp = new Date().toISOString();
         await this.projectRegistry.archive(project.projectId, timestamp);
         changes.push({
@@ -146,8 +150,8 @@ export class WorkspaceReconciliationService {
           directory: project.rootPath,
           reason: "no_active_workspaces",
         });
-      }
-    }
+      }),
+    );
 
     // 3. Reconcile git metadata for active projects whose directories still exist
     const projectsToReconcile = activeProjects.filter((project) => {

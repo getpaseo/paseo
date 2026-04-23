@@ -720,28 +720,24 @@ async function listChildDirectories(input: {
   const dirents = await readdir(input.directory, { withFileTypes: true }).catch(
     () => [] as Dirent[],
   );
-  const entries: ChildDirectoryEntry[] = [];
-  for (const dirent of dirents) {
-    if (isHiddenDirectoryName(dirent.name)) {
-      continue;
-    }
-    if (!dirent.isDirectory() && !dirent.isSymbolicLink()) {
-      continue;
-    }
-    const candidatePath = path.join(input.directory, dirent.name);
-    const absolutePath = await resolveDirectoryCandidate({
-      candidatePath,
-      dirent,
-      homeRoot: input.homeRoot,
-    });
-    if (!absolutePath) {
-      continue;
-    }
-    entries.push({
-      name: dirent.name,
-      absolutePath,
-    });
-  }
+  const candidates = dirents.filter(
+    (dirent) =>
+      !isHiddenDirectoryName(dirent.name) && (dirent.isDirectory() || dirent.isSymbolicLink()),
+  );
+  const resolved = await Promise.all(
+    candidates.map(async (dirent) => {
+      const candidatePath = path.join(input.directory, dirent.name);
+      const absolutePath = await resolveDirectoryCandidate({
+        candidatePath,
+        dirent,
+        homeRoot: input.homeRoot,
+      });
+      return absolutePath ? { name: dirent.name, absolutePath } : null;
+    }),
+  );
+  const entries: ChildDirectoryEntry[] = resolved.filter(
+    (entry): entry is ChildDirectoryEntry => entry !== null,
+  );
 
   setDirectoryListCache(input.directory, {
     expiresAt: now + DIRECTORY_LIST_CACHE_TTL_MS,
