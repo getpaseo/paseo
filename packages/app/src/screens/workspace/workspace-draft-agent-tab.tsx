@@ -31,7 +31,7 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsToolInvocations: false,
 };
 
-type WorkspaceDraftAgentTabProps = {
+interface WorkspaceDraftAgentTabProps {
   serverId: string;
   workspaceId: string;
   tabId: string;
@@ -39,7 +39,7 @@ type WorkspaceDraftAgentTabProps = {
   isPaneFocused: boolean;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
   onOpenWorkspaceFile: (input: { filePath: string }) => void;
-};
+}
 
 export function WorkspaceDraftAgentTab({
   serverId,

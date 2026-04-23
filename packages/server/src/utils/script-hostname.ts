@@ -1,10 +1,10 @@
 import { slugify } from "./worktree.js";
 
-type BuildScriptHostnameOptions = {
+interface BuildScriptHostnameOptions {
   projectSlug: string;
   branchName: string | null;
   scriptName: string;
-};
+}
 
 function toHostnameLabel(value: string): string {
   return slugify(value) || "untitled";

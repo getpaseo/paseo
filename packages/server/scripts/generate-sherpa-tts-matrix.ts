@@ -19,22 +19,22 @@ import { loadSherpaOnnxNode } from "../src/server/speech/providers/local/sherpa/
 const DEFAULT_SAMPLE_TEXT =
   "Paseo keeps your coding agents in your pocket, with fast local speech and reliable remote control.";
 
-type ScriptOptions = {
+interface ScriptOptions {
   modelsDir: string;
   outputDir: string;
   text: string;
   speed: number;
   modelIds: LocalTtsModelId[];
-};
+}
 
-type GeneratedSample = {
+interface GeneratedSample {
   modelId: LocalTtsModelId;
   voiceLabel: string;
   speakerId: number | null;
   sampleRate: number;
   durationSeconds: number;
   relativePath: string;
-};
+}
 
 function usage(): string {
   return [

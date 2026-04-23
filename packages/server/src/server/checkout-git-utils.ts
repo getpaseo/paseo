@@ -12,10 +12,10 @@ export const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
 
 export type CheckoutErrorCode = "NOT_GIT_REPO" | "NOT_ALLOWED" | "MERGE_CONFLICT" | "UNKNOWN";
 
-export type CheckoutErrorPayload = {
+export interface CheckoutErrorPayload {
   code: CheckoutErrorCode;
   message: string;
-};
+}
 
 export async function resolveCheckoutGitDir(cwd: string): Promise<string | null> {
   try {

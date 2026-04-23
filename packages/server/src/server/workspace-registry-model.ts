@@ -7,10 +7,10 @@ import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 
 export type PersistedProjectKind = "git" | "non_git";
 export type PersistedWorkspaceKind = "local_checkout" | "worktree" | "directory";
-export type DetectStaleWorkspacesInput = {
+export interface DetectStaleWorkspacesInput {
   activeWorkspaces: PersistedWorkspaceRecord[];
   checkDirectoryExists: (cwd: string) => Promise<boolean>;
-};
+}
 
 export function normalizeWorkspaceId(cwd: string): string {
   const trimmed = cwd.trim();

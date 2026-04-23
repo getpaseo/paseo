@@ -7,20 +7,20 @@ import { afterEach, describe, expect, test } from "vitest";
 import { findExecutable } from "../../../utils/executable.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 
-type SpawnResult = {
+interface SpawnResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
   error: Error | null;
-};
+}
 
-type ProviderLaunchCase = {
+interface ProviderLaunchCase {
   provider: "claude" | "codex" | "opencode" | "generic-acp";
   binaryName: string;
   args: string[];
   shell?: boolean;
-};
+}
 
 const JSON_ARG = '{"mcpServers":{"paseo":{"type":"http","url":"http://127.0.0.1:6767/mcp"}}}';
 const tempDirs: string[] = [];

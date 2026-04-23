@@ -2,9 +2,9 @@ import { getDesktopHost } from "@/desktop/host";
 
 export type DesktopEventUnlisten = () => void;
 
-type EventEnvelope = {
+interface EventEnvelope {
   payload?: unknown;
-};
+}
 
 export async function listenToDesktopEvent<TPayload>(
   event: string,

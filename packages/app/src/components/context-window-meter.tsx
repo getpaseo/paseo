@@ -3,10 +3,10 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-type ContextWindowMeterProps = {
+interface ContextWindowMeterProps {
   maxTokens: number;
   usedTokens: number;
-};
+}
 
 const SVG_SIZE = 16;
 const CENTER = SVG_SIZE / 2;

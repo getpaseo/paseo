@@ -6,14 +6,14 @@ import {
   type KeyboardActionId,
 } from "@/keyboard/keyboard-action-dispatcher";
 
-type UseKeyboardActionHandlerInput = {
+interface UseKeyboardActionHandlerInput {
   handlerId: string;
   actions: readonly KeyboardActionId[];
   enabled: boolean;
   priority: number;
   isActive?: () => boolean;
   handle: (action: KeyboardActionDefinition) => boolean;
-};
+}
 
 export function useKeyboardActionHandler(input: UseKeyboardActionHandlerInput) {
   useEffect(() => {

@@ -82,13 +82,13 @@ const int16ToBase64 = (pcm: Int16Array): string => {
   return btoa(binary);
 };
 
-type RecorderRefs = {
+interface RecorderRefs {
   recorder: MediaRecorder | null;
   audioChunks: Blob[];
   stoppedPromise: Promise<Blob> | null;
   stoppedResolve: ((blob: Blob) => void) | null;
   stoppedReject: ((error: unknown) => void) | null;
-};
+}
 
 export function useDictationAudioSource(config: DictationAudioSourceConfig): DictationAudioSource {
   const [volume, setVolume] = useState(0);

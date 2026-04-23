@@ -4,9 +4,9 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentModelDefinition } from "./agent-sdk-types.js";
 
 const mockState = vi.hoisted(() => {
-  type ConstructorEntry = {
+  interface ConstructorEntry {
     runtimeSettings?: unknown;
-  };
+  }
 
   return {
     constructorArgs: {

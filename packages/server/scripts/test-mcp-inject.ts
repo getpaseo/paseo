@@ -23,17 +23,17 @@ function collectAssistantText(entries: Array<{ item: { type: string; text?: stri
     .join("\n");
 }
 
-type ToolCallRecord = {
+interface ToolCallRecord {
   name: string;
   status: string;
-};
+}
 
-type ProviderRunResult = {
+interface ProviderRunResult {
   provider: "claude" | "codex";
   agentId: string;
   assistantText: string;
   toolCalls: ToolCallRecord[];
-};
+}
 
 async function verifyInjectedMcpForProvider(
   client: DaemonClient,

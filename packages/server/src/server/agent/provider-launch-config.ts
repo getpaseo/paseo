@@ -87,10 +87,10 @@ export type AgentProviderRuntimeSettingsMap = Partial<
   Record<AgentProvider, ProviderRuntimeSettings>
 >;
 
-export type ProviderCommandPrefix = {
+export interface ProviderCommandPrefix {
   command: string;
   args: string[];
-};
+}
 
 export async function resolveProviderCommandPrefix(
   commandConfig: ProviderCommand | undefined,

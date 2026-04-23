@@ -1,19 +1,19 @@
-export type TerminalOutputCoalescerTimers = {
+export interface TerminalOutputCoalescerTimers {
   setTimeout: typeof setTimeout;
   clearTimeout: typeof clearTimeout;
-};
+}
 
-export type TerminalOutputCoalescerFlush = {
+export interface TerminalOutputCoalescerFlush {
   payload: Buffer;
   chars: number;
   bytes: number;
-};
+}
 
-export type TerminalOutputCoalescerOptions = {
+export interface TerminalOutputCoalescerOptions {
   timers: TerminalOutputCoalescerTimers;
   flushDelayMs?: number;
   onFlush: (payload: TerminalOutputCoalescerFlush) => void;
-};
+}
 
 const DEFAULT_FLUSH_DELAY_MS = 5;
 

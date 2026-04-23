@@ -9,17 +9,17 @@ export function readBadgeCount(input: unknown): number {
 }
 
 export type WindowTheme = "light" | "dark";
-export type WindowControlsOverlayUpdate = {
+export interface WindowControlsOverlayUpdate {
   height?: number;
   backgroundColor?: string;
   foregroundColor?: string;
-};
+}
 
-export type WindowControlsOverlayState = {
+export interface WindowControlsOverlayState {
   height: number;
   backgroundColor?: string;
   foregroundColor?: string;
-};
+}
 
 export function readWindowTheme(input: unknown): WindowTheme | null {
   if (input === "light" || input === "dark") {

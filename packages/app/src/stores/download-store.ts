@@ -236,11 +236,11 @@ function findMostRecentDownloadId(downloads: Map<string, Download>): string | nu
   return mostRecent?.id ?? null;
 }
 
-type DownloadTarget = {
+interface DownloadTarget {
   baseUrl: string | null;
   authHeader: string | null;
   authCredentials: { username: string; password: string } | null;
-};
+}
 
 function resolveDaemonDownloadTarget(daemon?: HostProfile): DownloadTarget {
   const endpoint = daemon?.connections.find((conn) => conn.type === "directTcp")?.endpoint ?? null;

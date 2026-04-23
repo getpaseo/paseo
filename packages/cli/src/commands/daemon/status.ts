@@ -44,9 +44,9 @@ interface StatusRow {
   value: string;
 }
 
-type CliPackageJson = {
+interface CliPackageJson {
   version?: unknown;
-};
+}
 
 const require = createRequire(import.meta.url);
 

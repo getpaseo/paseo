@@ -939,13 +939,13 @@ export class OpenCodeServerManager {
   }
 }
 
-type OpenCodeServerGeneration = {
+interface OpenCodeServerGeneration {
   process: ChildProcess;
   port: number;
   url: string;
   refCount: number;
   retired: boolean;
-};
+}
 
 export class OpenCodeAgentClient implements AgentClient {
   readonly provider = "opencode" as const;
@@ -1242,7 +1242,7 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 }
 
-export type OpenCodeEventTranslationState = {
+export interface OpenCodeEventTranslationState {
   sessionId: string;
   messageRoles: Map<string, OpenCodeMessageRole>;
   accumulatedUsage: AgentUsage;
@@ -1252,7 +1252,7 @@ export type OpenCodeEventTranslationState = {
   partTypes: Map<string, string>;
   modelContextWindowsByModelKey?: ReadonlyMap<string, number>;
   onAssistantModelContextWindowResolved?: (contextWindowMaxTokens: number) => void;
-};
+}
 
 function stringifyStructuredAssistantMessage(value: unknown): string | null {
   if (value === undefined) {

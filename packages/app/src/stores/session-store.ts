@@ -218,13 +218,13 @@ export interface AgentFileExplorerState {
   selectedEntryPath: string | null;
 }
 
-export type DaemonServerInfo = {
+export interface DaemonServerInfo {
   serverId: string;
   hostname: string | null;
   version: string | null;
   capabilities?: ServerCapabilities;
   features?: ServerInfoStatusPayload["features"];
-};
+}
 
 export interface AgentTimelineCursorState {
   epoch: string;

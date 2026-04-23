@@ -3,19 +3,19 @@ import { getDesktopHost } from "@/desktop/host";
 import { buildNotificationRoute, resolveNotificationTarget } from "./notification-routing";
 import { isNative } from "@/constants/platform";
 
-type OsNotificationPayload = {
+interface OsNotificationPayload {
   title: string;
   body?: string;
   data?: Record<string, unknown>;
-};
+}
 
-export type WebNotificationClickDetail = {
+export interface WebNotificationClickDetail {
   data?: Record<string, unknown>;
-};
+}
 
-type WebNotificationInstance = {
+interface WebNotificationInstance {
   onclick?: ((event: Event) => void) | null;
-};
+}
 
 export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
 

@@ -62,7 +62,7 @@ export interface NormalizedGitOptions {
 
 type EmitSessionMessage = (message: SessionOutboundMessage) => void;
 
-type BuildAgentSessionConfigDependencies = {
+interface BuildAgentSessionConfigDependencies {
   paseoHome?: string;
   sessionLogger: Logger;
   workspaceGitService?: WorkspaceGitService;
@@ -79,9 +79,9 @@ type BuildAgentSessionConfigDependencies = {
     newBranchName: string;
   }) => Promise<void>;
   github?: Pick<GitHubService, "invalidate">;
-};
+}
 
-type CreatePaseoWorktreeInBackgroundDependencies = {
+interface CreatePaseoWorktreeInBackgroundDependencies {
   paseoHome?: string;
   emitWorkspaceUpdateForCwd: (cwd: string, options?: { dedupeGitState?: boolean }) => Promise<void>;
   cacheWorkspaceSetupSnapshot: (workspaceId: string, snapshot: WorkspaceSetupSnapshot) => void;
@@ -94,14 +94,14 @@ type CreatePaseoWorktreeInBackgroundDependencies = {
   getDaemonTcpPort: (() => number | null) | null;
   getDaemonTcpHost: (() => string | null) | null;
   onScriptsChanged: ((workspaceId: string, workspaceDirectory: string) => void) | null;
-};
+}
 
-type HandleWorkspaceSetupStatusRequestDependencies = {
+interface HandleWorkspaceSetupStatusRequestDependencies {
   emit: EmitSessionMessage;
   workspaceSetupSnapshots: ReadonlyMap<string, WorkspaceSetupSnapshot>;
-};
+}
 
-type HandleCreatePaseoWorktreeRequestDependencies = {
+interface HandleCreatePaseoWorktreeRequestDependencies {
   paseoHome?: string;
   describeWorkspaceRecord: (
     result: CreatePaseoWorktreeResult,
@@ -119,7 +119,7 @@ type HandleCreatePaseoWorktreeRequestDependencies = {
     slug: string;
     worktreePath: string;
   }) => Promise<void>;
-};
+}
 
 export async function buildAgentSessionConfig(
   dependencies: BuildAgentSessionConfigDependencies,

@@ -12,23 +12,23 @@ const DEFAULT_SNAPSHOT_TTL_MS = 300_000;
 const DEFAULT_REFRESH_TIMEOUT_MS = 30_000;
 
 type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd: string) => void;
-type ProviderSnapshotManagerOptions = {
+interface ProviderSnapshotManagerOptions {
   ttlMs?: number;
   refreshTimeoutMs?: number;
   now?: () => number;
-};
-type ProviderSnapshotRefreshOptions = {
+}
+interface ProviderSnapshotRefreshOptions {
   cwd: string;
   providers?: AgentProvider[];
-};
-type ProviderLoadOptions = {
+}
+interface ProviderLoadOptions {
   cwd: string;
   providers: AgentProvider[];
   force: boolean;
-};
-type ProviderLoad = {
+}
+interface ProviderLoad {
   promise: Promise<void>;
-};
+}
 
 export class ProviderSnapshotManager {
   private readonly snapshots = new Map<string, Map<AgentProvider, ProviderSnapshotEntry>>();

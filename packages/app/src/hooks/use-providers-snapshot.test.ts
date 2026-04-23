@@ -11,20 +11,20 @@ import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types
 import { useSessionStore } from "@/stores/session-store";
 import { providersSnapshotQueryKey, useProvidersSnapshot } from "./use-providers-snapshot";
 
-type ProviderSnapshotUpdateMessage = {
+interface ProviderSnapshotUpdateMessage {
   type: "providers_snapshot_update";
   payload: {
     cwd: string;
     entries: ProviderSnapshotEntry[];
     generatedAt: string;
   };
-};
+}
 type ProviderSnapshotUpdateListener = (message: ProviderSnapshotUpdateMessage) => void;
-type ProvidersSnapshot = {
+interface ProvidersSnapshot {
   entries: ProviderSnapshotEntry[];
   generatedAt: string;
   requestId: string;
-};
+}
 type HookResult = ReturnType<typeof renderProvidersSnapshotHook>["result"];
 
 const { mockClient, mockRuntime, snapshotUpdateListeners } = vi.hoisted(() => {

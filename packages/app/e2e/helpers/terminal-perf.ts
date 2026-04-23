@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
-export type TerminalPerfDaemonClient = {
+export interface TerminalPerfDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
   openProject(cwd: string): Promise<{
@@ -37,7 +37,7 @@ export type TerminalPerfDaemonClient = {
     handler: (event: { terminalId: string; type: string; data?: Uint8Array }) => void,
   ): () => void;
   killTerminal(terminalId: string): Promise<{ error: string | null }>;
-};
+}
 
 function getDaemonWsUrl(): string {
   const daemonPort = process.env.E2E_DAEMON_PORT;
@@ -55,12 +55,12 @@ function getServerId(): string {
   return serverId;
 }
 
-type TerminalPerfDaemonClientConfig = {
+interface TerminalPerfDaemonClientConfig {
   url: string;
   clientId: string;
   clientType: "cli";
   webSocketFactory?: NodeWebSocketFactory;
-};
+}
 
 async function loadDaemonClientConstructor(): Promise<
   new (config: TerminalPerfDaemonClientConfig) => TerminalPerfDaemonClient
@@ -191,10 +191,10 @@ export async function setupDeterministicPrompt(page: Page, sentinel?: string): P
   await page.waitForTimeout(300);
 }
 
-export type LatencySample = {
+export interface LatencySample {
   char: string;
   latencyMs: number;
-};
+}
 
 /**
  * Measures keystroke echo round-trip latency.

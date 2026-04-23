@@ -54,11 +54,11 @@ export interface StopLocalDaemonResult {
   message: string;
 }
 
-type ProcessExitDetails = {
+interface ProcessExitDetails {
   code: number | null;
   signal: NodeJS.Signals | null;
   error?: Error;
-};
+}
 
 type DetachedStartupResult = { exitedEarly: false } | ({ exitedEarly: true } & ProcessExitDetails);
 

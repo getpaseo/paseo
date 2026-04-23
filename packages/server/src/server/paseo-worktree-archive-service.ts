@@ -11,7 +11,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 
 type EmitSessionMessage = (message: SessionOutboundMessage) => void;
 
-export type ArchivePaseoWorktreeDependencies = {
+export interface ArchivePaseoWorktreeDependencies {
   paseoHome?: string;
   github: GitHubService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
@@ -23,15 +23,15 @@ export type ArchivePaseoWorktreeDependencies = {
   isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   killTerminalsUnderPath: (rootPath: string) => Promise<void>;
   sessionLogger?: Logger;
-};
+}
 
-export type KillTerminalsUnderPathDependencies = {
+export interface KillTerminalsUnderPathDependencies {
   isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   killTrackedTerminal: (terminalId: string, options?: { emitExit: boolean }) => void;
   detachTerminalStream?: (terminalId: string, options: { emitExit: boolean }) => void;
   sessionLogger: Logger;
   terminalManager: TerminalManager | null;
-};
+}
 
 export async function archivePaseoWorktree(
   dependencies: ArchivePaseoWorktreeDependencies,

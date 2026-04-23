@@ -24,11 +24,11 @@ import { createE2ETestContext } from "./helpers/test-daemon.ts";
 
 console.log("=== Provider Commands ===\n");
 
-type ProviderModel = {
+interface ProviderModel {
   model: string;
   id: string;
   description?: string;
-};
+}
 
 const EXPECTED_CLAUDE_MODELS = [
   {

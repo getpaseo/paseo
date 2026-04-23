@@ -123,12 +123,12 @@ export interface MergedToolCall {
 
 export type GroupedActivity = GroupedTextMessage | MergedToolCall | AgentActivity;
 
-type TextGroup = {
+interface TextGroup {
   messageType: TextMessageType;
   chunks: string[];
   startTimestamp: Date;
   endTimestamp: Date;
-};
+}
 
 type ToolCallAccumulator = Omit<MergedToolCall, "kind"> & {
   insertIndex: number;

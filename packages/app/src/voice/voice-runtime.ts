@@ -85,13 +85,13 @@ interface RuntimeState {
 
 type AudioOutputPayload = Extract<SessionOutboundMessage, { type: "audio_output" }>["payload"];
 
-type StreamingPlaybackChunk = {
+interface StreamingPlaybackChunk {
   id: string;
   chunkIndex: number;
   source: { arrayBuffer(): Promise<ArrayBuffer>; size: number; type: string };
-};
+}
 
-type StreamingPlaybackGroup = {
+interface StreamingPlaybackGroup {
   groupId: string;
   isVoiceMode: boolean;
   shouldPlay: boolean;
@@ -100,7 +100,7 @@ type StreamingPlaybackGroup = {
   finalChunkIndex: number | null;
   started: boolean;
   ackedChunkIds: Set<string>;
-};
+}
 
 interface RuntimePlaybackState {
   groups: Map<string, StreamingPlaybackGroup>;

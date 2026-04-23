@@ -11,11 +11,11 @@ import { getDesktopWindow } from "@/desktop/electron/window";
 import { usePanelStore } from "@/stores/panel-store";
 import { isNative } from "@/constants/platform";
 
-type RawWindowControlsPadding = {
+interface RawWindowControlsPadding {
   left: number;
   right: number;
   top: number;
-};
+}
 
 type WindowControlsPaddingRole =
   | "sidebar"

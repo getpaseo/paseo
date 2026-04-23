@@ -61,13 +61,13 @@ function resolveClaudeTranscriptPath(params: { cwd: string; sessionId: string })
   );
 }
 
-type ClaudeTranscriptLine = {
+interface ClaudeTranscriptLine {
   type?: unknown;
   timestamp?: unknown;
   uuid?: unknown;
   parentUuid?: unknown;
   message?: { content?: unknown } | null;
-};
+}
 
 function readTranscriptLines(pathname: string): ClaudeTranscriptLine[] {
   if (!existsSync(pathname)) {
@@ -158,10 +158,10 @@ function parseTimestamp(line: ClaudeTranscriptLine): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-type TranscriptRaceEvidence = {
+interface TranscriptRaceEvidence {
   helloAssistantText: string;
   notificationOutcomeAssistantText: string;
-};
+}
 
 function extractTranscriptRaceEvidence(
   lines: ClaudeTranscriptLine[],

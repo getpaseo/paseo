@@ -7,12 +7,12 @@ import {
 } from "../src/commands/agent/run.ts";
 import { resolveProviderAndModel } from "../src/utils/provider-model.ts";
 
-type TimelineEntry = {
+interface TimelineEntry {
   item: {
     type: string;
     text?: string;
   };
-};
+}
 
 function createClient(options: {
   entries?: TimelineEntry[];

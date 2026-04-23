@@ -15,15 +15,15 @@ import {
 
 export type ToastVariant = "default" | "success" | "error";
 
-export type ToastShowOptions = {
+export interface ToastShowOptions {
   icon?: ReactNode;
   variant?: ToastVariant;
   durationMs?: number;
   nativeAndroid?: boolean;
   testID?: string;
-};
+}
 
-export type ToastState = {
+export interface ToastState {
   id: number;
   content: ReactNode;
   nativeMessage: string | null;
@@ -31,13 +31,13 @@ export type ToastState = {
   variant: ToastVariant;
   durationMs: number;
   testID?: string;
-};
+}
 
-export type ToastApi = {
+export interface ToastApi {
   show: (content: ReactNode, options?: ToastShowOptions) => void;
   copied: (label?: string) => void;
   error: (message: string) => void;
-};
+}
 
 type ToastViewportPlacement = "app-shell" | "panel";
 

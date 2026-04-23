@@ -2,10 +2,10 @@ import { parseHostPort } from "@server/shared/daemon-endpoints";
 import type { WorkspaceScriptPayload } from "@server/shared/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
 
-export type ResolvedWorkspaceScriptLink = {
+export interface ResolvedWorkspaceScriptLink {
   openUrl: string | null;
   labelUrl: string | null;
-};
+}
 
 function isLoopbackHost(host: string): boolean {
   const normalizedHost = host.trim().toLowerCase();

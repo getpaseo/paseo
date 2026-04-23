@@ -14,22 +14,22 @@ import {
   type LocalTtsModelId,
 } from "./models.js";
 
-export type LocalSpeechModelConfig = {
+export interface LocalSpeechModelConfig {
   dictationStt: LocalSttModelId;
   voiceStt: LocalSttModelId;
   voiceTts: LocalTtsModelId;
   voiceTtsSpeakerId?: number;
   voiceTtsSpeed?: number;
-};
+}
 
-export type LocalSpeechProviderConfig = {
+export interface LocalSpeechProviderConfig {
   modelsDir: string;
   models: LocalSpeechModelConfig;
-};
+}
 
-export type ResolvedLocalSpeechConfig = {
+export interface ResolvedLocalSpeechConfig {
   local: LocalSpeechProviderConfig | undefined;
-};
+}
 
 export type { LocalSpeechModelId, LocalSttModelId, LocalTtsModelId };
 

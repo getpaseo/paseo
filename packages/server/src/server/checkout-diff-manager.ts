@@ -13,14 +13,14 @@ export type CheckoutDiffSnapshotPayload = Omit<
   "subscriptionId"
 >;
 
-export type CheckoutDiffMetrics = {
+export interface CheckoutDiffMetrics {
   checkoutDiffTargetCount: number;
   checkoutDiffSubscriptionCount: number;
   checkoutDiffWatcherCount: number;
   checkoutDiffFallbackRefreshTargetCount: number;
-};
+}
 
-type CheckoutDiffWatchTarget = {
+interface CheckoutDiffWatchTarget {
   key: string;
   cwd: string;
   diffCwd: string;
@@ -32,7 +32,7 @@ type CheckoutDiffWatchTarget = {
   refreshQueued: boolean;
   latestPayload: CheckoutDiffSnapshotPayload | null;
   latestFingerprint: string | null;
-};
+}
 
 export class CheckoutDiffManager {
   private readonly workspaceGitService: WorkspaceGitService;

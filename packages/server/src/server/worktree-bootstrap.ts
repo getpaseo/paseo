@@ -51,18 +51,18 @@ const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const WORKTREE_SETUP_TRUNCATION_MARKER = "\n...<output truncated in the middle>...\n";
 const WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS = 1_500;
 
-type MiddleTruncationAccumulator = {
+interface MiddleTruncationAccumulator {
   totalBytes: number;
   head: string;
   tail: string;
   truncated: boolean;
-};
+}
 
 export type WorktreeSetupOutputAccumulator = MiddleTruncationAccumulator;
-export type WorktreeSetupProgressAccumulator = {
+export interface WorktreeSetupProgressAccumulator {
   resultsByIndex: Map<number, WorktreeSetupCommandResult>;
   outputAccumulatorsByIndex: Map<number, WorktreeSetupOutputAccumulator>;
-};
+}
 
 function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");

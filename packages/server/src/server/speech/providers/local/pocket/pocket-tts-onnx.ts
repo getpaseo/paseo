@@ -16,11 +16,11 @@ type OrtModule = typeof import("onnxruntime-node");
 type OrtSession = import("onnxruntime-node").InferenceSession;
 type OrtTensor = import("onnxruntime-node").Tensor;
 
-type SentencePieceProcessor = {
+interface SentencePieceProcessor {
   encodeIds: (text: string) => number[];
   load?: (modelPath: string) => unknown;
   Load?: (modelPath: string) => unknown;
-};
+}
 
 function assertFileExists(filePath: string, label: string): void {
   if (!existsSync(filePath)) {
@@ -194,7 +194,7 @@ function tensorDataFloat32(t: OrtTensor): Float32Array {
   throw new Error("Unexpected tensor data type (expected Float32Array)");
 }
 
-export type PocketTtsOnnxConfig = {
+export interface PocketTtsOnnxConfig {
   modelDir: string;
   precision?: "int8" | "fp32";
   device?: "auto" | "cpu" | "cuda";
@@ -206,7 +206,7 @@ export type PocketTtsOnnxConfig = {
   maxChunkFrames?: number;
   targetChunkMs?: number;
   referenceAudioFile?: string;
-};
+}
 
 class PocketTtsOnnxEngine {
   static readonly SAMPLE_RATE = 24000;

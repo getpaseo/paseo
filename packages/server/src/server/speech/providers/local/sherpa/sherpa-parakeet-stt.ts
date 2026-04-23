@@ -16,10 +16,10 @@ import {
 } from "../../../audio.js";
 import { SherpaOfflineRecognizerEngine } from "./sherpa-offline-recognizer.js";
 
-export type SherpaParakeetSttConfig = {
+export interface SherpaParakeetSttConfig {
   engine: SherpaOfflineRecognizerEngine;
   silencePeakThreshold?: number;
-};
+}
 
 export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
   private readonly engine: SherpaOfflineRecognizerEngine;

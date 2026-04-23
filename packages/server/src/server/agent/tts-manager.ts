@@ -12,10 +12,10 @@ interface PendingPlayback {
   streamEnded: boolean;
 }
 
-type TtsSegment = {
+interface TtsSegment {
   index: number;
   text: string;
-};
+}
 
 type PreparedTtsSegment = TtsSegment & {
   format: string;

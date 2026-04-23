@@ -8,12 +8,12 @@ import { useSessionStore } from "@/stores/session-store";
 import { resolveAppVersion } from "@/utils/app-version";
 import { buildSettingsHostRoute } from "@/utils/host-routes";
 
-type DaemonVersionMismatch = {
+interface DaemonVersionMismatch {
   serverId: string;
   label: string;
   appVersion: string;
   daemonVersion: string;
-};
+}
 
 function useDaemonVersionMismatches(): DaemonVersionMismatch[] {
   const hosts = useHosts();

@@ -6,7 +6,7 @@ import { ClaudeAgentClient, readEventIdentifiers } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 
-type QueryMock = {
+interface QueryMock {
   next: ReturnType<typeof vi.fn>;
   interrupt: ReturnType<typeof vi.fn>;
   return: ReturnType<typeof vi.fn>;
@@ -17,7 +17,7 @@ type QueryMock = {
   supportedCommands: ReturnType<typeof vi.fn>;
   rewindFiles: ReturnType<typeof vi.fn>;
   [Symbol.asyncIterator]: () => AsyncIterator<Record<string, unknown>, void>;
-};
+}
 
 function buildUsage() {
   return {
@@ -85,10 +85,10 @@ function createSessionWithLogger(logger: Logger) {
 
 const sdkQueryFactory = vi.fn();
 
-type CapturedLog = {
+interface CapturedLog {
   level: "debug" | "info" | "warn" | "error";
   args: unknown[];
-};
+}
 
 function createSpyLogger(): {
   logger: Logger;

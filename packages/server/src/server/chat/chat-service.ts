@@ -54,13 +54,13 @@ export class ChatServiceError extends Error {
   }
 }
 
-type Waiter = {
+interface Waiter {
   roomId: string;
   afterMessageId: string | null;
   resolve: (messages: ChatMessage[]) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout> | null;
-};
+}
 
 export interface CreateChatRoomInput {
   name: string;

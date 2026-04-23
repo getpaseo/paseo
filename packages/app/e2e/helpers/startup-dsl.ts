@@ -6,11 +6,11 @@ const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
 const REGISTRY_KEY = "@paseo:daemon-registry";
 const E2E_KEY = "@paseo:e2e";
 
-type SavedHostInput = {
+interface SavedHostInput {
   serverId: string;
   label: string;
   endpoint: string;
-};
+}
 
 export function startupScenario(page: Page) {
   return new StartupScenario(page);

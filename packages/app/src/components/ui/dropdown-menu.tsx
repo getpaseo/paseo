@@ -43,13 +43,13 @@ interface Rect {
   height: number;
 }
 
-type DropdownMenuContextValue = {
+interface DropdownMenuContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   selectItem: (onSelect: (() => void) | undefined, closeOnSelect: boolean) => void;
   flushPendingSelect: () => void;
   triggerRef: React.RefObject<View | null>;
-};
+}
 
 const DropdownMenuContext = createContext<DropdownMenuContextValue | null>(null);
 
@@ -224,7 +224,11 @@ export function DropdownMenu({
   return <DropdownMenuContext.Provider value={value}>{children}</DropdownMenuContext.Provider>;
 }
 
-type TriggerState = { pressed: boolean; hovered: boolean; open: boolean };
+interface TriggerState {
+  pressed: boolean;
+  hovered: boolean;
+  open: boolean;
+}
 type TriggerStyleProp = StyleProp<ViewStyle> | ((state: TriggerState) => StyleProp<ViewStyle>);
 
 interface DropdownMenuTriggerProps extends Omit<PressableProps, "style" | "children"> {

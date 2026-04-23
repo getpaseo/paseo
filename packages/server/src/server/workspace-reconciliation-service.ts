@@ -26,19 +26,19 @@ export type ReconciliationChange =
       fields: Partial<Pick<PersistedWorkspaceRecord, "displayName">>;
     };
 
-export type ReconciliationResult = {
+export interface ReconciliationResult {
   changesApplied: ReconciliationChange[];
   durationMs: number;
-};
+}
 
-export type WorkspaceReconciliationServiceOptions = {
+export interface WorkspaceReconciliationServiceOptions {
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   logger: pino.Logger;
   intervalMs?: number;
   onChanges?: (changes: ReconciliationChange[]) => void;
   workspaceGitService?: Pick<WorkspaceGitService, "getWorkspaceGitMetadata">;
-};
+}
 
 export class WorkspaceReconciliationService {
   private readonly projectRegistry: ProjectRegistry;

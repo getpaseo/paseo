@@ -152,7 +152,7 @@ type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   }
 >;
 
-type TextAreaHandle = {
+interface TextAreaHandle {
   scrollHeight?: number;
   clientHeight?: number;
   offsetHeight?: number;
@@ -163,7 +163,7 @@ type TextAreaHandle = {
     height?: string;
     overflowY?: string;
   } & Record<string, unknown>;
-};
+}
 
 function logWebStickyBottom(_event: string, _details: Record<string, unknown>): void {
   // Intentionally disabled: this path is too noisy during voice debugging.

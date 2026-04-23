@@ -14,10 +14,10 @@ import { useSessionStore } from "@/stores/session-store";
 const DRAFT_STORE_VERSION = 4;
 const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
-type LegacyDraftImage = {
+interface LegacyDraftImage {
   uri: string;
   mimeType?: string;
-};
+}
 
 type PersistedDraftImage = AttachmentMetadata | LegacyDraftImage;
 

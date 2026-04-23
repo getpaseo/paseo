@@ -1,6 +1,6 @@
 import type { TerminalState } from "@server/shared/messages";
 
-export type TerminalStreamControllerClient = {
+export interface TerminalStreamControllerClient {
   subscribeTerminal: (terminalId: string) => Promise<{
     terminalId: string;
     error?: string | null;
@@ -17,26 +17,26 @@ export type TerminalStreamControllerClient = {
         | { terminalId: string; type: "snapshot"; state: TerminalState },
     ) => void,
   ) => () => void;
-};
+}
 
-export type TerminalStreamControllerSize = {
+export interface TerminalStreamControllerSize {
   rows: number;
   cols: number;
-};
+}
 
-export type TerminalStreamControllerStatus = {
+export interface TerminalStreamControllerStatus {
   terminalId: string | null;
   isAttaching: boolean;
   error: string | null;
-};
+}
 
-export type TerminalStreamControllerOptions = {
+export interface TerminalStreamControllerOptions {
   client: TerminalStreamControllerClient;
   getPreferredSize: () => TerminalStreamControllerSize | null;
   onOutput: (input: { terminalId: string; text: string }) => void;
   onSnapshot: (input: { terminalId: string; state: TerminalState }) => void;
   onStatusChange?: (status: TerminalStreamControllerStatus) => void;
-};
+}
 
 const TERMINAL_EXITED_ERROR = "Terminal exited";
 

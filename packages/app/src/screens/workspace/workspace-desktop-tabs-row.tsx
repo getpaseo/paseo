@@ -63,7 +63,7 @@ export interface WorkspaceDesktopTabRowItem {
   isClosingTab: boolean;
 }
 
-type WorkspaceDesktopTabsRowProps = {
+interface WorkspaceDesktopTabsRowProps {
   paneId?: string;
   isFocused?: boolean;
   tabs: WorkspaceDesktopTabRowItem[];
@@ -90,7 +90,7 @@ type WorkspaceDesktopTabsRowProps = {
   activeDragTabId?: string | null;
   tabDropPreviewIndex?: number | null;
   showPaneSplitActions?: boolean;
-};
+}
 
 function getFallbackTabLabel(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "draft") {

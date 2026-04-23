@@ -12,12 +12,12 @@ vi.mock("@/constants/platform", () => ({
   isWeb: true,
 }));
 
-type RectInput = {
+interface RectInput {
   left: number;
   right: number;
   top: number;
   bottom: number;
-};
+}
 
 let root: Root | null = null;
 let container: HTMLElement | null = null;

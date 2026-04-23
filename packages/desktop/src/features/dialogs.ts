@@ -1,19 +1,19 @@
 import { dialog, ipcMain, BrowserWindow } from "electron";
 
-type AskOptions = {
+interface AskOptions {
   title?: string;
   okLabel?: string;
   cancelLabel?: string;
   kind?: "info" | "warning" | "error";
-};
+}
 
-type OpenOptions = {
+interface OpenOptions {
   title?: string;
   defaultPath?: string;
   directory?: boolean;
   multiple?: boolean;
   filters?: Array<{ name: string; extensions: string[] }>;
-};
+}
 
 export function registerDialogHandlers(): void {
   ipcMain.handle("paseo:dialog:ask", async (event, message: string, options?: AskOptions) => {

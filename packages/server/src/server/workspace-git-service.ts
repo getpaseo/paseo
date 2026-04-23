@@ -38,7 +38,7 @@ const WORKSPACE_GIT_CONSUMER_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
 const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
 
-export type WorkspaceGitRuntimeSnapshot = {
+export interface WorkspaceGitRuntimeSnapshot {
   cwd: string;
   git: {
     isGit: boolean;
@@ -80,7 +80,7 @@ export type WorkspaceGitRuntimeSnapshot = {
     } | null;
     error: { message: string } | null;
   };
-};
+}
 
 export interface WorkspaceGitService {
   registerWorkspace(
@@ -136,9 +136,9 @@ export interface WorkspaceGitService {
 
 export type WorkspaceGitListener = (snapshot: WorkspaceGitRuntimeSnapshot) => void;
 
-export type WorkspaceGitSubscription = {
+export interface WorkspaceGitSubscription {
   unsubscribe: () => void;
-};
+}
 
 export type WorkspaceGitReadOptions =
   | {

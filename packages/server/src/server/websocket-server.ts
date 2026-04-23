@@ -51,20 +51,20 @@ import {
 } from "../shared/agent-attention-notification.js";
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 
-export type ExternalSocketMetadata = {
+export interface ExternalSocketMetadata {
   transport: "relay";
   externalSessionKey?: string;
-};
+}
 
-type PendingConnection = {
+interface PendingConnection {
   connectionLogger: pino.Logger;
   helloTimeout: ReturnType<typeof setTimeout> | null;
-};
+}
 
-type WebSocketServerConfig = {
+interface WebSocketServerConfig {
   allowedOrigins: Set<string>;
   hostnames?: HostnamesConfig;
-};
+}
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
 
@@ -232,25 +232,25 @@ function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffe
   return Buffer.from(data as ArrayBuffer);
 }
 
-type WebSocketLike = {
+interface WebSocketLike {
   readyState: number;
   bufferedAmount?: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
   on: (event: "message" | "close" | "error", listener: (...args: any[]) => void) => void;
   once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
-};
+}
 
-type SessionConnection = {
+interface SessionConnection {
   session: Session;
   clientId: string;
   appVersion: string | null;
   connectionLogger: pino.Logger;
   sockets: Set<WebSocketLike>;
   externalDisconnectCleanupTimeout: ReturnType<typeof setTimeout> | null;
-};
+}
 
-type WebSocketRuntimeCounters = {
+interface WebSocketRuntimeCounters {
   connectedAwaitingHello: number;
   helloResumed: number;
   helloNew: number;
@@ -266,7 +266,7 @@ type WebSocketRuntimeCounters = {
   relayExternalSocketAttached: number;
   originRejected: number;
   hostRejected: number;
-};
+}
 
 const SLOW_REQUEST_THRESHOLD_MS = 500;
 const EXTERNAL_SESSION_DISCONNECT_GRACE_MS = 90_000;
@@ -1612,12 +1612,12 @@ export class VoiceAssistantWebSocketServer {
   }
 }
 
-type SocketRequestMetadata = {
+interface SocketRequestMetadata {
   host?: string;
   origin?: string;
   userAgent?: string;
   remoteAddress?: string;
-};
+}
 
 function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
   if (!request || typeof request !== "object") {

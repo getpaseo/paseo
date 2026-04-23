@@ -1,10 +1,10 @@
 import { createRequire } from "node:module";
 
-export type SherpaOnnxModule = {
+export interface SherpaOnnxModule {
   createOnlineRecognizer: (config: any) => any;
   createOfflineRecognizer: (config: any) => any;
   createOfflineTts: (config: any) => any;
-};
+}
 
 let cached: SherpaOnnxModule | null = null;
 

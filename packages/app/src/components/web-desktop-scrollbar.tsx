@@ -37,11 +37,11 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export type ScrollbarMetrics = {
+export interface ScrollbarMetrics {
   offset: number;
   viewportSize: number;
   contentSize: number;
-};
+}
 
 function areMetricsEqual(a: ScrollbarMetrics, b: ScrollbarMetrics): boolean {
   return (
@@ -107,12 +107,12 @@ export function useWebDesktopScrollbarMetrics() {
   };
 }
 
-type WebDesktopScrollbarOverlayProps = {
+interface WebDesktopScrollbarOverlayProps {
   enabled: boolean;
   metrics: ScrollbarMetrics;
   onScrollToOffset: (offset: number) => void;
   inverted?: boolean;
-};
+}
 
 export function WebDesktopScrollbarOverlay({
   enabled,

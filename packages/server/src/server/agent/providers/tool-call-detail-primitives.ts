@@ -329,10 +329,10 @@ const ToolReadOutputPathSchema = z.union([
     })),
 ]);
 
-type ToolReadOutputValue = {
+interface ToolReadOutputValue {
   filePath?: string;
   content?: string;
-};
+}
 
 export const ToolReadOutputSchema: z.ZodType<ToolReadOutputValue, z.ZodTypeDef, unknown> =
   ToolReadOutputContentSchema;

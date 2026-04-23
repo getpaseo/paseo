@@ -19,7 +19,7 @@ function getServerId(): string {
   return serverId;
 }
 
-type WorkspaceScriptStarter = {
+interface WorkspaceScriptStarter {
   startWorkspaceScript(
     workspaceId: string,
     scriptName: string,
@@ -29,7 +29,7 @@ type WorkspaceScriptStarter = {
     terminalId: string | null;
     error: string | null;
   }>;
-};
+}
 
 /** Click the sidebar row for a workspace (by ID) and wait for navigation. */
 async function navigateToWorkspaceViaSidebar(

@@ -8,11 +8,11 @@ import type pino from "pino";
 
 import { getSherpaOnnxModelSpec, type SherpaOnnxModelId } from "./model-catalog.js";
 
-export type EnsureSherpaOnnxModelOptions = {
+export interface EnsureSherpaOnnxModelOptions {
   modelsDir: string;
   modelId: SherpaOnnxModelId;
   logger: pino.Logger;
-};
+}
 
 export function getSherpaOnnxModelDir(modelsDir: string, modelId: SherpaOnnxModelId): string {
   const spec = getSherpaOnnxModelSpec(modelId);
@@ -38,10 +38,10 @@ async function hasRequiredFiles(modelDir: string, requiredFiles: string[]): Prom
   return true;
 }
 
-type DownloadToFileOptions = {
+interface DownloadToFileOptions {
   url: string;
   outputPath: string;
-};
+}
 
 async function downloadToFile(options: DownloadToFileOptions): Promise<void> {
   const { url, outputPath } = options;

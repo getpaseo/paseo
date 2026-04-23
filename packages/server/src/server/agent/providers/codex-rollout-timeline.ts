@@ -582,10 +582,10 @@ export async function parseRolloutFile(filePath: string): Promise<AgentTimelineI
   return dedupeMirroredTextTimelineItems(timeline);
 }
 
-export type CodexPersistedTimelineOptions = {
+export interface CodexPersistedTimelineOptions {
   sessionRoot?: string | null;
   rolloutPath?: string | null;
-};
+}
 
 export async function loadCodexPersistedTimeline(
   sessionId: string,

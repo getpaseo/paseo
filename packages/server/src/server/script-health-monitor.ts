@@ -10,12 +10,12 @@ export interface ScriptHealthEntry {
   health: ScriptHealthState;
 }
 
-type RouteHealthState = {
+interface RouteHealthState {
   workspaceId: string;
   health: ScriptHealthState;
   consecutiveFailures: number;
   registeredAt: number;
-};
+}
 
 export class ScriptHealthMonitor {
   private readonly routeStore: ScriptRouteStore;

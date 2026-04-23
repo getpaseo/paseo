@@ -10,12 +10,12 @@ import {
   parseDataUrl,
 } from "@/attachments/utils";
 
-type StoredBlobRecord = {
+interface StoredBlobRecord {
   id: string;
   blob: Blob;
   createdAt: number;
   fileName: string | null;
-};
+}
 
 const DB_NAME = "paseo-attachment-bytes";
 const STORE_NAME = "attachments";

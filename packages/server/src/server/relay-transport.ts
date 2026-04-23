@@ -11,25 +11,25 @@ import {
 import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 
-type RelayTransportOptions = {
+interface RelayTransportOptions {
   logger: pino.Logger;
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>;
   relayEndpoint: string; // "host:port"
   serverId: string;
   daemonKeyPair?: KeyPair;
-};
+}
 
-export type RelayTransportController = {
+export interface RelayTransportController {
   stop: () => Promise<void>;
-};
+}
 
-type RelaySocketLike = {
+interface RelaySocketLike {
   readyState: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
   on: (event: "message" | "close" | "error", listener: (...args: any[]) => void) => void;
   once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
-};
+}
 
 type ControlMessage =
   | { type: "sync"; connectionIds: string[] }

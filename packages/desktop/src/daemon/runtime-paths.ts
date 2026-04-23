@@ -18,9 +18,9 @@ const CLI_PACKAGE_NAME = "@getpaseo/cli";
 const SERVER_PACKAGE_NAME = "@getpaseo/server";
 const CLI_BIN_ENTRY = `${CLI_PACKAGE_NAME}/bin/paseo`;
 
-type PackageInfo = {
+interface PackageInfo {
   root: string;
-};
+}
 
 const esmRequire = createRequire(__filename);
 

@@ -55,11 +55,11 @@ const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
 
 type TimeoutResult = "completed" | "timed_out";
 
-type TimeoutOptions = {
+interface TimeoutOptions {
   operation: Promise<void>;
   timeoutMs: number;
   onLateError?: (error: unknown) => void;
-};
+}
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 export type {
@@ -83,10 +83,10 @@ export type AgentManagerEvent =
 
 export type AgentSubscriber = (event: AgentManagerEvent) => void;
 
-export type SubscribeOptions = {
+export interface SubscribeOptions {
   agentId?: string;
   replayState?: boolean;
-};
+}
 
 export type PersistedAgentQueryOptions = ListPersistedAgentsOptions & {
   provider?: AgentProvider;
@@ -98,18 +98,18 @@ export type AgentAttentionCallback = (params: {
   reason: "finished" | "error" | "permission";
 }) => void;
 
-export type ProviderAvailability = {
+export interface ProviderAvailability {
   provider: AgentProvider;
   available: boolean;
   error: string | null;
-};
+}
 
-type AgentManagerRescueTimeouts = {
+interface AgentManagerRescueTimeouts {
   reloadSessionCloseMs?: number;
   interruptSessionMs?: number;
-};
+}
 
-export type AgentManagerOptions = {
+export interface AgentManagerOptions {
   clients?: Partial<Record<AgentProvider, AgentClient>>;
   idFactory?: () => string;
   registry?: AgentStorage;
@@ -120,22 +120,22 @@ export type AgentManagerOptions = {
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
-};
+}
 
-export type WaitForAgentOptions = {
+export interface WaitForAgentOptions {
   signal?: AbortSignal;
   waitForActive?: boolean;
-};
+}
 
-export type WaitForAgentResult = {
+export interface WaitForAgentResult {
   status: AgentLifecycleStatus;
   permission: AgentPermissionRequest | null;
   lastMessage: string | null;
-};
+}
 
-export type WaitForAgentStartOptions = {
+export interface WaitForAgentStartOptions {
   signal?: AbortSignal;
-};
+}
 
 type AttentionState =
   | { requiresAttention: false }
@@ -145,23 +145,23 @@ type AttentionState =
       attentionTimestamp: Date;
     };
 
-type ForegroundTurnWaiter = {
+interface ForegroundTurnWaiter {
   turnId: string;
   callback: (event: AgentStreamEvent) => void;
   settled: boolean;
   settledPromise: Promise<void>;
   resolveSettled: () => void;
-};
+}
 
-type PendingForegroundRun = {
+interface PendingForegroundRun {
   token: string;
   started: boolean;
   settled: boolean;
   settledPromise: Promise<void>;
   resolveSettled: () => void;
-};
+}
 
-type ManagedAgentBase = {
+interface ManagedAgentBase {
   id: string;
   provider: AgentProvider;
   cwd: string;
@@ -197,7 +197,7 @@ type ManagedAgentBase = {
    * User-defined labels for categorizing agents (e.g., { surface: "workspace" }).
    */
   labels: Record<string, string>;
-};
+}
 
 type ManagedAgentWithSession = ManagedAgentBase & {
   session: AgentSession;
@@ -273,10 +273,10 @@ function attachPersistenceCwd(
   };
 }
 
-type SubscriptionRecord = {
+interface SubscriptionRecord {
   callback: AgentSubscriber;
   agentId: string | null;
-};
+}
 
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
 const AgentIdSchema = z.string().uuid();

@@ -16,11 +16,11 @@ import {
 } from "../../../audio.js";
 import { SherpaOnlineRecognizerEngine } from "./sherpa-online-recognizer.js";
 
-export type SherpaSttConfig = {
+export interface SherpaSttConfig {
   engine: SherpaOnlineRecognizerEngine;
   silencePeakThreshold?: number;
   tailPaddingMs?: number;
-};
+}
 
 export class SherpaOnnxSTT implements SpeechToTextProvider {
   private readonly engine: SherpaOnlineRecognizerEngine;

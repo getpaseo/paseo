@@ -15,13 +15,13 @@ import type {
 import type { ProviderDefinition } from "./provider-registry.js";
 import { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 
-type Deferred<T> = {
+interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
-};
+}
 
-type MockProviderOptions = {
+interface MockProviderOptions {
   provider: AgentProvider;
   label?: string;
   description?: string;
@@ -29,14 +29,14 @@ type MockProviderOptions = {
   isAvailable?: () => Promise<boolean>;
   fetchModels?: (cwd: string, force: boolean) => Promise<AgentModelDefinition[]>;
   fetchModes?: (cwd: string, force: boolean) => Promise<AgentMode[]>;
-};
+}
 
-type MockProviderHandle = {
+interface MockProviderHandle {
   definition: ProviderDefinition;
   isAvailable: ReturnType<typeof vi.fn>;
   fetchModels: ReturnType<typeof vi.fn>;
   fetchModes: ReturnType<typeof vi.fn>;
-};
+}
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,

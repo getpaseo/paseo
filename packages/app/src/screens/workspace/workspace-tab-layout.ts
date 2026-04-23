@@ -1,6 +1,6 @@
 export type WorkspaceTabCloseButtonPolicy = "all";
 
-export type WorkspaceTabLayoutInput = {
+export interface WorkspaceTabLayoutInput {
   viewportWidth: number;
   tabLabelLengths: number[];
   metrics: {
@@ -14,19 +14,19 @@ export type WorkspaceTabLayoutInput = {
     estimatedCharWidth: number;
     closeButtonWidth: number;
   };
-};
+}
 
-export type WorkspaceTabLayoutItem = {
+export interface WorkspaceTabLayoutItem {
   width: number;
   showLabel: boolean;
   labelCharCap: number;
-};
+}
 
-export type WorkspaceTabLayoutResult = {
+export interface WorkspaceTabLayoutResult {
   items: WorkspaceTabLayoutItem[];
   closeButtonPolicy: WorkspaceTabCloseButtonPolicy;
   requiresHorizontalScrollFallback: boolean;
-};
+}
 
 function clamp(value: number, min: number, max: number): number {
   if (value < min) {

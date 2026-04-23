@@ -1,9 +1,9 @@
 import { app, Menu, BrowserWindow, ipcMain } from "electron";
 
-type ShowContextMenuInput = {
+interface ShowContextMenuInput {
   kind?: "terminal";
   hasSelection?: boolean;
-};
+}
 
 function withBrowserWindow(
   callback: (win: BrowserWindow) => void,

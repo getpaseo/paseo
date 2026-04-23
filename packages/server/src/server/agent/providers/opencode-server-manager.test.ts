@@ -9,13 +9,13 @@ type FakeServerProcess = EventEmitter & {
   kill: ReturnType<typeof vi.fn>;
 };
 
-type FakeGeneration = {
+interface FakeGeneration {
   process: FakeServerProcess;
   port: number;
   url: string;
   refCount: number;
   retired: boolean;
-};
+}
 
 describe("OpenCodeServerManager generations", () => {
   test("rotation creates a new current server without killing a referenced old server", async () => {

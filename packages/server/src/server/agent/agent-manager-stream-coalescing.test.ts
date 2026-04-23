@@ -226,13 +226,13 @@ class TestAgentClient implements AgentClient {
   }
 }
 
-type Harness = {
+interface Harness {
   manager: AgentManager;
   client: TestAgentClient;
   events: AgentManagerEvent[];
   workdir: string;
   cleanup: () => void;
-};
+}
 
 function createHarness(options?: { provider?: AgentProvider }): Harness {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stream-coalescing-"));

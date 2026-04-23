@@ -98,11 +98,11 @@ import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 
 polyfillCrypto();
 
-export type HostRuntimeBootstrapState = {
+export interface HostRuntimeBootstrapState {
   phase: "starting-daemon" | "connecting" | "online" | "error";
   error: string | null;
   retry: () => void;
-};
+}
 
 function getRouteParamValue(value: string | string[] | undefined): string | undefined {
   if (typeof value === "string") {

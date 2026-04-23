@@ -40,10 +40,10 @@ const COPILOT_MODES: AgentMode[] = [
   },
 ];
 
-type CopilotACPAgentClientOptions = {
+interface CopilotACPAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
-};
+}
 
 export class CopilotACPAgentClient extends ACPAgentClient {
   constructor(options: CopilotACPAgentClientOptions) {

@@ -320,7 +320,7 @@ export function resolveWaitForFinishError(options: {
 
 type ProcessingPhase = "idle" | "transcribing";
 
-type WorkspaceGitWatchTarget = {
+interface WorkspaceGitWatchTarget {
   cwd: string;
   watchers: FSWatcher[];
   debounceTimer: ReturnType<typeof setTimeout> | null;
@@ -328,22 +328,22 @@ type WorkspaceGitWatchTarget = {
   refreshQueued: boolean;
   latestDescriptorStateKey: string | null;
   lastBranchName: string | null;
-};
+}
 
-type ActiveTerminalStream = {
+interface ActiveTerminalStream {
   terminalId: string;
   slot: number;
   unsubscribe: () => void;
   needsSnapshot: boolean;
   outputCoalescer: TerminalOutputCoalescer;
-};
+}
 
-export type SessionRuntimeMetrics = {
+export interface SessionRuntimeMetrics {
   terminalDirectorySubscriptionCount: number;
   terminalSubscriptionCount: number;
   inflightRequests: number;
   peakInflightRequests: number;
-};
+}
 
 type FetchAgentsRequestMessage = Extract<SessionInboundMessage, { type: "fetch_agents_request" }>;
 type FetchAgentHistoryRequestMessage = Extract<
@@ -361,17 +361,17 @@ type FetchAgentsResponseEntry = FetchAgentsResponsePayload["entries"][number];
 type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 type AgentUpdatesFilter = FetchAgentsRequestFilter;
-type AgentUpdatesSubscriptionState = {
+interface AgentUpdatesSubscriptionState {
   subscriptionId: string;
   filter?: AgentUpdatesFilter;
   isBootstrapping: boolean;
   pendingUpdatesByAgentId: Map<string, AgentUpdatePayload>;
-};
-type FetchAgentsCursor = {
+}
+interface FetchAgentsCursor {
   sort: FetchAgentsRequestSort[];
   values: Record<string, string | number | null>;
   id: string;
-};
+}
 type FetchWorkspacesRequestMessage = Extract<
   SessionInboundMessage,
   { type: "fetch_workspaces_request" }
@@ -389,18 +389,18 @@ type WorkspaceUpdatePayload = Extract<
   { type: "workspace_update" }
 >["payload"];
 type WorkspaceUpdatesFilter = FetchWorkspacesRequestFilter;
-type WorkspaceUpdatesSubscriptionState = {
+interface WorkspaceUpdatesSubscriptionState {
   subscriptionId: string;
   filter?: WorkspaceUpdatesFilter;
   isBootstrapping: boolean;
   pendingUpdatesByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
   lastEmittedByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
-};
-type FetchWorkspacesCursor = {
+}
+interface FetchWorkspacesCursor {
   sort: FetchWorkspacesRequestSort[];
   values: Record<string, string | number | null>;
   id: string;
-};
+}
 
 function summarizeFetchWorkspacesEntries(entries: Iterable<FetchWorkspacesResponseEntry>): {
   count: number;
@@ -461,9 +461,9 @@ const VOICE_INTERRUPT_CONFIRMATION_MS = 500;
 const AVAILABLE_EDITOR_TARGETS_CACHE_TTL_MS = 60_000;
 const AVAILABLE_EDITOR_TARGETS_CACHE_KEY = "available";
 
-type VoiceModeBaseConfig = {
+interface VoiceModeBaseConfig {
   systemPrompt?: string;
-};
+}
 
 interface AudioBufferState {
   chunks: Buffer[];
@@ -475,7 +475,7 @@ interface AudioBufferState {
 // Stub types for features under development (modules not yet available)
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
-type VoiceTranscriptionResultPayload = {
+interface VoiceTranscriptionResultPayload {
   text: string;
   requestId: string;
   language?: string;
@@ -485,9 +485,9 @@ type VoiceTranscriptionResultPayload = {
   byteLength?: number;
   format?: string;
   debugRecordingPath?: string;
-};
+}
 
-export type SessionOptions = {
+export interface SessionOptions {
   clientId: string;
   appVersion?: string | null;
   onMessage: (msg: SessionOutboundMessage) => void;
@@ -542,7 +542,7 @@ export type SessionOptions = {
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
   isDev?: boolean;
-};
+}
 
 export type SessionLifecycleIntent =
   | {
@@ -568,18 +568,18 @@ type PullRequestTimelinePayload = Extract<
 >["payload"];
 type PullRequestTimelinePayloadItem = PullRequestTimelinePayload["items"][number];
 
-type VoiceFeatureUnavailableContext = {
+interface VoiceFeatureUnavailableContext {
   reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
   message: string;
   retryable: boolean;
   missingModelIds: LocalSpeechModelId[];
-};
+}
 
-type VoiceFeatureUnavailableResponseMetadata = {
+interface VoiceFeatureUnavailableResponseMetadata {
   reasonCode?: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
   retryable?: boolean;
   missingModelIds?: LocalSpeechModelId[];
-};
+}
 
 class VoiceFeatureUnavailableError extends Error {
   readonly reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];

@@ -9,16 +9,16 @@ export type ToolCallDisplayInput = Pick<
   cwd?: string;
 };
 
-export type ToolCallDisplayModel = {
+export interface ToolCallDisplayModel {
   displayName: string;
   summary?: string;
   errorText?: string;
-};
+}
 
-type DetailDisplay = {
+interface DetailDisplay {
   displayName?: string;
   summary?: string;
-};
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

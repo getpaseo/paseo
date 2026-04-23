@@ -19,11 +19,11 @@ import { coerceAgentProvider, toAgentPersistenceHandle } from "../persistence-ho
 
 export type { ManagedAgent };
 
-type ProjectionOptions = {
+interface ProjectionOptions {
   title?: string | null;
   createdAt?: string;
   internal?: boolean;
-};
+}
 
 function normalizeThinkingOptionId(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;

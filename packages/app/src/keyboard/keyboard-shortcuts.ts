@@ -11,41 +11,41 @@ export type { KeyCombo } from "@/keyboard/shortcut-string";
 
 // --- Public types ---
 
-export type KeyboardShortcutContext = {
+export interface KeyboardShortcutContext {
   isMac: boolean;
   isDesktop: boolean;
   focusScope: KeyboardFocusScope;
   commandCenterOpen: boolean;
-};
+}
 
-export type KeyboardShortcutMatch = {
+export interface KeyboardShortcutMatch {
   action: KeyboardActionId;
   payload: KeyboardShortcutPayload;
   preventDefault: boolean;
   stopPropagation: boolean;
-};
+}
 
-export type KeyboardShortcutHelpRow = {
+export interface KeyboardShortcutHelpRow {
   id: string;
   label: string;
   keys: ShortcutKey[];
   note?: string;
-};
+}
 
 export type ShortcutSectionId = "navigation" | "tabs-panes" | "projects" | "panels" | "agent-input";
 
-export type KeyboardShortcutHelpSection = {
+export interface KeyboardShortcutHelpSection {
   id: ShortcutSectionId;
   title: string;
   rows: KeyboardShortcutHelpRow[];
-};
+}
 
 // --- Binding definition types ---
 
-type KeyboardShortcutPlatformContext = {
+interface KeyboardShortcutPlatformContext {
   isMac: boolean;
   isDesktop: boolean;
-};
+}
 
 interface ShortcutWhen {
   /** true = mac only, false = non-mac only */

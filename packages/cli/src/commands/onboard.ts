@@ -165,10 +165,10 @@ async function resolveVoiceSelection(mode: OnboardOptions["voice"]): Promise<boo
   return answer;
 }
 
-type DownloadProgress = {
+interface DownloadProgress {
   modelId: string | null;
   pct: number | null;
-};
+}
 
 function parseDownloadProgress(logTail: string): DownloadProgress | null {
   const lines = logTail.split("\n").filter(Boolean);

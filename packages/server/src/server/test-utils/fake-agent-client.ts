@@ -32,11 +32,11 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsToolInvocations: true,
 };
 
-type Deferred<T> = {
+interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (err: unknown) => void;
-};
+}
 
 function createDeferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;

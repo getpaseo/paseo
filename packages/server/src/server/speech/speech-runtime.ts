@@ -31,16 +31,16 @@ export type SpeechReadinessReasonCode =
   | "stt_unavailable"
   | "tts_unavailable";
 
-export type SpeechReadinessState = {
+export interface SpeechReadinessState {
   enabled: boolean;
   available: boolean;
   reasonCode: SpeechReadinessReasonCode;
   message: string;
   retryable: boolean;
   missingModelIds: LocalSpeechModelId[];
-};
+}
 
-export type SpeechReadinessSnapshot = {
+export interface SpeechReadinessSnapshot {
   generatedAt: string;
   requiredLocalModelIds: LocalSpeechModelId[];
   missingLocalModelIds: LocalSpeechModelId[];
@@ -51,7 +51,7 @@ export type SpeechReadinessSnapshot = {
   realtimeVoice: SpeechReadinessState;
   dictation: SpeechReadinessState;
   voiceFeature: SpeechReadinessState;
-};
+}
 
 function resolveRequestedSpeechProviders(
   speechConfig: PaseoSpeechConfig | null,
@@ -336,7 +336,7 @@ function resolveEffectiveProviderIds(params: {
   };
 }
 
-export type SpeechService = {
+export interface SpeechService {
   resolveStt: () => SpeechToTextProvider | null;
   resolveTts: () => TextToSpeechProvider | null;
   resolveTurnDetection: () => TurnDetectionProvider | null;
@@ -346,7 +346,7 @@ export type SpeechService = {
   start: () => void;
   stop: () => void;
   ready: Promise<void>;
-};
+}
 
 export function createSpeechService(params: {
   logger: Logger;

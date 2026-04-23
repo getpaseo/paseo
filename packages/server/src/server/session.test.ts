@@ -45,11 +45,11 @@ const paseoWorktreeServiceMocks = vi.hoisted(() => ({
   createPaseoWorktree: vi.fn(),
 }));
 
-type Deferred<T> = {
+interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
-};
+}
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,

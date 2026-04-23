@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 
-export type TerminalRenderProbeSnapshot = {
+export interface TerminalRenderProbeSnapshot {
   setCount: number;
   unsetCount: number;
   writeCount: number;
@@ -10,28 +10,28 @@ export type TerminalRenderProbeSnapshot = {
   altExitWrites: number;
   events: TerminalRenderProbeEvent[];
   frames: TerminalFrame[];
-};
+}
 
-export type TerminalRenderProbeEvent = {
+export interface TerminalRenderProbeEvent {
   at: number;
   type: "set" | "unset" | "reset-write" | "clear-write" | "alt-enter-write" | "alt-exit-write";
   preview?: string;
-};
+}
 
-export type TerminalFrame = {
+export interface TerminalFrame {
   at: number;
   rowCount: number;
   nonEmptyRows: number;
   firstNonEmptyRow: number | null;
   text: string;
   topText: string;
-};
+}
 
 export type TerminalRenderProbeSummary = Omit<TerminalRenderProbeSnapshot, "frames"> & {
   frameCount: number;
 };
 
-export type TerminalKeystrokeStressReport = {
+export interface TerminalKeystrokeStressReport {
   inputTextLength: number;
   keydownCount: number;
   inputFrameCount: number;
@@ -70,20 +70,20 @@ export type TerminalKeystrokeStressReport = {
   keydownToXtermCommitMs: LatencyStats | null;
   firstKeydownAt: number | null;
   lastXtermCommitAt: number | null;
-};
+}
 
-export type LatencyStats = {
+export interface LatencyStats {
   count: number;
   minMs: number;
   p50Ms: number;
   p95Ms: number;
   maxMs: number;
   avgMs: number;
-};
+}
 
 export async function installTerminalRenderProbe(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    type ProbeState = {
+    interface ProbeState {
       term: any;
       setCount: number;
       unsetCount: number;
@@ -99,7 +99,7 @@ export async function installTerminalRenderProbe(page: Page): Promise<void> {
       reset: () => void;
       snapshot: () => TerminalRenderProbeSnapshot;
       startSampling: (durationMs: number) => void;
-    };
+    }
 
     const win = window as any;
     const existingDescriptor = Object.getOwnPropertyDescriptor(win, "__paseoTerminal");
@@ -272,29 +272,29 @@ export function summarizeTerminalRenderProbe(
 
 export async function installTerminalKeystrokeStressProbe(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    type TimedTextEvent = {
+    interface TimedTextEvent {
       at: number;
       text: string;
       bytes: number;
-    };
-    type TimedTextMessageEvent = {
+    }
+    interface TimedTextMessageEvent {
       at: number;
       bytes: number;
       kind: string | null;
-    };
-    type XtermWriteEvent = {
+    }
+    interface XtermWriteEvent {
       at: number;
       committedAt: number | null;
       text: string;
       bytes: number;
-    };
-    type AppProbeEvent = {
+    }
+    interface AppProbeEvent {
       type: string;
       at: number;
       bytes?: number;
       queueDepth?: number;
-    };
-    type StressProbeState = {
+    }
+    interface StressProbeState {
       keydowns: Array<{ at: number; key: string }>;
       inputFrames: TimedTextEvent[];
       outputFrames: TimedTextEvent[];
@@ -303,7 +303,7 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
       appEvents: AppProbeEvent[];
       reset: () => void;
       report: (inputText: string) => TerminalKeystrokeStressReport;
-    };
+    }
 
     const INPUT_OPCODE = 0x02;
     const OUTPUT_OPCODE = 0x01;

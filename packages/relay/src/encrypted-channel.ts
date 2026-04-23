@@ -35,7 +35,7 @@ export interface EncryptedChannelEvents {
 
 type ChannelState = "connecting" | "handshaking" | "open" | "closed";
 
-type EncryptedChannelOptions = {
+interface EncryptedChannelOptions {
   /**
    * If set, the channel can validate repeated plaintext `{type:"e2ee_hello"}`
    * messages even after it is open.
@@ -45,7 +45,7 @@ type EncryptedChannelOptions = {
    * the daemon should re-send `{type:"e2ee_ready"}` without changing keys.
    */
   daemonKeyPair?: KeyPair;
-};
+}
 
 interface E2EEHelloMessage {
   type: "e2ee_hello";

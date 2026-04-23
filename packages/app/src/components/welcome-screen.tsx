@@ -16,14 +16,14 @@ import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isWeb, isNative } from "@/constants/platform";
 
-type WelcomeAction = {
+interface WelcomeAction {
   key: "scan-qr" | "direct-connection" | "paste-pairing-link";
   label: string;
   testID: string;
   primary: boolean;
   icon: typeof QrCode;
   onPress: () => void;
-};
+}
 
 const styles = StyleSheet.create((theme) => ({
   root: {

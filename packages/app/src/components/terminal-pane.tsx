@@ -51,11 +51,11 @@ const KEY_BUTTONS: Array<{ id: string; label: string; key: string }> = [
   { id: "c", label: "C", key: "c" },
 ];
 
-type ModifierState = {
+interface ModifierState {
   ctrl: boolean;
   shift: boolean;
   alt: boolean;
-};
+}
 
 type PendingTerminalInput =
   | {

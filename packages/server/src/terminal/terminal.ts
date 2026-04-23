@@ -98,12 +98,12 @@ export interface CaptureTerminalLinesResult {
   totalLines: number;
 }
 
-type EnsureNodePtySpawnHelperExecutableOptions = {
+interface EnsureNodePtySpawnHelperExecutableOptions {
   packageRoot?: string;
   platform?: NodeJS.Platform;
   arch?: string;
   force?: boolean;
-};
+}
 
 function resolveNodePtyPackageRoot(): string | null {
   try {

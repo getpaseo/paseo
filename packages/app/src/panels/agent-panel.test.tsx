@@ -15,7 +15,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
 
-type PanelTestTheme = {
+interface PanelTestTheme {
   colors: {
     foreground: string;
     foregroundMuted: string;
@@ -31,7 +31,7 @@ type PanelTestTheme = {
   fontSize: Record<string, number>;
   fontWeight: Record<string, string>;
   iconSize: Record<string, number>;
-};
+}
 type PanelTestStyles = Record<string, unknown>;
 type PanelTestStyleFactory = (input: PanelTestTheme) => PanelTestStyles;
 

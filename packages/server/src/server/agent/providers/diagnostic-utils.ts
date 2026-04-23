@@ -1,10 +1,10 @@
 import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
 import { execCommand } from "../../../utils/spawn.js";
 
-type DiagnosticEntry = {
+interface DiagnosticEntry {
   label: string;
   value: string;
-};
+}
 
 export function formatProviderDiagnostic(providerName: string, entries: DiagnosticEntry[]): string {
   return [providerName, ...entries.map((entry) => `  ${entry.label}: ${entry.value}`)].join("\n");

@@ -36,7 +36,10 @@ for (let i = 0; i < args.length; i++) {
 
 $.verbose = false;
 
-type Failure = { test: string; error: string };
+interface Failure {
+  test: string;
+  error: string;
+}
 
 async function runCommand(label: string, command: string): Promise<void> {
   console.log(`\n${"─".repeat(50)}`);

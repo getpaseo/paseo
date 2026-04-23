@@ -41,7 +41,7 @@ vi.mock("@xterm/xterm", () => ({
 
 import { TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
-type StubTerminal = {
+interface StubTerminal {
   write: (text: string, callback?: () => void) => void;
   reset: () => void;
   resize?: (cols: number, rows: number) => void;
@@ -50,7 +50,7 @@ type StubTerminal = {
   options?: { theme?: unknown };
   rows?: number;
   cols?: number;
-};
+}
 
 function createRuntimeWithTerminal(): {
   runtime: TerminalEmulatorRuntime;

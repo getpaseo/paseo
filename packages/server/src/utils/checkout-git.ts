@@ -115,20 +115,20 @@ export function __setCheckoutShortstatCacheTtlForTests(ttlMs: number): void {
   shortstatInFlight.clear();
 }
 
-type CheckoutFileChange = {
+interface CheckoutFileChange {
   path: string;
   oldPath?: string;
   status: string;
   isNew: boolean;
   isDeleted: boolean;
   isUntracked?: boolean;
-};
+}
 
-type CheckoutDiffRefs = {
+interface CheckoutDiffRefs {
   baseRef: string;
   targetRef?: string;
   includeUntracked: boolean;
-};
+}
 
 function getCheckoutDiffRefArgs(refs: CheckoutDiffRefs): string[] {
   return [refs.baseRef, ...(refs.targetRef ? [refs.targetRef] : [])];
@@ -640,7 +640,7 @@ export interface CheckoutStatus {
   isGit: false;
 }
 
-export type CheckoutStatusGitNonPaseo = {
+export interface CheckoutStatusGitNonPaseo {
   isGit: true;
   repoRoot: string;
   currentBranch: string | null;
@@ -652,9 +652,9 @@ export type CheckoutStatusGitNonPaseo = {
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: false;
-};
+}
 
-export type CheckoutStatusGitPaseo = {
+export interface CheckoutStatusGitPaseo {
   isGit: true;
   repoRoot: string;
   mainRepoRoot: string;
@@ -667,7 +667,7 @@ export type CheckoutStatusGitPaseo = {
   hasRemote: boolean;
   remoteUrl: string | null;
   isPaseoOwnedWorktree: true;
-};
+}
 
 export type CheckoutStatusGit = CheckoutStatusGitNonPaseo | CheckoutStatusGitPaseo;
 
@@ -696,9 +696,9 @@ export interface MergeFromBaseOptions {
   requireCleanTarget?: boolean;
 }
 
-export type CheckoutContext = {
+export interface CheckoutContext {
   paseoHome?: string;
-};
+}
 
 function isGitError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -788,11 +788,11 @@ export async function getMainRepoRoot(cwd: string): Promise<string> {
   return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonPaseo[0]?.path ?? normalized;
 }
 
-export type GitWorktreeEntry = {
+export interface GitWorktreeEntry {
   path: string;
   branchRef?: string;
   isBare?: boolean;
-};
+}
 
 /** Check whether a path contains a `.paseo/worktrees/` segment (both `/` and `\`). */
 export function isPaseoWorktreePath(p: string): boolean {
@@ -1218,12 +1218,12 @@ async function getBehindOfOrigin(cwd: string, currentBranch: string): Promise<nu
   }
 }
 
-type CheckoutInspectionContext = {
+interface CheckoutInspectionContext {
   worktreeRoot: string;
   currentBranch: string | null;
   remoteUrl: string | null;
   configured: ConfiguredBaseRefForCwd;
-};
+}
 
 async function inspectCheckoutContext(
   cwd: string,
@@ -2102,13 +2102,13 @@ export interface PullRequestStatusResult {
   githubFeaturesEnabled: boolean;
 }
 
-export type PullRequestCheck = {
+export interface PullRequestCheck {
   name: string;
   status: "success" | "failure" | "pending" | "skipped" | "cancelled";
   url: string | null;
   workflow?: string;
   duration?: string;
-};
+}
 
 export type ChecksStatus = "none" | "pending" | "success" | "failure";
 

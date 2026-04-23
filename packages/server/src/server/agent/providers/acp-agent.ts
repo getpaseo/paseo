@@ -182,7 +182,7 @@ export function createLoggedNdJsonStream(
   return { readable, writable };
 }
 
-type ACPAgentClientOptions = {
+interface ACPAgentClientOptions {
   provider: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
@@ -199,9 +199,9 @@ type ACPAgentClientOptions = {
   capabilities?: AgentCapabilityFlags;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
-};
+}
 
-type ACPAgentSessionOptions = {
+interface ACPAgentSessionOptions {
   provider: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
@@ -220,15 +220,15 @@ type ACPAgentSessionOptions = {
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
-};
+}
 
-export type SpawnedACPProcess = {
+export interface SpawnedACPProcess {
   child: ChildProcessWithoutNullStreams;
   connection: ClientSideConnection;
   initialize: InitializeResponse;
-};
+}
 
-export type ACPToolSnapshot = {
+export interface ACPToolSnapshot {
   toolCallId: string;
   title: string;
   kind?: ToolKind | null;
@@ -237,28 +237,28 @@ export type ACPToolSnapshot = {
   locations?: ToolCallLocation[] | null;
   rawInput?: unknown;
   rawOutput?: unknown;
-};
+}
 
-type PendingPermission = {
+interface PendingPermission {
   request: AgentPermissionRequest;
   options: PermissionOption[];
   resolve: (response: RequestPermissionResponse) => void;
   reject: (error: Error) => void;
   turnId: string | null;
-};
+}
 
-type MessageAssemblyState = {
+interface MessageAssemblyState {
   text: string;
-};
+}
 
 export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
 
-type TerminalExit = {
+interface TerminalExit {
   exitCode?: number | null;
   signal?: string | null;
-};
+}
 
-type TerminalEntry = {
+interface TerminalEntry {
   id: string;
   child: ChildProcess;
   output: string;
@@ -268,15 +268,15 @@ type TerminalEntry = {
   waitForExit: Promise<TerminalExit>;
   resolveExit: (exit: TerminalExit) => void;
   rejectExit: (error: Error) => void;
-};
+}
 
-type ConfigOptionSelector = {
+interface ConfigOptionSelector {
   id: string;
   label: string;
   description?: string;
   isDefault?: boolean;
   metadata?: AgentMetadata;
-};
+}
 
 export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undefined {
   if (!usage) {

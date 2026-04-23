@@ -34,10 +34,10 @@ function resolveRelayVersion(rawValue: string | null): RelayProtocolVersion | nu
   return null;
 }
 
-type WebSocketPair = {
+interface WebSocketPair {
   0: WebSocket;
   1: WebSocket;
-};
+}
 
 interface DurableObjectState {
   acceptWebSocket(ws: WebSocket, tags?: string[]): void;

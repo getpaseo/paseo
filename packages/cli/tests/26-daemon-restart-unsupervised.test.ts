@@ -54,10 +54,10 @@ async function waitFor(
   throw new Error(message);
 }
 
-type ExitResult = {
+interface ExitResult {
   code: number | null;
   signal: NodeJS.Signals | null;
-};
+}
 
 function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): Promise<ExitResult> {
   return new Promise((resolve, reject) => {

@@ -19,7 +19,7 @@ export type SherpaOnlineRecognizerModel =
       tokens: string;
     };
 
-export type SherpaOnlineRecognizerConfig = {
+export interface SherpaOnlineRecognizerConfig {
   model: SherpaOnlineRecognizerModel;
   numThreads?: number;
   provider?: "cpu";
@@ -32,7 +32,7 @@ export type SherpaOnlineRecognizerConfig = {
   rule1MinTrailingSilence?: number;
   rule2MinTrailingSilence?: number;
   rule3MinUtteranceLength?: number;
-};
+}
 
 function assertFileExists(filePath: string, label: string): void {
   if (!existsSync(filePath)) {

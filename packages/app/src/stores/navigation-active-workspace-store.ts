@@ -17,15 +17,15 @@ interface ActivateWorkspaceSelectionOptions {
   historyMode?: "push" | "replace";
 }
 
-type NavigationRouteParams = {
+interface NavigationRouteParams {
   serverId?: string | string[];
   workspaceId?: string | string[];
-};
+}
 
-type NavigationRouteLike = {
+interface NavigationRouteLike {
   params?: NavigationRouteParams | null;
   path?: string | null;
-};
+}
 
 type NavigationWorkspaceRouteState =
   | { kind: "workspace"; selection: ActiveWorkspaceSelection }

@@ -10,11 +10,11 @@ import type { ScriptHealthEntry, ScriptHealthState } from "./script-health-monit
 import type { ScriptRouteStore } from "./script-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 
-type SessionEmitter = {
+interface SessionEmitter {
   emit(message: SessionOutboundMessage): void;
-};
+}
 
-type BuildWorkspaceScriptPayloadsOptions = {
+interface BuildWorkspaceScriptPayloadsOptions {
   workspaceId: string;
   workspaceDirectory: string;
   routeStore: ScriptRouteStore;
@@ -25,7 +25,7 @@ type BuildWorkspaceScriptPayloadsOptions = {
     currentBranch: string | null;
   };
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
-};
+}
 
 function resolveDaemonPort(daemonPort: number | null | (() => number | null)): number | null {
   if (typeof daemonPort === "function") {

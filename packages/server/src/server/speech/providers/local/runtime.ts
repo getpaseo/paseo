@@ -31,18 +31,18 @@ type LocalSttEngine =
   | { kind: "offline"; engine: SherpaOfflineRecognizerEngine }
   | { kind: "online"; engine: SherpaOnlineRecognizerEngine };
 
-type ResolvedLocalModels = {
+interface ResolvedLocalModels {
   dictationLocalSttModel: LocalSttModelId;
   voiceLocalSttModel: LocalSttModelId;
   voiceLocalTtsModel: LocalTtsModelId;
-};
+}
 
-type LocalSpeechAvailability = {
+interface LocalSpeechAvailability {
   configured: boolean;
   modelsDir: string | null;
-};
+}
 
-export type InitializedLocalSpeech = {
+export interface InitializedLocalSpeech {
   turnDetectionService: TurnDetectionProvider | null;
   sttService: SpeechToTextProvider | null;
   ttsService: TextToSpeechProvider | null;
@@ -54,7 +54,7 @@ export type InitializedLocalSpeech = {
   } | null;
   availability: LocalSpeechAvailability;
   cleanup: () => void;
-};
+}
 
 function buildModelDownloadHint(modelId: LocalSpeechModelId): string {
   return `Use 'paseo speech download --model ${modelId}' to download this model.`;

@@ -12,24 +12,24 @@ import { OpenAIRealtimeTranscriptionSession } from "./realtime-transcription-ses
 import { OpenAISTT } from "./stt.js";
 import { OpenAITTS } from "./tts.js";
 
-type OpenAiCredentialState = {
+interface OpenAiCredentialState {
   openaiSttApiKey: string | undefined;
   openaiTtsApiKey: string | undefined;
   openaiDictationApiKey: string | undefined;
-};
+}
 
-export type OpenAiSpeechAvailability = {
+export interface OpenAiSpeechAvailability {
   stt: boolean;
   tts: boolean;
   dictationStt: boolean;
-};
+}
 
-export type SpeechServices = {
+export interface SpeechServices {
   turnDetectionService: TurnDetectionProvider | null;
   sttService: SpeechToTextProvider | null;
   ttsService: TextToSpeechProvider | null;
   dictationSttService: SpeechToTextProvider | null;
-};
+}
 
 function resolveOpenAiCredentials(
   openaiConfig: OpenAiSpeechProviderConfig | undefined,

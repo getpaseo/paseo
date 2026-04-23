@@ -1,8 +1,8 @@
-type ReadChunkLike = {
+interface ReadChunkLike {
   text?: string;
   content?: string;
   output?: string;
-};
+}
 
 export function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;

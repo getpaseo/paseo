@@ -21,18 +21,18 @@ export class StructuredAgentResponseError extends Error {
   }
 }
 
-export type StructuredGenerationProvider = {
+export interface StructuredGenerationProvider {
   provider: AgentProvider;
   model?: string;
   thinkingOptionId?: string;
-};
+}
 
-export type StructuredGenerationAttempt = {
+export interface StructuredGenerationAttempt {
   provider: AgentProvider;
   model: string | null;
   available: boolean;
   error: string | null;
-};
+}
 
 export class StructuredAgentFallbackError extends Error {
   readonly attempts: StructuredGenerationAttempt[];

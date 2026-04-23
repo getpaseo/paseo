@@ -26,10 +26,10 @@ export interface AgentHistoryResult {
   loadMore: () => void;
 }
 
-type AgentHistoryPage = {
+interface AgentHistoryPage {
   agents: AggregatedAgent[];
   pageInfo: FetchAgentHistoryPageInfo;
-};
+}
 
 async function fetchAgentHistoryPage(input: {
   client: DaemonClient;

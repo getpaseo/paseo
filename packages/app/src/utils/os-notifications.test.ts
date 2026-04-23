@@ -1,25 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-type MockNotificationOptions = {
+interface MockNotificationOptions {
   body?: string;
   data?: Record<string, unknown>;
   icon?: string;
-};
+}
 
-type MockNotificationInstance = {
+interface MockNotificationInstance {
   title: string;
   options?: MockNotificationOptions;
   onclick: ((event: Event) => void) | null;
   close: ReturnType<typeof vi.fn>;
-};
+}
 
-type GlobalSnapshot = {
+interface GlobalSnapshot {
   Notification: unknown;
   CustomEvent: unknown;
   dispatchEvent: unknown;
   focus: unknown;
   location: unknown;
-};
+}
 
 const originalGlobals: GlobalSnapshot = {
   Notification: (globalThis as { Notification?: unknown }).Notification,

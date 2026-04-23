@@ -55,7 +55,7 @@ export type HostRuntimeAgentDirectoryStatus =
   | "error_before_first_success"
   | "error_after_ready";
 
-export type HostRuntimeSnapshot = {
+export interface HostRuntimeSnapshot {
   serverId: string;
   activeConnectionId: string | null;
   activeConnection: ActiveConnection | null;
@@ -68,7 +68,7 @@ export type HostRuntimeSnapshot = {
   hasEverLoadedAgentDirectory: boolean;
   probeByConnectionId: Map<string, ConnectionProbeState>;
   clientGeneration: number;
-};
+}
 
 type HostRuntimeSnapshotPatch = Partial<Omit<HostRuntimeSnapshot, "serverId" | "clientGeneration">>;
 
@@ -112,7 +112,7 @@ function hashForLog(value: string): string {
   return `h_${Math.abs(hash).toString(16)}`;
 }
 
-export type HostRuntimeControllerDeps = {
+export interface HostRuntimeControllerDeps {
   createClient: (input: {
     host: HostProfile;
     connection: HostConnection;
@@ -125,15 +125,15 @@ export type HostRuntimeControllerDeps = {
     hostname: string | null;
   }>;
   getClientId: () => Promise<string>;
-};
+}
 
-export type HostRuntimeStartOptions = {
+export interface HostRuntimeStartOptions {
   autoProbe?: boolean;
   initialConnection?: {
     connectionId: string;
     existingClient: DaemonClient;
   };
-};
+}
 
 const PROBE_TICK_MS = 2_000;
 const PROBE_STEADY_MS = 10_000;

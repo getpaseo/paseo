@@ -7,11 +7,11 @@ import type {
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 
-type LoggerLike = {
+interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
   error(...args: any[]): void;
   warn(...args: any[]): void;
-};
+}
 
 const DEFAULT_AGENT_PROVIDER = "claude";
 
@@ -22,10 +22,10 @@ function getLogger(logger: LoggerLike): LoggerLike {
 type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot" | "list">;
 type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
 
-type BuildSessionConfigOptions = {
+interface BuildSessionConfigOptions {
   validProviders?: Iterable<AgentProvider>;
   logger?: LoggerLike;
-};
+}
 
 type RegisteredProviders = ReturnType<typeof buildProviderRegistry> | Iterable<AgentProvider>;
 

@@ -129,11 +129,11 @@ const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
 
-type WorkspaceScreenProps = {
+interface WorkspaceScreenProps {
   serverId: string;
   workspaceId: string;
   isRouteFocused?: boolean;
-};
+}
 
 type WorkspaceScreenContentProps = WorkspaceScreenProps & {
   isRouteFocused: boolean;
@@ -187,7 +187,7 @@ function getFallbackTabOptionDescription(tab: WorkspaceTabDescriptor): string {
   return tab.target.path;
 }
 
-type MobileWorkspaceTabSwitcherProps = {
+interface MobileWorkspaceTabSwitcherProps {
   tabs: WorkspaceTabDescriptor[];
   activeTabKey: string;
   activeTab: WorkspaceTabDescriptor | null;
@@ -203,7 +203,7 @@ type MobileWorkspaceTabSwitcherProps = {
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
-};
+}
 
 function MobileActiveTabTrigger({
   activeTab,

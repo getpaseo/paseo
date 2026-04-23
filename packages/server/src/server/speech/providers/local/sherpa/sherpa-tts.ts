@@ -8,14 +8,14 @@ import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
 
 export type SherpaTtsPreset = "kokoro-en-v0_19" | "kitten-nano-en-v0_1-fp16";
 
-export type SherpaTtsConfig = {
+export interface SherpaTtsConfig {
   preset: SherpaTtsPreset;
   modelDir: string;
   speakerId?: number;
   speed?: number;
   lengthScale?: number;
   numThreads?: number;
-};
+}
 
 function assertFileExists(filePath: string, label: string): void {
   if (!existsSync(filePath)) {

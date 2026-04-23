@@ -14,13 +14,13 @@ import { renameCurrentBranch } from "../../utils/checkout-git.js";
 import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "../workspace-git-service.js";
 
-export type AgentMetadataGeneratorDeps = {
+export interface AgentMetadataGeneratorDeps {
   generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
   renameCurrentBranch?: typeof renameCurrentBranch;
   workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot">;
-};
+}
 
-export type AgentMetadataGenerationOptions = {
+export interface AgentMetadataGenerationOptions {
   agentManager: AgentManager;
   agentId: string;
   cwd: string;
@@ -29,13 +29,13 @@ export type AgentMetadataGenerationOptions = {
   paseoHome?: string;
   logger: Logger;
   deps?: AgentMetadataGeneratorDeps;
-};
+}
 
-type AgentMetadataNeeds = {
+interface AgentMetadataNeeds {
   prompt: string | null;
   needsTitle: boolean;
   needsBranch: boolean;
-};
+}
 
 function hasExplicitTitle(title?: string | null): boolean {
   return Boolean(title && title.trim().length > 0);

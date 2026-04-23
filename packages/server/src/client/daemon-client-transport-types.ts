@@ -1,11 +1,11 @@
-export type DaemonTransport = {
+export interface DaemonTransport {
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
   onMessage: (handler: (data: unknown) => void) => () => void;
   onOpen: (handler: () => void) => () => void;
   onClose: (handler: (event?: unknown) => void) => () => void;
   onError: (handler: (event?: unknown) => void) => () => void;
-};
+}
 
 export type DaemonTransportFactory = (options: {
   url: string;
@@ -17,7 +17,7 @@ export type WebSocketFactory = (
   options?: { headers?: Record<string, string> },
 ) => WebSocketLike;
 
-export type WebSocketLike = {
+export interface WebSocketLike {
   readyState: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
@@ -31,7 +31,7 @@ export type WebSocketLike = {
   onclose?: ((event: any) => void) | null;
   onerror?: ((event: any) => void) | null;
   onmessage?: ((event: any) => void) | null;
-};
+}
 
 export interface TransportLogger {
   warn(obj: object, msg?: string): void;

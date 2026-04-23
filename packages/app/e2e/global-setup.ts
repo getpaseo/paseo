@@ -8,13 +8,13 @@ import { Buffer } from "node:buffer";
 import dotenv from "dotenv";
 import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./helpers/paseo-home-fork";
 
-type WaitForServerOptions = {
+interface WaitForServerOptions {
   host?: string;
   timeoutMs?: number;
   label: string;
   childProcess?: ChildProcess | null;
   getRecentOutput?: () => string;
-};
+}
 
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -197,12 +197,12 @@ function resolveOptionalPaseoHomeEnv(value: string | undefined): string | null {
   return resolvePaseoHomePath(trimmed);
 }
 
-type OfferPayload = {
+interface OfferPayload {
   v: 2;
   serverId: string;
   daemonPublicKeyB64: string;
   relay: { endpoint: string };
-};
+}
 
 async function createFakeGhBin(): Promise<string> {
   const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-gh-bin-"));

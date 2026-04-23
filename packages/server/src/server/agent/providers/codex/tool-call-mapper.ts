@@ -5,7 +5,9 @@ import { extractCodexShellOutput, truncateDiffText } from "../tool-call-mapper-u
 import { deriveCodexToolDetail, normalizeCodexFilePath } from "./tool-call-detail-parser.js";
 import { isSpeakToolName } from "../../tool-name-normalization.js";
 
-type CodexMapperOptions = { cwd?: string | null };
+interface CodexMapperOptions {
+  cwd?: string | null;
+}
 
 const FAILED_STATUSES = new Set(["failed", "error", "errored", "rejected", "denied"]);
 const CANCELED_STATUSES = new Set(["canceled", "cancelled", "interrupted", "aborted"]);
@@ -24,7 +26,7 @@ const CodexRolloutToolCallParamsSchema = z
   })
   .passthrough();
 
-type CodexNormalizedToolCallEnvelope = {
+interface CodexNormalizedToolCallEnvelope {
   callId: string;
   name: string;
   input?: unknown | null;
@@ -33,7 +35,7 @@ type CodexNormalizedToolCallEnvelope = {
   error?: unknown | null;
   metadata?: Record<string, unknown>;
   cwd?: string | null;
-};
+}
 
 const CodexNormalizedToolCallPass1Schema = z
   .object({
@@ -300,10 +302,10 @@ function looksLikeUnifiedDiff(text: string): boolean {
   );
 }
 
-type CodexApplyPatchDirective = {
+interface CodexApplyPatchDirective {
   kind: "add" | "update" | "delete";
   path: string;
-};
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -628,11 +630,11 @@ function mapCommandExecutionItem(
   };
 }
 
-type CodexFileChangeEntry = {
+interface CodexFileChangeEntry {
   path: string;
   kind?: string;
   diff?: string;
-};
+}
 
 function parseFileChangePath(
   entry: Record<string, unknown>,

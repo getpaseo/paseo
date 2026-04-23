@@ -4,13 +4,13 @@ import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
 import { isSpeakToolName } from "../../tool-name-normalization.js";
 import { deriveClaudeToolDetail } from "./tool-call-detail-parser.js";
 
-type MapperParams = {
+interface MapperParams {
   callId?: string | null;
   name: string;
   input?: unknown;
   output?: unknown;
   metadata?: Record<string, unknown>;
-};
+}
 
 const ClaudeToolCallStatusSchema = z.enum(["running", "completed", "failed", "canceled"]);
 

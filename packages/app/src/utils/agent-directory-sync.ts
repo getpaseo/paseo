@@ -5,11 +5,11 @@ import { resolveProjectPlacement } from "@/utils/project-placement";
 
 type AgentDirectoryFetchEntry = FetchAgentsEntry | FetchAgentHistoryEntry;
 
-type PendingPermissionEntry = {
+interface PendingPermissionEntry {
   key: string;
   agentId: string;
   request: Agent["pendingPermissions"][number];
-};
+}
 
 export function buildAgentDirectoryState(input: {
   serverId: string;

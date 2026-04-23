@@ -7,13 +7,13 @@ import { afterEach, describe, expect, test } from "vitest";
 import { findExecutable } from "./executable.js";
 import { spawnProcess } from "./spawn.js";
 
-type SpawnResult = {
+interface SpawnResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
   error: Error | null;
-};
+}
 
 const tempDirs: string[] = [];
 const JSON_ARG = '{"key":"value with spaces","nested":{"quote":"\\"yes\\""}}';

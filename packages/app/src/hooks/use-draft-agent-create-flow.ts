@@ -11,12 +11,12 @@ import type { AgentAttachment } from "@server/shared/messages";
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
-type CreateAttempt = {
+interface CreateAttempt {
   clientMessageId: string;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
-};
+}
 
 type DraftAgentMachineState =
   | { tag: "draft"; errorMessage: string }
@@ -56,24 +56,24 @@ function reducer(
   }
 }
 
-type CreateRequestResult<TCreateResult> = {
+interface CreateRequestResult<TCreateResult> {
   agentId: string | null;
   result: TCreateResult;
-};
+}
 
-type SubmitContext = {
+interface SubmitContext {
   text: string;
   attachments: ComposerAttachment[];
   cwd: string;
-};
+}
 
-type CreateRequestContext = {
+interface CreateRequestContext {
   attempt: CreateAttempt;
   text: string;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
   cwd: string;
-};
+}
 
 interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
   draftId: string;

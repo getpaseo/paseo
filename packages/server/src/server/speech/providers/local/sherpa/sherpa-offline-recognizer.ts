@@ -9,15 +9,15 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
-export type SherpaOfflineRecognizerModel = {
+export interface SherpaOfflineRecognizerModel {
   kind: "nemo_transducer";
   encoder: string;
   decoder: string;
   joiner: string;
   tokens: string;
-};
+}
 
-export type SherpaOfflineRecognizerConfig = {
+export interface SherpaOfflineRecognizerConfig {
   model: SherpaOfflineRecognizerModel;
   numThreads?: number;
   provider?: "cpu";
@@ -26,7 +26,7 @@ export type SherpaOfflineRecognizerConfig = {
   featureDim?: number;
   decodingMethod?: "greedy_search";
   maxActivePaths?: number;
-};
+}
 
 export class SherpaOfflineRecognizerEngine {
   public readonly recognizer: any;

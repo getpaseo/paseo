@@ -13,9 +13,9 @@ import { estimateStreamItemHeight } from "./agent-stream-web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./stream-strategy";
 import { createStreamStrategy } from "./stream-strategy";
 
-type CreateWebStreamStrategyInput = {
+interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
-};
+}
 
 type ScrollBehaviorLike = "auto" | "smooth";
 

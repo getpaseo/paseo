@@ -19,11 +19,11 @@ import type {
   AgentTimelineItem,
 } from "./agent-sdk-types.js";
 
-type Deferred<T> = {
+interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
-};
+}
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;

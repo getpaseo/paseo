@@ -5,28 +5,31 @@ import { buildToolCallDisplayModel } from "../../../../shared/tool-call-display.
 
 import type { AgentMetadata, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 
-type ClaudeContentChunk = { type: string; [key: string]: unknown };
+interface ClaudeContentChunk {
+  type: string;
+  [key: string]: unknown;
+}
 
-type SubAgentActionEntry = {
+interface SubAgentActionEntry {
   index: number;
   toolName: string;
   summary?: string;
-};
+}
 
-type SubAgentActivityState = {
+interface SubAgentActivityState {
   subAgentType?: string;
   description?: string;
   actions: SubAgentActionEntry[];
   actionKeys: string[];
   nextActionIndex: number;
   actionIndexByKey: Map<string, number>;
-};
+}
 
-type SubAgentActionCandidate = {
+interface SubAgentActionCandidate {
   key: string;
   toolName: string;
   input: unknown;
-};
+}
 
 const MAX_SUB_AGENT_LOG_ENTRIES = 200;
 const MAX_SUB_AGENT_SUMMARY_CHARS = 160;

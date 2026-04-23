@@ -4,12 +4,12 @@ import type { AgentProvider } from "./agent-sdk-types.js";
 import { expandTilde } from "../../utils/path.js";
 import type { Logger } from "pino";
 
-type ResolveAgentModelOptions = {
+interface ResolveAgentModelOptions {
   provider: AgentProvider;
   requestedModel?: string | null;
   cwd?: string;
   logger: Logger;
-};
+}
 
 export async function resolveAgentModel(
   options: ResolveAgentModelOptions,

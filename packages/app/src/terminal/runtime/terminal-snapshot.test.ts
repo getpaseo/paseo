@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
 
-type SnapshotCell = {
+interface SnapshotCell {
   char: string;
   fg: number | undefined;
   bg: number | undefined;
@@ -13,9 +13,9 @@ type SnapshotCell = {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
-};
+}
 
-type SnapshotState = {
+interface SnapshotState {
   rows: number;
   cols: number;
   grid: SnapshotCell[][];
@@ -27,7 +27,7 @@ type SnapshotState = {
     style?: "block" | "underline" | "bar";
     blink?: boolean;
   };
-};
+}
 
 async function writeToTerminal(
   terminal: Pick<ClientTerminal | HeadlessTerminal, "write">,

@@ -21,14 +21,14 @@ import { createWorktreeCoreDeps } from "../worktree-core.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import type { GitHubService } from "../../services/github-service.js";
 
-type TestDeps = {
+interface TestDeps {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   spies: {
     agentManager: Record<string, any>;
     agentStorage: Record<string, any>;
   };
-};
+}
 
 function createTestDeps(): TestDeps {
   const agentManagerSpies = {

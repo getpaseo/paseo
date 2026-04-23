@@ -5,20 +5,20 @@ import { autoUpdater, type UpdateInfo } from "electron-updater";
 // Types
 // ---------------------------------------------------------------------------
 
-export type AppUpdateCheckResult = {
+export interface AppUpdateCheckResult {
   hasUpdate: boolean;
   readyToInstall: boolean;
   currentVersion: string;
   latestVersion: string;
   body: string | null;
   date: string | null;
-};
+}
 
-export type AppUpdateInstallResult = {
+export interface AppUpdateInstallResult {
   installed: boolean;
   version: string | null;
   message: string;
-};
+}
 
 export type AppReleaseChannel = "stable" | "beta";
 

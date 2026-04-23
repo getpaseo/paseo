@@ -10,10 +10,10 @@ import { ScriptHealthMonitor, type ScriptHealthEntry } from "./script-health-mon
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 
-type TcpServerHandle = {
+interface TcpServerHandle {
   port: number;
   server: net.Server;
-};
+}
 
 function createWorkspaceRepo(options?: {
   branchName?: string;

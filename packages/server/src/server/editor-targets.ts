@@ -8,18 +8,18 @@ import type {
 } from "../shared/messages.js";
 import { findExecutable, quoteWindowsArgument, quoteWindowsCommand } from "../utils/executable.js";
 
-type EditorTargetDefinition = {
+interface EditorTargetDefinition {
   id: KnownEditorTargetId;
   label: string;
   command: string;
   platforms?: readonly NodeJS.Platform[];
   excludedPlatforms?: readonly NodeJS.Platform[];
-};
+}
 
-type ListAvailableEditorTargetsDependencies = {
+interface ListAvailableEditorTargetsDependencies {
   platform?: NodeJS.Platform;
   findExecutable?: (command: string) => string | null | Promise<string | null>;
-};
+}
 
 type OpenInEditorTargetDependencies = ListAvailableEditorTargetsDependencies & {
   existsSync?: typeof existsSync;
@@ -89,10 +89,10 @@ export async function listAvailableEditorTargets(
   return results;
 }
 
-type Launch = {
+interface Launch {
   command: string;
   args: string[];
-};
+}
 
 async function resolveEditorLaunch(input: {
   editorId: EditorTargetId;

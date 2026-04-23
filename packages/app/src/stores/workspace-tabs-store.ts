@@ -14,11 +14,11 @@ export type WorkspaceTabTarget =
   | { kind: "file"; path: string }
   | { kind: "setup"; workspaceId: string };
 
-export type WorkspaceTab = {
+export interface WorkspaceTab {
   tabId: string;
   target: WorkspaceTabTarget;
   createdAt: number;
-};
+}
 
 function trimNonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -64,7 +64,7 @@ function ensureInOrder(input: { current: string[]; tabId: string }): string[] {
   return [...input.current, input.tabId];
 }
 
-type WorkspaceTabsState = {
+interface WorkspaceTabsState {
   uiTabsByWorkspace: Record<string, WorkspaceTab[]>;
   tabOrderByWorkspace: Record<string, string[]>;
   focusedTabIdByWorkspace: Record<string, string>;
@@ -94,7 +94,7 @@ type WorkspaceTabsState = {
   reorderTabs: (input: { serverId: string; workspaceId: string; tabIds: string[] }) => void;
   getWorkspaceTabs: (input: { serverId: string; workspaceId: string }) => WorkspaceTab[];
   purgeWorkspace: (input: { serverId: string; workspaceId: string }) => void;
-};
+}
 
 export const useWorkspaceTabsStore = create<WorkspaceTabsState>()(
   persist(

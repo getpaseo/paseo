@@ -46,12 +46,12 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   fetchModes: (options: ListModesOptions) => Promise<AgentMode[]>;
 }
 
-export type BuildProviderRegistryOptions = {
+export interface BuildProviderRegistryOptions {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   isDev?: boolean;
-};
+}
 
 type ProviderClientFactory = (
   logger: Logger,
@@ -59,14 +59,14 @@ type ProviderClientFactory = (
   options?: Pick<BuildProviderRegistryOptions, "workspaceGitService">,
 ) => AgentClient;
 
-type ResolvedProvider = {
+interface ResolvedProvider {
   definition: AgentProviderDefinition;
   runtimeSettings?: ProviderRuntimeSettings;
   profileModels: ProviderProfileModel[];
   additionalModels: ProviderProfileModel[];
   enabled: boolean;
   createBaseClient: (logger: Logger) => AgentClient;
-};
+}
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   claude: (logger, runtimeSettings) =>

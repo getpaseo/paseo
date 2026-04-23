@@ -88,10 +88,10 @@ export function resolveRequiredProviderModel(
   };
 }
 
-export type StartAgentRunOptions = {
+export interface StartAgentRunOptions {
   replaceRunning?: boolean;
   runOptions?: AgentRunOptions;
-};
+}
 
 /**
  * Wraps agentManager.waitForAgentEvent with a self-imposed timeout.

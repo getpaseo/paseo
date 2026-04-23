@@ -25,11 +25,11 @@ const AGENT_STREAM_REDUCER_FLUSH_DELAY_MS = 16 * 3;
 // Shared cursor type
 // ---------------------------------------------------------------------------
 
-export type TimelineCursor = {
+export interface TimelineCursor {
   epoch: string;
   startSeq: number;
   endSeq: number;
-};
+}
 
 // ---------------------------------------------------------------------------
 // Side-effect discriminated unions
@@ -39,10 +39,10 @@ export type TimelineReducerSideEffect =
   | { type: "catch_up"; cursor: { epoch: string; endSeq: number } }
   | { type: "flush_pending_updates" };
 
-export type AgentStreamReducerSideEffect = {
+export interface AgentStreamReducerSideEffect {
   type: "catch_up";
   cursor: { epoch: string; endSeq: number };
-};
+}
 
 // ---------------------------------------------------------------------------
 // processTimelineResponse
@@ -51,13 +51,13 @@ export type AgentStreamReducerSideEffect = {
 type TimelineDirection = "tail" | "before" | "after";
 type InitRequestDirection = "tail" | "after";
 
-type TimelineResponseEntry = {
+interface TimelineResponseEntry {
   seqStart: number;
   seqEnd: number;
   provider: string;
   item: Record<string, unknown>;
   timestamp: string;
-};
+}
 
 export interface ProcessTimelineResponseInput {
   payload: {
@@ -337,37 +337,37 @@ export interface ProcessAgentStreamEventOutput {
   sideEffects: AgentStreamReducerSideEffect[];
 }
 
-export type AgentStreamReducerEvent = {
+export interface AgentStreamReducerEvent {
   event: AgentStreamEventPayload;
   seq: number | undefined;
   epoch: string | undefined;
   timestamp: Date;
-};
+}
 
-export type AgentStreamReducerAgentSnapshot = {
+export interface AgentStreamReducerAgentSnapshot {
   status: AgentLifecycleStatus;
   updatedAt: Date;
   lastActivityAt: Date;
-};
+}
 
-export type ProcessAgentStreamEventsInput = {
+export interface ProcessAgentStreamEventsInput {
   events: AgentStreamReducerEvent[];
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
   currentAgent: AgentStreamReducerAgentSnapshot | null;
-};
+}
 
 export type AgentStreamReducerSnapshot = Omit<ProcessAgentStreamEventsInput, "events">;
 
-export type AgentStreamReducerQueue = {
+export interface AgentStreamReducerQueue {
   enqueue: (agentId: string, event: AgentStreamReducerEvent) => void;
   flush: () => void;
   flushAgent: (agentId: string) => void;
   dispose: (options?: { flush?: boolean }) => void;
-};
+}
 
-export type CreateAgentStreamReducerQueueInput = {
+export interface CreateAgentStreamReducerQueueInput {
   getSnapshot: (agentId: string) => AgentStreamReducerSnapshot;
   commit: (
     agentId: string,
@@ -377,7 +377,7 @@ export type CreateAgentStreamReducerQueueInput = {
   handleSideEffects: (agentId: string, sideEffects: AgentStreamReducerSideEffect[]) => void;
   scheduleFlush: (callback: () => void) => number;
   cancelFlush: (id: number) => void;
-};
+}
 
 function applyAgentPatch(
   currentAgent: AgentStreamReducerAgentSnapshot | null,
@@ -632,12 +632,12 @@ export function createAgentStreamReducerQueue(
   };
 }
 
-type StreamStatePatch = {
+interface StreamStatePatch {
   tail?: StreamItem[];
   head?: StreamItem[];
-};
+}
 
-export type CreateSessionAgentStreamReducerQueueInput = {
+export interface CreateSessionAgentStreamReducerQueueInput {
   serverId: string;
   setAgentStreamState: (serverId: string, agentId: string, state: StreamStatePatch) => void;
   setAgentTimelineCursor: (
@@ -646,7 +646,7 @@ export type CreateSessionAgentStreamReducerQueueInput = {
   ) => void;
   setAgents: (serverId: string, state: (prev: Map<string, Agent>) => Map<string, Agent>) => void;
   requestCanonicalCatchUp: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
-};
+}
 
 function scheduleAgentStreamReducerFlush(callback: () => void): number {
   return setTimeout(callback, AGENT_STREAM_REDUCER_FLUSH_DELAY_MS) as unknown as number;

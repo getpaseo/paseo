@@ -3,7 +3,7 @@ import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 
-export type DesktopDaemonStatus = {
+export interface DesktopDaemonStatus {
   serverId: string;
   status: DesktopDaemonState;
   listen: string | null;
@@ -13,25 +13,25 @@ export type DesktopDaemonStatus = {
   version: string | null;
   desktopManaged: boolean;
   error: string | null;
-};
+}
 
-export type DesktopDaemonLogs = {
+export interface DesktopDaemonLogs {
   logPath: string;
   contents: string;
-};
+}
 
-export type DesktopPairingOffer = {
+export interface DesktopPairingOffer {
   relayEnabled: boolean;
   url: string | null;
   qr: string | null;
-};
+}
 
-export type LocalTransportTarget = {
+export interface LocalTransportTarget {
   transportType: "socket" | "pipe";
   transportPath: string;
-};
+}
 
-type LocalTransportEventPayload = {
+interface LocalTransportEventPayload {
   sessionId: string;
   kind: "open" | "message" | "close" | "error";
   text?: string | null;
@@ -39,7 +39,7 @@ type LocalTransportEventPayload = {
   code?: number | null;
   reason?: string | null;
   error?: string | null;
-};
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

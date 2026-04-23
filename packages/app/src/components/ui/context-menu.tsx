@@ -53,13 +53,13 @@ interface Rect {
   height: number;
 }
 
-type ContextMenuContextValue = {
+interface ContextMenuContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<View | null>;
   anchorRect: Rect | null;
   setAnchorRect: (rect: Rect | null) => void;
-};
+}
 
 const ContextMenuContext = createContext<ContextMenuContextValue | null>(null);
 
@@ -235,7 +235,11 @@ export function ContextMenu({
   return <ContextMenuContext.Provider value={value}>{children}</ContextMenuContext.Provider>;
 }
 
-type TriggerState = { pressed: boolean; hovered: boolean; open: boolean };
+interface TriggerState {
+  pressed: boolean;
+  hovered: boolean;
+  open: boolean;
+}
 type TriggerStyleProp = StyleProp<ViewStyle> | ((state: TriggerState) => StyleProp<ViewStyle>);
 
 export function ContextMenuTrigger({

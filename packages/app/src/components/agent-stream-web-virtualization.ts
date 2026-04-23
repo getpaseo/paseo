@@ -31,15 +31,15 @@ export function getWebMountedRecentStreamItems(): number {
   return override ?? DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS;
 }
 
-export type IndexedStreamItem = {
+export interface IndexedStreamItem {
   item: StreamItem;
   index: number;
-};
+}
 
-export type WebVirtualizedHistoryWindow = {
+export interface WebVirtualizedHistoryWindow {
   virtualizedEntries: IndexedStreamItem[];
   mountedEntries: IndexedStreamItem[];
-};
+}
 
 export function estimateStreamItemHeight(item: StreamItem): number {
   switch (item.kind) {

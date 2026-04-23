@@ -15,10 +15,10 @@
 import nacl from "tweetnacl";
 import { fromByteArray, toByteArray } from "base64-js";
 
-export type KeyPair = {
+export interface KeyPair {
   publicKey: Uint8Array; // 32 bytes
   secretKey: Uint8Array; // 32 bytes
-};
+}
 
 export type SharedKey = Uint8Array; // 32 bytes (box.before)
 

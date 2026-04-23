@@ -2,27 +2,27 @@ const NOTIFICATION_PREVIEW_LIMIT = 220;
 
 export type AgentAttentionReason = "finished" | "error" | "permission";
 
-export type AgentAttentionNotificationData = {
+export interface AgentAttentionNotificationData {
   serverId: string;
   agentId: string;
   reason: AgentAttentionReason;
-};
+}
 
-export type AgentAttentionNotificationPayload = {
+export interface AgentAttentionNotificationPayload {
   title: string;
   body: string;
   data: AgentAttentionNotificationData;
-};
+}
 
-type BuildAgentAttentionNotificationPayloadInput = {
+interface BuildAgentAttentionNotificationPayloadInput {
   reason: AgentAttentionReason;
   serverId: string;
   agentId: string;
   assistantMessage?: string | null;
   permissionRequest?: NotificationPermissionRequest | null;
-};
+}
 
-export type NotificationPermissionRequest = {
+export interface NotificationPermissionRequest {
   id: string;
   provider: string;
   name: string;
@@ -31,7 +31,7 @@ export type NotificationPermissionRequest = {
   description?: string;
   input?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
-};
+}
 
 export type AssistantTimelineItem =
   | { type: "assistant_message"; text: string }

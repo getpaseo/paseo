@@ -12,13 +12,13 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { isWeb } from "@/constants/platform";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
-type StartupSplashScreenProps = {
+interface StartupSplashScreenProps {
   bootstrapState?: {
     phase: "starting-daemon" | "connecting" | "online" | "error";
     error: string | null;
     retry: () => void;
   };
-};
+}
 
 const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
 const DOCS_URL = "https://paseo.sh/docs";

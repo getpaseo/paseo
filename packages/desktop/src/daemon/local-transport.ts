@@ -1,12 +1,12 @@
 import { BrowserWindow } from "electron";
 import WebSocket from "ws";
 
-type TransportTarget = {
+interface TransportTarget {
   transportType: "socket" | "pipe";
   transportPath: string;
-};
+}
 
-type TransportEventPayload = {
+interface TransportEventPayload {
   sessionId: string;
   kind: "open" | "message" | "close" | "error";
   text?: string | null;
@@ -14,13 +14,13 @@ type TransportEventPayload = {
   code?: number | null;
   reason?: string | null;
   error?: string | null;
-};
+}
 
-type Session = {
+interface Session {
   id: string;
   ws: WebSocket;
   state: "opening" | "open" | "closing" | "closed";
-};
+}
 
 const WS_ENDPOINT_PATH = "/ws";
 

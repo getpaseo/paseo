@@ -69,10 +69,10 @@ function readWorkerPid(supervisorPid: number): number | null {
   return null;
 }
 
-type DaemonStatus = {
+interface DaemonStatus {
   localDaemon: string | null;
   pid: number | null;
-};
+}
 
 async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
   const result =

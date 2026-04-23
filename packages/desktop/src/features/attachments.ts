@@ -6,10 +6,10 @@ const ATTACHMENTS_DIRNAME = "desktop-attachments";
 const ATTACHMENT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const EXTENSION_PATTERN = /^\.[A-Za-z0-9]{1,16}$/;
 
-type AttachmentFileResult = {
+interface AttachmentFileResult {
   path: string;
   byteSize: number;
-};
+}
 
 function attachmentsDirPath(): string {
   return path.join(resolvePaseoHome(process.env), ATTACHMENTS_DIRNAME);

@@ -1,7 +1,7 @@
 import { basename } from "path";
 import { slugify } from "../utils/worktree.js";
 
-export type WorkspaceGitMetadata = {
+export interface WorkspaceGitMetadata {
   projectKind: "git" | "directory";
   projectDisplayName: string;
   workspaceDisplayName: string;
@@ -11,7 +11,7 @@ export type WorkspaceGitMetadata = {
   repoRoot: string | null;
   currentBranch: string | null;
   remoteUrl: string | null;
-};
+}
 
 export function parseGitHubRepoFromRemote(remoteUrl: string): string | null {
   let cleaned = remoteUrl.trim();

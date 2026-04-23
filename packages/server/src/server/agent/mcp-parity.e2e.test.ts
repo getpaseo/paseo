@@ -9,18 +9,20 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { AGENT_WAIT_TIMEOUT_MS } from "./mcp-shared.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
-type StructuredContent = { [key: string]: unknown };
+interface StructuredContent {
+  [key: string]: unknown;
+}
 
-type McpToolResult = {
+interface McpToolResult {
   structuredContent?: StructuredContent;
   content?: Array<{ structuredContent?: StructuredContent } | StructuredContent>;
   isError?: boolean;
-};
+}
 
-type McpClient = {
+interface McpClient {
   callTool: (input: { name: string; args?: StructuredContent }) => Promise<unknown>;
   close: () => Promise<void>;
-};
+}
 
 function formatHostForHttpUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;

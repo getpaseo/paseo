@@ -3,15 +3,15 @@ import type { AgentTimelineRow } from "./agent-manager.js";
 
 export type TimelineProjectionMode = "canonical" | "projected";
 
-export type TimelineSeqRange = {
+export interface TimelineSeqRange {
   startSeq: number;
   endSeq: number;
-};
+}
 
 export type TimelineProjectionKind = "assistant_merge" | "tool_lifecycle";
 export type TimelineLimitDirection = "tail" | "before" | "after";
 
-export type TimelineProjectionEntry = {
+export interface TimelineProjectionEntry {
   provider: AgentProvider;
   item: AgentTimelineItem;
   timestamp: string;
@@ -19,15 +19,15 @@ export type TimelineProjectionEntry = {
   seqEnd: number;
   sourceSeqRanges: TimelineSeqRange[];
   collapsed: TimelineProjectionKind[];
-};
+}
 
 type WorkingEntry = TimelineProjectionEntry;
-type ProjectedWindowSelection = {
+interface ProjectedWindowSelection {
   projectedEntries: TimelineProjectionEntry[];
   selectedRows: AgentTimelineRow[];
   minSeq: number | null;
   maxSeq: number | null;
-};
+}
 
 function appendSeqToRanges(ranges: TimelineSeqRange[], seq: number): TimelineSeqRange[] {
   if (ranges.length === 0) {

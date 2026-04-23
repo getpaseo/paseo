@@ -10,19 +10,22 @@ vi.mock("@xterm/addon-webgl", () => ({
   },
 }));
 
-type TerminalSize = { rows: number; cols: number };
+interface TerminalSize {
+  rows: number;
+  cols: number;
+}
 
 type BrowserTerminal = TerminalSize & {
   refresh: (start: number, end: number) => void;
   reset: () => void;
 };
 
-type MountedTerminal = {
+interface MountedTerminal {
   host: HTMLDivElement;
   root: HTMLDivElement;
   runtime: TerminalEmulatorRuntime;
   sizes: TerminalSize[];
-};
+}
 
 const mountedTerminals: MountedTerminal[] = [];
 

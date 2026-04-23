@@ -21,36 +21,36 @@ export type BottomAnchorTransportBehavior = Readonly<{
   verificationRetryMode: "rescroll" | "recheck";
 }>;
 
-export type StreamViewportMetrics = {
+export interface StreamViewportMetrics {
   contentHeight: number;
   viewportHeight: number;
-};
+}
 
 export type StreamNearBottomInput = StreamViewportMetrics & {
   offsetY: number;
   threshold: number;
 };
 
-export type StreamEdgeSlotProps = {
+export interface StreamEdgeSlotProps {
   ListHeaderComponent?: ReactElement | ComponentType<any> | null;
   ListHeaderComponentStyle?: StyleProp<ViewStyle>;
   ListFooterComponent?: ReactElement | ComponentType<any> | null;
   ListFooterComponentStyle?: StyleProp<ViewStyle>;
-};
+}
 
-export type StreamViewportHandle = {
+export interface StreamViewportHandle {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
-};
+}
 
-export type StreamSegmentRenderers = {
+export interface StreamSegmentRenderers {
   renderHistoryVirtualizedRow: (item: StreamItem, index: number, items: StreamItem[]) => ReactNode;
   renderHistoryMountedRow: (item: StreamItem, index: number, items: StreamItem[]) => ReactNode;
   renderLiveHeadRow: (item: StreamItem, index: number, items: StreamItem[]) => ReactNode;
   renderLiveAuxiliary: () => ReactNode;
-};
+}
 
-export type StreamRenderInput = {
+export interface StreamRenderInput {
   agentId: string;
   segments: StreamRenderSegments;
   boundary: StreamHistoryBoundary;
@@ -64,12 +64,12 @@ export type StreamRenderInput = {
   listStyle: StyleProp<ViewStyle>;
   baseListContentContainerStyle: StyleProp<ViewStyle>;
   forwardListContentContainerStyle: StyleProp<ViewStyle>;
-};
+}
 
-export type ResolveStreamRenderStrategyInput = {
+export interface ResolveStreamRenderStrategyInput {
   platform: string;
   isMobileBreakpoint: boolean;
-};
+}
 
 export interface StreamStrategy {
   render: (input: StreamRenderInput) => ReactNode;
@@ -98,7 +98,7 @@ export interface StreamStrategy {
   shouldUseVirtualizedList: () => boolean;
 }
 
-type StreamStrategyConfig = {
+interface StreamStrategyConfig {
   render: StreamStrategy["render"];
   orderTailReverse: boolean;
   orderHeadReverse: boolean;
@@ -114,7 +114,7 @@ type StreamStrategyConfig = {
   useVirtualizedList: boolean;
   isNearBottom: (input: StreamNearBottomInput) => boolean;
   getBottomOffset: (metrics: StreamViewportMetrics) => number;
-};
+}
 
 const NATIVE_SETTLING_VERIFICATION_DELAY_FRAMES = 4;
 

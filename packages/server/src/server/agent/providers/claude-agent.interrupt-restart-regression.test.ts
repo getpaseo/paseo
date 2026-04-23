@@ -5,7 +5,7 @@ import { ClaudeAgentClient } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 
-type QueryMock = {
+interface QueryMock {
   next: ReturnType<typeof vi.fn>;
   interrupt: ReturnType<typeof vi.fn>;
   return: ReturnType<typeof vi.fn>;
@@ -16,18 +16,18 @@ type QueryMock = {
   supportedCommands: ReturnType<typeof vi.fn>;
   rewindFiles: ReturnType<typeof vi.fn>;
   [Symbol.asyncIterator]: () => AsyncIterator<Record<string, unknown>, void>;
-};
+}
 
-type PromptRecord = {
+interface PromptRecord {
   text: string;
   uuid: string | null;
-};
+}
 
-type AsyncQueue<T> = {
+interface AsyncQueue<T> {
   push: (value: T) => void;
   next: () => Promise<IteratorResult<T, void>>;
   end: () => void;
-};
+}
 
 type ScriptedQuery = QueryMock & {
   emit: (message: Record<string, unknown>) => void;

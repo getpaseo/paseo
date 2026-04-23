@@ -35,11 +35,11 @@ const SCROLLBAR_HANDLE_SCROLL_VISIBILITY_MS = 1_200;
 const SCROLLBAR_HANDLE_SCROLL_ACTIVE_MS = 110;
 const WEBKIT_SCROLLBAR_STYLE_ID = "terminal-emulator-webkit-scrollbar-style";
 
-type ViewportMetrics = {
+interface ViewportMetrics {
   offset: number;
   viewportSize: number;
   contentSize: number;
-};
+}
 
 function buildXtermThemeKey(theme: ITheme): string {
   const values: Array<string> = [

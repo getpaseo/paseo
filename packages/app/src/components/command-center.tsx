@@ -14,12 +14,12 @@ function agentKey(agent: Pick<AggregatedAgent, "serverId" | "id">): string {
   return `${agent.serverId}:${agent.id}`;
 }
 
-type CommandCenterRowProps = {
+interface CommandCenterRowProps {
   active: boolean;
   children: ReactNode;
   onPress: () => void;
   registerRow: (el: View | null) => void;
-};
+}
 
 const CommandCenterRow = memo(function CommandCenterRow({
   active,

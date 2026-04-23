@@ -23,10 +23,10 @@ const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
 const shouldRun = !process.env.CI && (hasOpenAICredentials || hasClaudeCredentials);
 
-type AgentMcpServerHandle = {
+interface AgentMcpServerHandle {
   url: string;
   close: () => Promise<void>;
-};
+}
 
 async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerHandle> {
   const app = express();

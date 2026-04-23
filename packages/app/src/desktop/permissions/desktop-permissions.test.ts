@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 type MockPlatform = "web" | "ios" | "android";
 
-type GlobalSnapshot = {
+interface GlobalSnapshot {
   Notification: unknown;
   navigatorDescriptor?: PropertyDescriptor;
   windowDescriptor?: PropertyDescriptor;
   paseoDesktop: unknown;
-};
+}
 
 const originalGlobals: GlobalSnapshot = {
   Notification: (globalThis as { Notification?: unknown }).Notification,

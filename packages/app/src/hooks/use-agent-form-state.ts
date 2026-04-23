@@ -55,16 +55,16 @@ interface FormState {
   workingDir: string;
 }
 
-type UseAgentFormStateOptions = {
+interface UseAgentFormStateOptions {
   initialServerId?: string | null;
   initialValues?: FormInitialValues;
   isVisible?: boolean;
   isCreateFlow?: boolean;
   isTargetDaemonReady?: boolean;
   onlineServerIds?: string[];
-};
+}
 
-export type UseAgentFormStateResult = {
+export interface UseAgentFormStateResult {
   selectedServerId: string | null;
   setSelectedServerId: (value: string | null) => void;
   setSelectedServerIdFromUser: (value: string | null) => void;
@@ -95,7 +95,7 @@ export type UseAgentFormStateResult = {
   setProviderAndModelFromUser: (provider: AgentProvider, modelId: string) => void;
   workingDirIsEmpty: boolean;
   persistFormPreferences: () => Promise<void>;
-};
+}
 
 function normalizeSelectedModelId(modelId: string | null | undefined): string {
   const normalized = typeof modelId === "string" ? modelId.trim() : "";

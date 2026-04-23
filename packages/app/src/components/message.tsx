@@ -132,7 +132,7 @@ const MARKDOWN_ALLOWED_IMAGE_HANDLERS = [
 ] as const;
 const MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM = <Text key="dotdotdot">...</Text>;
 
-type MarkdownWithStableRendererProps = {
+interface MarkdownWithStableRendererProps {
   children: ReactNode;
   style: ReturnType<typeof createMarkdownStyles>;
   rules: RenderRules;
@@ -140,7 +140,7 @@ type MarkdownWithStableRendererProps = {
   onLinkPress: (url: string) => boolean;
   allowedImageHandlers: readonly string[];
   topLevelMaxExceededItem: ReactNode;
-};
+}
 
 const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
 const WEB_TOOLCALL_SHIMMER_KEYFRAME_CSS = `

@@ -95,9 +95,9 @@ const CODEX_MODES: AgentMode[] = [
 
 const DEFAULT_CODEX_MODE_ID = "auto";
 
-type CodexAppServerAgentDeps = {
+interface CodexAppServerAgentDeps {
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
-};
+}
 
 const MODE_PRESETS: Record<
   string,
@@ -217,10 +217,10 @@ function normalizeCodexOutputSchema(schema: unknown): Record<string, unknown> {
   return normalized;
 }
 
-type CodexConfiguredDefaults = {
+interface CodexConfiguredDefaults {
   model?: string;
   thinkingOptionId?: string;
-};
+}
 
 function mergeCodexConfiguredDefaults(
   primary: CodexConfiguredDefaults,
@@ -509,30 +509,30 @@ function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
       };
   }
 }
-type JsonRpcRequest = {
+interface JsonRpcRequest {
   id: number;
   method: string;
   params?: unknown;
-};
+}
 
-type JsonRpcResponse = {
+interface JsonRpcResponse {
   id: number;
   result?: unknown;
   error?: { code?: number; message: string };
-};
+}
 
-type JsonRpcNotification = {
+interface JsonRpcNotification {
   method: string;
   params?: unknown;
-};
+}
 
 type JsonRpcMessage = JsonRpcRequest | JsonRpcResponse | JsonRpcNotification;
 
-type PendingRequest = {
+interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
-};
+}
 
 type RequestHandler = (params: unknown) => Promise<unknown> | unknown;
 
@@ -922,12 +922,12 @@ function buildCodexPlanImplementationPrompt(planText: string): string {
   ].join("\n\n");
 }
 
-type CodexQuestionOption = {
+interface CodexQuestionOption {
   label: string;
   description?: string;
-};
+}
 
-type CodexQuestionPrompt = {
+interface CodexQuestionPrompt {
   id: string;
   header: string;
   question: string;
@@ -935,7 +935,7 @@ type CodexQuestionPrompt = {
   multiSelect?: boolean;
   isOther?: boolean;
   isSecret?: boolean;
-};
+}
 
 function normalizeCodexQuestionPrompts(raw: unknown): CodexQuestionPrompt[] {
   if (!Array.isArray(raw)) {
@@ -1103,11 +1103,11 @@ function mapCodexQuestionResponseByHeader(params: {
   return Object.keys(answers).length > 0 ? answers : null;
 }
 
-type CodexPatchFileChange = {
+interface CodexPatchFileChange {
   path: string;
   kind?: string;
   content?: string;
-};
+}
 
 function extractPatchLikeText(value: unknown): string | undefined {
   if (!value || typeof value !== "object") {
@@ -1546,7 +1546,10 @@ function getImageExtension(mimeType: string): string {
   }
 }
 
-type ImageDataPayload = { mimeType: string; data: string };
+interface ImageDataPayload {
+  mimeType: string;
+  data: string;
+}
 
 function normalizeImageData(mimeType: string, data: string): ImageDataPayload {
   if (data.startsWith("data:")) {

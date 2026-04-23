@@ -7,15 +7,15 @@ type SegmentedControlSize = "sm" | "md";
 
 type SegmentedControlIconRenderer = (props: { color: string; size: number }) => ReactNode;
 
-export type SegmentedControlOption<T extends string> = {
+export interface SegmentedControlOption<T extends string> {
   value: T;
   label: string;
   icon?: SegmentedControlIconRenderer;
   disabled?: boolean;
   testID?: string;
-};
+}
 
-type SegmentedControlProps<T extends string> = {
+interface SegmentedControlProps<T extends string> {
   options: SegmentedControlOption<T>[];
   value: T;
   onValueChange: (value: T) => void;
@@ -23,7 +23,7 @@ type SegmentedControlProps<T extends string> = {
   hideLabels?: boolean;
   style?: StyleProp<ViewStyle>;
   testID?: string;
-};
+}
 
 export function SegmentedControl<T extends string>({
   options,

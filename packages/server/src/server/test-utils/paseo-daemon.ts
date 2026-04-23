@@ -12,7 +12,7 @@ import {
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
 
-type TestPaseoDaemonOptions = {
+interface TestPaseoDaemonOptions {
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
@@ -29,16 +29,16 @@ type TestPaseoDaemonOptions = {
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
-};
+}
 
-export type TestPaseoDaemon = {
+export interface TestPaseoDaemon {
   config: PaseoDaemonConfig;
   daemon: Awaited<ReturnType<typeof createPaseoDaemon>>;
   port: number;
   paseoHome: string;
   staticDir: string;
   close: () => Promise<void>;
-};
+}
 
 const TEST_DAEMON_START_TIMEOUT_MS = 20_000;
 

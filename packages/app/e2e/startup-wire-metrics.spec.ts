@@ -7,13 +7,13 @@ import { waitForSidebarHydration } from "./helpers/workspace-ui";
 type WireDirection = "sent" | "received";
 type WirePhase = "startup" | "workspace_clicks";
 
-type ParsedWireMessage = {
+interface ParsedWireMessage {
   type: string | null;
   requestId: string | null;
   entryCount: number | null;
   hasMore: boolean | null;
   providerEntries: ProviderSnapshotWireEntry[] | null;
-};
+}
 
 type WireFrameRecord = ParsedWireMessage & {
   phase: WirePhase;
@@ -21,23 +21,23 @@ type WireFrameRecord = ParsedWireMessage & {
   bytes: number;
 };
 
-type ProviderSnapshotWireEntry = {
+interface ProviderSnapshotWireEntry {
   provider: string;
   status: string | null;
   modelCount: number;
   modeCount: number;
   bytes: number;
-};
+}
 
-type WebSocketFrameEvent = {
+interface WebSocketFrameEvent {
   requestId: string;
   response: {
     opcode: number;
     payloadData: string;
   };
-};
+}
 
-type WireSummary = {
+interface WireSummary {
   totalFrames: number;
   totalBytes: number;
   byDirection: Record<WireDirection, { frames: number; bytes: number }>;
@@ -84,7 +84,7 @@ type WireSummary = {
     copiedFiles: number | null;
     copiedBytes: number | null;
   };
-};
+}
 
 class WireMonitor {
   private phase: WirePhase = "startup";

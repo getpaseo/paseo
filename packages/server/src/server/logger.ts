@@ -25,17 +25,17 @@ export interface ResolvedLogConfig {
   };
 }
 
-type LegacyLogConfig = {
+interface LegacyLogConfig {
   level?: LogLevel;
   format?: LogFormat;
-};
+}
 
 type LoggerConfigInput = PersistedConfig | LegacyLogConfig | undefined;
 
-type ResolveLogConfigOptions = {
+interface ResolveLogConfigOptions {
   paseoHome?: string;
   env?: NodeJS.ProcessEnv;
-};
+}
 
 const LOG_LEVELS: Set<LogLevel> = new Set(["trace", "debug", "info", "warn", "error", "fatal"]);
 const LOG_FORMATS: Set<LogFormat> = new Set(["pretty", "json"]);

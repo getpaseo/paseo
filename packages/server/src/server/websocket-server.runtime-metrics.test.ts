@@ -28,7 +28,7 @@ vi.mock("ws", () => ({
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { wrapSessionMessage } from "./messages.js";
 
-type RuntimeMetricsLog = {
+interface RuntimeMetricsLog {
   outboundMessageTypesTop: Array<[string, number]>;
   outboundSessionMessageTypesTop: Array<[string, number]>;
   outboundAgentStreamTypesTop: Array<[string, number]>;
@@ -38,9 +38,9 @@ type RuntimeMetricsLog = {
     p95: number;
     max: number;
   };
-};
+}
 
-type TestSocket = {
+interface TestSocket {
   readyState: number;
   bufferedAmount: number;
   sent: Array<string | Uint8Array | ArrayBuffer>;
@@ -49,7 +49,7 @@ type TestSocket = {
   close: () => void;
   on: () => void;
   once: () => void;
-};
+}
 
 function createLogger() {
   const logger = {

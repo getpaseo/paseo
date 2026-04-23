@@ -10,10 +10,10 @@ export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/me
 type MutableDaemonConfig = import("../shared/messages.js").MutableDaemonConfig;
 type MutableDaemonConfigPatch = import("../shared/messages.js").MutableDaemonConfigPatch;
 
-type LoggerLike = {
+interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
   info(...args: any[]): void;
-};
+}
 
 type ConfigListener = (config: MutableDaemonConfig) => void;
 type FieldChangeHandler = (value: unknown) => void;

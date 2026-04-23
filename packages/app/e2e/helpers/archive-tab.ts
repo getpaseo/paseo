@@ -11,13 +11,13 @@ import {
   buildHostWorkspaceRoute,
 } from "@/utils/host-routes";
 
-export type ArchiveTabAgent = {
+export interface ArchiveTabAgent {
   id: string;
   title: string;
   cwd: string;
-};
+}
 
-type ArchiveTabDaemonClient = {
+interface ArchiveTabDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
   createAgent(options: {
@@ -36,7 +36,7 @@ type ArchiveTabDaemonClient = {
     predicate: (snapshot: { status: string }) => boolean,
     timeout?: number,
   ): Promise<{ status: string }>;
-};
+}
 
 function getDaemonPort(): string {
   const daemonPort = process.env.E2E_DAEMON_PORT;
@@ -73,12 +73,12 @@ function buildSeededStoragePayload() {
   };
 }
 
-type ArchiveTabDaemonClientConfig = {
+interface ArchiveTabDaemonClientConfig {
   url: string;
   clientId: string;
   clientType: "cli";
   webSocketFactory?: NodeWebSocketFactory;
-};
+}
 
 async function loadDaemonClientConstructor(): Promise<
   new (config: ArchiveTabDaemonClientConfig) => ArchiveTabDaemonClient

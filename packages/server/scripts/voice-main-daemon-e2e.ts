@@ -5,11 +5,11 @@ import { DaemonClient } from "../src/server/test-utils/daemon-client.js";
 import { OpenAITTS } from "../src/server/speech/providers/openai/tts.js";
 import { withTimeout } from "../src/utils/promise-timeout.js";
 
-type RoundTripResult = {
+interface RoundTripResult {
   voiceAgentId: string;
   speakToolCalls: number;
   audioChunks: number;
-};
+}
 
 async function streamToBuffer(stream: AsyncIterable<unknown>): Promise<Buffer> {
   const chunks: Buffer[] = [];

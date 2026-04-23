@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 
-type WebSocketLike = {
+interface WebSocketLike {
   readyState: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
@@ -14,7 +14,7 @@ type WebSocketLike = {
   onclose?: ((event: any) => void) | null;
   onerror?: ((event: any) => void) | null;
   onmessage?: ((event: any) => void) | null;
-};
+}
 
 export type NodeWebSocketFactory = (
   url: string,

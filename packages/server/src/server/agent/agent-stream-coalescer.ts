@@ -10,48 +10,48 @@ type CoalescableTimelineEvent = Extract<AgentStreamEvent, { type: "timeline" }> 
   item: CoalescableTimelineItem;
 };
 
-export type AgentStreamCoalescerTimers = {
+export interface AgentStreamCoalescerTimers {
   setTimeout: typeof setTimeout;
   clearTimeout: typeof clearTimeout;
-};
+}
 
-export type AgentStreamCoalescerFlush = {
+export interface AgentStreamCoalescerFlush {
   agentId: string;
   item: CoalescableTimelineItem;
   provider: AgentProvider;
   turnId?: string;
-};
+}
 
-export type AgentStreamCoalescerOptions = {
+export interface AgentStreamCoalescerOptions {
   windowMs?: number;
   timers: AgentStreamCoalescerTimers;
   onFlush: (payload: AgentStreamCoalescerFlush) => void;
-};
+}
 
-type PendingTextEntry = {
+interface PendingTextEntry {
   kind: "text";
   item: CoalescableTextItem;
   text: string;
   provider: AgentProvider;
   turnId?: string;
-};
+}
 
-type PendingToolCallEntry = {
+interface PendingToolCallEntry {
   kind: "tool_call";
   item: Extract<AgentTimelineItem, { type: "tool_call" }>;
   provider: AgentProvider;
   turnId?: string;
-};
+}
 
 type PendingAgentStreamEntry = PendingTextEntry | PendingToolCallEntry;
 
-type PendingAgentStreamBuffer = {
+interface PendingAgentStreamBuffer {
   agentId: string;
   entries: PendingAgentStreamEntry[];
   toolCallEntryIndexes: Map<string, number>;
   timer: ReturnType<typeof setTimeout> | null;
   flushing: boolean;
-};
+}
 
 function isCoalescableTimelineEvent(event: AgentStreamEvent): event is CoalescableTimelineEvent {
   return (

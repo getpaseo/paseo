@@ -183,7 +183,7 @@ export type DaemonEvent =
 
 export type DaemonEventHandler = (event: DaemonEvent) => void;
 
-export type DaemonClientConfig = {
+export interface DaemonClientConfig {
   url: string;
   clientId: string;
   clientType?: "mobile" | "browser" | "cli" | "mcp";
@@ -206,13 +206,13 @@ export type DaemonClientConfig = {
   };
   runtimeMetricsIntervalMs?: number;
   runtimeMetricsWindowMs?: number;
-};
+}
 
-export type SendMessageOptions = {
+export interface SendMessageOptions {
   messageId?: string;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
-};
+}
 
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
 
@@ -279,10 +279,10 @@ type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
   "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "featureValues"
 >;
-type ListCommandsOptions = {
+interface ListCommandsOptions {
   requestId?: string;
   draftConfig?: ListCommandsDraftConfig;
-};
+}
 type SetVoiceModePayload = Extract<
   SessionOutboundMessage,
   { type: "set_voice_mode_response" }
@@ -355,13 +355,13 @@ export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["paylo
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
 export type FetchAgentTimelineCursor = NonNullable<FetchAgentTimelinePayload["startCursor"]>;
-export type FetchAgentTimelineOptions = {
+export interface FetchAgentTimelineOptions {
   direction?: FetchAgentTimelineDirection;
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
   projection?: FetchAgentTimelineProjection;
   requestId?: string;
-};
+}
 
 type AgentRefreshedStatusPayload = z.infer<typeof AgentRefreshedStatusPayloadSchema>;
 type RestartRequestedStatusPayload = z.infer<typeof RestartRequestedStatusPayloadSchema>;
@@ -399,40 +399,40 @@ export type FetchWorkspacesOptions = Omit<FetchWorkspacesRequest, "type" | "requ
 };
 export type FetchWorkspacesEntry = FetchWorkspacesPayload["entries"][number];
 export type FetchWorkspacesPageInfo = FetchWorkspacesPayload["pageInfo"];
-export type CreateChatRoomOptions = {
+export interface CreateChatRoomOptions {
   name: string;
   purpose?: string | null;
   requestId?: string;
-};
-export type InspectChatRoomOptions = {
+}
+export interface InspectChatRoomOptions {
   room: string;
   requestId?: string;
-};
-export type DeleteChatRoomOptions = {
+}
+export interface DeleteChatRoomOptions {
   room: string;
   requestId?: string;
-};
-export type PostChatMessageOptions = {
+}
+export interface PostChatMessageOptions {
   room: string;
   body: string;
   authorAgentId?: string;
   replyToMessageId?: string | null;
   requestId?: string;
-};
-export type ReadChatMessagesOptions = {
+}
+export interface ReadChatMessagesOptions {
   room: string;
   limit?: number;
   since?: string;
   authorAgentId?: string;
   requestId?: string;
-};
-export type WaitForChatMessagesOptions = {
+}
+export interface WaitForChatMessagesOptions {
   room: string;
   afterMessageId?: string | null;
   timeoutMs?: number;
   requestId?: string;
-};
-export type RunLoopOptions = {
+}
+export interface RunLoopOptions {
   prompt: string;
   cwd: string;
   verifyPrompt?: string | null;
@@ -442,21 +442,21 @@ export type RunLoopOptions = {
   maxIterations?: number;
   maxTimeMs?: number;
   requestId?: string;
-};
-export type InspectLoopOptions = {
+}
+export interface InspectLoopOptions {
   id: string;
   requestId?: string;
-};
-export type LoopLogsOptions = {
+}
+export interface LoopLogsOptions {
   id: string;
   afterSeq?: number;
   requestId?: string;
-};
-export type StopLoopOptions = {
+}
+export interface StopLoopOptions {
   id: string;
   requestId?: string;
-};
-export type CreateScheduleOptions = {
+}
+export interface CreateScheduleOptions {
   prompt: string;
   name?: string | null;
   cadence:
@@ -498,11 +498,11 @@ export type CreateScheduleOptions = {
   maxRuns?: number;
   expiresAt?: string;
   requestId?: string;
-};
-export type InspectScheduleOptions = {
+}
+export interface InspectScheduleOptions {
   id: string;
   requestId?: string;
-};
+}
 type ListAvailableEditorsPayload = ListAvailableEditorsResponseMessage["payload"];
 type OpenInEditorPayload = OpenInEditorResponseMessage["payload"];
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
@@ -510,29 +510,29 @@ type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
 type WorkspaceSetupStatusPayload = WorkspaceSetupStatusResponseMessage["payload"];
 export type EditorTargetDescriptor = ListAvailableEditorsPayload["editors"][number];
 
-export type FetchAgentResult = {
+export interface FetchAgentResult {
   agent: AgentSnapshotPayload;
   project: ProjectPlacementPayload | null;
-};
+}
 
-export type WaitForFinishResult = {
+export interface WaitForFinishResult {
   status: "idle" | "error" | "permission" | "timeout";
   final: AgentSnapshotPayload | null;
   error: string | null;
   lastMessage: string | null;
-};
+}
 
-type Waiter<T> = {
+interface Waiter<T> {
   predicate: (msg: SessionOutboundMessage) => T | null;
   resolve: (value: T) => void;
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout> | null;
-};
+}
 
-type WaitHandle<T> = {
+interface WaitHandle<T> {
   promise: Promise<T>;
   cancel: (error: Error) => void;
-};
+}
 
 type RpcWaitResult<T> = { kind: "ok"; value: T } | { kind: "error"; error: DaemonRpcError };
 type GetDaemonConfigResponse = Extract<

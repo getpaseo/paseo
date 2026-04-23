@@ -154,10 +154,10 @@ function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null
 export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
 export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
 
-export type PaseoSpeechConfig = {
+export interface PaseoSpeechConfig {
   providers: RequestedSpeechProviders;
   local?: PaseoLocalSpeechConfig;
-};
+}
 
 export type DaemonLifecycleIntent =
   | {
@@ -172,7 +172,7 @@ export type DaemonLifecycleIntent =
       reason?: string;
     };
 
-export type PaseoDaemonConfig = {
+export interface PaseoDaemonConfig {
   listen: string;
   paseoHome: string;
   corsAllowedOrigins: string[];
@@ -199,7 +199,7 @@ export type PaseoDaemonConfig = {
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
-};
+}
 
 export interface PaseoDaemon {
   config: PaseoDaemonConfig;

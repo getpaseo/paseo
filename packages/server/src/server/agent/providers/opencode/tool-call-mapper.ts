@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { ToolCallTimelineItem } from "../../agent-sdk-types.js";
 import { deriveOpencodeToolDetail } from "./tool-call-detail-parser.js";
 
-type OpencodeToolCallParams = {
+interface OpencodeToolCallParams {
   toolName: string;
   callId?: string | null;
   status?: unknown;
@@ -11,7 +11,7 @@ type OpencodeToolCallParams = {
   output?: unknown;
   error?: unknown;
   metadata?: Record<string, unknown>;
-};
+}
 
 const FAILED_STATUSES = new Set(["error", "failed", "failure"]);
 const CANCELED_STATUSES = new Set(["canceled", "cancelled", "aborted", "interrupted"]);

@@ -1,8 +1,8 @@
-export type HostPortParts = {
+export interface HostPortParts {
   host: string;
   port: number;
   isIpv6: boolean;
-};
+}
 
 export type RelayRole = "server" | "client";
 export type RelayProtocolVersion = "1" | "2";

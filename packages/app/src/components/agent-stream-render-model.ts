@@ -11,37 +11,37 @@ import {
 } from "./stream-strategy";
 import { resolveStreamRenderStrategy } from "./stream-strategy-resolver";
 
-export type StreamRenderSegments = {
+export interface StreamRenderSegments {
   historyVirtualized: StreamItem[];
   historyMounted: StreamItem[];
   liveHead: StreamItem[];
-};
+}
 
-export type StreamHistoryBoundary = {
+export interface StreamHistoryBoundary {
   hasVirtualizedHistory: boolean;
   hasMountedHistory: boolean;
   hasLiveHead: boolean;
   historyToHeadGap: number;
-};
+}
 
-export type StreamRenderAuxiliary = {
+export interface StreamRenderAuxiliary {
   pendingPermissions: ReactNode;
   workingIndicator: ReactNode;
-};
+}
 
-export type AgentStreamRenderModel = {
+export interface AgentStreamRenderModel {
   history: StreamItem[];
   segments: StreamRenderSegments;
   boundary: StreamHistoryBoundary;
   auxiliary: StreamRenderAuxiliary;
-};
+}
 
-export type BuildAgentStreamRenderModelInput = {
+export interface BuildAgentStreamRenderModelInput {
   tail: StreamItem[];
   head: StreamItem[];
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
-};
+}
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 const EMPTY_AUXILIARY: StreamRenderAuxiliary = {

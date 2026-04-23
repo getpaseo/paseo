@@ -3,16 +3,16 @@ import type { BottomAnchorTransportBehavior } from "./agent-stream-render-strate
 
 export type BottomAnchorMode = "sticky-bottom" | "detached";
 
-export type BottomAnchorRouteRequest = {
+export interface BottomAnchorRouteRequest {
   reason: "initial-entry" | "resume";
   agentId: string;
   requestKey: string;
-};
+}
 
-export type BottomAnchorLocalRequest = {
+export interface BottomAnchorLocalRequest {
   reason: "jump-to-bottom" | "message-sent";
   agentId: string;
-};
+}
 
 export type BottomAnchorBlockedReason =
   | "waiting_for_history_readiness"
@@ -24,14 +24,14 @@ type BottomAnchorRequestReason =
   | BottomAnchorRouteRequest["reason"]
   | BottomAnchorLocalRequest["reason"];
 
-type BottomAnchorRequest = {
+interface BottomAnchorRequest {
   id: number;
   agentId: string;
   reason: BottomAnchorRequestReason;
   requestKey: string;
-};
+}
 
-type ControllerMeasurementState = {
+interface ControllerMeasurementState {
   containerKey: string;
   viewportWidth: number;
   viewportHeight: number;
@@ -39,23 +39,23 @@ type ControllerMeasurementState = {
   offsetY: number;
   viewportMeasuredForKey: string | null;
   contentMeasuredForKey: string | null;
-};
+}
 
-type AttemptContext = {
+interface AttemptContext {
   requestId: number | null;
   retries: number;
   confirmationPasses?: number;
   startedContentHeight?: number;
   startedOffsetY?: number;
   startedViewportHeight?: number;
-};
+}
 
-type ScheduledFrameHandle = {
+interface ScheduledFrameHandle {
   cancelled: boolean;
   rafId: number | null;
   remainingFrames: number;
   callback: () => void;
-};
+}
 
 type BottomAnchorEvent =
   | "request_created"
@@ -69,7 +69,7 @@ type BottomAnchorEvent =
   | "verification_scheduled"
   | "blocked_reason_changed";
 
-type BottomAnchorControllerDriver = {
+interface BottomAnchorControllerDriver {
   destroy: () => void;
   getSnapshot: () => {
     mode: BottomAnchorMode;
@@ -99,9 +99,9 @@ type BottomAnchorControllerDriver = {
   }) => void;
   notifyAuthoritativeHistoryMaybeChanged: () => void;
   reevaluate: (animated?: boolean) => void;
-};
+}
 
-type CreateBottomAnchorControllerDriverInput = {
+interface CreateBottomAnchorControllerDriverInput {
   getAgentId: () => string;
   getIsAuthoritativeHistoryReady: () => boolean;
   getRenderStrategy: () => string;
@@ -116,7 +116,7 @@ type CreateBottomAnchorControllerDriverInput = {
     delayFrames?: number;
   }) => unknown;
   cancelFrame: (handle: unknown) => void;
-};
+}
 
 const MAX_VERIFICATION_RETRIES = 3;
 const WEB_PARTIAL_VIRTUALIZED_CONFIRMATION_DELAY_FRAMES = 1;

@@ -47,22 +47,22 @@ export interface WorktreeConfig {
   worktreePath: string;
 }
 
-export type WorktreeRuntimeEnv = {
+export interface WorktreeRuntimeEnv {
   PASEO_SOURCE_CHECKOUT_PATH: string;
   PASEO_ROOT_PATH: string;
   PASEO_WORKTREE_PATH: string;
   PASEO_BRANCH_NAME: string;
   PASEO_WORKTREE_PORT: string;
-};
+}
 
-export type WorktreeSetupCommandResult = {
+export interface WorktreeSetupCommandResult {
   command: string;
   cwd: string;
   stdout: string;
   stderr: string;
   exitCode: number | null;
   durationMs: number;
-};
+}
 
 export type WorktreeSetupCommandProgressEvent =
   | {
@@ -145,12 +145,12 @@ export interface PaseoWorktreeInfo {
   head?: string;
 }
 
-export type PaseoWorktreeOwnership = {
+export interface PaseoWorktreeOwnership {
   allowed: boolean;
   repoRoot?: string;
   worktreeRoot?: string;
   worktreePath?: string;
-};
+}
 
 export type WorktreeSource =
   | { kind: "branch-off"; baseBranch: string; newBranchName: string }

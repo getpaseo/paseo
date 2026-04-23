@@ -26,12 +26,12 @@ const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = -2;
 const EMPHASIZED_STATUS_DOT_OFFSET = -3;
 
-type WorkspaceTabPresentationResolverProps = {
+interface WorkspaceTabPresentationResolverProps {
   tab: WorkspaceTabDescriptor;
   serverId: string;
   workspaceId: string;
   children: (presentation: WorkspaceTabPresentation) => ReactNode;
-};
+}
 
 type WorkspaceTabPresentationResolverInnerProps = WorkspaceTabPresentationResolverProps & {
   registration: NonNullable<ReturnType<typeof getPanelRegistration>>;
@@ -96,12 +96,12 @@ function WorkspaceTabPresentationResolverInner({
   return <>{children(presentation)}</>;
 }
 
-type WorkspaceTabIconProps = {
+interface WorkspaceTabIconProps {
   presentation: WorkspaceTabPresentation;
   active?: boolean;
   size?: number;
   statusDotBorderColor?: string;
-};
+}
 
 export function WorkspaceTabIcon({
   presentation,
@@ -168,13 +168,13 @@ export function WorkspaceTabIcon({
   );
 }
 
-type WorkspaceTabOptionRowProps = {
+interface WorkspaceTabOptionRowProps {
   presentation: WorkspaceTabPresentation;
   selected: boolean;
   active: boolean;
   onPress: () => void;
   trailingAccessory?: ReactNode;
-};
+}
 
 export function WorkspaceTabOptionRow({
   presentation,

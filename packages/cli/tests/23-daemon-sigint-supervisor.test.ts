@@ -61,10 +61,10 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
   }
 }
 
-type DaemonStatus = {
+interface DaemonStatus {
   localDaemon: string | null;
   pid: number | null;
-};
+}
 
 async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
   const result =
@@ -103,10 +103,10 @@ async function waitFor(
   throw new Error(message);
 }
 
-type ExitResult = {
+interface ExitResult {
   code: number | null;
   signal: NodeJS.Signals | null;
-};
+}
 
 function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): Promise<ExitResult> {
   return new Promise((resolve, reject) => {

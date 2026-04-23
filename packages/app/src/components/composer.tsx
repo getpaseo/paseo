@@ -71,11 +71,11 @@ import { AttachmentLightbox } from "@/components/attachment-lightbox";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 
-type QueuedMessage = {
+interface QueuedMessage {
   id: string;
   text: string;
   attachments: ComposerAttachment[];
-};
+}
 
 type AttachmentListUpdater =
   | ComposerAttachment[]

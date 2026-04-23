@@ -45,13 +45,13 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
 
 const SERVER_ID = "sidebar-render-count";
 
-type RenderCounts = {
+interface RenderCounts {
   frame: number;
   headers: Record<string, number>;
   rows: Record<string, number>;
   projectSelection: Record<string, number>;
   rowSelection: Record<string, number>;
-};
+}
 
 const runningScript: WorkspaceScriptPayload = {
   scriptName: "web",

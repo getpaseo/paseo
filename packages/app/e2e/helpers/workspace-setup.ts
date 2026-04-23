@@ -8,7 +8,7 @@ import { gotoAppShell } from "./app";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import type { SessionOutboundMessage } from "@server/shared/messages";
 
-type WorkspaceSetupDaemonClient = {
+interface WorkspaceSetupDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
   openProject(cwd: string): Promise<{
@@ -52,7 +52,7 @@ type WorkspaceSetupDaemonClient = {
     error?: string | null;
   }>;
   subscribeRawMessages(handler: (message: SessionOutboundMessage) => void): () => void;
-};
+}
 
 export type WorkspaceSetupProgressPayload = Extract<
   SessionOutboundMessage,

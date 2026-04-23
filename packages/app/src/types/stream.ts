@@ -142,7 +142,10 @@ export interface CompactionItem {
   preTokens?: number;
 }
 
-export type TodoEntry = { text: string; completed: boolean };
+export interface TodoEntry {
+  text: string;
+  completed: boolean;
+}
 
 export interface TodoListItem {
   kind: "todo_list";

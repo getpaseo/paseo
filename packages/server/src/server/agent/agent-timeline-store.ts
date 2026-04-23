@@ -6,19 +6,19 @@ import type {
   AgentTimelineRow,
 } from "./agent-timeline-store-types.js";
 
-export type SeedAgentTimelineOptions = {
+export interface SeedAgentTimelineOptions {
   items?: readonly AgentTimelineItem[];
   rows?: readonly AgentTimelineRow[];
   epoch?: string;
   nextSeq?: number;
   timestamp?: string;
-};
+}
 
-type AgentTimelineState = {
+interface AgentTimelineState {
   epoch: string;
   rows: AgentTimelineRow[];
   nextSeq: number;
-};
+}
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 

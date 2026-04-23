@@ -2,15 +2,15 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-type ResolvePackageVersionParams = {
+interface ResolvePackageVersionParams {
   moduleUrl?: string;
   packageName: string;
-};
+}
 
-type PackageJson = {
+interface PackageJson {
   name?: unknown;
   version?: unknown;
-};
+}
 
 export class PackageVersionResolutionError extends Error {
   constructor(params: { moduleUrl: string; packageName: string }) {

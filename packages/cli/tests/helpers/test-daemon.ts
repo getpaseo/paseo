@@ -50,10 +50,10 @@ const TEST_OUTPUT_CAPTURE_LIMIT = Number.parseInt(
   10,
 );
 
-type OutputCapture = {
+interface OutputCapture {
   value: string;
   truncated: boolean;
-};
+}
 
 function createOutputCapture(): OutputCapture {
   return { value: "", truncated: false };

@@ -2,9 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import { DictationStreamSender } from "@/dictation/dictation-stream-sender";
 
-type FakeFinish = { dictationId: string; finalSeq: number };
-type FakeStart = { dictationId: string; format: string };
-type FakeChunk = { dictationId: string; seq: number; audio: string; format: string };
+interface FakeFinish {
+  dictationId: string;
+  finalSeq: number;
+}
+interface FakeStart {
+  dictationId: string;
+  format: string;
+}
+interface FakeChunk {
+  dictationId: string;
+  seq: number;
+  audio: string;
+  format: string;
+}
 
 class FakeDaemonClient {
   isConnected = true;

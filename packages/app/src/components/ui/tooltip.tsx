@@ -41,14 +41,14 @@ interface Rect {
   height: number;
 }
 
-type TooltipContextValue = {
+interface TooltipContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<View | null>;
   enabled: boolean;
   openOnPress: boolean;
   delayDuration: number;
-};
+}
 
 const TooltipContext = createContext<TooltipContextValue | null>(null);
 

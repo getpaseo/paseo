@@ -73,20 +73,20 @@ const CHAT: ChatItem[] = [
 
 // ── Sidebar data ────────────────────────────────────────
 
-type SidebarWorkspace = {
+interface SidebarWorkspace {
   name: string;
   kind: "checkout" | "worktree";
   status: "running" | "done" | "idle" | "syncing";
   selected?: boolean;
   diffStat?: { additions: number; deletions: number };
   pr?: { number: number; state: "open" | "merged" | "closed" };
-};
+}
 
-type SidebarProject = {
+interface SidebarProject {
   initial: string;
   name: string;
   workspaces: SidebarWorkspace[];
-};
+}
 
 const SIDEBAR_PROJECTS: SidebarProject[] = [
   {
@@ -144,12 +144,12 @@ const SIDEBAR_PROJECTS: SidebarProject[] = [
 
 // ── Tab data ─────────────────────────────────────────────
 
-type TabDef = {
+interface TabDef {
   name: string;
   provider: "claude" | "codex" | "terminal";
   done: boolean;
   active?: boolean;
-};
+}
 
 const TABS: TabDef[] = [
   { name: "Orchestrator", provider: "claude", done: false, active: true },
@@ -160,12 +160,12 @@ const TABS: TabDef[] = [
 // ── Diff data ──────────────────────────────────────────
 
 type DiffLineType = "add" | "remove" | "context" | "header";
-type DiffLine = {
+interface DiffLine {
   type: DiffLineType;
   ln: string | null;
   content?: string;
   tokens?: Array<{ text: string; cls: string }>;
-};
+}
 
 const DIFF_LINES: DiffLine[] = [
   {

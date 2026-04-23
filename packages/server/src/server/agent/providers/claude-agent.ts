@@ -83,21 +83,21 @@ const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", 
 
 type TurnState = "idle" | "foreground" | "autonomous";
 
-type EventIdentifiers = {
+interface EventIdentifiers {
   taskId: string | null;
   parentMessageId: string | null;
   messageId: string | null;
-};
+}
 
-type AutonomousTurnState = {
+interface AutonomousTurnState {
   id: string;
-};
+}
 
-type AsyncMessageInput<T> = {
+interface AsyncMessageInput<T> {
   push: (item: T) => void;
   end: () => void;
   iterable: AsyncIterable<T>;
-};
+}
 
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -144,34 +144,37 @@ const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type SlashCommandInvocation = {
+interface SlashCommandInvocation {
   commandName: string;
   args?: string;
   rawInput: string;
-};
+}
 
 // Orchestrator instructions moved to shared module.
 type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
-export type ClaudeContentChunk = { type: string; [key: string]: any };
+export interface ClaudeContentChunk {
+  type: string;
+  [key: string]: any;
+}
 
 type ClaudeOptions = Options;
 
-type ClaudeAgentClientOptions = {
+interface ClaudeAgentClientOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   queryFactory?: typeof query;
-};
+}
 
-type ClaudeAgentSessionOptions = {
+interface ClaudeAgentSessionOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
   handle?: AgentPersistenceHandle;
   launchEnv?: Record<string, string>;
   logger: Logger;
   queryFactory?: typeof query;
-};
+}
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -253,7 +256,7 @@ function sanitizeClaudeProjectPath(cwd: string): string {
   return cwd.replace(/[\\/._:]/g, "-");
 }
 
-type ClaudeOptionsLogSummary = {
+interface ClaudeOptionsLogSummary {
   cwd: string | null;
   permissionMode: string | null;
   model: string | null;
@@ -272,7 +275,7 @@ type ClaudeOptionsLogSummary = {
   hasSpawnOverride: boolean;
   hasStderrHandler: boolean;
   pathToClaudeCodeExecutable: string | null;
-};
+}
 
 const MAX_RECENT_STDERR_CHARS = 4000;
 const STDERR_FLUSH_WAIT_MS = 150;
@@ -511,15 +514,15 @@ export function extractUserMessageText(content: unknown): string | null {
   return combined.length > 0 ? combined : null;
 }
 
-type PendingPermission = {
+interface PendingPermission {
   request: AgentPermissionRequest;
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
   cleanup?: () => void;
-};
+}
 
 type ToolUseClassification = "generic" | "command" | "file_change";
-type ToolUseCacheEntry = {
+interface ToolUseCacheEntry {
   id: string;
   name: string;
   server: string;
@@ -528,7 +531,7 @@ type ToolUseCacheEntry = {
   commandText?: string;
   files?: { path: string; kind: string }[];
   input?: AgentMetadata | null;
-};
+}
 function isMetadata(value: unknown): value is AgentMetadata {
   return typeof value === "object" && value !== null;
 }
@@ -720,19 +723,19 @@ function buildClaudePlanPermissionActions(
   return actions;
 }
 
-type TimelineFragment = {
+interface TimelineFragment {
   kind: "assistant" | "reasoning";
   text: string;
-};
+}
 
-type TimelineMessageState = {
+interface TimelineMessageState {
   id: string;
   assistantText: string;
   reasoningText: string;
   emittedAssistantLength: number;
   emittedReasoningLength: number;
   stopped: boolean;
-};
+}
 
 class TimelineAssembler {
   private readonly messages = new Map<string, TimelineMessageState>();
@@ -4090,10 +4093,10 @@ function createAsyncMessageInput<T>(): AsyncMessageInput<T> {
   };
 }
 
-type ClaudeSessionCandidate = {
+interface ClaudeSessionCandidate {
   path: string;
   mtime: Date;
-};
+}
 
 async function pathExists(target: string): Promise<boolean> {
   try {

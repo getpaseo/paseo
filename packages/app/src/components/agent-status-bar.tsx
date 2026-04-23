@@ -51,14 +51,14 @@ import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 
-type StatusOption = {
+interface StatusOption {
   id: string;
   label: string;
-};
+}
 
 type StatusSelector = "provider" | "mode" | "model" | "thinking" | `feature-${string}`;
 
-type ControlledAgentStatusBarProps = {
+interface ControlledAgentStatusBarProps {
   provider: string;
   providerOptions?: StatusOption[];
   selectedProviderId?: string;
@@ -84,7 +84,7 @@ type ControlledAgentStatusBarProps = {
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
-};
+}
 
 export interface DraftAgentStatusBarProps {
   providerDefinitions: AgentProviderDefinition[];

@@ -2,20 +2,20 @@ const IGNORED_ARG_PREFIXES = ["-psn_", "--no-sandbox"];
 
 export const DESKTOP_CLI_ENV = "PASEO_DESKTOP_CLI";
 
-export type NodeEntrypointSpec = {
+export interface NodeEntrypointSpec {
   entryPath: string;
   execArgv: string[];
-};
+}
 
-export type NodeEntrypointInvocation = {
+export interface NodeEntrypointInvocation {
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv;
-};
+}
 
 export type NodeEntrypointArgvMode = "bare" | "node-script";
 
-type CreateNodeEntrypointInvocationInput = {
+interface CreateNodeEntrypointInvocationInput {
   execPath: string;
   isPackaged: boolean;
   packagedRunnerPath: string | null;
@@ -23,13 +23,13 @@ type CreateNodeEntrypointInvocationInput = {
   argvMode: NodeEntrypointArgvMode;
   args: string[];
   baseEnv: NodeJS.ProcessEnv;
-};
+}
 
-type ParseCliPassthroughArgsFromArgvInput = {
+interface ParseCliPassthroughArgsFromArgvInput {
   argv: string[];
   isDefaultApp: boolean;
   forceCli: boolean;
-};
+}
 
 export function createElectronNodeEnv(
   baseEnv: NodeJS.ProcessEnv,

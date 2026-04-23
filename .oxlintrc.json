@@ -18,7 +18,6 @@
     "no-empty-pattern": "warn",
     "no-self-assign": "warn",
     "no-shadow": "warn",
-    "no-use-before-define": ["warn", { "functions": false, "classes": false, "variables": true }],
     "require-await": "off",
     "unicorn/consistent-function-scoping": "off",
     "unicorn/no-array-sort": "off",
@@ -53,6 +52,7 @@
     "typescript/no-explicit-any": "warn",
     "typescript/prefer-as-const": "warn",
     "typescript/no-this-alias": "warn",
+    "typescript/consistent-type-definitions": ["warn", "interface"],
 
     "no-nested-ternary": "warn",
     "no-unneeded-ternary": "warn",

@@ -3,7 +3,7 @@ import { copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-export type PaseoHomeMetadataForkResult = {
+export interface PaseoHomeMetadataForkResult {
   sourceHome: string;
   targetHome: string;
   agentFiles: number;
@@ -13,13 +13,13 @@ export type PaseoHomeMetadataForkResult = {
   copiedFiles: number;
   copiedBytes: number;
   skippedMissing: string[];
-};
+}
 
-type CopyStats = {
+interface CopyStats {
   files: number;
   bytes: number;
   skippedMissing: string[];
-};
+}
 
 export function resolvePaseoHomePath(value: string): string {
   if (value === "~") {

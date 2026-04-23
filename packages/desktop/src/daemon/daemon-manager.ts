@@ -44,7 +44,7 @@ const DETACHED_STARTUP_GRACE_MS = 1200;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 
-type DesktopDaemonStatus = {
+interface DesktopDaemonStatus {
   serverId: string;
   status: DesktopDaemonState;
   listen: string | null;
@@ -54,18 +54,18 @@ type DesktopDaemonStatus = {
   version: string | null;
   desktopManaged: boolean;
   error: string | null;
-};
+}
 
-type DesktopDaemonLogs = {
+interface DesktopDaemonLogs {
   logPath: string;
   contents: string;
-};
+}
 
-type DesktopPairingOffer = {
+interface DesktopPairingOffer {
   relayEnabled: boolean;
   url: string | null;
   qr: string | null;
-};
+}
 
 type DesktopCommandHandler = (args?: Record<string, unknown>) => Promise<unknown> | unknown;
 

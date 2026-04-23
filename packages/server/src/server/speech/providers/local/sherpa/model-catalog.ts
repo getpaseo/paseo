@@ -4,7 +4,7 @@ export type SherpaOnnxModelKind = "stt-online" | "stt-offline" | "tts";
 
 type DefaultModelRole = "stt" | "tts";
 
-type SherpaOnnxCatalogEntry = {
+interface SherpaOnnxCatalogEntry {
   kind: SherpaOnnxModelKind;
   archiveUrl?: string;
   downloadFiles?: Array<{ url: string; relPath: string }>;
@@ -13,7 +13,7 @@ type SherpaOnnxCatalogEntry = {
   description: string;
   aliases?: readonly string[];
   defaultFor?: DefaultModelRole;
-};
+}
 
 export const SHERPA_ONNX_MODEL_CATALOG = {
   "zipformer-bilingual-zh-en-2023-02-20": {

@@ -34,40 +34,40 @@ const DEFAULT_MAX_DIRECTORIES_SCANNED = 5000;
 const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
 const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
 
-type QueryParts = {
+interface QueryParts {
   isPathQuery: boolean;
   parentPart: string;
   searchTerm: string;
-};
+}
 
-type RankedDirectory = {
+interface RankedDirectory {
   absolutePath: string;
   matchTier: number;
   segmentIndex: number;
   matchOffset: number;
   depth: number;
-};
+}
 
-type ChildDirectoryEntry = {
+interface ChildDirectoryEntry {
   name: string;
   absolutePath: string;
-};
+}
 
-type ChildWorkspaceEntry = {
+interface ChildWorkspaceEntry {
   name: string;
   absolutePath: string;
   kind: WorkspaceSuggestionKind;
-};
+}
 
-type DirectoryListCacheEntry = {
+interface DirectoryListCacheEntry {
   expiresAt: number;
   entries: ChildDirectoryEntry[];
-};
+}
 
-type WorkspaceEntryListCacheEntry = {
+interface WorkspaceEntryListCacheEntry {
   expiresAt: number;
   entries: ChildWorkspaceEntry[];
-};
+}
 
 const directoryListCache = new Map<string, DirectoryListCacheEntry>();
 const workspaceEntryListCache = new Map<string, WorkspaceEntryListCacheEntry>();
@@ -112,14 +112,14 @@ export async function searchHomeDirectories(
   });
 }
 
-type RankedWorkspaceEntry = {
+interface RankedWorkspaceEntry {
   relativePath: string;
   kind: WorkspaceSuggestionKind;
   matchTier: number;
   segmentIndex: number;
   matchOffset: number;
   depth: number;
-};
+}
 
 export async function searchWorkspaceEntries(
   options: SearchWorkspaceEntriesOptions,
