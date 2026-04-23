@@ -53,14 +53,14 @@ export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
       },
       appendPcm16(chunk: Buffer) {
         if (!connected) {
-          (emitter as any).emit("error", new Error("STT session not connected"));
+          emitter.emit("error", new Error("STT session not connected"));
           return;
         }
         pcm16 = pcm16.length === 0 ? chunk : Buffer.concat([pcm16, chunk]);
       },
       commit: () => {
         if (!connected) {
-          (emitter as any).emit("error", new Error("STT session not connected"));
+          emitter.emit("error", new Error("STT session not connected"));
           return;
         }
 
@@ -70,7 +70,7 @@ export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
         previousSegmentId = committedId;
         segmentId = uuidv4();
         pcm16 = Buffer.alloc(0);
-        (emitter as any).emit("committed", { segmentId: committedId, previousSegmentId: prev });
+        emitter.emit("committed", { segmentId: committedId, previousSegmentId: prev });
 
         void (async () => {
           try {
@@ -78,7 +78,7 @@ export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
               committedPcm16,
               `audio/pcm;rate=${requiredSampleRate}`,
             );
-            (emitter as any).emit("transcript", {
+            emitter.emit("transcript", {
               segmentId: committedId,
               transcript: rt.text,
               isFinal: true,
@@ -88,7 +88,7 @@ export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
               isLowConfidence: rt.isLowConfidence,
             });
           } catch (err) {
-            (emitter as any).emit("error", err);
+            emitter.emit("error", err);
           } finally {
             logger.debug({ bytes: committedPcm16.length }, "Parakeet session reset");
           }
@@ -102,8 +102,8 @@ export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
         connected = false;
         pcm16 = Buffer.alloc(0);
       },
-      on(event: any, handler: any) {
-        emitter.on(event, handler);
+      on(event: "committed" | "transcript" | "error", handler: (payload: never) => void) {
+        emitter.on(event, handler as (...args: unknown[]) => void);
         return undefined;
       },
     };
@@ -151,7 +151,11 @@ export class SherpaOnnxParakeetSTT implements SpeechToTextProvider {
       this.engine.acceptWaveform(stream, inputRate, floatSamples);
       this.engine.recognizer.decode(stream);
       const result = this.engine.recognizer.getResult(stream);
-      const text = String(result?.text ?? result ?? "").trim();
+      const text = String(
+        (typeof result === "object" && result && "text" in result ? result.text : undefined) ??
+          result ??
+          "",
+      ).trim();
       const duration = Date.now() - start;
       this.logger.debug({ duration, textLength: text.length }, "Parakeet transcription complete");
       return { text, duration, ...(text.length === 0 ? { isLowConfidence: true } : {}) };

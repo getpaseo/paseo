@@ -74,8 +74,23 @@ function buildModelConfig(model: SherpaOnlineRecognizerModel): object {
   };
 }
 
+export interface SherpaOnlineStreamNative {
+  acceptWaveform: (sampleRate: number, samples: Float32Array) => void;
+  free?: () => void;
+}
+
+export interface SherpaOnlineRecognizerNative {
+  config?: { featConfig?: { sampleRate?: number } };
+  createStream: () => SherpaOnlineStreamNative;
+  isReady: (stream: SherpaOnlineStreamNative) => boolean;
+  decode: (stream: SherpaOnlineStreamNative) => void;
+  getResult: (stream: SherpaOnlineStreamNative) => { text?: string } | string | undefined;
+  reset?: (stream: SherpaOnlineStreamNative) => void;
+  free?: () => void;
+}
+
 export class SherpaOnlineRecognizerEngine {
-  public readonly recognizer: any;
+  public readonly recognizer: SherpaOnlineRecognizerNative;
   public readonly sampleRate: number;
   private readonly logger: pino.Logger;
 
@@ -115,7 +130,9 @@ export class SherpaOnlineRecognizerEngine {
       rule3MinUtteranceLength: config.rule3MinUtteranceLength ?? 20,
     };
 
-    this.recognizer = sherpa.createOnlineRecognizer(recognizerConfig);
+    this.recognizer = sherpa.createOnlineRecognizer(
+      recognizerConfig,
+    ) as SherpaOnlineRecognizerNative;
     const sr = this.recognizer?.config?.featConfig?.sampleRate;
     this.sampleRate =
       typeof sr === "number" && Number.isFinite(sr) && sr > 0 ? sr : featConfig.sampleRate;
@@ -126,7 +143,7 @@ export class SherpaOnlineRecognizerEngine {
     );
   }
 
-  createStream(): any {
+  createStream(): SherpaOnlineStreamNative {
     return this.recognizer.createStream();
   }
 

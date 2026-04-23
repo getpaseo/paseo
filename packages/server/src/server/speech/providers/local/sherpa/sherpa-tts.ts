@@ -23,8 +23,19 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
+interface SherpaOfflineTtsNative {
+  sampleRate?: number;
+  generate: (args: {
+    text: string;
+    sid: number;
+    speed: number;
+    enableExternalBuffer: boolean;
+  }) => { samples?: Float32Array | number[]; sampleRate?: number } | undefined;
+  free?: () => void;
+}
+
 export class SherpaOnnxTTS implements TextToSpeechProvider {
-  private readonly tts: any;
+  private readonly tts: SherpaOfflineTtsNative;
   private readonly speakerId: number;
   private readonly speed: number;
   private readonly logger: pino.Logger;
@@ -81,7 +92,9 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
       maxNumSentences: 1,
     };
 
-    this.tts = new sherpa.OfflineTts(offlineTtsConfig);
+    this.tts = new (
+      sherpa as unknown as { OfflineTts: new (config: unknown) => SherpaOfflineTtsNative }
+    ).OfflineTts(offlineTtsConfig);
     this.logger.info(
       { preset: config.preset, modelDir: config.modelDir },
       "Sherpa offline TTS initialized",

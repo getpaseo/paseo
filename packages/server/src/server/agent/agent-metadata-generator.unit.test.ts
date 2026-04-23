@@ -159,7 +159,10 @@ describe("agent metadata generator auto-title", () => {
       deps: {
         generateStructuredAgentResponseWithFallback: generateStructured,
         renameCurrentBranch,
-        workspaceGitService: workspaceGitService as any,
+        workspaceGitService: workspaceGitService as unknown as Pick<
+          import("../workspace-git-service.js").WorkspaceGitService,
+          "getSnapshot"
+        >,
       },
     });
 
@@ -198,7 +201,10 @@ describe("agent metadata generator auto-title", () => {
       deps: {
         generateStructuredAgentResponseWithFallback: generateStructured,
         renameCurrentBranch,
-        workspaceGitService: workspaceGitService as any,
+        workspaceGitService: workspaceGitService as unknown as Pick<
+          import("../workspace-git-service.js").WorkspaceGitService,
+          "getSnapshot"
+        >,
       },
     });
 

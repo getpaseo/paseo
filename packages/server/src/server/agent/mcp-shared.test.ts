@@ -71,6 +71,10 @@ it("does not notify archived callers", async () => {
     expect(agentStorage.get).toHaveBeenCalledWith("caller-agent");
   });
 
-  expect((agentManager as any).streamAgent).not.toHaveBeenCalled();
-  expect((agentManager as any).replaceAgentRun).not.toHaveBeenCalled();
+  expect(
+    (agentManager as unknown as { streamAgent: ReturnType<typeof vi.fn> }).streamAgent,
+  ).not.toHaveBeenCalled();
+  expect(
+    (agentManager as unknown as { replaceAgentRun: ReturnType<typeof vi.fn> }).replaceAgentRun,
+  ).not.toHaveBeenCalled();
 });

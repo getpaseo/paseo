@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type pino from "pino";
 import { describe, expect, test, vi, afterEach } from "vitest";
 import {
   createPersistedProjectRecord,
@@ -69,7 +70,7 @@ function createTestLogger() {
     warn: vi.fn(),
     error: vi.fn(),
   };
-  return logger as any;
+  return logger as unknown as pino.Logger;
 }
 
 function createWorkspaceGitServiceStub(

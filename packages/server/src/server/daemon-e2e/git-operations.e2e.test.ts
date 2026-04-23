@@ -26,7 +26,7 @@ function findTimelineToolCall(
     if (msg.payload.agentId !== agentId) {
       continue;
     }
-    const event = msg.payload.event as any;
+    const event = msg.payload.event as { type?: string; item?: AgentTimelineItem };
     if (event?.type !== "timeline") {
       continue;
     }
@@ -57,7 +57,7 @@ async function waitForTimelineToolCall(
     const msg = messages[i];
     if (msg?.type !== "agent_stream") continue;
     if (msg.payload.agentId !== agentId) continue;
-    const event = msg.payload.event as any;
+    const event = msg.payload.event as { type?: string; item?: AgentTimelineItem };
     if (event?.type !== "timeline") continue;
     const item = event.item as AgentTimelineItem;
     if (item?.type !== "tool_call") continue;

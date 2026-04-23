@@ -1,5 +1,5 @@
 import express from "express";
-import { createServer as createHTTPServer } from "http";
+import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { createReadStream, unlinkSync, existsSync } from "fs";
 import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
@@ -644,7 +644,11 @@ export async function createPaseoDaemon(
             transport = await createAgentMcpTransport(callerAgentId);
           }
 
-          await transport.handleRequest(req as any, res as any, req.body);
+          await transport.handleRequest(
+            req as unknown as IncomingMessage,
+            res as unknown as ServerResponse,
+            req.body,
+          );
         } catch (err) {
           logger.error({ err }, "Failed to handle Agent MCP request");
           if (!res.headersSent) {

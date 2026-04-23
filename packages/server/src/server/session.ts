@@ -1642,7 +1642,7 @@ export class Session {
       );
       try {
         await this.dispatchInboundMessage(msg);
-      } catch (error: any) {
+      } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         this.sessionLogger.error({ err }, "Error handling message");
 
@@ -2131,7 +2131,7 @@ export class Session {
 
     try {
       await this.agentManager.closeAgent(agentId);
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.warn(
         { err: error, agentId },
         `Failed to close agent ${agentId} during delete`,
@@ -2145,7 +2145,7 @@ export class Session {
     try {
       await this.agentStorage.remove(agentId);
       await this.agentManager.deleteCommittedTimeline(agentId);
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error({ err: error, agentId }, `Failed to fully delete agent ${agentId}`);
     }
 
@@ -2281,7 +2281,7 @@ export class Session {
     for (const terminalId of msg.terminalIds) {
       try {
         terminals.push(this.killTerminalForClose(terminalId));
-      } catch (error: any) {
+      } catch (error) {
         this.sessionLogger.warn(
           { err: error, terminalId, requestId: msg.requestId },
           "Failed to kill terminal during close_items batch",
@@ -2358,7 +2358,7 @@ export class Session {
         type: "update_agent_response",
         payload: { requestId, agentId, accepted: true, error: null },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId, requestId },
         "session: update_agent_request error",
@@ -2369,7 +2369,7 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to update agent: ${error.message}`,
+          content: `Failed to update agent: ${(error as Error).message}`,
         },
       });
       this.emit({
@@ -2378,7 +2378,9 @@ export class Session {
           requestId,
           agentId,
           accepted: false,
-          error: error?.message ? String(error.message) : "Failed to update agent",
+          error: (error as Error | undefined)?.message
+            ? String((error as Error).message)
+            : "Failed to update agent",
         },
       });
     }
@@ -2943,7 +2945,7 @@ export class Session {
         { agentId: snapshot.id, provider: snapshot.provider },
         `Created agent ${snapshot.id} (${snapshot.provider})`,
       );
-    } catch (error: any) {
+    } catch (error) {
       const wireError = toWorktreeWireError(error);
       this.sessionLogger.error({ err: error }, "Failed to create agent");
       if (requestId) {
@@ -3052,7 +3054,7 @@ export class Session {
           },
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to resume agent");
       this.emit({
         type: "activity_log",
@@ -3060,7 +3062,7 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to resume agent: ${error.message}`,
+          content: `Failed to resume agent: ${(error as Error).message}`,
         },
       });
     }
@@ -3113,7 +3115,7 @@ export class Session {
           },
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error({ err: error, agentId }, `Failed to refresh agent ${agentId}`);
       this.emit({
         type: "activity_log",
@@ -3121,7 +3123,7 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to refresh agent: ${error.message}`,
+          content: `Failed to refresh agent: ${(error as Error).message}`,
         },
       });
     }
@@ -3782,7 +3784,7 @@ export class Session {
         type: "set_agent_mode_response",
         payload: { requestId, agentId, accepted: true, error: null },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId, modeId, requestId },
         "session: set_agent_mode_request error",
@@ -3793,7 +3795,7 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to set agent mode: ${error.message}`,
+          content: `Failed to set agent mode: ${(error as Error).message}`,
         },
       });
       this.emit({
@@ -3802,7 +3804,9 @@ export class Session {
           requestId,
           agentId,
           accepted: false,
-          error: error?.message ? String(error.message) : "Failed to set agent mode",
+          error: (error as Error | undefined)?.message
+            ? String((error as Error).message)
+            : "Failed to set agent mode",
         },
       });
     }
@@ -3825,7 +3829,7 @@ export class Session {
         type: "set_agent_model_response",
         payload: { requestId, agentId, accepted: true, error: null },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId, modelId, requestId },
         "session: set_agent_model_request error",
@@ -3836,7 +3840,7 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to set agent model: ${error.message}`,
+          content: `Failed to set agent model: ${(error as Error).message}`,
         },
       });
       this.emit({
@@ -3845,7 +3849,9 @@ export class Session {
           requestId,
           agentId,
           accepted: false,
-          error: error?.message ? String(error.message) : "Failed to set agent model",
+          error: (error as Error | undefined)?.message
+            ? String((error as Error).message)
+            : "Failed to set agent model",
         },
       });
     }
@@ -3872,7 +3878,7 @@ export class Session {
         type: "set_agent_feature_response",
         payload: { requestId, agentId, accepted: true, error: null },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId, featureId, value, requestId },
         "session: set_agent_feature_request error",
@@ -3883,7 +3889,7 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to set agent feature: ${error.message}`,
+          content: `Failed to set agent feature: ${(error as Error).message}`,
         },
       });
       this.emit({
@@ -3892,7 +3898,9 @@ export class Session {
           requestId,
           agentId,
           accepted: false,
-          error: error?.message ? String(error.message) : "Failed to set agent feature",
+          error: (error as Error | undefined)?.message
+            ? String((error as Error).message)
+            : "Failed to set agent feature",
         },
       });
     }
@@ -3918,7 +3926,7 @@ export class Session {
         type: "set_agent_thinking_response",
         payload: { requestId, agentId, accepted: true, error: null },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId, thinkingOptionId, requestId },
         "session: set_agent_thinking_request error",
@@ -3929,7 +3937,7 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to set agent thinking option: ${error.message}`,
+          content: `Failed to set agent thinking option: ${(error as Error).message}`,
         },
       });
       this.emit({
@@ -3938,7 +3946,9 @@ export class Session {
           requestId,
           agentId,
           accepted: false,
-          error: error?.message ? String(error.message) : "Failed to set agent thinking option",
+          error: (error as Error | undefined)?.message
+            ? String((error as Error).message)
+            : "Failed to set agent thinking option",
         },
       });
     }
@@ -3973,7 +3983,7 @@ export class Session {
           },
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error({ err: error, agentIds }, "Failed to clear agent attention");
       // Don't throw - this is not critical
     }
@@ -4072,14 +4082,14 @@ export class Session {
           requestId,
         },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error({ err: error, agentId, draftConfig }, "Failed to list commands");
       this.emit({
         type: "list_commands_response",
         payload: {
           agentId,
           commands: [],
-          error: error.message,
+          error: (error as Error).message,
           requestId,
         },
       });
@@ -4110,7 +4120,7 @@ export class Session {
         );
         this.startAgentStream(agentId, result.followUpPrompt);
       }
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId, requestId },
         "Failed to respond to permission",
@@ -4121,7 +4131,7 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Failed to respond to permission: ${error.message}`,
+          content: `Failed to respond to permission: ${(error as Error).message}`,
         },
       });
       throw error;
@@ -5195,7 +5205,7 @@ export class Session {
           },
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error(
         { err: error, cwd, path: requestedPath },
         `Failed to fulfill file explorer request for workspace ${cwd}`,
@@ -5208,7 +5218,7 @@ export class Session {
           mode,
           directory: null,
           file: null,
-          error: error.message,
+          error: (error as Error).message,
           requestId,
         },
       });
@@ -5234,13 +5244,13 @@ export class Session {
           requestId,
         },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.emit({
         type: "project_icon_response",
         payload: {
           cwd,
           icon: null,
-          error: error.message,
+          error: (error as Error).message,
           requestId,
         },
       });
@@ -5302,7 +5312,7 @@ export class Session {
           requestId,
         },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error(
         { err: error, cwd, path: requestedPath },
         `Failed to issue download token for workspace ${cwd}`,
@@ -5316,7 +5326,7 @@ export class Session {
           fileName: null,
           mimeType: null,
           size: null,
-          error: error.message,
+          error: (error as Error).message,
           requestId,
         },
       });
@@ -7746,7 +7756,7 @@ export class Session {
         format: result.format,
         debugRecordingPath: result.debugRecordingPath,
       });
-    } catch (error: any) {
+    } catch (error) {
       this.setPhase("idle");
       this.clearSpeechInProgress("transcription error");
       await this.flushPendingAudioSegments("transcription error");
@@ -7756,7 +7766,7 @@ export class Session {
           id: uuidv4(),
           timestamp: new Date(),
           type: "error",
-          content: `Transcription error: ${error.message}`,
+          content: `Transcription error: ${(error as Error).message}`,
         },
       });
       throw error;
@@ -8816,7 +8826,7 @@ export class Session {
           requestId: msg.requestId,
         },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error({ err: error, cwd: msg.cwd }, "Failed to list terminals");
       this.emit({
         type: "list_terminals_response",
@@ -8887,13 +8897,13 @@ export class Session {
           requestId: msg.requestId,
         },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error({ err: error, cwd: msg.cwd }, "Failed to create terminal");
       this.emit({
         type: "create_terminal_response",
         payload: {
           terminal: null,
-          error: error.message,
+          error: (error as Error).message,
           requestId: msg.requestId,
         },
       });
@@ -9081,7 +9091,7 @@ export class Session {
           requestId: msg.requestId,
         },
       });
-    } catch (error: any) {
+    } catch (error) {
       this.sessionLogger.error(
         { err: error, terminalId: msg.terminalId },
         "Failed to capture terminal",
