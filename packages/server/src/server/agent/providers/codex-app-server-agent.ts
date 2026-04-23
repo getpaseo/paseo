@@ -4104,7 +4104,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const storedConfig = (handle.metadata ?? {}) as AgentSessionConfig;
+    const storedConfig = (handle.metadata ?? {}) as unknown as AgentSessionConfig;
     const merged: AgentSessionConfig = {
       ...storedConfig,
       ...overrides,

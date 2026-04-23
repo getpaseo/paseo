@@ -48,6 +48,7 @@ export interface WorktreeConfig {
 }
 
 export interface WorktreeRuntimeEnv {
+  [key: string]: string;
   PASEO_SOURCE_CHECKOUT_PATH: string;
   PASEO_ROOT_PATH: string;
   PASEO_WORKTREE_PATH: string;

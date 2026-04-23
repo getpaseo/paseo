@@ -3,6 +3,7 @@ const NOTIFICATION_PREVIEW_LIMIT = 220;
 export type AgentAttentionReason = "finished" | "error" | "permission";
 
 export interface AgentAttentionNotificationData {
+  [key: string]: unknown;
   serverId: string;
   agentId: string;
   reason: AgentAttentionReason;
