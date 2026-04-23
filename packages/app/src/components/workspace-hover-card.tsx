@@ -6,6 +6,7 @@ import {
   useState,
   type PropsWithChildren,
   type ReactElement,
+  type ReactNode,
 } from "react";
 import { Dimensions, Platform, Text, View } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
@@ -81,10 +82,10 @@ export function WorkspaceHoverCard({
   prHint,
   isDragging,
   children,
-}: PropsWithChildren<WorkspaceHoverCardProps>): ReactElement {
+}: PropsWithChildren<WorkspaceHoverCardProps>): ReactNode {
   // Desktop-only: skip on non-web platforms
   if (Platform.OS !== "web") {
-    return <>{children}</>;
+    return children;
   }
 
   return (

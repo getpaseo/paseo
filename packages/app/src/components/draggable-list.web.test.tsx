@@ -27,7 +27,7 @@ vi.mock("@dnd-kit/core", () => ({
 }));
 
 vi.mock("@dnd-kit/sortable", () => ({
-  SortableContext: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  SortableContext: ({ children }: React.PropsWithChildren) => children,
   arrayMove: <T,>(items: T[], from: number, to: number) => {
     const next = [...items];
     const [item] = next.splice(from, 1);

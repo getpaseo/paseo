@@ -408,7 +408,7 @@ vi.mock("@/components/ui/shortcut", () => ({
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  Tooltip: ({ children }: { children: React.ReactNode }) => children,
   TooltipTrigger: ({
     asChild,
     children,
@@ -423,13 +423,13 @@ vi.mock("@/components/ui/tooltip", () => ({
     disabled?: boolean;
   }) =>
     asChild ? (
-      <>{children}</>
+      children
     ) : (
       <button type="button" aria-label={accessibilityLabel} disabled={disabled} onClick={onPress}>
         {typeof children === "function" ? children({ hovered: false }) : children}
       </button>
     ),
-  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => {

@@ -315,7 +315,7 @@ export function Combobox({
   keepOpenOnSelect = false,
   anchorRef,
   children,
-}: ComboboxProps): ReactElement {
+}: ComboboxProps): ReactElement | null {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
   const titleColor = theme.colors.foreground;
@@ -704,24 +704,21 @@ export function Combobox({
     />
   );
 
-  const optionsList = (
-    <>
-      {orderedVisibleOptions.length > 0 ? (
-        orderedVisibleOptions.map((opt, index) => (
-          <OptionRow
-            key={opt.id}
-            option={opt}
-            selected={opt.id === value}
-            active={index === activeIndex}
-            onSelect={handleSelect}
-            renderOption={renderOption}
-          />
-        ))
-      ) : (
-        <ComboboxEmpty>{emptyText}</ComboboxEmpty>
-      )}
-    </>
-  );
+  const optionsList =
+    orderedVisibleOptions.length > 0 ? (
+      orderedVisibleOptions.map((opt, index) => (
+        <OptionRow
+          key={opt.id}
+          option={opt}
+          selected={opt.id === value}
+          active={index === activeIndex}
+          onSelect={handleSelect}
+          renderOption={renderOption}
+        />
+      ))
+    ) : (
+      <ComboboxEmpty>{emptyText}</ComboboxEmpty>
+    );
 
   const defaultContent = optionsList;
 
@@ -802,7 +799,7 @@ export function Combobox({
     );
   }
 
-  if (!isOpen) return <></>;
+  if (!isOpen) return null;
 
   return (
     <Modal transparent animationType="none" visible={isOpen} onRequestClose={handleClose}>

@@ -40,7 +40,7 @@ export function FileDropZone({ children, onFilesDropped, disabled = false }: Fil
 
   // On non-web platforms, just render children
   if (!IS_WEB) {
-    return <>{children}</>;
+    return children;
   }
 
   return (

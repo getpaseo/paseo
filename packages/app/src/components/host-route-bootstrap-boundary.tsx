@@ -12,5 +12,5 @@ export function HostRouteBootstrapBoundary({ children }: { children: ReactNode }
     return <StartupSplashScreen bootstrapState={isDesktop ? bootstrapState : undefined} />;
   }
 
-  return <>{children}</>;
+  return children;
 }
