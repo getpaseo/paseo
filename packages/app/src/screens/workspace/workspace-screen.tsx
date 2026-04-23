@@ -30,6 +30,7 @@ import { ScreenHeader } from "@/components/headers/screen-header";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -565,8 +566,13 @@ const MobileMountedTabSlot = memo(function MobileMountedTabSlot({
     [buildPaneContentModel, paneId, tabDescriptor],
   );
 
+  const slotStyle = useMemo(
+    () => ({ display: isVisible ? ("flex" as const) : ("none" as const), flex: 1 }),
+    [isVisible],
+  );
+
   return (
-    <View style={{ display: isVisible ? "flex" : "none", flex: 1 }}>
+    <View style={slotStyle}>
       <WorkspacePaneContent
         content={content}
         isWorkspaceFocused={isWorkspaceFocused}
@@ -993,6 +999,10 @@ function WorkspaceScreenContent({
       (Boolean(hovered) || Boolean(pressed) || isExplorerOpen) && styles.sourceControlButtonHovered,
     ],
     [hasDiffStat, isExplorerOpen],
+  );
+  const explorerToggleAccessibilityState = useMemo(
+    () => ({ expanded: isExplorerOpen }),
+    [isExplorerOpen],
   );
 
   const explorerOpenGesture = useExplorerOpenGesture({
@@ -2269,8 +2279,13 @@ function WorkspaceScreenContent({
     );
   }, []);
 
+  const containerStyle = useMemo(
+    () => [styles.container, { backgroundColor: mainBackgroundColor }],
+    [mainBackgroundColor],
+  );
+
   return (
-    <View style={[styles.container, { backgroundColor: mainBackgroundColor }]}>
+    <View style={containerStyle}>
       {isRouteFocused && isWeb && activeTabDescriptor ? (
         <WorkspaceTabPresentationResolver
           tab={activeTabDescriptor}
@@ -2427,7 +2442,7 @@ function WorkspaceScreenContent({
                             onPress={handleToggleExplorer}
                             accessibilityRole="button"
                             accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
-                            accessibilityState={{ expanded: isExplorerOpen }}
+                            accessibilityState={explorerToggleAccessibilityState}
                             style={explorerToggleStyle}
                           >
                             {({ hovered, pressed }) => {
@@ -2460,7 +2475,10 @@ function WorkspaceScreenContent({
                         >
                           <View style={styles.explorerTooltipRow}>
                             <Text style={styles.explorerTooltipText}>Toggle explorer</Text>
-                            <Shortcut keys={["mod", "E"]} style={styles.explorerTooltipShortcut} />
+                            <Shortcut
+                              keys={EXPLORER_TOGGLE_KEYS}
+                              style={styles.explorerTooltipShortcut}
+                            />
                           </View>
                         </TooltipContent>
                       </Tooltip>
@@ -2471,13 +2489,13 @@ function WorkspaceScreenContent({
                       testID="workspace-explorer-toggle"
                       onPress={handleToggleExplorer}
                       tooltipLabel="Toggle explorer"
-                      tooltipKeys={["mod", "E"]}
+                      tooltipKeys={EXPLORER_TOGGLE_KEYS}
                       tooltipSide="left"
                       style={styles.headerActionButton}
                       accessible
                       accessibilityRole="button"
                       accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
-                      accessibilityState={{ expanded: isExplorerOpen }}
+                      accessibilityState={explorerToggleAccessibilityState}
                     >
                       {({ hovered }) => {
                         const color =
@@ -2493,13 +2511,13 @@ function WorkspaceScreenContent({
                       testID="workspace-explorer-toggle"
                       onPress={handleToggleExplorer}
                       tooltipLabel="Toggle explorer"
-                      tooltipKeys={["mod", "E"]}
+                      tooltipKeys={EXPLORER_TOGGLE_KEYS}
                       tooltipSide="left"
                       style={styles.headerActionButton}
                       accessible
                       accessibilityRole="button"
                       accessibilityLabel={isExplorerOpen ? "Close explorer" : "Open explorer"}
-                      accessibilityState={{ expanded: isExplorerOpen }}
+                      accessibilityState={explorerToggleAccessibilityState}
                     >
                       {({ hovered }) => {
                         const color =
@@ -2932,3 +2950,5 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
   },
 }));
+
+const EXPLORER_TOGGLE_KEYS: ShortcutKey[] = ["mod", "E"];
