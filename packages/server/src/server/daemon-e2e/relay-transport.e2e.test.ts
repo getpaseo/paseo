@@ -259,9 +259,24 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                   if (
                     payload &&
                     typeof payload === "object" &&
-                    (payload as any).type === "session" &&
-                    (payload as any).message?.type === "status" &&
-                    (payload as any).message?.payload?.status === "server_info"
+                    (
+                      payload as {
+                        type?: string;
+                        message?: { type?: string; payload?: { status?: string } };
+                      }
+                    ).type === "session" &&
+                    (
+                      payload as {
+                        type?: string;
+                        message?: { type?: string; payload?: { status?: string } };
+                      }
+                    ).message?.type === "status" &&
+                    (
+                      payload as {
+                        type?: string;
+                        message?: { type?: string; payload?: { status?: string } };
+                      }
+                    ).message?.payload?.status === "server_info"
                   ) {
                     if (!pingSent && channelRef) {
                       pingSent = true;
@@ -269,7 +284,16 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                     }
                     return;
                   }
-                  if (payload && typeof payload === "object" && (payload as any).type === "pong") {
+                  if (
+                    payload &&
+                    typeof payload === "object" &&
+                    (
+                      payload as {
+                        type?: string;
+                        message?: { type?: string; payload?: { status?: string } };
+                      }
+                    ).type === "pong"
+                  ) {
                     clearTimeout(timeout);
                     resolve(payload);
                     ws.close();
@@ -388,9 +412,24 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                 if (
                   payload &&
                   typeof payload === "object" &&
-                  (payload as any).type === "session" &&
-                  (payload as any).message?.type === "status" &&
-                  (payload as any).message?.payload?.status === "server_info"
+                  (
+                    payload as {
+                      type?: string;
+                      message?: { type?: string; payload?: { status?: string } };
+                    }
+                  ).type === "session" &&
+                  (
+                    payload as {
+                      type?: string;
+                      message?: { type?: string; payload?: { status?: string } };
+                    }
+                  ).message?.type === "status" &&
+                  (
+                    payload as {
+                      type?: string;
+                      message?: { type?: string; payload?: { status?: string } };
+                    }
+                  ).message?.payload?.status === "server_info"
                 ) {
                   if (!pingSent && channelRef) {
                     pingSent = true;
@@ -398,7 +437,16 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                   }
                   return;
                 }
-                if (payload && typeof payload === "object" && (payload as any).type === "pong") {
+                if (
+                  payload &&
+                  typeof payload === "object" &&
+                  (
+                    payload as {
+                      type?: string;
+                      message?: { type?: string; payload?: { status?: string } };
+                    }
+                  ).type === "pong"
+                ) {
                   clearTimeout(timeout);
                   resolve(payload);
                   ws.close();
