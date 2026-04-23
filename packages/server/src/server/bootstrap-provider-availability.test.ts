@@ -17,9 +17,9 @@ describe("bootstrap provider availability", () => {
   afterEach(async () => {
     process.env.PATH = originalEnv.PATH;
     process.env.PATHEXT = originalEnv.PATHEXT;
-    for (const root of tempRoots.splice(0)) {
-      await rm(root, { recursive: true, force: true });
-    }
+    await Promise.all(
+      tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    );
   });
 
   test("loads a persisted Codex record without spawning a missing Codex binary", async () => {
