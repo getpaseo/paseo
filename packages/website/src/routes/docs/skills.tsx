@@ -28,8 +28,8 @@ function Skills() {
           Paseo ships orchestration skills that teach coding agents (Claude Code, Codex) how to use
           the Paseo CLI to spawn, coordinate, and manage other agents. Skills are slash commands
           your agent can invoke — they provide the prompts, context, and workflows so agents know
-          how to orchestrate without you writing boilerplate. Install them from the desktop app's
-          Integrations settings or via the CLI.
+          how to orchestrate without you writing boilerplate. Install them from the desktop
+          app&apos;s Integrations settings or via the CLI.
         </p>
       </div>
 
@@ -60,7 +60,8 @@ function Skills() {
           command reference so agents know how to run commands.
         </p>
         <p className="text-white/60 leading-relaxed">
-          Not typically invoked directly by users — it's a reference that other skills depend on.
+          Not typically invoked directly by users — it&apos;s a reference that other skills depend
+          on.
         </p>
       </section>
 
@@ -71,8 +72,8 @@ function Skills() {
         </h2>
         <p className="text-white/60 leading-relaxed">
           Hands off your current task to another agent with full context. The receiving agent gets a
-          comprehensive prompt with: task description, relevant files, what's been tried, decisions
-          made, and acceptance criteria.
+          comprehensive prompt with: task description, relevant files, what&apos;s been tried,
+          decisions made, and acceptance criteria.
         </p>
         <p className="text-white/60 leading-relaxed">
           Default provider is Codex. Can specify Claude (sonnet/opus). Supports{" "}

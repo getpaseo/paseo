@@ -84,7 +84,7 @@ function GettingStarted() {
           >
             GitHub releases page
           </a>
-          . Open it and you're done.
+          . Open it and you&apos;re done.
         </p>
         <p className="text-white/60">
           The desktop app bundles and manages its own daemon automatically, so you do not need a

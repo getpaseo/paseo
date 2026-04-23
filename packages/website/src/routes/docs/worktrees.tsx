@@ -59,7 +59,7 @@ function Worktrees() {
         <p className="text-white/60 leading-relaxed">
           Drop a <code className="font-mono">paseo.json</code> in your repo root. Paseo reads it
           from the committed version of the base branch you picked, so uncommitted changes in other
-          branches don't apply.
+          branches don&apos;t apply.
         </p>
         <Code>
           <pre className="text-white/80">{`{
@@ -113,7 +113,7 @@ function Worktrees() {
           <code className="font-mono">scripts</code> are named commands you can run inside a
           worktree on demand. Mark one as a <em>service</em> and Paseo supervises it as a
           long-running process, assigns it a port, and routes HTTP traffic to it through the
-          daemon's reverse proxy.
+          daemon&apos;s reverse proxy.
         </p>
 
         <h3 className="text-lg font-medium mt-4">Plain scripts</h3>
@@ -167,9 +167,9 @@ http://<script>.<project>.localhost:<daemon-port>`}</pre>
 
         <h3 className="text-lg font-medium mt-6">Service-to-service</h3>
         <p className="text-white/60 leading-relaxed">
-          Services launched from the same workspace see each other's ports and proxy URLs. Given{" "}
-          <code className="font-mono">web</code> and <code className="font-mono">api</code> above,
-          each process gets:
+          Services launched from the same workspace see each other&apos;s ports and proxy URLs.
+          Given <code className="font-mono">web</code> and <code className="font-mono">api</code>{" "}
+          above, each process gets:
         </p>
         <Code>
           <pre className="text-white/80">{`PASEO_PORT=3000                         # this service's port
@@ -219,7 +219,7 @@ PASEO_SERVICE_WEB_URL=http://web.my-app.localhost:6767`}</pre>
             <code className="font-mono">$PASEO_WORKTREE_PATH</code> — the worktree directory
           </li>
           <li>
-            <code className="font-mono">$PASEO_BRANCH_NAME</code> — the worktree's branch
+            <code className="font-mono">$PASEO_BRANCH_NAME</code> — the worktree&apos;s branch
           </li>
           <li>
             <code className="font-mono">$PASEO_WORKTREE_PORT</code> — legacy per-worktree port
@@ -229,10 +229,10 @@ PASEO_SERVICE_WEB_URL=http://web.my-app.localhost:6767`}</pre>
         <p className="text-white/60 leading-relaxed">Services additionally get:</p>
         <ul className="text-white/60 space-y-2 list-disc list-inside">
           <li>
-            <code className="font-mono">$PASEO_PORT</code> — this service's assigned port
+            <code className="font-mono">$PASEO_PORT</code> — this service&apos;s assigned port
           </li>
           <li>
-            <code className="font-mono">$PASEO_URL</code> — this service's proxy URL
+            <code className="font-mono">$PASEO_URL</code> — this service&apos;s proxy URL
           </li>
           <li>
             <code className="font-mono">$PASEO_SERVICE_&lt;NAME&gt;_PORT</code> /{" "}

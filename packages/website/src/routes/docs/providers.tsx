@@ -43,12 +43,12 @@ function Providers() {
         </p>
         <ul className="text-white/60 space-y-3 list-disc list-inside">
           <li>
-            <code className="font-mono">claude</code> — Anthropic's Claude Code. Multi-tool
+            <code className="font-mono">claude</code> — Anthropic&apos;s Claude Code. Multi-tool
             assistant with MCP support, streaming, and deep reasoning.
           </li>
           <li>
-            <code className="font-mono">codex</code> — OpenAI's Codex workspace agent with sandbox
-            controls and optional network access.
+            <code className="font-mono">codex</code> — OpenAI&apos;s Codex workspace agent with
+            sandbox controls and optional network access.
           </li>
           <li>
             <code className="font-mono">opencode</code> — Open-source coding assistant with
@@ -90,14 +90,15 @@ function Providers() {
             Client Protocol over stdio.
           </li>
           <li>
-            <strong>Disable</strong> a provider you don't use.
+            <strong>Disable</strong> a provider you don&apos;t use.
           </li>
         </ul>
         <p className="text-white/60 leading-relaxed">
           Provider IDs must be lowercase alphanumeric with hyphens (
           <code className="font-mono">/^[a-z][a-z0-9-]*$/</code>). Every custom entry needs{" "}
           <code className="font-mono">extends</code> (a first-class provider ID or{" "}
-          <code className="font-mono">"acp"</code>) and a <code className="font-mono">label</code>.
+          <code className="font-mono">&quot;acp&quot;</code>) and a{" "}
+          <code className="font-mono">label</code>.
         </p>
         <p className="text-white/60 leading-relaxed">
           The examples below are a quick tour. The full, up-to-date reference is on GitHub:{" "}
@@ -139,7 +140,7 @@ function Providers() {
           Z.AI exposes GLM models through an Anthropic-compatible endpoint. Point{" "}
           <code className="font-mono">ANTHROPIC_BASE_URL</code> at their API and use{" "}
           <code className="font-mono">ANTHROPIC_AUTH_TOKEN</code> for the key. Third-party endpoints
-          don't support Anthropic's server-side tools, so disable{" "}
+          don&apos;t support Anthropic&apos;s server-side tools, so disable{" "}
           <code className="font-mono">WebSearch</code>.
         </p>
         <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
@@ -169,8 +170,8 @@ function Providers() {
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Alibaba Cloud (Qwen) coding plan</h2>
         <p className="text-white/60 leading-relaxed">
-          Alibaba's coding plan routes Claude Code to Qwen models via an Anthropic-compatible API.
-          Subscription keys look like <code className="font-mono">sk-sp-...</code> and must be
+          Alibaba&apos;s coding plan routes Claude Code to Qwen models via an Anthropic-compatible
+          API. Subscription keys look like <code className="font-mono">sk-sp-...</code> and must be
           created in the Singapore region.
         </p>
         <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
@@ -253,8 +254,8 @@ function Providers() {
           >
             ACP
           </a>{" "}
-          over stdio can be added with <code className="font-mono">extends: "acp"</code> and a{" "}
-          <code className="font-mono">command</code>. Paseo spawns the process, sends an{" "}
+          over stdio can be added with <code className="font-mono">extends: &quot;acp&quot;</code>{" "}
+          and a <code className="font-mono">command</code>. Paseo spawns the process, sends an{" "}
           <code className="font-mono">initialize</code> JSON-RPC request, and the agent reports its
           capabilities, modes, and models at runtime.
         </p>

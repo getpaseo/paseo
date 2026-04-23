@@ -1,5 +1,38 @@
 import * as React from "react";
-import { motion, AnimatePresence, useInView, useScroll, useTransform } from "framer-motion";
+import {
+  motion,
+  AnimatePresence,
+  useInView,
+  useScroll,
+  useTransform,
+  type Transition,
+} from "framer-motion";
+
+// Shared motion presets — hoisted so every JSX site receives the same object
+// reference and doesn't trigger jsx-no-new-object-as-prop.
+const FADE_IN_UP = { opacity: 0, y: 20 };
+const FADE_IN = { opacity: 1, y: 0 };
+const FADE_IN_UP_SMALL = { opacity: 0, y: 16 };
+const FADE_IN_UP_TINY = { opacity: 0, y: -10 };
+const FADE_IN_UP_XL = { opacity: 0, y: 30 };
+const FADE_IN_UP_40 = { opacity: 0, y: 40 };
+const FADE_IN_UP_4 = { opacity: 0, y: 4 };
+const FADE_OUT_UP_4 = { opacity: 0, y: 4 };
+
+const EASE_OUT_06: Transition = { duration: 0.6, ease: "easeOut" };
+const EASE_OUT_06_DELAY_015: Transition = { duration: 0.6, delay: 0.15, ease: "easeOut" };
+const EASE_OUT_06_DELAY_01: Transition = { duration: 0.6, delay: 0.1, ease: "easeOut" };
+const EASE_OUT_06_DELAY_04: Transition = { duration: 0.6, delay: 0.4, ease: "easeOut" };
+const EASE_OUT_08_DELAY_05: Transition = { duration: 0.8, delay: 0.5, ease: "easeOut" };
+const EASE_OUT_05: Transition = { duration: 0.5, ease: "easeOut" };
+const EASE_OUT_015: Transition = { duration: 0.15, ease: "easeOut" };
+const DURATION_05: Transition = { duration: 0.5 };
+
+const VIEWPORT_60 = { once: true, margin: "-60px" };
+const VIEWPORT_40 = { once: true, margin: "-40px" };
+
+const SVG_OVERFLOW_VISIBLE_STYLE = { overflow: "visible" as const };
+const PHONE_PERSPECTIVE_STYLE = { minHeight: 480, perspective: 1200 };
 import { CursorFieldProvider } from "~/components/butterfly";
 import { CommandDialog } from "~/components/command-dialog";
 import {
@@ -38,9 +71,9 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
 
         {/* Mockup - inside hero so it's above the gradient, positioned to overflow into black section */}
         <motion.div
-          initial={{ opacity: 0, y: 40 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.5, ease: "easeOut" }}
+          initial={FADE_IN_UP_40}
+          animate={FADE_IN}
+          transition={EASE_OUT_08_DELAY_05}
           className="relative px-6 md:px-8 pb-8 md:pb-16"
         >
           <div className="max-w-7xl mx-auto">
@@ -203,17 +236,17 @@ function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: string })
   return (
     <div className="space-y-6">
       <motion.h1
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: "easeOut" }}
+        initial={FADE_IN_UP}
+        animate={FADE_IN}
+        transition={EASE_OUT_06}
         className="text-3xl md:text-5xl font-medium tracking-tight"
       >
         {title}
       </motion.h1>
       <motion.p
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.15, ease: "easeOut" }}
+        initial={FADE_IN_UP}
+        animate={FADE_IN}
+        transition={EASE_OUT_06_DELAY_015}
         className="text-white/70 text-lg leading-relaxed max-w-lg"
       >
         {subtitle}
@@ -235,10 +268,10 @@ function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
       <AnimatePresence>
         {hovered && (
           <motion.span
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
+            initial={FADE_IN_UP_4}
+            animate={FADE_IN}
+            exit={FADE_OUT_UP_4}
+            transition={EASE_OUT_015}
             className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded bg-white text-black text-xs whitespace-nowrap pointer-events-none"
           >
             {name}
@@ -260,10 +293,10 @@ function FeatureSection({
 }) {
   return (
     <motion.section
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
+      initial={FADE_IN_UP}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_60}
+      transition={EASE_OUT_05}
       className="space-y-8"
     >
       <div className="space-y-2">
@@ -278,14 +311,14 @@ function FeatureSection({
 function PrinciplesSection() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-40px" }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
+      initial={FADE_IN_UP_SMALL}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_40}
+      transition={EASE_OUT_05}
       className="py-32 px-6 md:px-20 max-w-3xl mx-auto text-center"
     >
       <p className="text-2xl md:text-4xl font-medium text-white/90">
-        Here's what's under the hood.
+        Here&apos;s what&apos;s under the hood.
       </p>
     </motion.div>
   );
@@ -510,7 +543,7 @@ function SelfHostedDiagram() {
         {/* SVG curves */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none"
-          style={{ overflow: "visible" }}
+          style={SVG_OVERFLOW_VISIBLE_STYLE}
         >
           {[...paths.left, ...paths.right].map(
             (d, i) =>
@@ -696,38 +729,41 @@ function ShortcutsSection() {
   );
 }
 
+interface VoiceBarProps {
+  index: number;
+  barCount: number;
+}
+
+function VoiceBar({ index, barCount }: VoiceBarProps) {
+  const style = React.useMemo(() => {
+    const center = barCount / 2;
+    const dist = Math.abs(index - center) / center;
+    const envelope = 1 - dist * dist;
+    const minH = 4;
+    const maxH = 56;
+    const baseH = minH + (maxH - minH) * envelope;
+    const jitter = Math.sin(index * 2.3) * 0.3 + Math.cos(index * 1.7) * 0.2;
+    const h = Math.max(minH, baseH * (0.5 + 0.5 * Math.abs(jitter + Math.sin(index * 0.8))));
+    return {
+      height: h,
+      animationName: "voice-bar",
+      animationDuration: `${800 + (index % 5) * 200}ms`,
+      animationTimingFunction: "ease-in-out",
+      animationIterationCount: "infinite",
+      animationDirection: "alternate" as const,
+      animationDelay: `${(index % 7) * 80}ms`,
+    };
+  }, [index, barCount]);
+  return <div className="w-[3px] rounded-full bg-white/30" style={style} />;
+}
+
 function VoiceWaveform() {
   const barCount = 48;
   return (
     <div className="flex items-center justify-center gap-[3px] h-16">
-      {Array.from({ length: barCount }).map((_, i) => {
-        // Create a natural-looking waveform envelope — louder in center, quieter at edges
-        const center = barCount / 2;
-        const dist = Math.abs(i - center) / center;
-        const envelope = 1 - dist * dist; // quadratic falloff
-        const minH = 4;
-        const maxH = 56;
-        const baseH = minH + (maxH - minH) * envelope;
-        // Vary per-bar so it doesn't look uniform
-        const jitter = Math.sin(i * 2.3) * 0.3 + Math.cos(i * 1.7) * 0.2;
-        const h = Math.max(minH, baseH * (0.5 + 0.5 * Math.abs(jitter + Math.sin(i * 0.8))));
-
-        return (
-          <div
-            key={i}
-            className="w-[3px] rounded-full bg-white/30"
-            style={{
-              height: h,
-              animationName: "voice-bar",
-              animationDuration: `${800 + (i % 5) * 200}ms`,
-              animationTimingFunction: "ease-in-out",
-              animationIterationCount: "infinite",
-              animationDirection: "alternate",
-              animationDelay: `${(i % 7) * 80}ms`,
-            }}
-          />
-        );
-      })}
+      {Array.from({ length: barCount }).map((_, i) => (
+        <VoiceBar key={i} index={i} barCount={barCount} />
+      ))}
     </div>
   );
 }
@@ -925,9 +961,9 @@ function LocalVoiceSection() {
 function GetStarted() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6, delay: 0.4, ease: "easeOut" }}
+      initial={FADE_IN_UP}
+      animate={FADE_IN}
+      transition={EASE_OUT_06_DELAY_04}
       className="pt-10"
     >
       <div className="flex flex-row flex-wrap gap-3">
@@ -1440,13 +1476,24 @@ function PhoneShowcase() {
   const leftX = useTransform(scrollYProgress, [0.2, 0.6], [0, -slideDistance]);
   const rightX = useTransform(scrollYProgress, [0.2, 0.6], [0, slideDistance]);
 
+  const leftPhoneStyle = React.useMemo(
+    () => ({ opacity: sideOpacity, x: leftX, rotateY: -15, scale: 0.97 }),
+    [sideOpacity, leftX],
+  );
+  const rightPhoneStyle = React.useMemo(
+    () => ({ opacity: sideOpacity, x: rightX, rotateY: 15, scale: 0.97 }),
+    [sideOpacity, rightX],
+  );
+  const centerPhoneAnimate = React.useMemo(() => (textInView ? FADE_IN : {}), [textInView]);
+  const textAnimate = React.useMemo(() => (textInView ? FADE_IN : {}), [textInView]);
+
   return (
     <div ref={containerRef} className="flex flex-col items-center pt-4 pb-16 gap-20">
       {/* Arrow + text */}
       <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={textInView ? { opacity: 1, y: 0 } : {}}
-        transition={{ duration: 0.5 }}
+        initial={FADE_IN_UP_TINY}
+        animate={textAnimate}
+        transition={DURATION_05}
         className="flex flex-col items-center gap-1.5 px-6"
       >
         <svg
@@ -1474,13 +1521,10 @@ function PhoneShowcase() {
       {/* Phone trio — side phones are absolute, start behind center, slide outward with perspective rotation */}
       <div
         className="relative flex items-center justify-center overflow-x-clip w-full"
-        style={{ minHeight: 480, perspective: 1200 }}
+        style={PHONE_PERSPECTIVE_STYLE}
       >
         {/* Left phone — rotated to face inward */}
-        <motion.div
-          style={{ opacity: sideOpacity, x: leftX, rotateY: -15, scale: 0.97 }}
-          className="w-[160px] md:w-[240px] absolute"
-        >
+        <motion.div style={leftPhoneStyle} className="w-[160px] md:w-[240px] absolute">
           <img
             src="/phone-1.png"
             alt="Paseo sessions list"
@@ -1490,9 +1534,9 @@ function PhoneShowcase() {
 
         {/* Center phone */}
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={textInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.6, delay: 0.1, ease: "easeOut" }}
+          initial={FADE_IN_UP_XL}
+          animate={centerPhoneAnimate}
+          transition={EASE_OUT_06_DELAY_01}
           className="w-[220px] md:w-[240px] relative z-10"
         >
           <img
@@ -1503,10 +1547,7 @@ function PhoneShowcase() {
         </motion.div>
 
         {/* Right phone — rotated to face inward */}
-        <motion.div
-          style={{ opacity: sideOpacity, x: rightX, rotateY: 15, scale: 0.97 }}
-          className="w-[160px] md:w-[240px] absolute"
-        >
+        <motion.div style={rightPhoneStyle} className="w-[160px] md:w-[240px] absolute">
           <img
             src="/phone-3.png"
             alt="Paseo diff view"
@@ -1573,10 +1614,10 @@ function CLISection() {
 function FAQ() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
+      initial={FADE_IN_UP}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_60}
+      transition={EASE_OUT_05}
       className="space-y-6"
     >
       <h2 className="text-3xl font-medium">FAQ</h2>
@@ -1587,8 +1628,8 @@ function FAQ() {
           speech providers if you configure them.
         </FAQItem>
         <FAQItem question="Does my code leave my machine?">
-          Paseo doesn't send your code anywhere. Agents run locally and talk to their own APIs as
-          they normally would. For remote access, you can use the optional{" "}
+          Paseo doesn&apos;t send your code anywhere. Agents run locally and talk to their own APIs
+          as they normally would. For remote access, you can use the optional{" "}
           <a href="/docs/security" className="underline hover:text-white/80">
             end-to-end encrypted relay
           </a>
@@ -1596,7 +1637,7 @@ function FAQ() {
         </FAQItem>
         <FAQItem question="What agents does it support?">
           Claude Code, Codex, and OpenCode. Each agent runs as its own process using its own CLI.
-          Paseo doesn't modify or wrap their behavior.
+          Paseo doesn&apos;t modify or wrap their behavior.
         </FAQItem>
         <FAQItem question="Do I need the desktop app?">
           No. You can run the daemon headless with{" "}
@@ -1616,9 +1657,9 @@ function FAQ() {
           .
         </FAQItem>
         <FAQItem question="Can I connect from outside my network?">
-          Yes. You can use the hosted relay (end-to-end encrypted, Paseo can't read your traffic),
-          set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the daemon port
-          directly. See{" "}
+          Yes. You can use the hosted relay (end-to-end encrypted, Paseo can&apos;t read your
+          traffic), set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the
+          daemon port directly. See{" "}
           <a href="/docs/configuration" className="underline hover:text-white/80">
             configuration
           </a>
@@ -1626,17 +1667,17 @@ function FAQ() {
         </FAQItem>
         <FAQItem question="Do I need git or GitHub?">
           No. Paseo works in any directory. Worktrees are optional and only relevant if you use git.
-          You can run agents anywhere you'd normally work.
+          You can run agents anywhere you&apos;d normally work.
         </FAQItem>
         <FAQItem question="Can I get banned for using Paseo?">
-          <p>We can't make promises on behalf of providers.</p>
+          <p>We can&apos;t make promises on behalf of providers.</p>
           <p>
             That said, Paseo launches the official first-party CLIs (Claude Code, Codex, OpenCode)
-            as subprocesses. It doesn't extract tokens or call inference APIs directly. From the
-            provider's perspective, usage through Paseo is indistinguishable from running the CLI
-            yourself.
+            as subprocesses. It doesn&apos;t extract tokens or call inference APIs directly. From
+            the provider&apos;s perspective, usage through Paseo is indistinguishable from running
+            the CLI yourself.
           </p>
-          <p>I've been using Paseo with all providers for months without issue.</p>
+          <p>I&apos;ve been using Paseo with all providers for months without issue.</p>
         </FAQItem>
         <FAQItem question="How do worktrees work?">
           When you launch an agent with the worktree option (from the app, desktop, or CLI), Paseo
@@ -1655,17 +1696,17 @@ function FAQ() {
 function SponsorCTA() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
+      initial={FADE_IN_UP}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_60}
+      transition={EASE_OUT_05}
       className="rounded-xl bg-white/5 border border-white/10 p-8 md:p-10 text-left space-y-4 max-w-xl mx-auto"
     >
       <div className="text-sm text-muted-foreground leading-relaxed space-y-3">
         <p>
-          I built Paseo because I wanted better tools for coding agents on my own setup. It's an
-          independent open source project, built around freedom of choice and real workflows. If you
-          like what I'm building, consider becoming a supporter.
+          I built Paseo because I wanted better tools for coding agents on my own setup. It&apos;s
+          an independent open source project, built around freedom of choice and real workflows. If
+          you like what I&apos;m building, consider becoming a supporter.
         </p>
         <p>- Mo</p>
       </div>

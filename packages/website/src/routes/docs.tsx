@@ -18,6 +18,10 @@ const navigation = [
   { name: "Best practices", href: "/docs/best-practices" },
 ];
 
+const ACTIVE_OPTIONS_EXACT = { exact: true };
+const MOBILE_ACTIVE_PROPS = { className: "text-foreground" };
+const DESKTOP_ACTIVE_PROPS = { className: "bg-muted text-foreground" };
+
 function DocsLayout() {
   return (
     <div className="min-h-screen bg-background">
@@ -32,9 +36,9 @@ function DocsLayout() {
             <Link
               key={item.href}
               to={item.href}
-              activeOptions={{ exact: true }}
+              activeOptions={ACTIVE_OPTIONS_EXACT}
               className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-              activeProps={{ className: "text-foreground" }}
+              activeProps={MOBILE_ACTIVE_PROPS}
             >
               {item.name}
             </Link>
@@ -54,9 +58,9 @@ function DocsLayout() {
               <Link
                 key={item.href}
                 to={item.href}
-                activeOptions={{ exact: true }}
+                activeOptions={ACTIVE_OPTIONS_EXACT}
                 className="block px-3 py-2 text-sm rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                activeProps={{ className: "bg-muted text-foreground" }}
+                activeProps={DESKTOP_ACTIVE_PROPS}
               >
                 {item.name}
               </Link>

@@ -27,6 +27,9 @@ import {
 } from "lucide-react";
 import { ClaudeIcon, CodexIcon, SourceControlIcon } from "~/components/mockup";
 
+const USER_BUBBLE_STYLE = { borderRadius: "16px 2px 16px 16px" };
+const NEW_BADGE_STYLE = { backgroundColor: "rgba(46, 160, 67, 0.2)" };
+
 // ── Stagger timing ──────────────────────────────────────
 
 const D = {
@@ -477,7 +480,7 @@ function ChatMessages({ items }: { items: ChatItem[] }) {
             <div key={i} className="flex justify-end py-1">
               <div
                 className="bg-mock-surface2 px-2.5 py-1.5 max-w-[85%] leading-none"
-                style={{ borderRadius: "16px 2px 16px 16px" }}
+                style={USER_BUBBLE_STYLE}
               >
                 <span className="text-[11px] text-mock-fg leading-none">{item.text}</span>
               </div>
@@ -593,7 +596,7 @@ function ExplorerSidebar() {
           <span className="text-[11px] text-mock-fg-muted truncate min-w-0"> src/pages</span>
           <span
             className="text-[10px] text-mock-green-400 px-2 py-[2px] rounded-md flex-shrink-0"
-            style={{ backgroundColor: "rgba(46, 160, 67, 0.2)" }}
+            style={NEW_BADGE_STYLE}
           >
             New
           </span>
@@ -658,7 +661,7 @@ function ExplorerSidebar() {
             {file.isNew && (
               <span
                 className="text-[10px] text-mock-green-400 px-2 py-[2px] rounded-md flex-shrink-0"
-                style={{ backgroundColor: "rgba(46, 160, 67, 0.2)" }}
+                style={NEW_BADGE_STYLE}
               >
                 New
               </span>
@@ -683,53 +686,66 @@ const SYNCED_LOADER_DURATION_MS = 950;
 const DOT_COUNT = 6;
 const STEP_MS = SYNCED_LOADER_DURATION_MS / DOT_COUNT; // 158.333…ms per step
 
+interface SyncedLoaderDotProps {
+  dotIndex: number;
+  dotSize: number;
+  gap: number;
+}
+
+function SyncedLoaderDot({ dotIndex, dotSize, gap }: SyncedLoaderDotProps) {
+  const col = dotIndex % 2;
+  const row = Math.floor(dotIndex / 2);
+  const sequenceIndex = DOT_SEQUENCE.indexOf(dotIndex as (typeof DOT_SEQUENCE)[number]);
+  const delayMs = -(sequenceIndex * STEP_MS);
+  const style = React.useMemo(
+    () => ({
+      position: "absolute" as const,
+      left: col * (dotSize + gap),
+      top: row * (dotSize + gap),
+      width: dotSize,
+      height: dotSize,
+      borderRadius: "50%",
+      backgroundColor: "#f59e0b",
+      animationName: "synced-snake-dot",
+      animationDuration: `${SYNCED_LOADER_DURATION_MS}ms`,
+      animationTimingFunction: "linear",
+      animationIterationCount: "infinite",
+      animationDelay: `${delayMs}ms`,
+    }),
+    [col, row, dotSize, gap, delayMs],
+  );
+  return <div style={style} />;
+}
+
 function SyncedLoader({ size = 11 }: { size?: number }) {
   const gap = Math.max(1, Math.round(size * 0.12));
   const dotSize = Math.max(2, Math.floor((size - gap * 2) / 3));
   const gridW = dotSize * 2 + gap;
   const gridH = dotSize * 3 + gap * 2;
 
+  const outerStyle = React.useMemo(
+    () => ({
+      width: size,
+      height: size,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flexShrink: 0,
+    }),
+    [size],
+  );
+
+  const innerStyle = React.useMemo(
+    () => ({ position: "relative" as const, width: gridW, height: gridH }),
+    [gridW, gridH],
+  );
+
   return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-      }}
-    >
-      <div style={{ position: "relative", width: gridW, height: gridH }}>
-        {Array.from({ length: DOT_COUNT }).map((_, dotIndex) => {
-          const col = dotIndex % 2;
-          const row = Math.floor(dotIndex / 2);
-          // The snake sequence index for this dot: when is it the "head"?
-          const sequenceIndex = DOT_SEQUENCE.indexOf(dotIndex as (typeof DOT_SEQUENCE)[number]);
-          // Negative delay syncs the animation so this dot is the head at t=0 when sequenceIndex=0.
-          // At t=0, headIndex should be 0, meaning sequenceIndex=0 dot is the head.
-          // Each dot is shifted by sequenceIndex steps back in time.
-          const delayMs = -(sequenceIndex * STEP_MS);
-          return (
-            <div
-              key={dotIndex}
-              style={{
-                position: "absolute",
-                left: col * (dotSize + gap),
-                top: row * (dotSize + gap),
-                width: dotSize,
-                height: dotSize,
-                borderRadius: "50%",
-                backgroundColor: "#f59e0b",
-                animationName: "synced-snake-dot",
-                animationDuration: `${SYNCED_LOADER_DURATION_MS}ms`,
-                animationTimingFunction: "linear",
-                animationIterationCount: "infinite",
-                animationDelay: `${delayMs}ms`,
-              }}
-            />
-          );
-        })}
+    <div style={outerStyle}>
+      <div style={innerStyle}>
+        {Array.from({ length: DOT_COUNT }).map((_, dotIndex) => (
+          <SyncedLoaderDot key={dotIndex} dotIndex={dotIndex} dotSize={dotSize} gap={gap} />
+        ))}
       </div>
     </div>
   );
@@ -869,15 +885,14 @@ function DesktopMockup() {
     return () => window.removeEventListener("resize", updateScale);
   }, []);
 
+  const containerStyle = React.useMemo(() => ({ height: `${1200 * (9 / 16) * scale}px` }), [scale]);
+  const innerStyle = React.useMemo(() => ({ width: 1200, transform: `scale(${scale})` }), [scale]);
+
   return (
-    <div
-      ref={containerRef}
-      className="w-full overflow-hidden"
-      style={{ height: `${1200 * (9 / 16) * scale}px` }}
-    >
+    <div ref={containerRef} className="w-full overflow-hidden" style={containerStyle}>
       <div
         className="mx-auto rounded-xl overflow-hidden border border-mock-border bg-mock-surface0 shadow-[6px_6px_0_rgba(0,0,0,0.4)] origin-top-left"
-        style={{ width: 1200, transform: `scale(${scale})` }}
+        style={innerStyle}
       >
         {/* Top-level: left sidebar | center column | explorer sidebar — all full height */}
         <div className="flex aspect-video">
