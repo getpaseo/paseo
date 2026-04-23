@@ -900,9 +900,13 @@ function NavigationActiveWorkspaceObserver() {
 
 export default function RootLayout() {
   const { theme } = useUnistyles();
+  const gestureRootStyle = useMemo(
+    () => ({ flex: 1, backgroundColor: theme.colors.surface0 }),
+    [theme.colors.surface0],
+  );
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
+    <GestureHandlerRootView style={gestureRootStyle}>
       <NavigationActiveWorkspaceObserver />
       <PortalProvider>
         <SafeAreaProvider>
