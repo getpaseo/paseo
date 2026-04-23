@@ -408,25 +408,27 @@ test("captures session IDs from fixture-driven init message variants", async () 
     },
   ] as const;
 
-  for (const fixture of fixtures) {
-    const session = await createSession();
-    const internal = session as unknown as {
-      handleSystemMessage: (message: Record<string, unknown>) => string | null;
-    };
-    try {
-      const started = internal.handleSystemMessage({
-        type: "system",
-        subtype: "init",
-        permissionMode: "default",
-        model: "opus",
-        ...fixture.payload,
-      });
-      expect(started).toBe(fixture.expected);
-      expect(session.describePersistence()?.sessionId).toBe(fixture.expected);
-    } finally {
-      await session.close();
-    }
-  }
+  await Promise.all(
+    fixtures.map(async (fixture) => {
+      const session = await createSession();
+      const internal = session as unknown as {
+        handleSystemMessage: (message: Record<string, unknown>) => string | null;
+      };
+      try {
+        const started = internal.handleSystemMessage({
+          type: "system",
+          subtype: "init",
+          permissionMode: "default",
+          model: "opus",
+          ...fixture.payload,
+        });
+        expect(started).toBe(fixture.expected);
+        expect(session.describePersistence()?.sessionId).toBe(fixture.expected);
+      } finally {
+        await session.close();
+      }
+    }),
+  );
 });
 
 test("waits for complete JSON values before updating tool input from input_json_delta", async () => {
