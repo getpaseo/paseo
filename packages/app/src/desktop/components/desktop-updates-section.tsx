@@ -265,7 +265,7 @@ export function LocalDaemonSection() {
       testID="host-page-daemon-lifecycle-card"
     >
       {isLoading ? (
-        <View style={[settingsStyles.card, styles.loadingCard]}>
+        <View style={LOADING_CARD_STYLE}>
           <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
         </View>
       ) : (
@@ -283,7 +283,7 @@ export function LocalDaemonSection() {
                 <Text style={styles.valueSubtext}>{daemonStatusDetailText}</Text>
               </View>
             </View>
-            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+            <View style={ROW_WITH_BORDER_STYLE}>
               <View style={settingsStyles.rowContent}>
                 <Text style={settingsStyles.rowTitle}>Daemon management</Text>
                 <Text style={settingsStyles.rowHint}>
@@ -314,7 +314,7 @@ export function LocalDaemonSection() {
                     : "Pause"}
               </Button>
             </View>
-            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+            <View style={ROW_WITH_BORDER_STYLE}>
               <View style={settingsStyles.rowContent}>
                 <Text style={settingsStyles.rowTitle}>{daemonActionLabel}</Text>
                 <Text style={settingsStyles.rowHint}>{daemonActionMessage}</Text>
@@ -334,7 +334,7 @@ export function LocalDaemonSection() {
                   : daemonActionLabel}
               </Button>
             </View>
-            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+            <View style={ROW_WITH_BORDER_STYLE}>
               <View style={settingsStyles.rowContent}>
                 <Text style={settingsStyles.rowTitle}>Log file</Text>
                 <Text style={settingsStyles.rowHint}>
@@ -363,7 +363,7 @@ export function LocalDaemonSection() {
                 </Button>
               </View>
             </View>
-            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+            <View style={ROW_WITH_BORDER_STYLE}>
               <View style={settingsStyles.rowContent}>
                 <Text style={settingsStyles.rowTitle}>Full status</Text>
                 <Text style={settingsStyles.rowHint}>
@@ -398,7 +398,7 @@ export function LocalDaemonSection() {
         onClose={handleCloseLogsModal}
         title="Daemon logs"
         testID="managed-daemon-logs-dialog"
-        snapPoints={["70%", "92%"]}
+        snapPoints={LOGS_MODAL_SNAP_POINTS}
       >
         <View style={styles.modalBody}>
           <Text style={settingsStyles.rowHint}>
@@ -415,7 +415,7 @@ export function LocalDaemonSection() {
         onClose={handleCloseCliStatusModal}
         title="Daemon status"
         testID="daemon-cli-status-dialog"
-        snapPoints={["60%", "85%"]}
+        snapPoints={CLI_STATUS_MODAL_SNAP_POINTS}
       >
         <View style={styles.modalBody}>
           <Text style={styles.logOutput} selectable>
@@ -495,3 +495,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
 }));
+
+const LOADING_CARD_STYLE = [settingsStyles.card, styles.loadingCard];
+const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
+const LOGS_MODAL_SNAP_POINTS = ["70%", "92%"];
+const CLI_STATUS_MODAL_SNAP_POINTS = ["60%", "85%"];
