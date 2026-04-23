@@ -283,9 +283,9 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
         recorderRefs.audioChunks.push(data);
       }
     };
-    recorder.onerror = (event: any) => {
+    recorder.addEventListener("error", (event: Event) => {
       recorderRefs.stoppedReject?.(event);
-    };
+    });
     recorder.addEventListener("stop", () => {
       try {
         const blob =

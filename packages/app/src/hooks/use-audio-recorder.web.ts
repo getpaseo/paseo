@@ -242,10 +242,10 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
       }
     };
 
-    recorder.onerror = (event) => {
+    recorder.addEventListener("error", (event) => {
       const error = (event as { error?: Error }).error;
       console.error("[AudioRecorder][Web] Recorder error", error ?? event);
-    };
+    });
 
     const timeslice = options?.enableContinuousRecording ? 1000 : undefined;
 

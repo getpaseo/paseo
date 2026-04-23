@@ -14,7 +14,7 @@ export interface WebNotificationClickDetail {
 }
 
 interface WebNotificationInstance {
-  onclick?: ((event: Event) => void) | null;
+  addEventListener: (type: "click", listener: (event: Event) => void) => void;
 }
 
 export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
@@ -144,12 +144,12 @@ function attachWebClickHandler(
   notification: WebNotificationInstance,
   data: Record<string, unknown> | undefined,
 ): void {
-  notification.onclick = () => {
+  notification.addEventListener("click", () => {
     const handledByApp = dispatchWebNotificationClick({ data });
     if (!handledByApp) {
       fallbackNavigateToNotificationTarget(data);
     }
-  };
+  });
 }
 
 export async function sendOsNotification(payload: OsNotificationPayload): Promise<boolean> {

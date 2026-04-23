@@ -98,7 +98,7 @@ export function createPreviewAttachmentId(input: {
 export async function blobToBase64(blob: Blob): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.addEventListener("load", () => {
       if (typeof reader.result !== "string") {
         reject(new Error("Unexpected FileReader result while encoding attachment."));
         return;
@@ -109,10 +109,10 @@ export async function blobToBase64(blob: Blob): Promise<string> {
         return;
       }
       resolve(payload);
-    };
-    reader.onerror = () => {
+    });
+    reader.addEventListener("error", () => {
       reject(reader.error ?? new Error("Failed to read attachment blob."));
-    };
+    });
     reader.readAsDataURL(blob);
   });
 }

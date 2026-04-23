@@ -40,13 +40,13 @@ function openAttachmentDb(): Promise<IDBDatabase> {
       }
     };
 
-    request.onsuccess = () => {
+    request.addEventListener("success", () => {
       resolve(request.result);
-    };
+    });
 
-    request.onerror = () => {
+    request.addEventListener("error", () => {
       reject(request.error ?? new Error("Failed to open attachment IndexedDB."));
-    };
+    });
   });
 }
 
@@ -60,17 +60,17 @@ function runTx<T>(
     const store = transaction.objectStore(STORE_NAME);
     const request = run(store);
 
-    request.onsuccess = () => {
+    request.addEventListener("success", () => {
       resolve(request.result as T);
-    };
+    });
 
-    request.onerror = () => {
+    request.addEventListener("error", () => {
       reject(request.error ?? new Error("IndexedDB transaction request failed."));
-    };
+    });
 
-    transaction.onerror = () => {
+    transaction.addEventListener("error", () => {
       reject(transaction.error ?? new Error("IndexedDB transaction failed."));
-    };
+    });
   });
 }
 
@@ -203,13 +203,13 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
           const store = tx.objectStore(STORE_NAME);
           const cursorRequest = store.openCursor();
 
-          cursorRequest.onerror = () => {
+          cursorRequest.addEventListener("error", () => {
             reject(
               cursorRequest.error ?? new Error("Failed to iterate IndexedDB attachment store."),
             );
-          };
+          });
 
-          cursorRequest.onsuccess = () => {
+          cursorRequest.addEventListener("success", () => {
             const cursor = cursorRequest.result;
             if (!cursor) {
               resolve();
@@ -221,11 +221,11 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
               cursor.delete();
             }
             cursor.continue();
-          };
+          });
 
-          tx.onerror = () => {
+          tx.addEventListener("error", () => {
             reject(tx.error ?? new Error("Failed to garbage collect IndexedDB attachments."));
-          };
+          });
         });
       } finally {
         db.close();
