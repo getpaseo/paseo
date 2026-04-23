@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import type { BarcodeScanningResult } from "expo-camera";
+import type { BarcodeScanningResult, BarcodeSettings } from "expo-camera";
 import { useHostMutations } from "@/runtime/host-runtime";
 import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
@@ -272,7 +272,7 @@ export default function PairScanScreen() {
   );
 }
 
-const BARCODE_SCANNER_SETTINGS = { barcodeTypes: ["qr"] as const };
+const BARCODE_SCANNER_SETTINGS: BarcodeSettings = { barcodeTypes: ["qr"] };
 const CORNER_TL_STYLE = [styles.corner, styles.cornerTL];
 const CORNER_TR_STYLE = [styles.corner, styles.cornerTR];
 const CORNER_BL_STYLE = [styles.corner, styles.cornerBL];

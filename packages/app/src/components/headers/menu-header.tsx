@@ -27,10 +27,7 @@ const MOBILE_MENU_LINE_SHORT_WIDTH = 8;
 const MOBILE_MENU_LINE_HEIGHT = 2;
 
 function MobileMenuIcon({ color }: { color: string }) {
-  const lineStyle = useMemo(
-    () => [styles.mobileMenuLine, { backgroundColor: color }],
-    [color],
-  );
+  const lineStyle = useMemo(() => [styles.mobileMenuLine, { backgroundColor: color }], [color]);
   const shortLineStyle = useMemo(
     () => [styles.mobileMenuLine, styles.mobileMenuLineShort, { backgroundColor: color }],
     [color],

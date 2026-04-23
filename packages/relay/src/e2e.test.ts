@@ -155,10 +155,7 @@ async function waitForRelayWebSocketReady(
   return poll();
 }
 
-async function waitForProcessExit(
-  relayProcess: ChildProcess,
-  deadline: number,
-): Promise<void> {
+async function waitForProcessExit(relayProcess: ChildProcess, deadline: number): Promise<void> {
   if (relayProcess.exitCode !== null) return;
   if (Date.now() >= deadline) return;
   await sleep(50);

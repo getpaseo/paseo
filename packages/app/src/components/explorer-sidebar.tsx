@@ -279,6 +279,10 @@ export function ExplorerSidebar({
       mobileKeyboardInsetStyle,
     ],
   );
+  const desktopSidebarStyle = useMemo(
+    () => [explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }],
+    [resizeAnimatedStyle, insets.top],
+  );
 
   // Mobile: full-screen overlay with gesture.
   // On web, keep it interactive only while open so closed sidebars don't eat taps.

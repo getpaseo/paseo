@@ -230,6 +230,11 @@ export function PrBadge({ hint }: { hint: PrHint }) {
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
   const handleHoverOut = useCallback(() => setIsHovered(false), []);
 
+  const prBadgeTextStyle = useMemo(
+    () => [prBadgeStyles.text, { color: activeColor }],
+    [activeColor],
+  );
+
   return (
     <Pressable
       accessibilityRole="link"
@@ -246,7 +251,7 @@ export function PrBadge({ hint }: { hint: PrHint }) {
       ) : (
         <GitPullRequest size={12} color={iconColor} />
       )}
-      <Text style={[prBadgeStyles.text, { color: activeColor }]} numberOfLines={1}>
+      <Text style={prBadgeTextStyle} numberOfLines={1}>
         #{hint.number}
       </Text>
     </Pressable>
@@ -290,18 +295,20 @@ const prBadgeStyles = StyleSheet.create((theme) => ({
 function ChecksBadge({ checks }: { checks: PrHint["checks"] }): ReactElement | null {
   const { theme } = useUnistyles();
 
+  const color = theme.colors.palette.red[500];
+  const textStyle = useMemo(() => [checksBadgeStyles.text, { color }], [color]);
+
   if (!checks || checks.length === 0) return null;
 
   const failed = checks.filter((c) => c.status === "failure").length;
   if (failed === 0) return null;
 
-  const color = theme.colors.palette.red[500];
   const label = `${failed} failed`;
 
   return (
     <View style={checksBadgeStyles.badge}>
       <GitHubIcon size={10} color={color} />
-      <Text style={[checksBadgeStyles.text, { color }]}>{label}</Text>
+      <Text style={textStyle}>{label}</Text>
     </View>
   );
 }
@@ -375,24 +382,25 @@ function WorkspaceStatusIndicator({
       ? EMPHASIZED_STATUS_DOT_OFFSET
       : DEFAULT_STATUS_DOT_OFFSET;
 
+  const statusDotOverlayStyle = useMemo(
+    () => [
+      styles.statusDotOverlay,
+      {
+        backgroundColor: dotColor ?? undefined,
+        borderColor: theme.colors.surface0,
+        width: statusDotSize,
+        height: statusDotSize,
+        right: statusDotOffset,
+        bottom: statusDotOffset,
+      },
+    ],
+    [dotColor, theme.colors.surface0, statusDotSize, statusDotOffset],
+  );
+
   return (
     <View style={styles.workspaceStatusDot}>
       <KindIcon size={14} color={theme.colors.foregroundMuted} />
-      {dotColor ? (
-        <View
-          style={[
-            styles.statusDotOverlay,
-            {
-              backgroundColor: dotColor,
-              borderColor: theme.colors.surface0,
-              width: statusDotSize,
-              height: statusDotSize,
-              right: statusDotOffset,
-              bottom: statusDotOffset,
-            },
-          ]}
-        />
-      ) : null}
+      {dotColor ? <View style={statusDotOverlayStyle} /> : null}
     </View>
   );
 }
@@ -430,8 +438,9 @@ function ProjectLeadingVisual({
     );
   }
 
+  const iconSource = useMemo(() => ({ uri: iconDataUri ?? "" }), [iconDataUri]);
   const projectIcon = iconDataUri ? (
-    <Image source={{ uri: iconDataUri }} style={styles.projectIcon} />
+    <Image source={iconSource} style={styles.projectIcon} />
   ) : (
     <View style={styles.projectIconFallback}>
       <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
@@ -486,24 +495,25 @@ function ProjectLeadingVisual({
       ? EMPHASIZED_STATUS_DOT_OFFSET
       : DEFAULT_STATUS_DOT_OFFSET;
 
+  const projectStatusDotOverlayStyle = useMemo(
+    () => [
+      styles.statusDotOverlay,
+      {
+        backgroundColor: dotColor ?? "transparent",
+        borderColor: theme.colors.surface0,
+        width: statusDotSize,
+        height: statusDotSize,
+        right: statusDotOffset,
+        bottom: statusDotOffset,
+      },
+    ],
+    [dotColor, theme.colors.surface0, statusDotSize, statusDotOffset],
+  );
+
   return (
     <View style={styles.projectLeadingVisualSlot}>
       {projectIcon}
-      {dotColor ? (
-        <View
-          style={[
-            styles.statusDotOverlay,
-            {
-              backgroundColor: dotColor,
-              borderColor: theme.colors.surface0,
-              width: statusDotSize,
-              height: statusDotSize,
-              right: statusDotOffset,
-              bottom: statusDotOffset,
-            },
-          ]}
-        />
-      ) : null}
+      {dotColor ? <View style={projectStatusDotOverlayStyle} /> : null}
     </View>
   );
 }
@@ -1059,6 +1069,16 @@ function WorkspaceRowInner({
     (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
   );
 
+  const accessibilityState = useMemo(() => ({ selected }), [selected]);
+  const workspaceBranchTextStyle = useMemo(
+    () => [
+      styles.workspaceBranchText,
+      isHovered && styles.workspaceBranchTextHovered,
+      isCreating && styles.workspaceBranchTextCreating,
+    ],
+    [isHovered, isCreating],
+  );
+
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
       <View
@@ -1073,7 +1093,7 @@ function WorkspaceRowInner({
           disabled={isArchiving}
           aria-selected={selected}
           accessibilityRole="button"
-          accessibilityState={{ selected }}
+          accessibilityState={accessibilityState}
           style={workspaceRowStyle}
           onPressIn={interaction.handlePressIn}
           onTouchMove={interaction.handleTouchMove}
@@ -1088,14 +1108,7 @@ function WorkspaceRowInner({
                 workspaceKind={workspace.workspaceKind}
                 loading={isArchiving || isCreating}
               />
-              <Text
-                style={[
-                  styles.workspaceBranchText,
-                  isHovered && styles.workspaceBranchTextHovered,
-                  isCreating && styles.workspaceBranchTextCreating,
-                ]}
-                numberOfLines={1}
-              >
+              <Text style={workspaceBranchTextStyle} numberOfLines={1}>
                 {workspace.name}
               </Text>
             </View>
