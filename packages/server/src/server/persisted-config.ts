@@ -219,6 +219,21 @@ function normalizeAgentProviders(value: unknown): unknown {
   };
 }
 
+const PersistedProxyConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    httpUrl: z.string().optional(),
+    httpsUrl: z.string().optional(),
+    noProxy: z.string().optional(),
+  })
+  .strict();
+
+const PersistedNetworkConfigSchema = z
+  .object({
+    proxy: PersistedProxyConfigSchema.optional(),
+  })
+  .strict();
+
 export const PersistedConfigSchema = z
   .object({
     // v1 schema marker
@@ -251,6 +266,7 @@ export const PersistedConfigSchema = z
           })
           .strict()
           .optional(),
+        network: PersistedNetworkConfigSchema.optional(),
       })
       .strict()
       .transform(({ allowedHosts, ...daemon }) => {

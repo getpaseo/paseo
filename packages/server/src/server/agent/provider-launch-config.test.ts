@@ -1,10 +1,12 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   applyProviderEnv,
+  buildProxyEnv,
   migrateProviderSettings,
   ProviderOverrideSchema,
   resolveProviderCommandPrefix,
+  setGlobalAgentEnv,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
 
@@ -55,7 +57,67 @@ describe("resolveProviderCommandPrefix", () => {
   });
 });
 
+describe("buildProxyEnv", () => {
+  test("returns empty env when proxy is undefined", () => {
+    expect(buildProxyEnv(undefined)).toEqual({});
+  });
+
+  test("returns empty env when proxy is disabled", () => {
+    expect(
+      buildProxyEnv({
+        enabled: false,
+        httpsUrl: "http://127.0.0.1:7890",
+      }),
+    ).toEqual({});
+  });
+
+  test("sets both upper- and lower-case HTTPS_PROXY/ALL_PROXY when httpsUrl is set", () => {
+    const env = buildProxyEnv({
+      enabled: true,
+      httpsUrl: "http://user:pass@127.0.0.1:7890",
+    });
+    expect(env.HTTPS_PROXY).toBe("http://user:pass@127.0.0.1:7890");
+    expect(env.https_proxy).toBe("http://user:pass@127.0.0.1:7890");
+    expect(env.ALL_PROXY).toBe("http://user:pass@127.0.0.1:7890");
+    expect(env.all_proxy).toBe("http://user:pass@127.0.0.1:7890");
+    expect(env.HTTP_PROXY).toBeUndefined();
+  });
+
+  test("sets HTTP_PROXY when httpUrl is set", () => {
+    const env = buildProxyEnv({
+      enabled: true,
+      httpUrl: "http://127.0.0.1:7890",
+    });
+    expect(env.HTTP_PROXY).toBe("http://127.0.0.1:7890");
+    expect(env.http_proxy).toBe("http://127.0.0.1:7890");
+    expect(env.HTTPS_PROXY).toBeUndefined();
+  });
+
+  test("sets NO_PROXY when noProxy is set", () => {
+    const env = buildProxyEnv({
+      enabled: true,
+      noProxy: "localhost,127.0.0.1",
+    });
+    expect(env.NO_PROXY).toBe("localhost,127.0.0.1");
+    expect(env.no_proxy).toBe("localhost,127.0.0.1");
+  });
+
+  test("ignores empty/whitespace URL strings", () => {
+    const env = buildProxyEnv({
+      enabled: true,
+      httpsUrl: "   ",
+      httpUrl: "",
+    });
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.HTTP_PROXY).toBeUndefined();
+  });
+});
+
 describe("applyProviderEnv", () => {
+  afterEach(() => {
+    setGlobalAgentEnv({});
+  });
+
   test("merges provider env overrides", () => {
     const base = {
       PATH: "/usr/bin",
@@ -83,6 +145,50 @@ describe("applyProviderEnv", () => {
     const env = applyProviderEnv(base, runtime);
 
     expect(env.PATH).toBe("/custom/path");
+  });
+
+  test("merges the global agent env (proxy) into provider env", () => {
+    setGlobalAgentEnv({ HTTPS_PROXY: "http://127.0.0.1:7890" });
+    const base = { PATH: "/usr/bin" };
+
+    const env = applyProviderEnv(base);
+
+    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:7890");
+    expect(env.PATH).toBe("/usr/bin");
+  });
+
+  test("global agent env overrides baseEnv of the same name", () => {
+    setGlobalAgentEnv({ HTTPS_PROXY: "http://proxy.config:7890" });
+    const base = {
+      PATH: "/usr/bin",
+      HTTPS_PROXY: "http://shell.env:1111",
+    };
+
+    const env = applyProviderEnv(base);
+
+    expect(env.HTTPS_PROXY).toBe("http://proxy.config:7890");
+  });
+
+  test("per-provider runtimeSettings env beats global agent env", () => {
+    setGlobalAgentEnv({ HTTPS_PROXY: "http://global:7890" });
+    const base = { PATH: "/usr/bin" };
+    const runtime: ProviderRuntimeSettings = {
+      env: { HTTPS_PROXY: "http://per-provider:1234" },
+    };
+
+    const env = applyProviderEnv(base, runtime);
+
+    expect(env.HTTPS_PROXY).toBe("http://per-provider:1234");
+  });
+
+  test("no global env and disabled proxy leaves base env untouched", () => {
+    setGlobalAgentEnv({});
+    const base = { PATH: "/usr/bin" };
+
+    const env = applyProviderEnv(base);
+
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.PATH).toBe("/usr/bin");
   });
 
   test("strips parent Claude Code session env vars", () => {

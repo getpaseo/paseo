@@ -2,6 +2,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { PaseoDaemonConfig } from "./bootstrap.js";
+import type { ProxyConfig } from "../shared/messages.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import type {
@@ -171,6 +172,16 @@ export function loadConfig(
     persisted.agents?.providers as Record<string, unknown> | undefined,
   );
 
+  const persistedProxy = persisted.daemon?.network?.proxy;
+  const proxy: ProxyConfig | undefined = persistedProxy
+    ? {
+        enabled: persistedProxy.enabled ?? false,
+        httpUrl: persistedProxy.httpUrl,
+        httpsUrl: persistedProxy.httpsUrl,
+        noProxy: persistedProxy.noProxy,
+      }
+    : undefined;
+
   return {
     listen,
     paseoHome,
@@ -196,5 +207,6 @@ export function loadConfig(
     voiceLlmModel,
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     providerOverrides,
+    proxy,
   };
 }
