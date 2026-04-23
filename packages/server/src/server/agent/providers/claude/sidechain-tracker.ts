@@ -158,43 +158,17 @@ export class ClaudeSidechainTracker {
     return `${normalized.slice(0, MAX_SUB_AGENT_SUMMARY_CHARS)}...`;
   }
 
-  private extractSubAgentActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {
-    if (message.type === "assistant") {
-      const content = message.message?.content;
-      if (!Array.isArray(content)) {
-        return [];
-      }
-      const actions: SubAgentActionCandidate[] = [];
-      for (const block of content) {
-        if (
-          !isClaudeContentChunk(block) ||
-          !(
-            block.type === "tool_use" ||
-            block.type === "mcp_tool_use" ||
-            block.type === "server_tool_use"
-          ) ||
-          typeof block.name !== "string"
-        ) {
-          continue;
-        }
-        const key = readTrimmedString(block.id) ?? `assistant:${block.name}:${actions.length}`;
-        actions.push({
-          key,
-          toolName: block.name,
-          input: block.input ?? null,
-        });
-      }
-      return actions;
+  private extractAssistantMessageActions(
+    message: Extract<SDKMessage, { type: "assistant" }>,
+  ): SubAgentActionCandidate[] {
+    const content = message.message?.content;
+    if (!Array.isArray(content)) {
+      return [];
     }
-
-    if (message.type === "stream_event") {
-      const event = message.event;
-      if (event.type !== "content_block_start") {
-        return [];
-      }
-      const block = isClaudeContentChunk(event.content_block) ? event.content_block : null;
+    const actions: SubAgentActionCandidate[] = [];
+    for (const block of content) {
       if (
-        !block ||
+        !isClaudeContentChunk(block) ||
         !(
           block.type === "tool_use" ||
           block.type === "mcp_tool_use" ||
@@ -202,18 +176,56 @@ export class ClaudeSidechainTracker {
         ) ||
         typeof block.name !== "string"
       ) {
-        return [];
+        continue;
       }
-      const key =
-        readTrimmedString(block.id) ??
-        `stream:${block.name}:${typeof event.index === "number" ? event.index : 0}`;
-      return [
-        {
-          key,
-          toolName: block.name,
-          input: block.input ?? null,
-        },
-      ];
+      const key = readTrimmedString(block.id) ?? `assistant:${block.name}:${actions.length}`;
+      actions.push({
+        key,
+        toolName: block.name,
+        input: block.input ?? null,
+      });
+    }
+    return actions;
+  }
+
+  private extractStreamEventActions(
+    message: Extract<SDKMessage, { type: "stream_event" }>,
+  ): SubAgentActionCandidate[] {
+    const event = message.event;
+    if (event.type !== "content_block_start") {
+      return [];
+    }
+    const block = isClaudeContentChunk(event.content_block) ? event.content_block : null;
+    if (
+      !block ||
+      !(
+        block.type === "tool_use" ||
+        block.type === "mcp_tool_use" ||
+        block.type === "server_tool_use"
+      ) ||
+      typeof block.name !== "string"
+    ) {
+      return [];
+    }
+    const key =
+      readTrimmedString(block.id) ??
+      `stream:${block.name}:${typeof event.index === "number" ? event.index : 0}`;
+    return [
+      {
+        key,
+        toolName: block.name,
+        input: block.input ?? null,
+      },
+    ];
+  }
+
+  private extractSubAgentActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {
+    if (message.type === "assistant") {
+      return this.extractAssistantMessageActions(message);
+    }
+
+    if (message.type === "stream_event") {
+      return this.extractStreamEventActions(message);
     }
 
     if (message.type === "tool_progress") {

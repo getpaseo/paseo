@@ -504,68 +504,41 @@ function normalizeLegacyEditArgs(rawArgs: unknown): EditToolInput | null {
   };
 }
 
+function parseEditToolArgs(rawArgs: unknown): PiTrackedToolCall {
+  const parsed = EditToolInputSchema.safeParse(rawArgs);
+  if (parsed.success) {
+    return { kind: "edit", toolName: "edit", args: parsed.data };
+  }
+  const legacyArgs = normalizeLegacyEditArgs(rawArgs);
+  if (legacyArgs) {
+    return { kind: "edit", toolName: "edit", args: legacyArgs };
+  }
+  return { kind: "unknown", toolName: "edit", args: rawArgs ?? null };
+}
+
+type SimpleToolKind = "bash" | "read" | "write" | "find" | "grep" | "ls";
+const SIMPLE_TOOL_SCHEMAS: {
+  [K in SimpleToolKind]: { safeParse: (data: unknown) => { success: boolean; data?: unknown } };
+} = {
+  bash: BashToolInputSchema,
+  read: ReadToolInputSchema,
+  write: WriteToolInputSchema,
+  find: FindToolInputSchema,
+  grep: GrepToolInputSchema,
+  ls: LsToolInputSchema,
+};
+
 function parseToolArgs(toolName: string, rawArgs: unknown): PiTrackedToolCall {
-  if (toolName === "bash") {
-    const parsed = BashToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "bash", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
-  if (toolName === "read") {
-    const parsed = ReadToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "read", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
   if (toolName === "edit") {
-    const parsed = EditToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "edit", toolName, args: parsed.data };
-    }
-
-    const legacyArgs = normalizeLegacyEditArgs(rawArgs);
-    if (legacyArgs) {
-      return { kind: "edit", toolName, args: legacyArgs };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
+    return parseEditToolArgs(rawArgs);
   }
-
-  if (toolName === "write") {
-    const parsed = WriteToolInputSchema.safeParse(rawArgs);
+  const schema = SIMPLE_TOOL_SCHEMAS[toolName as SimpleToolKind];
+  if (schema) {
+    const parsed = schema.safeParse(rawArgs);
     if (parsed.success) {
-      return { kind: "write", toolName, args: parsed.data };
+      return { kind: toolName as SimpleToolKind, toolName, args: parsed.data } as PiTrackedToolCall;
     }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
   }
-
-  if (toolName === "find") {
-    const parsed = FindToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "find", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
-  if (toolName === "grep") {
-    const parsed = GrepToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "grep", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
-  if (toolName === "ls") {
-    const parsed = LsToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "ls", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
   return { kind: "unknown", toolName, args: rawArgs ?? null };
 }
 
@@ -887,6 +860,38 @@ export class PiDirectAgentSession implements AgentSession {
     });
   }
 
+  private handleMessageUpdate(
+    event: Extract<AgentSessionEvent, { type: "message_update" }>,
+    turnId: string | undefined,
+  ): void {
+    if (event.message.role !== "assistant") {
+      return;
+    }
+    if (event.assistantMessageEvent.type === "text_delta") {
+      this.emit({
+        type: "timeline",
+        provider: PI_PROVIDER,
+        turnId,
+        item: {
+          type: "assistant_message",
+          text: event.assistantMessageEvent.delta ?? "",
+        },
+      });
+      return;
+    }
+    if (event.assistantMessageEvent.type === "thinking_delta") {
+      this.emit({
+        type: "timeline",
+        provider: PI_PROVIDER,
+        turnId,
+        item: {
+          type: "reasoning",
+          text: event.assistantMessageEvent.delta ?? "",
+        },
+      });
+    }
+  }
+
   private handleSessionEvent(event: AgentSessionEvent): void {
     const turnId = this.currentTurnIdForEvent();
 
@@ -906,32 +911,7 @@ export class PiDirectAgentSession implements AgentSession {
         });
         return;
       case "message_update":
-        if (event.message.role !== "assistant") {
-          return;
-        }
-        if (event.assistantMessageEvent.type === "text_delta") {
-          this.emit({
-            type: "timeline",
-            provider: PI_PROVIDER,
-            turnId,
-            item: {
-              type: "assistant_message",
-              text: event.assistantMessageEvent.delta ?? "",
-            },
-          });
-          return;
-        }
-        if (event.assistantMessageEvent.type === "thinking_delta") {
-          this.emit({
-            type: "timeline",
-            provider: PI_PROVIDER,
-            turnId,
-            item: {
-              type: "reasoning",
-              text: event.assistantMessageEvent.delta ?? "",
-            },
-          });
-        }
+        this.handleMessageUpdate(event, turnId);
         return;
       case "tool_execution_start": {
         const toolCall = parseToolArgs(event.toolName, event.args);

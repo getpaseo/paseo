@@ -167,7 +167,7 @@ function createGitHubServiceStub(): GitHubService {
   };
 }
 
-function createService(options?: {
+interface CreateServiceTestOptions {
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
@@ -179,38 +179,38 @@ function createService(options?: {
   readdir?: ReturnType<typeof vi.fn>;
   watch?: ReturnType<typeof vi.fn>;
   now?: () => Date;
-}) {
+}
+
+function buildDefaultTestServiceDeps() {
+  return {
+    watch: (() => createWatcher()) as unknown as any,
+    readdir: vi.fn(async () => []),
+    getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
+    getCheckoutShortstat: vi.fn(async () => ({
+      additions: 1,
+      deletions: 0,
+    })),
+    getPullRequestStatus: vi.fn(async () => createPullRequestStatusResult()),
+    github: createGitHubServiceStub(),
+    resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
+    hasOriginRemote: vi.fn(async () => false),
+    runGitFetch: vi.fn(async () => {}),
+    runGitCommand: vi.fn(async () => ({
+      stdout: "/tmp/repo\n",
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    })),
+    now: () => new Date("2026-04-12T00:00:00.000Z"),
+  };
+}
+
+function createService(options?: CreateServiceTestOptions) {
   return new WorkspaceGitServiceImpl({
     logger: createLogger() as any,
     paseoHome: "/tmp/paseo-test",
-    deps: {
-      watch: options?.watch ?? ((() => createWatcher()) as unknown as any),
-      readdir: options?.readdir ?? vi.fn(async () => []),
-      getCheckoutStatus:
-        options?.getCheckoutStatus ?? vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
-      getCheckoutShortstat:
-        options?.getCheckoutShortstat ??
-        vi.fn(async () => ({
-          additions: 1,
-          deletions: 0,
-        })),
-      getPullRequestStatus:
-        options?.getPullRequestStatus ?? vi.fn(async () => createPullRequestStatusResult()),
-      github: options?.github ?? createGitHubServiceStub(),
-      resolveAbsoluteGitDir: options?.resolveAbsoluteGitDir ?? vi.fn(async () => "/tmp/repo/.git"),
-      hasOriginRemote: options?.hasOriginRemote ?? vi.fn(async () => false),
-      runGitFetch: options?.runGitFetch ?? vi.fn(async () => {}),
-      runGitCommand:
-        options?.runGitCommand ??
-        vi.fn(async () => ({
-          stdout: "/tmp/repo\n",
-          stderr: "",
-          truncated: false,
-          exitCode: 0,
-          signal: null,
-        })),
-      now: options?.now ?? (() => new Date("2026-04-12T00:00:00.000Z")),
-    },
+    deps: { ...buildDefaultTestServiceDeps(), ...(options ?? {}) },
   });
 }
 

@@ -367,6 +367,62 @@ export function resolveCreateAgentTitles(options: {
   };
 }
 
+function parseFetchWorkspacesCursorSort(raw: unknown[]): FetchWorkspacesRequestSort[] {
+  const cursorSort: FetchWorkspacesRequestSort[] = [];
+  for (const item of raw) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      typeof (item as { key?: unknown }).key !== "string" ||
+      typeof (item as { direction?: unknown }).direction !== "string"
+    ) {
+      throw new SessionRequestError("invalid_cursor", "Invalid fetch_workspaces cursor");
+    }
+
+    const key = (item as { key: string }).key;
+    const direction = (item as { direction: string }).direction;
+    if (
+      (key !== "status_priority" &&
+        key !== "activity_at" &&
+        key !== "name" &&
+        key !== "project_id") ||
+      (direction !== "asc" && direction !== "desc")
+    ) {
+      throw new SessionRequestError("invalid_cursor", "Invalid fetch_workspaces cursor");
+    }
+    cursorSort.push({ key, direction });
+  }
+  return cursorSort;
+}
+
+function parseFetchAgentsCursorSort(raw: unknown[]): FetchAgentsRequestSort[] {
+  const cursorSort: FetchAgentsRequestSort[] = [];
+  for (const item of raw) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      typeof (item as { key?: unknown }).key !== "string" ||
+      typeof (item as { direction?: unknown }).direction !== "string"
+    ) {
+      throw new SessionRequestError("invalid_cursor", "Invalid fetch_agents cursor");
+    }
+
+    const key = (item as { key: string }).key;
+    const direction = (item as { direction: string }).direction;
+    if (
+      (key !== "status_priority" &&
+        key !== "created_at" &&
+        key !== "updated_at" &&
+        key !== "title") ||
+      (direction !== "asc" && direction !== "desc")
+    ) {
+      throw new SessionRequestError("invalid_cursor", "Invalid fetch_agents cursor");
+    }
+    cursorSort.push({ key, direction });
+  }
+  return cursorSort;
+}
+
 export function resolveWaitForFinishError(options: {
   status: "permission" | "error" | "idle";
   final: AgentSnapshotPayload | null;
@@ -709,8 +765,8 @@ export class Session {
   private pendingVoiceSpeechStartAt: number | null = null;
   private pendingVoiceSpeechTimer: ReturnType<typeof setTimeout> | null = null;
 
-  private readonly dictationStreamManager: DictationStreamManager;
-  private readonly resolveVoiceTurnDetection: () => TurnDetectionProvider | null;
+  private dictationStreamManager!: DictationStreamManager;
+  private resolveVoiceTurnDetection!: () => TurnDetectionProvider | null;
   private voiceTurnController: VoiceTurnController | null = null;
   private voiceInputChunkCount = 0;
   private voiceInputBytes = 0;
@@ -725,8 +781,8 @@ export class Session {
   private readonly ttsDebugStreams = new Map<string, { format: string; chunks: Buffer[] }>();
 
   // Per-session managers
-  private readonly ttsManager: TTSManager;
-  private readonly sttManager: STTManager;
+  private ttsManager!: TTSManager;
+  private sttManager!: STTManager;
 
   // Per-session MCP client and tools
   private agentMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
@@ -798,17 +854,11 @@ export class Session {
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
   private readonly workspaceGitFetchSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitSubscriptions = new Map<string, () => void>();
-  private readonly registerVoiceSpeakHandler?: (
-    agentId: string,
-    handler: VoiceSpeakHandler,
-  ) => void;
-  private readonly unregisterVoiceSpeakHandler?: (agentId: string) => void;
-  private readonly registerVoiceCallerContext?: (
-    agentId: string,
-    context: VoiceCallerContext,
-  ) => void;
-  private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
-  private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot;
+  private registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
+  private unregisterVoiceSpeakHandler?: (agentId: string) => void;
+  private registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
+  private unregisterVoiceCallerContext?: (agentId: string) => void;
+  private getSpeechReadiness?: () => SpeechReadinessSnapshot;
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private readonly isDev: boolean;
@@ -891,37 +941,8 @@ export class Session {
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.resolveScriptHealth = resolveScriptHealth ?? null;
-    if (this.terminalManager) {
-      this.unsubscribeTerminalsChanged = this.terminalManager.subscribeTerminalsChanged((event) =>
-        this.handleTerminalsChanged(event),
-      );
-    }
-    if (this.providerSnapshotManager) {
-      const handleProviderSnapshotChange = (entries: ProviderSnapshotEntry[], cwd: string) => {
-        // COMPAT(providersSnapshot): keep provider visibility gating for older clients.
-        const visibleEntries = entries.filter((entry) =>
-          this.isProviderVisibleToClient(entry.provider),
-        );
-        this.emit({
-          type: "providers_snapshot_update",
-          payload: {
-            cwd,
-            entries: visibleEntries,
-            generatedAt: new Date().toISOString(),
-          },
-        });
-      };
-      this.providerSnapshotManager.on("change", handleProviderSnapshotChange);
-      this.unsubscribeProviderSnapshotEvents = () => {
-        this.providerSnapshotManager?.off("change", handleProviderSnapshotChange);
-      };
-    }
-    this.resolveVoiceTurnDetection = toResolver(voice?.turnDetection ?? null);
-    this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler;
-    this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler;
-    this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext;
-    this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
-    this.getSpeechReadiness = dictation?.getSpeechReadiness;
+    this.subscribeToOptionalManagers();
+    this.bindVoiceBridges({ voice, voiceBridge, dictation });
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.providerOverrides = providerOverrides;
     this.isDev = isDev === true;
@@ -933,16 +954,7 @@ export class Session {
       isDev: this.isDev,
     });
 
-    // Initialize per-session managers
-    this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
-    this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt);
-    this.dictationStreamManager = new DictationStreamManager({
-      logger: this.sessionLogger,
-      sessionId: this.sessionId,
-      emit: (msg) => this.handleDictationManagerMessage(msg),
-      stt: dictation?.stt ?? null,
-      finalTimeoutMs: dictation?.finalTimeoutMs,
-    });
+    this.initializePerSessionManagers({ tts, stt, dictation });
 
     // Initialize agent MCP client asynchronously
     void this.initializeAgentMcp();
@@ -1180,6 +1192,65 @@ export class Session {
   /**
    * Subscribe to AgentManager events and forward them to the client
    */
+  private subscribeToOptionalManagers(): void {
+    if (this.terminalManager) {
+      this.unsubscribeTerminalsChanged = this.terminalManager.subscribeTerminalsChanged((event) =>
+        this.handleTerminalsChanged(event),
+      );
+    }
+    if (this.providerSnapshotManager) {
+      const handleProviderSnapshotChange = (entries: ProviderSnapshotEntry[], cwd: string) => {
+        // COMPAT(providersSnapshot): keep provider visibility gating for older clients.
+        const visibleEntries = entries.filter((entry) =>
+          this.isProviderVisibleToClient(entry.provider),
+        );
+        this.emit({
+          type: "providers_snapshot_update",
+          payload: {
+            cwd,
+            entries: visibleEntries,
+            generatedAt: new Date().toISOString(),
+          },
+        });
+      };
+      this.providerSnapshotManager.on("change", handleProviderSnapshotChange);
+      this.unsubscribeProviderSnapshotEvents = () => {
+        this.providerSnapshotManager?.off("change", handleProviderSnapshotChange);
+      };
+    }
+  }
+
+  private bindVoiceBridges(params: {
+    voice: SessionOptions["voice"];
+    voiceBridge: SessionOptions["voiceBridge"];
+    dictation: SessionOptions["dictation"];
+  }): void {
+    const { voice, voiceBridge, dictation } = params;
+    this.resolveVoiceTurnDetection = toResolver(voice?.turnDetection ?? null);
+    this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler;
+    this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler;
+    this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext;
+    this.unregisterVoiceCallerContext = voiceBridge?.unregisterVoiceCallerContext;
+    this.getSpeechReadiness = dictation?.getSpeechReadiness;
+  }
+
+  private initializePerSessionManagers(params: {
+    tts: SessionOptions["tts"];
+    stt: SessionOptions["stt"];
+    dictation: SessionOptions["dictation"];
+  }): void {
+    const { tts, stt, dictation } = params;
+    this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
+    this.sttManager = new STTManager(this.sessionId, this.sessionLogger, stt);
+    this.dictationStreamManager = new DictationStreamManager({
+      logger: this.sessionLogger,
+      sessionId: this.sessionId,
+      emit: (msg) => this.handleDictationManagerMessage(msg),
+      stt: dictation?.stt ?? null,
+      finalTimeoutMs: dictation?.finalTimeoutMs,
+    });
+  }
+
   private subscribeToAgentEvents(): void {
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();
@@ -1313,6 +1384,53 @@ export class Session {
     return editors.filter((editor) => isLegacyEditorTargetId(editor.id));
   }
 
+  private agentThinkingOptionMatchesFilter(
+    agent: AgentSnapshotPayload,
+    filter: AgentUpdatesFilter,
+  ): boolean {
+    if (filter.thinkingOptionId === undefined) {
+      return true;
+    }
+    const expectedThinkingOptionId = resolveEffectiveThinkingOptionId({
+      configuredThinkingOptionId: filter.thinkingOptionId ?? null,
+    });
+    const resolvedThinkingOptionId =
+      agent.effectiveThinkingOptionId ??
+      resolveEffectiveThinkingOptionId({
+        runtimeInfo: agent.runtimeInfo,
+        configuredThinkingOptionId: agent.thinkingOptionId ?? null,
+      });
+    return resolvedThinkingOptionId === expectedThinkingOptionId;
+  }
+
+  private matchesAgentStructuralFilter(
+    agent: AgentSnapshotPayload,
+    project: ProjectPlacementPayload,
+    filter: AgentUpdatesFilter,
+  ): boolean {
+    if (filter.statuses && filter.statuses.length > 0) {
+      const statuses = new Set(filter.statuses);
+      if (!statuses.has(agent.status)) {
+        return false;
+      }
+    }
+
+    if (typeof filter.requiresAttention === "boolean") {
+      const requiresAttention = agent.requiresAttention ?? false;
+      if (requiresAttention !== filter.requiresAttention) {
+        return false;
+      }
+    }
+
+    if (filter.projectKeys && filter.projectKeys.length > 0) {
+      const projectKeys = new Set(filter.projectKeys.filter((item) => item.trim().length > 0));
+      if (projectKeys.size > 0 && !projectKeys.has(project.projectKey)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private matchesAgentFilter(options: {
     agent: AgentSnapshotPayload;
     project: ProjectPlacementPayload;
@@ -1334,40 +1452,12 @@ export class Session {
       return false;
     }
 
-    if (filter?.thinkingOptionId !== undefined) {
-      const expectedThinkingOptionId = resolveEffectiveThinkingOptionId({
-        configuredThinkingOptionId: filter.thinkingOptionId ?? null,
-      });
-      const resolvedThinkingOptionId =
-        agent.effectiveThinkingOptionId ??
-        resolveEffectiveThinkingOptionId({
-          runtimeInfo: agent.runtimeInfo,
-          configuredThinkingOptionId: agent.thinkingOptionId ?? null,
-        });
-      if (resolvedThinkingOptionId !== expectedThinkingOptionId) {
-        return false;
-      }
+    if (filter && !this.agentThinkingOptionMatchesFilter(agent, filter)) {
+      return false;
     }
 
-    if (filter?.statuses && filter.statuses.length > 0) {
-      const statuses = new Set(filter.statuses);
-      if (!statuses.has(agent.status)) {
-        return false;
-      }
-    }
-
-    if (typeof filter?.requiresAttention === "boolean") {
-      const requiresAttention = agent.requiresAttention ?? false;
-      if (requiresAttention !== filter.requiresAttention) {
-        return false;
-      }
-    }
-
-    if (filter?.projectKeys && filter.projectKeys.length > 0) {
-      const projectKeys = new Set(filter.projectKeys.filter((item) => item.trim().length > 0));
-      if (projectKeys.size > 0 && !projectKeys.has(project.projectKey)) {
-        return false;
-      }
+    if (filter && !this.matchesAgentStructuralFilter(agent, project, filter)) {
+      return false;
     }
 
     return true;
@@ -1551,471 +1641,7 @@ export class Session {
         "inbound message",
       );
       try {
-        switch (msg.type) {
-          case "voice_audio_chunk":
-            await this.handleAudioChunk(msg);
-            break;
-
-          case "abort_request":
-            await this.handleAbort();
-            break;
-
-          case "audio_played":
-            this.handleAudioPlayed(msg.id);
-            break;
-
-          case "fetch_agents_request":
-            await this.handleFetchAgents(msg);
-            break;
-
-          case "fetch_agent_history_request":
-            await this.handleFetchAgentHistory(msg);
-            break;
-
-          case "fetch_workspaces_request":
-            await this.handleFetchWorkspacesRequest(msg);
-            break;
-
-          case "fetch_agent_request":
-            await this.handleFetchAgent(msg.agentId, msg.requestId);
-            break;
-
-          case "delete_agent_request":
-            await this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
-            break;
-
-          case "archive_agent_request":
-            await this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
-            break;
-
-          case "close_items_request":
-            await this.handleCloseItemsRequest(msg);
-            break;
-
-          case "update_agent_request":
-            await this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
-            break;
-
-          case "set_voice_mode":
-            await this.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
-            break;
-
-          case "send_agent_message_request":
-            await this.handleSendAgentMessageRequest(msg);
-            break;
-
-          case "wait_for_finish_request":
-            await this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
-            break;
-
-          case "get_daemon_config_request":
-            this.emit({
-              type: "get_daemon_config_response",
-              payload: {
-                requestId: msg.requestId,
-                config: this.daemonConfigStore.get(),
-              },
-            });
-            break;
-
-          case "set_daemon_config_request":
-            this.emit({
-              type: "set_daemon_config_response",
-              payload: {
-                requestId: msg.requestId,
-                config: this.daemonConfigStore.patch(msg.config),
-              },
-            });
-            break;
-
-          case "dictation_stream_start":
-            {
-              const unavailable = this.resolveVoiceFeatureUnavailableContext("dictation");
-              if (unavailable) {
-                this.emit({
-                  type: "dictation_stream_error",
-                  payload: {
-                    dictationId: msg.dictationId,
-                    error: unavailable.message,
-                    retryable: unavailable.retryable,
-                    reasonCode: unavailable.reasonCode,
-                    missingModelIds: unavailable.missingModelIds,
-                  },
-                });
-                break;
-              }
-            }
-            await this.dictationStreamManager.handleStart(msg.dictationId, msg.format);
-            break;
-
-          case "dictation_stream_chunk":
-            await this.dictationStreamManager.handleChunk({
-              dictationId: msg.dictationId,
-              seq: msg.seq,
-              audioBase64: msg.audio,
-              format: msg.format,
-            });
-            break;
-
-          case "dictation_stream_finish":
-            await this.dictationStreamManager.handleFinish(msg.dictationId, msg.finalSeq);
-            break;
-
-          case "dictation_stream_cancel":
-            this.dictationStreamManager.handleCancel(msg.dictationId);
-            break;
-
-          case "create_agent_request":
-            await this.handleCreateAgentRequest(msg);
-            break;
-
-          case "resume_agent_request":
-            await this.handleResumeAgentRequest(msg);
-            break;
-
-          case "refresh_agent_request":
-            await this.handleRefreshAgentRequest(msg);
-            break;
-
-          case "cancel_agent_request":
-            await this.handleCancelAgentRequest(msg.agentId, msg.requestId);
-            break;
-
-          case "restart_server_request":
-            await this.handleRestartServerRequest(msg.requestId, msg.reason);
-            break;
-
-          case "shutdown_server_request":
-            await this.handleShutdownServerRequest(msg.requestId);
-            break;
-
-          case "fetch_agent_timeline_request":
-            await this.handleFetchAgentTimelineRequest(msg);
-            break;
-
-          case "set_agent_mode_request":
-            await this.handleSetAgentModeRequest(msg.agentId, msg.modeId, msg.requestId);
-            break;
-
-          case "set_agent_model_request":
-            await this.handleSetAgentModelRequest(msg.agentId, msg.modelId, msg.requestId);
-            break;
-
-          case "set_agent_feature_request":
-            await this.handleSetAgentFeatureRequest(
-              msg.agentId,
-              msg.featureId,
-              msg.value,
-              msg.requestId,
-            );
-            break;
-
-          case "set_agent_thinking_request":
-            await this.handleSetAgentThinkingRequest(
-              msg.agentId,
-              msg.thinkingOptionId,
-              msg.requestId,
-            );
-            break;
-
-          case "agent_permission_response":
-            await this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
-            break;
-
-          case "checkout_status_request":
-            await this.handleCheckoutStatusRequest(msg);
-            break;
-
-          case "validate_branch_request":
-            await this.handleValidateBranchRequest(msg);
-            break;
-
-          case "branch_suggestions_request":
-            await this.handleBranchSuggestionsRequest(msg);
-            break;
-
-          case "directory_suggestions_request":
-            await this.handleDirectorySuggestionsRequest(msg);
-            break;
-
-          case "subscribe_checkout_diff_request":
-            await this.handleSubscribeCheckoutDiffRequest(msg);
-            break;
-
-          case "unsubscribe_checkout_diff_request":
-            this.handleUnsubscribeCheckoutDiffRequest(msg);
-            break;
-
-          case "checkout_switch_branch_request":
-            await this.handleCheckoutSwitchBranchRequest(msg);
-            break;
-
-          case "stash_save_request":
-            await this.handleStashSaveRequest(msg);
-            break;
-
-          case "stash_pop_request":
-            await this.handleStashPopRequest(msg);
-            break;
-
-          case "stash_list_request":
-            await this.handleStashListRequest(msg);
-            break;
-
-          case "checkout_commit_request":
-            await this.handleCheckoutCommitRequest(msg);
-            break;
-
-          case "checkout_merge_request":
-            await this.handleCheckoutMergeRequest(msg);
-            break;
-
-          case "checkout_merge_from_base_request":
-            await this.handleCheckoutMergeFromBaseRequest(msg);
-            break;
-
-          case "checkout_pull_request":
-            await this.handleCheckoutPullRequest(msg);
-            break;
-
-          case "checkout_push_request":
-            await this.handleCheckoutPushRequest(msg);
-            break;
-
-          case "checkout_pr_create_request":
-            await this.handleCheckoutPrCreateRequest(msg);
-            break;
-
-          case "checkout_pr_status_request":
-            await this.handleCheckoutPrStatusRequest(msg);
-            break;
-
-          case "pull_request_timeline_request":
-            await this.handlePullRequestTimelineRequest(msg);
-            break;
-
-          case "github_search_request":
-            await this.handleGitHubSearchRequest(msg);
-            break;
-
-          case "paseo_worktree_list_request":
-            await this.handlePaseoWorktreeListRequest(msg);
-            break;
-
-          case "paseo_worktree_archive_request":
-            await this.handlePaseoWorktreeArchiveRequest(msg);
-            break;
-
-          case "create_paseo_worktree_request":
-            await this.handleCreatePaseoWorktreeRequest(msg);
-            break;
-
-          case "workspace_setup_status_request":
-            await this.handleWorkspaceSetupStatusRequest(msg);
-            break;
-
-          case "list_available_editors_request":
-            await this.handleListAvailableEditorsRequest(msg);
-            break;
-
-          case "open_in_editor_request":
-            await this.handleOpenInEditorRequest(msg);
-            break;
-
-          case "open_project_request":
-            await this.handleOpenProjectRequest(msg);
-            break;
-
-          case "archive_workspace_request":
-            await this.handleArchiveWorkspaceRequest(msg);
-            break;
-
-          case "file_explorer_request":
-            await this.handleFileExplorerRequest(msg);
-            break;
-
-          case "project_icon_request":
-            await this.handleProjectIconRequest(msg);
-            break;
-
-          case "file_download_token_request":
-            await this.handleFileDownloadTokenRequest(msg);
-            break;
-
-          case "list_provider_models_request":
-            await this.handleListProviderModelsRequest(msg);
-            break;
-
-          case "list_provider_modes_request":
-            await this.handleListProviderModesRequest(msg);
-            break;
-
-          case "list_provider_features_request":
-            await this.handleListProviderFeaturesRequest(msg);
-            break;
-
-          case "list_available_providers_request":
-            await this.handleListAvailableProvidersRequest(msg);
-            break;
-
-          case "get_providers_snapshot_request":
-            await this.handleGetProvidersSnapshotRequest(msg);
-            break;
-
-          case "refresh_providers_snapshot_request":
-            await this.handleRefreshProvidersSnapshotRequest(msg);
-            break;
-
-          case "provider_diagnostic_request":
-            await this.handleProviderDiagnosticRequest(msg);
-            break;
-
-          case "clear_agent_attention":
-            await this.handleClearAgentAttention(msg.agentId, msg.requestId);
-            break;
-
-          case "client_heartbeat":
-            this.handleClientHeartbeat(msg);
-            break;
-
-          case "ping": {
-            const now = Date.now();
-            this.emit({
-              type: "pong",
-              payload: {
-                requestId: msg.requestId,
-                clientSentAt: msg.clientSentAt,
-                serverReceivedAt: now,
-                serverSentAt: now,
-              },
-            });
-            break;
-          }
-
-          case "list_commands_request":
-            await this.handleListCommandsRequest(msg);
-            break;
-
-          case "register_push_token":
-            this.handleRegisterPushToken(msg.token);
-            break;
-
-          case "subscribe_terminals_request":
-            this.handleSubscribeTerminalsRequest(msg);
-            break;
-
-          case "unsubscribe_terminals_request":
-            this.handleUnsubscribeTerminalsRequest(msg);
-            break;
-
-          case "list_terminals_request":
-            await this.handleListTerminalsRequest(msg);
-            break;
-
-          case "create_terminal_request":
-            await this.handleCreateTerminalRequest(msg);
-            break;
-
-          case "start_workspace_script_request":
-            await this.handleStartWorkspaceScriptRequest(msg);
-            break;
-
-          case "subscribe_terminal_request":
-            await this.handleSubscribeTerminalRequest(msg);
-            break;
-
-          case "unsubscribe_terminal_request":
-            this.handleUnsubscribeTerminalRequest(msg);
-            break;
-
-          case "terminal_input":
-            this.handleTerminalInput(msg);
-            break;
-
-          case "kill_terminal_request":
-            await this.handleKillTerminalRequest(msg);
-            break;
-
-          case "capture_terminal_request":
-            await this.handleCaptureTerminalRequest(msg);
-            break;
-
-          case "chat/create":
-            await this.handleChatCreateRequest(msg);
-            break;
-
-          case "chat/list":
-            await this.handleChatListRequest(msg);
-            break;
-
-          case "chat/inspect":
-            await this.handleChatInspectRequest(msg);
-            break;
-
-          case "chat/delete":
-            await this.handleChatDeleteRequest(msg);
-            break;
-
-          case "chat/post":
-            await this.handleChatPostRequest(msg);
-            break;
-
-          case "chat/read":
-            await this.handleChatReadRequest(msg);
-            break;
-
-          case "chat/wait":
-            await this.handleChatWaitRequest(msg);
-            break;
-
-          case "schedule/create":
-            await this.handleScheduleCreateRequest(msg);
-            break;
-
-          case "schedule/list":
-            await this.handleScheduleListRequest(msg);
-            break;
-
-          case "schedule/inspect":
-            await this.handleScheduleInspectRequest(msg);
-            break;
-
-          case "schedule/logs":
-            await this.handleScheduleLogsRequest(msg);
-            break;
-
-          case "schedule/pause":
-            await this.handleSchedulePauseRequest(msg);
-            break;
-
-          case "schedule/resume":
-            await this.handleScheduleResumeRequest(msg);
-            break;
-
-          case "schedule/delete":
-            await this.handleScheduleDeleteRequest(msg);
-            break;
-
-          case "loop/run":
-            await this.handleLoopRunRequest(msg);
-            break;
-
-          case "loop/list":
-            await this.handleLoopListRequest(msg);
-            break;
-
-          case "loop/inspect":
-            await this.handleLoopInspectRequest(msg);
-            break;
-
-          case "loop/logs":
-            await this.handleLoopLogsRequest(msg);
-            break;
-
-          case "loop/stop":
-            await this.handleLoopStopRequest(msg);
-            break;
-        }
+        await this.dispatchInboundMessage(msg);
       } catch (error: any) {
         const err = error instanceof Error ? error : new Error(String(error));
         this.sessionLogger.error({ err }, "Error handling message");
@@ -2049,6 +1675,437 @@ export class Session {
       }
     } finally {
       this.inflightRequests--;
+    }
+  }
+
+  private async dispatchInboundMessage(msg: SessionInboundMessage): Promise<void> {
+    if (await this.dispatchVoiceAndControlMessage(msg)) return;
+    if (await this.dispatchAgentLifecycleMessage(msg)) return;
+    if (await this.dispatchAgentConfigMessage(msg)) return;
+    if (await this.dispatchCheckoutMessage(msg)) return;
+    if (await this.dispatchWorkspaceAndProjectMessage(msg)) return;
+    if (await this.dispatchProviderMessage(msg)) return;
+    if (await this.dispatchTerminalMessage(msg)) return;
+    if (await this.dispatchChatScheduleLoopMessage(msg)) return;
+    await this.dispatchMiscMessage(msg);
+  }
+
+  private async dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<boolean> {
+    switch (msg.type) {
+      case "voice_audio_chunk":
+        await this.handleAudioChunk(msg);
+        return true;
+      case "abort_request":
+        await this.handleAbort();
+        return true;
+      case "audio_played":
+        this.handleAudioPlayed(msg.id);
+        return true;
+      case "set_voice_mode":
+        await this.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
+        return true;
+      case "dictation_stream_start":
+        await this.handleDictationStreamStart(msg);
+        return true;
+      case "dictation_stream_chunk":
+        await this.dictationStreamManager.handleChunk({
+          dictationId: msg.dictationId,
+          seq: msg.seq,
+          audioBase64: msg.audio,
+          format: msg.format,
+        });
+        return true;
+      case "dictation_stream_finish":
+        await this.dictationStreamManager.handleFinish(msg.dictationId, msg.finalSeq);
+        return true;
+      case "dictation_stream_cancel":
+        this.dictationStreamManager.handleCancel(msg.dictationId);
+        return true;
+      case "restart_server_request":
+        await this.handleRestartServerRequest(msg.requestId, msg.reason);
+        return true;
+      case "shutdown_server_request":
+        await this.handleShutdownServerRequest(msg.requestId);
+        return true;
+      case "client_heartbeat":
+        this.handleClientHeartbeat(msg);
+        return true;
+      case "ping": {
+        const now = Date.now();
+        this.emit({
+          type: "pong",
+          payload: {
+            requestId: msg.requestId,
+            clientSentAt: msg.clientSentAt,
+            serverReceivedAt: now,
+            serverSentAt: now,
+          },
+        });
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  private async handleDictationStreamStart(
+    msg: Extract<SessionInboundMessage, { type: "dictation_stream_start" }>,
+  ): Promise<void> {
+    const unavailable = this.resolveVoiceFeatureUnavailableContext("dictation");
+    if (unavailable) {
+      this.emit({
+        type: "dictation_stream_error",
+        payload: {
+          dictationId: msg.dictationId,
+          error: unavailable.message,
+          retryable: unavailable.retryable,
+          reasonCode: unavailable.reasonCode,
+          missingModelIds: unavailable.missingModelIds,
+        },
+      });
+      return;
+    }
+    await this.dictationStreamManager.handleStart(msg.dictationId, msg.format);
+  }
+
+  private async dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<boolean> {
+    switch (msg.type) {
+      case "fetch_agents_request":
+        await this.handleFetchAgents(msg);
+        return true;
+      case "fetch_agent_history_request":
+        await this.handleFetchAgentHistory(msg);
+        return true;
+      case "fetch_agent_request":
+        await this.handleFetchAgent(msg.agentId, msg.requestId);
+        return true;
+      case "delete_agent_request":
+        await this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
+        return true;
+      case "archive_agent_request":
+        await this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
+        return true;
+      case "close_items_request":
+        await this.handleCloseItemsRequest(msg);
+        return true;
+      case "update_agent_request":
+        await this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
+        return true;
+      case "send_agent_message_request":
+        await this.handleSendAgentMessageRequest(msg);
+        return true;
+      case "wait_for_finish_request":
+        await this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
+        return true;
+      case "create_agent_request":
+        await this.handleCreateAgentRequest(msg);
+        return true;
+      case "resume_agent_request":
+        await this.handleResumeAgentRequest(msg);
+        return true;
+      case "refresh_agent_request":
+        await this.handleRefreshAgentRequest(msg);
+        return true;
+      case "cancel_agent_request":
+        await this.handleCancelAgentRequest(msg.agentId, msg.requestId);
+        return true;
+      case "fetch_agent_timeline_request":
+        await this.handleFetchAgentTimelineRequest(msg);
+        return true;
+      case "agent_permission_response":
+        await this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
+        return true;
+      case "clear_agent_attention":
+        await this.handleClearAgentAttention(msg.agentId, msg.requestId);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<boolean> {
+    switch (msg.type) {
+      case "set_agent_mode_request":
+        await this.handleSetAgentModeRequest(msg.agentId, msg.modeId, msg.requestId);
+        return true;
+      case "set_agent_model_request":
+        await this.handleSetAgentModelRequest(msg.agentId, msg.modelId, msg.requestId);
+        return true;
+      case "set_agent_feature_request":
+        await this.handleSetAgentFeatureRequest(
+          msg.agentId,
+          msg.featureId,
+          msg.value,
+          msg.requestId,
+        );
+        return true;
+      case "set_agent_thinking_request":
+        await this.handleSetAgentThinkingRequest(msg.agentId, msg.thinkingOptionId, msg.requestId);
+        return true;
+      case "get_daemon_config_request":
+        this.emit({
+          type: "get_daemon_config_response",
+          payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
+        });
+        return true;
+      case "set_daemon_config_request":
+        this.emit({
+          type: "set_daemon_config_response",
+          payload: {
+            requestId: msg.requestId,
+            config: this.daemonConfigStore.patch(msg.config),
+          },
+        });
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<boolean> {
+    switch (msg.type) {
+      case "checkout_status_request":
+        await this.handleCheckoutStatusRequest(msg);
+        return true;
+      case "validate_branch_request":
+        await this.handleValidateBranchRequest(msg);
+        return true;
+      case "branch_suggestions_request":
+        await this.handleBranchSuggestionsRequest(msg);
+        return true;
+      case "directory_suggestions_request":
+        await this.handleDirectorySuggestionsRequest(msg);
+        return true;
+      case "subscribe_checkout_diff_request":
+        await this.handleSubscribeCheckoutDiffRequest(msg);
+        return true;
+      case "unsubscribe_checkout_diff_request":
+        this.handleUnsubscribeCheckoutDiffRequest(msg);
+        return true;
+      case "checkout_switch_branch_request":
+        await this.handleCheckoutSwitchBranchRequest(msg);
+        return true;
+      case "stash_save_request":
+        await this.handleStashSaveRequest(msg);
+        return true;
+      case "stash_pop_request":
+        await this.handleStashPopRequest(msg);
+        return true;
+      case "stash_list_request":
+        await this.handleStashListRequest(msg);
+        return true;
+      case "checkout_commit_request":
+        await this.handleCheckoutCommitRequest(msg);
+        return true;
+      case "checkout_merge_request":
+        await this.handleCheckoutMergeRequest(msg);
+        return true;
+      case "checkout_merge_from_base_request":
+        await this.handleCheckoutMergeFromBaseRequest(msg);
+        return true;
+      case "checkout_pull_request":
+        await this.handleCheckoutPullRequest(msg);
+        return true;
+      case "checkout_push_request":
+        await this.handleCheckoutPushRequest(msg);
+        return true;
+      case "checkout_pr_create_request":
+        await this.handleCheckoutPrCreateRequest(msg);
+        return true;
+      case "checkout_pr_status_request":
+        await this.handleCheckoutPrStatusRequest(msg);
+        return true;
+      case "pull_request_timeline_request":
+        await this.handlePullRequestTimelineRequest(msg);
+        return true;
+      case "github_search_request":
+        await this.handleGitHubSearchRequest(msg);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async dispatchWorkspaceAndProjectMessage(msg: SessionInboundMessage): Promise<boolean> {
+    switch (msg.type) {
+      case "fetch_workspaces_request":
+        await this.handleFetchWorkspacesRequest(msg);
+        return true;
+      case "paseo_worktree_list_request":
+        await this.handlePaseoWorktreeListRequest(msg);
+        return true;
+      case "paseo_worktree_archive_request":
+        await this.handlePaseoWorktreeArchiveRequest(msg);
+        return true;
+      case "create_paseo_worktree_request":
+        await this.handleCreatePaseoWorktreeRequest(msg);
+        return true;
+      case "workspace_setup_status_request":
+        await this.handleWorkspaceSetupStatusRequest(msg);
+        return true;
+      case "list_available_editors_request":
+        await this.handleListAvailableEditorsRequest(msg);
+        return true;
+      case "open_in_editor_request":
+        await this.handleOpenInEditorRequest(msg);
+        return true;
+      case "open_project_request":
+        await this.handleOpenProjectRequest(msg);
+        return true;
+      case "archive_workspace_request":
+        await this.handleArchiveWorkspaceRequest(msg);
+        return true;
+      case "file_explorer_request":
+        await this.handleFileExplorerRequest(msg);
+        return true;
+      case "project_icon_request":
+        await this.handleProjectIconRequest(msg);
+        return true;
+      case "file_download_token_request":
+        await this.handleFileDownloadTokenRequest(msg);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async dispatchProviderMessage(msg: SessionInboundMessage): Promise<boolean> {
+    switch (msg.type) {
+      case "list_provider_models_request":
+        await this.handleListProviderModelsRequest(msg);
+        return true;
+      case "list_provider_modes_request":
+        await this.handleListProviderModesRequest(msg);
+        return true;
+      case "list_provider_features_request":
+        await this.handleListProviderFeaturesRequest(msg);
+        return true;
+      case "list_available_providers_request":
+        await this.handleListAvailableProvidersRequest(msg);
+        return true;
+      case "get_providers_snapshot_request":
+        await this.handleGetProvidersSnapshotRequest(msg);
+        return true;
+      case "refresh_providers_snapshot_request":
+        await this.handleRefreshProvidersSnapshotRequest(msg);
+        return true;
+      case "provider_diagnostic_request":
+        await this.handleProviderDiagnosticRequest(msg);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async dispatchTerminalMessage(msg: SessionInboundMessage): Promise<boolean> {
+    switch (msg.type) {
+      case "subscribe_terminals_request":
+        this.handleSubscribeTerminalsRequest(msg);
+        return true;
+      case "unsubscribe_terminals_request":
+        this.handleUnsubscribeTerminalsRequest(msg);
+        return true;
+      case "list_terminals_request":
+        await this.handleListTerminalsRequest(msg);
+        return true;
+      case "create_terminal_request":
+        await this.handleCreateTerminalRequest(msg);
+        return true;
+      case "start_workspace_script_request":
+        await this.handleStartWorkspaceScriptRequest(msg);
+        return true;
+      case "subscribe_terminal_request":
+        await this.handleSubscribeTerminalRequest(msg);
+        return true;
+      case "unsubscribe_terminal_request":
+        this.handleUnsubscribeTerminalRequest(msg);
+        return true;
+      case "terminal_input":
+        this.handleTerminalInput(msg);
+        return true;
+      case "kill_terminal_request":
+        await this.handleKillTerminalRequest(msg);
+        return true;
+      case "capture_terminal_request":
+        await this.handleCaptureTerminalRequest(msg);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async dispatchChatScheduleLoopMessage(msg: SessionInboundMessage): Promise<boolean> {
+    switch (msg.type) {
+      case "chat/create":
+        await this.handleChatCreateRequest(msg);
+        return true;
+      case "chat/list":
+        await this.handleChatListRequest(msg);
+        return true;
+      case "chat/inspect":
+        await this.handleChatInspectRequest(msg);
+        return true;
+      case "chat/delete":
+        await this.handleChatDeleteRequest(msg);
+        return true;
+      case "chat/post":
+        await this.handleChatPostRequest(msg);
+        return true;
+      case "chat/read":
+        await this.handleChatReadRequest(msg);
+        return true;
+      case "chat/wait":
+        await this.handleChatWaitRequest(msg);
+        return true;
+      case "schedule/create":
+        await this.handleScheduleCreateRequest(msg);
+        return true;
+      case "schedule/list":
+        await this.handleScheduleListRequest(msg);
+        return true;
+      case "schedule/inspect":
+        await this.handleScheduleInspectRequest(msg);
+        return true;
+      case "schedule/logs":
+        await this.handleScheduleLogsRequest(msg);
+        return true;
+      case "schedule/pause":
+        await this.handleSchedulePauseRequest(msg);
+        return true;
+      case "schedule/resume":
+        await this.handleScheduleResumeRequest(msg);
+        return true;
+      case "schedule/delete":
+        await this.handleScheduleDeleteRequest(msg);
+        return true;
+      case "loop/run":
+        await this.handleLoopRunRequest(msg);
+        return true;
+      case "loop/list":
+        await this.handleLoopListRequest(msg);
+        return true;
+      case "loop/inspect":
+        await this.handleLoopInspectRequest(msg);
+        return true;
+      case "loop/logs":
+        await this.handleLoopLogsRequest(msg);
+        return true;
+      case "loop/stop":
+        await this.handleLoopStopRequest(msg);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async dispatchMiscMessage(msg: SessionInboundMessage): Promise<void> {
+    switch (msg.type) {
+      case "list_commands_request":
+        await this.handleListCommandsRequest(msg);
+        return;
+      case "register_push_token":
+        this.handleRegisterPushToken(msg.token);
+        return;
     }
   }
 
@@ -2919,32 +2976,15 @@ export class Session {
       );
       await this.forwardAgentUpdate(snapshot);
 
-      if (trimmedPrompt || (images?.length ?? 0) > 0 || (attachments?.length ?? 0) > 0) {
-        scheduleAgentMetadataGeneration({
-          agentManager: this.agentManager,
-          agentId: snapshot.id,
-          cwd: snapshot.cwd,
-          initialPrompt: trimmedPrompt,
-          explicitTitle,
-          paseoHome: this.paseoHome,
-          logger: this.sessionLogger,
-          deps: {
-            workspaceGitService: this.workspaceGitService,
-          },
-        });
-
-        const started = await this.handleSendAgentMessage(
-          snapshot.id,
-          trimmedPrompt || "",
-          resolveClientMessageId(clientMessageId),
-          images,
-          attachments,
-          outputSchema ? { outputSchema } : undefined,
-        );
-        if (!started.ok) {
-          throw new Error(started.error);
-        }
-      }
+      await this.sendInitialCreateAgentPrompt({
+        snapshot,
+        trimmedPrompt,
+        images,
+        attachments,
+        clientMessageId,
+        outputSchema,
+        explicitTitle,
+      });
 
       if (requestId) {
         const agentPayload = await this.buildAgentPayload(snapshot);
@@ -3008,6 +3048,48 @@ export class Session {
           content: `Failed to create agent: ${wireError.message}`,
         },
       });
+    }
+  }
+
+  private async sendInitialCreateAgentPrompt(params: {
+    snapshot: { id: string; cwd: string };
+    trimmedPrompt: string | undefined;
+    images: Array<{ data: string; mimeType: string }> | undefined;
+    attachments: AgentAttachment[] | undefined;
+    clientMessageId: string | undefined;
+    outputSchema: Record<string, unknown> | undefined;
+    explicitTitle: string | null;
+  }): Promise<void> {
+    const { snapshot, trimmedPrompt, images, attachments, clientMessageId, outputSchema } = params;
+    const hasPrompt = Boolean(trimmedPrompt);
+    const hasImages = (images?.length ?? 0) > 0;
+    const hasAttachments = (attachments?.length ?? 0) > 0;
+    if (!hasPrompt && !hasImages && !hasAttachments) {
+      return;
+    }
+    scheduleAgentMetadataGeneration({
+      agentManager: this.agentManager,
+      agentId: snapshot.id,
+      cwd: snapshot.cwd,
+      initialPrompt: trimmedPrompt,
+      explicitTitle: params.explicitTitle,
+      paseoHome: this.paseoHome,
+      logger: this.sessionLogger,
+      deps: {
+        workspaceGitService: this.workspaceGitService,
+      },
+    });
+
+    const started = await this.handleSendAgentMessage(
+      snapshot.id,
+      trimmedPrompt || "",
+      resolveClientMessageId(clientMessageId),
+      images,
+      attachments,
+      outputSchema ? { outputSchema } : undefined,
+    );
+    if (!started.ok) {
+      throw new Error(started.error);
     }
   }
 
@@ -5575,30 +5657,7 @@ export class Session {
       throw new SessionRequestError("invalid_cursor", "Invalid fetch_agents cursor");
     }
 
-    const cursorSort: FetchAgentsRequestSort[] = [];
-    for (const item of payload.sort) {
-      if (
-        !item ||
-        typeof item !== "object" ||
-        typeof (item as { key?: unknown }).key !== "string" ||
-        typeof (item as { direction?: unknown }).direction !== "string"
-      ) {
-        throw new SessionRequestError("invalid_cursor", "Invalid fetch_agents cursor");
-      }
-
-      const key = (item as { key: string }).key;
-      const direction = (item as { direction: string }).direction;
-      if (
-        (key !== "status_priority" &&
-          key !== "created_at" &&
-          key !== "updated_at" &&
-          key !== "title") ||
-        (direction !== "asc" && direction !== "desc")
-      ) {
-        throw new SessionRequestError("invalid_cursor", "Invalid fetch_agents cursor");
-      }
-      cursorSort.push({ key, direction });
-    }
+    const cursorSort = parseFetchAgentsCursorSort(payload.sort);
 
     if (
       cursorSort.length !== sort.length ||
@@ -5669,6 +5728,49 @@ export class Session {
     return placementsByCwd;
   }
 
+  private async collectFetchAgentsEntries(params: {
+    candidates: AgentSnapshotPayload[];
+    limit: number;
+    getPlacement: (cwd: string) => Promise<ProjectPlacementPayload | null>;
+    filter: AgentUpdatesFilter | undefined;
+  }): Promise<FetchAgentsResponseEntry[]> {
+    const { candidates, limit, getPlacement, filter } = params;
+    const matchedEntries: FetchAgentsResponseEntry[] = [];
+    const batchSize = 25;
+    for (
+      let start = 0;
+      start < candidates.length && matchedEntries.length <= limit;
+      start += batchSize
+    ) {
+      const batch = candidates.slice(start, start + batchSize);
+      const batchEntries = await Promise.all(
+        batch.map(async (agent) => {
+          const project = await getPlacement(agent.cwd);
+          return project ? { agent, project } : null;
+        }),
+      );
+      for (const entry of batchEntries) {
+        if (!entry) {
+          continue;
+        }
+        if (
+          !this.matchesAgentFilter({
+            agent: entry.agent,
+            project: entry.project,
+            filter,
+          })
+        ) {
+          continue;
+        }
+        matchedEntries.push(entry);
+        if (matchedEntries.length > limit) {
+          break;
+        }
+      }
+    }
+    return matchedEntries;
+  }
+
   private async listFetchAgentsEntries(request: AgentDirectoryRequestMessage): Promise<{
     entries: FetchAgentsResponseEntry[];
     pageInfo: FetchAgentsResponsePageInfo;
@@ -5721,39 +5823,12 @@ export class Session {
 
     const limit = request.page?.limit ?? 200;
 
-    const matchedEntries: FetchAgentsResponseEntry[] = [];
-    const batchSize = 25;
-    for (
-      let start = 0;
-      start < candidates.length && matchedEntries.length <= limit;
-      start += batchSize
-    ) {
-      const batch = candidates.slice(start, start + batchSize);
-      const batchEntries = await Promise.all(
-        batch.map(async (agent) => {
-          const project = await getPlacement(agent.cwd);
-          return project ? { agent, project } : null;
-        }),
-      );
-      for (const entry of batchEntries) {
-        if (!entry) {
-          continue;
-        }
-        if (
-          !this.matchesAgentFilter({
-            agent: entry.agent,
-            project: entry.project,
-            filter,
-          })
-        ) {
-          continue;
-        }
-        matchedEntries.push(entry);
-        if (matchedEntries.length > limit) {
-          break;
-        }
-      }
-    }
+    const matchedEntries = await this.collectFetchAgentsEntries({
+      candidates,
+      limit,
+      getPlacement,
+      filter,
+    });
 
     const pagedEntries = matchedEntries.slice(0, limit);
     const hasMore = matchedEntries.length > limit;
@@ -6131,30 +6206,7 @@ export class Session {
       throw new SessionRequestError("invalid_cursor", "Invalid fetch_workspaces cursor");
     }
 
-    const cursorSort: FetchWorkspacesRequestSort[] = [];
-    for (const item of payload.sort) {
-      if (
-        !item ||
-        typeof item !== "object" ||
-        typeof (item as { key?: unknown }).key !== "string" ||
-        typeof (item as { direction?: unknown }).direction !== "string"
-      ) {
-        throw new SessionRequestError("invalid_cursor", "Invalid fetch_workspaces cursor");
-      }
-
-      const key = (item as { key: string }).key;
-      const direction = (item as { direction: string }).direction;
-      if (
-        (key !== "status_priority" &&
-          key !== "activity_at" &&
-          key !== "name" &&
-          key !== "project_id") ||
-        (direction !== "asc" && direction !== "desc")
-      ) {
-        throw new SessionRequestError("invalid_cursor", "Invalid fetch_workspaces cursor");
-      }
-      cursorSort.push({ key, direction });
-    }
+    const cursorSort = parseFetchWorkspacesCursorSort(payload.sort);
 
     if (
       cursorSort.length !== sort.length ||
@@ -7100,6 +7152,75 @@ export class Session {
     });
   }
 
+  private loadProjectedTimelineWindow(params: {
+    agentId: string;
+    direction: AgentTimelineFetchDirection;
+    cursor: AgentTimelineCursor | undefined;
+    requestedLimit: number;
+    provider: AgentSnapshotPayload["provider"];
+    timeline: ReturnType<AgentManager["fetchTimeline"]>;
+  }): {
+    timeline: ReturnType<AgentManager["fetchTimeline"]>;
+    selectedRows: ReturnType<typeof selectTimelineWindowByProjectedLimit>["selectedRows"];
+    minSeq: number | null;
+    maxSeq: number | null;
+  } {
+    const { agentId, direction, cursor, requestedLimit, provider } = params;
+    let timeline = params.timeline;
+    const projectedLimit = Math.max(1, Math.floor(requestedLimit));
+    let fetchLimit = projectedLimit;
+    let projectedWindow = selectTimelineWindowByProjectedLimit({
+      rows: timeline.rows,
+      provider,
+      direction,
+      limit: projectedLimit,
+      collapseToolLifecycle: false,
+    });
+
+    while (timeline.hasOlder) {
+      const needsMoreProjectedEntries = projectedWindow.projectedEntries.length < projectedLimit;
+      const firstLoadedRow = timeline.rows[0];
+      const firstSelectedRow = projectedWindow.selectedRows[0];
+      const startsAtLoadedBoundary =
+        firstLoadedRow != null &&
+        firstSelectedRow != null &&
+        firstSelectedRow.seq === firstLoadedRow.seq;
+      const boundaryIsAssistantChunk =
+        startsAtLoadedBoundary && firstLoadedRow.item.type === "assistant_message";
+
+      if (!needsMoreProjectedEntries && !boundaryIsAssistantChunk) {
+        break;
+      }
+
+      const maxRows = Math.max(0, timeline.window.maxSeq - timeline.window.minSeq + 1);
+      const nextFetchLimit = Math.min(maxRows, fetchLimit * 2);
+      if (nextFetchLimit <= fetchLimit) {
+        break;
+      }
+
+      fetchLimit = nextFetchLimit;
+      timeline = this.agentManager.fetchTimeline(agentId, {
+        direction,
+        cursor,
+        limit: fetchLimit,
+      });
+      projectedWindow = selectTimelineWindowByProjectedLimit({
+        rows: timeline.rows,
+        provider,
+        direction,
+        limit: projectedLimit,
+        collapseToolLifecycle: false,
+      });
+    }
+
+    return {
+      timeline,
+      selectedRows: projectedWindow.selectedRows,
+      minSeq: projectedWindow.minSeq,
+      maxSeq: projectedWindow.maxSeq,
+    };
+  }
+
   private async handleFetchAgentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "fetch_agent_timeline_request" }>,
   ): Promise<void> {
@@ -7142,61 +7263,20 @@ export class Session {
       let entries: ReturnType<typeof projectTimelineRows>;
 
       if (shouldLimitByProjectedWindow) {
-        const projectedLimit = Math.max(1, Math.floor(requestedLimit));
-        let fetchLimit = projectedLimit;
-        let projectedWindow = selectTimelineWindowByProjectedLimit({
-          rows: timeline.rows,
-          provider: snapshot.provider,
+        const projectedResult = this.loadProjectedTimelineWindow({
+          agentId: msg.agentId,
           direction,
-          limit: projectedLimit,
-          collapseToolLifecycle: false,
+          cursor,
+          requestedLimit,
+          provider: snapshot.provider,
+          timeline,
         });
-
-        while (timeline.hasOlder) {
-          const needsMoreProjectedEntries =
-            projectedWindow.projectedEntries.length < projectedLimit;
-          const firstLoadedRow = timeline.rows[0];
-          const firstSelectedRow = projectedWindow.selectedRows[0];
-          const startsAtLoadedBoundary =
-            firstLoadedRow != null &&
-            firstSelectedRow != null &&
-            firstSelectedRow.seq === firstLoadedRow.seq;
-          const boundaryIsAssistantChunk =
-            startsAtLoadedBoundary && firstLoadedRow.item.type === "assistant_message";
-
-          if (!needsMoreProjectedEntries && !boundaryIsAssistantChunk) {
-            break;
-          }
-
-          const maxRows = Math.max(0, timeline.window.maxSeq - timeline.window.minSeq + 1);
-          const nextFetchLimit = Math.min(maxRows, fetchLimit * 2);
-          if (nextFetchLimit <= fetchLimit) {
-            break;
-          }
-
-          fetchLimit = nextFetchLimit;
-          timeline = this.agentManager.fetchTimeline(msg.agentId, {
-            direction,
-            cursor,
-            limit: fetchLimit,
-          });
-          projectedWindow = selectTimelineWindowByProjectedLimit({
-            rows: timeline.rows,
-            provider: snapshot.provider,
-            direction,
-            limit: projectedLimit,
-            collapseToolLifecycle: false,
-          });
-        }
-
-        const selectedRows = projectedWindow.selectedRows;
-
-        entries = projectTimelineRows(selectedRows, snapshot.provider, projection);
-
-        if (projectedWindow.minSeq !== null && projectedWindow.maxSeq !== null) {
-          startCursor = { epoch: timeline.epoch, seq: projectedWindow.minSeq };
-          endCursor = { epoch: timeline.epoch, seq: projectedWindow.maxSeq };
-          hasOlder = projectedWindow.minSeq > timeline.window.minSeq;
+        timeline = projectedResult.timeline;
+        entries = projectTimelineRows(projectedResult.selectedRows, snapshot.provider, projection);
+        if (projectedResult.minSeq !== null && projectedResult.maxSeq !== null) {
+          startCursor = { epoch: timeline.epoch, seq: projectedResult.minSeq };
+          endCursor = { epoch: timeline.epoch, seq: projectedResult.maxSeq };
+          hasOlder = projectedResult.minSeq > timeline.window.minSeq;
           hasNewer = false;
         }
       } else {
@@ -7474,58 +7554,10 @@ export class Session {
   /**
    * Handle audio chunk for buffering and transcription
    */
-  private async handleAudioChunk(
-    msg: Extract<SessionInboundMessage, { type: "voice_audio_chunk" }>,
-  ): Promise<void> {
-    if (!this.isVoiceMode) {
-      this.sessionLogger.warn(
-        "Received voice_audio_chunk while voice mode is disabled; transcript will be emitted but voice assistant turn is skipped",
-      );
-    }
-
-    const chunkFormat = msg.format || "audio/wav";
-
-    if (this.isVoiceMode) {
-      if (!this.voiceTurnController) {
-        throw new Error("Voice mode is enabled but the voice turn controller is not running");
-      }
-      const chunkBytes = Buffer.byteLength(msg.audio, "base64");
-      this.voiceInputChunkCount += 1;
-      this.voiceInputBytes += chunkBytes;
-      if (this.voiceInputChunkCount === 1) {
-        this.sessionLogger.info(
-          {
-            format: chunkFormat,
-            audioBytes: chunkBytes,
-          },
-          "Received first voice_audio_chunk for active voice mode",
-        );
-      }
-      const now = Date.now();
-      if (this.voiceInputChunkCount % 50 === 0 || now - this.voiceInputWindowStartedAt >= 1000) {
-        this.sessionLogger.info(
-          {
-            chunkCount: this.voiceInputChunkCount,
-            audioBytes: this.voiceInputBytes,
-            windowMs: now - this.voiceInputWindowStartedAt,
-            format: chunkFormat,
-          },
-          "Voice input chunk summary",
-        );
-        this.voiceInputWindowStartedAt = now;
-        this.voiceInputChunkCount = 0;
-        this.voiceInputBytes = 0;
-      }
-      await this.voiceTurnController.appendClientChunk({
-        audioBase64: msg.audio,
-        format: chunkFormat,
-      });
-      return;
-    }
-
-    const chunkBuffer = Buffer.from(msg.audio, "base64");
-    const isPCMChunk = chunkFormat.toLowerCase().includes("pcm");
-
+  private async ensureAudioBufferForFormat(
+    chunkFormat: string,
+    isPCMChunk: boolean,
+  ): Promise<AudioBufferState> {
     if (!this.audioBuffer) {
       this.audioBuffer = {
         chunks: [],
@@ -7533,9 +7565,8 @@ export class Session {
         isPCM: isPCMChunk,
         totalPCMBytes: 0,
       };
+      return this.audioBuffer;
     }
-
-    // If the format changes mid-stream, flush what we have first
     if (this.audioBuffer.isPCM !== isPCMChunk) {
       this.sessionLogger.debug(
         {
@@ -7554,21 +7585,83 @@ export class Session {
         isPCM: isPCMChunk,
         totalPCMBytes: 0,
       };
-    } else if (!this.audioBuffer.isPCM) {
-      // Keep latest format info for non-PCM blobs
+      return this.audioBuffer;
+    }
+    if (!this.audioBuffer.isPCM) {
       this.audioBuffer.format = chunkFormat;
     }
+    return this.audioBuffer;
+  }
 
-    this.audioBuffer.chunks.push(chunkBuffer);
-    if (this.audioBuffer.isPCM) {
-      this.audioBuffer.totalPCMBytes += chunkBuffer.length;
+  private async forwardAudioChunkToVoiceTurn(
+    msg: Extract<SessionInboundMessage, { type: "voice_audio_chunk" }>,
+    chunkFormat: string,
+  ): Promise<void> {
+    if (!this.voiceTurnController) {
+      throw new Error("Voice mode is enabled but the voice turn controller is not running");
+    }
+    const chunkBytes = Buffer.byteLength(msg.audio, "base64");
+    this.voiceInputChunkCount += 1;
+    this.voiceInputBytes += chunkBytes;
+    if (this.voiceInputChunkCount === 1) {
+      this.sessionLogger.info(
+        {
+          format: chunkFormat,
+          audioBytes: chunkBytes,
+        },
+        "Received first voice_audio_chunk for active voice mode",
+      );
+    }
+    const now = Date.now();
+    if (this.voiceInputChunkCount % 50 === 0 || now - this.voiceInputWindowStartedAt >= 1000) {
+      this.sessionLogger.info(
+        {
+          chunkCount: this.voiceInputChunkCount,
+          audioBytes: this.voiceInputBytes,
+          windowMs: now - this.voiceInputWindowStartedAt,
+          format: chunkFormat,
+        },
+        "Voice input chunk summary",
+      );
+      this.voiceInputWindowStartedAt = now;
+      this.voiceInputChunkCount = 0;
+      this.voiceInputBytes = 0;
+    }
+    await this.voiceTurnController.appendClientChunk({
+      audioBase64: msg.audio,
+      format: chunkFormat,
+    });
+  }
+
+  private async handleAudioChunk(
+    msg: Extract<SessionInboundMessage, { type: "voice_audio_chunk" }>,
+  ): Promise<void> {
+    if (!this.isVoiceMode) {
+      this.sessionLogger.warn(
+        "Received voice_audio_chunk while voice mode is disabled; transcript will be emitted but voice assistant turn is skipped",
+      );
+    }
+
+    const chunkFormat = msg.format || "audio/wav";
+
+    if (this.isVoiceMode) {
+      await this.forwardAudioChunkToVoiceTurn(msg, chunkFormat);
+      return;
+    }
+
+    const chunkBuffer = Buffer.from(msg.audio, "base64");
+    const isPCMChunk = chunkFormat.toLowerCase().includes("pcm");
+
+    const buffer = await this.ensureAudioBufferForFormat(chunkFormat, isPCMChunk);
+
+    buffer.chunks.push(chunkBuffer);
+    if (buffer.isPCM) {
+      buffer.totalPCMBytes += chunkBuffer.length;
     }
 
     // In non-voice mode, use streaming threshold to process chunks
     const reachedStreamingThreshold =
-      !this.isVoiceMode &&
-      this.audioBuffer.isPCM &&
-      this.audioBuffer.totalPCMBytes >= MIN_STREAMING_SEGMENT_BYTES;
+      !this.isVoiceMode && buffer.isPCM && buffer.totalPCMBytes >= MIN_STREAMING_SEGMENT_BYTES;
 
     if (!msg.isLast && reachedStreamingThreshold) {
       return;

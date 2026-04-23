@@ -198,62 +198,75 @@ export async function generateAndApplyAgentMetadata(
   }
 
   if (needs.needsBranch && typeof result.branch === "string") {
-    const normalizedBranch = result.branch.trim();
-    const validation = validateBranchSlug(normalizedBranch);
-    if (!validation.valid) {
-      options.logger.warn(
-        { agentId: options.agentId, branch: normalizedBranch, error: validation.error },
-        "Generated branch name is invalid",
-      );
-      return;
-    }
+    await applyGeneratedBranchRename({
+      options,
+      branch: result.branch,
+      renameCurrentBranchImpl,
+    });
+  }
+}
 
-    const workspaceGitService = options.deps?.workspaceGitService;
-    if (!workspaceGitService) {
-      return;
-    }
+async function applyGeneratedBranchRename(params: {
+  options: AgentMetadataGenerationOptions;
+  branch: string;
+  renameCurrentBranchImpl: typeof renameCurrentBranch;
+}): Promise<void> {
+  const { options, branch, renameCurrentBranchImpl } = params;
+  const normalizedBranch = branch.trim();
+  const validation = validateBranchSlug(normalizedBranch);
+  if (!validation.valid) {
+    options.logger.warn(
+      { agentId: options.agentId, branch: normalizedBranch, error: validation.error },
+      "Generated branch name is invalid",
+    );
+    return;
+  }
 
-    let snapshot: WorkspaceGitRuntimeSnapshot;
+  const workspaceGitService = options.deps?.workspaceGitService;
+  if (!workspaceGitService) {
+    return;
+  }
+
+  let snapshot: WorkspaceGitRuntimeSnapshot;
+  try {
+    snapshot = await workspaceGitService.getSnapshot(options.cwd);
+  } catch (error) {
+    options.logger.warn(
+      { err: error, agentId: options.agentId },
+      "Failed to re-check branch eligibility",
+    );
+    return;
+  }
+
+  if (!snapshot.git.isGit || !snapshot.git.isPaseoOwnedWorktree || !snapshot.git.currentBranch) {
+    return;
+  }
+
+  const worktreeDirName = snapshot.git.repoRoot ? basename(snapshot.git.repoRoot) : null;
+  if (snapshot.git.currentBranch !== worktreeDirName) {
+    return;
+  }
+
+  try {
+    await renameCurrentBranchImpl(options.cwd, normalizedBranch);
     try {
-      snapshot = await workspaceGitService.getSnapshot(options.cwd);
+      await workspaceGitService.getSnapshot(options.cwd, {
+        force: true,
+        reason: "rename-branch",
+      });
     } catch (error) {
       options.logger.warn(
-        { err: error, agentId: options.agentId },
-        "Failed to re-check branch eligibility",
-      );
-      return;
-    }
-
-    if (!snapshot.git.isGit || !snapshot.git.isPaseoOwnedWorktree || !snapshot.git.currentBranch) {
-      return;
-    }
-
-    const worktreeDirName = snapshot.git.repoRoot ? basename(snapshot.git.repoRoot) : null;
-    if (snapshot.git.currentBranch !== worktreeDirName) {
-      return;
-    }
-
-    try {
-      await renameCurrentBranchImpl(options.cwd, normalizedBranch);
-      try {
-        await workspaceGitService.getSnapshot(options.cwd, {
-          force: true,
-          reason: "rename-branch",
-        });
-      } catch (error) {
-        options.logger.warn(
-          { err: error, agentId: options.agentId, cwd: options.cwd },
-          "Failed to force-refresh workspace git snapshot after branch rename",
-        );
-      }
-      options.agentManager.notifyAgentState(options.agentId);
-      await options.agentManager.flush();
-    } catch (error) {
-      options.logger.warn(
-        { err: error, agentId: options.agentId, branch: normalizedBranch },
-        "Failed to rename branch",
+        { err: error, agentId: options.agentId, cwd: options.cwd },
+        "Failed to force-refresh workspace git snapshot after branch rename",
       );
     }
+    options.agentManager.notifyAgentState(options.agentId);
+    await options.agentManager.flush();
+  } catch (error) {
+    options.logger.warn(
+      { err: error, agentId: options.agentId, branch: normalizedBranch },
+      "Failed to rename branch",
+    );
   }
 }
 

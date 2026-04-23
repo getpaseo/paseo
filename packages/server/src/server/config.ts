@@ -102,6 +102,105 @@ function extractAgentProviderSettings(
     : undefined;
 }
 
+interface ResolveRelayInput {
+  env: NodeJS.ProcessEnv;
+  persisted: ReturnType<typeof loadPersistedConfig>;
+  cliRelayEnabled: boolean | undefined;
+}
+
+interface ResolvedRelay {
+  enabled: boolean;
+  endpoint: string;
+  publicEndpoint: string;
+}
+
+function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
+  const enabled =
+    input.cliRelayEnabled ??
+    parseBooleanEnv(input.env.PASEO_RELAY_ENABLED) ??
+    input.persisted.daemon?.relay?.enabled ??
+    true;
+  const endpoint =
+    input.env.PASEO_RELAY_ENDPOINT ??
+    input.persisted.daemon?.relay?.endpoint ??
+    DEFAULT_RELAY_ENDPOINT;
+  const publicEndpoint =
+    input.env.PASEO_RELAY_PUBLIC_ENDPOINT ??
+    input.persisted.daemon?.relay?.publicEndpoint ??
+    endpoint;
+  return { enabled, endpoint, publicEndpoint };
+}
+
+interface ResolvedVoiceLlm {
+  provider: AgentProvider | null;
+  providerExplicit: boolean;
+  model: string | null;
+}
+
+function resolveVoiceLlmConfig(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): ResolvedVoiceLlm {
+  const envVoiceLlmProvider = parseOptionalVoiceLlmProvider(env.PASEO_VOICE_LLM_PROVIDER);
+  const persistedVoiceLlmProvider = parseOptionalVoiceLlmProvider(
+    persisted.features?.voiceMode?.llm?.provider,
+  );
+  return {
+    provider: envVoiceLlmProvider ?? persistedVoiceLlmProvider ?? null,
+    providerExplicit: envVoiceLlmProvider !== null || persistedVoiceLlmProvider !== null,
+    model: persisted.features?.voiceMode?.llm?.model ?? null,
+  };
+}
+
+function resolveCorsAllowedOrigins(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): string[] {
+  const envCorsOrigins = env.PASEO_CORS_ORIGINS
+    ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())
+    : [];
+  const persistedCorsOrigins = persisted.daemon?.cors?.allowedOrigins ?? [];
+  return Array.from(
+    new Set([...persistedCorsOrigins, ...envCorsOrigins].filter((s) => s.length > 0)),
+  );
+}
+
+// PASEO_LISTEN can be:
+// - host:port (TCP)
+// - /path/to/socket (Unix socket)
+// - unix:///path/to/socket (Unix socket)
+// Default is TCP at 127.0.0.1:6767
+function resolveListenAddress(
+  env: NodeJS.ProcessEnv,
+  cli: CliConfigOverrides | undefined,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): string {
+  return (
+    cli?.listen ??
+    env.PASEO_LISTEN ??
+    persisted.daemon?.listen ??
+    `127.0.0.1:${env.PORT ?? DEFAULT_PORT}`
+  );
+}
+
+function resolveStaticLoadConfigSettings(
+  env: NodeJS.ProcessEnv,
+  cli: CliConfigOverrides | undefined,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+) {
+  return {
+    mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
+    mcpInjectIntoAgents:
+      cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
+    hostnames: mergeHostnames([
+      persisted.daemon?.hostnames,
+      parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
+      cli?.hostnames,
+    ]),
+    appBaseUrl: env.PASEO_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL,
+  };
+}
+
 export function loadConfig(
   paseoHome: string,
   options?: {
@@ -112,46 +211,15 @@ export function loadConfig(
   const env = options?.env ?? process.env;
   const persisted = loadPersistedConfig(paseoHome);
 
-  // PASEO_LISTEN can be:
-  // - host:port (TCP)
-  // - /path/to/socket (Unix socket)
-  // - unix:///path/to/socket (Unix socket)
-  // Default is TCP at 127.0.0.1:6767
-  const listen =
-    options?.cli?.listen ??
-    env.PASEO_LISTEN ??
-    persisted.daemon?.listen ??
-    `127.0.0.1:${env.PORT ?? DEFAULT_PORT}`;
+  const listen = resolveListenAddress(env, options?.cli, persisted);
+  const { mcpEnabled, mcpInjectIntoAgents, hostnames, appBaseUrl } =
+    resolveStaticLoadConfigSettings(env, options?.cli, persisted);
 
-  const envCorsOrigins = env.PASEO_CORS_ORIGINS
-    ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())
-    : [];
-
-  const persistedCorsOrigins = persisted.daemon?.cors?.allowedOrigins ?? [];
-
-  const hostnames = mergeHostnames([
-    persisted.daemon?.hostnames,
-    parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
-    options?.cli?.hostnames,
-  ]);
-
-  const mcpEnabled = options?.cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true;
-  const mcpInjectIntoAgents =
-    options?.cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false;
-
-  const relayEnabled =
-    options?.cli?.relayEnabled ??
-    parseBooleanEnv(env.PASEO_RELAY_ENABLED) ??
-    persisted.daemon?.relay?.enabled ??
-    true;
-
-  const relayEndpoint =
-    env.PASEO_RELAY_ENDPOINT ?? persisted.daemon?.relay?.endpoint ?? DEFAULT_RELAY_ENDPOINT;
-
-  const relayPublicEndpoint =
-    env.PASEO_RELAY_PUBLIC_ENDPOINT ?? persisted.daemon?.relay?.publicEndpoint ?? relayEndpoint;
-
-  const appBaseUrl = env.PASEO_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL;
+  const relay = resolveRelayConfig({
+    env,
+    persisted,
+    cliRelayEnabled: options?.cli?.relayEnabled,
+  });
 
   const { openai, speech } = resolveSpeechConfig({
     paseoHome,
@@ -159,14 +227,7 @@ export function loadConfig(
     persisted,
   });
 
-  const envVoiceLlmProvider = parseOptionalVoiceLlmProvider(env.PASEO_VOICE_LLM_PROVIDER);
-  const persistedVoiceLlmProvider = parseOptionalVoiceLlmProvider(
-    persisted.features?.voiceMode?.llm?.provider,
-  );
-  const voiceLlmProvider = envVoiceLlmProvider ?? persistedVoiceLlmProvider ?? null;
-  const voiceLlmProviderExplicit =
-    envVoiceLlmProvider !== null || persistedVoiceLlmProvider !== null;
-  const voiceLlmModel = persisted.features?.voiceMode?.llm?.model ?? null;
+  const voiceLlm = resolveVoiceLlmConfig(env, persisted);
   const providerOverrides = extractProviderOverrides(
     persisted.agents?.providers as Record<string, unknown> | undefined,
   );
@@ -174,9 +235,7 @@ export function loadConfig(
   return {
     listen,
     paseoHome,
-    corsAllowedOrigins: Array.from(
-      new Set([...persistedCorsOrigins, ...envCorsOrigins].filter((s) => s.length > 0)),
-    ),
+    corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,
     mcpEnabled,
     mcpInjectIntoAgents,
@@ -185,15 +244,15 @@ export function loadConfig(
     agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",
     agentClients: {},
-    relayEnabled,
-    relayEndpoint,
-    relayPublicEndpoint,
+    relayEnabled: relay.enabled,
+    relayEndpoint: relay.endpoint,
+    relayPublicEndpoint: relay.publicEndpoint,
     appBaseUrl,
     openai,
     speech,
-    voiceLlmProvider,
-    voiceLlmProviderExplicit,
-    voiceLlmModel,
+    voiceLlmProvider: voiceLlm.provider,
+    voiceLlmProviderExplicit: voiceLlm.providerExplicit,
+    voiceLlmModel: voiceLlm.model,
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     providerOverrides,
   };

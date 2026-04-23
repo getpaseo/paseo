@@ -94,40 +94,64 @@ const ToolShellOutputObjectSchema = z
   })
   .passthrough();
 
+function firstNonEmptyString(values: Array<unknown>): string | undefined {
+  for (const value of values) {
+    const resolved = nonEmptyString(value);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  return undefined;
+}
+
+function resolveShellOutputRawText(
+  value: z.infer<typeof ToolShellOutputObjectSchema>,
+): string | undefined {
+  return firstNonEmptyString([
+    value.output,
+    value.text,
+    value.content,
+    value.aggregated_output,
+    value.aggregatedOutput,
+    value.structuredContent?.output,
+    value.structuredContent?.text,
+    value.structuredContent?.content,
+    value.structured_content?.output,
+    value.structured_content?.text,
+    value.structured_content?.content,
+    value.result?.output,
+    value.result?.text,
+    value.result?.content,
+  ]);
+}
+
+function resolveShellOutputExitCode(
+  value: z.infer<typeof ToolShellOutputObjectSchema>,
+): number | null | undefined {
+  return (
+    value.exitCode ??
+    value.exit_code ??
+    value.metadata?.exitCode ??
+    value.metadata?.exit_code ??
+    undefined
+  );
+}
+
+function transformShellOutputObject(value: z.infer<typeof ToolShellOutputObjectSchema>) {
+  return {
+    command: nonEmptyString(value.command) ?? nonEmptyString(value.result?.command),
+    output: extractCodexShellOutput(resolveShellOutputRawText(value)),
+    exitCode: resolveShellOutputExitCode(value),
+  };
+}
+
 export const ToolShellOutputSchema = z.union([
   z.string().transform((value) => ({
     command: undefined,
     output: extractCodexShellOutput(value),
     exitCode: undefined,
   })),
-  ToolShellOutputObjectSchema.transform((value) => {
-    const rawOutput =
-      nonEmptyString(value.output) ??
-      nonEmptyString(value.text) ??
-      nonEmptyString(value.content) ??
-      nonEmptyString(value.aggregated_output) ??
-      nonEmptyString(value.aggregatedOutput) ??
-      nonEmptyString(value.structuredContent?.output) ??
-      nonEmptyString(value.structuredContent?.text) ??
-      nonEmptyString(value.structuredContent?.content) ??
-      nonEmptyString(value.structured_content?.output) ??
-      nonEmptyString(value.structured_content?.text) ??
-      nonEmptyString(value.structured_content?.content) ??
-      nonEmptyString(value.result?.output) ??
-      nonEmptyString(value.result?.text) ??
-      nonEmptyString(value.result?.content);
-
-    return {
-      command: nonEmptyString(value.command) ?? nonEmptyString(value.result?.command),
-      output: extractCodexShellOutput(rawOutput),
-      exitCode:
-        value.exitCode ??
-        value.exit_code ??
-        value.metadata?.exitCode ??
-        value.metadata?.exit_code ??
-        undefined,
-    };
-  }),
+  ToolShellOutputObjectSchema.transform((value) => transformShellOutputObject(value)),
 ]);
 
 export const ToolPathInputSchema = z.union([
@@ -735,6 +759,54 @@ export function toEditToolDetail(
   };
 }
 
+function buildWebSearchExtraFields(output: ParsedToolWebSearchOutput): Record<string, unknown> {
+  const webResults = output.results.flatMap((entry) =>
+    typeof entry === "string" ? [] : entry.content,
+  );
+  const annotations = output.results.filter((entry): entry is string => typeof entry === "string");
+  return {
+    ...(webResults.length > 0 ? { webResults } : {}),
+    ...(annotations.length > 0 ? { annotations } : {}),
+    durationSeconds: output.durationSeconds,
+  };
+}
+
+function buildGrepExtraFields(output: ParsedToolGrepOutput): Record<string, unknown> {
+  const filePaths = output.filenames.length > 0 ? output.filenames : undefined;
+  return {
+    ...(output.content ? { content: output.content } : {}),
+    ...(filePaths ? { filePaths } : {}),
+    numFiles: output.numFiles,
+    ...(output.numMatches !== undefined ? { numMatches: output.numMatches } : {}),
+    ...(output.mode ? { mode: output.mode } : {}),
+  };
+}
+
+function buildGlobExtraFields(output: ParsedToolGlobOutput): Record<string, unknown> {
+  const filePaths = output.filenames.length > 0 ? output.filenames : undefined;
+  return {
+    ...(filePaths ? { filePaths } : {}),
+    numFiles: output.numFiles,
+    durationMs: output.durationMs,
+    truncated: output.truncated,
+  };
+}
+
+function buildSearchToolDetailOutputFields(
+  output?: ParsedToolGrepOutput | ParsedToolGlobOutput | ParsedToolWebSearchOutput | null,
+): Record<string, unknown> {
+  if (isParsedToolGrepOutput(output)) {
+    return buildGrepExtraFields(output);
+  }
+  if (isParsedToolGlobOutput(output)) {
+    return buildGlobExtraFields(output);
+  }
+  if (isParsedToolWebSearchOutput(output)) {
+    return buildWebSearchExtraFields(output);
+  }
+  return {};
+}
+
 export function toSearchToolDetail(params: {
   input: ParsedToolSearchInput | null;
   output?: ParsedToolGrepOutput | ParsedToolGlobOutput | ParsedToolWebSearchOutput | null;
@@ -745,35 +817,11 @@ export function toSearchToolDetail(params: {
     return undefined;
   }
 
-  let filePaths: string[] | undefined;
-  if (isParsedToolGrepOutput(output) || isParsedToolGlobOutput(output)) {
-    filePaths = output.filenames.length > 0 ? output.filenames : undefined;
-  }
-  const webResults = isParsedToolWebSearchOutput(output)
-    ? output.results.flatMap((entry) => (typeof entry === "string" ? [] : entry.content))
-    : undefined;
-  const annotations = isParsedToolWebSearchOutput(output)
-    ? output.results.filter((entry): entry is string => typeof entry === "string")
-    : undefined;
-
   return {
     type: "search",
     query: input.query,
     ...(toolName ? { toolName } : {}),
-    ...(isParsedToolGrepOutput(output) && output.content ? { content: output.content } : {}),
-    ...(filePaths ? { filePaths } : {}),
-    ...(webResults && webResults.length > 0 ? { webResults } : {}),
-    ...(annotations && annotations.length > 0 ? { annotations } : {}),
-    ...(isParsedToolGrepOutput(output) || isParsedToolGlobOutput(output)
-      ? { numFiles: output.numFiles }
-      : {}),
-    ...(isParsedToolGrepOutput(output) && output.numMatches !== undefined
-      ? { numMatches: output.numMatches }
-      : {}),
-    ...(isParsedToolGlobOutput(output) ? { durationMs: output.durationMs } : {}),
-    ...(isParsedToolWebSearchOutput(output) ? { durationSeconds: output.durationSeconds } : {}),
-    ...(isParsedToolGlobOutput(output) ? { truncated: output.truncated } : {}),
-    ...(isParsedToolGrepOutput(output) && output.mode ? { mode: output.mode } : {}),
+    ...buildSearchToolDetailOutputFields(output),
   };
 }
 

@@ -183,6 +183,132 @@ async function createLocalSttEngine(params: {
   throw new Error(`Unsupported local STT model '${modelId}'`);
 }
 
+type LocalConfig = NonNullable<PaseoSpeechConfig["local"]>;
+
+function isLocalProviderEnabled(provider: { enabled?: boolean; provider: string }): boolean {
+  return provider.enabled !== false && provider.provider === "local";
+}
+
+async function initializeLocalTurnDetection(
+  localConfig: LocalConfig | null,
+  logger: Logger,
+): Promise<TurnDetectionProvider> {
+  let vadModelPath: string | undefined;
+  if (localConfig) {
+    try {
+      vadModelPath = await ensureSileroVadModel(localConfig.modelsDir, logger);
+    } catch (err) {
+      logger.warn({ err }, "Failed to provision Silero VAD model, falling back to bundled");
+    }
+  }
+  return new SherpaSileroTurnDetectionProvider({ modelPath: vadModelPath }, logger);
+}
+
+async function initializeLocalVoiceStt(params: {
+  localConfig: LocalConfig | null;
+  modelId: LocalSttModelId;
+  logger: Logger;
+  getLocalSttEngine: (modelId: LocalSttModelId) => Promise<LocalSttEngine | null>;
+}): Promise<SpeechToTextProvider | null> {
+  const { localConfig, modelId, logger, getLocalSttEngine } = params;
+  if (!localConfig) {
+    logger.warn(
+      { configured: false },
+      "Local STT selected for voice but local provider config is missing; STT will be unavailable",
+    );
+    return null;
+  }
+  const voiceEngine = await getLocalSttEngine(modelId);
+  if (voiceEngine?.kind === "offline") {
+    return new SherpaOnnxParakeetSTT({ engine: voiceEngine.engine }, logger);
+  }
+  if (voiceEngine?.kind === "online") {
+    return new SherpaOnnxSTT({ engine: voiceEngine.engine }, logger);
+  }
+  return null;
+}
+
+async function initializeLocalDictationStt(params: {
+  localConfig: LocalConfig | null;
+  modelId: LocalSttModelId;
+  logger: Logger;
+  getLocalSttEngine: (modelId: LocalSttModelId) => Promise<LocalSttEngine | null>;
+}): Promise<SpeechToTextProvider | null> {
+  const { localConfig, modelId, logger, getLocalSttEngine } = params;
+  if (!localConfig) {
+    logger.warn(
+      { configured: false },
+      "Local STT selected for dictation but local provider config is missing; dictation STT will be unavailable",
+    );
+    return null;
+  }
+  const dictationEngine = await getLocalSttEngine(modelId);
+  if (dictationEngine?.kind === "offline") {
+    return {
+      id: "local",
+      createSession: () =>
+        new SherpaParakeetRealtimeTranscriptionSession({ engine: dictationEngine.engine }),
+    };
+  }
+  if (dictationEngine?.kind === "online") {
+    return {
+      id: "local",
+      createSession: () =>
+        new SherpaRealtimeTranscriptionSession({ engine: dictationEngine.engine }),
+    };
+  }
+  return null;
+}
+
+async function initializeLocalVoiceTts(params: {
+  localConfig: LocalConfig | null;
+  speechConfig: PaseoSpeechConfig | null;
+  localModels: ResolvedLocalModels;
+  logger: Logger;
+}): Promise<TextToSpeechProvider | null> {
+  const { localConfig, speechConfig, localModels, logger } = params;
+  if (!localConfig) {
+    logger.warn(
+      { configured: false },
+      "Local TTS selected for voice but local provider config is missing; TTS will be unavailable",
+    );
+    return null;
+  }
+  try {
+    const modelDir = getLocalSpeechModelDir(localConfig.modelsDir, localModels.voiceLocalTtsModel);
+    if (localModels.voiceLocalTtsModel === "pocket-tts-onnx-int8") {
+      return await PocketTtsOnnxTTS.create(
+        {
+          modelDir,
+          precision: "int8",
+          targetChunkMs: 50,
+        },
+        logger,
+      );
+    }
+    return new SherpaOnnxTTS(
+      {
+        preset: localModels.voiceLocalTtsModel,
+        modelDir,
+        speakerId: speechConfig?.local?.models.voiceTtsSpeakerId,
+        speed: speechConfig?.local?.models.voiceTtsSpeed,
+      },
+      logger,
+    );
+  } catch (err) {
+    logger.warn(
+      {
+        err,
+        modelsDir: localConfig.modelsDir,
+        modelId: localModels.voiceLocalTtsModel,
+        hint: buildModelDownloadHint(localModels.voiceLocalTtsModel),
+      },
+      "Local TTS engine unavailable",
+    );
+    return null;
+  }
+}
+
 export async function initializeLocalSpeechServices(params: {
   providers: RequestedSpeechProviders;
   speechConfig: PaseoSpeechConfig | null;
@@ -235,112 +361,37 @@ export async function initializeLocalSpeechServices(params: {
     }
   };
 
-  if (
-    providers.voiceTurnDetection.enabled !== false &&
-    providers.voiceTurnDetection.provider === "local"
-  ) {
-    let vadModelPath: string | undefined;
-    if (localConfig) {
-      try {
-        vadModelPath = await ensureSileroVadModel(localConfig.modelsDir, logger);
-      } catch (err) {
-        logger.warn({ err }, "Failed to provision Silero VAD model, falling back to bundled");
-      }
-    }
-    turnDetectionService = new SherpaSileroTurnDetectionProvider(
-      { modelPath: vadModelPath },
+  if (isLocalProviderEnabled(providers.voiceTurnDetection)) {
+    turnDetectionService = await initializeLocalTurnDetection(localConfig, logger);
+  }
+
+  if (isLocalProviderEnabled(providers.voiceStt)) {
+    sttService = await initializeLocalVoiceStt({
+      localConfig,
+      modelId: localModels.voiceLocalSttModel,
       logger,
-    );
+      getLocalSttEngine,
+    });
   }
 
-  if (providers.voiceStt.enabled !== false && providers.voiceStt.provider === "local") {
-    if (!localConfig) {
-      logger.warn(
-        { configured: false },
-        "Local STT selected for voice but local provider config is missing; STT will be unavailable",
-      );
-    } else {
-      const voiceEngine = await getLocalSttEngine(localModels.voiceLocalSttModel);
-      if (voiceEngine?.kind === "offline") {
-        sttService = new SherpaOnnxParakeetSTT({ engine: voiceEngine.engine }, logger);
-      } else if (voiceEngine?.kind === "online") {
-        sttService = new SherpaOnnxSTT({ engine: voiceEngine.engine }, logger);
-      }
-    }
+  if (isLocalProviderEnabled(providers.dictationStt)) {
+    dictationSttService = await initializeLocalDictationStt({
+      localConfig,
+      modelId: localModels.dictationLocalSttModel,
+      logger,
+      getLocalSttEngine,
+    });
   }
 
-  if (providers.dictationStt.enabled !== false && providers.dictationStt.provider === "local") {
-    if (!localConfig) {
-      logger.warn(
-        { configured: false },
-        "Local STT selected for dictation but local provider config is missing; dictation STT will be unavailable",
-      );
-    } else {
-      const dictationEngine = await getLocalSttEngine(localModels.dictationLocalSttModel);
-      if (dictationEngine?.kind === "offline") {
-        dictationSttService = {
-          id: "local",
-          createSession: () =>
-            new SherpaParakeetRealtimeTranscriptionSession({ engine: dictationEngine.engine }),
-        };
-      } else if (dictationEngine?.kind === "online") {
-        dictationSttService = {
-          id: "local",
-          createSession: () =>
-            new SherpaRealtimeTranscriptionSession({ engine: dictationEngine.engine }),
-        };
-      }
-    }
-  }
-
-  if (providers.voiceTts.enabled !== false && providers.voiceTts.provider === "local") {
-    if (!localConfig) {
-      logger.warn(
-        { configured: false },
-        "Local TTS selected for voice but local provider config is missing; TTS will be unavailable",
-      );
-    } else {
-      try {
-        if (localModels.voiceLocalTtsModel === "pocket-tts-onnx-int8") {
-          const modelDir = getLocalSpeechModelDir(
-            localConfig.modelsDir,
-            localModels.voiceLocalTtsModel,
-          );
-          localVoiceTtsProvider = await PocketTtsOnnxTTS.create(
-            {
-              modelDir,
-              precision: "int8",
-              targetChunkMs: 50,
-            },
-            logger,
-          );
-        } else {
-          const modelDir = getLocalSpeechModelDir(
-            localConfig.modelsDir,
-            localModels.voiceLocalTtsModel,
-          );
-          localVoiceTtsProvider = new SherpaOnnxTTS(
-            {
-              preset: localModels.voiceLocalTtsModel,
-              modelDir,
-              speakerId: speechConfig?.local?.models.voiceTtsSpeakerId,
-              speed: speechConfig?.local?.models.voiceTtsSpeed,
-            },
-            logger,
-          );
-        }
-        ttsService = localVoiceTtsProvider;
-      } catch (err) {
-        logger.warn(
-          {
-            err,
-            modelsDir: localConfig.modelsDir,
-            modelId: localModels.voiceLocalTtsModel,
-            hint: buildModelDownloadHint(localModels.voiceLocalTtsModel),
-          },
-          "Local TTS engine unavailable",
-        );
-      }
+  if (isLocalProviderEnabled(providers.voiceTts)) {
+    localVoiceTtsProvider = await initializeLocalVoiceTts({
+      localConfig,
+      speechConfig,
+      localModels,
+      logger,
+    });
+    if (localVoiceTtsProvider) {
+      ttsService = localVoiceTtsProvider;
     }
   }
 

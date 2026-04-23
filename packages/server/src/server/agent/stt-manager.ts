@@ -15,6 +15,84 @@ const BATCH_APPEND_CHUNK_SECONDS = 1;
 const DEFAULT_BATCH_COMMIT_EVERY_SECONDS = 15;
 const BATCH_FINAL_TIMEOUT_MS = 120_000;
 
+interface TranscriptSegmentMeta {
+  language?: string;
+  logprobs?: TranscriptionResult["logprobs"];
+  avgLogprob?: number;
+  isLowConfidence?: boolean;
+}
+
+function assembleTranscriptionResult(params: {
+  committedSegmentIds: string[];
+  transcriptsBySegmentId: Map<string, string>;
+  finalTranscriptSegmentIds: Set<string>;
+  transcriptMetaBySegmentId: Map<string, TranscriptSegmentMeta>;
+  durationMs: number;
+}): TranscriptionResult {
+  const {
+    committedSegmentIds,
+    transcriptsBySegmentId,
+    finalTranscriptSegmentIds,
+    transcriptMetaBySegmentId,
+    durationMs,
+  } = params;
+  const committedSet = new Set(committedSegmentIds);
+  const orderedSegmentIds: string[] = [...committedSegmentIds];
+  for (const segmentId of transcriptsBySegmentId.keys()) {
+    if (!committedSet.has(segmentId)) {
+      orderedSegmentIds.push(segmentId);
+    }
+  }
+
+  const transcript = orderedSegmentIds
+    .map((segmentId) => transcriptsBySegmentId.get(segmentId) ?? "")
+    .join(" ")
+    .trim();
+  const orderedFinalMeta = orderedSegmentIds
+    .filter((segmentId) => finalTranscriptSegmentIds.has(segmentId))
+    .map((segmentId) => transcriptMetaBySegmentId.get(segmentId))
+    .filter((meta): meta is TranscriptSegmentMeta => Boolean(meta));
+  const language = orderedFinalMeta.find((meta) => meta.language)?.language;
+  const singleSegmentMeta = orderedFinalMeta.length === 1 ? orderedFinalMeta[0] : null;
+  const allLowConfidence =
+    orderedFinalMeta.length > 0 && orderedFinalMeta.every((meta) => meta.isLowConfidence === true);
+
+  return {
+    text: transcript,
+    ...(language ? { language } : {}),
+    ...(singleSegmentMeta?.logprobs ? { logprobs: singleSegmentMeta.logprobs } : {}),
+    ...(singleSegmentMeta?.avgLogprob !== undefined
+      ? { avgLogprob: singleSegmentMeta.avgLogprob }
+      : {}),
+    ...(allLowConfidence ? { isLowConfidence: true } : {}),
+    duration: durationMs,
+  };
+}
+
+function preparePcmForModel(audio: Buffer, format: string, requiredSampleRate: number): Buffer {
+  let inputRate: number;
+  let pcm16: Buffer;
+  if (format.toLowerCase().includes("audio/wav")) {
+    const parsed = parsePcm16MonoWav(audio);
+    inputRate = parsed.sampleRate;
+    pcm16 = parsed.pcm16;
+  } else if (format.toLowerCase().includes("audio/pcm")) {
+    inputRate = parsePcmRateFromFormat(format, requiredSampleRate) ?? requiredSampleRate;
+    pcm16 = audio;
+  } else {
+    throw new Error(`Unsupported audio format for STT: ${format}`);
+  }
+
+  if (inputRate === requiredSampleRate) {
+    return pcm16;
+  }
+  const resampler = new Pcm16MonoResampler({
+    inputRate,
+    outputRate: requiredSampleRate,
+  });
+  return resampler.processChunk(pcm16);
+}
+
 function resolveBatchCommitEverySeconds(): number {
   const fromEnv = process.env.PASEO_STT_BATCH_COMMIT_EVERY_SECONDS;
   if (!fromEnv) {
@@ -92,29 +170,7 @@ export class STTManager {
       language: "en",
     });
 
-    let inputRate: number;
-    let pcm16: Buffer;
-    if (format.toLowerCase().includes("audio/wav")) {
-      const parsed = parsePcm16MonoWav(audio);
-      inputRate = parsed.sampleRate;
-      pcm16 = parsed.pcm16;
-    } else if (format.toLowerCase().includes("audio/pcm")) {
-      inputRate =
-        parsePcmRateFromFormat(format, session.requiredSampleRate) ?? session.requiredSampleRate;
-      pcm16 = audio;
-    } else {
-      throw new Error(`Unsupported audio format for STT: ${format}`);
-    }
-
-    let pcmForModel = pcm16;
-    if (inputRate !== session.requiredSampleRate) {
-      const resampler = new Pcm16MonoResampler({
-        inputRate,
-        outputRate: session.requiredSampleRate,
-      });
-      pcmForModel = resampler.processChunk(pcm16);
-      inputRate = session.requiredSampleRate;
-    }
+    const pcmForModel = preparePcmForModel(audio, format, session.requiredSampleRate);
 
     try {
       const startedAt = Date.now();
@@ -123,15 +179,7 @@ export class STTManager {
       const committedSegmentIds: string[] = [];
       const transcriptsBySegmentId = new Map<string, string>();
       const finalTranscriptSegmentIds = new Set<string>();
-      const transcriptMetaBySegmentId = new Map<
-        string,
-        {
-          language?: string;
-          logprobs?: TranscriptionResult["logprobs"];
-          avgLogprob?: number;
-          isLowConfidence?: boolean;
-        }
-      >();
+      const transcriptMetaBySegmentId = new Map<string, TranscriptSegmentMeta>();
 
       let expectedFinals = 0;
       let settle: (() => void) | null = null;
@@ -241,47 +289,13 @@ export class STTManager {
       await allFinalsReady;
       clearTimeout(finalTimeout);
 
-      const committedSet = new Set(committedSegmentIds);
-      const orderedSegmentIds: string[] = [...committedSegmentIds];
-      for (const segmentId of transcriptsBySegmentId.keys()) {
-        if (!committedSet.has(segmentId)) {
-          orderedSegmentIds.push(segmentId);
-        }
-      }
-
-      const transcript = orderedSegmentIds
-        .map((segmentId) => transcriptsBySegmentId.get(segmentId) ?? "")
-        .join(" ")
-        .trim();
-      const orderedFinalMeta = orderedSegmentIds
-        .filter((segmentId) => finalTranscriptSegmentIds.has(segmentId))
-        .map((segmentId) => transcriptMetaBySegmentId.get(segmentId))
-        .filter(
-          (
-            meta,
-          ): meta is {
-            language?: string;
-            logprobs?: TranscriptionResult["logprobs"];
-            avgLogprob?: number;
-            isLowConfidence?: boolean;
-          } => Boolean(meta),
-        );
-      const language = orderedFinalMeta.find((meta) => meta.language)?.language;
-      const singleSegmentMeta = orderedFinalMeta.length === 1 ? orderedFinalMeta[0] : null;
-      const allLowConfidence =
-        orderedFinalMeta.length > 0 &&
-        orderedFinalMeta.every((meta) => meta.isLowConfidence === true);
-
-      const result: TranscriptionResult = {
-        text: transcript,
-        ...(language ? { language } : {}),
-        ...(singleSegmentMeta?.logprobs ? { logprobs: singleSegmentMeta.logprobs } : {}),
-        ...(singleSegmentMeta?.avgLogprob !== undefined
-          ? { avgLogprob: singleSegmentMeta.avgLogprob }
-          : {}),
-        ...(allLowConfidence ? { isLowConfidence: true } : {}),
-        duration: Date.now() - startedAt,
-      };
+      const result = assembleTranscriptionResult({
+        committedSegmentIds,
+        transcriptsBySegmentId,
+        finalTranscriptSegmentIds,
+        transcriptMetaBySegmentId,
+        durationMs: Date.now() - startedAt,
+      });
 
       // Filter out low-confidence transcriptions (non-speech sounds)
       if (result.isLowConfidence) {

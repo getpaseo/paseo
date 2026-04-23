@@ -40,6 +40,40 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
+function validateModelFiles(model: SherpaOnlineRecognizerModel): void {
+  if (model.kind === "transducer") {
+    assertFileExists(model.encoder, "transducer encoder");
+    assertFileExists(model.decoder, "transducer decoder");
+    assertFileExists(model.joiner, "transducer joiner");
+    assertFileExists(model.tokens, "tokens");
+  } else {
+    assertFileExists(model.encoder, "paraformer encoder");
+    assertFileExists(model.decoder, "paraformer decoder");
+    assertFileExists(model.tokens, "tokens");
+  }
+}
+
+function buildModelConfig(model: SherpaOnlineRecognizerModel): object {
+  if (model.kind === "transducer") {
+    return {
+      transducer: {
+        encoder: model.encoder,
+        decoder: model.decoder,
+        joiner: model.joiner,
+      },
+      tokens: model.tokens,
+      modelType: model.modelType ?? "zipformer",
+    };
+  }
+  return {
+    paraformer: {
+      encoder: model.encoder,
+      decoder: model.decoder,
+    },
+    tokens: model.tokens,
+  };
+}
+
 export class SherpaOnlineRecognizerEngine {
   public readonly recognizer: any;
   public readonly sampleRate: number;
@@ -53,36 +87,10 @@ export class SherpaOnlineRecognizerEngine {
     });
 
     const { model } = config;
-    if (model.kind === "transducer") {
-      assertFileExists(model.encoder, "transducer encoder");
-      assertFileExists(model.decoder, "transducer decoder");
-      assertFileExists(model.joiner, "transducer joiner");
-      assertFileExists(model.tokens, "tokens");
-    } else {
-      assertFileExists(model.encoder, "paraformer encoder");
-      assertFileExists(model.decoder, "paraformer decoder");
-      assertFileExists(model.tokens, "tokens");
-    }
+    validateModelFiles(model);
 
     const sherpa = loadSherpaOnnx();
-    const modelConfig =
-      model.kind === "transducer"
-        ? {
-            transducer: {
-              encoder: model.encoder,
-              decoder: model.decoder,
-              joiner: model.joiner,
-            },
-            tokens: model.tokens,
-            modelType: model.modelType ?? "zipformer",
-          }
-        : {
-            paraformer: {
-              encoder: model.encoder,
-              decoder: model.decoder,
-            },
-            tokens: model.tokens,
-          };
+    const modelConfig = buildModelConfig(model);
 
     const featConfig = {
       sampleRate: config.sampleRate ?? 16000,

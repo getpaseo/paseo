@@ -447,33 +447,22 @@ function asEditTextFields(text: string | undefined): { unifiedDiff?: string; new
   return { newString: text };
 }
 
-function normalizeRolloutEditInput(input: unknown): unknown {
-  if (typeof input === "string") {
-    const textFields = asEditTextFields(input);
-    const path = extractPatchPrimaryFilePath(input);
-    return {
-      ...(path ? { path } : {}),
-      ...(textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
-      ...(textFields.newString ? { content: textFields.newString } : {}),
-    };
-  }
-  if (!isRecord(input)) {
-    return input;
-  }
-
-  const candidatePatchText =
+function findRolloutEditPatchText(input: Record<string, unknown>): string | undefined {
+  return (
     (typeof input.patch === "string" && input.patch) ||
     (typeof input.diff === "string" && input.diff) ||
     (typeof input.unified_diff === "string" && input.unified_diff) ||
     (typeof input.unifiedDiff === "string" && input.unifiedDiff) ||
     (typeof input.content === "string" && input.content) ||
-    undefined;
-  if (!candidatePatchText) {
-    return input;
-  }
+    undefined
+  );
+}
 
-  const textFields = asEditTextFields(candidatePatchText);
-  const rawPath =
+function findRolloutEditInputPath(
+  input: Record<string, unknown>,
+  patchText: string,
+): string | undefined {
+  return (
     (typeof input.path === "string" && input.path.trim().length > 0 ? input.path : undefined) ||
     (typeof input.file_path === "string" && input.file_path.trim().length > 0
       ? input.file_path
@@ -481,7 +470,18 @@ function normalizeRolloutEditInput(input: unknown): unknown {
     (typeof input.filePath === "string" && input.filePath.trim().length > 0
       ? input.filePath
       : undefined) ||
-    extractPatchPrimaryFilePath(candidatePatchText);
+    extractPatchPrimaryFilePath(patchText)
+  );
+}
+
+function normalizeRolloutEditRecordInput(input: Record<string, unknown>): unknown {
+  const candidatePatchText = findRolloutEditPatchText(input);
+  if (!candidatePatchText) {
+    return input;
+  }
+
+  const textFields = asEditTextFields(candidatePatchText);
+  const rawPath = findRolloutEditInputPath(input, candidatePatchText);
 
   const {
     patch: _patch,
@@ -503,6 +503,22 @@ function normalizeRolloutEditInput(input: unknown): unknown {
   }
 
   return normalized;
+}
+
+function normalizeRolloutEditInput(input: unknown): unknown {
+  if (typeof input === "string") {
+    const textFields = asEditTextFields(input);
+    const path = extractPatchPrimaryFilePath(input);
+    return {
+      ...(path ? { path } : {}),
+      ...(textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
+      ...(textFields.newString ? { content: textFields.newString } : {}),
+    };
+  }
+  if (!isRecord(input)) {
+    return input;
+  }
+  return normalizeRolloutEditRecordInput(input);
 }
 
 function asEditFileOutputFields(text: string | undefined): { patch?: string; content?: string } {

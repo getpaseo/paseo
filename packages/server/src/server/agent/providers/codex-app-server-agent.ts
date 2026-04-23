@@ -1474,6 +1474,34 @@ function mapCodexTerminalInteractionToToolCall(params: {
   };
 }
 
+function mapCodexThreadPlanItem(normalizedItem: any): AgentTimelineItem | null {
+  const callId =
+    nonEmptyString(normalizedItem.id ?? normalizedItem.itemId ?? undefined) ??
+    `plan:${normalizePlanMarkdown(normalizedItem.text ?? "")}`;
+  return mapCodexPlanToToolCall({
+    callId,
+    text: normalizedItem.text ?? "",
+  });
+}
+
+function mapCodexThreadReasoningItem(normalizedItem: any): AgentTimelineItem | null {
+  const summary = Array.isArray(normalizedItem.summary) ? normalizedItem.summary.join("\n") : "";
+  const content = Array.isArray(normalizedItem.content) ? normalizedItem.content.join("\n") : "";
+  const text = summary || content;
+  return text ? { type: "reasoning", text } : null;
+}
+
+function mapCodexThreadUserMessageItem(
+  normalizedItem: any,
+  includeUserMessage: boolean,
+): AgentTimelineItem | null {
+  if (!includeUserMessage) {
+    return null;
+  }
+  const text = extractUserText(normalizedItem.content) ?? "";
+  return { type: "user_message", text };
+}
+
 function threadItemToTimeline(
   item: any,
   options?: { includeUserMessage?: boolean; cwd?: string | null },
@@ -1490,34 +1518,14 @@ function threadItemToTimeline(
       : item;
 
   switch (normalizedType) {
-    case "userMessage": {
-      if (!includeUserMessage) {
-        return null;
-      }
-      const text = extractUserText(normalizedItem.content) ?? "";
-      return { type: "user_message", text };
-    }
-    case "agentMessage": {
+    case "userMessage":
+      return mapCodexThreadUserMessageItem(normalizedItem, includeUserMessage);
+    case "agentMessage":
       return { type: "assistant_message", text: normalizedItem.text ?? "" };
-    }
-    case "plan": {
-      return mapCodexPlanToToolCall({
-        callId:
-          nonEmptyString(normalizedItem.id ?? normalizedItem.itemId ?? undefined) ??
-          `plan:${normalizePlanMarkdown(normalizedItem.text ?? "")}`,
-        text: normalizedItem.text ?? "",
-      });
-    }
-    case "reasoning": {
-      const summary = Array.isArray(normalizedItem.summary)
-        ? normalizedItem.summary.join("\n")
-        : "";
-      const content = Array.isArray(normalizedItem.content)
-        ? normalizedItem.content.join("\n")
-        : "";
-      const text = summary || content;
-      return text ? { type: "reasoning", text } : null;
-    }
+    case "plan":
+      return mapCodexThreadPlanItem(normalizedItem);
+    case "reasoning":
+      return mapCodexThreadReasoningItem(normalizedItem);
     case "commandExecution":
     case "fileChange":
     case "mcpToolCall":
@@ -3175,26 +3183,7 @@ class CodexAppServerAgentSession implements AgentSession {
     const pendingRequest = this.pendingPermissions.get(requestId) ?? null;
 
     if (pending.kind === "plan") {
-      let followUpPrompt: string | undefined;
-      if (response.behavior === "allow") {
-        followUpPrompt = this.preparePlanImplementation({
-          planText: pending.planText ?? pendingRequest?.metadata?.planText,
-        });
-      }
-
-      this.pendingPermissionHandlers.delete(requestId);
-      this.pendingPermissions.delete(requestId);
-      this.resolvedPermissionRequests.add(requestId);
-      this.emitEvent({
-        type: "permission_resolved",
-        provider: CODEX_PROVIDER,
-        requestId,
-        resolution: response,
-      });
-      if (followUpPrompt) {
-        return { followUpPrompt };
-      }
-      return;
+      return this.handlePlanPermissionResponse({ requestId, response, pending, pendingRequest });
     }
 
     this.pendingPermissionHandlers.delete(requestId);
@@ -3202,34 +3191,7 @@ class CodexAppServerAgentSession implements AgentSession {
     this.resolvedPermissionRequests.add(requestId);
 
     if (response.behavior === "deny" && pendingRequest?.kind === "tool") {
-      let fallbackName: string;
-      if (pendingRequest.name === "CodexBash") {
-        fallbackName = "shell";
-      } else if (pendingRequest.name === "CodexFileChange") {
-        fallbackName = "apply_patch";
-      } else {
-        fallbackName = pendingRequest.name;
-      }
-      this.emitEvent({
-        type: "timeline",
-        provider: CODEX_PROVIDER,
-        item: {
-          type: "tool_call",
-          callId: requestId,
-          name: fallbackName,
-          status: "failed",
-          error: { message: response.message ?? "Permission denied" },
-          detail: pendingRequest.detail ?? {
-            type: "unknown",
-            input: pendingRequest.input ?? null,
-            output: null,
-          },
-          metadata: {
-            permissionRequestId: requestId,
-            denied: true,
-          },
-        },
-      });
+      this.emitDeniedToolCallTimelineEvent({ requestId, response, pendingRequest });
     }
 
     this.emitEvent({
@@ -3296,6 +3258,75 @@ class CodexAppServerAgentSession implements AgentSession {
       }),
     });
     pending.resolve({ answers: {} });
+  }
+
+  private handlePlanPermissionResponse(params: {
+    requestId: string;
+    response: AgentPermissionResponse;
+    pending: {
+      resolve: (value: unknown) => void;
+      kind: "command" | "file" | "question" | "plan";
+      questions?: CodexQuestionPrompt[];
+      planText?: string;
+    };
+    pendingRequest: AgentPermissionRequest | null;
+  }): AgentPermissionResult | void {
+    const { requestId, response, pending, pendingRequest } = params;
+    let followUpPrompt: string | undefined;
+    if (response.behavior === "allow") {
+      followUpPrompt = this.preparePlanImplementation({
+        planText: pending.planText ?? pendingRequest?.metadata?.planText,
+      });
+    }
+
+    this.pendingPermissionHandlers.delete(requestId);
+    this.pendingPermissions.delete(requestId);
+    this.resolvedPermissionRequests.add(requestId);
+    this.emitEvent({
+      type: "permission_resolved",
+      provider: CODEX_PROVIDER,
+      requestId,
+      resolution: response,
+    });
+    if (followUpPrompt) {
+      return { followUpPrompt };
+    }
+  }
+
+  private emitDeniedToolCallTimelineEvent(params: {
+    requestId: string;
+    response: Extract<AgentPermissionResponse, { behavior: "deny" }>;
+    pendingRequest: AgentPermissionRequest;
+  }): void {
+    const { requestId, response, pendingRequest } = params;
+    let fallbackName: string;
+    if (pendingRequest.name === "CodexBash") {
+      fallbackName = "shell";
+    } else if (pendingRequest.name === "CodexFileChange") {
+      fallbackName = "apply_patch";
+    } else {
+      fallbackName = pendingRequest.name;
+    }
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: {
+        type: "tool_call",
+        callId: requestId,
+        name: fallbackName,
+        status: "failed",
+        error: { message: response.message ?? "Permission denied" },
+        detail: pendingRequest.detail ?? {
+          type: "unknown",
+          input: pendingRequest.input ?? null,
+          output: null,
+        },
+        metadata: {
+          permissionRequestId: requestId,
+          denied: true,
+        },
+      },
+    });
   }
 
   describePersistence(): {
@@ -3380,11 +3411,13 @@ class CodexAppServerAgentSession implements AgentSession {
     );
   }
 
-  private async ensureThread(): Promise<void> {
-    if (!this.client) return;
-    if (this.currentThreadId) return;
-
-    // Resolve model + thinking defaults when omitted.
+  private async resolveModelAndThinking(): Promise<{
+    model: string;
+    thinkingOptionId: string | undefined;
+  }> {
+    if (!this.client) {
+      throw new Error("Codex client is not initialized");
+    }
     let configuredDefaults: CodexConfiguredDefaults = {};
     let model = this.config.model;
     let thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
@@ -3415,6 +3448,17 @@ class CodexAppServerAgentSession implements AgentSession {
       }
     }
 
+    if (!model) {
+      throw new Error("Unable to resolve Codex model");
+    }
+    return { model, thinkingOptionId };
+  }
+
+  private async ensureThread(): Promise<void> {
+    if (!this.client) return;
+    if (this.currentThreadId) return;
+
+    const { model, thinkingOptionId } = await this.resolveModelAndThinking();
     this.config.model = model;
     this.config.thinkingOptionId = thinkingOptionId;
 
@@ -3489,329 +3533,389 @@ class CodexAppServerAgentSession implements AgentSession {
 
   private handleNotification(method: string, params: unknown): void {
     const parsed = CodexNotificationSchema.parse({ method, params });
-
-    if (parsed.kind === "thread_started") {
-      this.currentThreadId = parsed.threadId;
-      this.emitEvent({
-        type: "thread_started",
-        provider: CODEX_PROVIDER,
-        sessionId: parsed.threadId,
-      });
-      return;
+    switch (parsed.kind) {
+      case "thread_started":
+        this.handleThreadStartedNotification(parsed);
+        return;
+      case "turn_started":
+        this.handleTurnStartedNotification(parsed);
+        return;
+      case "turn_completed":
+        this.handleTurnCompletedNotification(parsed);
+        return;
+      case "plan_updated":
+        this.handlePlanUpdatedNotification(parsed);
+        return;
+      case "diff_updated":
+        // NOTE: Codex app-server emits frequent `turn/diff/updated` notifications
+        // containing a full accumulated unified diff for the *entire turn*.
+        // This is not a concrete file-change tool call; it is progress telemetry.
+        return;
+      case "token_usage_updated":
+        this.handleTokenUsageUpdatedNotification(parsed);
+        return;
+      case "agent_message_delta":
+      case "reasoning_delta":
+      case "exec_command_output_delta":
+      case "file_change_output_delta":
+        this.handleCodexDeltaNotification(parsed);
+        return;
+      case "exec_command_started":
+        this.handleExecCommandStartedNotification(parsed);
+        return;
+      case "exec_command_completed":
+        this.handleExecCommandCompletedNotification(parsed);
+        return;
+      case "terminal_interaction":
+        this.handleTerminalInteractionNotification(parsed);
+        return;
+      case "patch_apply_started":
+        this.handlePatchApplyStartedNotification(parsed);
+        return;
+      case "patch_apply_completed":
+        this.handlePatchApplyCompletedNotification(parsed);
+        return;
+      case "item_completed":
+        this.handleItemCompletedNotification(parsed);
+        return;
+      case "item_started":
+        this.handleItemStartedNotification(parsed);
+        return;
+      case "invalid_payload":
+        this.warnInvalidNotificationPayload(parsed.method, parsed.params);
+        return;
+      default:
+        this.warnUnknownNotificationMethod(parsed.method, parsed.params);
     }
+  }
 
-    if (parsed.kind === "turn_started") {
-      this.currentTurnId = parsed.turnId;
-      this.latestPlanResult = null;
-      this.emittedItemStartedIds.clear();
-      this.emittedItemCompletedIds.clear();
-      this.emittedExecCommandStartedCallIds.clear();
-      this.emittedExecCommandCompletedCallIds.clear();
-      this.pendingCommandOutputDeltas.clear();
-      this.pendingFileChangeOutputDeltas.clear();
-      this.warnedIncompleteEditToolCallIds.clear();
-      this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
-      return;
-    }
-
-    if (parsed.kind === "turn_completed") {
-      if (parsed.status === "failed") {
-        this.emitEvent({
-          type: "turn_failed",
-          provider: CODEX_PROVIDER,
-          error: parsed.errorMessage ?? "Codex turn failed",
-        });
-      } else if (parsed.status === "interrupted") {
-        this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
-      } else {
-        if (this.planModeEnabled && this.latestPlanResult?.text) {
-          this.emitSyntheticPlanApprovalRequest(this.latestPlanResult.text);
-        }
-        this.emitEvent({
-          type: "turn_completed",
-          provider: CODEX_PROVIDER,
-          usage: this.latestUsage,
-        });
+  private handleCodexDeltaNotification(
+    parsed: Extract<
+      ParsedCodexNotification,
+      {
+        kind:
+          | "agent_message_delta"
+          | "reasoning_delta"
+          | "exec_command_output_delta"
+          | "file_change_output_delta";
       }
-      this.activeForegroundTurnId = null;
-      this.latestPlanResult = null;
-      this.emittedItemStartedIds.clear();
-      this.emittedItemCompletedIds.clear();
-      this.emittedExecCommandStartedCallIds.clear();
-      this.emittedExecCommandCompletedCallIds.clear();
-      this.pendingCommandOutputDeltas.clear();
-      this.pendingFileChangeOutputDeltas.clear();
-      this.warnedIncompleteEditToolCallIds.clear();
-      return;
-    }
-
-    if (parsed.kind === "plan_updated") {
-      const timelineItem = mapCodexPlanToToolCall({
-        callId: `plan:${this.currentTurnId ?? this.currentThreadId ?? "current"}`,
-        text: planStepsToMarkdown(
-          parsed.plan.map((entry) => ({
-            step: entry.step ?? "",
-            status: entry.status ?? "pending",
-          })),
-        ),
-      });
-      if (timelineItem) {
-        this.rememberPlanResult(timelineItem);
-        this.emitEvent({
-          type: "timeline",
-          provider: CODEX_PROVIDER,
-          item: timelineItem,
-        });
-      }
-      return;
-    }
-
-    if (parsed.kind === "diff_updated") {
-      // NOTE: Codex app-server emits frequent `turn/diff/updated` notifications
-      // containing a full accumulated unified diff for the *entire turn*.
-      // This is not a concrete file-change tool call; it is progress telemetry.
-      // We intentionally do NOT store every diff update in the timeline.
-      return;
-    }
-
-    if (parsed.kind === "token_usage_updated") {
-      this.latestUsage = toAgentUsage(parsed.tokenUsage);
-      if (this.latestUsage) {
-        this.notifySubscribers({
-          type: "usage_updated",
-          provider: CODEX_PROVIDER,
-          usage: this.latestUsage,
-        });
-      }
-      return;
-    }
-
+    >,
+  ): void {
     if (parsed.kind === "agent_message_delta") {
       const prev = this.pendingAgentMessages.get(parsed.itemId) ?? "";
       this.pendingAgentMessages.set(parsed.itemId, prev + parsed.delta);
       return;
     }
-
     if (parsed.kind === "reasoning_delta") {
       const prev = this.pendingReasoning.get(parsed.itemId) ?? [];
       prev.push(parsed.delta);
       this.pendingReasoning.set(parsed.itemId, prev);
       return;
     }
-
     if (parsed.kind === "exec_command_output_delta") {
       this.appendOutputDeltaChunk(this.pendingCommandOutputDeltas, parsed.callId, parsed.chunk, {
         decodeBase64: true,
       });
       return;
     }
+    this.appendOutputDeltaChunk(this.pendingFileChangeOutputDeltas, parsed.itemId, parsed.delta);
+  }
 
-    if (parsed.kind === "file_change_output_delta") {
-      this.appendOutputDeltaChunk(this.pendingFileChangeOutputDeltas, parsed.itemId, parsed.delta);
-      return;
-    }
+  private handleThreadStartedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "thread_started" }>,
+  ): void {
+    this.currentThreadId = parsed.threadId;
+    this.emitEvent({
+      type: "thread_started",
+      provider: CODEX_PROVIDER,
+      sessionId: parsed.threadId,
+    });
+  }
 
-    if (parsed.kind === "exec_command_started") {
-      if (parsed.callId) {
-        this.emittedExecCommandStartedCallIds.add(parsed.callId);
-        this.pendingCommandOutputDeltas.delete(parsed.callId);
-      }
-      const timelineItem = mapCodexExecNotificationToToolCall({
-        callId: parsed.callId,
-        command: parsed.command,
-        cwd: parsed.cwd ?? this.config.cwd ?? null,
-        running: true,
+  private handleTurnStartedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "turn_started" }>,
+  ): void {
+    this.currentTurnId = parsed.turnId;
+    this.resetTurnTrackingState();
+    this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
+  }
+
+  private handleTurnCompletedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "turn_completed" }>,
+  ): void {
+    if (parsed.status === "failed") {
+      this.emitEvent({
+        type: "turn_failed",
+        provider: CODEX_PROVIDER,
+        error: parsed.errorMessage ?? "Codex turn failed",
       });
-      if (timelineItem) {
-        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    } else if (parsed.status === "interrupted") {
+      this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    } else {
+      if (this.planModeEnabled && this.latestPlanResult?.text) {
+        this.emitSyntheticPlanApprovalRequest(this.latestPlanResult.text);
       }
-      return;
-    }
-
-    if (parsed.kind === "exec_command_completed") {
-      const bufferedOutput = this.consumeOutputDelta(
-        this.pendingCommandOutputDeltas,
-        parsed.callId,
-      );
-      const resolvedOutput = parsed.output ?? bufferedOutput;
-      this.rememberTerminalProcessForCommand(parsed.command, resolvedOutput);
-      const timelineItem = mapCodexExecNotificationToToolCall({
-        callId: parsed.callId,
-        command: parsed.command,
-        cwd: parsed.cwd ?? this.config.cwd ?? null,
-        output: resolvedOutput,
-        exitCode: parsed.exitCode,
-        success: parsed.success,
-        stderr: parsed.stderr,
-        running: false,
+      this.emitEvent({
+        type: "turn_completed",
+        provider: CODEX_PROVIDER,
+        usage: this.latestUsage,
       });
-      if (timelineItem) {
-        this.emittedExecCommandCompletedCallIds.add(timelineItem.callId);
-        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-      }
+    }
+    this.activeForegroundTurnId = null;
+    this.resetTurnTrackingState();
+  }
+
+  private resetTurnTrackingState(): void {
+    this.latestPlanResult = null;
+    this.emittedItemStartedIds.clear();
+    this.emittedItemCompletedIds.clear();
+    this.emittedExecCommandStartedCallIds.clear();
+    this.emittedExecCommandCompletedCallIds.clear();
+    this.pendingCommandOutputDeltas.clear();
+    this.pendingFileChangeOutputDeltas.clear();
+    this.warnedIncompleteEditToolCallIds.clear();
+  }
+
+  private handlePlanUpdatedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "plan_updated" }>,
+  ): void {
+    const timelineItem = mapCodexPlanToToolCall({
+      callId: `plan:${this.currentTurnId ?? this.currentThreadId ?? "current"}`,
+      text: planStepsToMarkdown(
+        parsed.plan.map((entry) => ({
+          step: entry.step ?? "",
+          status: entry.status ?? "pending",
+        })),
+      ),
+    });
+    if (timelineItem) {
+      this.rememberPlanResult(timelineItem);
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    }
+  }
+
+  private handleTokenUsageUpdatedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "token_usage_updated" }>,
+  ): void {
+    this.latestUsage = toAgentUsage(parsed.tokenUsage);
+    if (this.latestUsage) {
+      this.notifySubscribers({
+        type: "usage_updated",
+        provider: CODEX_PROVIDER,
+        usage: this.latestUsage,
+      });
+    }
+  }
+
+  private handleExecCommandStartedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "exec_command_started" }>,
+  ): void {
+    if (parsed.callId) {
+      this.emittedExecCommandStartedCallIds.add(parsed.callId);
+      this.pendingCommandOutputDeltas.delete(parsed.callId);
+    }
+    const timelineItem = mapCodexExecNotificationToToolCall({
+      callId: parsed.callId,
+      command: parsed.command,
+      cwd: parsed.cwd ?? this.config.cwd ?? null,
+      running: true,
+    });
+    if (timelineItem) {
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    }
+  }
+
+  private handleExecCommandCompletedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "exec_command_completed" }>,
+  ): void {
+    const bufferedOutput = this.consumeOutputDelta(this.pendingCommandOutputDeltas, parsed.callId);
+    const resolvedOutput = parsed.output ?? bufferedOutput;
+    this.rememberTerminalProcessForCommand(parsed.command, resolvedOutput);
+    const timelineItem = mapCodexExecNotificationToToolCall({
+      callId: parsed.callId,
+      command: parsed.command,
+      cwd: parsed.cwd ?? this.config.cwd ?? null,
+      output: resolvedOutput,
+      exitCode: parsed.exitCode,
+      success: parsed.success,
+      stderr: parsed.stderr,
+      running: false,
+    });
+    if (timelineItem) {
+      this.emittedExecCommandCompletedCallIds.add(timelineItem.callId);
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    }
+  }
+
+  private handleTerminalInteractionNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "terminal_interaction" }>,
+  ): void {
+    const interactionKey = [parsed.processId ?? "", parsed.stdin ?? ""].join("\u0000");
+    if (!this.shouldEmitTerminalInteractionKey(interactionKey)) {
       return;
     }
+    const command =
+      (parsed.processId ? this.terminalCommandByProcessId.get(parsed.processId) : undefined) ??
+      null;
+    if (!command && parsed.processId) {
+      this.pendingUnlabeledTerminalInteractions.add(parsed.processId);
+    }
+    const timelineItem = mapCodexTerminalInteractionToToolCall({
+      processId: parsed.processId,
+      fallbackCallId: parsed.callId,
+      command,
+    });
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+  }
 
-    if (parsed.kind === "terminal_interaction") {
-      const interactionKey = [parsed.processId ?? "", parsed.stdin ?? ""].join("\u0000");
-      if (!this.shouldEmitTerminalInteractionKey(interactionKey)) {
-        return;
-      }
-      const command =
-        (parsed.processId ? this.terminalCommandByProcessId.get(parsed.processId) : undefined) ??
-        null;
-      if (!command && parsed.processId) {
-        this.pendingUnlabeledTerminalInteractions.add(parsed.processId);
-      }
-      const timelineItem = mapCodexTerminalInteractionToToolCall({
-        processId: parsed.processId,
-        fallbackCallId: parsed.callId,
-        command,
+  private handlePatchApplyStartedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "patch_apply_started" }>,
+  ): void {
+    if (parsed.callId) {
+      this.pendingFileChangeOutputDeltas.delete(parsed.callId);
+    }
+    const timelineItem = mapCodexPatchNotificationToToolCall({
+      callId: parsed.callId,
+      changes: parsed.changes,
+      cwd: this.config.cwd ?? null,
+      running: true,
+    });
+    if (timelineItem) {
+      this.warnOnIncompleteEditToolCall(timelineItem, "patch_apply_started", {
+        callId: parsed.callId,
+        changes: parsed.changes,
       });
       this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-      return;
     }
+  }
 
-    if (parsed.kind === "patch_apply_started") {
-      if (parsed.callId) {
-        this.pendingFileChangeOutputDeltas.delete(parsed.callId);
-      }
-      const timelineItem = mapCodexPatchNotificationToToolCall({
+  private handlePatchApplyCompletedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "patch_apply_completed" }>,
+  ): void {
+    const bufferedOutput = this.consumeOutputDelta(
+      this.pendingFileChangeOutputDeltas,
+      parsed.callId,
+    );
+    const timelineItem = mapCodexPatchNotificationToToolCall({
+      callId: parsed.callId,
+      changes: parsed.changes,
+      cwd: this.config.cwd ?? null,
+      stdout: parsed.stdout ?? bufferedOutput,
+      stderr: parsed.stderr,
+      success: parsed.success,
+      running: false,
+    });
+    if (timelineItem) {
+      this.warnOnIncompleteEditToolCall(timelineItem, "patch_apply_completed", {
         callId: parsed.callId,
         changes: parsed.changes,
-        cwd: this.config.cwd ?? null,
-        running: true,
+        stdout: parsed.stdout,
       });
-      if (timelineItem) {
-        this.warnOnIncompleteEditToolCall(timelineItem, "patch_apply_started", {
-          callId: parsed.callId,
-          changes: parsed.changes,
-        });
-        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-      }
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    }
+  }
+
+  private handleItemCompletedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "item_completed" }>,
+  ): void {
+    // Codex emits mirrored lifecycle notifications via both `codex/event/item_*`
+    // and canonical `item/*`. We render only the canonical channel to avoid
+    // duplicated assistant/reasoning rows.
+    if (parsed.source === "codex_event") {
       return;
     }
-
-    if (parsed.kind === "patch_apply_completed") {
-      const bufferedOutput = this.consumeOutputDelta(
-        this.pendingFileChangeOutputDeltas,
-        parsed.callId,
-      );
-      const timelineItem = mapCodexPatchNotificationToToolCall({
-        callId: parsed.callId,
-        changes: parsed.changes,
-        cwd: this.config.cwd ?? null,
-        stdout: parsed.stdout ?? bufferedOutput,
-        stderr: parsed.stderr,
-        success: parsed.success,
-        running: false,
-      });
-      if (timelineItem) {
-        this.warnOnIncompleteEditToolCall(timelineItem, "patch_apply_completed", {
-          callId: parsed.callId,
-          changes: parsed.changes,
-          stdout: parsed.stdout,
-        });
-        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-      }
+    const timelineItem = threadItemToTimeline(parsed.item, {
+      includeUserMessage: false,
+      cwd: this.config.cwd ?? null,
+    });
+    if (!timelineItem) {
       return;
     }
-
-    if (parsed.kind === "item_completed") {
-      // Codex emits mirrored lifecycle notifications via both `codex/event/item_*`
-      // and canonical `item/*`. We render only the canonical channel to avoid
-      // duplicated assistant/reasoning rows.
-      if (parsed.source === "codex_event") {
+    const normalizedItemType = normalizeCodexThreadItemType(
+      typeof parsed.item.type === "string" ? parsed.item.type : undefined,
+    );
+    const itemId = parsed.item.id;
+    // For commandExecution items, codex/event/exec_command_* is authoritative.
+    if (timelineItem.type === "tool_call" && normalizedItemType === "commandExecution") {
+      const callId = timelineItem.callId || itemId;
+      if (callId && this.emittedExecCommandCompletedCallIds.has(callId)) {
         return;
       }
-      const timelineItem = threadItemToTimeline(parsed.item, {
-        includeUserMessage: false,
-        cwd: this.config.cwd ?? null,
-      });
-      if (timelineItem) {
-        const normalizedItemType = normalizeCodexThreadItemType(
-          typeof parsed.item.type === "string" ? parsed.item.type : undefined,
-        );
-        const itemId = parsed.item.id;
-        // For commandExecution items, codex/event/exec_command_* is authoritative.
-        // Keep item/completed as fallback only when no exec_command completion was seen.
-        if (timelineItem.type === "tool_call" && normalizedItemType === "commandExecution") {
-          const callId = timelineItem.callId || itemId;
-          if (callId && this.emittedExecCommandCompletedCallIds.has(callId)) {
-            return;
-          }
-        }
-        if (itemId && this.emittedItemCompletedIds.has(itemId)) {
-          return;
-        }
-        if (timelineItem.type === "assistant_message" && itemId) {
-          const buffered = this.pendingAgentMessages.get(itemId);
-          if (buffered && buffered.length > 0) {
-            timelineItem.text = buffered;
-          }
-        }
-        if (timelineItem.type === "reasoning" && itemId) {
-          const buffered = this.pendingReasoning.get(itemId);
-          if (buffered && buffered.length > 0) {
-            timelineItem.text = buffered.join("");
-          }
-        }
-        if (timelineItem.type === "tool_call") {
-          if (timelineItem.detail.type === "plan") {
-            this.rememberPlanResult(timelineItem);
-          }
-          this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
-        }
-        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-        if (itemId) {
-          this.emittedItemCompletedIds.add(itemId);
-          this.emittedItemStartedIds.delete(itemId);
-          this.pendingCommandOutputDeltas.delete(itemId);
-          this.pendingFileChangeOutputDeltas.delete(itemId);
-        }
+    }
+    if (itemId && this.emittedItemCompletedIds.has(itemId)) {
+      return;
+    }
+    this.applyBufferedDeltaTextToTimelineItem(timelineItem, itemId);
+    if (timelineItem.type === "tool_call") {
+      if (timelineItem.detail.type === "plan") {
+        this.rememberPlanResult(timelineItem);
+      }
+      this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
+    }
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    if (itemId) {
+      this.emittedItemCompletedIds.add(itemId);
+      this.emittedItemStartedIds.delete(itemId);
+      this.pendingCommandOutputDeltas.delete(itemId);
+      this.pendingFileChangeOutputDeltas.delete(itemId);
+    }
+  }
+
+  private applyBufferedDeltaTextToTimelineItem(
+    timelineItem: AgentTimelineItem,
+    itemId: string | null | undefined,
+  ): void {
+    if (!itemId) {
+      return;
+    }
+    if (timelineItem.type === "assistant_message") {
+      const buffered = this.pendingAgentMessages.get(itemId);
+      if (buffered && buffered.length > 0) {
+        timelineItem.text = buffered;
       }
       return;
     }
+    if (timelineItem.type === "reasoning") {
+      const buffered = this.pendingReasoning.get(itemId);
+      if (buffered && buffered.length > 0) {
+        timelineItem.text = buffered.join("");
+      }
+    }
+  }
 
-    if (parsed.kind === "item_started") {
-      if (parsed.source === "codex_event") {
+  private handleItemStartedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "item_started" }>,
+  ): void {
+    if (parsed.source === "codex_event") {
+      return;
+    }
+    const timelineItem = threadItemToTimeline(parsed.item, {
+      includeUserMessage: false,
+      cwd: this.config.cwd ?? null,
+    });
+    if (!timelineItem || timelineItem.type !== "tool_call") {
+      return;
+    }
+    const normalizedItemType = normalizeCodexThreadItemType(
+      typeof parsed.item.type === "string" ? parsed.item.type : undefined,
+    );
+    const itemId = parsed.item.id;
+    if (normalizedItemType === "commandExecution") {
+      const callId = timelineItem.callId || itemId;
+      if (callId && this.emittedExecCommandStartedCallIds.has(callId)) {
         return;
       }
-      const timelineItem = threadItemToTimeline(parsed.item, {
-        includeUserMessage: false,
-        cwd: this.config.cwd ?? null,
-      });
-      if (timelineItem && timelineItem.type === "tool_call") {
-        const normalizedItemType = normalizeCodexThreadItemType(
-          typeof parsed.item.type === "string" ? parsed.item.type : undefined,
-        );
-        const itemId = parsed.item.id;
-        if (normalizedItemType === "commandExecution") {
-          const callId = timelineItem.callId || itemId;
-          if (callId && this.emittedExecCommandStartedCallIds.has(callId)) {
-            return;
-          }
-        }
-        if (itemId && this.emittedItemStartedIds.has(itemId)) {
-          return;
-        }
-        this.warnOnIncompleteEditToolCall(timelineItem, "item_started", parsed.item);
-        this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-        if (itemId) {
-          this.emittedItemStartedIds.add(itemId);
-          this.pendingCommandOutputDeltas.delete(itemId);
-          this.pendingFileChangeOutputDeltas.delete(itemId);
-        }
-      }
+    }
+    if (itemId && this.emittedItemStartedIds.has(itemId)) {
       return;
     }
-
-    if (parsed.kind === "invalid_payload") {
-      this.warnInvalidNotificationPayload(parsed.method, parsed.params);
-      return;
+    this.warnOnIncompleteEditToolCall(timelineItem, "item_started", parsed.item);
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    if (itemId) {
+      this.emittedItemStartedIds.add(itemId);
+      this.pendingCommandOutputDeltas.delete(itemId);
+      this.pendingFileChangeOutputDeltas.delete(itemId);
     }
-
-    this.warnUnknownNotificationMethod(parsed.method, parsed.params);
   }
 
   private warnUnknownNotificationMethod(method: string, params: unknown): void {

@@ -15,27 +15,27 @@ type SupervisorLifecycleMessage =
       reason?: string;
     };
 
-async function main() {
-  let paseoHome: string;
-  let logger: ReturnType<typeof createRootLogger>;
-  let config: ReturnType<typeof loadConfig>;
-  let daemon: Awaited<ReturnType<typeof createPaseoDaemon>> | null = null;
-  let shutdownPromise: Promise<number> | null = null;
-  let exitHookInstalled = false;
-  const supervised = process.env.PASEO_SUPERVISED === "1" && typeof process.send === "function";
-  let pidLockAcquired = false;
+interface BootstrapResult {
+  paseoHome: string;
+  logger: ReturnType<typeof createRootLogger>;
+  config: ReturnType<typeof loadConfig>;
+}
 
+function bootstrapFromEnvironment(): BootstrapResult {
   try {
-    paseoHome = resolvePaseoHome();
+    const paseoHome = resolvePaseoHome();
     const persistedConfig = loadPersistedConfig(paseoHome);
-    logger = createRootLogger(persistedConfig, { paseoHome });
-    config = loadConfig(paseoHome);
+    const logger = createRootLogger(persistedConfig, { paseoHome });
+    const config = loadConfig(paseoHome);
+    return { paseoHome, logger, config };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`${message}\n`);
     process.exit(1);
   }
+}
 
+function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
   if (process.argv.includes("--no-relay")) {
     config.relayEnabled = false;
   }
@@ -45,6 +45,17 @@ async function main() {
   if (process.argv.includes("--no-inject-mcp")) {
     config.mcpInjectIntoAgents = false;
   }
+}
+
+async function main() {
+  const { paseoHome, logger, config } = bootstrapFromEnvironment();
+  let daemon: Awaited<ReturnType<typeof createPaseoDaemon>> | null = null;
+  let shutdownPromise: Promise<number> | null = null;
+  let exitHookInstalled = false;
+  const supervised = process.env.PASEO_SUPERVISED === "1" && typeof process.send === "function";
+  let pidLockAcquired = false;
+
+  applyCliFlagOverrides(config);
 
   const installExitHook = () => {
     if (exitHookInstalled || !shutdownPromise) {

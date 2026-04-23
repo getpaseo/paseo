@@ -143,6 +143,32 @@ export function toAgentPayload(
   return payload;
 }
 
+function buildStoredRuntimeInfo(
+  record: StoredAgentRecord,
+  providerRegistry: ReturnType<typeof buildProviderRegistry>,
+  logger: Logger,
+): AgentRuntimeInfo | undefined {
+  if (!record.runtimeInfo) return undefined;
+  const ri = record.runtimeInfo;
+  const runtimeInfo: AgentRuntimeInfo = {
+    provider: coerceAgentProvider(logger, providerRegistry, ri.provider, record.id),
+    sessionId: ri.sessionId,
+  };
+  if (Object.prototype.hasOwnProperty.call(ri, "model")) {
+    runtimeInfo.model = ri.model ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(ri, "thinkingOptionId")) {
+    runtimeInfo.thinkingOptionId = ri.thinkingOptionId ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(ri, "modeId")) {
+    runtimeInfo.modeId = ri.modeId ?? null;
+  }
+  if (ri.extra) {
+    runtimeInfo.extra = ri.extra;
+  }
+  return runtimeInfo;
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   providerRegistry: ReturnType<typeof buildProviderRegistry>,
@@ -162,27 +188,7 @@ export function buildStoredAgentPayload(
   const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
   const provider = coerceAgentProvider(logger, providerRegistry, record.provider, record.id);
-  const runtimeInfo = record.runtimeInfo
-    ? {
-        provider: coerceAgentProvider(
-          logger,
-          providerRegistry,
-          record.runtimeInfo.provider,
-          record.id,
-        ),
-        sessionId: record.runtimeInfo.sessionId,
-        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "model")
-          ? { model: record.runtimeInfo.model ?? null }
-          : {}),
-        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "thinkingOptionId")
-          ? { thinkingOptionId: record.runtimeInfo.thinkingOptionId ?? null }
-          : {}),
-        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "modeId")
-          ? { modeId: record.runtimeInfo.modeId ?? null }
-          : {}),
-        ...(record.runtimeInfo.extra ? { extra: record.runtimeInfo.extra } : {}),
-      }
-    : undefined;
+  const runtimeInfo = buildStoredRuntimeInfo(record, providerRegistry, logger);
 
   return {
     id: record.id,
@@ -383,47 +389,39 @@ function sanitizeMetadataArray(value: unknown): AgentMetadata[] | undefined {
   return sanitized.length > 0 ? sanitized : undefined;
 }
 
+type UsageNumericField = Exclude<keyof AgentUsage, never>;
+
+function assignFiniteNumber(
+  source: { [key: string]: JsonValue },
+  target: AgentUsage,
+  field: UsageNumericField,
+): boolean {
+  const raw = source[field];
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    target[field] = raw;
+    return true;
+  }
+  return raw === undefined || raw === null;
+}
+
 function sanitizeUsage(value: unknown): AgentUsage | undefined {
   const sanitized = sanitizeOptionalJson(value);
   if (!sanitized || !isJsonObject(sanitized)) {
     return undefined;
   }
   const result: AgentUsage = {};
-  const inputTokens = sanitized.inputTokens;
-  if (typeof inputTokens === "number" && Number.isFinite(inputTokens)) {
-    result.inputTokens = inputTokens;
-  } else if (inputTokens !== undefined && inputTokens !== null) {
-    return undefined;
-  }
-  const cachedInputTokens = sanitized.cachedInputTokens;
-  if (typeof cachedInputTokens === "number" && Number.isFinite(cachedInputTokens)) {
-    result.cachedInputTokens = cachedInputTokens;
-  } else if (cachedInputTokens !== undefined && cachedInputTokens !== null) {
-    return undefined;
-  }
-  const outputTokens = sanitized.outputTokens;
-  if (typeof outputTokens === "number" && Number.isFinite(outputTokens)) {
-    result.outputTokens = outputTokens;
-  } else if (outputTokens !== undefined && outputTokens !== null) {
-    return undefined;
-  }
-  const totalCostUsd = sanitized.totalCostUsd;
-  if (typeof totalCostUsd === "number" && Number.isFinite(totalCostUsd)) {
-    result.totalCostUsd = totalCostUsd;
-  } else if (totalCostUsd !== undefined && totalCostUsd !== null) {
-    return undefined;
-  }
-  const contextWindowMaxTokens = sanitized.contextWindowMaxTokens;
-  if (typeof contextWindowMaxTokens === "number" && Number.isFinite(contextWindowMaxTokens)) {
-    result.contextWindowMaxTokens = contextWindowMaxTokens;
-  } else if (contextWindowMaxTokens !== undefined && contextWindowMaxTokens !== null) {
-    return undefined;
-  }
-  const contextWindowUsedTokens = sanitized.contextWindowUsedTokens;
-  if (typeof contextWindowUsedTokens === "number" && Number.isFinite(contextWindowUsedTokens)) {
-    result.contextWindowUsedTokens = contextWindowUsedTokens;
-  } else if (contextWindowUsedTokens !== undefined && contextWindowUsedTokens !== null) {
-    return undefined;
+  const fields: UsageNumericField[] = [
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "totalCostUsd",
+    "contextWindowMaxTokens",
+    "contextWindowUsedTokens",
+  ];
+  for (const field of fields) {
+    if (!assignFiniteNumber(sanitized, result, field)) {
+      return undefined;
+    }
   }
   return Object.keys(result).length ? result : undefined;
 }

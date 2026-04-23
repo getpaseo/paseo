@@ -191,7 +191,7 @@ function createGitHubServiceStub(): GitHubService {
   };
 }
 
-function createService(options?: {
+interface CreateServiceOptions {
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
@@ -207,46 +207,47 @@ function createService(options?: {
   runGitCommand?: ReturnType<typeof vi.fn>;
   watch?: ReturnType<typeof vi.fn>;
   now?: () => Date;
-}) {
+}
+
+function buildDefaultServiceDeps() {
+  return {
+    watch: (() => createWatcher()) as never,
+    readdir: vi.fn(async () => []),
+    getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
+    getCheckoutShortstat: vi.fn(async () => ({
+      additions: 1,
+      deletions: 0,
+    })),
+    getPullRequestStatus: vi.fn(async () => createPullRequestStatusResult()),
+    getCheckoutDiff: vi.fn(async () => ({ diff: "", structured: [] })),
+    resolveBranchCheckout: vi.fn(async () => ({ kind: "not-found" })),
+    resolveRepositoryDefaultBranch: vi.fn(async () => "main"),
+    listBranchSuggestions: vi.fn(async () => []),
+    listPaseoWorktrees: vi.fn(async () => []),
+    github: createGitHubServiceStub(),
+    resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
+    hasOriginRemote: vi.fn(async () => false),
+    runGitFetch: vi.fn(async () => {}),
+    runGitCommand: vi.fn(async () => ({
+      stdout: "/tmp/repo\n",
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    })),
+    now: () => new Date("2026-04-12T00:00:00.000Z"),
+  };
+}
+
+function buildServiceDeps(options?: CreateServiceOptions) {
+  return { ...buildDefaultServiceDeps(), ...(options ?? {}) };
+}
+
+function createService(options?: CreateServiceOptions) {
   return new WorkspaceGitServiceImpl({
     logger: createLogger() as never,
     paseoHome: "/tmp/paseo-test",
-    deps: {
-      watch: options?.watch ?? ((() => createWatcher()) as never),
-      readdir: vi.fn(async () => []),
-      getCheckoutStatus:
-        options?.getCheckoutStatus ?? vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
-      getCheckoutShortstat:
-        options?.getCheckoutShortstat ??
-        vi.fn(async () => ({
-          additions: 1,
-          deletions: 0,
-        })),
-      getPullRequestStatus:
-        options?.getPullRequestStatus ?? vi.fn(async () => createPullRequestStatusResult()),
-      getCheckoutDiff:
-        options?.getCheckoutDiff ?? vi.fn(async () => ({ diff: "", structured: [] })),
-      resolveBranchCheckout:
-        options?.resolveBranchCheckout ?? vi.fn(async () => ({ kind: "not-found" })),
-      resolveRepositoryDefaultBranch:
-        options?.resolveRepositoryDefaultBranch ?? vi.fn(async () => "main"),
-      listBranchSuggestions: options?.listBranchSuggestions ?? vi.fn(async () => []),
-      listPaseoWorktrees: options?.listPaseoWorktrees ?? vi.fn(async () => []),
-      github: options?.github ?? createGitHubServiceStub(),
-      resolveAbsoluteGitDir: options?.resolveAbsoluteGitDir ?? vi.fn(async () => "/tmp/repo/.git"),
-      hasOriginRemote: options?.hasOriginRemote ?? vi.fn(async () => false),
-      runGitFetch: options?.runGitFetch ?? vi.fn(async () => {}),
-      runGitCommand:
-        options?.runGitCommand ??
-        vi.fn(async () => ({
-          stdout: "/tmp/repo\n",
-          stderr: "",
-          truncated: false,
-          exitCode: 0,
-          signal: null,
-        })),
-      now: options?.now ?? (() => new Date("2026-04-12T00:00:00.000Z")),
-    },
+    deps: buildServiceDeps(options),
   });
 }
 

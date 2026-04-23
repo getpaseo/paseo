@@ -563,33 +563,41 @@ export class LoopService {
         }
       }
     } catch (error) {
-      if (isAbortError(error)) {
-        this.finishLoop(loop, "stopped", "Loop stopped.");
-        const iteration = loop.activeIteration
-          ? loop.iterations.find((candidate) => candidate.index === loop.activeIteration)
-          : null;
-        if (iteration && iteration.status === "running") {
-          iteration.status = "stopped";
-          iteration.failureReason = "Loop stopped";
-          iteration.workerCompletedAt = nowIso();
-        }
-        await this.persist();
-        return;
-      }
+      await this.handleExecuteLoopError(loop, loopId, error);
+    }
+  }
 
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error({ err: error, loopId }, "Loop execution failed");
-      this.finishLoop(loop, "failed", message);
+  private async handleExecuteLoopError(
+    loop: LoopRecord,
+    loopId: string,
+    error: unknown,
+  ): Promise<void> {
+    if (isAbortError(error)) {
+      this.finishLoop(loop, "stopped", "Loop stopped.");
       const iteration = loop.activeIteration
         ? loop.iterations.find((candidate) => candidate.index === loop.activeIteration)
         : null;
       if (iteration && iteration.status === "running") {
-        iteration.status = "failed";
-        iteration.failureReason = message;
+        iteration.status = "stopped";
+        iteration.failureReason = "Loop stopped";
         iteration.workerCompletedAt = nowIso();
       }
       await this.persist();
+      return;
     }
+
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.error({ err: error, loopId }, "Loop execution failed");
+    this.finishLoop(loop, "failed", message);
+    const iteration = loop.activeIteration
+      ? loop.iterations.find((candidate) => candidate.index === loop.activeIteration)
+      : null;
+    if (iteration && iteration.status === "running") {
+      iteration.status = "failed";
+      iteration.failureReason = message;
+      iteration.workerCompletedAt = nowIso();
+    }
+    await this.persist();
   }
 
   private async runWorkerIteration(

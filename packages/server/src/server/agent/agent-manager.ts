@@ -156,6 +156,16 @@ function resolveInitialAttention(input: AttentionState | undefined): AttentionSt
   };
 }
 
+interface StreamEventFlags {
+  shouldDispatchEvent: boolean;
+  shouldNotifyWaiters: boolean;
+}
+
+interface HandleStreamEventOptions {
+  fromHistory?: boolean;
+  canonicalUserMessagesById?: ReadonlyMap<string, string>;
+}
+
 interface ForegroundTurnWaiter {
   turnId: string;
   callback: (event: AgentStreamEvent) => void;
@@ -329,6 +339,32 @@ function normalizeMessageId(messageId: string | undefined): string | undefined {
   }
   const trimmed = messageId.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function buildExplicitTimelineSeedForRegister(
+  now: Date,
+  options:
+    | {
+        timeline?: AgentTimelineItem[];
+        timelineRows?: AgentTimelineRow[];
+        timelineNextSeq?: number;
+        createdAt?: Date;
+        updatedAt?: Date;
+      }
+    | undefined,
+): SeedAgentTimelineOptions | null {
+  const hasTimeline = Boolean(options?.timeline?.length);
+  const hasTimelineRows = Boolean(options?.timelineRows?.length);
+  const hasTimelineNextSeq = options?.timelineNextSeq !== undefined;
+  if (!hasTimeline && !hasTimelineRows && !hasTimelineNextSeq) {
+    return null;
+  }
+  return {
+    items: options?.timeline,
+    rows: options?.timelineRows,
+    nextSeq: options?.timelineNextSeq,
+    timestamp: (options?.updatedAt ?? options?.createdAt ?? now).toISOString(),
+  };
 }
 
 export class AgentManager {
@@ -1962,38 +1998,94 @@ export class AgentManager {
     const initialPersistedTitle = await this.resolveInitialPersistedTitle(resolvedAgentId, config);
 
     const now = new Date();
-    const explicitTimelineSeed: SeedAgentTimelineOptions | null =
-      options?.timeline?.length ||
-      options?.timelineRows?.length ||
-      options?.timelineNextSeq !== undefined
-        ? {
-            items: options?.timeline,
-            rows: options?.timelineRows,
-            nextSeq: options?.timelineNextSeq,
-            timestamp: (options?.updatedAt ?? options?.createdAt ?? now).toISOString(),
-          }
-        : null;
+    const { durableTimelineHasRows } = await this.initializeAgentTimelineForRegister({
+      agentId: resolvedAgentId,
+      now,
+      options,
+    });
+
+    const managed = this.buildManagedAgentForRegister({
+      resolvedAgentId,
+      session,
+      config,
+      now,
+      durableTimelineHasRows,
+      options,
+    });
+
+    this.agents.set(resolvedAgentId, managed);
+    // Initialize previousStatus to track transitions
+    this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
+    await this.refreshRuntimeInfo(managed);
+    await this.persistSnapshot(managed, {
+      workspaceId: options?.workspaceId,
+      title: initialPersistedTitle,
+    });
+    this.emitState(managed, { persist: false });
+
+    await this.refreshSessionState(managed);
+    managed.lifecycle = "idle";
+    await this.persistSnapshot(managed, { workspaceId: options?.workspaceId });
+    this.emitState(managed, { persist: false });
+    this.subscribeToSession(managed);
+    return { ...managed };
+  }
+
+  private async initializeAgentTimelineForRegister(params: {
+    agentId: string;
+    now: Date;
+    options:
+      | {
+          timeline?: AgentTimelineItem[];
+          timelineRows?: AgentTimelineRow[];
+          timelineNextSeq?: number;
+          createdAt?: Date;
+          updatedAt?: Date;
+        }
+      | undefined;
+  }): Promise<{ durableTimelineHasRows: boolean }> {
+    const { agentId, now, options } = params;
+    const explicitTimelineSeed = buildExplicitTimelineSeedForRegister(now, options);
     const shouldSeedFromDurable =
       !explicitTimelineSeed &&
-      !this.timelineStore.has(resolvedAgentId) &&
+      !this.timelineStore.has(agentId) &&
       this.durableTimelineStore !== undefined;
     const durableTimelineSeed = shouldSeedFromDurable
-      ? await this.loadCommittedTimelineSeed(resolvedAgentId, now)
+      ? await this.loadCommittedTimelineSeed(agentId, now)
       : null;
     const durableTimelineHasRows =
       durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1;
     const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
-    if (timelineSeed || !this.timelineStore.has(resolvedAgentId)) {
-      this.timelineStore.initialize(
-        resolvedAgentId,
-        timelineSeed ?? { timestamp: now.toISOString() },
-      );
+    if (timelineSeed || !this.timelineStore.has(agentId)) {
+      this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
     if (options?.timelineRows?.length) {
-      this.enqueueDurableTimelineBulkInsert(resolvedAgentId, options.timelineRows);
+      this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
     }
+    return { durableTimelineHasRows };
+  }
 
-    const managed = {
+  private buildManagedAgentForRegister(params: {
+    resolvedAgentId: string;
+    session: AgentSession;
+    config: AgentSessionConfig;
+    now: Date;
+    durableTimelineHasRows: boolean;
+    options:
+      | {
+          createdAt?: Date;
+          updatedAt?: Date;
+          lastUserMessageAt?: Date | null;
+          labels?: Record<string, string>;
+          historyPrimed?: boolean;
+          lastUsage?: AgentUsage;
+          lastError?: string;
+          attention?: AttentionState;
+        }
+      | undefined;
+  }): ActiveManagedAgent {
+    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    return {
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
@@ -2023,23 +2115,6 @@ export class AgentManager {
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
     } as ActiveManagedAgent;
-
-    this.agents.set(resolvedAgentId, managed);
-    // Initialize previousStatus to track transitions
-    this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
-    await this.refreshRuntimeInfo(managed);
-    await this.persistSnapshot(managed, {
-      workspaceId: options?.workspaceId,
-      title: initialPersistedTitle,
-    });
-    this.emitState(managed, { persist: false });
-
-    await this.refreshSessionState(managed);
-    managed.lifecycle = "idle";
-    await this.persistSnapshot(managed, { workspaceId: options?.workspaceId });
-    this.emitState(managed, { persist: false });
-    this.subscribeToSession(managed);
-    return { ...managed };
   }
 
   private async loadCommittedTimelineSeed(
@@ -2352,10 +2427,7 @@ export class AgentManager {
   private async handleStreamEvent(
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
-    options?: {
-      fromHistory?: boolean;
-      canonicalUserMessagesById?: ReadonlyMap<string, string>;
-    },
+    options?: HandleStreamEventOptions,
   ): Promise<boolean> {
     const eventTurnId = (event as { turnId?: string }).turnId;
     const isForegroundEvent = Boolean(eventTurnId && agent.activeForegroundTurnId === eventTurnId);
@@ -2376,211 +2448,302 @@ export class AgentManager {
       this.agentStreamCoalescer.flushFor(agent.id);
     }
 
-    let shouldDispatchEvent = true;
-    let shouldNotifyWaiters = true;
+    const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
 
+    await this.dispatchStreamEventByType({
+      agent,
+      event,
+      options,
+      isForegroundEvent,
+      eventTurnId,
+      flags,
+    });
+
+    if (!options?.fromHistory && isForegroundEvent && isTurnTerminalEvent(event)) {
+      this.finalizeForegroundTurn(agent, eventTurnId);
+    }
+
+    if (!options?.fromHistory && flags.shouldDispatchEvent) {
+      this.dispatchStream(agent.id, event);
+    }
+
+    return flags.shouldNotifyWaiters;
+  }
+
+  private async dispatchStreamEventByType(params: {
+    agent: ActiveManagedAgent;
+    event: AgentStreamEvent;
+    options: HandleStreamEventOptions | undefined;
+    isForegroundEvent: boolean;
+    eventTurnId: string | undefined;
+    flags: StreamEventFlags;
+  }): Promise<void> {
+    const { agent, event, options, isForegroundEvent, eventTurnId, flags } = params;
     switch (event.type) {
       case "thread_started":
-        {
-          const previousSessionId = agent.persistence?.sessionId ?? null;
-          const handle = agent.session.describePersistence();
-          if (handle) {
-            agent.persistence = attachPersistenceCwd(handle, agent.cwd);
-            if (agent.persistence?.sessionId !== previousSessionId) {
-              this.emitState(agent);
-            }
-          }
-          void this.refreshRuntimeInfo(agent);
-        }
+        this.onStreamThreadStarted(agent);
         break;
       case "usage_updated":
         agent.lastUsage = event.usage;
         this.emitState(agent);
         break;
       case "timeline":
-        {
-          // Skip provider-replayed user_message items during history hydration.
-          if (options?.fromHistory && event.item.type === "user_message") {
-            const eventMessageId = normalizeMessageId(event.item.messageId);
-            if (eventMessageId) {
-              const canonicalText = options?.canonicalUserMessagesById?.get(eventMessageId);
-              if (canonicalText === event.item.text) {
-                shouldDispatchEvent = false;
-                shouldNotifyWaiters = false;
-                break;
-              }
-            }
-          }
-
-          // Suppress user_message echoes for the active foreground turn.
-          if (!options?.fromHistory && event.item.type === "user_message" && isForegroundEvent) {
-            const eventMessageId = normalizeMessageId(event.item.messageId);
-            if (
-              eventMessageId &&
-              (await this.hasCommittedUserMessageFromStores(agent.id, {
-                messageId: eventMessageId,
-                text: event.item.text,
-              }))
-            ) {
-              break;
-            }
-          }
-
-          if (options?.fromHistory) {
-            this.recordTimeline(agent.id, event.item);
-            shouldDispatchEvent = false;
-            shouldNotifyWaiters = false;
-            break;
-          }
-
-          this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
-          if (event.item.type === "user_message") {
-            agent.lastUserMessageAt = new Date();
-            this.emitState(agent);
-          }
-          shouldDispatchEvent = false;
-          shouldNotifyWaiters = true;
-        }
+        await this.onStreamTimelineEvent({ agent, event, options, isForegroundEvent, flags });
         break;
       case "turn_completed":
-        this.logger.trace(
-          {
-            agentId: agent.id,
-            lifecycle: agent.lifecycle,
-            activeForegroundTurnId: agent.activeForegroundTurnId,
-            eventTurnId,
-          },
-          "handleStreamEvent: turn_completed",
-        );
-        agent.lastUsage = event.usage;
-        agent.lastError = undefined;
-        // For autonomous turns (not foreground), transition to idle
-        // unless a replacement is pending (avoid idle flash during replace)
-        if (!isForegroundEvent && agent.lifecycle !== "idle" && !agent.pendingReplacement) {
-          (agent as ActiveManagedAgent).lifecycle = "idle";
-          this.emitState(agent);
-        }
-        void this.refreshRuntimeInfo(agent);
+        this.onStreamTurnCompleted({ agent, event, eventTurnId, isForegroundEvent });
         break;
       case "turn_failed":
-        this.logger.warn(
-          {
-            agentId: agent.id,
-            lifecycle: agent.lifecycle,
-            activeForegroundTurnId: agent.activeForegroundTurnId,
-            eventTurnId,
-            error: event.error,
-            code: event.code,
-            diagnostic: event.diagnostic,
-          },
-          "handleStreamEvent: turn_failed",
-        );
-        // For autonomous turns, set error state directly
-        if (!isForegroundEvent) {
-          agent.lifecycle = "error";
-        }
-        agent.lastError = event.error;
-        await this.appendSystemErrorTimelineMessage(
-          agent,
-          event.provider,
-          this.formatTurnFailedMessage(event),
-          options,
-        );
-        for (const [requestId] of agent.pendingPermissions) {
-          agent.pendingPermissions.delete(requestId);
-          if (!options?.fromHistory) {
-            this.dispatchStream(agent.id, {
-              type: "permission_resolved",
-              provider: event.provider,
-              requestId,
-              resolution: { behavior: "deny", message: "Turn failed" },
-            });
-          }
-        }
-        if (!isForegroundEvent) {
-          this.emitState(agent);
-        }
+        await this.onStreamTurnFailed({ agent, event, eventTurnId, isForegroundEvent, options });
         break;
       case "turn_canceled":
-        this.logger.trace(
-          {
-            agentId: agent.id,
-            lifecycle: agent.lifecycle,
-            activeForegroundTurnId: agent.activeForegroundTurnId,
-            eventTurnId,
-          },
-          "handleStreamEvent: turn_canceled",
-        );
-        // For autonomous turns, transition to idle
-        // unless a replacement is pending (avoid idle flash during replace)
-        if (!isForegroundEvent && !agent.pendingReplacement) {
-          (agent as ActiveManagedAgent).lifecycle = "idle";
-        }
-        agent.lastError = undefined;
-        for (const [requestId] of agent.pendingPermissions) {
-          agent.pendingPermissions.delete(requestId);
-          if (!options?.fromHistory) {
-            this.dispatchStream(agent.id, {
-              type: "permission_resolved",
-              provider: event.provider,
-              requestId,
-              resolution: { behavior: "deny", message: "Interrupted" },
-            });
-          }
-        }
-        if (!isForegroundEvent) {
-          this.emitState(agent);
-        }
+        this.onStreamTurnCanceled({ agent, event, eventTurnId, isForegroundEvent, options });
         break;
       case "turn_started":
-        this.logger.trace(
-          {
-            agentId: agent.id,
-            lifecycle: agent.lifecycle,
-            activeForegroundTurnId: agent.activeForegroundTurnId,
-            eventTurnId,
-          },
-          "handleStreamEvent: turn_started",
-        );
-        // For autonomous turn_started (no foreground match), set running
-        if (!isForegroundEvent) {
-          (agent as ActiveManagedAgent).lifecycle = "running";
-          this.emitState(agent);
-        }
+        this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent });
         break;
       case "permission_requested":
-        {
-          const hadPendingPermissions = agent.pendingPermissions.size > 0;
-          agent.pendingPermissions.set(event.request.id, event.request);
-          if (!hadPendingPermissions && !agent.internal) {
-            this.broadcastAgentAttention(agent, "permission");
-          }
-        }
-        this.emitState(agent);
+        this.onStreamPermissionRequested(agent, event);
         break;
       case "permission_resolved":
-        agent.pendingPermissions.delete(event.requestId);
-        if (!options?.fromHistory && agent.inFlightPermissionResponses.has(event.requestId)) {
-          agent.bufferedPermissionResolutions.set(event.requestId, event);
-          shouldDispatchEvent = false;
-          break;
-        }
-        this.emitState(agent);
+        this.onStreamPermissionResolved({ agent, event, options, flags });
         break;
       default:
         break;
     }
+  }
 
-    if (!options?.fromHistory && isForegroundEvent && isTurnTerminalEvent(event)) {
-      this.finalizeForegroundTurn(agent, eventTurnId);
+  private onStreamThreadStarted(agent: ActiveManagedAgent): void {
+    const previousSessionId = agent.persistence?.sessionId ?? null;
+    const handle = agent.session.describePersistence();
+    if (handle) {
+      agent.persistence = attachPersistenceCwd(handle, agent.cwd);
+      if (agent.persistence?.sessionId !== previousSessionId) {
+        this.emitState(agent);
+      }
+    }
+    void this.refreshRuntimeInfo(agent);
+  }
+
+  private async onStreamTimelineEvent(params: {
+    agent: ActiveManagedAgent;
+    event: Extract<AgentStreamEvent, { type: "timeline" }>;
+    options:
+      | {
+          fromHistory?: boolean;
+          canonicalUserMessagesById?: ReadonlyMap<string, string>;
+        }
+      | undefined;
+    isForegroundEvent: boolean;
+    flags: StreamEventFlags;
+  }): Promise<void> {
+    const { agent, event, options, isForegroundEvent, flags } = params;
+    // Skip provider-replayed user_message items during history hydration.
+    if (options?.fromHistory && event.item.type === "user_message") {
+      const eventMessageId = normalizeMessageId(event.item.messageId);
+      if (eventMessageId) {
+        const canonicalText = options?.canonicalUserMessagesById?.get(eventMessageId);
+        if (canonicalText === event.item.text) {
+          flags.shouldDispatchEvent = false;
+          flags.shouldNotifyWaiters = false;
+          return;
+        }
+      }
     }
 
-    // Skip dispatching individual stream events during history replay.
-    if (!options?.fromHistory && shouldDispatchEvent) {
-      this.dispatchStream(agent.id, event);
+    // Suppress user_message echoes for the active foreground turn.
+    if (!options?.fromHistory && event.item.type === "user_message" && isForegroundEvent) {
+      const eventMessageId = normalizeMessageId(event.item.messageId);
+      if (
+        eventMessageId &&
+        (await this.hasCommittedUserMessageFromStores(agent.id, {
+          messageId: eventMessageId,
+          text: event.item.text,
+        }))
+      ) {
+        return;
+      }
     }
 
-    return shouldNotifyWaiters;
+    if (options?.fromHistory) {
+      this.recordTimeline(agent.id, event.item);
+      flags.shouldDispatchEvent = false;
+      flags.shouldNotifyWaiters = false;
+      return;
+    }
+
+    this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
+    if (event.item.type === "user_message") {
+      agent.lastUserMessageAt = new Date();
+      this.emitState(agent);
+    }
+    flags.shouldDispatchEvent = false;
+    flags.shouldNotifyWaiters = true;
+  }
+
+  private onStreamTurnCompleted(params: {
+    agent: ActiveManagedAgent;
+    event: Extract<AgentStreamEvent, { type: "turn_completed" }>;
+    eventTurnId: string | undefined;
+    isForegroundEvent: boolean;
+  }): void {
+    const { agent, event, eventTurnId, isForegroundEvent } = params;
+    this.logger.trace(
+      {
+        agentId: agent.id,
+        lifecycle: agent.lifecycle,
+        activeForegroundTurnId: agent.activeForegroundTurnId,
+        eventTurnId,
+      },
+      "handleStreamEvent: turn_completed",
+    );
+    agent.lastUsage = event.usage;
+    agent.lastError = undefined;
+    if (!isForegroundEvent && agent.lifecycle !== "idle" && !agent.pendingReplacement) {
+      (agent as ActiveManagedAgent).lifecycle = "idle";
+      this.emitState(agent);
+    }
+    void this.refreshRuntimeInfo(agent);
+  }
+
+  private async onStreamTurnFailed(params: {
+    agent: ActiveManagedAgent;
+    event: Extract<AgentStreamEvent, { type: "turn_failed" }>;
+    eventTurnId: string | undefined;
+    isForegroundEvent: boolean;
+    options:
+      | {
+          fromHistory?: boolean;
+          canonicalUserMessagesById?: ReadonlyMap<string, string>;
+        }
+      | undefined;
+  }): Promise<void> {
+    const { agent, event, eventTurnId, isForegroundEvent, options } = params;
+    this.logger.warn(
+      {
+        agentId: agent.id,
+        lifecycle: agent.lifecycle,
+        activeForegroundTurnId: agent.activeForegroundTurnId,
+        eventTurnId,
+        error: event.error,
+        code: event.code,
+        diagnostic: event.diagnostic,
+      },
+      "handleStreamEvent: turn_failed",
+    );
+    if (!isForegroundEvent) {
+      agent.lifecycle = "error";
+    }
+    agent.lastError = event.error;
+    await this.appendSystemErrorTimelineMessage(
+      agent,
+      event.provider,
+      this.formatTurnFailedMessage(event),
+      options,
+    );
+    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
+    if (!isForegroundEvent) {
+      this.emitState(agent);
+    }
+  }
+
+  private onStreamTurnCanceled(params: {
+    agent: ActiveManagedAgent;
+    event: Extract<AgentStreamEvent, { type: "turn_canceled" }>;
+    eventTurnId: string | undefined;
+    isForegroundEvent: boolean;
+    options:
+      | {
+          fromHistory?: boolean;
+        }
+      | undefined;
+  }): void {
+    const { agent, event, eventTurnId, isForegroundEvent, options } = params;
+    this.logger.trace(
+      {
+        agentId: agent.id,
+        lifecycle: agent.lifecycle,
+        activeForegroundTurnId: agent.activeForegroundTurnId,
+        eventTurnId,
+      },
+      "handleStreamEvent: turn_canceled",
+    );
+    if (!isForegroundEvent && !agent.pendingReplacement) {
+      (agent as ActiveManagedAgent).lifecycle = "idle";
+    }
+    agent.lastError = undefined;
+    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Interrupted");
+    if (!isForegroundEvent) {
+      this.emitState(agent);
+    }
+  }
+
+  private onStreamTurnStarted(params: {
+    agent: ActiveManagedAgent;
+    eventTurnId: string | undefined;
+    isForegroundEvent: boolean;
+  }): void {
+    const { agent, eventTurnId, isForegroundEvent } = params;
+    this.logger.trace(
+      {
+        agentId: agent.id,
+        lifecycle: agent.lifecycle,
+        activeForegroundTurnId: agent.activeForegroundTurnId,
+        eventTurnId,
+      },
+      "handleStreamEvent: turn_started",
+    );
+    if (!isForegroundEvent) {
+      (agent as ActiveManagedAgent).lifecycle = "running";
+      this.emitState(agent);
+    }
+  }
+
+  private onStreamPermissionRequested(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "permission_requested" }>,
+  ): void {
+    const hadPendingPermissions = agent.pendingPermissions.size > 0;
+    agent.pendingPermissions.set(event.request.id, event.request);
+    if (!hadPendingPermissions && !agent.internal) {
+      this.broadcastAgentAttention(agent, "permission");
+    }
+    this.emitState(agent);
+  }
+
+  private onStreamPermissionResolved(params: {
+    agent: ActiveManagedAgent;
+    event: Extract<AgentStreamEvent, { type: "permission_resolved" }>;
+    options: { fromHistory?: boolean } | undefined;
+    flags: StreamEventFlags;
+  }): void {
+    const { agent, event, options, flags } = params;
+    agent.pendingPermissions.delete(event.requestId);
+    if (!options?.fromHistory && agent.inFlightPermissionResponses.has(event.requestId)) {
+      agent.bufferedPermissionResolutions.set(event.requestId, event);
+      flags.shouldDispatchEvent = false;
+      return;
+    }
+    this.emitState(agent);
+  }
+
+  private resolvePendingPermissionsForAgent(
+    agent: ActiveManagedAgent,
+    provider: AgentProvider,
+    options: { fromHistory?: boolean } | undefined,
+    message: string,
+  ): void {
+    for (const [requestId] of agent.pendingPermissions) {
+      agent.pendingPermissions.delete(requestId);
+      if (!options?.fromHistory) {
+        this.dispatchStream(agent.id, {
+          type: "permission_resolved",
+          provider,
+          requestId,
+          resolution: { behavior: "deny", message },
+        });
+      }
+    }
   }
 
   private recordAndDispatchTimelineItem(

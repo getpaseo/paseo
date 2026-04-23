@@ -1431,292 +1431,51 @@ export function translateOpenCodeEvent(
 
   switch (event.type) {
     case "session.created":
-    case "session.updated": {
-      if (event.properties.info.id === state.sessionId) {
-        events.push({
-          type: "thread_started",
-          sessionId: state.sessionId,
-          provider: "opencode",
-        });
-      }
+    case "session.updated":
+      appendOpenCodeSessionCreatedOrUpdated(event, state, events);
       break;
-    }
-
-    case "message.updated": {
-      const info = event.properties.info;
-      if (info.sessionID !== state.sessionId) {
-        break;
-      }
-
-      state.messageRoles.set(info.id, info.role);
-      if (info.role === "assistant") {
-        const modelLookupKey = resolveOpenCodeModelLookupKeyFromAssistantMessage(info);
-        if (modelLookupKey) {
-          const contextWindowMaxTokens = state.modelContextWindowsByModelKey?.get(modelLookupKey);
-          if (contextWindowMaxTokens !== undefined) {
-            state.onAssistantModelContextWindowResolved?.(contextWindowMaxTokens);
-          }
-        }
-
-        if (!state.emittedStructuredMessageIds.has(info.id) && info.time?.completed !== undefined) {
-          const text = stringifyStructuredAssistantMessage(info.structured);
-          if (text) {
-            state.emittedStructuredMessageIds.add(info.id);
-            events.push({
-              type: "timeline",
-              provider: "opencode",
-              item: { type: "assistant_message", text },
-            });
-          }
-        }
-      }
+    case "message.updated":
+      appendOpenCodeMessageUpdated(event, state, events);
       break;
-    }
-
-    case "message.part.updated": {
-      const part = event.properties.part;
-      if (part.sessionID !== state.sessionId) {
-        break;
-      }
-
-      const messageRole = state.messageRoles.get(part.messageID);
-      state.partTypes.set(part.id, part.type);
-
-      if (part.type === "text") {
-        const partKey = resolvePartDedupeKey(part, "text");
-        if (messageRole === "user") {
-          break;
-        }
-        if (part.time?.end) {
-          if (partKey && state.streamedPartKeys.delete(partKey)) {
-            break;
-          }
-          if (part.text) {
-            events.push({
-              type: "timeline",
-              provider: "opencode",
-              item: { type: "assistant_message", text: part.text },
-            });
-          }
-        }
-      } else if (part.type === "reasoning") {
-        const partKey = resolvePartDedupeKey(part, "reasoning");
-        if (part.time.end) {
-          if (partKey && state.streamedPartKeys.delete(partKey)) {
-            break;
-          }
-          if (part.text) {
-            events.push({
-              type: "timeline",
-              provider: "opencode",
-              item: { type: "reasoning", text: part.text },
-            });
-          }
-        }
-      } else if (part.type === "tool") {
-        const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
-        if (parsedToolPart.success && parsedToolPart.data) {
-          events.push({
-            type: "timeline",
-            provider: "opencode",
-            item: parsedToolPart.data,
-          });
-        }
-      } else if (part.type === "compaction") {
-        events.push({
-          type: "timeline",
-          provider: "opencode",
-          item: createCompactionTimelineItem("loading", part.auto ? "auto" : "manual"),
-        });
-      } else if (part.type === "step-finish") {
-        mergeOpenCodeStepFinishUsage(state.accumulatedUsage, part);
-        if (hasNormalizedOpenCodeUsage(state.accumulatedUsage)) {
-          events.push({
-            type: "usage_updated",
-            provider: "opencode",
-            usage: { ...state.accumulatedUsage },
-          });
-        }
-      }
+    case "message.part.updated":
+      appendOpenCodeMessagePartUpdated(event, state, events);
       break;
-    }
-
-    case "message.part.delta": {
-      const { sessionID, messageID, partID, field, delta } = event.properties;
-      if (sessionID !== state.sessionId) {
-        break;
-      }
-
-      if (!delta || !field) {
-        break;
-      }
-
-      const messageRole = messageID ? state.messageRoles.get(messageID) : undefined;
-      const knownPartType = partID ? state.partTypes.get(partID) : undefined;
-      const isReasoning = knownPartType === "reasoning" || field === "reasoning";
-
-      if (isReasoning) {
-        if (partID) {
-          state.streamedPartKeys.add(`reasoning:${partID}`);
-        }
-        events.push({
-          type: "timeline",
-          provider: "opencode",
-          item: { type: "reasoning", text: delta },
-        });
-      } else if (field === "text") {
-        if (messageRole === "user") {
-          break;
-        }
-        if (partID) {
-          state.streamedPartKeys.add(`text:${partID}`);
-        }
-        events.push({
-          type: "timeline",
-          provider: "opencode",
-          item: { type: "assistant_message", text: delta },
-        });
-      }
+    case "message.part.delta":
+      appendOpenCodeMessagePartDelta(event, state, events);
       break;
-    }
-
-    case "permission.asked": {
-      if (event.properties.sessionID !== state.sessionId) {
-        break;
-      }
-
-      const metadata = readOpenCodeRecord(event.properties.metadata);
-      const tool = readOpenCodeRecord(event.properties.tool);
-      const patterns = Array.isArray(event.properties.patterns)
-        ? event.properties.patterns.filter((value): value is string => typeof value === "string")
-        : [];
-      const command = readPermissionField(metadata, PERMISSION_COMMAND_KEYS);
-      const cwd = readPermissionField(metadata, PERMISSION_CWD_KEYS);
-      const reason = readPermissionField(metadata, PERMISSION_REASON_KEYS);
-      const input = buildOpenCodePermissionInput({
-        patterns,
-        metadata,
-        tool,
-        command,
-      });
-      const detail = buildOpenCodePermissionDetail({
-        permission: event.properties.permission,
-        input,
-        command,
-        cwd,
-      });
-      const description = buildOpenCodePermissionDescription({
-        reason,
-        patterns,
-      });
-
-      events.push({
-        type: "permission_requested",
-        provider: "opencode",
-        request: {
-          id: event.properties.id,
-          provider: "opencode",
-          name: event.properties.permission,
-          kind: "tool",
-          title: toHumanReadablePermissionTitle(event.properties.permission),
-          ...(description ? { description } : {}),
-          input,
-          detail,
-        },
-      });
+    case "permission.asked":
+      appendOpenCodePermissionAsked(event, state, events);
       break;
-    }
-
-    case "question.asked": {
-      if (event.properties.sessionID !== state.sessionId) {
-        break;
-      }
-
-      const questions = event.properties.questions.flatMap((q) => {
-        if (!q.question || !q.header) {
-          return [];
-        }
-        const options =
-          q.options?.map((o) => ({
-            label: o.label,
-            ...(o.description ? { description: o.description } : {}),
-          })) ?? [];
-        return [
-          {
-            question: q.question,
-            header: q.header,
-            options,
-            ...(q.multiple === true ? { multiSelect: true } : {}),
-          },
-        ];
-      });
-
-      if (questions.length === 0) {
-        break;
-      }
-
-      events.push({
-        type: "permission_requested",
-        provider: "opencode",
-        request: {
-          id: event.properties.id,
-          provider: "opencode",
-          name: "question",
-          kind: "question",
-          title: "Question",
-          input: { questions },
-          metadata: {
-            source: "opencode_question",
-            ...event.properties.tool,
-          },
-        },
-      });
+    case "question.asked":
+      appendOpenCodeQuestionAsked(event, state, events);
       break;
-    }
-
-    case "todo.updated": {
-      if (event.properties.sessionID !== state.sessionId) {
-        break;
-      }
-
-      events.push({
-        type: "timeline",
-        provider: "opencode",
-        item: mapOpenCodeTodosToTimelineItems(event.properties.todos),
-      });
-      break;
-    }
-
-    case "session.compacted": {
-      if (event.properties.sessionID !== state.sessionId) {
-        break;
-      }
-
-      events.push({
-        type: "timeline",
-        provider: "opencode",
-        item: createCompactionTimelineItem("completed"),
-      });
-      break;
-    }
-
-    case "session.idle": {
+    case "todo.updated":
       if (event.properties.sessionID === state.sessionId) {
-        state.streamedPartKeys.clear();
-        state.partTypes.clear();
         events.push({
-          type: "turn_completed",
+          type: "timeline",
           provider: "opencode",
-          usage: undefined,
+          item: mapOpenCodeTodosToTimelineItems(event.properties.todos),
         });
       }
       break;
-    }
-
-    case "session.error": {
+    case "session.compacted":
       if (event.properties.sessionID === state.sessionId) {
-        state.streamedPartKeys.clear();
-        state.partTypes.clear();
+        events.push({
+          type: "timeline",
+          provider: "opencode",
+          item: createCompactionTimelineItem("completed"),
+        });
+      }
+      break;
+    case "session.idle":
+      if (event.properties.sessionID === state.sessionId) {
+        resetOpenCodeTurnTrackingState(state);
+        events.push({ type: "turn_completed", provider: "opencode", usage: undefined });
+      }
+      break;
+    case "session.error":
+      if (event.properties.sessionID === state.sessionId) {
+        resetOpenCodeTurnTrackingState(state);
         events.push({
           type: "turn_failed",
           provider: "opencode",
@@ -1724,36 +1483,323 @@ export function translateOpenCodeEvent(
         });
       }
       break;
-    }
-
-    case "session.status": {
-      if (event.properties.sessionID !== state.sessionId) {
-        break;
-      }
-      const { status } = event.properties;
-      if (status.type === "idle") {
-        state.streamedPartKeys.clear();
-        state.partTypes.clear();
-        events.push({
-          type: "turn_completed",
-          provider: "opencode",
-          usage: undefined,
-        });
-      } else if (status.type === "retry" && isFatalOpenCodeRetryMessage(status.message)) {
-        state.streamedPartKeys.clear();
-        state.partTypes.clear();
-        events.push({
-          type: "turn_failed",
-          provider: "opencode",
-          error: normalizeTurnFailureError(status.message),
-        });
-      }
-      // "retry" and "busy" are transient — no terminal event.
+    case "session.status":
+      appendOpenCodeSessionStatus(event, state, events);
       break;
-    }
   }
 
   return events;
+}
+
+function resetOpenCodeTurnTrackingState(state: OpenCodeEventTranslationState): void {
+  state.streamedPartKeys.clear();
+  state.partTypes.clear();
+}
+
+function appendOpenCodeSessionCreatedOrUpdated(
+  event: Extract<OpenCodeEvent, { type: "session.created" | "session.updated" }>,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  if (event.properties.info.id === state.sessionId) {
+    events.push({
+      type: "thread_started",
+      sessionId: state.sessionId,
+      provider: "opencode",
+    });
+  }
+}
+
+function appendOpenCodeMessageUpdated(
+  event: Extract<OpenCodeEvent, { type: "message.updated" }>,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const info = event.properties.info;
+  if (info.sessionID !== state.sessionId) {
+    return;
+  }
+  state.messageRoles.set(info.id, info.role);
+  if (info.role !== "assistant") {
+    return;
+  }
+  const modelLookupKey = resolveOpenCodeModelLookupKeyFromAssistantMessage(info);
+  if (modelLookupKey) {
+    const contextWindowMaxTokens = state.modelContextWindowsByModelKey?.get(modelLookupKey);
+    if (contextWindowMaxTokens !== undefined) {
+      state.onAssistantModelContextWindowResolved?.(contextWindowMaxTokens);
+    }
+  }
+  if (state.emittedStructuredMessageIds.has(info.id) || info.time?.completed === undefined) {
+    return;
+  }
+  const text = stringifyStructuredAssistantMessage(info.structured);
+  if (!text) {
+    return;
+  }
+  state.emittedStructuredMessageIds.add(info.id);
+  events.push({
+    type: "timeline",
+    provider: "opencode",
+    item: { type: "assistant_message", text },
+  });
+}
+
+function appendOpenCodeMessagePartUpdated(
+  event: Extract<OpenCodeEvent, { type: "message.part.updated" }>,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const part = event.properties.part;
+  if (part.sessionID !== state.sessionId) {
+    return;
+  }
+  const messageRole = state.messageRoles.get(part.messageID);
+  state.partTypes.set(part.id, part.type);
+
+  if (part.type === "text") {
+    appendOpenCodeTextPart(part, messageRole, state, events);
+    return;
+  }
+  if (part.type === "reasoning") {
+    appendOpenCodeReasoningPart(part, state, events);
+    return;
+  }
+  if (part.type === "tool") {
+    const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
+    if (parsedToolPart.success && parsedToolPart.data) {
+      events.push({ type: "timeline", provider: "opencode", item: parsedToolPart.data });
+    }
+    return;
+  }
+  if (part.type === "compaction") {
+    events.push({
+      type: "timeline",
+      provider: "opencode",
+      item: createCompactionTimelineItem("loading", part.auto ? "auto" : "manual"),
+    });
+    return;
+  }
+  if (part.type === "step-finish") {
+    mergeOpenCodeStepFinishUsage(state.accumulatedUsage, part);
+    if (hasNormalizedOpenCodeUsage(state.accumulatedUsage)) {
+      events.push({
+        type: "usage_updated",
+        provider: "opencode",
+        usage: { ...state.accumulatedUsage },
+      });
+    }
+  }
+}
+
+function appendOpenCodeTextPart(
+  part: Extract<
+    Extract<OpenCodeEvent, { type: "message.part.updated" }>["properties"]["part"],
+    { type: "text" }
+  >,
+  messageRole: OpenCodeMessageRole | undefined,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  if (messageRole === "user") {
+    return;
+  }
+  if (!part.time?.end) {
+    return;
+  }
+  const partKey = resolvePartDedupeKey(part, "text");
+  if (partKey && state.streamedPartKeys.delete(partKey)) {
+    return;
+  }
+  if (part.text) {
+    events.push({
+      type: "timeline",
+      provider: "opencode",
+      item: { type: "assistant_message", text: part.text },
+    });
+  }
+}
+
+function appendOpenCodeReasoningPart(
+  part: Extract<
+    Extract<OpenCodeEvent, { type: "message.part.updated" }>["properties"]["part"],
+    { type: "reasoning" }
+  >,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  if (!part.time.end) {
+    return;
+  }
+  const partKey = resolvePartDedupeKey(part, "reasoning");
+  if (partKey && state.streamedPartKeys.delete(partKey)) {
+    return;
+  }
+  if (part.text) {
+    events.push({
+      type: "timeline",
+      provider: "opencode",
+      item: { type: "reasoning", text: part.text },
+    });
+  }
+}
+
+function appendOpenCodeMessagePartDelta(
+  event: Extract<OpenCodeEvent, { type: "message.part.delta" }>,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const { sessionID, messageID, partID, field, delta } = event.properties;
+  if (sessionID !== state.sessionId) {
+    return;
+  }
+  if (!delta || !field) {
+    return;
+  }
+  const messageRole = messageID ? state.messageRoles.get(messageID) : undefined;
+  const knownPartType = partID ? state.partTypes.get(partID) : undefined;
+  const isReasoning = knownPartType === "reasoning" || field === "reasoning";
+
+  if (isReasoning) {
+    if (partID) {
+      state.streamedPartKeys.add(`reasoning:${partID}`);
+    }
+    events.push({
+      type: "timeline",
+      provider: "opencode",
+      item: { type: "reasoning", text: delta },
+    });
+    return;
+  }
+  if (field !== "text") {
+    return;
+  }
+  if (messageRole === "user") {
+    return;
+  }
+  if (partID) {
+    state.streamedPartKeys.add(`text:${partID}`);
+  }
+  events.push({
+    type: "timeline",
+    provider: "opencode",
+    item: { type: "assistant_message", text: delta },
+  });
+}
+
+function appendOpenCodePermissionAsked(
+  event: Extract<OpenCodeEvent, { type: "permission.asked" }>,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  if (event.properties.sessionID !== state.sessionId) {
+    return;
+  }
+  const metadata = readOpenCodeRecord(event.properties.metadata);
+  const tool = readOpenCodeRecord(event.properties.tool);
+  const patterns = Array.isArray(event.properties.patterns)
+    ? event.properties.patterns.filter((value): value is string => typeof value === "string")
+    : [];
+  const command = readPermissionField(metadata, PERMISSION_COMMAND_KEYS);
+  const cwd = readPermissionField(metadata, PERMISSION_CWD_KEYS);
+  const reason = readPermissionField(metadata, PERMISSION_REASON_KEYS);
+  const input = buildOpenCodePermissionInput({ patterns, metadata, tool, command });
+  const detail = buildOpenCodePermissionDetail({
+    permission: event.properties.permission,
+    input,
+    command,
+    cwd,
+  });
+  const description = buildOpenCodePermissionDescription({ reason, patterns });
+
+  events.push({
+    type: "permission_requested",
+    provider: "opencode",
+    request: {
+      id: event.properties.id,
+      provider: "opencode",
+      name: event.properties.permission,
+      kind: "tool",
+      title: toHumanReadablePermissionTitle(event.properties.permission),
+      ...(description ? { description } : {}),
+      input,
+      detail,
+    },
+  });
+}
+
+function appendOpenCodeQuestionAsked(
+  event: Extract<OpenCodeEvent, { type: "question.asked" }>,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  if (event.properties.sessionID !== state.sessionId) {
+    return;
+  }
+  const questions = event.properties.questions.flatMap((q) => {
+    if (!q.question || !q.header) {
+      return [];
+    }
+    const options =
+      q.options?.map((o) => ({
+        label: o.label,
+        ...(o.description ? { description: o.description } : {}),
+      })) ?? [];
+    return [
+      {
+        question: q.question,
+        header: q.header,
+        options,
+        ...(q.multiple === true ? { multiSelect: true } : {}),
+      },
+    ];
+  });
+
+  if (questions.length === 0) {
+    return;
+  }
+
+  events.push({
+    type: "permission_requested",
+    provider: "opencode",
+    request: {
+      id: event.properties.id,
+      provider: "opencode",
+      name: "question",
+      kind: "question",
+      title: "Question",
+      input: { questions },
+      metadata: {
+        source: "opencode_question",
+        ...event.properties.tool,
+      },
+    },
+  });
+}
+
+function appendOpenCodeSessionStatus(
+  event: Extract<OpenCodeEvent, { type: "session.status" }>,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  if (event.properties.sessionID !== state.sessionId) {
+    return;
+  }
+  const { status } = event.properties;
+  if (status.type === "idle") {
+    resetOpenCodeTurnTrackingState(state);
+    events.push({ type: "turn_completed", provider: "opencode", usage: undefined });
+    return;
+  }
+  if (status.type === "retry" && isFatalOpenCodeRetryMessage(status.message)) {
+    resetOpenCodeTurnTrackingState(state);
+    events.push({
+      type: "turn_failed",
+      provider: "opencode",
+      error: normalizeTurnFailureError(status.message),
+    });
+  }
+  // "retry" and "busy" are transient — no terminal event.
 }
 
 class OpenCodeAgentSession implements AgentSession {

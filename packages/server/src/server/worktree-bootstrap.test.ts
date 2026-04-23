@@ -689,6 +689,66 @@ describe("runAsyncWorktreeBootstrap", () => {
     return env;
   }
 
+  function assertServiceTerminalCallSelfEnv(params: {
+    createTerminalCalls: CreateTerminalCall[];
+    terminalRecords: StubTerminalRecord[];
+    repoDir: string;
+  }): void {
+    const { createTerminalCalls, terminalRecords, repoDir } = params;
+    expect(createTerminalCalls).toHaveLength(1);
+    expect(createTerminalCalls[0]?.cwd).toBe(repoDir);
+    expect(createTerminalCalls[0]?.name).toBe("api");
+    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run api\r"]);
+    expect(createTerminalCalls[0]?.env).not.toHaveProperty("PORT");
+    expect(createTerminalCalls[0]?.env?.PASEO_PORT).toEqual(expect.any(String));
+    expect(createTerminalCalls[0]?.env?.HOST).toBe("127.0.0.1");
+    expect(createTerminalCalls[0]?.env?.PASEO_URL).toBe(
+      "http://api.feature-socket-service.repo.localhost:6767",
+    );
+    expect(createTerminalCalls[0]?.env?.PASEO_SERVICE_API_PORT).toBe(
+      createTerminalCalls[0]?.env?.PASEO_PORT,
+    );
+    expect(createTerminalCalls[0]?.env?.PASEO_SERVICE_API_URL).toBe(
+      "http://api.feature-socket-service.repo.localhost:6767",
+    );
+  }
+
+  async function assertServiceTerminalCallPeerEnv(params: {
+    createTerminalCalls: CreateTerminalCall[];
+    repoDir: string;
+  }): Promise<void> {
+    const { createTerminalCalls, repoDir } = params;
+    const plannedPorts = await ensureWorkspaceServicePortPlan({
+      workspaceId: repoDir,
+      services: [{ scriptName: "api" }, { scriptName: "app-server" }],
+      allocatePort: async () => {
+        throw new Error("Peer env test should reuse the existing service port plan");
+      },
+    });
+    const plannedAppServerPort = plannedPorts.get("app-server");
+    if (plannedAppServerPort === undefined) {
+      throw new Error("Expected app-server to be present in the service port plan");
+    }
+    expect(createTerminalCalls[0]?.env?.PASEO_SERVICE_APP_SERVER_PORT).toBe(
+      String(plannedAppServerPort),
+    );
+    expect(createTerminalCalls[0]?.env?.PASEO_SERVICE_APP_SERVER_URL).toBe(
+      "http://app-server.feature-socket-service.repo.localhost:6767",
+    );
+  }
+
+  async function assertServiceTerminalCallEnv(params: {
+    createTerminalCalls: CreateTerminalCall[];
+    terminalRecords: StubTerminalRecord[];
+    repoDir: string;
+  }): Promise<void> {
+    assertServiceTerminalCallSelfEnv(params);
+    await assertServiceTerminalCallPeerEnv({
+      createTerminalCalls: params.createTerminalCalls,
+      repoDir: params.repoDir,
+    });
+  }
+
   function commitPaseoScripts(
     scripts: Record<string, { command: string; type?: "script" | "service" }>,
     message = "add script config",
@@ -1024,39 +1084,11 @@ describe("runAsyncWorktreeBootstrap", () => {
         scriptName: "api",
       },
     ]);
-    expect(createTerminalCalls).toHaveLength(1);
-    expect(createTerminalCalls[0]?.cwd).toBe(repoDir);
-    expect(createTerminalCalls[0]?.name).toBe("api");
-    expect(terminalRecords[0]?.sentInputs).toEqual(["npm run api\r"]);
-    expect(createTerminalCalls[0]?.env).not.toHaveProperty("PORT");
-    expect(createTerminalCalls[0]?.env?.PASEO_PORT).toEqual(expect.any(String));
-    expect(createTerminalCalls[0]?.env?.HOST).toBe("127.0.0.1");
-    expect(createTerminalCalls[0]?.env?.PASEO_URL).toBe(
-      "http://api.feature-socket-service.repo.localhost:6767",
-    );
-    expect(createTerminalCalls[0]?.env?.PASEO_SERVICE_API_PORT).toBe(
-      createTerminalCalls[0]?.env?.PASEO_PORT,
-    );
-    expect(createTerminalCalls[0]?.env?.PASEO_SERVICE_API_URL).toBe(
-      "http://api.feature-socket-service.repo.localhost:6767",
-    );
-    const plannedPorts = await ensureWorkspaceServicePortPlan({
-      workspaceId: repoDir,
-      services: [{ scriptName: "api" }, { scriptName: "app-server" }],
-      allocatePort: async () => {
-        throw new Error("Peer env test should reuse the existing service port plan");
-      },
+    await assertServiceTerminalCallEnv({
+      createTerminalCalls,
+      terminalRecords,
+      repoDir,
     });
-    const plannedAppServerPort = plannedPorts.get("app-server");
-    if (plannedAppServerPort === undefined) {
-      throw new Error("Expected app-server to be present in the service port plan");
-    }
-    expect(createTerminalCalls[0]?.env?.PASEO_SERVICE_APP_SERVER_PORT).toBe(
-      String(plannedAppServerPort),
-    );
-    expect(createTerminalCalls[0]?.env?.PASEO_SERVICE_APP_SERVER_URL).toBe(
-      "http://app-server.feature-socket-service.repo.localhost:6767",
-    );
     expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "api" })).toMatchObject({
       type: "service",
       lifecycle: "running",

@@ -1080,6 +1080,16 @@ function isSyntheticUserEntry(entry: unknown): boolean {
   return candidate.isSynthetic === true || candidate.isMeta === true;
 }
 
+function firstTrimmedString(sources: readonly unknown[]): string | null {
+  for (const source of sources) {
+    const value = readTrimmedString(source);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
 export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   const root = message as unknown as Record<string, unknown>;
   const messageType = readTrimmedString(root.type);
@@ -1087,28 +1097,30 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   const streamEventMessage = streamEvent?.message as Record<string, unknown> | undefined;
   const messageContainer = root.message as Record<string, unknown> | undefined;
 
+  const messageIdFromUuid = messageType === "user" ? root.uuid : undefined;
+
   return {
-    taskId:
-      readTrimmedString(root.task_id) ??
-      readTrimmedString(streamEvent?.task_id) ??
-      readTrimmedString(streamEventMessage?.task_id) ??
-      readTrimmedString(messageContainer?.task_id) ??
-      null,
-    parentMessageId:
-      readTrimmedString(root.parent_message_id) ??
-      readTrimmedString(streamEvent?.parent_message_id) ??
-      readTrimmedString(streamEventMessage?.parent_message_id) ??
-      readTrimmedString(messageContainer?.parent_message_id) ??
-      null,
-    messageId:
-      readTrimmedString(root.message_id) ??
-      readTrimmedString(streamEvent?.message_id) ??
-      readTrimmedString(streamEventMessage?.id) ??
-      readTrimmedString(streamEventMessage?.message_id) ??
-      readTrimmedString(messageContainer?.id) ??
-      readTrimmedString(messageContainer?.message_id) ??
-      (messageType === "user" ? readTrimmedString(root.uuid) : null) ??
-      null,
+    taskId: firstTrimmedString([
+      root.task_id,
+      streamEvent?.task_id,
+      streamEventMessage?.task_id,
+      messageContainer?.task_id,
+    ]),
+    parentMessageId: firstTrimmedString([
+      root.parent_message_id,
+      streamEvent?.parent_message_id,
+      streamEventMessage?.parent_message_id,
+      messageContainer?.parent_message_id,
+    ]),
+    messageId: firstTrimmedString([
+      root.message_id,
+      streamEvent?.message_id,
+      streamEventMessage?.id,
+      streamEventMessage?.message_id,
+      messageContainer?.id,
+      messageContainer?.message_id,
+      messageIdFromUuid,
+    ]),
   };
 }
 
@@ -2167,26 +2179,34 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private async buildOptions(): Promise<ClaudeOptions> {
+  private resolveThinkingConfig(): {
+    thinking: ClaudeOptions["thinking"];
+    effort: ClaudeOptions["effort"];
+  } {
     const thinkingOptionId =
       this.config.thinkingOptionId && this.config.thinkingOptionId !== "default"
         ? this.config.thinkingOptionId
         : undefined;
-    let thinking: ClaudeOptions["thinking"];
-    let effort: ClaudeOptions["effort"];
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
-      thinking = { type: "adaptive" };
       // SDK 0.2.71 types `effort` as 'low' | 'medium' | 'high' | 'max'; Opus 4.7
       // adds 'xhigh' which the binary accepts but the typings don't yet expose.
-      effort = thinkingOptionId as ClaudeOptions["effort"];
+      return {
+        thinking: { type: "adaptive" },
+        effort: thinkingOptionId as ClaudeOptions["effort"],
+      };
     }
+    return { thinking: undefined, effort: undefined };
+  }
 
-    const appendedSystemPrompt = [
-      getOrchestratorModeInstructions(),
-      this.config.systemPrompt?.trim(),
-    ]
+  private buildAppendedSystemPrompt(): string {
+    return [getOrchestratorModeInstructions(), this.config.systemPrompt?.trim()]
       .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
       .join("\n\n");
+  }
+
+  private async buildOptions(): Promise<ClaudeOptions> {
+    const { thinking, effort } = this.resolveThinkingConfig();
+    const appendedSystemPrompt = this.buildAppendedSystemPrompt();
 
     const claudeBinary = await findExecutable("claude");
     this.logger.debug(
@@ -2621,7 +2641,19 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private routeSdkMessageFromPump(message: SDKMessage): void {
+  private isEchoedForegroundUserMessage(event: AgentStreamEvent): boolean {
+    if (
+      event.type !== "timeline" ||
+      event.item.type !== "user_message" ||
+      !this.activeForegroundTurnId ||
+      !this.lastForegroundPromptText
+    ) {
+      return false;
+    }
+    return event.item.text.trim() === this.lastForegroundPromptText.trim();
+  }
+
+  private shouldSuppressStaleResult(message: SDKMessage): boolean {
     // Suppress stale results from interrupted requests. The cancel path already
     // emitted the terminal event; this result is leftover from the killed API
     // request. Consume the flag on ANY result so it doesn't linger.
@@ -2629,22 +2661,32 @@ class ClaudeAgentSession implements AgentSession {
       this.pendingInterruptAbort = false;
       if (message.subtype !== "success") {
         this.logger.debug("Suppressing stale non-success result from interrupted request");
-        return;
+        return true;
       }
     }
     if (message.type === "result" && message.subtype !== "success" && this.isAbortError(message)) {
       this.logger.debug("Suppressing abort result by content");
+      return true;
+    }
+    return false;
+  }
+
+  private isAssistantishMessage(message: SDKMessage): boolean {
+    return (
+      message.type === "assistant" ||
+      message.type === "stream_event" ||
+      message.type === "tool_progress" ||
+      (message.type === "system" && message.subtype === "task_notification")
+    );
+  }
+
+  private routeSdkMessageFromPump(message: SDKMessage): void {
+    if (this.shouldSuppressStaleResult(message)) {
       return;
     }
 
     const isForeground = Boolean(this.activeForegroundTurnId);
-    const assistantishMessage =
-      message.type === "assistant" ||
-      message.type === "stream_event" ||
-      message.type === "tool_progress" ||
-      (message.type === "system" && message.subtype === "task_notification");
-
-    if (!isForeground && assistantishMessage) {
+    if (!isForeground && this.isAssistantishMessage(message)) {
       this.startAutonomousTurn();
     }
     if (!isForeground && !this.autonomousTurn && message.type === "result") {
@@ -2685,19 +2727,9 @@ class ClaudeAgentSession implements AgentSession {
       );
 
     // User message dedup: suppress echoed user messages that match the foreground prompt
-    const filteredMessageEvents = messageEvents.filter((event) => {
-      if (
-        event.type === "timeline" &&
-        event.item.type === "user_message" &&
-        this.activeForegroundTurnId &&
-        this.lastForegroundPromptText
-      ) {
-        if (event.item.text.trim() === this.lastForegroundPromptText.trim()) {
-          return false;
-        }
-      }
-      return true;
-    });
+    const filteredMessageEvents = messageEvents.filter(
+      (event) => !this.isEchoedForegroundUserMessage(event),
+    );
 
     const events = [...filteredMessageEvents, ...assistantTimelineEvents];
 
@@ -2813,114 +2845,11 @@ class ClaudeAgentSession implements AgentSession {
 
     switch (message.type) {
       case "system":
-        if (message.subtype === "init") {
-          const threadSessionId = this.handleSystemMessage(message);
-          if (threadSessionId) {
-            events.push({
-              type: "thread_started",
-              provider: "claude",
-              sessionId: threadSessionId,
-            });
-          }
-        } else if (message.subtype === "status") {
-          const status = (message as { status?: string }).status;
-          if (status === "compacting") {
-            this.compacting = true;
-            events.push({
-              type: "timeline",
-              item: { type: "compaction", status: "loading" },
-              provider: "claude",
-            });
-          }
-        } else if (message.subtype === "compact_boundary") {
-          const compactMetadata = readCompactionMetadata(message as Record<string, unknown>);
-          events.push({
-            type: "timeline",
-            item: {
-              type: "compaction",
-              status: "completed",
-              trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
-              preTokens: compactMetadata?.preTokens,
-            },
-            provider: "claude",
-          });
-        } else if (message.subtype === "task_notification") {
-          const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(message);
-          if (taskNotificationItem) {
-            events.push({
-              type: "timeline",
-              item: taskNotificationItem,
-              provider: "claude",
-            });
-          }
-          const usage = readUsageFromTaskNotification(message);
-          if (typeof usage === "number") {
-            this.lastContextWindowUsedTokens = usage;
-            events.push(this.createUsageUpdatedEvent(usage));
-          }
-        } else if (message.subtype === "task_progress") {
-          this.lastContextWindowUsedTokens =
-            readContextWindowUsedTokensFromTaskProgress(message) ??
-            this.lastContextWindowUsedTokens;
-          if (typeof this.lastContextWindowUsedTokens === "number") {
-            events.push(this.createUsageUpdatedEvent(this.lastContextWindowUsedTokens));
-          }
-        }
+        this.appendSystemMessageEvents(message, events);
         break;
-      case "user": {
-        if (isSyntheticUserEntry(message)) {
-          break;
-        }
-        if (this.compacting) {
-          this.compacting = false;
-          break;
-        }
-        const messageId =
-          typeof message.uuid === "string" && message.uuid.length > 0 ? message.uuid : undefined;
-        this.rememberUserMessageId(messageId);
-        const content = message.message?.content;
-        const taskNotificationItem = mapTaskNotificationUserContentToToolCall({
-          content,
-          messageId,
-        });
-        if (taskNotificationItem) {
-          events.push({
-            type: "timeline",
-            item: taskNotificationItem,
-            provider: "claude",
-          });
-          break;
-        }
-        if (typeof content === "string" && content.length > 0) {
-          if (!isClaudeTranscriptNoiseText(content)) {
-            events.push({
-              type: "timeline",
-              item: {
-                type: "user_message",
-                text: content,
-                ...(messageId ? { messageId } : {}),
-              },
-              provider: "claude",
-            });
-          }
-        } else if (Array.isArray(content)) {
-          const timelineItems = this.mapBlocksToTimeline(content, {
-            textMessageType: "user_message",
-          });
-          for (const item of timelineItems) {
-            if (item.type === "user_message" && messageId && !item.messageId) {
-              events.push({
-                type: "timeline",
-                item: { ...item, messageId },
-                provider: "claude",
-              });
-              continue;
-            }
-            events.push({ type: "timeline", item, provider: "claude" });
-          }
-        }
+      case "user":
+        this.appendUserMessageEvents(message, events);
         break;
-      }
       case "assistant": {
         const timelineItems = this.mapBlocksToTimeline(message.message.content, {
           suppressAssistantText: options?.suppressAssistantText ?? false,
@@ -2931,38 +2860,184 @@ class ClaudeAgentSession implements AgentSession {
         }
         break;
       }
-      case "stream_event": {
-        const usageUpdatedEvent = this.trackStreamEventUsage(message.event);
-        if (usageUpdatedEvent) {
-          events.push(usageUpdatedEvent);
-        }
-        const timelineItems = this.mapPartialEvent(message.event, {
-          suppressAssistantText: options?.suppressAssistantText ?? false,
-          suppressReasoning: options?.suppressReasoning ?? false,
-        });
-        for (const item of timelineItems) {
-          events.push({ type: "timeline", item, provider: "claude" });
-        }
+      case "stream_event":
+        this.appendStreamEventEvents(message, events, options);
         break;
-      }
-      case "result": {
-        const usage = this.convertUsage(message, message.modelUsage);
-        if (message.subtype === "success") {
-          events.push({ type: "turn_completed", provider: "claude", usage });
-        } else {
-          const errorMessage =
-            "errors" in message && Array.isArray(message.errors) && message.errors.length > 0
-              ? message.errors.join("\n")
-              : "Claude run failed";
-          events.push(this.buildTurnFailedEvent(errorMessage));
-        }
+      case "result":
+        this.appendResultEvents(message, events);
         break;
-      }
       default:
         break;
     }
 
     return events;
+  }
+
+  private appendSystemMessageEvents(
+    message: Extract<SDKMessage, { type: "system" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    if (message.subtype === "init") {
+      const threadSessionId = this.handleSystemMessage(message);
+      if (threadSessionId) {
+        events.push({
+          type: "thread_started",
+          provider: "claude",
+          sessionId: threadSessionId,
+        });
+      }
+      return;
+    }
+    if (message.subtype === "status") {
+      const status = (message as { status?: string }).status;
+      if (status === "compacting") {
+        this.compacting = true;
+        events.push({
+          type: "timeline",
+          item: { type: "compaction", status: "loading" },
+          provider: "claude",
+        });
+      }
+      return;
+    }
+    if (message.subtype === "compact_boundary") {
+      const compactMetadata = readCompactionMetadata(message as Record<string, unknown>);
+      events.push({
+        type: "timeline",
+        item: {
+          type: "compaction",
+          status: "completed",
+          trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
+          preTokens: compactMetadata?.preTokens,
+        },
+        provider: "claude",
+      });
+      return;
+    }
+    if (message.subtype === "task_notification") {
+      const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(message);
+      if (taskNotificationItem) {
+        events.push({
+          type: "timeline",
+          item: taskNotificationItem,
+          provider: "claude",
+        });
+      }
+      const usage = readUsageFromTaskNotification(message);
+      if (typeof usage === "number") {
+        this.lastContextWindowUsedTokens = usage;
+        events.push(this.createUsageUpdatedEvent(usage));
+      }
+      return;
+    }
+    if (message.subtype === "task_progress") {
+      this.lastContextWindowUsedTokens =
+        readContextWindowUsedTokensFromTaskProgress(message) ?? this.lastContextWindowUsedTokens;
+      if (typeof this.lastContextWindowUsedTokens === "number") {
+        events.push(this.createUsageUpdatedEvent(this.lastContextWindowUsedTokens));
+      }
+    }
+  }
+
+  private appendUserMessageEvents(
+    message: Extract<SDKMessage, { type: "user" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    if (isSyntheticUserEntry(message)) {
+      return;
+    }
+    if (this.compacting) {
+      this.compacting = false;
+      return;
+    }
+    const messageId =
+      typeof message.uuid === "string" && message.uuid.length > 0 ? message.uuid : undefined;
+    this.rememberUserMessageId(messageId);
+    const content = message.message?.content;
+    const taskNotificationItem = mapTaskNotificationUserContentToToolCall({
+      content,
+      messageId,
+    });
+    if (taskNotificationItem) {
+      events.push({
+        type: "timeline",
+        item: taskNotificationItem,
+        provider: "claude",
+      });
+      return;
+    }
+    if (typeof content === "string" && content.length > 0) {
+      if (!isClaudeTranscriptNoiseText(content)) {
+        events.push({
+          type: "timeline",
+          item: {
+            type: "user_message",
+            text: content,
+            ...(messageId ? { messageId } : {}),
+          },
+          provider: "claude",
+        });
+      }
+      return;
+    }
+    if (Array.isArray(content)) {
+      this.appendUserContentArrayEvents(content, messageId, events);
+    }
+  }
+
+  private appendUserContentArrayEvents(
+    content: ClaudeContentChunk[],
+    messageId: string | undefined,
+    events: AgentStreamEvent[],
+  ): void {
+    const timelineItems = this.mapBlocksToTimeline(content, {
+      textMessageType: "user_message",
+    });
+    for (const item of timelineItems) {
+      if (item.type === "user_message" && messageId && !item.messageId) {
+        events.push({
+          type: "timeline",
+          item: { ...item, messageId },
+          provider: "claude",
+        });
+        continue;
+      }
+      events.push({ type: "timeline", item, provider: "claude" });
+    }
+  }
+
+  private appendStreamEventEvents(
+    message: Extract<SDKMessage, { type: "stream_event" }>,
+    events: AgentStreamEvent[],
+    options: { suppressAssistantText?: boolean; suppressReasoning?: boolean } | undefined,
+  ): void {
+    const usageUpdatedEvent = this.trackStreamEventUsage(message.event);
+    if (usageUpdatedEvent) {
+      events.push(usageUpdatedEvent);
+    }
+    const timelineItems = this.mapPartialEvent(message.event, {
+      suppressAssistantText: options?.suppressAssistantText ?? false,
+      suppressReasoning: options?.suppressReasoning ?? false,
+    });
+    for (const item of timelineItems) {
+      events.push({ type: "timeline", item, provider: "claude" });
+    }
+  }
+
+  private appendResultEvents(
+    message: Extract<SDKMessage, { type: "result" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    const usage = this.convertUsage(message, message.modelUsage);
+    if (message.subtype === "success") {
+      events.push({ type: "turn_completed", provider: "claude", usage });
+      return;
+    }
+    const errorMessage =
+      "errors" in message && Array.isArray(message.errors) && message.errors.length > 0
+        ? message.errors.join("\n")
+        : "Claude run failed";
+    events.push(this.buildTurnFailedEvent(errorMessage));
   }
 
   private captureSessionIdFromMessage(message: SDKMessage): string | null {
@@ -3423,51 +3498,13 @@ class ClaudeAgentSession implements AgentSession {
     // User SDK entries can arrive as multiple text blocks, but Paseo treats them as one message.
     const userTextParts: string[] = [];
     for (const block of content) {
-      switch (block.type) {
-        case "text":
-        case "text_delta":
-          if (
-            block.text &&
-            block.text !== INTERRUPT_TOOL_USE_PLACEHOLDER &&
-            !isClaudeTranscriptNoiseText(block.text)
-          ) {
-            if (textMessageType === "user_message") {
-              const trimmed = block.text.trim();
-              if (trimmed) {
-                userTextParts.push(trimmed);
-              }
-            } else if (!suppressText) {
-              items.push({ type: "assistant_message", text: block.text });
-            }
-          }
-          break;
-        case "thinking":
-        case "thinking_delta":
-          if (block.thinking) {
-            if (!suppressReasoning) {
-              items.push({ type: "reasoning", text: block.thinking });
-            }
-          }
-          break;
-        case "tool_use":
-        case "server_tool_use":
-        case "mcp_tool_use": {
-          this.handleToolUseStart(block, items);
-          break;
-        }
-        case "tool_result":
-        case "mcp_tool_result":
-        case "web_fetch_tool_result":
-        case "web_search_tool_result":
-        case "code_execution_tool_result":
-        case "bash_code_execution_tool_result":
-        case "text_editor_code_execution_tool_result": {
-          this.handleToolResult(block, items);
-          break;
-        }
-        default:
-          break;
-      }
+      this.mapBlockToTimeline(block, {
+        items,
+        userTextParts,
+        textMessageType,
+        suppressText,
+        suppressReasoning,
+      });
     }
 
     if (textMessageType === "user_message" && userTextParts.length > 0) {
@@ -3478,6 +3515,75 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return items;
+  }
+
+  private appendTextBlockToTimeline(
+    block: ClaudeContentChunk,
+    context: {
+      items: AgentTimelineItem[];
+      userTextParts: string[];
+      textMessageType: "assistant_message" | "user_message";
+      suppressText: boolean;
+    },
+  ): void {
+    const { items, userTextParts, textMessageType, suppressText } = context;
+    if (
+      !block.text ||
+      block.text === INTERRUPT_TOOL_USE_PLACEHOLDER ||
+      isClaudeTranscriptNoiseText(block.text)
+    ) {
+      return;
+    }
+    if (textMessageType === "user_message") {
+      const trimmed = block.text.trim();
+      if (trimmed) {
+        userTextParts.push(trimmed);
+      }
+      return;
+    }
+    if (!suppressText) {
+      items.push({ type: "assistant_message", text: block.text });
+    }
+  }
+
+  private mapBlockToTimeline(
+    block: ClaudeContentChunk,
+    context: {
+      items: AgentTimelineItem[];
+      userTextParts: string[];
+      textMessageType: "assistant_message" | "user_message";
+      suppressText: boolean;
+      suppressReasoning: boolean;
+    },
+  ): void {
+    switch (block.type) {
+      case "text":
+      case "text_delta":
+        this.appendTextBlockToTimeline(block, context);
+        break;
+      case "thinking":
+      case "thinking_delta":
+        if (block.thinking && !context.suppressReasoning) {
+          context.items.push({ type: "reasoning", text: block.thinking });
+        }
+        break;
+      case "tool_use":
+      case "server_tool_use":
+      case "mcp_tool_use":
+        this.handleToolUseStart(block, context.items);
+        break;
+      case "tool_result":
+      case "mcp_tool_result":
+      case "web_fetch_tool_result":
+      case "web_search_tool_result":
+      case "code_execution_tool_result":
+      case "bash_code_execution_tool_result":
+      case "text_editor_code_execution_tool_result":
+        this.handleToolResult(block, context.items);
+        break;
+      default:
+        break;
+    }
   }
 
   private handleToolUseStart(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
@@ -3583,6 +3689,53 @@ class ClaudeAgentSession implements AgentSession {
     return Object.keys(result).length > 0 ? result : undefined;
   }
 
+  private isCommandExecutionTool(
+    normalizedServer: string,
+    normalizedTool: string,
+    input: AgentMetadata | null | undefined,
+  ): boolean {
+    if (
+      normalizedServer.includes("bash") ||
+      normalizedServer.includes("shell") ||
+      normalizedServer.includes("command")
+    ) {
+      return true;
+    }
+    if (
+      normalizedTool.includes("bash") ||
+      normalizedTool.includes("shell") ||
+      normalizedTool.includes("command")
+    ) {
+      return true;
+    }
+    return Boolean(input && (typeof input.command === "string" || Array.isArray(input.command)));
+  }
+
+  private static isFileWriteTool(normalizedTool: string): boolean {
+    return (
+      normalizedTool.includes("write") ||
+      normalizedTool === "write_file" ||
+      normalizedTool === "create_file"
+    );
+  }
+
+  private static isFileEditTool(normalizedTool: string): boolean {
+    return (
+      normalizedTool.includes("edit") ||
+      normalizedTool.includes("patch") ||
+      normalizedTool === "apply_patch" ||
+      normalizedTool === "apply_diff"
+    );
+  }
+
+  private static isFileReadTool(normalizedTool: string): boolean {
+    return (
+      normalizedTool.includes("read") ||
+      normalizedTool === "read_file" ||
+      normalizedTool === "view_file"
+    );
+  }
+
   private buildStructuredToolResult(
     server: string,
     tool: string,
@@ -3592,16 +3745,7 @@ class ClaudeAgentSession implements AgentSession {
     const normalizedServer = server.toLowerCase();
     const normalizedTool = tool.toLowerCase();
 
-    // Command execution tools
-    if (
-      normalizedServer.includes("bash") ||
-      normalizedServer.includes("shell") ||
-      normalizedServer.includes("command") ||
-      normalizedTool.includes("bash") ||
-      normalizedTool.includes("shell") ||
-      normalizedTool.includes("command") ||
-      (input && (typeof input.command === "string" || Array.isArray(input.command)))
-    ) {
+    if (this.isCommandExecutionTool(normalizedServer, normalizedTool, input)) {
       const command = this.extractCommandText(input ?? {}) ?? "command";
       return {
         type: "command",
@@ -3611,69 +3755,53 @@ class ClaudeAgentSession implements AgentSession {
       };
     }
 
-    // File write tools (new files or complete replacements)
     if (
-      normalizedTool.includes("write") ||
-      normalizedTool === "write_file" ||
-      normalizedTool === "create_file"
+      ClaudeAgentSession.isFileWriteTool(normalizedTool) &&
+      input &&
+      typeof input.file_path === "string"
     ) {
-      if (input && typeof input.file_path === "string") {
-        return {
-          type: "file_write",
-          filePath: input.file_path,
-          oldContent: "",
-          newContent: typeof input.content === "string" ? input.content : output,
-        };
-      }
+      return {
+        type: "file_write",
+        filePath: input.file_path,
+        oldContent: "",
+        newContent: typeof input.content === "string" ? input.content : output,
+      };
     }
 
-    // File edit/patch tools
     if (
-      normalizedTool.includes("edit") ||
-      normalizedTool.includes("patch") ||
-      normalizedTool === "apply_patch" ||
-      normalizedTool === "apply_diff"
+      ClaudeAgentSession.isFileEditTool(normalizedTool) &&
+      input &&
+      typeof input.file_path === "string"
     ) {
-      if (input && typeof input.file_path === "string") {
-        // Support both old_str/new_str and old_string/new_string parameter names
-        const oldContent = firstStringField(input, "old_str", "old_string");
-        const newContent = firstStringField(input, "new_str", "new_string");
-        const diff = firstStringField(input, "patch", "diff");
-        return {
-          type: "file_edit",
-          filePath: input.file_path,
-          diff,
-          oldContent,
-          newContent,
-        };
-      }
+      // Support both old_str/new_str and old_string/new_string parameter names
+      const oldContent = firstStringField(input, "old_str", "old_string");
+      const newContent = firstStringField(input, "new_str", "new_string");
+      const diff = firstStringField(input, "patch", "diff");
+      return {
+        type: "file_edit",
+        filePath: input.file_path,
+        diff,
+        oldContent,
+        newContent,
+      };
     }
 
-    // File read tools
     if (
-      normalizedTool.includes("read") ||
-      normalizedTool === "read_file" ||
-      normalizedTool === "view_file"
+      ClaudeAgentSession.isFileReadTool(normalizedTool) &&
+      input &&
+      typeof input.file_path === "string"
     ) {
-      if (input && typeof input.file_path === "string") {
-        return {
-          type: "file_read",
-          filePath: input.file_path,
-          content: output,
-        };
-      }
+      return {
+        type: "file_read",
+        filePath: input.file_path,
+        content: output,
+      };
     }
 
     return undefined;
   }
 
-  private mapPartialEvent(
-    event: SDKPartialAssistantMessage["event"],
-    options?: {
-      suppressAssistantText?: boolean;
-      suppressReasoning?: boolean;
-    },
-  ): AgentTimelineItem[] {
+  private updatePartialEventToolState(event: SDKPartialAssistantMessage["event"]): boolean {
     if (event.type === "content_block_start") {
       const block = isClaudeContentChunk(event.content_block) ? event.content_block : null;
       if (
@@ -3684,19 +3812,36 @@ class ClaudeAgentSession implements AgentSession {
         this.toolUseIndexToId.set(event.index, block.id);
         this.toolUseInputBuffers.delete(block.id);
       }
-    } else if (event.type === "content_block_delta") {
+      return false;
+    }
+    if (event.type === "content_block_delta") {
       const delta = isClaudeContentChunk(event.delta) ? event.delta : null;
       if (delta?.type === "input_json_delta") {
         const partialJson = typeof delta.partial_json === "string" ? delta.partial_json : undefined;
         this.handleToolInputDelta(event.index, partialJson);
-        return [];
+        return true;
       }
-    } else if (event.type === "content_block_stop" && typeof event.index === "number") {
+      return false;
+    }
+    if (event.type === "content_block_stop" && typeof event.index === "number") {
       const toolId = this.toolUseIndexToId.get(event.index);
       if (toolId) {
         this.toolUseIndexToId.delete(event.index);
         this.toolUseInputBuffers.delete(toolId);
       }
+    }
+    return false;
+  }
+
+  private mapPartialEvent(
+    event: SDKPartialAssistantMessage["event"],
+    options?: {
+      suppressAssistantText?: boolean;
+      suppressReasoning?: boolean;
+    },
+  ): AgentTimelineItem[] {
+    if (this.updatePartialEventToolState(event)) {
+      return [];
     }
 
     switch (event.type) {
@@ -3968,37 +4113,38 @@ function normalizeHistoryBlocks(content: unknown): ClaudeContentChunk[] | null {
   return null;
 }
 
-export function convertClaudeHistoryEntry(
+function convertClaudeHistoryEntryPreamble(
   entry: any,
-  mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
-): AgentTimelineItem[] {
+): { shortCircuit: AgentTimelineItem[] } | { proceed: { content: unknown } } {
   if (entry.type === "system" && entry.subtype === "compact_boundary") {
     const compactMetadata = readCompactionMetadata(entry as Record<string, unknown>);
-    return [
-      {
-        type: "compaction",
-        status: "completed",
-        trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
-        preTokens: compactMetadata?.preTokens,
-      },
-    ];
+    return {
+      shortCircuit: [
+        {
+          type: "compaction",
+          status: "completed",
+          trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
+          preTokens: compactMetadata?.preTokens,
+        },
+      ],
+    };
   }
 
   const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(entry);
   if (taskNotificationItem) {
-    return [taskNotificationItem];
+    return { shortCircuit: [taskNotificationItem] };
   }
 
   if (entry.isCompactSummary) {
-    return [];
+    return { shortCircuit: [] };
   }
   if (entry.type === "user" && isSyntheticUserEntry(entry)) {
-    return [];
+    return { shortCircuit: [] };
   }
 
   const message = entry?.message;
   if (!message || !("content" in message)) {
-    return [];
+    return { shortCircuit: [] };
   }
 
   const content = message.content;
@@ -4006,8 +4152,21 @@ export function convertClaudeHistoryEntry(
     (entry.type === "user" || entry.type === "assistant") &&
     isClaudeTranscriptNoiseContent(content)
   ) {
-    return [];
+    return { shortCircuit: [] };
   }
+
+  return { proceed: { content } };
+}
+
+export function convertClaudeHistoryEntry(
+  entry: any,
+  mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
+): AgentTimelineItem[] {
+  const preamble = convertClaudeHistoryEntryPreamble(entry);
+  if ("shortCircuit" in preamble) {
+    return preamble.shortCircuit;
+  }
+  const { content } = preamble.proceed;
   const normalizedBlocks = normalizeHistoryBlocks(content);
   const contentValue = typeof content === "string" ? content : normalizedBlocks;
   const hasToolBlock = normalizedBlocks?.some((block) => hasToolLikeBlock(block)) ?? false;
@@ -4160,6 +4319,51 @@ async function collectRecentClaudeSessions(
   return candidates.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
 }
 
+interface ClaudeSessionDescriptorAccumulator {
+  sessionId: string | null;
+  cwd: string | null;
+  title: string | null;
+  timeline: AgentTimelineItem[];
+}
+
+function isFinishedAccumulator(acc: ClaudeSessionDescriptorAccumulator): boolean {
+  return Boolean(acc.sessionId && acc.cwd && acc.title);
+}
+
+function applyClaudeSessionEntryToAccumulator(
+  entry: any,
+  acc: ClaudeSessionDescriptorAccumulator,
+): void {
+  if (entry?.isSidechain) {
+    return;
+  }
+  if (entry?.type === "user" && isSyntheticUserEntry(entry)) {
+    return;
+  }
+  if (!acc.sessionId && typeof entry.sessionId === "string") {
+    acc.sessionId = entry.sessionId;
+  }
+  if (!acc.cwd && typeof entry.cwd === "string") {
+    acc.cwd = entry.cwd;
+  }
+  if (entry.type === "user" && entry.message) {
+    const text = extractClaudeUserText(entry.message);
+    if (text) {
+      if (!acc.title) {
+        acc.title = text;
+      }
+      acc.timeline.push({ type: "user_message", text });
+    }
+    return;
+  }
+  if (entry.type === "assistant" && entry.message) {
+    const text = extractClaudeUserText(entry.message);
+    if (text) {
+      acc.timeline.push({ type: "assistant_message", text });
+    }
+  }
+}
+
 async function parseClaudeSessionDescriptor(
   filePath: string,
   mtime: Date,
@@ -4171,10 +4375,12 @@ async function parseClaudeSessionDescriptor(
     return null;
   }
 
-  let sessionId: string | null = null;
-  let cwd: string | null = null;
-  let title: string | null = null;
-  const timeline: AgentTimelineItem[] = [];
+  const acc: ClaudeSessionDescriptorAccumulator = {
+    sessionId: null,
+    cwd: null,
+    title: null,
+    timeline: [],
+  };
 
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -4185,36 +4391,13 @@ async function parseClaudeSessionDescriptor(
     } catch {
       continue;
     }
-    if (entry?.isSidechain) {
-      continue;
-    }
-    if (entry?.type === "user" && isSyntheticUserEntry(entry)) {
-      continue;
-    }
-    if (!sessionId && typeof entry.sessionId === "string") {
-      sessionId = entry.sessionId;
-    }
-    if (!cwd && typeof entry.cwd === "string") {
-      cwd = entry.cwd;
-    }
-    if (entry.type === "user" && entry.message) {
-      const text = extractClaudeUserText(entry.message);
-      if (text) {
-        if (!title) {
-          title = text;
-        }
-        timeline.push({ type: "user_message", text });
-      }
-    } else if (entry.type === "assistant" && entry.message) {
-      const text = extractClaudeUserText(entry.message);
-      if (text) {
-        timeline.push({ type: "assistant_message", text });
-      }
-    }
-    if (sessionId && cwd && title) {
+    applyClaudeSessionEntryToAccumulator(entry, acc);
+    if (isFinishedAccumulator(acc)) {
       break;
     }
   }
+
+  const { sessionId, cwd, title, timeline } = acc;
 
   if (!sessionId || !cwd) {
     return null;

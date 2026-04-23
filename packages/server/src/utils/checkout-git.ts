@@ -1563,6 +1563,194 @@ export function warmCheckoutShortstatInBackground(
     });
 }
 
+interface AppendStructuredTrackedDiffsInput {
+  cwd: string;
+  trackedChanges: CheckoutFileChange[];
+  trackedChangeByPath: Map<string, CheckoutFileChange>;
+  trackedNumstatByPath: Map<string, FileStat>;
+  trackedPlaceholderByPath: Map<string, { status: "binary" | "too_large"; stat: FileStat }>;
+  trackedDiffText: string;
+  trackedDiffTruncated: boolean;
+  refsForDiff: CheckoutDiffRefs;
+  ignoreWhitespace: boolean;
+  structured: ParsedDiffFile[];
+  appendDiff: (text: string) => void;
+  appendTrackedPlaceholderComment: (
+    change: CheckoutFileChange,
+    status: "binary" | "too_large",
+  ) => void;
+}
+
+async function appendStructuredTrackedDiffs(
+  input: AppendStructuredTrackedDiffsInput,
+): Promise<void> {
+  const {
+    cwd,
+    trackedChanges,
+    trackedChangeByPath,
+    trackedNumstatByPath,
+    trackedPlaceholderByPath,
+    trackedDiffText,
+    trackedDiffTruncated,
+    refsForDiff,
+    ignoreWhitespace,
+    structured,
+    appendTrackedPlaceholderComment,
+  } = input;
+
+  const parsedTrackedFiles =
+    trackedDiffText.length > 0
+      ? await parseAndHighlightDiff(trackedDiffText, cwd, {
+          getOldFileContent: async (file) => {
+            const change = trackedChangeByPath.get(file.path);
+            if (!change || change.isNew) {
+              return null;
+            }
+            const refPath = change.oldPath ?? change.path;
+            return readGitFileContentAtRef(cwd, refsForDiff.baseRef, refPath);
+          },
+          getNewFileContent: async (file) => {
+            if (!refsForDiff.targetRef) {
+              return null;
+            }
+            return readGitFileContentAtRef(cwd, refsForDiff.targetRef, file.path);
+          },
+        })
+      : [];
+  const parsedTrackedByPath = new Map(parsedTrackedFiles.map((file) => [file.path, file]));
+
+  for (const change of trackedChanges) {
+    const placeholder = trackedPlaceholderByPath.get(change.path);
+    if (placeholder) {
+      structured.push(
+        buildPlaceholderParsedDiffFile(change, {
+          status: placeholder.status,
+          stat: placeholder.stat,
+        }),
+      );
+      appendTrackedPlaceholderComment(change, placeholder.status);
+      continue;
+    }
+
+    const stat = trackedNumstatByPath.get(change.path) ?? null;
+    const parsedFile = parsedTrackedByPath.get(change.path);
+    if (parsedFile) {
+      structured.push({
+        ...parsedFile,
+        path: change.path,
+        isNew: change.isNew,
+        isDeleted: change.isDeleted,
+        status: "ok",
+      });
+      continue;
+    }
+
+    // `git diff -w --name-status` can still report a modified path even when the
+    // whitespace-filtered patch and numstat are both empty. Skip emitting a
+    // structured placeholder in that case so whitespace-only edits truly disappear.
+    if (
+      ignoreWhitespace &&
+      !trackedDiffTruncated &&
+      change.status.startsWith("M") &&
+      (!stat || (!stat.isBinary && stat.additions === 0 && stat.deletions === 0))
+    ) {
+      continue;
+    }
+
+    structured.push({
+      path: change.path,
+      isNew: change.isNew,
+      isDeleted: change.isDeleted,
+      additions: stat?.additions ?? 0,
+      deletions: stat?.deletions ?? 0,
+      hunks: [],
+      status: trackedDiffTruncated ? "too_large" : "ok",
+    });
+  }
+}
+
+interface ProcessUntrackedChangeInput {
+  cwd: string;
+  change: CheckoutFileChange;
+  ignoreWhitespace: boolean;
+  includeStructured: boolean;
+  structured: ParsedDiffFile[];
+  appendDiff: (text: string) => void;
+}
+
+async function processUntrackedChange(input: ProcessUntrackedChangeInput): Promise<void> {
+  const { cwd, change, ignoreWhitespace, includeStructured, structured, appendDiff } = input;
+  const { text, truncated, stat } = await getUntrackedDiffText(cwd, change, ignoreWhitespace);
+
+  if (!includeStructured) {
+    if (stat?.isBinary) {
+      appendDiff(`# ${change.path}: binary diff omitted\n`);
+    } else if (truncated) {
+      appendDiff(`# ${change.path}: diff too large omitted\n`);
+    } else {
+      appendDiff(text);
+    }
+    return;
+  }
+
+  if (stat?.isBinary) {
+    structured.push(buildPlaceholderParsedDiffFile(change, { status: "binary", stat }));
+    appendDiff(`# ${change.path}: binary diff omitted\n`);
+    return;
+  }
+
+  if (truncated) {
+    structured.push(buildPlaceholderParsedDiffFile(change, { status: "too_large", stat }));
+    appendDiff(`# ${change.path}: diff too large omitted\n`);
+    return;
+  }
+
+  appendDiff(text);
+  const parsed = await parseAndHighlightDiff(text, cwd);
+  const parsedFile =
+    parsed[0] ??
+    ({
+      path: change.path,
+      isNew: change.isNew,
+      isDeleted: change.isDeleted,
+      additions: stat?.additions ?? 0,
+      deletions: stat?.deletions ?? 0,
+      hunks: [],
+    } satisfies ParsedDiffFile);
+
+  structured.push({
+    ...parsedFile,
+    path: change.path,
+    isNew: change.isNew,
+    isDeleted: change.isDeleted,
+    status: "ok",
+  });
+}
+
+async function resolveCheckoutDiffRefs(
+  cwd: string,
+  compare: CheckoutDiffCompare,
+  context: CheckoutContext | undefined,
+): Promise<CheckoutDiffRefs | null> {
+  if (compare.mode === "uncommitted") {
+    return { baseRef: "HEAD", includeUntracked: true };
+  }
+  const configured = await getConfiguredBaseRefForCwd(cwd, context);
+  const baseRef = configured.baseRef ?? compare.baseRef ?? (await resolveBaseRef(cwd));
+  if (!baseRef) {
+    return null;
+  }
+  if (configured.isPaseoOwnedWorktree && compare.baseRef && compare.baseRef !== baseRef) {
+    throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
+  }
+  const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
+  return {
+    baseRef: (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef,
+    targetRef: "HEAD",
+    includeUntracked: false,
+  };
+}
+
 export async function getCheckoutDiff(
   cwd: string,
   compare: CheckoutDiffCompare,
@@ -1570,26 +1758,9 @@ export async function getCheckoutDiff(
 ): Promise<CheckoutDiffResult> {
   await requireGitRepo(cwd);
 
-  let refsForDiff: CheckoutDiffRefs;
-
-  if (compare.mode === "uncommitted") {
-    refsForDiff = { baseRef: "HEAD", includeUntracked: true };
-  } else {
-    const configured = await getConfiguredBaseRefForCwd(cwd, context);
-    const baseRef = configured.baseRef ?? compare.baseRef ?? (await resolveBaseRef(cwd));
-    if (!baseRef) {
-      return { diff: "" };
-    }
-    if (configured.isPaseoOwnedWorktree && compare.baseRef && compare.baseRef !== baseRef) {
-      throw new Error(`Base ref mismatch: expected ${baseRef}, got ${compare.baseRef}`);
-    }
-
-    const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
-    refsForDiff = {
-      baseRef: (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef,
-      targetRef: "HEAD",
-      includeUntracked: false,
-    };
+  const refsForDiff = await resolveCheckoutDiffRefs(cwd, compare, context);
+  if (!refsForDiff) {
+    return { diff: "" };
   }
 
   const ignoreWhitespace = compare.ignoreWhitespace === true;
@@ -1679,75 +1850,20 @@ export async function getCheckoutDiff(
   };
 
   if (compare.includeStructured) {
-    const parsedTrackedFiles =
-      trackedDiffText.length > 0
-        ? await parseAndHighlightDiff(trackedDiffText, cwd, {
-            getOldFileContent: async (file) => {
-              const change = trackedChangeByPath.get(file.path);
-              if (!change || change.isNew) {
-                return null;
-              }
-              const refPath = change.oldPath ?? change.path;
-              return readGitFileContentAtRef(cwd, refsForDiff.baseRef, refPath);
-            },
-            getNewFileContent: async (file) => {
-              if (!refsForDiff.targetRef) {
-                return null;
-              }
-              return readGitFileContentAtRef(cwd, refsForDiff.targetRef, file.path);
-            },
-          })
-        : [];
-    const parsedTrackedByPath = new Map(parsedTrackedFiles.map((file) => [file.path, file]));
-
-    for (const change of trackedChanges) {
-      const placeholder = trackedPlaceholderByPath.get(change.path);
-      if (placeholder) {
-        structured.push(
-          buildPlaceholderParsedDiffFile(change, {
-            status: placeholder.status,
-            stat: placeholder.stat,
-          }),
-        );
-        appendTrackedPlaceholderComment(change, placeholder.status);
-        continue;
-      }
-
-      const stat = trackedNumstatByPath.get(change.path) ?? null;
-      const parsedFile = parsedTrackedByPath.get(change.path);
-      if (parsedFile) {
-        structured.push({
-          ...parsedFile,
-          path: change.path,
-          isNew: change.isNew,
-          isDeleted: change.isDeleted,
-          status: "ok",
-        });
-        continue;
-      }
-
-      // `git diff -w --name-status` can still report a modified path even when the
-      // whitespace-filtered patch and numstat are both empty. Skip emitting a
-      // structured placeholder in that case so whitespace-only edits truly disappear.
-      if (
-        ignoreWhitespace &&
-        !trackedDiffTruncated &&
-        change.status.startsWith("M") &&
-        (!stat || (!stat.isBinary && stat.additions === 0 && stat.deletions === 0))
-      ) {
-        continue;
-      }
-
-      structured.push({
-        path: change.path,
-        isNew: change.isNew,
-        isDeleted: change.isDeleted,
-        additions: stat?.additions ?? 0,
-        deletions: stat?.deletions ?? 0,
-        hunks: [],
-        status: trackedDiffTruncated ? "too_large" : "ok",
-      });
-    }
+    await appendStructuredTrackedDiffs({
+      cwd,
+      trackedChanges,
+      trackedChangeByPath,
+      trackedNumstatByPath,
+      trackedPlaceholderByPath,
+      trackedDiffText,
+      trackedDiffTruncated,
+      refsForDiff,
+      ignoreWhitespace,
+      structured,
+      appendDiff,
+      appendTrackedPlaceholderComment,
+    });
   } else {
     for (const change of trackedChanges) {
       const placeholder = trackedPlaceholderByPath.get(change.path);
@@ -1761,50 +1877,13 @@ export async function getCheckoutDiff(
     if (diffBytes >= TOTAL_DIFF_MAX_BYTES) {
       break;
     }
-    const { text, truncated, stat } = await getUntrackedDiffText(cwd, change, ignoreWhitespace);
-
-    if (!compare.includeStructured) {
-      if (stat?.isBinary) {
-        appendDiff(`# ${change.path}: binary diff omitted\n`);
-      } else if (truncated) {
-        appendDiff(`# ${change.path}: diff too large omitted\n`);
-      } else {
-        appendDiff(text);
-      }
-      continue;
-    }
-
-    if (stat?.isBinary) {
-      structured.push(buildPlaceholderParsedDiffFile(change, { status: "binary", stat }));
-      appendDiff(`# ${change.path}: binary diff omitted\n`);
-      continue;
-    }
-
-    if (truncated) {
-      structured.push(buildPlaceholderParsedDiffFile(change, { status: "too_large", stat }));
-      appendDiff(`# ${change.path}: diff too large omitted\n`);
-      continue;
-    }
-
-    appendDiff(text);
-    const parsed = await parseAndHighlightDiff(text, cwd);
-    const parsedFile =
-      parsed[0] ??
-      ({
-        path: change.path,
-        isNew: change.isNew,
-        isDeleted: change.isDeleted,
-        additions: stat?.additions ?? 0,
-        deletions: stat?.deletions ?? 0,
-        hunks: [],
-      } satisfies ParsedDiffFile);
-
-    structured.push({
-      ...parsedFile,
-      path: change.path,
-      isNew: change.isNew,
-      isDeleted: change.isDeleted,
-      status: "ok",
+    await processUntrackedChange({
+      cwd,
+      change,
+      ignoreWhitespace,
+      includeStructured: compare.includeStructured === true,
+      structured,
+      appendDiff,
     });
   }
 
@@ -1830,6 +1909,67 @@ export async function commitChanges(
 
 export async function commitAll(cwd: string, message: string): Promise<void> {
   await commitChanges(cwd, { message, addAll: true });
+}
+
+interface DetectMergeToBaseConflictInput {
+  operationCwd: string;
+  error: unknown;
+  baseRef: string;
+  currentBranch: string;
+}
+
+async function detectAndThrowMergeToBaseConflict(
+  input: DetectMergeToBaseConflictInput,
+): Promise<void> {
+  const { operationCwd, error, baseRef, currentBranch } = input;
+  const errorDetails =
+    error instanceof Error
+      ? `${error.message}\n${(error as any).stderr ?? ""}\n${(error as any).stdout ?? ""}`
+      : String(error);
+  try {
+    const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
+      runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd: operationCwd }),
+      runGitCommand(["ls-files", "-u"], { cwd: operationCwd }),
+      runGitCommand(["status", "--porcelain"], { cwd: operationCwd }),
+    ]);
+    const statusConflicts = statusOutput.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => /^(UU|AA|DD|AU|UA|UD|DU)\s/.test(line))
+      .map((line) => line.slice(3).trim());
+    const conflicts = [
+      ...unmergedOutput.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+      ...lsFilesOutput.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => line.split("\t").pop() as string),
+      ...statusConflicts,
+    ].filter(Boolean);
+    const conflictDetected =
+      conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
+    if (conflictDetected) {
+      try {
+        await runGitCommand(["merge", "--abort"], { cwd: operationCwd, timeout: 120_000 });
+      } catch {
+        // ignore
+      }
+      throw new MergeConflictError({
+        baseRef,
+        currentBranch,
+        conflictFiles: conflicts.length > 0 ? conflicts : [],
+      });
+    }
+  } catch (innerError) {
+    if (innerError instanceof MergeConflictError) {
+      throw innerError;
+    }
+    // ignore detection failures
+  }
 }
 
 export async function mergeToBase(
@@ -1882,55 +2022,12 @@ export async function mergeToBase(
       await runGitCommand(["merge", currentBranch], { cwd: operationCwd, timeout: 120_000 });
     }
   } catch (error) {
-    const errorDetails =
-      error instanceof Error
-        ? `${error.message}\n${(error as any).stderr ?? ""}\n${(error as any).stdout ?? ""}`
-        : String(error);
-    try {
-      const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
-        runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd: operationCwd }),
-        runGitCommand(["ls-files", "-u"], { cwd: operationCwd }),
-        runGitCommand(["status", "--porcelain"], { cwd: operationCwd }),
-      ]);
-      const statusConflicts = statusOutput.stdout
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .filter((line) => /^(UU|AA|DD|AU|UA|UD|DU)\s/.test(line))
-        .map((line) => line.slice(3).trim());
-      const conflicts = [
-        ...unmergedOutput.stdout
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean),
-        ...lsFilesOutput.stdout
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line) => line.split("\t").pop() as string),
-        ...statusConflicts,
-      ].filter(Boolean);
-      const conflictDetected =
-        conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
-      if (conflictDetected) {
-        try {
-          await runGitCommand(["merge", "--abort"], { cwd: operationCwd, timeout: 120_000 });
-        } catch {
-          // ignore
-        }
-        throw new MergeConflictError({
-          baseRef: normalizedBaseRef,
-          currentBranch,
-          conflictFiles: conflicts.length > 0 ? conflicts : [],
-        });
-      }
-    } catch (innerError) {
-      if (innerError instanceof MergeConflictError) {
-        throw innerError;
-      }
-      // ignore detection failures
-    }
-
+    await detectAndThrowMergeToBaseConflict({
+      operationCwd,
+      error,
+      baseRef: normalizedBaseRef,
+      currentBranch,
+    });
     throw error;
   } finally {
     if (isSameCheckout && originalBranch && originalBranch !== normalizedBaseRef) {
@@ -1987,56 +2084,74 @@ export async function mergeFromBase(
   try {
     await runGitCommand(["merge", bestBaseRef], { cwd, timeout: 120_000 });
   } catch (error) {
-    const errorDetails =
-      error instanceof Error
-        ? `${error.message}\n${(error as any).stderr ?? ""}\n${(error as any).stdout ?? ""}`
-        : String(error);
-    try {
-      const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
-        runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd }),
-        runGitCommand(["ls-files", "-u"], { cwd }),
-        runGitCommand(["status", "--porcelain"], { cwd }),
-      ]);
-      const statusConflicts = statusOutput.stdout
+    await detectAndThrowMergeFromBaseConflict({
+      cwd,
+      error,
+      baseRef: bestBaseRef,
+      currentBranch,
+    });
+    throw error;
+  }
+}
+
+interface DetectMergeFromBaseConflictInput {
+  cwd: string;
+  error: unknown;
+  baseRef: string;
+  currentBranch: string;
+}
+
+async function detectAndThrowMergeFromBaseConflict(
+  input: DetectMergeFromBaseConflictInput,
+): Promise<void> {
+  const { cwd, error, baseRef, currentBranch } = input;
+  const errorDetails =
+    error instanceof Error
+      ? `${error.message}\n${(error as any).stderr ?? ""}\n${(error as any).stdout ?? ""}`
+      : String(error);
+  try {
+    const [unmergedOutput, lsFilesOutput, statusOutput] = await Promise.all([
+      runGitCommand(["diff", "--name-only", "--diff-filter=U"], { cwd }),
+      runGitCommand(["ls-files", "-u"], { cwd }),
+      runGitCommand(["status", "--porcelain"], { cwd }),
+    ]);
+    const statusConflicts = statusOutput.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => /^(UU|AA|DD|AU|UA|UD|DU)\s/.test(line))
+      .map((line) => line.slice(3).trim());
+    const conflicts = [
+      ...unmergedOutput.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+      ...lsFilesOutput.stdout
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
-        .filter((line) => /^(UU|AA|DD|AU|UA|UD|DU)\s/.test(line))
-        .map((line) => line.slice(3).trim());
-      const conflicts = [
-        ...unmergedOutput.stdout
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean),
-        ...lsFilesOutput.stdout
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line) => line.split("\t").pop() as string),
-        ...statusConflicts,
-      ].filter(Boolean);
-      const conflictDetected =
-        conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
-      if (conflictDetected) {
-        try {
-          await runGitCommand(["merge", "--abort"], { cwd, timeout: 120_000 });
-        } catch {
-          // ignore
-        }
-        throw new MergeFromBaseConflictError({
-          baseRef: bestBaseRef,
-          currentBranch,
-          conflictFiles: conflicts.length > 0 ? conflicts : [],
-        });
+        .map((line) => line.split("\t").pop() as string),
+      ...statusConflicts,
+    ].filter(Boolean);
+    const conflictDetected =
+      conflicts.length > 0 || /CONFLICT|Automatic merge failed/i.test(errorDetails);
+    if (conflictDetected) {
+      try {
+        await runGitCommand(["merge", "--abort"], { cwd, timeout: 120_000 });
+      } catch {
+        // ignore
       }
-    } catch (innerError) {
-      if (innerError instanceof MergeFromBaseConflictError) {
-        throw innerError;
-      }
-      // ignore detection failures
+      throw new MergeFromBaseConflictError({
+        baseRef,
+        currentBranch,
+        conflictFiles: conflicts.length > 0 ? conflicts : [],
+      });
     }
-
-    throw error;
+  } catch (innerError) {
+    if (innerError instanceof MergeFromBaseConflictError) {
+      throw innerError;
+    }
+    // ignore detection failures
   }
 }
 

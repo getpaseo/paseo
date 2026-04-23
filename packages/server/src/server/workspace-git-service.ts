@@ -279,6 +279,33 @@ interface WorkspaceGitAuxiliaryReadCacheEntry<T> {
   inFlight: Promise<T> | null;
 }
 
+function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies {
+  return {
+    watch,
+    readdir,
+    getCheckoutStatus,
+    getCheckoutShortstat,
+    getCheckoutDiff,
+    getPullRequestStatus,
+    resolveBranchCheckout,
+    resolveRepositoryDefaultBranch,
+    listBranchSuggestions,
+    listPaseoWorktrees,
+    github: createGitHubService(),
+    resolveAbsoluteGitDir,
+    hasOriginRemote,
+    runGitFetch,
+    runGitCommand,
+    now: () => new Date(),
+  };
+}
+
+function resolveWorkspaceGitServiceDeps(
+  deps: Partial<WorkspaceGitServiceDependencies> | undefined,
+): WorkspaceGitServiceDependencies {
+  return { ...buildDefaultWorkspaceGitServiceDeps(), ...(deps ?? {}) };
+}
+
 export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly logger: pino.Logger;
   private readonly paseoHome: string;
@@ -319,25 +346,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
     this.paseoHome = options.paseoHome;
-    this.deps = {
-      watch: options.deps?.watch ?? watch,
-      readdir: options.deps?.readdir ?? readdir,
-      getCheckoutStatus: options.deps?.getCheckoutStatus ?? getCheckoutStatus,
-      getCheckoutShortstat: options.deps?.getCheckoutShortstat ?? getCheckoutShortstat,
-      getCheckoutDiff: options.deps?.getCheckoutDiff ?? getCheckoutDiff,
-      getPullRequestStatus: options.deps?.getPullRequestStatus ?? getPullRequestStatus,
-      resolveBranchCheckout: options.deps?.resolveBranchCheckout ?? resolveBranchCheckout,
-      resolveRepositoryDefaultBranch:
-        options.deps?.resolveRepositoryDefaultBranch ?? resolveRepositoryDefaultBranch,
-      listBranchSuggestions: options.deps?.listBranchSuggestions ?? listBranchSuggestions,
-      listPaseoWorktrees: options.deps?.listPaseoWorktrees ?? listPaseoWorktrees,
-      github: options.deps?.github ?? createGitHubService(),
-      resolveAbsoluteGitDir: options.deps?.resolveAbsoluteGitDir ?? resolveAbsoluteGitDir,
-      hasOriginRemote: options.deps?.hasOriginRemote ?? hasOriginRemote,
-      runGitFetch: options.deps?.runGitFetch ?? runGitFetch,
-      runGitCommand: options.deps?.runGitCommand ?? runGitCommand,
-      now: options.deps?.now ?? (() => new Date()),
-    };
+    this.deps = resolveWorkspaceGitServiceDeps(options.deps);
   }
 
   registerWorkspace(

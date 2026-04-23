@@ -1,5 +1,5 @@
 import { WebSocketServer } from "ws";
-import type { Server as HTTPServer } from "http";
+import type { IncomingMessage, Server as HTTPServer } from "http";
 import { basename, join } from "path";
 import { hostname as getHostname } from "node:os";
 import type { AgentManager } from "./agent/agent-manager.js";
@@ -18,6 +18,7 @@ import {
   type SessionOutboundMessage,
   type WorkspaceSetupSnapshot,
   type WSHelloMessage,
+  type WSInboundMessage,
   WSInboundMessageSchema,
   type ServerCapabilityState,
   type ServerCapabilities,
@@ -284,6 +285,35 @@ export class MissingDaemonVersionError extends Error {
   }
 }
 
+interface RequiredWebSocketServices {
+  chatService: FileBackedChatService;
+  loopService: LoopService;
+  scheduleService: ScheduleService;
+  checkoutDiffManager: CheckoutDiffManager;
+}
+
+function requireWebSocketServices(params: {
+  chatService?: FileBackedChatService;
+  loopService?: LoopService;
+  scheduleService?: ScheduleService;
+  checkoutDiffManager?: CheckoutDiffManager;
+}): RequiredWebSocketServices {
+  const { chatService, loopService, scheduleService, checkoutDiffManager } = params;
+  if (!chatService) {
+    throw new Error("VoiceAssistantWebSocketServer requires a chat service.");
+  }
+  if (!loopService) {
+    throw new Error("VoiceAssistantWebSocketServer requires a loop service.");
+  }
+  if (!scheduleService) {
+    throw new Error("VoiceAssistantWebSocketServer requires a schedule service.");
+  }
+  if (!checkoutDiffManager) {
+    throw new Error("VoiceAssistantWebSocketServer requires a checkout diff manager.");
+  }
+  return { chatService, loopService, scheduleService, checkoutDiffManager };
+}
+
 /**
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
@@ -311,25 +341,25 @@ export class VoiceAssistantWebSocketServer {
   private readonly pushTokenStore: PushTokenStore;
   private readonly pushService: PushService;
   private readonly mcpBaseUrl: string | null;
-  private readonly speech: SpeechService | null;
-  private readonly terminalManager: TerminalManager | null;
-  private readonly scriptRouteStore: ScriptRouteStore | null;
-  private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
-  private readonly getDaemonTcpPort: (() => number | null) | null;
-  private readonly getDaemonTcpHost: (() => string | null) | null;
-  private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
-  private readonly dictation: {
+  private speech!: SpeechService | null;
+  private terminalManager!: TerminalManager | null;
+  private scriptRouteStore!: ScriptRouteStore | null;
+  private scriptRuntimeStore!: WorkspaceScriptRuntimeStore | null;
+  private getDaemonTcpPort!: (() => number | null) | null;
+  private getDaemonTcpHost!: (() => string | null) | null;
+  private resolveScriptHealth!: ((hostname: string) => ScriptHealthState | null) | null;
+  private dictation!: {
     finalTimeoutMs?: number;
   } | null;
   private readonly voiceSpeakHandlers = new Map<string, VoiceSpeakHandler>();
   private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
   private readonly workspaceSetupSnapshots = new Map<string, WorkspaceSetupSnapshot>();
-  private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
-  private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
-  private readonly isDev: boolean;
+  private agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
+  private providerOverrides: Record<string, ProviderOverride> | undefined;
+  private isDev!: boolean;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
-  private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
-  private readonly onBranchChanged:
+  private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
+  private onBranchChanged!:
     | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
     | null;
   private serverCapabilities: ServerCapabilities | undefined;
@@ -414,34 +444,37 @@ export class VoiceAssistantWebSocketServer {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
-    if (!chatService) {
-      throw new Error("VoiceAssistantWebSocketServer requires a chat service.");
-    }
-    this.chatService = chatService;
-    if (!loopService) {
-      throw new Error("VoiceAssistantWebSocketServer requires a loop service.");
-    }
-    this.loopService = loopService;
-    if (!scheduleService) {
-      throw new Error("VoiceAssistantWebSocketServer requires a schedule service.");
-    }
-    this.scheduleService = scheduleService;
-    if (!checkoutDiffManager) {
-      throw new Error("VoiceAssistantWebSocketServer requires a checkout diff manager.");
-    }
-    this.checkoutDiffManager = checkoutDiffManager;
+    const requiredServices = requireWebSocketServices({
+      chatService,
+      loopService,
+      scheduleService,
+      checkoutDiffManager,
+    });
+    this.chatService = requiredServices.chatService;
+    this.loopService = requiredServices.loopService;
+    this.scheduleService = requiredServices.scheduleService;
+    this.checkoutDiffManager = requiredServices.checkoutDiffManager;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
-    this.speech = speech ?? null;
-    this.terminalManager = terminalManager ?? null;
-    this.dictation = dictation ?? null;
-    this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
-    this.providerOverrides = providerOverrides;
-    this.isDev = isDev === true;
+    this.assignOptionalServices({
+      speech,
+      terminalManager,
+      dictation,
+      agentProviderRuntimeSettings,
+      providerOverrides,
+      isDev,
+      onLifecycleIntent,
+      scriptRouteStore,
+      scriptRuntimeStore,
+      onBranchChanged,
+      getDaemonTcpPort,
+      getDaemonTcpHost,
+      resolveScriptHealth,
+    });
     const providerSnapshotLogger = this.logger.child({ module: "provider-snapshot-manager" });
     this.providerSnapshotManager = new ProviderSnapshotManager(
       buildProviderRegistry(providerSnapshotLogger, {
@@ -451,13 +484,6 @@ export class VoiceAssistantWebSocketServer {
       }),
       providerSnapshotLogger,
     );
-    this.onLifecycleIntent = onLifecycleIntent ?? null;
-    this.scriptRouteStore = scriptRouteStore ?? null;
-    this.scriptRuntimeStore = scriptRuntimeStore ?? null;
-    this.onBranchChanged = onBranchChanged ?? null;
-    this.getDaemonTcpPort = getDaemonTcpPort ?? null;
-    this.getDaemonTcpHost = getDaemonTcpHost ?? null;
-    this.resolveScriptHealth = resolveScriptHealth ?? null;
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.speech?.getReadiness() ?? null,
     });
@@ -479,49 +505,100 @@ export class VoiceAssistantWebSocketServer {
       });
     });
 
+    this.wss = this.createWebSocketServer(server, wsConfig);
+    this.startRuntimeMetricsInterval();
+
+    this.logger.info("WebSocket server initialized on /ws");
+  }
+
+  private assignOptionalServices(params: {
+    speech: SpeechService | null | undefined;
+    terminalManager: TerminalManager | null | undefined;
+    dictation: { finalTimeoutMs?: number } | undefined;
+    agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
+    providerOverrides: Record<string, ProviderOverride> | undefined;
+    isDev: boolean | undefined;
+    onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | undefined;
+    scriptRouteStore: ScriptRouteStore | null | undefined;
+    scriptRuntimeStore: WorkspaceScriptRuntimeStore | null | undefined;
+    onBranchChanged:
+      | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
+      | undefined;
+    getDaemonTcpPort: (() => number | null) | undefined;
+    getDaemonTcpHost: (() => string | null) | undefined;
+    resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | undefined;
+  }): void {
+    this.speech = params.speech ?? null;
+    this.terminalManager = params.terminalManager ?? null;
+    this.dictation = params.dictation ?? null;
+    this.agentProviderRuntimeSettings = params.agentProviderRuntimeSettings;
+    this.providerOverrides = params.providerOverrides;
+    this.isDev = params.isDev === true;
+    this.onLifecycleIntent = params.onLifecycleIntent ?? null;
+    this.scriptRouteStore = params.scriptRouteStore ?? null;
+    this.scriptRuntimeStore = params.scriptRuntimeStore ?? null;
+    this.onBranchChanged = params.onBranchChanged ?? null;
+    this.getDaemonTcpPort = params.getDaemonTcpPort ?? null;
+    this.getDaemonTcpHost = params.getDaemonTcpHost ?? null;
+    this.resolveScriptHealth = params.resolveScriptHealth ?? null;
+  }
+
+  private createWebSocketServer(
+    server: HTTPServer,
+    wsConfig: WebSocketServerConfig,
+  ): WebSocketServer {
     const { allowedOrigins, hostnames } = wsConfig;
-    this.wss = new WebSocketServer({
+    const wss = new WebSocketServer({
       server,
       path: "/ws",
       verifyClient: ({ req }, callback) => {
-        const requestMetadata = extractSocketRequestMetadata(req);
-        const origin = requestMetadata.origin;
-        const requestHost = requestMetadata.host ?? null;
-        if (requestHost && !isHostnameAllowed(requestHost, hostnames)) {
-          this.incrementRuntimeCounter("hostRejected");
-          this.logger.warn(
-            { ...requestMetadata, host: requestHost },
-            "Rejected connection from disallowed host",
-          );
-          callback(false, 403, "Host not allowed");
-          return;
-        }
-        const sameOrigin =
-          !!origin &&
-          !!requestHost &&
-          (origin === `http://${requestHost}` || origin === `https://${requestHost}`);
-
-        if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
-          callback(true);
-        } else {
-          this.incrementRuntimeCounter("originRejected");
-          this.logger.warn({ ...requestMetadata, origin }, "Rejected connection from origin");
-          callback(false, 403, "Origin not allowed");
-        }
+        this.verifyWsClient(req, allowedOrigins, hostnames, callback);
       },
     });
-
-    this.wss.on("connection", (ws, request) => {
+    wss.on("connection", (ws, request) => {
       void this.attachSocket(ws, request);
     });
+    return wss;
+  }
 
+  private startRuntimeMetricsInterval(): void {
     const runtimeMetricsInterval = setInterval(() => {
       this.flushRuntimeMetrics();
     }, WS_RUNTIME_METRICS_FLUSH_MS);
     this.runtimeMetricsInterval = runtimeMetricsInterval;
     (runtimeMetricsInterval as unknown as { unref?: () => void }).unref?.();
+  }
 
-    this.logger.info("WebSocket server initialized on /ws");
+  private verifyWsClient(
+    req: IncomingMessage,
+    allowedOrigins: Set<string>,
+    hostnames: HostnamesConfig | undefined,
+    callback: (res: boolean, code?: number, message?: string) => void,
+  ): void {
+    const requestMetadata = extractSocketRequestMetadata(req);
+    const origin = requestMetadata.origin;
+    const requestHost = requestMetadata.host ?? null;
+    if (requestHost && !isHostnameAllowed(requestHost, hostnames)) {
+      this.incrementRuntimeCounter("hostRejected");
+      this.logger.warn(
+        { ...requestMetadata, host: requestHost },
+        "Rejected connection from disallowed host",
+      );
+      callback(false, 403, "Host not allowed");
+      return;
+    }
+    const sameOrigin =
+      !!origin &&
+      !!requestHost &&
+      (origin === `http://${requestHost}` || origin === `https://${requestHost}`);
+
+    if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
+      callback(true);
+    } else {
+      this.incrementRuntimeCounter("originRejected");
+      this.logger.warn({ ...requestMetadata, origin }, "Rejected connection from origin");
+      callback(false, 403, "Origin not allowed");
+    }
   }
 
   public broadcast(message: WSOutboundMessage): void {
@@ -1086,6 +1163,137 @@ export class VoiceAssistantWebSocketServer {
     await connection.session.cleanup();
   }
 
+  private handleInvalidInboundMessage(args: {
+    ws: WebSocketLike;
+    parsed: unknown;
+    parsedMessage: { success: false; error: { message: string } } & Record<string, unknown>;
+    pendingConnection: PendingConnection | undefined;
+    activeConnection: SessionConnection | undefined;
+    log: pino.Logger;
+  }): void {
+    const { ws, parsed, parsedMessage, pendingConnection, activeConnection, log } = args;
+    this.incrementRuntimeCounter("validationFailed");
+    if (pendingConnection) {
+      pendingConnection.connectionLogger.warn(
+        { error: parsedMessage.error.message },
+        "Rejected pending message before hello",
+      );
+      this.clearPendingConnection(ws);
+      try {
+        ws.close(WS_CLOSE_INVALID_HELLO, "Invalid hello");
+      } catch {
+        // ignore close errors
+      }
+      return;
+    }
+
+    const requestInfo = extractRequestInfoFromUnknownWsInbound(parsed);
+    const isUnknownSchema =
+      requestInfo?.requestId != null &&
+      typeof parsed === "object" &&
+      parsed != null &&
+      "type" in parsed &&
+      (parsed as { type?: unknown }).type === "session";
+
+    log.warn(
+      {
+        clientId: activeConnection?.clientId,
+        requestId: requestInfo?.requestId,
+        requestType: requestInfo?.requestType,
+        error: parsedMessage.error.message,
+      },
+      "WS inbound message validation failed",
+    );
+
+    if (requestInfo) {
+      this.sendToClient(
+        ws,
+        wrapSessionMessage({
+          type: "rpc_error",
+          payload: {
+            requestId: requestInfo.requestId,
+            requestType: requestInfo.requestType,
+            error: isUnknownSchema ? "Unknown request schema" : "Invalid message",
+            code: isUnknownSchema ? "unknown_schema" : "invalid_message",
+          },
+        }),
+      );
+      return;
+    }
+
+    const errorMessage = `Invalid message: ${parsedMessage.error.message}`;
+    this.sendToClient(
+      ws,
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "error",
+          message: errorMessage,
+        },
+      }),
+    );
+  }
+
+  private maybeHandleBinaryFrame(params: {
+    ws: WebSocketLike;
+    buffer: Buffer;
+    activeConnection: SessionConnection | undefined;
+    log: pino.Logger;
+  }): boolean {
+    const { ws, buffer, activeConnection, log } = params;
+    const asBytes = asUint8Array(buffer);
+    if (!asBytes) {
+      return false;
+    }
+    const frame = decodeTerminalStreamFrame(asBytes);
+    if (!frame) {
+      return false;
+    }
+    if (!activeConnection) {
+      this.incrementRuntimeCounter("binaryBeforeHelloRejected");
+      log.warn("Rejected binary frame before hello");
+      this.clearPendingConnection(ws);
+      try {
+        ws.close(WS_CLOSE_INVALID_HELLO, "Session message before hello");
+      } catch {
+        // ignore close errors
+      }
+      return true;
+    }
+    activeConnection.session.handleBinaryFrame(frame);
+    return true;
+  }
+
+  private handlePendingConnectionMessage(params: {
+    ws: WebSocketLike;
+    message: WSInboundMessage;
+    pendingConnection: PendingConnection;
+  }): void {
+    const { ws, message, pendingConnection } = params;
+    if (message.type === "hello") {
+      this.handleHello({
+        ws,
+        message,
+        pending: pendingConnection,
+      });
+      return;
+    }
+
+    pendingConnection.connectionLogger.warn(
+      {
+        messageType: message.type,
+      },
+      "Rejected pending message before hello",
+    );
+    this.incrementRuntimeCounter("pendingMessageRejectedBeforeHello");
+    this.clearPendingConnection(ws);
+    try {
+      ws.close(WS_CLOSE_INVALID_HELLO, "Session message before hello");
+    } catch {
+      // ignore close errors
+    }
+  }
+
   private async handleRawMessage(
     ws: WebSocketLike,
     data: Buffer | ArrayBuffer | Buffer[] | string,
@@ -1097,90 +1305,27 @@ export class VoiceAssistantWebSocketServer {
 
     try {
       const buffer = bufferFromWsData(data);
-      const asBytes = asUint8Array(buffer);
-      if (asBytes) {
-        const frame = decodeTerminalStreamFrame(asBytes);
-        if (frame) {
-          if (!activeConnection) {
-            this.incrementRuntimeCounter("binaryBeforeHelloRejected");
-            log.warn("Rejected binary frame before hello");
-            this.clearPendingConnection(ws);
-            try {
-              ws.close(WS_CLOSE_INVALID_HELLO, "Session message before hello");
-            } catch {
-              // ignore close errors
-            }
-            return;
-          }
-          activeConnection.session.handleBinaryFrame(frame);
-          return;
-        }
+      const binaryHandled = this.maybeHandleBinaryFrame({
+        ws,
+        buffer,
+        activeConnection,
+        log,
+      });
+      if (binaryHandled) {
+        return;
       }
+
       const parsed = JSON.parse(buffer.toString());
       const parsedMessage = WSInboundMessageSchema.safeParse(parsed);
       if (!parsedMessage.success) {
-        this.incrementRuntimeCounter("validationFailed");
-        if (pendingConnection) {
-          pendingConnection.connectionLogger.warn(
-            {
-              error: parsedMessage.error.message,
-            },
-            "Rejected pending message before hello",
-          );
-          this.clearPendingConnection(ws);
-          try {
-            ws.close(WS_CLOSE_INVALID_HELLO, "Invalid hello");
-          } catch {
-            // ignore close errors
-          }
-          return;
-        }
-
-        const requestInfo = extractRequestInfoFromUnknownWsInbound(parsed);
-        const isUnknownSchema =
-          requestInfo?.requestId != null &&
-          typeof parsed === "object" &&
-          parsed != null &&
-          "type" in parsed &&
-          (parsed as { type?: unknown }).type === "session";
-
-        log.warn(
-          {
-            clientId: activeConnection?.clientId,
-            requestId: requestInfo?.requestId,
-            requestType: requestInfo?.requestType,
-            error: parsedMessage.error.message,
-          },
-          "WS inbound message validation failed",
-        );
-
-        if (requestInfo) {
-          this.sendToClient(
-            ws,
-            wrapSessionMessage({
-              type: "rpc_error",
-              payload: {
-                requestId: requestInfo.requestId,
-                requestType: requestInfo.requestType,
-                error: isUnknownSchema ? "Unknown request schema" : "Invalid message",
-                code: isUnknownSchema ? "unknown_schema" : "invalid_message",
-              },
-            }),
-          );
-          return;
-        }
-
-        const errorMessage = `Invalid message: ${parsedMessage.error.message}`;
-        this.sendToClient(
+        this.handleInvalidInboundMessage({
           ws,
-          wrapSessionMessage({
-            type: "status",
-            payload: {
-              status: "error",
-              message: errorMessage,
-            },
-          }),
-        );
+          parsed,
+          parsedMessage,
+          pendingConnection,
+          activeConnection,
+          log,
+        });
         return;
       }
 
@@ -1197,28 +1342,11 @@ export class VoiceAssistantWebSocketServer {
       }
 
       if (pendingConnection) {
-        if (message.type === "hello") {
-          this.handleHello({
-            ws,
-            message,
-            pending: pendingConnection,
-          });
-          return;
-        }
-
-        pendingConnection.connectionLogger.warn(
-          {
-            messageType: message.type,
-          },
-          "Rejected pending message before hello",
-        );
-        this.incrementRuntimeCounter("pendingMessageRejectedBeforeHello");
-        this.clearPendingConnection(ws);
-        try {
-          ws.close(WS_CLOSE_INVALID_HELLO, "Session message before hello");
-        } catch {
-          // ignore close errors
-        }
+        this.handlePendingConnectionMessage({
+          ws,
+          message,
+          pendingConnection,
+        });
         return;
       }
 
@@ -1240,92 +1368,116 @@ export class VoiceAssistantWebSocketServer {
       }
 
       if (message.type === "session") {
-        this.recordInboundSessionRequestType(message.message.type);
-        const startMs = performance.now();
-        await activeConnection.session.handleMessage(message.message);
-        const durationMs = performance.now() - startMs;
-        this.recordRequestLatency(message.message.type, durationMs);
-
-        if (durationMs >= SLOW_REQUEST_THRESHOLD_MS) {
-          activeConnection.connectionLogger.warn(
-            {
-              requestType: message.message.type,
-              durationMs: Math.round(durationMs),
-              inflightRequests: activeConnection.session.getRuntimeMetrics().inflightRequests,
-            },
-            "ws_slow_request",
-          );
-        }
+        await this.dispatchSessionMessage(activeConnection, message);
       }
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      let rawPayload: string | null = null;
-      let parsedPayload: unknown = null;
+      this.handleRawMessageError({ ws, data, error, log });
+    }
+  }
 
-      try {
-        const buffer = bufferFromWsData(data);
-        rawPayload = buffer.toString();
-        parsedPayload = JSON.parse(rawPayload);
-      } catch (payloadError) {
-        rawPayload = rawPayload ?? "<unreadable>";
-        parsedPayload = parsedPayload ?? rawPayload;
-        const payloadErr =
-          payloadError instanceof Error ? payloadError : new Error(String(payloadError));
-        this.logger.error({ err: payloadErr }, "Failed to decode raw payload");
-      }
+  private async dispatchSessionMessage(
+    activeConnection: SessionConnection,
+    message: Extract<WSInboundMessage, { type: "session" }>,
+  ): Promise<void> {
+    this.recordInboundSessionRequestType(message.message.type);
+    const startMs = performance.now();
+    await activeConnection.session.handleMessage(message.message);
+    const durationMs = performance.now() - startMs;
+    this.recordRequestLatency(message.message.type, durationMs);
 
-      const trimmedRawPayload =
-        typeof rawPayload === "string" && rawPayload.length > 2000
-          ? `${rawPayload.slice(0, 2000)}... (truncated)`
-          : rawPayload;
-
-      log.error(
+    if (durationMs >= SLOW_REQUEST_THRESHOLD_MS) {
+      activeConnection.connectionLogger.warn(
         {
-          err,
-          rawPayload: trimmedRawPayload,
-          parsedPayload,
+          requestType: message.message.type,
+          durationMs: Math.round(durationMs),
+          inflightRequests: activeConnection.session.getRuntimeMetrics().inflightRequests,
         },
-        "Failed to parse/handle message",
+        "ws_slow_request",
       );
+    }
+  }
 
-      if (this.pendingConnections.has(ws)) {
-        this.clearPendingConnection(ws);
-        try {
-          ws.close(WS_CLOSE_INVALID_HELLO, "Invalid hello");
-        } catch {
-          // ignore close errors
-        }
-        return;
+  private handleRawMessageError(params: {
+    ws: WebSocketLike;
+    data: Buffer | ArrayBuffer | Buffer[] | string;
+    error: unknown;
+    log: pino.Logger;
+  }): void {
+    const { ws, data, error, log } = params;
+    const err = error instanceof Error ? error : new Error(String(error));
+    const { rawPayload, parsedPayload } = this.decodeRawMessagePayloadForError(data);
+
+    const trimmedRawPayload =
+      typeof rawPayload === "string" && rawPayload.length > 2000
+        ? `${rawPayload.slice(0, 2000)}... (truncated)`
+        : rawPayload;
+
+    log.error(
+      {
+        err,
+        rawPayload: trimmedRawPayload,
+        parsedPayload,
+      },
+      "Failed to parse/handle message",
+    );
+
+    if (this.pendingConnections.has(ws)) {
+      this.clearPendingConnection(ws);
+      try {
+        ws.close(WS_CLOSE_INVALID_HELLO, "Invalid hello");
+      } catch {
+        // ignore close errors
       }
+      return;
+    }
 
-      const requestInfo = extractRequestInfoFromUnknownWsInbound(parsedPayload);
-      if (requestInfo) {
-        this.sendToClient(
-          ws,
-          wrapSessionMessage({
-            type: "rpc_error",
-            payload: {
-              requestId: requestInfo.requestId,
-              requestType: requestInfo.requestType,
-              error: "Invalid message",
-              code: "invalid_message",
-            },
-          }),
-        );
-        return;
-      }
-
+    const requestInfo = extractRequestInfoFromUnknownWsInbound(parsedPayload);
+    if (requestInfo) {
       this.sendToClient(
         ws,
         wrapSessionMessage({
-          type: "status",
+          type: "rpc_error",
           payload: {
-            status: "error",
-            message: `Invalid message: ${err.message}`,
+            requestId: requestInfo.requestId,
+            requestType: requestInfo.requestType,
+            error: "Invalid message",
+            code: "invalid_message",
           },
         }),
       );
+      return;
     }
+
+    this.sendToClient(
+      ws,
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "error",
+          message: `Invalid message: ${err.message}`,
+        },
+      }),
+    );
+  }
+
+  private decodeRawMessagePayloadForError(data: Buffer | ArrayBuffer | Buffer[] | string): {
+    rawPayload: string | null;
+    parsedPayload: unknown;
+  } {
+    let rawPayload: string | null = null;
+    let parsedPayload: unknown = null;
+    try {
+      const buffer = bufferFromWsData(data);
+      rawPayload = buffer.toString();
+      parsedPayload = JSON.parse(rawPayload);
+    } catch (payloadError) {
+      rawPayload = rawPayload ?? "<unreadable>";
+      parsedPayload = parsedPayload ?? rawPayload;
+      const payloadErr =
+        payloadError instanceof Error ? payloadError : new Error(String(payloadError));
+      this.logger.error({ err: payloadErr }, "Failed to decode raw payload");
+    }
+    return { rawPayload, parsedPayload };
   }
 
   private incrementRuntimeCounter(counter: keyof WebSocketRuntimeCounters): void {

@@ -351,6 +351,76 @@ function summarizeTimelineEntry(entry: {
   return `[${item.type}]`;
 }
 
+async function waitForTranscriptRaceEvidence(params: {
+  transcriptPath: string;
+  waitError: Error | null;
+  afterWaitStatus: string;
+  cancelRecovered: boolean;
+}): Promise<TranscriptRaceEvidence> {
+  const { transcriptPath, waitError, afterWaitStatus, cancelRecovered } = params;
+  let evidence: TranscriptRaceEvidence | null = null;
+  const transcriptDeadline = Date.now() + 20_000;
+  while (Date.now() < transcriptDeadline) {
+    const lines = readTranscriptLines(transcriptPath);
+    evidence = extractTranscriptRaceEvidence(lines);
+    if (evidence) {
+      break;
+    }
+    await sleep(250);
+  }
+  if (!evidence) {
+    const transcriptDump = summarizeTranscriptTail(readTranscriptLines(transcriptPath));
+    throw new Error(
+      [
+        "Failed to extract transcript race evidence (hello assistant and notification-turn assistant).",
+        `transcriptPath=${transcriptPath}`,
+        `waitError=${waitError ? waitError.message : "null"}`,
+        `afterWaitStatus=${afterWaitStatus}`,
+        `cancelRecovered=${cancelRecovered}`,
+        "transcriptTail:",
+        transcriptDump,
+      ].join("\n"),
+    );
+  }
+  return evidence;
+}
+
+async function waitForAssistantTextCombined(params: {
+  client: DaemonClient;
+  agentId: string;
+  helloAssistant: string;
+  notificationAssistant: string;
+}): Promise<string> {
+  const { client, agentId, helloAssistant, notificationAssistant } = params;
+  let assistantTextCombined = "";
+  const timelineDeadline = Date.now() + 20_000;
+  while (Date.now() < timelineDeadline) {
+    const timeline = await client.fetchAgentTimeline(agentId, {
+      direction: "tail",
+      limit: 0,
+      projection: "canonical",
+    });
+    const assistantTexts = timeline.entries
+      .filter(
+        (
+          entry,
+        ): entry is {
+          item: { type: "assistant_message"; text: string };
+        } => entry.item.type === "assistant_message",
+      )
+      .map((entry) => compactText(entry.item.text));
+    assistantTextCombined = assistantTexts.join("");
+    if (
+      assistantTextCombined.includes(helloAssistant) &&
+      assistantTextCombined.includes(notificationAssistant)
+    ) {
+      break;
+    }
+    await sleep(250);
+  }
+  return assistantTextCombined;
+}
+
 describe("daemon E2E (real claude) - autonomous wake from background task", () => {
   let canRun = false;
 
@@ -1019,60 +1089,21 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         sessionId: sessionId as string,
       });
 
-      let evidence: TranscriptRaceEvidence | null = null;
-      const transcriptDeadline = Date.now() + 20_000;
-      while (Date.now() < transcriptDeadline) {
-        const lines = readTranscriptLines(transcriptPath);
-        evidence = extractTranscriptRaceEvidence(lines);
-        if (evidence) {
-          break;
-        }
-        await sleep(250);
-      }
-      if (!evidence) {
-        const transcriptDump = summarizeTranscriptTail(readTranscriptLines(transcriptPath));
-        throw new Error(
-          [
-            "Failed to extract transcript race evidence (hello assistant and notification-turn assistant).",
-            `transcriptPath=${transcriptPath}`,
-            `waitError=${waitError ? waitError.message : "null"}`,
-            `afterWaitStatus=${afterWait?.status ?? "unknown"}`,
-            `cancelRecovered=${cancelRecovered}`,
-            "transcriptTail:",
-            transcriptDump,
-          ].join("\n"),
-        );
-      }
+      const evidence = await waitForTranscriptRaceEvidence({
+        transcriptPath,
+        waitError,
+        afterWaitStatus: afterWait?.status ?? "unknown",
+        cancelRecovered,
+      });
 
       const helloAssistant = compactText(evidence.helloAssistantText);
       const notificationAssistant = compactText(evidence.notificationOutcomeAssistantText);
-      let assistantTexts: string[] = [];
-      let assistantTextCombined = "";
-      const timelineDeadline = Date.now() + 20_000;
-      while (Date.now() < timelineDeadline) {
-        const timeline = await client.fetchAgentTimeline(agent.id, {
-          direction: "tail",
-          limit: 0,
-          projection: "canonical",
-        });
-        assistantTexts = timeline.entries
-          .filter(
-            (
-              entry,
-            ): entry is {
-              item: { type: "assistant_message"; text: string };
-            } => entry.item.type === "assistant_message",
-          )
-          .map((entry) => compactText(entry.item.text));
-        assistantTextCombined = assistantTexts.join("");
-        if (
-          assistantTextCombined.includes(helloAssistant) &&
-          assistantTextCombined.includes(notificationAssistant)
-        ) {
-          break;
-        }
-        await sleep(250);
-      }
+      const assistantTextCombined = await waitForAssistantTextCombined({
+        client,
+        agentId: agent.id,
+        helloAssistant,
+        notificationAssistant,
+      });
 
       expect(assistantTextCombined.includes(helloAssistant)).toBe(true);
       expect(assistantTextCombined.includes(notificationAssistant)).toBe(true);

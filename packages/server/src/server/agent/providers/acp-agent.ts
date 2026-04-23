@@ -1512,23 +1512,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         const item = this.createMessageTimelineItem("reasoning", update);
         return item ? [this.wrapTimeline(item)] : [];
       }
-      case "tool_call": {
-        let snapshot = mergeToolSnapshot(update.toolCallId, update);
-        if (this.toolSnapshotTransformer) {
-          snapshot = this.toolSnapshotTransformer(snapshot);
-        }
-        this.toolCalls.set(update.toolCallId, snapshot);
-        return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
-      }
-      case "tool_call_update": {
-        const previous = this.toolCalls.get(update.toolCallId);
-        let snapshot = mergeToolSnapshot(update.toolCallId, update, previous);
-        if (this.toolSnapshotTransformer) {
-          snapshot = this.toolSnapshotTransformer(snapshot);
-        }
-        this.toolCalls.set(update.toolCallId, snapshot);
-        return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
-      }
+      case "tool_call":
+        return this.handleToolCallUpdate(update.toolCallId, update, undefined);
+      case "tool_call_update":
+        return this.handleToolCallUpdate(
+          update.toolCallId,
+          update,
+          this.toolCalls.get(update.toolCallId),
+        );
       case "plan":
         return [this.wrapTimeline(mapPlanToTimeline(update))];
       case "current_mode_update":
@@ -1554,6 +1545,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       default:
         return [];
     }
+  }
+
+  private handleToolCallUpdate(
+    toolCallId: string,
+    update: ToolCall | ToolCallUpdate,
+    previous: ACPToolSnapshot | undefined,
+  ): AgentStreamEvent[] {
+    let snapshot = mergeToolSnapshot(toolCallId, update, previous);
+    if (this.toolSnapshotTransformer) {
+      snapshot = this.toolSnapshotTransformer(snapshot);
+    }
+    this.toolCalls.set(toolCallId, snapshot);
+    return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
   }
 
   private createMessageTimelineItem(
@@ -1879,22 +1883,30 @@ function contentBlockToText(content: ContentBlock): string {
   }
 }
 
+function coalesceDefined<T>(next: T | undefined, previous: T | undefined, fallback: T): T {
+  if (next !== undefined) {
+    return next;
+  }
+  if (previous !== undefined) {
+    return previous;
+  }
+  return fallback;
+}
+
 function mergeToolSnapshot(
   toolCallId: string,
   update: ToolCall | ToolCallUpdate,
   previous?: ACPToolSnapshot,
 ): ACPToolSnapshot {
-  const isFull = "title" in update && typeof update.title === "string";
   return {
     toolCallId,
     title: (update.title ?? previous?.title ?? toolCallId) as string,
     kind: update.kind ?? previous?.kind ?? null,
     status: update.status ?? previous?.status ?? null,
-    content: update.content !== undefined ? update.content : (previous?.content ?? null),
-    locations: update.locations !== undefined ? update.locations : (previous?.locations ?? null),
+    content: coalesceDefined(update.content, previous?.content, null),
+    locations: coalesceDefined(update.locations, previous?.locations, null),
     rawInput: update.rawInput !== undefined ? update.rawInput : previous?.rawInput,
     rawOutput: update.rawOutput !== undefined ? update.rawOutput : previous?.rawOutput,
-    ...(isFull ? {} : {}),
   };
 }
 
@@ -1958,106 +1970,147 @@ function mapToolStatus(status: ToolCallStatus | null | undefined): ToolCallTimel
   }
 }
 
+interface MapToolDetailContext {
+  snapshot: ACPToolSnapshot;
+  firstLocation: string | undefined;
+  textContent: string | undefined;
+  diffContent: ReturnType<typeof extractDiffContent>;
+  terminalContent: ReturnType<typeof extractTerminalContent>;
+  rawInput: ReturnType<typeof readRecord>;
+  rawOutput: ReturnType<typeof readRecord>;
+}
+
 function mapToolDetail(
   snapshot: ACPToolSnapshot,
   terminals: Map<string, TerminalEntry>,
 ): ToolCallDetail {
-  const firstLocation = snapshot.locations?.[0]?.path;
-  const textContent = extractToolText(snapshot.content);
-  const diffContent = extractDiffContent(snapshot.content);
-  const terminalContent = extractTerminalContent(snapshot.content, terminals);
-  const rawInput = readRecord(snapshot.rawInput);
-  const rawOutput = readRecord(snapshot.rawOutput);
+  const context: MapToolDetailContext = {
+    snapshot,
+    firstLocation: snapshot.locations?.[0]?.path,
+    textContent: extractToolText(snapshot.content),
+    diffContent: extractDiffContent(snapshot.content),
+    terminalContent: extractTerminalContent(snapshot.content, terminals),
+    rawInput: readRecord(snapshot.rawInput),
+    rawOutput: readRecord(snapshot.rawOutput),
+  };
 
   switch (snapshot.kind) {
     case "read":
-      return {
-        type: "read",
-        filePath:
-          firstLocation ?? readString(rawInput, ["path", "filePath", "file"]) ?? snapshot.title,
-        content: textContent ?? readString(rawOutput, ["content", "text"]),
-        offset: readNumber(rawInput, ["offset", "line"]),
-        limit: readNumber(rawInput, ["limit"]),
-      };
+      return buildReadToolDetail(context);
     case "edit":
     case "delete":
-      return {
-        type: "edit",
-        filePath:
-          firstLocation ?? readString(rawInput, ["path", "filePath", "file"]) ?? snapshot.title,
-        oldString: diffContent?.oldText ?? readString(rawInput, ["oldText", "oldString"]),
-        newString:
-          snapshot.kind === "delete"
-            ? ""
-            : (diffContent?.newText ?? readString(rawInput, ["newText", "newString"])),
-        unifiedDiff: textContent ?? undefined,
-      };
+      return buildEditToolDetail(context);
     case "search":
-      return {
-        type: "search",
-        query: readString(rawInput, ["query", "pattern"]) ?? snapshot.title,
-        toolName: "search",
-        content: textContent ?? readString(rawOutput, ["content", "text"]),
-        filePaths: snapshot.locations?.map((location) => location.path),
-      };
+      return buildSearchAcpToolDetail(context);
     case "execute":
-      return {
-        type: "shell",
-        command:
-          terminalContent?.command ??
-          buildShellCommand(rawInput) ??
-          readString(rawInput, ["command"]) ??
-          snapshot.title,
-        cwd: terminalContent?.cwd ?? readString(rawInput, ["cwd"]),
-        output: terminalContent?.output ?? textContent ?? readString(rawOutput, ["output", "text"]),
-        exitCode: terminalContent?.exitCode ?? readNumber(rawOutput, ["exitCode"]),
-      };
+      return buildShellToolDetail(context);
     case "fetch":
-      return {
-        type: "fetch",
-        url: readString(rawInput, ["url"]) ?? snapshot.title,
-        prompt: readString(rawInput, ["prompt"]),
-        result: textContent ?? readString(rawOutput, ["result", "text", "content"]),
-        code: readNumber(rawOutput, ["status", "code"]),
-      };
+      return buildFetchToolDetail(context);
     case "think":
       return {
         type: "plain_text",
         label: snapshot.title,
         icon: "brain",
-        text: textContent ?? stringifyUnknown(snapshot.rawOutput),
+        text: context.textContent ?? stringifyUnknown(snapshot.rawOutput),
       };
     case "switch_mode":
       return {
         type: "plain_text",
         label: snapshot.title,
         icon: "sparkles",
-        text: textContent ?? stringifyUnknown(snapshot.rawInput),
+        text: context.textContent ?? stringifyUnknown(snapshot.rawInput),
       };
     default:
-      if (terminalContent) {
-        return {
-          type: "shell",
-          command: terminalContent.command ?? snapshot.title,
-          cwd: terminalContent.cwd,
-          output: terminalContent.output,
-          exitCode: terminalContent.exitCode,
-        };
-      }
-      if (textContent) {
-        return {
-          type: "plain_text",
-          label: snapshot.title,
-          text: textContent,
-          icon: "wrench",
-        };
-      }
-      return {
-        type: "unknown",
-        input: snapshot.rawInput ?? null,
-        output: snapshot.rawOutput ?? null,
-      };
+      return buildDefaultToolDetail(context);
   }
+}
+
+function buildReadToolDetail(context: MapToolDetailContext): ToolCallDetail {
+  const { snapshot, firstLocation, textContent, rawInput, rawOutput } = context;
+  return {
+    type: "read",
+    filePath: firstLocation ?? readString(rawInput, ["path", "filePath", "file"]) ?? snapshot.title,
+    content: textContent ?? readString(rawOutput, ["content", "text"]),
+    offset: readNumber(rawInput, ["offset", "line"]),
+    limit: readNumber(rawInput, ["limit"]),
+  };
+}
+
+function buildEditToolDetail(context: MapToolDetailContext): ToolCallDetail {
+  const { snapshot, firstLocation, textContent, diffContent, rawInput } = context;
+  return {
+    type: "edit",
+    filePath: firstLocation ?? readString(rawInput, ["path", "filePath", "file"]) ?? snapshot.title,
+    oldString: diffContent?.oldText ?? readString(rawInput, ["oldText", "oldString"]),
+    newString:
+      snapshot.kind === "delete"
+        ? ""
+        : (diffContent?.newText ?? readString(rawInput, ["newText", "newString"])),
+    unifiedDiff: textContent ?? undefined,
+  };
+}
+
+function buildSearchAcpToolDetail(context: MapToolDetailContext): ToolCallDetail {
+  const { snapshot, textContent, rawInput, rawOutput } = context;
+  return {
+    type: "search",
+    query: readString(rawInput, ["query", "pattern"]) ?? snapshot.title,
+    toolName: "search",
+    content: textContent ?? readString(rawOutput, ["content", "text"]),
+    filePaths: snapshot.locations?.map((location) => location.path),
+  };
+}
+
+function buildShellToolDetail(context: MapToolDetailContext): ToolCallDetail {
+  const { snapshot, textContent, terminalContent, rawInput, rawOutput } = context;
+  return {
+    type: "shell",
+    command:
+      terminalContent?.command ??
+      buildShellCommand(rawInput) ??
+      readString(rawInput, ["command"]) ??
+      snapshot.title,
+    cwd: terminalContent?.cwd ?? readString(rawInput, ["cwd"]),
+    output: terminalContent?.output ?? textContent ?? readString(rawOutput, ["output", "text"]),
+    exitCode: terminalContent?.exitCode ?? readNumber(rawOutput, ["exitCode"]),
+  };
+}
+
+function buildFetchToolDetail(context: MapToolDetailContext): ToolCallDetail {
+  const { snapshot, textContent, rawInput, rawOutput } = context;
+  return {
+    type: "fetch",
+    url: readString(rawInput, ["url"]) ?? snapshot.title,
+    prompt: readString(rawInput, ["prompt"]),
+    result: textContent ?? readString(rawOutput, ["result", "text", "content"]),
+    code: readNumber(rawOutput, ["status", "code"]),
+  };
+}
+
+function buildDefaultToolDetail(context: MapToolDetailContext): ToolCallDetail {
+  const { snapshot, textContent, terminalContent } = context;
+  if (terminalContent) {
+    return {
+      type: "shell",
+      command: terminalContent.command ?? snapshot.title,
+      cwd: terminalContent.cwd,
+      output: terminalContent.output,
+      exitCode: terminalContent.exitCode,
+    };
+  }
+  if (textContent) {
+    return {
+      type: "plain_text",
+      label: snapshot.title,
+      text: textContent,
+      icon: "wrench",
+    };
+  }
+  return {
+    type: "unknown",
+    input: snapshot.rawInput ?? null,
+    output: snapshot.rawOutput ?? null,
+  };
 }
 
 function extractToolText(content: ToolCallContent[] | null | undefined): string | undefined {

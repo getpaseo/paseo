@@ -75,34 +75,7 @@ export async function createTestPaseoDaemon(
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const paseoHomeRoot =
-      options.paseoHomeRoot ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-home-")));
-    const paseoHome = path.join(paseoHomeRoot, ".paseo");
-    await mkdir(paseoHome, { recursive: true });
-    const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-static-")));
-    const listenHost = options.listen ?? "127.0.0.1";
-    const config: PaseoDaemonConfig = {
-      listen: `${listenHost}:0`,
-      paseoHome,
-      corsAllowedOrigins: options.corsAllowedOrigins ?? [],
-      hostnames: true,
-      mcpEnabled: true,
-      staticDir,
-      mcpDebug: false,
-      agentClients: options.agentClients ?? createTestAgentClients(),
-      agentStoragePath: path.join(paseoHome, "agents"),
-      relayEnabled: options.relayEnabled ?? false,
-      relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
-      appBaseUrl: "https://app.paseo.sh",
-      openai: options.openai,
-      speech: options.speech,
-      voiceLlmProvider: options.voiceLlmProvider ?? null,
-      voiceLlmProviderExplicit: options.voiceLlmProviderExplicit ?? false,
-      voiceLlmModel: options.voiceLlmModel ?? null,
-      dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
-      downloadTokenTtlMs: options.downloadTokenTtlMs,
-    };
-
+    const { config, paseoHomeRoot, paseoHome, staticDir } = await prepareTestDaemonConfig(options);
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger);
     try {
@@ -146,6 +119,46 @@ export async function createTestPaseoDaemon(
   }
 
   throw lastError ?? new Error("Failed to start test daemon");
+}
+
+interface PreparedTestDaemonConfig {
+  config: PaseoDaemonConfig;
+  paseoHomeRoot: string;
+  paseoHome: string;
+  staticDir: string;
+}
+
+async function prepareTestDaemonConfig(
+  options: TestPaseoDaemonOptions,
+): Promise<PreparedTestDaemonConfig> {
+  const paseoHomeRoot =
+    options.paseoHomeRoot ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-home-")));
+  const paseoHome = path.join(paseoHomeRoot, ".paseo");
+  await mkdir(paseoHome, { recursive: true });
+  const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-static-")));
+  const listenHost = options.listen ?? "127.0.0.1";
+  const config: PaseoDaemonConfig = {
+    listen: `${listenHost}:0`,
+    paseoHome,
+    corsAllowedOrigins: options.corsAllowedOrigins ?? [],
+    hostnames: true,
+    mcpEnabled: true,
+    staticDir,
+    mcpDebug: false,
+    agentClients: options.agentClients ?? createTestAgentClients(),
+    agentStoragePath: path.join(paseoHome, "agents"),
+    relayEnabled: options.relayEnabled ?? false,
+    relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
+    appBaseUrl: "https://app.paseo.sh",
+    openai: options.openai,
+    speech: options.speech,
+    voiceLlmProvider: options.voiceLlmProvider ?? null,
+    voiceLlmProviderExplicit: options.voiceLlmProviderExplicit ?? false,
+    voiceLlmModel: options.voiceLlmModel ?? null,
+    dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
+    downloadTokenTtlMs: options.downloadTokenTtlMs,
+  };
+  return { config, paseoHomeRoot, paseoHome, staticDir };
 }
 
 function isAddressInUseError(error: unknown): boolean {

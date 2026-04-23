@@ -39,6 +39,80 @@ interface ParseAndHighlightDiffOptions {
 /**
  * Parse a unified diff into structured data
  */
+function extractPathFromDiffHeader(firstLine: string): string {
+  const pathMatch = firstLine.match(/a\/(.*?) b\//);
+  if (pathMatch) return pathMatch[1];
+  const newFileMatch = firstLine.match(/b\/(.+)$/);
+  if (newFileMatch) return newFileMatch[1];
+  return "unknown";
+}
+
+function isMetadataLine(line: string): boolean {
+  return (
+    line.startsWith("index ") ||
+    line.startsWith("--- ") ||
+    line.startsWith("+++ ") ||
+    line.startsWith("new file mode") ||
+    line.startsWith("deleted file mode")
+  );
+}
+
+function parseHunkHeader(line: string): DiffHunk | null {
+  const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+  if (!hunkMatch) return null;
+  return {
+    oldStart: parseInt(hunkMatch[1], 10),
+    oldCount: parseInt(hunkMatch[2] ?? "1", 10),
+    newStart: parseInt(hunkMatch[3], 10),
+    newCount: parseInt(hunkMatch[4] ?? "1", 10),
+    lines: [{ type: "header", content: line.match(/^(@@ .+? @@)/)?.[1] ?? line }],
+  };
+}
+
+interface ParsedSectionBody {
+  hunks: DiffHunk[];
+  additions: number;
+  deletions: number;
+}
+
+function parseSectionBody(lines: string[]): ParsedSectionBody {
+  const hunks: DiffHunk[] = [];
+  let currentHunk: DiffHunk | null = null;
+  let additions = 0;
+  let deletions = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (isMetadataLine(line)) continue;
+
+    const newHunk = parseHunkHeader(line);
+    if (newHunk) {
+      if (currentHunk) hunks.push(currentHunk);
+      currentHunk = newHunk;
+      continue;
+    }
+
+    if (!currentHunk) continue;
+
+    if (line.startsWith("+")) {
+      currentHunk.lines.push({ type: "add", content: line.slice(1) });
+      additions++;
+    } else if (line.startsWith("-")) {
+      currentHunk.lines.push({ type: "remove", content: line.slice(1) });
+      deletions++;
+    } else if (line.startsWith(" ")) {
+      currentHunk.lines.push({ type: "context", content: line.slice(1) });
+    } else if (line.length > 0 && !line.startsWith("\\")) {
+      currentHunk.lines.push({ type: "context", content: line });
+    }
+  }
+
+  if (currentHunk) hunks.push(currentHunk);
+
+  return { hunks, additions, deletions };
+}
+
 export function parseDiff(diffText: string): ParsedDiffFile[] {
   if (!diffText || diffText.trim().length === 0) {
     return [];
@@ -51,72 +125,11 @@ export function parseDiff(diffText: string): ParsedDiffFile[] {
     const lines = section.split("\n");
     const firstLine = lines[0];
 
-    // Detect new/deleted file
     const isNew = section.includes("new file mode") || section.includes("--- /dev/null");
     const isDeleted = section.includes("deleted file mode") || section.includes("+++ /dev/null");
+    const path = extractPathFromDiffHeader(firstLine);
 
-    // Extract path
-    let path = "unknown";
-    const pathMatch = firstLine.match(/a\/(.*?) b\//);
-    if (pathMatch) {
-      path = pathMatch[1];
-    } else {
-      const newFileMatch = firstLine.match(/b\/(.+)$/);
-      if (newFileMatch) {
-        path = newFileMatch[1];
-      }
-    }
-
-    const hunks: DiffHunk[] = [];
-    let currentHunk: DiffHunk | null = null;
-    let additions = 0;
-    let deletions = 0;
-
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-
-      // Skip metadata lines
-      if (line.startsWith("index ")) continue;
-      if (line.startsWith("--- ")) continue;
-      if (line.startsWith("+++ ")) continue;
-      if (line.startsWith("new file mode")) continue;
-      if (line.startsWith("deleted file mode")) continue;
-
-      // Parse hunk header: @@ -oldStart,oldCount +newStart,newCount @@
-      const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-      if (hunkMatch) {
-        if (currentHunk) {
-          hunks.push(currentHunk);
-        }
-        currentHunk = {
-          oldStart: parseInt(hunkMatch[1], 10),
-          oldCount: parseInt(hunkMatch[2] ?? "1", 10),
-          newStart: parseInt(hunkMatch[3], 10),
-          newCount: parseInt(hunkMatch[4] ?? "1", 10),
-          lines: [{ type: "header", content: line.match(/^(@@ .+? @@)/)?.[1] ?? line }],
-        };
-        continue;
-      }
-
-      if (!currentHunk) continue;
-
-      if (line.startsWith("+")) {
-        currentHunk.lines.push({ type: "add", content: line.slice(1) });
-        additions++;
-      } else if (line.startsWith("-")) {
-        currentHunk.lines.push({ type: "remove", content: line.slice(1) });
-        deletions++;
-      } else if (line.startsWith(" ")) {
-        currentHunk.lines.push({ type: "context", content: line.slice(1) });
-      } else if (line.length > 0 && !line.startsWith("\\")) {
-        // Non-empty line that's not a "\ No newline" marker
-        currentHunk.lines.push({ type: "context", content: line });
-      }
-    }
-
-    if (currentHunk) {
-      hunks.push(currentHunk);
-    }
+    const { hunks, additions, deletions } = parseSectionBody(lines);
 
     files.push({ path, isNew, isDeleted, additions, deletions, hunks });
   }

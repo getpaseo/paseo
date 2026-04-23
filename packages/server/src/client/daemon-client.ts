@@ -3777,31 +3777,18 @@ export class DaemonClient {
     }
 
     const rawBytes = asUint8Array(rawData);
-    if (rawBytes) {
-      const frame = decodeTerminalStreamFrame(rawBytes);
-      if (frame) {
-        const binaryStartMs = perfNow();
-        this.handleBinaryFrame(frame);
-        let frameKind: "output" | "snapshot" | "other" = "other";
-        if (frame.opcode === TerminalStreamOpcode.Output) {
-          frameKind = "output";
-        } else if (frame.opcode === TerminalStreamOpcode.Snapshot) {
-          frameKind = "snapshot";
-        }
-        this.runtimeMetrics?.recordBinaryFrame(
-          frameKind,
-          rawBytes.byteLength,
-          perfNow() - binaryStartMs,
-        );
-        return;
-      }
+    if (rawBytes && this.tryHandleBinaryFrame(rawBytes)) {
+      return;
     }
     const payload = decodeMessageData(rawData);
     if (!payload) {
       return;
     }
+    this.handleJsonPayload(payload, rawBytes?.byteLength);
+  }
 
-    const bytes = rawBytes?.byteLength ?? payload.length;
+  private handleJsonPayload(payload: string, rawBytesLength: number | undefined): void {
+    const bytes = rawBytesLength ?? payload.length;
     const startMs = perfNow();
     let parsedJson: unknown;
     try {
@@ -3828,6 +3815,27 @@ export class DaemonClient {
     if (parsed.data.message.type === "agent_stream") {
       this.runtimeMetrics?.recordAgentStream(parsed.data.message.payload);
     }
+  }
+
+  private tryHandleBinaryFrame(rawBytes: Uint8Array): boolean {
+    const frame = decodeTerminalStreamFrame(rawBytes);
+    if (!frame) {
+      return false;
+    }
+    const binaryStartMs = perfNow();
+    this.handleBinaryFrame(frame);
+    let frameKind: "output" | "snapshot" | "other" = "other";
+    if (frame.opcode === TerminalStreamOpcode.Output) {
+      frameKind = "output";
+    } else if (frame.opcode === TerminalStreamOpcode.Snapshot) {
+      frameKind = "snapshot";
+    }
+    this.runtimeMetrics?.recordBinaryFrame(
+      frameKind,
+      rawBytes.byteLength,
+      perfNow() - binaryStartMs,
+    );
+    return true;
   }
 
   private handleBinaryFrame(frame: TerminalStreamFrame): void {
@@ -3932,6 +3940,19 @@ export class DaemonClient {
       this.rejectConnect(new Error(reason ?? "Daemon client is disposed"));
       return;
     }
+    this.emitDisconnectedStateForReconnect(reason, input);
+    if (!this.shouldReconnect || this.config.reconnect?.enabled === false) {
+      this.rejectConnect(new Error(reason ?? "Transport disconnected before connect"));
+      return;
+    }
+
+    this.armReconnectTimer();
+  }
+
+  private emitDisconnectedStateForReconnect(
+    reason: string | undefined,
+    input: { reason?: string; event?: string; reasonCode?: string } | undefined,
+  ): void {
     this.updateConnectionState(
       {
         status: "disconnected",
@@ -3943,11 +3964,9 @@ export class DaemonClient {
         ...(input?.reasonCode ? { reasonCode: input.reasonCode } : {}),
       },
     );
-    if (!this.shouldReconnect || this.config.reconnect?.enabled === false) {
-      this.rejectConnect(new Error(reason ?? "Transport disconnected before connect"));
-      return;
-    }
+  }
 
+  private armReconnectTimer(): void {
     const attempt = this.reconnectAttempt;
     const baseDelay = this.config.reconnect?.baseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS;
     const maxDelay = this.config.reconnect?.maxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS;

@@ -10,6 +10,7 @@ import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.j
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
   AgentPermissionRequest,
+  AgentProvider,
   AgentSession,
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
@@ -26,12 +27,11 @@ type ManagedAgentOverrides = Omit<
   attention?: ManagedAgent["attention"];
 };
 
-function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent {
-  const now = overrides.updatedAt ?? new Date("2025-01-01T00:00:00.000Z");
-  const provider = overrides.provider ?? "claude";
-  const cwd = overrides.cwd ?? "/tmp/project";
-  const lifecycle = overrides.lifecycle ?? "idle";
-  const configOverrides = overrides.config ?? {};
+function buildManagedAgentConfig(
+  provider: AgentProvider,
+  cwd: string,
+  configOverrides: Partial<AgentSessionConfig>,
+): AgentSessionConfig {
   const config: AgentSessionConfig = {
     provider,
     cwd,
@@ -45,49 +45,88 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
   if (Object.prototype.hasOwnProperty.call(configOverrides, "featureValues")) {
     config.featureValues = configOverrides.featureValues;
   }
+  return config;
+}
+
+function buildDefaultCapabilities() {
+  return {
+    supportsStreaming: true,
+    supportsSessionPersistence: true,
+    supportsDynamicModes: true,
+    supportsMcpServers: true,
+    supportsReasoningStream: true,
+    supportsToolInvocations: true,
+  };
+}
+
+function buildDefaultRuntimeInfo(params: {
+  provider: AgentProvider;
+  config: AgentSessionConfig;
+  sessionId: string;
+}) {
+  return {
+    provider: params.provider,
+    sessionId: params.sessionId,
+    model: params.config.model ?? null,
+    modeId: params.config.modeId ?? null,
+  };
+}
+
+interface ManagedAgentCore {
+  provider: AgentProvider;
+  cwd: string;
+  lifecycle: ManagedAgent["lifecycle"];
+  config: AgentSessionConfig;
+  session: AgentSession | null;
+  activeForegroundTurnId: string | null;
+  now: Date;
+}
+
+function resolveManagedAgentCore(overrides: ManagedAgentOverrides): ManagedAgentCore {
+  const now = overrides.updatedAt ?? new Date("2025-01-01T00:00:00.000Z");
+  const provider = overrides.provider ?? "claude";
+  const cwd = overrides.cwd ?? "/tmp/project";
+  const lifecycle = overrides.lifecycle ?? "idle";
+  const config = buildManagedAgentConfig(provider, cwd, overrides.config ?? {});
   const session = lifecycle === "closed" ? null : (overrides.session ?? ({} as AgentSession));
   const activeForegroundTurnId =
     overrides.activeForegroundTurnId ?? (lifecycle === "running" ? "test-turn-id" : null);
+  return { provider, cwd, lifecycle, config, session, activeForegroundTurnId, now };
+}
 
-  const agent: ManagedAgent = {
+function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent {
+  const core = resolveManagedAgentCore(overrides);
+  return {
     id: overrides.id ?? "agent-test",
-    provider,
-    cwd,
-    session,
-    capabilities: overrides.capabilities ?? {
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    },
-    config,
-    lifecycle,
-    createdAt: overrides.createdAt ?? now,
-    updatedAt: overrides.updatedAt ?? now,
+    provider: core.provider,
+    cwd: core.cwd,
+    session: core.session,
+    capabilities: overrides.capabilities ?? buildDefaultCapabilities(),
+    config: core.config,
+    lifecycle: core.lifecycle,
+    createdAt: overrides.createdAt ?? core.now,
+    updatedAt: overrides.updatedAt ?? core.now,
     availableModes: overrides.availableModes ?? [],
-    currentModeId: overrides.currentModeId ?? config.modeId ?? null,
+    currentModeId: overrides.currentModeId ?? core.config.modeId ?? null,
     pendingPermissions: overrides.pendingPermissions ?? new Map<string, AgentPermissionRequest>(),
-    activeForegroundTurnId,
+    activeForegroundTurnId: core.activeForegroundTurnId,
     foregroundTurnWaiters: new Set(),
     unsubscribeSession: null,
     timeline: overrides.timeline ?? [],
     attention: overrides.attention ?? { requiresAttention: false },
-    runtimeInfo: overrides.runtimeInfo ?? {
-      provider,
-      sessionId: overrides.sessionId ?? "session-123",
-      model: config.model ?? null,
-      modeId: config.modeId ?? null,
-    },
+    runtimeInfo:
+      overrides.runtimeInfo ??
+      buildDefaultRuntimeInfo({
+        provider: core.provider,
+        config: core.config,
+        sessionId: overrides.sessionId ?? "session-123",
+      }),
     persistence: overrides.persistence ?? null,
     historyPrimed: overrides.historyPrimed ?? true,
-    lastUserMessageAt: overrides.lastUserMessageAt ?? now,
+    lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,
   };
-
-  return agent;
 }
 
 describe("AgentStorage", () => {
