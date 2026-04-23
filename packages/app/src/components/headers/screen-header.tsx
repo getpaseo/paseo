@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -43,23 +43,31 @@ export function ScreenHeader({
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const baseHorizontalPadding = theme.spacing[2];
 
+  const innerStyle = useMemo(
+    () => [styles.inner, { paddingTop: insets.top + topPadding }],
+    [insets.top, topPadding],
+  );
+  const rowStyle = useMemo(
+    () => [
+      styles.row,
+      {
+        paddingLeft: baseHorizontalPadding + padding.left,
+        paddingRight: baseHorizontalPadding + padding.right,
+      },
+      borderless && styles.borderless,
+    ],
+    [baseHorizontalPadding, padding.left, padding.right, borderless],
+  );
+  const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
+  const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
+
   return (
     <View style={styles.header}>
-      <View style={[styles.inner, { paddingTop: insets.top + topPadding }]}>
-        <View
-          onLayout={onRowLayout}
-          style={[
-            styles.row,
-            {
-              paddingLeft: baseHorizontalPadding + padding.left,
-              paddingRight: baseHorizontalPadding + padding.right,
-            },
-            borderless && styles.borderless,
-          ]}
-        >
+      <View style={innerStyle}>
+        <View onLayout={onRowLayout} style={rowStyle}>
           <TitlebarDragRegion />
-          <View style={[styles.left, leftStyle]}>{left}</View>
-          <View style={[styles.right, rightStyle]}>{right}</View>
+          <View style={leftCombinedStyle}>{left}</View>
+          <View style={rightCombinedStyle}>{right}</View>
         </View>
       </View>
     </View>
