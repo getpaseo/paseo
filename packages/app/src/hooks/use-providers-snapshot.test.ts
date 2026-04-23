@@ -28,22 +28,22 @@ interface ProvidersSnapshot {
 type HookResult = ReturnType<typeof renderProvidersSnapshotHook>["result"];
 
 const { mockClient, mockRuntime, snapshotUpdateListeners } = vi.hoisted(() => {
-  const snapshotUpdateListeners: ProviderSnapshotUpdateListener[] = [];
-  const mockClient = {
+  const hoistedListeners: ProviderSnapshotUpdateListener[] = [];
+  const hoistedClient = {
     getProvidersSnapshot: vi.fn(),
     refreshProvidersSnapshot: vi.fn(),
     on: vi.fn((_event: string, listener: ProviderSnapshotUpdateListener) => {
-      snapshotUpdateListeners.push(listener);
+      hoistedListeners.push(listener);
       return () => {};
     }),
   };
   return {
-    mockClient,
+    mockClient: hoistedClient,
     mockRuntime: {
-      client: mockClient,
+      client: hoistedClient,
       isConnected: true,
     },
-    snapshotUpdateListeners,
+    snapshotUpdateListeners: hoistedListeners,
   };
 });
 

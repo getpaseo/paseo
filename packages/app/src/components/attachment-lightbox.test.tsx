@@ -7,7 +7,7 @@ import type { AttachmentMetadata } from "@/attachments/types";
 import { AttachmentLightbox } from "./attachment-lightbox";
 
 const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
-  const theme = {
+  const hoistedTheme = {
     spacing: { 1: 4, 2: 8, 3: 12, 4: 16 },
     iconSize: { sm: 14, md: 18, lg: 22 },
     borderWidth: { 1: 1 },
@@ -24,7 +24,7 @@ const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
     },
   };
 
-  const imageMetadata: AttachmentMetadata = {
+  const hoistedImageMetadata: AttachmentMetadata = {
     id: "img-1",
     mimeType: "image/png",
     storageType: "web-indexeddb",
@@ -35,8 +35,8 @@ const { theme, imageMetadata, useAttachmentPreviewUrlMock } = vi.hoisted(() => {
   };
 
   return {
-    theme,
-    imageMetadata,
+    theme: hoistedTheme,
+    imageMetadata: hoistedImageMetadata,
     useAttachmentPreviewUrlMock: vi.fn<(metadata: AttachmentMetadata | null) => string | null>(
       () => "blob:preview",
     ),

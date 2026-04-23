@@ -106,18 +106,15 @@ class StartupScenario {
     const createAgentPreferences = buildStoredCreateAgentPreferences(firstHost.serverId);
 
     await this.page.evaluate(
-      ({ keys, registry, createAgentPreferences }) => {
+      ({ keys, registry: storedRegistry, createAgentPreferences: storedPreferences }) => {
         const nonce = localStorage.getItem(keys.seedNonce);
         if (!nonce) {
           throw new Error("Expected e2e seed nonce before overriding startup registry.");
         }
 
         localStorage.setItem(keys.e2e, "1");
-        localStorage.setItem(keys.registry, JSON.stringify(registry));
-        localStorage.setItem(
-          "@paseo:create-agent-preferences",
-          JSON.stringify(createAgentPreferences),
-        );
+        localStorage.setItem(keys.registry, JSON.stringify(storedRegistry));
+        localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(storedPreferences));
         localStorage.setItem(keys.disableDefaultSeedOnce, nonce);
       },
       {

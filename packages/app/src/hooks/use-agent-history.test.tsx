@@ -14,13 +14,13 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { useAgentHistory } from "./use-agent-history";
 
 const { mockClient, mockRuntimeStore } = vi.hoisted(() => {
-  const mockClient = {
+  const hoistedClient = {
     fetchAgentHistory: vi.fn(),
   };
-  const mockRuntimeStore = {
+  const hoistedRuntimeStore = {
     refreshAgentDirectory: vi.fn(),
   };
-  return { mockClient, mockRuntimeStore };
+  return { mockClient: hoistedClient, mockRuntimeStore: hoistedRuntimeStore };
 });
 
 vi.mock("@/runtime/host-runtime", () => ({
