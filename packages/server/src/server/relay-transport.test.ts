@@ -119,9 +119,7 @@ describe("relay-transport control lifecycle", () => {
   });
 
   afterEach(async () => {
-    for (const controller of controllers) {
-      await controller.stop();
-    }
+    await Promise.all(controllers.map((controller) => controller.stop()));
     controllers.length = 0;
     vi.useRealTimers();
   });

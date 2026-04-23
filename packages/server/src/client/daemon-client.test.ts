@@ -91,9 +91,7 @@ function wrapSessionMessage(message: unknown): string {
 const clients: DaemonClient[] = [];
 
 afterEach(async () => {
-  for (const client of clients) {
-    await client.close();
-  }
+  await Promise.all(clients.map((client) => client.close()));
   clients.length = 0;
 });
 
