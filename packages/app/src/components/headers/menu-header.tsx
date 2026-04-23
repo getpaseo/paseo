@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PanelLeft } from "lucide-react-native";
@@ -27,13 +27,19 @@ const MOBILE_MENU_LINE_SHORT_WIDTH = 8;
 const MOBILE_MENU_LINE_HEIGHT = 2;
 
 function MobileMenuIcon({ color }: { color: string }) {
+  const lineStyle = useMemo(
+    () => [styles.mobileMenuLine, { backgroundColor: color }],
+    [color],
+  );
+  const shortLineStyle = useMemo(
+    () => [styles.mobileMenuLine, styles.mobileMenuLineShort, { backgroundColor: color }],
+    [color],
+  );
   return (
     <View style={styles.mobileMenuIcon} pointerEvents="none">
-      <View style={[styles.mobileMenuLine, { backgroundColor: color }]} />
-      <View style={[styles.mobileMenuLine, { backgroundColor: color }]} />
-      <View
-        style={[styles.mobileMenuLine, styles.mobileMenuLineShort, { backgroundColor: color }]}
-      />
+      <View style={lineStyle} />
+      <View style={lineStyle} />
+      <View style={shortLineStyle} />
     </View>
   );
 }
@@ -48,7 +54,10 @@ export function SidebarMenuToggle({
   const isMobile = useIsCompactFormFactor();
   const isOpen = usePanelStore((state) => selectIsAgentListOpen(state, { isCompact: isMobile }));
   const toggleAgentListForLayout = usePanelStore((state) => state.toggleAgentListForLayout);
-  const toggleShortcutKeys = getShortcutOs() === "mac" ? ["mod", "B"] : ["mod", "."];
+  const toggleShortcutKeys = useMemo(
+    () => (getShortcutOs() === "mac" ? ["mod", "B"] : ["mod", "."]),
+    [],
+  );
 
   const menuIconColor =
     !isMobile && isOpen ? theme.colors.foreground : theme.colors.foregroundMuted;
@@ -56,6 +65,8 @@ export function SidebarMenuToggle({
   const handlePress = useCallback(() => {
     toggleAgentListForLayout({ isCompact: isMobile });
   }, [toggleAgentListForLayout, isMobile]);
+
+  const accessibilityState = useMemo(() => ({ expanded: isOpen }), [isOpen]);
 
   return (
     <HeaderToggleButton
@@ -69,7 +80,7 @@ export function SidebarMenuToggle({
       accessible
       accessibilityRole="button"
       accessibilityLabel={isOpen ? "Close menu" : "Open menu"}
-      accessibilityState={{ expanded: isOpen }}
+      accessibilityState={accessibilityState}
     >
       {isMobile ? (
         <MobileMenuIcon color={menuIconColor} />
