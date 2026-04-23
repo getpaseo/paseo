@@ -732,22 +732,25 @@ export async function getCurrentBranch(cwd: string): Promise<string | null> {
 }
 
 async function getRebaseHeadBranch(cwd: string): Promise<string | null> {
-  for (const path of ["rebase-merge/head-name", "rebase-apply/head-name"]) {
-    try {
-      const { stdout } = await runGitCommand(["rev-parse", "--git-path", path], {
-        cwd,
-        env: READ_ONLY_GIT_ENV,
-      });
-      const headName = (await readFile(resolve(cwd, stdout.trim()), "utf8")).trim();
-      if (headName.startsWith("refs/heads/")) {
-        return headName.slice("refs/heads/".length) || null;
+  const paths = ["rebase-merge/head-name", "rebase-apply/head-name"];
+  const results = await Promise.all(
+    paths.map(async (path): Promise<string | null> => {
+      try {
+        const { stdout } = await runGitCommand(["rev-parse", "--git-path", path], {
+          cwd,
+          env: READ_ONLY_GIT_ENV,
+        });
+        const headName = (await readFile(resolve(cwd, stdout.trim()), "utf8")).trim();
+        if (headName.startsWith("refs/heads/")) {
+          return headName.slice("refs/heads/".length) || null;
+        }
+        return headName || null;
+      } catch {
+        return null;
       }
-      return headName || null;
-    } catch {
-      // Try the other rebase backend.
-    }
-  }
-  return null;
+    }),
+  );
+  return results.find((result): result is string => result !== null) ?? null;
 }
 
 async function getWorktreeRoot(cwd: string): Promise<string | null> {
