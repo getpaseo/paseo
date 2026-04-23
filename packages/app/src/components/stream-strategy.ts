@@ -32,9 +32,9 @@ export type StreamNearBottomInput = StreamViewportMetrics & {
 };
 
 export interface StreamEdgeSlotProps {
-  ListHeaderComponent?: ReactElement | ComponentType<any> | null;
+  ListHeaderComponent?: ReactElement | ComponentType<unknown> | null;
   ListHeaderComponentStyle?: StyleProp<ViewStyle>;
-  ListFooterComponent?: ReactElement | ComponentType<any> | null;
+  ListFooterComponent?: ReactElement | ComponentType<unknown> | null;
   ListFooterComponentStyle?: StyleProp<ViewStyle>;
 }
 
@@ -85,7 +85,7 @@ export interface StreamStrategy {
   isNearBottom: (input: StreamNearBottomInput) => boolean;
   getBottomOffset: (metrics: StreamViewportMetrics) => number;
   getEdgeSlotProps: (
-    component: ReactElement | ComponentType<any> | null,
+    component: ReactElement | ComponentType<unknown> | null,
     gapSize: number,
   ) => StreamEdgeSlotProps;
   getMaintainVisibleContentPosition: () => MaintainVisibleContentPositionConfig | undefined;
@@ -262,7 +262,7 @@ export function getBottomOffsetForStreamRenderStrategy(
 
 export function getStreamEdgeSlotProps(params: {
   strategy: StreamStrategy;
-  component: ReactElement | ComponentType<any> | null;
+  component: ReactElement | ComponentType<unknown> | null;
   gapSize: number;
 }): StreamEdgeSlotProps {
   return params.strategy.getEdgeSlotProps(params.component, params.gapSize);

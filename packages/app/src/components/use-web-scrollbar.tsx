@@ -60,8 +60,12 @@ export function useWebElementScrollbar(
     if (!element) return;
 
     element.setAttribute("data-hide-scrollbar", "");
-    (element.style as any).scrollbarWidth = "none";
-    (element.style as any).msOverflowStyle = "none";
+    (
+      element.style as CSSStyleDeclaration & { scrollbarWidth: string; msOverflowStyle: string }
+    ).scrollbarWidth = "none";
+    (
+      element.style as CSSStyleDeclaration & { scrollbarWidth: string; msOverflowStyle: string }
+    ).msOverflowStyle = "none";
     ensureHideScrollbarStyle();
 
     function update() {
@@ -90,8 +94,12 @@ export function useWebElementScrollbar(
       element.removeEventListener("scroll", update);
       resizeObserver.disconnect();
       element.removeAttribute("data-hide-scrollbar");
-      (element.style as any).scrollbarWidth = "";
-      (element.style as any).msOverflowStyle = "";
+      (
+        element.style as CSSStyleDeclaration & { scrollbarWidth: string; msOverflowStyle: string }
+      ).scrollbarWidth = "";
+      (
+        element.style as CSSStyleDeclaration & { scrollbarWidth: string; msOverflowStyle: string }
+      ).msOverflowStyle = "";
     };
   }, [contentRef, elementRef, enabled]);
 

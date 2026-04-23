@@ -52,18 +52,18 @@ describe("checkout-git-actions-store", () => {
     vi.useFakeTimers();
     __resetCheckoutGitActionsStoreForTests();
     appQueryClient.clear();
-    useSessionStore.setState((state) => ({ ...state, sessions: {} as any }));
+    useSessionStore.setState((state) => ({ ...state, sessions: {} }));
   });
 
   afterEach(() => {
     vi.useRealTimers();
     __resetCheckoutGitActionsStoreForTests();
     appQueryClient.clear();
-    useSessionStore.setState((state) => ({ ...state, sessions: {} as any }));
+    useSessionStore.setState((state) => ({ ...state, sessions: {} }));
   });
 
   it("shares pending state per checkout and de-dupes in-flight calls", async () => {
-    const deferred = createDeferred<any>();
+    const deferred = createDeferred<unknown>();
     const client = {
       checkoutCommit: vi.fn(() => deferred.promise),
     };
@@ -71,8 +71,8 @@ describe("checkout-git-actions-store", () => {
     useSessionStore.setState((state) => ({
       ...state,
       sessions: {
-        ...(state.sessions as any),
-        [serverId]: { client } as any,
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
       },
     }));
 

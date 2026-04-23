@@ -100,7 +100,19 @@ function buildWorkspaceUrl(workspaceId: string): string {
 
 export async function getTerminalBufferText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__paseoTerminal;
+    const term = (
+      window as Window & {
+        __paseoTerminal?: {
+          buffer: {
+            active: {
+              length: number;
+              getLine: (i: number) => { translateToString: (trim: boolean) => string } | null;
+            };
+          };
+          onWriteParsed: (cb: () => void) => { dispose: () => void };
+        };
+      }
+    ).__paseoTerminal;
     if (!term) {
       return "";
     }
@@ -205,12 +217,16 @@ export interface LatencySample {
  */
 export async function measureKeystrokeLatency(page: Page, char: string): Promise<number> {
   await page.evaluate(() => {
-    const term = (window as any).__paseoTerminal;
-    if (!term) {
+    const win = window as Window & {
+      __paseoTerminal?: { onWriteParsed: (cb: () => void) => { dispose: () => void } };
+      __perfKeystroke?: { promise: Promise<number> | null };
+    };
+    if (!win.__paseoTerminal) {
       throw new Error("__paseoTerminal not available");
     }
+    const term = win.__paseoTerminal;
 
-    const state = ((window as any).__perfKeystroke = {
+    const state = (win.__perfKeystroke = {
       promise: null as Promise<number> | null,
     });
 
@@ -236,7 +252,11 @@ export async function measureKeystrokeLatency(page: Page, char: string): Promise
 
   await page.keyboard.press(char);
 
-  return page.evaluate(() => (window as any).__perfKeystroke.promise);
+  return page.evaluate(
+    () =>
+      (window as unknown as { __perfKeystroke: { promise: Promise<number> } }).__perfKeystroke
+        .promise,
+  );
 }
 
 export function computePercentile(samples: number[], p: number): number {

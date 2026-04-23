@@ -27,7 +27,15 @@ const HANDLE_WIDTH_TRANSITION_DURATION_MS = 240;
 const HANDLE_SCROLL_VISIBILITY_MS = 1200;
 const HANDLE_SCROLL_ACTIVE_MS = 110;
 
-function readClientY(event: any): number | null {
+interface PointerLikeEvent {
+  clientY?: number;
+  pageY?: number;
+  nativeEvent?: { clientY?: number; pageY?: number; preventDefault?: () => void };
+  preventDefault?: () => void;
+  stopPropagation?: () => void;
+}
+
+function readClientY(event: PointerLikeEvent): number | null {
   const value =
     event?.nativeEvent?.clientY ?? event?.clientY ?? event?.nativeEvent?.pageY ?? event?.pageY;
   return typeof value === "number" ? value : null;
@@ -281,7 +289,7 @@ export function WebDesktopScrollbarOverlay({
     });
   }, [applyDragDelta]);
 
-  const startWebDrag = useCallback((event: any) => {
+  const startWebDrag = useCallback((event: PointerLikeEvent) => {
     if (!platformIsWeb) {
       return;
     }
@@ -371,7 +379,7 @@ export function WebDesktopScrollbarOverlay({
           transitionProperty: "transform",
           transitionDuration: `${handleTravelDurationMs}ms`,
           transitionTimingFunction: "linear",
-        } as any),
+        } as object),
     ],
     [thumbRegionHeight, thumbRegionOffset, handleCursor, handleTravelDurationMs],
   );
@@ -391,7 +399,7 @@ export function WebDesktopScrollbarOverlay({
           transitionProperty: "opacity, width, background-color",
           transitionDuration: `${HANDLE_FADE_DURATION_MS}ms, ${HANDLE_WIDTH_TRANSITION_DURATION_MS}ms, ${HANDLE_FADE_DURATION_MS}ms`,
           transitionTimingFunction: "ease-out, cubic-bezier(0.22, 0.75, 0.2, 1), ease-out",
-        } as any),
+        } as object),
     ],
     [handleInsetTop, geometry.handleSize, handleWidth, handleColor, handleOpacity],
   );
@@ -409,7 +417,7 @@ export function WebDesktopScrollbarOverlay({
               onPointerLeave: handleGrabHoverOut,
               onMouseEnter: handleGrabHoverIn,
               onMouseLeave: handleGrabHoverOut,
-            } as any)
+            } as object)
           : null)}
       >
         <View style={handleStyle} pointerEvents="none" />

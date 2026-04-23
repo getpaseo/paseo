@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { DaemonClient } from "@server/client/daemon-client";
 
 import { DictationStreamSender } from "@/dictation/dictation-stream-sender";
 
@@ -55,7 +56,7 @@ describe("DictationStreamSender", () => {
     const client = new FakeDaemonClient();
     const ids = ["d1"];
     const sender = new DictationStreamSender({
-      client: client as any,
+      client: client as unknown as DaemonClient,
       format: "audio/pcm;rate=16000;bits=16",
       createDictationId: () => ids.shift() ?? "dX",
     });
@@ -76,7 +77,7 @@ describe("DictationStreamSender", () => {
     const client = new FakeDaemonClient();
     const ids = ["d1", "d2"];
     const sender = new DictationStreamSender({
-      client: client as any,
+      client: client as unknown as DaemonClient,
       format: "audio/pcm;rate=16000;bits=16",
       createDictationId: () => ids.shift() ?? "dX",
     });
@@ -99,7 +100,7 @@ describe("DictationStreamSender", () => {
     const client = new FakeDaemonClient();
     const ids = ["d1"];
     const sender = new DictationStreamSender({
-      client: client as any,
+      client: client as unknown as DaemonClient,
       format: "audio/pcm;rate=16000;bits=16",
       createDictationId: () => ids.shift() ?? "dX",
     });
@@ -120,7 +121,7 @@ describe("DictationStreamSender", () => {
     client.isConnected = false;
     const ids = ["d1"];
     const sender = new DictationStreamSender({
-      client: client as any,
+      client: client as unknown as DaemonClient,
       format: "audio/pcm;rate=16000;bits=16",
       createDictationId: () => ids.shift() ?? "dX",
     });
