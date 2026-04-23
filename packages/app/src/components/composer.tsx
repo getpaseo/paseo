@@ -235,6 +235,15 @@ function GithubPickerOption({
   const handlePress = useCallback(() => {
     onToggle(item);
   }, [onToggle, item]);
+  const leadingSlot = useMemo(
+    () =>
+      item.kind === "pr" ? (
+        <GitPullRequest size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+      ) : (
+        <CircleDot size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+      ),
+    [item.kind, theme.iconSize.sm, theme.colors.foregroundMuted],
+  );
   return (
     <ComboboxItem
       testID={testID}
@@ -242,13 +251,7 @@ function GithubPickerOption({
       selected={selected}
       active={active}
       onPress={handlePress}
-      leadingSlot={
-        item.kind === "pr" ? (
-          <GitPullRequest size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-        ) : (
-          <CircleDot size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-        )
-      }
+      leadingSlot={leadingSlot}
     />
   );
 }

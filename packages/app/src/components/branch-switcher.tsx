@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { Pressable, View, type PressableStateCallbackType } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, GitBranch } from "lucide-react-native";
@@ -62,6 +62,11 @@ export function BranchSwitcher({
     [],
   );
 
+  const branchLeadingSlot = useMemo(
+    () => <GitBranch size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+
   const renderBranchOption = useCallback<NonNullable<ComboboxProps["renderOption"]>>(
     ({ option, selected, active, onPress }) => (
       <ComboboxItem
@@ -69,10 +74,10 @@ export function BranchSwitcher({
         selected={selected}
         active={active}
         onPress={onPress}
-        leadingSlot={<GitBranch size={14} color={theme.colors.foregroundMuted} />}
+        leadingSlot={branchLeadingSlot}
       />
     ),
-    [theme.colors.foregroundMuted],
+    [branchLeadingSlot],
   );
 
   if (!currentBranchName) {

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -160,6 +160,11 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     hostInputRef.current?.clear();
   }, []);
 
+  const connectIcon = useMemo(
+    () => <Link2 size={16} color={theme.colors.palette.white} />,
+    [theme.colors.palette.white],
+  );
+
   const handleClose = useCallback(() => {
     if (isSaving) return;
     clearInput();
@@ -289,7 +294,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           variant="default"
           onPress={handleSavePress}
           disabled={isSaving}
-          leftIcon={<Link2 size={16} color={theme.colors.palette.white} />}
+          leftIcon={connectIcon}
           testID="direct-host-submit"
         >
           {isSaving ? "Connecting..." : "Connect"}

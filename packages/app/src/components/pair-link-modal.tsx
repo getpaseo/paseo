@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -73,6 +73,11 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
     offerUrlRef.current = "";
     inputRef.current?.clear();
   }, []);
+
+  const pairIcon = useMemo(
+    () => <Link size={16} color={theme.colors.palette.white} />,
+    [theme.colors.palette.white],
+  );
 
   const handleClose = useCallback(() => {
     if (isSaving) return;
@@ -209,7 +214,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
           testID="pair-link-submit"
           accessibilityRole="button"
           accessibilityLabel="Pair"
-          leftIcon={<Link size={16} color={theme.colors.palette.white} />}
+          leftIcon={pairIcon}
         >
           {isSaving ? "Pairing..." : "Pair"}
         </Button>

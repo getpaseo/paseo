@@ -72,6 +72,23 @@ export function PrPane({ data }: { data: PrPaneData }) {
     [data.activity],
   );
 
+  const checkSuccessIcon = useMemo(
+    () => <CircleCheck size={12} color={theme.colors.statusSuccess} />,
+    [theme.colors.statusSuccess],
+  );
+  const checkDangerIcon = useMemo(
+    () => <CircleX size={12} color={theme.colors.statusDanger} />,
+    [theme.colors.statusDanger],
+  );
+  const checkWarningIcon = useMemo(
+    () => <CircleDot size={12} color={theme.colors.statusWarning} />,
+    [theme.colors.statusWarning],
+  );
+  const commentIcon = useMemo(
+    () => <MessageSquare size={11} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+
   return (
     <View style={styles.root}>
       <Pressable onPress={handleOpenPrUrl} style={styles.header}>
@@ -105,17 +122,13 @@ export function PrPane({ data }: { data: PrPaneData }) {
             <SummaryPill
               count={passed}
               color={theme.colors.statusSuccess}
-              icon={<CircleCheck size={12} color={theme.colors.statusSuccess} />}
+              icon={checkSuccessIcon}
             />
-            <SummaryPill
-              count={failed}
-              color={theme.colors.statusDanger}
-              icon={<CircleX size={12} color={theme.colors.statusDanger} />}
-            />
+            <SummaryPill count={failed} color={theme.colors.statusDanger} icon={checkDangerIcon} />
             <SummaryPill
               count={pending}
               color={theme.colors.statusWarning}
-              icon={<CircleDot size={12} color={theme.colors.statusWarning} />}
+              icon={checkWarningIcon}
             />
           </>
         }
@@ -136,17 +149,17 @@ export function PrPane({ data }: { data: PrPaneData }) {
             <SummaryPill
               count={approvals}
               color={theme.colors.statusSuccess}
-              icon={<CircleCheck size={12} color={theme.colors.statusSuccess} />}
+              icon={checkSuccessIcon}
             />
             <SummaryPill
               count={changesRequested}
               color={theme.colors.statusDanger}
-              icon={<CircleX size={12} color={theme.colors.statusDanger} />}
+              icon={checkDangerIcon}
             />
             <SummaryPill
               count={commentCount}
               color={theme.colors.foregroundMuted}
-              icon={<MessageSquare size={11} color={theme.colors.foregroundMuted} />}
+              icon={commentIcon}
             />
           </>
         }

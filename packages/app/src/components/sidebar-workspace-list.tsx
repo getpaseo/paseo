@@ -884,6 +884,11 @@ function ProjectHeaderRow({
     [isDragging, selected, isHovered],
   );
 
+  const removeProjectLeadingIcon = useMemo(
+    () => <Trash2 size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+
   const rowChildren = (
     <>
       <View style={styles.projectRowLeft}>
@@ -938,7 +943,7 @@ function ProjectHeaderRow({
               <DropdownMenuContent align="end" width={220}>
                 <DropdownMenuItem
                   testID={`sidebar-project-menu-remove-${project.projectKey}`}
-                  leading={<Trash2 size={14} color={theme.colors.foregroundMuted} />}
+                  leading={removeProjectLeadingIcon}
                   status={removeProjectStatus}
                   pendingLabel="Removing..."
                   onSelect={onRemoveProject}
@@ -1078,6 +1083,18 @@ function WorkspaceRowInner({
     ],
     [isHovered, isCreating],
   );
+  const copyLeadingIcon = useMemo(
+    () => <Copy size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const archiveLeadingIcon = useMemo(
+    () => <Archive size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const archiveTrailing = useMemo(
+    () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
+    [archiveShortcutKeys],
+  );
 
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
@@ -1143,7 +1160,7 @@ function WorkspaceRowInner({
                     {onCopyPath ? (
                       <DropdownMenuItem
                         testID={`sidebar-workspace-menu-copy-path-${workspace.workspaceKey}`}
-                        leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
+                        leading={copyLeadingIcon}
                         onSelect={onCopyPath}
                       >
                         Copy path
@@ -1152,7 +1169,7 @@ function WorkspaceRowInner({
                     {onCopyBranchName ? (
                       <DropdownMenuItem
                         testID={`sidebar-workspace-menu-copy-branch-name-${workspace.workspaceKey}`}
-                        leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
+                        leading={copyLeadingIcon}
                         onSelect={onCopyBranchName}
                       >
                         Copy branch name
@@ -1160,10 +1177,8 @@ function WorkspaceRowInner({
                     ) : null}
                     <DropdownMenuItem
                       testID={`sidebar-workspace-menu-archive-${workspace.workspaceKey}`}
-                      leading={<Archive size={14} color={theme.colors.foregroundMuted} />}
-                      trailing={
-                        archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null
-                      }
+                      leading={archiveLeadingIcon}
+                      trailing={archiveTrailing}
                       status={archiveStatus}
                       pendingLabel={archivePendingLabel}
                       onSelect={onArchive}
