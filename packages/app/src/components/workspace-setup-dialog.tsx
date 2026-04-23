@@ -272,24 +272,27 @@ export function WorkspaceSetupDialog() {
     [composerState, pendingAction],
   );
 
+  const subtitleContent = useMemo(
+    () => (
+      <View style={styles.subtitleRow}>
+        {iconSource ? (
+          <Image source={iconSource} style={styles.projectIcon} />
+        ) : (
+          <View style={styles.projectIconFallback}>
+            <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
+          </View>
+        )}
+        <Text style={styles.projectTitle} numberOfLines={1}>
+          {workspaceTitle}
+        </Text>
+      </View>
+    ),
+    [iconSource, placeholderInitial, workspaceTitle],
+  );
+
   if (!pendingWorkspaceSetup || !sourceDirectory) {
     return null;
   }
-
-  const subtitleContent = (
-    <View style={styles.subtitleRow}>
-      {iconSource ? (
-        <Image source={iconSource} style={styles.projectIcon} />
-      ) : (
-        <View style={styles.projectIconFallback}>
-          <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
-        </View>
-      )}
-      <Text style={styles.projectTitle} numberOfLines={1}>
-        {workspaceTitle}
-      </Text>
-    </View>
-  );
 
   return (
     <AdaptiveModalSheet

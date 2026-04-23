@@ -202,6 +202,49 @@ function ModelRow({
     [onToggleFavorite, row.modelId, row.provider],
   );
 
+  const leadingSlot = useMemo(
+    () => <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+    [ProviderIcon, theme.iconSize.sm, theme.colors.foregroundMuted],
+  );
+  const trailingSlot = useMemo(
+    () =>
+      onToggleFavorite && !disabled ? (
+        <Pressable
+          onPress={handleToggleFavorite}
+          hitSlop={8}
+          style={favoriteButtonStyle}
+          accessibilityRole="button"
+          accessibilityLabel={isFavorite ? "Unfavorite model" : "Favorite model"}
+          testID={`favorite-model-${row.provider}-${row.modelId}`}
+        >
+          {({ hovered }) => (
+            <Star
+              size={16}
+              color={
+                isFavorite
+                  ? theme.colors.palette.amber[500]
+                  : hovered
+                    ? theme.colors.foregroundMuted
+                    : theme.colors.border
+              }
+              fill={isFavorite ? theme.colors.palette.amber[500] : "transparent"}
+            />
+          )}
+        </Pressable>
+      ) : null,
+    [
+      onToggleFavorite,
+      disabled,
+      handleToggleFavorite,
+      isFavorite,
+      row.provider,
+      row.modelId,
+      theme.colors.palette.amber,
+      theme.colors.foregroundMuted,
+      theme.colors.border,
+    ],
+  );
+
   const showDescription = row.description && PROVIDERS_WITH_MODEL_DESCRIPTIONS.has(row.provider);
 
   return (
@@ -212,33 +255,8 @@ function ModelRow({
       disabled={disabled}
       elevated={elevated}
       onPress={onPress}
-      leadingSlot={<ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
-      trailingSlot={
-        onToggleFavorite && !disabled ? (
-          <Pressable
-            onPress={handleToggleFavorite}
-            hitSlop={8}
-            style={favoriteButtonStyle}
-            accessibilityRole="button"
-            accessibilityLabel={isFavorite ? "Unfavorite model" : "Favorite model"}
-            testID={`favorite-model-${row.provider}-${row.modelId}`}
-          >
-            {({ hovered }) => (
-              <Star
-                size={16}
-                color={
-                  isFavorite
-                    ? theme.colors.palette.amber[500]
-                    : hovered
-                      ? theme.colors.foregroundMuted
-                      : theme.colors.border
-                }
-                fill={isFavorite ? theme.colors.palette.amber[500] : "transparent"}
-              />
-            )}
-          </Pressable>
-        ) : null
-      }
+      leadingSlot={leadingSlot}
+      trailingSlot={trailingSlot}
     />
   );
 }
@@ -719,6 +737,27 @@ export function CombinedModelSelector({
     setView({ kind: "provider", providerId, providerLabel });
   }, []);
 
+  const stickyHeader = useMemo(
+    () =>
+      view.kind === "provider" ? (
+        <View style={styles.level2Header}>
+          {!singleProviderView ? (
+            <ProviderBackButton
+              providerId={view.providerId}
+              providerLabel={view.providerLabel}
+              onBack={handleBackToAll}
+            />
+          ) : null}
+          <ProviderSearchInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoFocus={platformIsWeb}
+          />
+        </View>
+      ) : undefined,
+    [view, singleProviderView, handleBackToAll, searchQuery],
+  );
+
   return (
     <>
       <Pressable
@@ -761,24 +800,7 @@ export function CombinedModelSelector({
         desktopMinWidth={360}
         desktopFixedHeight={desktopFixedHeight}
         title="Select model"
-        stickyHeader={
-          view.kind === "provider" ? (
-            <View style={styles.level2Header}>
-              {!singleProviderView ? (
-                <ProviderBackButton
-                  providerId={view.providerId}
-                  providerLabel={view.providerLabel}
-                  onBack={handleBackToAll}
-                />
-              ) : null}
-              <ProviderSearchInput
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                autoFocus={platformIsWeb}
-              />
-            </View>
-          ) : undefined
-        }
+        stickyHeader={stickyHeader}
       >
         {isContentReady ? (
           <SelectorContent

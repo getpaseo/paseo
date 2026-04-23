@@ -88,6 +88,19 @@ export function DraggableList<T>({
     nestable ? (NestableDraggableFlatList as any) : DraggableFlatList
   ) as any;
 
+  const refreshControl = useMemo(
+    () =>
+      shouldShowRefreshControl ? (
+        <RefreshControl
+          refreshing={refreshing ?? false}
+          onRefresh={onRefresh}
+          tintColor={theme.colors.foregroundMuted}
+          colors={refreshColors}
+        />
+      ) : undefined,
+    [shouldShowRefreshControl, refreshing, onRefresh, theme.colors.foregroundMuted, refreshColors],
+  );
+
   return (
     <ListComponent
       testID={testID}
@@ -111,16 +124,7 @@ export function DraggableList<T>({
       onRelease={handleRelease}
       // @ts-ignore - waitFor is supported by RNGH FlatList but missing from DraggableFlatList types
       waitFor={waitFor}
-      refreshControl={
-        shouldShowRefreshControl ? (
-          <RefreshControl
-            refreshing={refreshing ?? false}
-            onRefresh={onRefresh}
-            tintColor={theme.colors.foregroundMuted}
-            colors={refreshColors}
-          />
-        ) : undefined
-      }
+      refreshControl={refreshControl}
     />
   );
 }

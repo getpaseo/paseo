@@ -123,6 +123,35 @@ export function ProviderDiagnosticSheet({
     });
   }, [fetchDiagnostic, provider, refresh]);
 
+  const headerActions = useMemo(
+    () => (
+      <Pressable
+        onPress={handleRefresh}
+        disabled={refreshInFlight}
+        hitSlop={8}
+        style={refreshButtonStyle}
+        accessibilityRole="button"
+        accessibilityLabel={
+          refreshInFlight ? `Refreshing ${providerLabel}` : `Refresh ${providerLabel}`
+        }
+      >
+        {refreshInFlight ? (
+          <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        ) : (
+          <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        )}
+      </Pressable>
+    ),
+    [
+      handleRefresh,
+      refreshInFlight,
+      refreshButtonStyle,
+      providerLabel,
+      theme.iconSize.sm,
+      theme.colors.foregroundMuted,
+    ],
+  );
+
   useEffect(() => {
     if (visible) {
       fetchDiagnostic();
@@ -176,24 +205,7 @@ export function ProviderDiagnosticSheet({
       onClose={onClose}
       snapPoints={DIAGNOSTIC_SHEET_SNAP_POINTS}
       scrollable={false}
-      headerActions={
-        <Pressable
-          onPress={handleRefresh}
-          disabled={refreshInFlight}
-          hitSlop={8}
-          style={refreshButtonStyle}
-          accessibilityRole="button"
-          accessibilityLabel={
-            refreshInFlight ? `Refreshing ${providerLabel}` : `Refresh ${providerLabel}`
-          }
-        >
-          {refreshInFlight ? (
-            <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          ) : (
-            <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          )}
-        </Pressable>
-      }
+      headerActions={headerActions}
     >
       <View style={sheetStyles.section}>
         <Text style={sheetStyles.sectionTitle}>Diagnostic</Text>
