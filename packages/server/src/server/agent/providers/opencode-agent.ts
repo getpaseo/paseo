@@ -241,6 +241,25 @@ function normalizeTurnFailureError(error: unknown): string {
   return normalized.length > 0 ? normalized : "Unknown error";
 }
 
+type TerminalTurnEvent = Extract<
+  AgentStreamEvent,
+  { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+>;
+
+function toTerminalTurnEvent(event: AgentStreamEvent): TerminalTurnEvent | null {
+  if (event.type === "turn_failed") {
+    return {
+      type: "turn_failed",
+      provider: "opencode",
+      error: normalizeTurnFailureError(event.error),
+    };
+  }
+  if (event.type === "turn_completed" || event.type === "turn_canceled") {
+    return event;
+  }
+  return null;
+}
+
 function isOpenCodeNotFoundError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -2132,23 +2151,9 @@ class OpenCodeAgentSession implements AgentSession {
           if (e.type === "timeline" && e.item.type === "tool_call") {
             this.trackToolCall(e.item);
           }
-          if (
-            e.type === "turn_completed" ||
-            e.type === "turn_failed" ||
-            e.type === "turn_canceled"
-          ) {
-            if (e.type === "turn_failed") {
-              this.finishForegroundTurn(
-                {
-                  type: "turn_failed",
-                  provider: "opencode",
-                  error: normalizeTurnFailureError(e.error),
-                },
-                turnId,
-              );
-            } else {
-              this.finishForegroundTurn(e, turnId);
-            }
+          const terminalEvent = toTerminalTurnEvent(e);
+          if (terminalEvent) {
+            this.finishForegroundTurn(terminalEvent, turnId);
             return;
           }
           this.notifySubscribers(e, turnId);
