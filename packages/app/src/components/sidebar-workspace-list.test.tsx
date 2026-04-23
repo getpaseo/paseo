@@ -203,11 +203,11 @@ function WorkspaceRowProbe({
   workspaceId: string;
   counts: RenderCounts;
 }): null {
-  const workspace = useWorkspaceFields(serverId, workspaceId, (entry) =>
+  const workspaceEntry = useWorkspaceFields(serverId, workspaceId, (entry) =>
     createSidebarWorkspaceEntry({ serverId, workspace: entry }),
   );
-  if (workspace) {
-    incrementRecord(counts.rows, workspace.workspaceId);
+  if (workspaceEntry) {
+    incrementRecord(counts.rows, workspaceEntry.workspaceId);
   }
   return null;
 }
@@ -223,7 +223,7 @@ function ProjectActiveProbe({
 }): null {
   useIsNavigationProjectActive({
     serverId,
-    workspaceIds: project.workspaces.map((workspace) => workspace.workspaceId),
+    workspaceIds: project.workspaces.map((entry) => entry.workspaceId),
   });
   incrementRecord(counts.projectSelection, project.projectKey);
   return null;
@@ -253,16 +253,16 @@ function SidebarFrameProbe({ counts }: { counts: RenderCounts }): ReactElement {
         <div key={project.projectKey}>
           <ProjectHeaderProbe project={project} counts={counts} />
           <ProjectActiveProbe serverId={SERVER_ID} project={project} counts={counts} />
-          {project.workspaces.map((workspace) => (
-            <React.Fragment key={workspace.workspaceKey}>
+          {project.workspaces.map((entry) => (
+            <React.Fragment key={entry.workspaceKey}>
               <WorkspaceRowProbe
-                serverId={workspace.serverId}
-                workspaceId={workspace.workspaceId}
+                serverId={entry.serverId}
+                workspaceId={entry.workspaceId}
                 counts={counts}
               />
               <WorkspaceSelectionProbe
-                serverId={workspace.serverId}
-                workspaceId={workspace.workspaceId}
+                serverId={entry.serverId}
+                workspaceId={entry.workspaceId}
                 counts={counts}
               />
             </React.Fragment>

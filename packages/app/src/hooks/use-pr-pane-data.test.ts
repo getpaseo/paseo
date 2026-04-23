@@ -766,9 +766,15 @@ function createDeferred<T>(): {
   return { promise, resolve };
 }
 
-function countTimelineCalls({ cwd, prNumber }: { cwd: string; prNumber: number }): number {
+function countTimelineCalls({
+  cwd: targetCwd,
+  prNumber,
+}: {
+  cwd: string;
+  prNumber: number;
+}): number {
   return mockClient.pullRequestTimeline.mock.calls.filter(([input]) => {
     const request = input as { cwd?: string; prNumber?: number | null };
-    return request.cwd === cwd && request.prNumber === prNumber;
+    return request.cwd === targetCwd && request.prNumber === prNumber;
   }).length;
 }
