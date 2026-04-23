@@ -4,7 +4,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { Session } from "./session.js";
+import type { SessionOptions } from "./session.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+
+interface SessionInternals {
+  archiveAgentForClose(agentId: string): Promise<{ archivedAt: string }>;
+  handleUpdateAgentRequest(
+    agentId: string,
+    title: string,
+    labels: Record<string, string>,
+    requestId: string,
+  ): Promise<unknown>;
+}
 
 describe("snapshot mutation ownership boundary", () => {
   afterEach(() => {
@@ -82,9 +93,9 @@ describe("snapshot mutation ownership boundary", () => {
     const session = new Session({
       clientId: "test-client",
       onMessage,
-      logger: logger as any,
-      downloadTokenStore: {} as any,
-      pushTokenStore: {} as any,
+      logger: logger as unknown as SessionOptions["logger"],
+      downloadTokenStore: {} as unknown as SessionOptions["downloadTokenStore"],
+      pushTokenStore: {} as unknown as SessionOptions["pushTokenStore"],
       paseoHome: "/tmp/paseo-test",
       agentManager: {
         subscribe: () => () => {},
@@ -92,13 +103,13 @@ describe("snapshot mutation ownership boundary", () => {
         getAgent: () => null,
         archiveSnapshot,
         updateAgentMetadata,
-      } as any,
+      } as unknown as SessionOptions["agentManager"],
       agentStorage: {
         list: async () => [],
         get: async () => storedRecord,
         applySnapshot: directStorageWrite,
         upsert: directStorageWrite,
-      } as any,
+      } as unknown as SessionOptions["agentStorage"],
       projectRegistry: {
         initialize: async () => {},
         existsOnDisk: async () => true,
@@ -107,7 +118,7 @@ describe("snapshot mutation ownership boundary", () => {
         upsert: async () => {},
         archive: async () => {},
         remove: async () => {},
-      } as any,
+      } as unknown as SessionOptions["projectRegistry"],
       workspaceRegistry: {
         initialize: async () => {},
         existsOnDisk: async () => true,
@@ -116,14 +127,14 @@ describe("snapshot mutation ownership boundary", () => {
         upsert: async () => {},
         archive: async () => {},
         remove: async () => {},
-      } as any,
+      } as unknown as SessionOptions["workspaceRegistry"],
       createAgentMcpTransport: async () => {
         throw new Error("not used");
       },
       stt: null,
       tts: null,
       terminalManager: null,
-    }) as any;
+    }) as unknown as SessionInternals;
 
     const archiveResult = await session.archiveAgentForClose("agent-1");
     expect(archiveSnapshot).toHaveBeenCalledTimes(1);
