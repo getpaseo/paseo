@@ -7,13 +7,15 @@ export interface PairDeviceModalProps {
   testID?: string;
 }
 
+const SNAP_POINTS: string[] = ["82%", "94%"];
+
 export function PairDeviceModal({ visible, onClose, testID }: PairDeviceModalProps) {
   return (
     <AdaptiveModalSheet
       title="Pair a device"
       visible={visible}
       onClose={onClose}
-      snapPoints={["82%", "94%"]}
+      snapPoints={SNAP_POINTS}
       desktopMaxWidth={640}
       testID={testID}
     >

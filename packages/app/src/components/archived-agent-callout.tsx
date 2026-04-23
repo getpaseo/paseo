@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import Animated from "react-native-reanimated";
@@ -22,6 +22,11 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
 
   const { style: keyboardAnimatedStyle } = useKeyboardShiftStyle({ mode: "translate" });
 
+  const containerStyle = useMemo(
+    () => [styles.container, { paddingBottom: insets.bottom }, keyboardAnimatedStyle],
+    [insets.bottom, keyboardAnimatedStyle],
+  );
+
   async function handleUnarchive() {
     if (!client || !isConnected || isUnarchiving) return;
     setIsUnarchiving(true);
@@ -34,9 +39,7 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
   }
 
   return (
-    <Animated.View
-      style={[styles.container, { paddingBottom: insets.bottom }, keyboardAnimatedStyle]}
-    >
+    <Animated.View style={containerStyle}>
       <View style={styles.inputAreaContainer}>
         <View style={styles.inputAreaContent}>
           <View style={styles.callout}>

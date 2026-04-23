@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { View, Text, ActivityIndicator, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown, Info, MoreVertical } from "lucide-react-native";
@@ -43,6 +43,8 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
     },
     [theme.colors.foreground, toast],
   );
+
+  const overflowMenuButtonStyle = useMemo(() => [styles.iconButton, styles.overflowMenuButton], []);
 
   return (
     <View style={styles.row}>
@@ -132,7 +134,7 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
           <DropdownMenuTrigger
             testID="changes-overflow-menu"
             hitSlop={8}
-            style={[styles.iconButton, styles.overflowMenuButton]}
+            style={overflowMenuButtonStyle}
             accessibilityRole="button"
             accessibilityLabel="More actions"
           >
