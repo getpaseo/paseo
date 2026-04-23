@@ -142,19 +142,11 @@ export async function garbageCollectManagedAttachmentFiles(input: {
     : new Set<string>();
 
   const entries = await readdir(dirPath, { withFileTypes: true });
-  let deletedCount = 0;
+  const toDelete = entries.filter(
+    (entry) => entry.isFile() && !referencedIds.has(path.parse(entry.name).name),
+  );
 
-  for (const entry of entries) {
-    if (!entry.isFile()) {
-      continue;
-    }
-    const attachmentId = path.parse(entry.name).name;
-    if (referencedIds.has(attachmentId)) {
-      continue;
-    }
-    await rm(path.join(dirPath, entry.name), { force: true });
-    deletedCount += 1;
-  }
+  await Promise.all(toDelete.map((entry) => rm(path.join(dirPath, entry.name), { force: true })));
 
-  return deletedCount;
+  return toDelete.length;
 }

@@ -144,25 +144,13 @@ async function inspectTitlebarRegions(page) {
       };
     }
 
-    const dragSummaries = [];
-    const suspiciousDragHosts = [];
-
-    for (const node of nodes) {
-      if (!(node instanceof HTMLElement) || !isVisible(node)) {
-        continue;
-      }
-      const summary = summarizeElement(node);
-      if (summary.appRegion !== "drag") {
-        continue;
-      }
-
+    function buildDragRecord(node, summary) {
       const parent = node.parentElement instanceof HTMLElement ? node.parentElement : null;
       const parentSummary = parent ? summarizeElement(parent) : null;
       const interactiveDescendants = Array.from(node.querySelectorAll(interactiveSelector))
         .filter((child) => child instanceof HTMLElement)
         .filter((child) => isVisible(child))
         .map((child) => summarizeInteractive(child));
-
       const siblingResizers = parent
         ? Array.from(parent.children)
             .filter((child) => child !== node)
@@ -170,7 +158,6 @@ async function inspectTitlebarRegions(page) {
             .filter((child) => isTopResizer(child, summary))
             .map((child) => summarizeElement(child))
         : [];
-
       const parentInteractive = parent
         ? Array.from(parent.querySelectorAll(interactiveSelector))
             .filter((child) => child instanceof HTMLElement)
@@ -180,7 +167,6 @@ async function inspectTitlebarRegions(page) {
       const explicitNoDragInteractive = parentInteractive.filter(
         (child) => child.appRegion === "no-drag",
       );
-
       const record = {
         ...summary,
         parent: parentSummary,
@@ -189,17 +175,25 @@ async function inspectTitlebarRegions(page) {
         explicitNoDragInteractive: explicitNoDragInteractive.slice(0, 5),
         parentInteractiveCount: parentInteractive.length,
       };
-      dragSummaries.push(record);
-
       const looksLikeHostShortcut =
         isNearTop(summary) &&
         (summary.position !== "absolute" ||
           summary.text.length > 0 ||
           interactiveDescendants.length > 0 ||
           parentSummary?.appRegion === "drag");
-      if (looksLikeHostShortcut) {
-        suspiciousDragHosts.push(record);
-      }
+      return { record, looksLikeHostShortcut };
+    }
+
+    const dragSummaries = [];
+    const suspiciousDragHosts = [];
+
+    for (const node of nodes) {
+      if (!(node instanceof HTMLElement) || !isVisible(node)) continue;
+      const summary = summarizeElement(node);
+      if (summary.appRegion !== "drag") continue;
+      const { record, looksLikeHostShortcut } = buildDragRecord(node, summary);
+      dragSummaries.push(record);
+      if (looksLikeHostShortcut) suspiciousDragHosts.push(record);
     }
 
     const verifiedRegions = dragSummaries
@@ -230,24 +224,27 @@ async function inspectTitlebarRegions(page) {
           Math.abs(summary.height - candidate.height) <= 1
         );
       });
+      function annotateMatchingParent(parent) {
+        if (!(parent instanceof HTMLElement)) return;
+        const resizers = Array.from(parent.children).filter(
+          (child) => child instanceof HTMLElement && isTopResizer(child, candidate),
+        );
+        for (const child of resizers) {
+          child.setAttribute("data-electron-verify-resizer", "true");
+        }
+        const interactiveChildren = Array.from(parent.querySelectorAll(interactiveSelector))
+          .filter((child) => child instanceof HTMLElement)
+          .filter((child) => isVisible(child))
+          .filter((child) => summarizeElement(child).appRegion === "no-drag")
+          .slice(0, 3);
+        for (const child of interactiveChildren) {
+          child.setAttribute("data-electron-verify-interactive", "true");
+        }
+      }
+
       if (matchingDragNode instanceof HTMLElement) {
         matchingDragNode.setAttribute("data-electron-verify-drag", "true");
-        const parent = matchingDragNode.parentElement;
-        if (parent instanceof HTMLElement) {
-          for (const child of parent.children) {
-            if (child instanceof HTMLElement && isTopResizer(child, candidate)) {
-              child.setAttribute("data-electron-verify-resizer", "true");
-            }
-          }
-          const interactiveChildren = Array.from(parent.querySelectorAll(interactiveSelector))
-            .filter((child) => child instanceof HTMLElement)
-            .filter((child) => isVisible(child))
-            .filter((child) => summarizeElement(child).appRegion === "no-drag")
-            .slice(0, 3);
-          for (const child of interactiveChildren) {
-            child.setAttribute("data-electron-verify-interactive", "true");
-          }
-        }
+        annotateMatchingParent(matchingDragNode.parentElement);
       }
     }
 
@@ -367,37 +364,26 @@ async function findAppPage(browser) {
   throw new Error(`Unable to find Electron app page for ${APP_URL_FRAGMENT}`);
 }
 
-async function main() {
-  await ensureDir(OUTPUT_DIR);
-
-  const browser = await chromium.connectOverCDP(CDP_URL);
-  const page = await findAppPage(browser);
-  const consoleMessages = [];
-  const results = [];
-
+function attachConsoleCollector(page, consoleMessages) {
   page.on("console", (message) => {
-    consoleMessages.push({
-      type: message.type(),
-      text: message.text(),
-    });
+    consoleMessages.push({ type: message.type(), text: message.text() });
   });
   page.on("pageerror", (error) => {
-    consoleMessages.push({
-      type: "pageerror",
-      text: String(error),
-    });
+    consoleMessages.push({ type: "pageerror", text: String(error) });
   });
+}
 
+async function navigateToWelcome(page) {
   await page.waitForLoadState("domcontentloaded");
   await page.waitForTimeout(1000);
   if (!page.url().endsWith("/welcome")) {
     await page.goto(`http://${APP_URL_FRAGMENT}/welcome`, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(1000);
   }
+}
 
-  const welcomeScreenshot = await captureScreenshot(page, "01-welcome.png");
-
-  const desktopDetection = await page.evaluate(() => {
+async function detectDesktopBridge(page) {
+  return page.evaluate(() => {
     const bridge = window.paseoDesktop;
     const keys = bridge && typeof bridge === "object" ? Object.keys(bridge) : [];
     const keyTypes =
@@ -411,6 +397,124 @@ async function main() {
       platform: bridge?.platform ?? null,
     };
   });
+}
+
+async function navigateToSettings(page, serverId) {
+  await page.evaluate((nextServerId) => {
+    window.location.href = `/h/${nextServerId}/settings`;
+  }, serverId);
+  await page.waitForURL(new RegExp(`/h/${escapeRegExp(serverId)}/settings$`), {
+    timeout: 30_000,
+  });
+  await page.getByText("Daemon management", { exact: true }).waitFor({
+    timeout: 30_000,
+  });
+}
+
+async function dismissMobileSidebarIfVisible(page) {
+  const sidebarSettingsButton = page.locator('[data-testid="sidebar-settings"]').first();
+  const menuToggle = page.locator('[data-testid="menu-button"]').first();
+  const bothVisible =
+    (await sidebarSettingsButton.isVisible().catch(() => false)) &&
+    (await menuToggle.isVisible().catch(() => false));
+  if (!bothVisible) return;
+  await menuToggle.click();
+  await sidebarSettingsButton.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => undefined);
+  await page.waitForTimeout(500);
+}
+
+function evaluateDragRegionCheck(dragRegionCheck) {
+  return (
+    dragRegionCheck.dragRegionCount > 0 &&
+    dragRegionCheck.verifiedRegionCount > 0 &&
+    Boolean(dragRegionCheck.candidate) &&
+    dragRegionCheck.candidate.top < 220 &&
+    dragRegionCheck.candidate.parent?.appRegion !== "drag" &&
+    dragRegionCheck.candidate.siblingResizers.length > 0 &&
+    dragRegionCheck.suspiciousDragHosts.length === 0
+  );
+}
+
+function evaluateTrafficLightPadding(dragRegionCheck) {
+  if (process.platform !== "darwin") return true;
+  const observedPaddingLeft = dragRegionCheck.candidate?.parent?.paddingLeft ?? null;
+  return (
+    typeof observedPaddingLeft === "number" &&
+    observedPaddingLeft >= 78 &&
+    observedPaddingLeft <= 110
+  );
+}
+
+async function collectDragRegionResults(page, dragRegionCheck, dragScreenshot, results) {
+  results.push({
+    check: "titlebar-drag-structure",
+    pass: evaluateDragRegionCheck(dragRegionCheck),
+    details: dragRegionCheck,
+    screenshot: dragScreenshot,
+  });
+
+  const trafficLightScreenshot = await captureScreenshot(page, "04-traffic-light-padding.png");
+  results.push({
+    check: "traffic-light-padding",
+    pass: evaluateTrafficLightPadding(dragRegionCheck),
+    details: {
+      platform: process.platform,
+      observedPaddingLeft: dragRegionCheck.candidate?.parent?.paddingLeft ?? null,
+      note: "Traffic-light padding is only validated structurally on macOS in this verifier.",
+      candidate: dragRegionCheck.candidate,
+    },
+    screenshot: trafficLightScreenshot,
+  });
+
+  results.push({
+    check: "interactive-no-drag-layering",
+    pass:
+      Boolean(dragRegionCheck.candidate) &&
+      Array.isArray(dragRegionCheck.candidate.explicitNoDragInteractive) &&
+      dragRegionCheck.candidate.explicitNoDragInteractive.length > 0,
+    details: {
+      candidate: dragRegionCheck.candidate,
+      explicitNoDragInteractive: dragRegionCheck.candidate?.explicitNoDragInteractive ?? [],
+    },
+    screenshot: dragScreenshot,
+  });
+}
+
+async function collectDaemonManagementResult(page, serverId, desktopStatus, results) {
+  const daemonManagementVisible = await Promise.all([
+    page.getByText("Built-in daemon", { exact: true }).isVisible(),
+    page.getByText("Daemon management", { exact: true }).isVisible(),
+    page.getByRole("button", { name: "Restart daemon" }).first().isVisible(),
+  ]).then((values) => values.every(Boolean));
+  const daemonManagementScreenshot = await captureScreenshot(
+    page,
+    "05-settings-daemon-management.png",
+  );
+  results.push({
+    check: "settings-daemon-management",
+    pass: daemonManagementVisible,
+    details: {
+      route: page.url(),
+      serverId,
+      desktopStatus,
+    },
+    screenshot: daemonManagementScreenshot,
+  });
+}
+
+async function main() {
+  await ensureDir(OUTPUT_DIR);
+
+  const browser = await chromium.connectOverCDP(CDP_URL);
+  const page = await findAppPage(browser);
+  const consoleMessages = [];
+  const results = [];
+
+  attachConsoleCollector(page, consoleMessages);
+  await navigateToWelcome(page);
+
+  const welcomeScreenshot = await captureScreenshot(page, "01-welcome.png");
+  const desktopDetection = await detectDesktopBridge(page);
 
   const hasExpectedDesktopShape =
     desktopDetection.exists &&
@@ -432,84 +536,14 @@ async function main() {
   );
 
   const serverId = desktopStatus.serverId.trim();
-  await page.evaluate((nextServerId) => {
-    window.location.href = `/h/${nextServerId}/settings`;
-  }, serverId);
-  await page.waitForURL(new RegExp(`/h/${escapeRegExp(serverId)}/settings$`), {
-    timeout: 30_000,
-  });
-  await page.getByText("Daemon management", { exact: true }).waitFor({
-    timeout: 30_000,
-  });
+  await navigateToSettings(page, serverId);
 
-  const settingsScreenshot = await captureScreenshot(page, "02-settings-page.png");
-
-  const sidebarSettingsButton = page.locator('[data-testid="sidebar-settings"]').first();
-  const menuToggle = page.locator('[data-testid="menu-button"]').first();
-  if (
-    (await sidebarSettingsButton.isVisible().catch(() => false)) &&
-    (await menuToggle.isVisible().catch(() => false))
-  ) {
-    await menuToggle.click();
-    await sidebarSettingsButton
-      .waitFor({ state: "hidden", timeout: 10_000 })
-      .catch(() => undefined);
-    await page.waitForTimeout(500);
-  }
+  await captureScreenshot(page, "02-settings-page.png");
+  await dismissMobileSidebarIfVisible(page);
 
   const dragRegionCheck = await inspectTitlebarRegions(page);
-
   const dragScreenshot = await captureScreenshot(page, "03-drag-region.png");
-  const dragRegionPassed =
-    dragRegionCheck.dragRegionCount > 0 &&
-    dragRegionCheck.verifiedRegionCount > 0 &&
-    Boolean(dragRegionCheck.candidate) &&
-    dragRegionCheck.candidate.top < 220 &&
-    dragRegionCheck.candidate.parent?.appRegion !== "drag" &&
-    dragRegionCheck.candidate.siblingResizers.length > 0 &&
-    dragRegionCheck.suspiciousDragHosts.length === 0;
-
-  results.push({
-    check: "titlebar-drag-structure",
-    pass: dragRegionPassed,
-    details: dragRegionCheck,
-    screenshot: dragScreenshot,
-  });
-
-  const trafficLightScreenshot = await captureScreenshot(page, "04-traffic-light-padding.png");
-  const isMac = process.platform === "darwin";
-  const observedPaddingLeft = dragRegionCheck.candidate?.parent?.paddingLeft ?? null;
-  const trafficLightPaddingPassed = !isMac
-    ? true
-    : typeof observedPaddingLeft === "number" &&
-      observedPaddingLeft >= 78 &&
-      observedPaddingLeft <= 110;
-
-  results.push({
-    check: "traffic-light-padding",
-    pass: trafficLightPaddingPassed,
-    details: {
-      platform: process.platform,
-      observedPaddingLeft,
-      note: "Traffic-light padding is only validated structurally on macOS in this verifier.",
-      candidate: dragRegionCheck.candidate,
-    },
-    screenshot: trafficLightScreenshot,
-  });
-
-  const noDragInteractiveCheck = {
-    check: "interactive-no-drag-layering",
-    pass:
-      Boolean(dragRegionCheck.candidate) &&
-      Array.isArray(dragRegionCheck.candidate.explicitNoDragInteractive) &&
-      dragRegionCheck.candidate.explicitNoDragInteractive.length > 0,
-    details: {
-      candidate: dragRegionCheck.candidate,
-      explicitNoDragInteractive: dragRegionCheck.candidate?.explicitNoDragInteractive ?? [],
-    },
-    screenshot: dragScreenshot,
-  };
-  results.push(noDragInteractiveCheck);
+  await collectDragRegionResults(page, dragRegionCheck, dragScreenshot, results);
 
   const fullscreenDetails = await inspectFullscreenResizer(page);
   const fullscreenScreenshot = await captureScreenshot(page, "04-fullscreen-resizer.png");
@@ -520,26 +554,7 @@ async function main() {
     screenshot: fullscreenScreenshot,
   });
 
-  const daemonManagementVisible = await Promise.all([
-    page.getByText("Built-in daemon", { exact: true }).isVisible(),
-    page.getByText("Daemon management", { exact: true }).isVisible(),
-    page.getByRole("button", { name: "Restart daemon" }).first().isVisible(),
-  ]).then((values) => values.every(Boolean));
-  const daemonManagementScreenshot = await captureScreenshot(
-    page,
-    "05-settings-daemon-management.png",
-  );
-
-  results.push({
-    check: "settings-daemon-management",
-    pass: daemonManagementVisible,
-    details: {
-      route: page.url(),
-      serverId,
-      desktopStatus,
-    },
-    screenshot: daemonManagementScreenshot,
-  });
+  await collectDaemonManagementResult(page, serverId, desktopStatus, results);
 
   const desktopDetectionScreenshot = await captureScreenshot(page, "06-desktop-detection.png");
   results[0].screenshot = desktopDetectionScreenshot;

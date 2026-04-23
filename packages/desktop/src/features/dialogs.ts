@@ -15,12 +15,17 @@ interface OpenOptions {
   filters?: Array<{ name: string; extensions: string[] }>;
 }
 
+function resolveDialogType(kind: AskOptions["kind"]): "warning" | "error" | "question" {
+  if (kind === "warning") return "warning";
+  if (kind === "error") return "error";
+  return "question";
+}
+
 export function registerDialogHandlers(): void {
   ipcMain.handle("paseo:dialog:ask", async (event, message: string, options?: AskOptions) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showMessageBox(win ?? BrowserWindow.getFocusedWindow()!, {
-      type:
-        options?.kind === "warning" ? "warning" : options?.kind === "error" ? "error" : "question",
+      type: resolveDialogType(options?.kind),
       title: options?.title ?? "Confirm",
       message,
       buttons: [options?.cancelLabel ?? "Cancel", options?.okLabel ?? "OK"],

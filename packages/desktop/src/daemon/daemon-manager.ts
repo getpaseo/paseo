@@ -238,6 +238,47 @@ function normalizeVersion(version: string | null): string | null {
   return trimmed.replace(/^v/i, "");
 }
 
+function shouldRestartForVersion(current: DesktopDaemonStatus): boolean {
+  if (!current.desktopManaged) return false;
+  const appVersion = normalizeVersion(resolveDesktopAppVersion());
+  const daemonVersion = normalizeVersion(current.version);
+  return Boolean(appVersion && daemonVersion && appVersion !== daemonVersion);
+}
+
+function buildStartupFailureError(
+  result: { code: number | null; signal: string | null; error?: Error },
+  stdout: string,
+  stderr: string,
+): Error {
+  const reason = result.error
+    ? result.error.message
+    : `exit code ${result.code ?? "unknown"}${result.signal ? ` (${result.signal})` : ""}`;
+  const parts = [`Daemon failed to start: ${reason}`];
+  if (stderr.trim()) parts.push(`stderr:\n${stderr.trim()}`);
+  if (stdout.trim()) parts.push(`stdout:\n${stdout.trim()}`);
+  const logs = tailFile(logFilePath(), 15);
+  if (logs) parts.push(`Recent logs (${logFilePath()}):\n${logs}`);
+  return new Error(parts.join("\n\n"));
+}
+
+async function pollForRunningDaemon(): Promise<DesktopDaemonStatus> {
+  for (let attempt = 0; attempt < STARTUP_POLL_MAX_ATTEMPTS; attempt++) {
+    const status = await resolveStatus();
+    if (attempt === 0 || attempt === STARTUP_POLL_MAX_ATTEMPTS - 1 || attempt % 10 === 9) {
+      logDesktopDaemonLifecycle("polling daemon status after detached start", {
+        attempt: attempt + 1,
+        status: status.status,
+        pid: status.pid,
+        listen: status.listen,
+        serverId: status.serverId || null,
+      });
+    }
+    if (status.status === "running" && status.serverId && status.listen) return status;
+    await sleep(STARTUP_POLL_INTERVAL_MS);
+  }
+  return resolveStatus();
+}
+
 async function startDaemon(): Promise<DesktopDaemonStatus> {
   const current = await resolveStatus();
   logDesktopDaemonLifecycle("initial status check before start", {
@@ -249,12 +290,10 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     desktopManaged: current.desktopManaged,
   });
   if (current.status === "running") {
-    const appVersion = normalizeVersion(resolveDesktopAppVersion());
-    const daemonVersion = normalizeVersion(current.version);
-    if (current.desktopManaged && appVersion && daemonVersion && appVersion !== daemonVersion) {
+    if (shouldRestartForVersion(current)) {
       logDesktopDaemonLifecycle("daemon version mismatch, restarting", {
-        appVersion,
-        daemonVersion,
+        appVersion: normalizeVersion(resolveDesktopAppVersion()),
+        daemonVersion: normalizeVersion(current.version),
       });
       await stopDaemon();
     } else {
@@ -340,34 +379,10 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   });
 
   if (result.exitedEarly) {
-    const reason = result.error
-      ? result.error.message
-      : `exit code ${result.code ?? "unknown"}${result.signal ? ` (${result.signal})` : ""}`;
-    const parts = [`Daemon failed to start: ${reason}`];
-    if (stderr.trim()) parts.push(`stderr:\n${stderr.trim()}`);
-    if (stdout.trim()) parts.push(`stdout:\n${stdout.trim()}`);
-    const logs = tailFile(logFilePath(), 15);
-    if (logs) parts.push(`Recent logs (${logFilePath()}):\n${logs}`);
-    throw new Error(parts.join("\n\n"));
+    throw buildStartupFailureError(result, stdout, stderr);
   }
 
-  // Poll for PID file with server ID
-  for (let attempt = 0; attempt < STARTUP_POLL_MAX_ATTEMPTS; attempt++) {
-    const status = await resolveStatus();
-    if (attempt === 0 || attempt === STARTUP_POLL_MAX_ATTEMPTS - 1 || attempt % 10 === 9) {
-      logDesktopDaemonLifecycle("polling daemon status after detached start", {
-        attempt: attempt + 1,
-        status: status.status,
-        pid: status.pid,
-        listen: status.listen,
-        serverId: status.serverId || null,
-      });
-    }
-    if (status.status === "running" && status.serverId && status.listen) return status;
-    await sleep(STARTUP_POLL_INTERVAL_MS);
-  }
-
-  return await resolveStatus();
+  return pollForRunningDaemon();
 }
 
 async function stopDaemon(): Promise<DesktopDaemonStatus> {
