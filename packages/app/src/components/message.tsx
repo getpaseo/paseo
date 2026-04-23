@@ -251,7 +251,10 @@ function canScrollInsideDetailFromTarget(
 function shouldStopDetailWheelPropagation(detailRoot: HTMLElement, event: WheelEvent): boolean {
   const startElement = getWheelEventElementTarget(event, detailRoot);
   const verticalDelta = event.deltaY;
-  const horizontalDelta = event.deltaX !== 0 ? event.deltaX : event.shiftKey ? event.deltaY : 0;
+  let horizontalDelta: number;
+  if (event.deltaX !== 0) horizontalDelta = event.deltaX;
+  else if (event.shiftKey) horizontalDelta = event.deltaY;
+  else horizontalDelta = 0;
 
   const hasVerticalIntent = Math.abs(verticalDelta) > SCROLL_EDGE_EPSILON;
   const hasHorizontalIntent = Math.abs(horizontalDelta) > SCROLL_EDGE_EPSILON;
@@ -352,16 +355,17 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
 
 function UserMessageAttachmentThumbnail({ image }: { image: UserMessageImageAttachment }) {
   const uri = useAttachmentPreviewUrl(image);
+  const imageSource = useMemo(() => ({ uri: uri ?? "" }), [uri]);
   if (!uri) {
     return <View style={userMessageStylesheet.imageThumbnailPlaceholder} />;
   }
-  return <Image source={{ uri }} style={userMessageStylesheet.imageThumbnail} />;
+  return <Image source={imageSource} style={userMessageStylesheet.imageThumbnail} />;
 }
 
 export const UserMessage = memo(function UserMessage({
   message,
   images = [],
-  timestamp,
+  timestamp: _timestamp,
   isFirstInGroup = true,
   isLastInGroup = true,
   disableOuterSpacing,
@@ -582,12 +586,13 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
     () => [assistantMessageStylesheet.imageFrame, containerStyle],
     [containerStyle],
   );
+  const imageSource = useMemo(() => ({ uri }), [uri]);
 
   return (
     <View style={frameStyle}>
       <View style={surfaceStyle}>
         <Image
-          source={{ uri }}
+          source={imageSource}
           style={assistantMessageStylesheet.image}
           resizeMode="contain"
           accessibilityLabel={alt}
@@ -718,15 +723,14 @@ function AssistantMarkdownImage({
     );
   }
 
+  let errorText: string;
+  if (query.error instanceof Error) errorText = query.error.message;
+  else if (dataImageQuery.error instanceof Error) errorText = dataImageQuery.error.message;
+  else errorText = "Unable to load image preview.";
+
   return (
     <View style={stateFrameStyle}>
-      <Text style={assistantMessageStylesheet.imageErrorText}>
-        {query.error instanceof Error
-          ? query.error.message
-          : dataImageQuery.error instanceof Error
-            ? dataImageQuery.error.message
-            : "Unable to load image preview."}
-      </Text>
+      <Text style={assistantMessageStylesheet.imageErrorText}>{errorText}</Text>
     </View>
   );
 }
@@ -1164,6 +1168,22 @@ const NativeExpandableBadgeShimmer = memo(function NativeExpandableBadgeShimmer(
   );
 });
 
+interface AssistantMessageBlockContainerProps {
+  marginBottom: number;
+  children: ReactNode;
+}
+
+function AssistantMessageBlockContainer({
+  marginBottom,
+  children,
+}: AssistantMessageBlockContainerProps) {
+  const style = useMemo(
+    () => (marginBottom > 0 ? { marginBottom } : undefined),
+    [marginBottom],
+  );
+  return <View style={style}>{children}</View>;
+}
+
 interface MemoizedMarkdownBlockProps {
   text: string;
   styles: ReturnType<typeof createMarkdownStyles>;
@@ -1195,7 +1215,7 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
 
 export const AssistantMessage = memo(function AssistantMessage({
   message,
-  timestamp,
+  timestamp: _timestamp,
   onInlinePathPress,
   workspaceRoot,
   serverId,
@@ -1373,7 +1393,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           )}
         </MarkdownLink>
       ),
-      image: (node: any, _children: ReactNode[], parent: any, styles: any) => {
+      image: (node: any, _children: ReactNode[], parent: any, _styles: any) => {
         const paragraphNode = Array.isArray(parent)
           ? parent.find((ancestor: any) => ancestor?.type === "paragraph")
           : null;
@@ -1415,9 +1435,9 @@ export const AssistantMessage = memo(function AssistantMessage({
   return (
     <View testID="assistant-message" style={assistantContainerStyle}>
       {blocks.map((block, index) => (
-        <View
+        <AssistantMessageBlockContainer
           key={index}
-          style={index < blocks.length - 1 ? { marginBottom: theme.spacing[3] } : undefined}
+          marginBottom={index < blocks.length - 1 ? theme.spacing[3] : 0}
         >
           <MemoizedMarkdownBlock
             text={block}
@@ -1426,7 +1446,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             parser={markdownParser}
             onLinkPress={handleLinkPress}
           />
-        </View>
+        </AssistantMessageBlockContainer>
       ))}
     </View>
   );
@@ -1468,7 +1488,7 @@ const speakMessageStylesheet = StyleSheet.create((theme) => ({
 
 export const SpeakMessage = memo(function SpeakMessage({
   message,
-  timestamp,
+  timestamp: _timestamp,
   disableOuterSpacing,
 }: SpeakMessageProps) {
   const { theme } = useUnistyles();
@@ -1579,7 +1599,7 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
 export const ActivityLog = memo(function ActivityLog({
   type,
   message,
-  timestamp,
+  timestamp: _timestamp,
   metadata,
   artifactId,
   artifactType,
@@ -1710,12 +1730,10 @@ export const CompactionMarker = memo(function CompactionMarker({
   status,
   preTokens,
 }: CompactionMarkerProps) {
-  const label =
-    status === "loading"
-      ? "Compacting..."
-      : preTokens
-        ? `Context compacted (${Math.round(preTokens / 1000)}K tokens)`
-        : "Context compacted";
+  let label: string;
+  if (status === "loading") label = "Compacting...";
+  else if (preTokens) label = `Context compacted (${Math.round(preTokens / 1000)}K tokens)`;
+  else label = "Context compacted";
 
   return (
     <View style={compactionStylesheet.container}>
@@ -1736,6 +1754,41 @@ export const CompactionMarker = memo(function CompactionMarker({
 interface TodoListCardProps {
   items: TodoEntry[];
   disableOuterSpacing?: boolean;
+}
+
+interface TodoListItemRowProps {
+  text: string;
+  completed: boolean;
+}
+
+function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
+  const { theme: todoUnistylesTheme } = useUnistyles();
+  const badgeStyle = useMemo(
+    () => [
+      todoListCardStylesheet.radioBadge,
+      completed
+        ? todoListCardStylesheet.radioBadgeComplete
+        : todoListCardStylesheet.radioBadgeIncomplete,
+    ],
+    [completed],
+  );
+  const textStyle = useMemo(
+    () => [
+      todoListCardStylesheet.itemText,
+      completed && todoListCardStylesheet.itemTextCompleted,
+    ],
+    [completed],
+  );
+  return (
+    <View style={todoListCardStylesheet.itemRow}>
+      <View style={badgeStyle}>
+        {completed ? (
+          <Check size={12} color={todoUnistylesTheme.colors.primaryForeground} />
+        ) : null}
+      </View>
+      <Text style={textStyle}>{text}</Text>
+    </View>
+  );
 }
 
 const todoListCardStylesheet = StyleSheet.create((theme) => ({
@@ -1800,28 +1853,11 @@ export const TodoListCard = memo(function TodoListCard({
             <Text style={todoListCardStylesheet.emptyText}>No tasks yet.</Text>
           ) : (
             items.map((item, idx) => (
-              <View key={`${item.text}-${idx}`} style={todoListCardStylesheet.itemRow}>
-                <View
-                  style={[
-                    todoListCardStylesheet.radioBadge,
-                    item.completed
-                      ? todoListCardStylesheet.radioBadgeComplete
-                      : todoListCardStylesheet.radioBadgeIncomplete,
-                  ]}
-                >
-                  {item.completed ? (
-                    <Check size={12} color={unistylesTheme.colors.primaryForeground} />
-                  ) : null}
-                </View>
-                <Text
-                  style={[
-                    todoListCardStylesheet.itemText,
-                    item.completed && todoListCardStylesheet.itemTextCompleted,
-                  ]}
-                >
-                  {item.text}
-                </Text>
-              </View>
+              <TodoListItemRow
+                key={`${item.text}-${idx}`}
+                text={item.text}
+                completed={item.completed}
+              />
             ))
           )}
         </View>
@@ -2104,11 +2140,10 @@ const ExpandableBadge = memo(function ExpandableBadge({
   );
 
   const IconComponent = icon;
-  const iconColor = isError
-    ? theme.colors.destructive
-    : isActive
-      ? theme.colors.foreground
-      : theme.colors.mutedForeground;
+  let iconColor: string;
+  if (isError) iconColor = theme.colors.destructive;
+  else if (isActive) iconColor = theme.colors.foreground;
+  else iconColor = theme.colors.mutedForeground;
 
   let iconNode: ReactNode = null;
   if (isError) {
