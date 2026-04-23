@@ -12,12 +12,7 @@
  * resizes. We clip the view to those pixel bounds on the main window.
  */
 
-import {
-  BrowserWindow,
-  WebContentsView,
-  ipcMain,
-  type IpcMainInvokeEvent,
-} from "electron";
+import { BrowserWindow, WebContentsView, ipcMain, type IpcMainInvokeEvent } from "electron";
 
 interface ManagedView {
   browserId: string;
@@ -162,21 +157,18 @@ export function registerBrowserViewIpc(): void {
     },
   );
 
-  ipcMain.handle(
-    "hubcode:browser-view:destroy",
-    async (_event, payload: { browserId: string }) => {
-      const managed = views.get(payload.browserId);
-      if (!managed) return { ok: false };
-      try {
-        managed.attachedWindow.contentView.removeChildView(managed.view);
-      } catch {}
-      try {
-        (managed.view.webContents as any)?.close?.();
-      } catch {}
-      views.delete(payload.browserId);
-      return { ok: true };
-    },
-  );
+  ipcMain.handle("hubcode:browser-view:destroy", async (_event, payload: { browserId: string }) => {
+    const managed = views.get(payload.browserId);
+    if (!managed) return { ok: false };
+    try {
+      managed.attachedWindow.contentView.removeChildView(managed.view);
+    } catch {}
+    try {
+      (managed.view.webContents as any)?.close?.();
+    } catch {}
+    views.delete(payload.browserId);
+    return { ok: true };
+  });
 
   ipcMain.handle(
     "hubcode:browser-view:load-url",
@@ -190,19 +182,13 @@ export function registerBrowserViewIpc(): void {
 
   ipcMain.handle(
     "hubcode:browser-view:nav",
-    async (
-      _event,
-      payload: { browserId: string; action: "back" | "forward" | "reload" },
-    ) => {
+    async (_event, payload: { browserId: string; action: "back" | "forward" | "reload" }) => {
       const managed = views.get(payload.browserId);
       if (!managed) return { ok: false };
       const wc = managed.view.webContents;
       if (payload.action === "back" && wc.navigationHistory.canGoBack()) {
         wc.navigationHistory.goBack();
-      } else if (
-        payload.action === "forward" &&
-        wc.navigationHistory.canGoForward()
-      ) {
+      } else if (payload.action === "forward" && wc.navigationHistory.canGoForward()) {
         wc.navigationHistory.goForward();
       } else if (payload.action === "reload") {
         wc.reload();

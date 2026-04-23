@@ -211,9 +211,10 @@ export function useOrgChatRoom(
     return () => unsubscribe();
   }, [connState]);
 
-  const match = snapshot && snapshot.orgId === orgId && snapshot.sessionToken === sessionToken
-    ? snapshot
-    : null;
+  const match =
+    snapshot && snapshot.orgId === orgId && snapshot.sessionToken === sessionToken
+      ? snapshot
+      : null;
 
   const send: UseOrgChatRoomResult["send"] = (payload) => {
     match?.room?.send("send", payload);

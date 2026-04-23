@@ -74,8 +74,9 @@ export function ChatScreen() {
   });
   const markRead = useMarkChannelReadMutation(sessionToken);
   const deleteChannelMutation = useDeleteChannelMutation(sessionToken);
-  const [channelPendingDelete, setChannelPendingDelete] =
-    useState<import("@/api/chat").ChatChannel | null>(null);
+  const [channelPendingDelete, setChannelPendingDelete] = useState<
+    import("@/api/chat").ChatChannel | null
+  >(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const handleDeleteChannel = (c: import("@/api/chat").ChatChannel) => {
     if (c.kind === "dm") return;
@@ -302,9 +303,7 @@ export function ChatScreen() {
       <ConfirmDialog
         visible={!!channelPendingDelete}
         title={
-          channelPendingDelete?.name
-            ? `Delete #${channelPendingDelete.name}?`
-            : "Delete channel?"
+          channelPendingDelete?.name ? `Delete #${channelPendingDelete.name}?` : "Delete channel?"
         }
         description={
           deleteError ??
@@ -337,9 +336,7 @@ export function ChatScreen() {
               parent={threadParent}
               channel={selectedChannel}
               members={
-                selectedChannel.kind === "public"
-                  ? orgMemberFallback
-                  : (membersQuery.data ?? [])
+                selectedChannel.kind === "public" ? orgMemberFallback : (membersQuery.data ?? [])
               }
               channels={channelsQuery.data ?? []}
               sessionToken={sessionToken}
@@ -437,9 +434,7 @@ export function ChatScreen() {
             parent={threadParent}
             channel={selectedChannel}
             members={
-              selectedChannel.kind === "public"
-                ? orgMemberFallback
-                : (membersQuery.data ?? [])
+              selectedChannel.kind === "public" ? orgMemberFallback : (membersQuery.data ?? [])
             }
             channels={channelsQuery.data ?? []}
             sessionToken={sessionToken}

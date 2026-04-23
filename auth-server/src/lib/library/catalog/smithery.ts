@@ -94,10 +94,10 @@ export async function fetchSmitheryCatalog(params: FetchSmitheryParams): Promise
  * when the user opens the Add modal for a catalog item.
  */
 export async function fetchSmitheryDetail(qualifiedName: string): Promise<SmitheryDetail | null> {
-  const res = await fetch(
-    `${REGISTRY_BASE}/servers/${encodeURIComponent(qualifiedName)}`,
-    { headers: headers(), signal: AbortSignal.timeout(15_000) },
-  );
+  const res = await fetch(`${REGISTRY_BASE}/servers/${encodeURIComponent(qualifiedName)}`, {
+    headers: headers(),
+    signal: AbortSignal.timeout(15_000),
+  });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Smithery detail ${res.status}: ${await res.text()}`);
@@ -136,9 +136,7 @@ function normalizeList(raw: SmitheryListItem): CatalogItem {
  * Expand a list CatalogItem with the connection info from the detail endpoint.
  * Used by the MCP route when the user asks for a specific catalog item.
  */
-export async function enrichFromSmitheryDetail(
-  item: CatalogItem,
-): Promise<CatalogItem> {
+export async function enrichFromSmitheryDetail(item: CatalogItem): Promise<CatalogItem> {
   if (!item.id.startsWith("smithery:")) return item;
   const qualifiedName = item.id.slice("smithery:".length);
   const detail = await fetchSmitheryDetail(qualifiedName).catch(() => null);

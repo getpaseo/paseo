@@ -234,7 +234,8 @@ export const AGENT_INTEGRATIONS: AgentIntegration[] = [
     id: "hermes",
     label: "Hermes Agent",
     bin: "hermes",
-    installHint: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
+    installHint:
+      "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
     promptStyle: "positional",
     skills: { dirSegments: (id) => [".hermes", "skills", id] },
   },
@@ -257,7 +258,8 @@ export const AGENT_INTEGRATIONS: AgentIntegration[] = [
     id: "goose",
     label: "Goose",
     bin: "goose",
-    installHint: "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash",
+    installHint:
+      "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash",
     promptStyle: "-t",
     skills: { dirSegments: (id) => [".config", "goose", "skills", id] },
   },

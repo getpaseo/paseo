@@ -196,8 +196,7 @@ export function SharedCursorsOverlay() {
               borderRadius: 4,
               whiteSpace: "nowrap",
               boxShadow: "0 1px 2px rgba(0,0,0,0.25)",
-              fontFamily:
-                "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+              fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
             }}
           >
             {c.username || "member"}

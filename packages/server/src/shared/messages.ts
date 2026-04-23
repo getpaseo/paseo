@@ -48,6 +48,28 @@ import {
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
 } from "../server/loop/rpc-schemas.js";
+import {
+  IndexingListRequestSchema,
+  IndexingGetRequestSchema,
+  IndexingSetEnabledRequestSchema,
+  IndexingSetExposeToRequestSchema,
+  IndexingSetEmbeddingProviderRequestSchema,
+  IndexingSetWatchlistRequestSchema,
+  IndexingDetectRequestSchema,
+  IndexingInstallRequestSchema,
+  IndexingToolsListRequestSchema,
+  IndexingReindexRequestSchema,
+  IndexingListResponseSchema,
+  IndexingGetResponseSchema,
+  IndexingStateResponseSchema,
+  IndexingDetectResponseSchema,
+  IndexingToolsListResponseSchema,
+  IndexingStatusEventSchema,
+  IndexingInstallEventSchema,
+  IndexingProcessStateEventSchema,
+  IndexingToolsChangedEventSchema,
+  IndexingFsTriggerEventSchema,
+} from "../server/indexing/rpc-schemas.js";
 // ---------------------------------------------------------------------------
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
@@ -1853,14 +1875,7 @@ export const BrowserInputSchema = z.object({
   type: z.literal("browser_input"),
   payload: z.object({
     browserId: z.string(),
-    kind: z.enum([
-      "mouse_move",
-      "mouse_down",
-      "mouse_up",
-      "mouse_wheel",
-      "key_down",
-      "key_up",
-    ]),
+    kind: z.enum(["mouse_move", "mouse_down", "mouse_up", "mouse_wheel", "key_down", "key_up"]),
     x: z.number().optional(),
     y: z.number().optional(),
     button: z.enum(["left", "right", "middle"]).optional(),
@@ -1955,9 +1970,7 @@ export const LibrarySyncResponseSchema = z.object({
   error: z.string().optional(),
   // Per-target counts. Open-ended record so adding agents in a later daemon
   // release doesn't break old clients (old schema required 3 fixed keys).
-  counts: z
-    .record(z.object({ mcp: z.number(), skill: z.number() }))
-    .optional(),
+  counts: z.record(z.object({ mcp: z.number(), skill: z.number() })).optional(),
   /** Agent ids currently running — surface for the "restart agents?" prompt. */
   runningAgentIds: z.array(z.string()).default([]),
 });
@@ -2163,6 +2176,17 @@ const _sessionInboundRaw: any = z.union([
   LibrarySyncRequestSchema,
   LibraryAgentsRequestSchema,
   FileSearchRequestSchema,
+  // Code indexing (additive, optional for old clients)
+  IndexingListRequestSchema,
+  IndexingGetRequestSchema,
+  IndexingSetEnabledRequestSchema,
+  IndexingSetExposeToRequestSchema,
+  IndexingSetEmbeddingProviderRequestSchema,
+  IndexingSetWatchlistRequestSchema,
+  IndexingDetectRequestSchema,
+  IndexingInstallRequestSchema,
+  IndexingToolsListRequestSchema,
+  IndexingReindexRequestSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 115-member union
 export type SessionInboundMessage =
@@ -2289,7 +2313,17 @@ export type SessionInboundMessage =
   | BrowserResizeRequest
   | LibrarySyncRequest
   | LibraryAgentsRequest
-  | FileSearchRequest;
+  | FileSearchRequest
+  | IndexingListRequest
+  | IndexingGetRequest
+  | IndexingSetEnabledRequest
+  | IndexingSetExposeToRequest
+  | IndexingSetEmbeddingProviderRequest
+  | IndexingSetWatchlistRequest
+  | IndexingDetectRequest
+  | IndexingInstallRequest
+  | IndexingToolsListRequest
+  | IndexingReindexRequest;
 export const SessionInboundMessageSchema: z.ZodType<SessionInboundMessage> =
   _sessionInboundRaw as z.ZodType<SessionInboundMessage>;
 
@@ -3794,6 +3828,17 @@ const _sessionOutboundRaw: any = z.union([
   LibrarySyncResponseSchema,
   LibraryAgentsResponseSchema,
   FileSearchResponseSchema,
+  // Code indexing responses (additive)
+  IndexingListResponseSchema,
+  IndexingGetResponseSchema,
+  IndexingStateResponseSchema,
+  IndexingDetectResponseSchema,
+  IndexingStatusEventSchema,
+  IndexingInstallEventSchema,
+  IndexingProcessStateEventSchema,
+  IndexingToolsChangedEventSchema,
+  IndexingFsTriggerEventSchema,
+  IndexingToolsListResponseSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 118-member union
 export type SessionOutboundMessage =
@@ -3924,7 +3969,17 @@ export type SessionOutboundMessage =
   | BrowserFrame
   | LibrarySyncResponse
   | LibraryAgentsResponse
-  | FileSearchResponse;
+  | FileSearchResponse
+  | IndexingListResponse
+  | IndexingGetResponse
+  | IndexingStateResponse
+  | IndexingDetectResponse
+  | IndexingStatusEvent
+  | IndexingInstallEvent
+  | IndexingProcessStateEvent
+  | IndexingToolsChangedEvent
+  | IndexingFsTriggerEvent
+  | IndexingToolsListResponse;
 export const SessionOutboundMessageSchema: z.ZodType<SessionOutboundMessage> =
   _sessionOutboundRaw as z.ZodType<SessionOutboundMessage>;
 
@@ -4068,6 +4123,28 @@ export type LoopListRequest = z.infer<typeof LoopListRequestSchema>;
 export type LoopInspectRequest = z.infer<typeof LoopInspectRequestSchema>;
 export type LoopLogsRequest = z.infer<typeof LoopLogsRequestSchema>;
 export type LoopStopRequest = z.infer<typeof LoopStopRequestSchema>;
+export type IndexingListRequest = z.infer<typeof IndexingListRequestSchema>;
+export type IndexingGetRequest = z.infer<typeof IndexingGetRequestSchema>;
+export type IndexingSetEnabledRequest = z.infer<typeof IndexingSetEnabledRequestSchema>;
+export type IndexingSetExposeToRequest = z.infer<typeof IndexingSetExposeToRequestSchema>;
+export type IndexingSetEmbeddingProviderRequest = z.infer<
+  typeof IndexingSetEmbeddingProviderRequestSchema
+>;
+export type IndexingSetWatchlistRequest = z.infer<typeof IndexingSetWatchlistRequestSchema>;
+export type IndexingDetectRequest = z.infer<typeof IndexingDetectRequestSchema>;
+export type IndexingInstallRequest = z.infer<typeof IndexingInstallRequestSchema>;
+export type IndexingToolsListRequest = z.infer<typeof IndexingToolsListRequestSchema>;
+export type IndexingReindexRequest = z.infer<typeof IndexingReindexRequestSchema>;
+export type IndexingToolsListResponse = z.infer<typeof IndexingToolsListResponseSchema>;
+export type IndexingListResponse = z.infer<typeof IndexingListResponseSchema>;
+export type IndexingGetResponse = z.infer<typeof IndexingGetResponseSchema>;
+export type IndexingStateResponse = z.infer<typeof IndexingStateResponseSchema>;
+export type IndexingDetectResponse = z.infer<typeof IndexingDetectResponseSchema>;
+export type IndexingStatusEvent = z.infer<typeof IndexingStatusEventSchema>;
+export type IndexingInstallEvent = z.infer<typeof IndexingInstallEventSchema>;
+export type IndexingProcessStateEvent = z.infer<typeof IndexingProcessStateEventSchema>;
+export type IndexingToolsChangedEvent = z.infer<typeof IndexingToolsChangedEventSchema>;
+export type IndexingFsTriggerEvent = z.infer<typeof IndexingFsTriggerEventSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;

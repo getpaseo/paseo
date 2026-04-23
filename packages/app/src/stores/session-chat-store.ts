@@ -51,13 +51,10 @@ export function wireSessionChatListeners(room: any): void {
   if (wiredRoom === room) return;
   wiredRoom = room;
   try {
-    room.onMessage?.(
-      "session_chat_history",
-      (payload: { entries?: SessionChatMessage[] }) => {
-        const entries = Array.isArray(payload?.entries) ? payload.entries : [];
-        for (const e of entries) upsert(e);
-      },
-    );
+    room.onMessage?.("session_chat_history", (payload: { entries?: SessionChatMessage[] }) => {
+      const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+      for (const e of entries) upsert(e);
+    });
     room.onMessage?.("session_chat_new", (payload: SessionChatMessage) => {
       if (!payload?.id) return;
       upsert(payload);

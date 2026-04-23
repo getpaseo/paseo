@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach, afterEach } from "vitest";
+import { afterAll, describe, expect, test, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -38,6 +38,15 @@ describe("integration-service", () => {
   afterEach(() => {
     // Clean up temp dir
     fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  // Module-level `vi.stubGlobal("fetch", mockFetch)` survives test runs and
+  // can leak into other test files sharing the same vitest fork (the embedding
+  // server tests, in particular, hit fetch and would receive mockFetch's
+  // unconfigured undefined). Restore after the suite finishes.
+  // eslint-disable-next-line vitest/no-hooks
+  afterAll(() => {
+    vi.unstubAllGlobals();
   });
 
   describe("listIntegrationStatus", () => {
@@ -288,33 +297,34 @@ describe("integration-service", () => {
         }),
       );
 
+      // The implementation queries Linear's `issues(...)` endpoint directly
+      // (not `viewer.assignedIssues`), so the dropdown surfaces issues across
+      // all teams the viewer belongs to.
       mockFetchResponse(true, {
         data: {
-          viewer: {
-            assignedIssues: {
-              nodes: [
-                {
-                  id: "iss-1",
-                  identifier: "LIN-1",
-                  title: "Task 1",
-                  url: "https://linear.app/1",
-                  state: { name: "Todo" },
-                  assignee: null,
-                  team: { name: "Frontend" },
-                  project: null,
-                },
-                {
-                  id: "iss-2",
-                  identifier: "LIN-2",
-                  title: "Task 2",
-                  url: "https://linear.app/2",
-                  state: { name: "In Progress" },
-                  assignee: { name: "Dev" },
-                  team: { name: "Frontend" },
-                  project: null,
-                },
-              ],
-            },
+          issues: {
+            nodes: [
+              {
+                id: "iss-1",
+                identifier: "LIN-1",
+                title: "Task 1",
+                url: "https://linear.app/1",
+                state: { name: "Todo" },
+                assignee: null,
+                team: { name: "Frontend" },
+                project: null,
+              },
+              {
+                id: "iss-2",
+                identifier: "LIN-2",
+                title: "Task 2",
+                url: "https://linear.app/2",
+                state: { name: "In Progress" },
+                assignee: { name: "Dev" },
+                team: { name: "Frontend" },
+                project: null,
+              },
+            ],
           },
         },
       });

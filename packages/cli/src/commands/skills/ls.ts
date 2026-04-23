@@ -46,10 +46,7 @@ export async function runSkillsLsCommand(
   const rows: SkillRow[] = entries.map((e) => ({
     id: e.id.slice(0, 12),
     name: e.displayName || e.name,
-    scope:
-      e.scope === "user"
-        ? "user"
-        : `${e.scope}:${e.scopeId ? e.scopeId.slice(0, 8) : "?"}`,
+    scope: e.scope === "user" ? "user" : `${e.scope}:${e.scopeId ? e.scopeId.slice(0, 8) : "?"}`,
     visibility: e.visibility,
     source: e.source,
     active: e.activation?.active ? "yes" : "no",

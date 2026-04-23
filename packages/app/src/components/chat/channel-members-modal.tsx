@@ -71,9 +71,7 @@ export function ChannelMembersModal({
             .map((m) => ({
               userId: m.userId,
               role:
-                m.role === "admin" || m.role === "owner"
-                  ? ("admin" as const)
-                  : ("member" as const),
+                m.role === "admin" || m.role === "owner" ? ("admin" as const) : ("member" as const),
               joinedAt: m.createdAt,
               name: m.user?.name ?? "",
               email: m.user?.email ?? "",

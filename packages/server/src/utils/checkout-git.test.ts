@@ -65,7 +65,10 @@ describe("checkout git utilities", () => {
     const setup = initRepo();
     tempDir = setup.tempDir;
     repoDir = setup.repoDir;
-    hubcodeHome = join(tempDir, "hubcode-home");
+    // Use a `.hubcode` subdir so paths under it match `isHubcodeWorktreePath`
+    // (the regex looks for `.hubcode/worktrees/`, mirroring the production
+    // convention `~/.hubcode/worktrees/`).
+    hubcodeHome = join(tempDir, ".hubcode");
     __resetGhPathCacheForTests();
     __resetPullRequestStatusCacheForTests();
   });

@@ -264,7 +264,7 @@ export function CommandCenter() {
 
                 {workspaceItems.length > 0 ? (
                   <>
-                    {(actionItems.length > 0 || projectItems.length > 0) ? (
+                    {actionItems.length > 0 || projectItems.length > 0 ? (
                       <View
                         style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
                       />
@@ -320,9 +320,9 @@ export function CommandCenter() {
 
                 {agentItems.length > 0 ? (
                   <>
-                    {(actionItems.length > 0 ||
-                      projectItems.length > 0 ||
-                      workspaceItems.length > 0) ? (
+                    {actionItems.length > 0 ||
+                    projectItems.length > 0 ||
+                    workspaceItems.length > 0 ? (
                       <View
                         style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
                       />
@@ -377,10 +377,10 @@ export function CommandCenter() {
 
                 {fileItems.length > 0 ? (
                   <>
-                    {(actionItems.length > 0 ||
-                      projectItems.length > 0 ||
-                      workspaceItems.length > 0 ||
-                      agentItems.length > 0) ? (
+                    {actionItems.length > 0 ||
+                    projectItems.length > 0 ||
+                    workspaceItems.length > 0 ||
+                    agentItems.length > 0 ? (
                       <View
                         style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
                       />

@@ -144,14 +144,14 @@ describe("workspace agent visibility", () => {
         "slash-agent",
         makeAgent({
           id: "slash-agent",
-          cwd: "/Users/moboudra/.hubcode/worktrees/1luy0po7/normal-squid/",
+          cwd: "/tmp/.hubcode/worktrees/abc123/normal-squid/",
         }),
       ],
     ]);
 
     const result = deriveWorkspaceAgentVisibility({
       sessionAgents,
-      workspaceId: "/Users/moboudra/.hubcode/worktrees/1luy0po7/normal-squid",
+      workspaceId: "/tmp/.hubcode/worktrees/abc123/normal-squid",
     });
 
     expect(result.activeAgentIds).toEqual(new Set(["slash-agent"]));

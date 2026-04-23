@@ -145,9 +145,7 @@ export async function runMcpAddCommand(
       name: entry.displayName || entry.name,
       transport,
       scope:
-        entry.scope === "user"
-          ? "user"
-          : `${entry.scope}:${entry.scopeId?.slice(0, 8) ?? "?"}`,
+        entry.scope === "user" ? "user" : `${entry.scope}:${entry.scopeId?.slice(0, 8) ?? "?"}`,
     },
     schema,
   };

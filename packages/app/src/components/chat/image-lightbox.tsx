@@ -27,9 +27,7 @@ const useImageLightboxStore = create<LightboxState>((set) => ({
   close: () => set({ media: null }),
 }));
 
-export function openImageLightbox(
-  media: Omit<LightboxMedia, "kind"> & { kind?: MediaKind },
-): void {
+export function openImageLightbox(media: Omit<LightboxMedia, "kind"> & { kind?: MediaKind }): void {
   useImageLightboxStore.getState().open({ kind: "image", ...media });
 }
 
@@ -55,19 +53,15 @@ export function ImageLightbox() {
     return () => window.removeEventListener("keydown", onKey);
   }, [media, close]);
 
-  const aspectRatio =
-    media?.width && media?.height ? media.width / media.height : undefined;
+  const aspectRatio = media?.width && media?.height ? media.width / media.height : undefined;
 
   return (
-    <Modal
-      visible={!!media}
-      transparent
-      animationType="fade"
-      onRequestClose={close}
-    >
+    <Modal visible={!!media} transparent animationType="fade" onRequestClose={close}>
       <Pressable style={styles.backdrop} onPress={close}>
         <Pressable style={styles.contentWrap} onPress={(e) => e.stopPropagation?.()}>
-          {media?.kind === "image" ? <ImagePreview url={media.url} aspectRatio={aspectRatio} /> : null}
+          {media?.kind === "image" ? (
+            <ImagePreview url={media.url} aspectRatio={aspectRatio} />
+          ) : null}
           {media?.kind === "video" ? <VideoPlayer url={media.url} /> : null}
         </Pressable>
         <View style={styles.topBar} pointerEvents="box-none">

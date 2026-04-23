@@ -1,12 +1,5 @@
 import { useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Plus, RefreshCw, Search, FolderSync } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
@@ -115,10 +108,7 @@ export function McpLibraryScreen() {
           </View>
         ) : null}
 
-        <SyncResultBanner
-          error={syncLibrary.error}
-          lastResult={syncLibrary.lastResult}
-        />
+        <SyncResultBanner error={syncLibrary.error} lastResult={syncLibrary.lastResult} />
 
         {installed.length > 0 ? (
           <Section label="Installed">
@@ -142,9 +132,7 @@ export function McpLibraryScreen() {
 
         <Section label={query.trim() ? "Results" : "Recommended"}>
           {catalogQuery.isError && catalogItems.length > 0 ? (
-            <Text style={styles.syncWarnText}>
-              Catalog offline — showing cached results.
-            </Text>
+            <Text style={styles.syncWarnText}>Catalog offline — showing cached results.</Text>
           ) : null}
           {catalogQuery.isLoading && catalogItems.length === 0 ? (
             <View style={styles.loaderRow}>
@@ -153,9 +141,7 @@ export function McpLibraryScreen() {
             </View>
           ) : catalogQuery.isError && catalogItems.length === 0 ? (
             <View style={styles.errorRow}>
-              <Text style={styles.errorText}>
-                Catalog temporarily unavailable.
-              </Text>
+              <Text style={styles.errorText}>Catalog temporarily unavailable.</Text>
             </View>
           ) : catalogItems.length === 0 ? (
             <View style={styles.emptyRow}>
@@ -216,21 +202,12 @@ interface ActionButtonsProps {
  * header on desktop and as its own row below the full-width search input on
  * mobile without duplicating props-passing.
  */
-function ActionButtons({
-  onRefresh,
-  onSync,
-  syncPending,
-  onCustom,
-  compact,
-}: ActionButtonsProps) {
+function ActionButtons({ onRefresh, onSync, syncPending, onCustom, compact }: ActionButtonsProps) {
   return (
     <>
       <Pressable
         onPress={onRefresh}
-        style={({ hovered }) => [
-          styles.iconBtn,
-          hovered && styles.iconBtnHovered,
-        ]}
+        style={({ hovered }) => [styles.iconBtn, hovered && styles.iconBtnHovered]}
         accessibilityRole="button"
         accessibilityLabel="Refresh"
       >
@@ -250,9 +227,7 @@ function ActionButtons({
           accessibilityLabel="Sync to local CLI configs"
         >
           <FolderSync size={16} color="currentColor" />
-          <Text style={styles.customBtnLabel}>
-            {syncPending ? "Syncing…" : "Sync"}
-          </Text>
+          <Text style={styles.customBtnLabel}>{syncPending ? "Syncing…" : "Sync"}</Text>
         </Pressable>
       ) : null}
       <Pressable
@@ -271,13 +246,7 @@ function ActionButtons({
   );
 }
 
-function Section({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionLabel}>{label}</Text>

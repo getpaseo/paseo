@@ -53,16 +53,15 @@ export function SkillDetailModal({
     await onUninstall(entry);
   };
 
-  const previewBody = entry.payload && "instructionsInline" in entry.payload
-    ? entry.payload.instructionsInline ?? ""
-    : "";
+  const previewBody =
+    entry.payload && "instructionsInline" in entry.payload
+      ? (entry.payload.instructionsInline ?? "")
+      : "";
 
   return (
     <AdaptiveModalSheet title={entry.displayName || entry.name} visible={visible} onClose={onClose}>
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
-        {entry.description ? (
-          <Text style={styles.description}>{entry.description}</Text>
-        ) : null}
+        {entry.description ? <Text style={styles.description}>{entry.description}</Text> : null}
 
         {folderPath ? (
           <View style={styles.section}>

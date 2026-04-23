@@ -96,10 +96,7 @@ export class PlaywrightBrowserManager {
   /** Active CDP screencasts keyed by browserId. We ref-count subscribers so
    * multiple visitors on the same page share one underlying screencast and
    * the last unsubscribe tears it down. */
-  private readonly screencasts = new Map<
-    string,
-    { cdp: CDPSession; refCount: number }
-  >();
+  private readonly screencasts = new Map<string, { cdp: CDPSession; refCount: number }>();
 
   constructor(options: BrowserManagerOptions & { cdpEndpoint?: string }) {
     this.log = options.logger.child({ component: "PlaywrightBrowserManager" });
@@ -147,15 +144,13 @@ export class PlaywrightBrowserManager {
   private async getBrowser(): Promise<Browser> {
     if (!this.browserPromise) {
       this.log.info({ endpoint: this.cdpEndpoint }, "connecting to Electron CDP");
-      this.browserPromise = chromium
-        .connectOverCDP(this.cdpEndpoint)
-        .catch((err) => {
-          this.browserPromise = null;
-          this.log.error({ err }, "failed to connect to Electron CDP");
-          throw new Error(
-            `Cannot reach Electron CDP at ${this.cdpEndpoint} — is the Hubcode desktop app running?`,
-          );
-        });
+      this.browserPromise = chromium.connectOverCDP(this.cdpEndpoint).catch((err) => {
+        this.browserPromise = null;
+        this.log.error({ err }, "failed to connect to Electron CDP");
+        throw new Error(
+          `Cannot reach Electron CDP at ${this.cdpEndpoint} — is the Hubcode desktop app running?`,
+        );
+      });
     }
     return this.browserPromise;
   }
@@ -216,10 +211,7 @@ export class PlaywrightBrowserManager {
         candidates[0];
       if (match) {
         managed.page = match;
-        this.log.info(
-          { browserId, matchedUrl: match.url(), attempt },
-          "findPage resolved",
-        );
+        this.log.info({ browserId, matchedUrl: match.url(), attempt }, "findPage resolved");
         return match;
       }
       if (attempt < retries) {
@@ -308,19 +300,14 @@ export class PlaywrightBrowserManager {
     await page.click(selector, { timeout: 10_000 });
     // A click often triggers navigation. Wait for the page to settle
     // so subsequent get_text/screenshot see the new DOM.
-    await page
-      .waitForLoadState("domcontentloaded", { timeout: 3_000 })
-      .catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 3_000 }).catch(() => {});
     await page.waitForTimeout(200);
     this.refreshCachedUrl(browserId, page);
     this.log.info({ browserId, selector, urlAfter: page.url() }, "tool: click done");
   }
 
   async fill(browserId: string, selector: string, value: string): Promise<void> {
-    this.log.info(
-      { browserId, selector, valueLen: value.length },
-      "tool: fill",
-    );
+    this.log.info({ browserId, selector, valueLen: value.length }, "tool: fill");
     const page = await this.findPage(browserId);
     await page.fill(selector, value, { timeout: 10_000 });
     this.log.info({ browserId, selector }, "tool: fill done");
@@ -341,25 +328,16 @@ export class PlaywrightBrowserManager {
     const page = await this.findPage(browserId);
     const buf = await page.screenshot({ fullPage: false, type: "png" });
     const data = buf.toString("base64");
-    this.log.info(
-      { browserId, bytes: data.length, url: page.url() },
-      "tool: screenshot done",
-    );
+    this.log.info({ browserId, bytes: data.length, url: page.url() }, "tool: screenshot done");
     return { data, mimeType: "image/png" };
   }
 
   async evaluate(browserId: string, expression: string): Promise<{ result: string }> {
-    this.log.info(
-      { browserId, exprPreview: expression.slice(0, 120) },
-      "tool: evaluate",
-    );
+    this.log.info({ browserId, exprPreview: expression.slice(0, 120) }, "tool: evaluate");
     const page = await this.findPage(browserId);
     const res = await page.evaluate(expression);
     const result = typeof res === "string" ? res : JSON.stringify(res);
-    this.log.info(
-      { browserId, resultLen: result.length },
-      "tool: evaluate done",
-    );
+    this.log.info({ browserId, resultLen: result.length }, "tool: evaluate done");
     return { result };
   }
 
@@ -370,10 +348,7 @@ export class PlaywrightBrowserManager {
       () => document.body?.innerText || document.body?.textContent || "",
     );
     const clipped = (text ?? "").slice(0, 200_000);
-    this.log.info(
-      { browserId, chars: clipped.length, url: page.url() },
-      "tool: getText done",
-    );
+    this.log.info({ browserId, chars: clipped.length, url: page.url() }, "tool: getText done");
     return clipped;
   }
 
@@ -384,10 +359,7 @@ export class PlaywrightBrowserManager {
     this.log.info({ browserId, options }, "tool: scroll");
     const page = await this.findPage(browserId);
     if (options.selector) {
-      await page
-        .locator(options.selector)
-        .first()
-        .scrollIntoViewIfNeeded({ timeout: 5_000 });
+      await page.locator(options.selector).first().scrollIntoViewIfNeeded({ timeout: 5_000 });
       return;
     }
     if (options.to === "top") {
@@ -422,9 +394,7 @@ export class PlaywrightBrowserManager {
     // Key presses (Enter on a form input, arrow keys, etc.) often
     // trigger navigation or content changes — settle so the next
     // tool sees the new state.
-    await page
-      .waitForLoadState("domcontentloaded", { timeout: 3_000 })
-      .catch(() => {});
+    await page.waitForLoadState("domcontentloaded", { timeout: 3_000 }).catch(() => {});
     await page.waitForTimeout(150);
   }
 
@@ -530,17 +500,11 @@ export class PlaywrightBrowserManager {
    * called `launch()` (and therefore doesn't have this browserId in its
    * `browsers` map) can still resolve the Playwright page via URL.
    */
-  async startScreencast(
-    browserId: string,
-    options: { url?: string } = {},
-  ): Promise<void> {
+  async startScreencast(browserId: string, options: { url?: string } = {}): Promise<void> {
     const existing = this.screencasts.get(browserId);
     if (existing) {
       existing.refCount++;
-      this.log.info(
-        { browserId, refCount: existing.refCount },
-        "screencast: ref++",
-      );
+      this.log.info({ browserId, refCount: existing.refCount }, "screencast: ref++");
       return;
     }
     // Register the browserId if this session doesn't know it yet (visitor
@@ -595,13 +559,7 @@ export class PlaywrightBrowserManager {
    */
   async dispatchInput(payload: {
     browserId: string;
-    kind:
-      | "mouse_move"
-      | "mouse_down"
-      | "mouse_up"
-      | "mouse_wheel"
-      | "key_down"
-      | "key_up";
+    kind: "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "key_down" | "key_up";
     x?: number;
     y?: number;
     button?: "left" | "right" | "middle";
@@ -704,10 +662,7 @@ export class PlaywrightBrowserManager {
     if (!entry) return;
     entry.refCount--;
     if (entry.refCount > 0) {
-      this.log.info(
-        { browserId, refCount: entry.refCount },
-        "screencast: ref--",
-      );
+      this.log.info({ browserId, refCount: entry.refCount }, "screencast: ref--");
       return;
     }
     try {

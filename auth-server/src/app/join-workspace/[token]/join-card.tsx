@@ -18,6 +18,20 @@ interface RoomParticipant {
   avatarUrl: string | null;
 }
 
+// participants_list payload broadcast by the Colyseus SharedSessionRoom.
+// Mirrored here to avoid importing server-side types.
+interface ColyseusParticipant {
+  userId: string;
+  username: string;
+  avatarUrl: string;
+}
+
+const COLYSEUS_URL =
+  process.env.NEXT_PUBLIC_COLYSEUS_URL ??
+  (typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "ws://localhost:6800"
+    : "wss://colyseus.hubcode.ai");
+
 interface JoinCardProps {
   token: string;
   workspaceName: string;
@@ -46,27 +60,47 @@ export function JoinCard({
       ? { label: "Full access", className: "border-primary/20 bg-primary/10 text-primary" }
       : { label: "View only", className: "border-border bg-muted text-muted-foreground" };
 
-  // Poll the room participant list so the user can see who's already in the
-  // session before joining. 3s cadence keeps it fresh without hammering.
+  // Subscribe to the room participant list via Colyseus (observerOnly) so
+  // the user sees who's already in the session before joining. Observers are
+  // auth'd clients that receive `participants_list` broadcasts but aren't
+  // added to state.participants themselves. If the room doesn't exist yet
+  // (owner hasn't started the call), the join call throws and we just show
+  // an empty list — that's the correct "nobody here yet" state.
   const [participants, setParticipants] = useState<RoomParticipant[]>([]);
   useEffect(() => {
     if (!sessionToken || !token) return;
     let cancelled = false;
-    const fetchOnce = async () => {
+    let room: { leave: () => void } | null = null;
+    (async () => {
       try {
-        const res = await fetch(`/api/livekit/participants?room=${encodeURIComponent(token)}`, {
-          headers: { Authorization: `Bearer ${sessionToken}` },
+        const { Client } = await import("colyseus.js");
+        const client = new Client(COLYSEUS_URL);
+        const r = await client.joinOrCreate("shared_session", {
+          shareToken: token,
+          sessionToken,
+          observerOnly: true,
         });
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as { participants: RoomParticipant[] };
-        if (!cancelled) setParticipants(data.participants ?? []);
-      } catch {}
-    };
-    fetchOnce();
-    const id = window.setInterval(fetchOnce, 3000);
+        if (cancelled) {
+          r.leave();
+          return;
+        }
+        room = r;
+        r.onMessage("participants_list", (msg: { participants: ColyseusParticipant[] }) => {
+          setParticipants(
+            msg.participants.map((p) => ({
+              identity: p.userId,
+              name: p.username,
+              avatarUrl: p.avatarUrl || null,
+            })),
+          );
+        });
+      } catch {
+        // Room not yet created, auth denied, or transport down — leave empty.
+      }
+    })();
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      room?.leave();
     };
   }, [token, sessionToken]);
 

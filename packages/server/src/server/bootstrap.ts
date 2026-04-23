@@ -107,6 +107,32 @@ import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
+import { IndexingService } from "./indexing/service.js";
+import { createWorkspaceIndexingAdapter } from "./indexing/workspace-adapter.js";
+import { createHubcodeLocalInference } from "./indexing/hubcode-local-inference.js";
+import { CrgProcessManager } from "./indexing/process-manager.js";
+import { CrgMcpClient } from "./indexing/mcp-client.js";
+import { IndexingRuntime } from "./indexing/runtime.js";
+import { detectIndexingTools } from "./indexing/detector.js";
+import { WorkspaceFsWatcherRegistry } from "./indexing/fs-watcher.js";
+import { computeCrgIndexBytes } from "./indexing/index-size.js";
+import type { IndexingState } from "./indexing/types.js";
+import type { WorkspaceRegistry } from "./workspace-registry.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+async function resolveIndexingStateForCwd(
+  registry: WorkspaceRegistry,
+  indexingService: IndexingService,
+  cwd: string,
+): Promise<IndexingState | null> {
+  const normalized = path.resolve(cwd);
+  const workspaces = await registry.list();
+  const match =
+    workspaces.find((ws) => path.resolve(ws.cwd) === normalized) ??
+    workspaces.find((ws) => normalized.startsWith(`${path.resolve(ws.cwd)}${path.sep}`));
+  if (!match) return null;
+  return indexingService.getState(match.workspaceId);
+}
 import { DaemonConfigStore } from "./daemon-config-store.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import { BrowserManager } from "./browser/browser-manager.js";
@@ -420,6 +446,190 @@ export async function createHubcodeDaemon(
     });
     await scheduleService.start();
     logger.info({ elapsed: elapsed() }, "Schedule service initialized");
+    const indexingService = new IndexingService({
+      adapter: createWorkspaceIndexingAdapter(workspaceRegistry),
+      logger,
+      hubcodeLocalInfer: createHubcodeLocalInference({ logger }),
+    });
+    const indexingDetection = await detectIndexingTools().catch((err) => {
+      logger.warn({ err }, "Indexing tool detection failed; subprocess will not start");
+      return null;
+    });
+    const crgProcess = new CrgProcessManager({
+      logger,
+      binPath: indexingDetection?.codeReviewGraph.path ?? null,
+      envOverlay: () => indexingService.getCachedEmbeddingEnv(),
+    });
+    indexingService.attachProcessManager(crgProcess);
+    const crgMcpClient = new CrgMcpClient({ logger });
+    indexingService.attachMcpClient(crgMcpClient);
+    const indexingRuntime = new IndexingRuntime({
+      logger,
+      processManager: crgProcess,
+      mcpClient: crgMcpClient,
+    });
+    // Prime the embedding env cache from persisted workspaces before the
+    // subprocess spawns, so the first start gets the right env.
+    await indexingService.syncEmbeddingEnv().catch((err) => {
+      logger.warn({ err }, "Initial syncEmbeddingEnv failed");
+    });
+
+    // fs watcher registry — one watcher per indexing-enabled workspace.
+    // On a debounced change, ask crg to update its graph via MCP.
+    const fsWatchers = new WorkspaceFsWatcherRegistry({ logger });
+    const triggerReindex = async (
+      workspaceId: string,
+      cwd: string,
+    ): Promise<{ ok: boolean; error?: string; fileCount?: number; nodeCount?: number }> => {
+      if (!crgMcpClient.isConnected()) {
+        return { ok: false, error: "code-review-graph subprocess is not connected" };
+      }
+      // crg doesn't stream progress, so we emit a calibrated asymptotic
+      // estimate. Rises 0 → ~85% smoothly, snaps to 100% on success (via
+      // phase=ready) or stops on error. Time constant τ is sourced from the
+      // previous run's fileCount (≈ 40ms per file, 5s floor / 120s cap), so
+      // large repos ramp slower. It's a wishful progress bar, not truth.
+      const prior = await workspaceRegistry.get(workspaceId).catch(() => null);
+      const priorFileCount = prior?.indexing?.status?.fileCount ?? 0;
+      const tauMs = Math.max(5_000, Math.min(120_000, priorFileCount * 40));
+      const startedAt = Date.now();
+      let progressTimer: NodeJS.Timeout | null = null;
+      const tickProgress = () => {
+        const elapsed = Date.now() - startedAt;
+        const estimated = 85 * (1 - Math.exp(-elapsed / tauMs));
+        void indexingService
+          .setStatus(workspaceId, { phase: "indexing", progress: estimated })
+          .catch(() => undefined);
+      };
+      try {
+        await indexingService.setStatus(workspaceId, { phase: "indexing", progress: 0 });
+        // 1s cadence — each tick persists through setStatus, and more frequent
+        // writes aren't justified by visible UI smoothness for a wishful bar.
+        progressTimer = setInterval(tickProgress, 1000);
+        const result = (await crgMcpClient.callTool("crg_build_or_update_graph", {
+          repo_path: cwd,
+        })) as { content?: Array<{ text?: string }> } | null | undefined;
+        // Parse counts from the tool result text when present (best-effort).
+        const text = result?.content?.[0]?.text ?? "";
+        const fileMatch = text.match(/(\d+)\s+files?\b/i);
+        const nodeMatch = text.match(/(\d+)\s+nodes?\b/i);
+        const fileCount = fileMatch?.[1] ? Number.parseInt(fileMatch[1], 10) : undefined;
+        const nodeCount = nodeMatch?.[1] ? Number.parseInt(nodeMatch[1], 10) : undefined;
+        if (progressTimer) clearInterval(progressTimer);
+        progressTimer = null;
+        // Compute on-disk size of the crg index for this workspace. Best-effort
+        // — undefined on any fs error so the UI falls back to "—" instead of 0.
+        const indexBytes = await computeCrgIndexBytes(cwd);
+        await indexingService.setStatus(workspaceId, {
+          phase: "ready",
+          lastIndexedAt: new Date().toISOString(),
+          ...(fileCount != null ? { fileCount } : {}),
+          ...(nodeCount != null ? { nodeCount } : {}),
+          ...(indexBytes != null ? { indexBytes } : {}),
+        });
+        return { ok: true, fileCount, nodeCount };
+      } catch (err) {
+        if (progressTimer) clearInterval(progressTimer);
+        progressTimer = null;
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn({ err, workspaceId }, "Reindex failed");
+        await indexingService
+          .setStatus(workspaceId, { phase: "error", error: message })
+          .catch(() => undefined);
+        return { ok: false, error: message };
+      }
+    };
+    // Service-level trigger (UI Re-index button + on-enable auto). Looks up
+    // the cwd from the registry so callers don't have to.
+    indexingService.setReindexTrigger(async (workspaceId: string) => {
+      const ws = await workspaceRegistry.get(workspaceId);
+      if (!ws) return { ok: false, error: `Unknown workspace: ${workspaceId}` };
+      return triggerReindex(workspaceId, ws.cwd);
+    });
+    const reconcileWatchers = async () => {
+      const records = await workspaceRegistry.list();
+      const seen = new Set<string>();
+      for (const ws of records) {
+        if (!ws.indexing?.enabled) continue;
+        seen.add(ws.workspaceId);
+        if (fsWatchers.has(ws.workspaceId)) continue;
+        fsWatchers.set(
+          ws.workspaceId,
+          ws.cwd,
+          (info) => {
+            // Push the change event to the app before kicking off the reindex
+            // so the UI can show "triggered by N files" even for fast runs.
+            indexingService.emitFsTrigger({
+              kind: "change",
+              workspaceId: info.workspaceId,
+              changedPaths: info.changedPaths ?? [],
+            });
+            void indexingService
+              .setStatus(info.workspaceId, { phase: "indexing" })
+              .then(() => triggerReindex(info.workspaceId, ws.cwd))
+              .catch((err) => logger.warn({ err }, "fs-watcher reindex trigger failed"));
+          },
+          ws.indexing?.watchlist,
+          (workspaceId, err) => {
+            indexingService.emitFsTrigger({
+              kind: "error",
+              workspaceId,
+              error: err.message,
+            });
+          },
+        );
+      }
+      // Drop watchers for workspaces that are no longer enabled.
+      for (const active of fsWatchers.activeWorkspaceIds()) {
+        if (!seen.has(active)) fsWatchers.clear(active);
+      }
+    };
+    indexingService.onStatus(() => {
+      void reconcileWatchers().catch((err) => logger.warn({ err }, "reconcileWatchers failed"));
+    });
+    await reconcileWatchers().catch((err) =>
+      logger.warn({ err }, "Initial reconcileWatchers failed"),
+    );
+    // Once the crg client connects, auto-trigger initial reindex for any
+    // enabled workspace that has never been indexed (or is stale). Runs
+    // sequentially so we don't slam crg with parallel build calls.
+    const runInitialReindex = async () => {
+      if (!crgMcpClient.isConnected()) return;
+      const records = await workspaceRegistry.list().catch(() => []);
+      for (const ws of records) {
+        if (!ws.indexing?.enabled) continue;
+        if (ws.indexing.status?.lastIndexedAt) continue;
+        if (ws.archivedAt !== null) continue;
+        await triggerReindex(ws.workspaceId, ws.cwd).catch(() => undefined);
+      }
+    };
+    crgMcpClient.onConnectionState((s) => {
+      if (s.phase !== "connected") return;
+      void runInitialReindex();
+    });
+
+    // tools/list_changed broadcast — active agent MCP servers get notified
+    // whenever the user toggles exposure so connected CLIs refresh.
+    const activeMcpServers = new Set<McpServer>();
+    indexingService.onToolsChanged((event) => {
+      for (const server of activeMcpServers) {
+        try {
+          server.sendToolListChanged();
+        } catch (err) {
+          logger.debug({ err, event }, "sendToolListChanged on an MCP server threw");
+        }
+      }
+    });
+    if (indexingDetection?.codeReviewGraph.installed) {
+      crgProcess.start();
+      logger.info(
+        { binPath: indexingDetection.codeReviewGraph.path },
+        "code-review-graph subprocess started",
+      );
+    } else {
+      logger.info("code-review-graph not installed; subprocess deferred until install completes");
+    }
+    logger.info({ elapsed: elapsed() }, "Indexing service initialized");
     logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
     const persistedRecords = await agentStorage.list();
     logger.info(
@@ -451,8 +661,26 @@ export async function createHubcodeDaemon(
           browserManager: clientBrowserManager,
           resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
           resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
+          indexingBridge: {
+            mcpClient: crgMcpClient,
+            resolveAgentId: (id) => {
+              if (!id) return null;
+              const agent = agentManager.getAgent(id);
+              if (!agent) return null;
+              return agent.provider ?? null;
+            },
+            resolveState: async (id) => {
+              if (!id) return null;
+              const agent = agentManager.getAgent(id);
+              if (!agent?.cwd) return null;
+              return resolveIndexingStateForCwd(workspaceRegistry, indexingService, agent.cwd);
+            },
+          },
           logger,
         });
+
+        // Track for tools/list_changed broadcasts. Cleared on session close.
+        activeMcpServers.add(agentMcpServer);
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
@@ -473,6 +701,7 @@ export async function createHubcodeDaemon(
           if (transport.sessionId) {
             agentMcpTransports.delete(transport.sessionId);
           }
+          activeMcpServers.delete(agentMcpServer);
         };
         transport.onerror = (err) => {
           logger.error({ err }, "Agent MCP transport error");
@@ -637,6 +866,7 @@ export async function createHubcodeDaemon(
               checkoutDiffManager,
               browserManager,
               clientBrowserManager,
+              indexingService,
             );
 
             if (typeof process.send === "function" && process.env.HUBCODE_SUPERVISED === "1") {
@@ -708,6 +938,15 @@ export async function createHubcodeDaemon(
       await browserManager.dispose();
       speechService.stop();
       await scheduleService.stop().catch(() => undefined);
+      try {
+        fsWatchers.closeAll();
+        indexingRuntime.dispose();
+        await crgMcpClient.disconnect();
+        crgProcess.stop();
+        await indexingService.disposeEmbeddingServer();
+      } catch (err) {
+        logger.warn({ err }, "Failed to stop crg subprocess during shutdown");
+      }
       await relayTransport?.stop().catch(() => undefined);
       if (wsServer) {
         await wsServer.close();

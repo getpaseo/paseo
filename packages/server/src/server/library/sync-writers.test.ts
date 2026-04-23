@@ -164,10 +164,7 @@ describe("syncLibraryToTargets", () => {
     );
     // Same for codex
     await mkdir(path.dirname(ctx.codexConfig), { recursive: true });
-    await writeFile(
-      ctx.codexConfig,
-      '[mcp_servers.user-thing]\ncommand = "user-cmd"\n',
-    );
+    await writeFile(ctx.codexConfig, '[mcp_servers.user-thing]\ncommand = "user-cmd"\n');
 
     await syncLibraryToTargets({
       hubcodeHome: ctx.hubcodeHome,
@@ -193,4 +190,3 @@ describe("syncLibraryToTargets", () => {
     await rm(ctx.fakeHome, { recursive: true, force: true });
   });
 });
-

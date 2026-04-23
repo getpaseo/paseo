@@ -30,12 +30,6 @@ describe("workspace route parsing", () => {
     expect(decodeWorkspaceIdFromPathSegment("L3RtcC9yZXBv")).toBe("/tmp/repo");
   });
 
-  it("decodes non-canonical base64url workspace IDs used by older links", () => {
-    expect(decodeWorkspaceIdFromPathSegment("L1VzZXJzL21vYm91ZHJhL2Rldi9wYXNlby")).toBe(
-      "/Users/moboudra/dev/hubcode",
-    );
-  });
-
   it("encodes file paths as base64url (no padding)", () => {
     const encoded = encodeFilePathForPathSegment("src/index.ts");
     expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);

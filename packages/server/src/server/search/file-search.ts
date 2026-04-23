@@ -133,11 +133,7 @@ function matchScore(relativePath: string, tokens: string[]): number {
   return score;
 }
 
-async function* walkBfs(
-  root: string,
-  fileCap: number,
-  maxDepth: number,
-): AsyncGenerator<string> {
+async function* walkBfs(root: string, fileCap: number, maxDepth: number): AsyncGenerator<string> {
   interface QueueEntry {
     dir: string;
     depth: number;
@@ -149,7 +145,9 @@ async function* walkBfs(
     if (depth > maxDepth) continue;
     let entries: import("node:fs").Dirent[];
     try {
-      entries = (await fs.readdir(dir, { withFileTypes: true })) as unknown as import("node:fs").Dirent[];
+      entries = (await fs.readdir(dir, {
+        withFileTypes: true,
+      })) as unknown as import("node:fs").Dirent[];
     } catch {
       continue;
     }

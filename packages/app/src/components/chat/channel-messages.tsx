@@ -297,7 +297,10 @@ export function ChannelMessages({
           // broadcast replaces it in use-org-chat-room (matched by tmp_ prefix
           // + same userId/channel/content).
           const quotedMessageId = replyingTo?.id ?? null;
-          if (currentUserId && (result.content.trim().length > 0 || (attachments?.length ?? 0) > 0)) {
+          if (
+            currentUserId &&
+            (result.content.trim().length > 0 || (attachments?.length ?? 0) > 0)
+          ) {
             const tmpId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             useChatStore.getState().upsertMessage({
               id: tmpId,

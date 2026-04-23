@@ -92,11 +92,7 @@ export function CliAgentIcon({ icon, size = 16, color }: CliAgentIconProps) {
     // terminal icon.
     if (isWeb) {
       return (
-        <Image
-          source={asset.source}
-          style={{ width: size, height: size }}
-          resizeMode="contain"
-        />
+        <Image source={asset.source} style={{ width: size, height: size }} resizeMode="contain" />
       );
     }
     let uri: string | undefined;

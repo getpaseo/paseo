@@ -21,19 +21,11 @@ interface CacheSpec {
   ttlMs?: number;
 }
 
-async function readCache(
-  db: DbLike,
-  spec: CacheSpec,
-): Promise<CatalogPage | null> {
+async function readCache(db: DbLike, spec: CacheSpec): Promise<CatalogPage | null> {
   const rows = await db
     .select()
     .from(catalogCache)
-    .where(
-      and(
-        eq(catalogCache.source, spec.source),
-        eq(catalogCache.queryKey, spec.queryKey),
-      ),
-    )
+    .where(and(eq(catalogCache.source, spec.source), eq(catalogCache.queryKey, spec.queryKey)))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
@@ -41,11 +33,7 @@ async function readCache(
   return row.data as unknown as CatalogPage;
 }
 
-async function writeCache(
-  db: DbLike,
-  spec: CacheSpec,
-  data: CatalogPage,
-): Promise<void> {
+async function writeCache(db: DbLike, spec: CacheSpec, data: CatalogPage): Promise<void> {
   const ttl = spec.ttlMs ?? DEFAULT_TTL_MS;
   const now = new Date();
   await db
@@ -196,8 +184,6 @@ export function filterBySearch(items: CatalogItem[], query: string): CatalogItem
   const q = query.trim().toLowerCase();
   if (!q) return items;
   return items.filter(
-    (i) =>
-      i.name.toLowerCase().includes(q) ||
-      i.description.toLowerCase().includes(q),
+    (i) => i.name.toLowerCase().includes(q) || i.description.toLowerCase().includes(q),
   );
 }

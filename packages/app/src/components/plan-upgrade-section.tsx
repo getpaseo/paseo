@@ -24,7 +24,10 @@ const PRO_FEATURES = [
 ];
 
 function normalizePlanSlug(planId: string | null | undefined): string {
-  return (planId ?? "").toLowerCase().replace(/^plan[_-]/, "").trim();
+  return (planId ?? "")
+    .toLowerCase()
+    .replace(/^plan[_-]/, "")
+    .trim();
 }
 
 function isPaidPlan(planId: string | null | undefined): boolean {

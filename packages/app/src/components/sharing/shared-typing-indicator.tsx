@@ -27,12 +27,7 @@ export function SharedTypingIndicator() {
         const color = userColor(u.userId);
         return (
           <View key={u.userId} style={styles.chip}>
-            <View
-              style={[
-                styles.caret,
-                { backgroundColor: color, opacity: blinkOn ? 1 : 0.15 },
-              ]}
-            />
+            <View style={[styles.caret, { backgroundColor: color, opacity: blinkOn ? 1 : 0.15 }]} />
             <View style={[styles.nameTag, { backgroundColor: color }]}>
               <Text style={styles.nameText} numberOfLines={1}>
                 {u.username || "member"}

@@ -80,7 +80,9 @@ export function mergeCodexConfig(args: {
     .replace(/\n+$/, "");
 
   const userManagedKeys = new Set(
-    blocks.map((b) => headerKey(b.header)).filter((k): k is string => k !== null && !ownedSet.has(k)),
+    blocks
+      .map((b) => headerKey(b.header))
+      .filter((k): k is string => k !== null && !ownedSet.has(k)),
   );
 
   const renderedBlocks: string[] = [];

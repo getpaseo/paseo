@@ -12,6 +12,11 @@ import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 describe("hubcode daemon bootstrap", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    // `vi.restoreAllMocks` does NOT undo `vi.stubGlobal` calls. Without
+    // this, the stubbed `fetch` from one test leaks into others sharing
+    // the same fork (vitest's forks pool reuses processes), breaking any
+    // suite that does HTTP — e.g. the embedding-server tests.
+    vi.unstubAllGlobals();
   });
 
   test("starts and serves health endpoint", async () => {

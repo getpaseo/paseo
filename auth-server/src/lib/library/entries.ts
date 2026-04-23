@@ -17,12 +17,7 @@ import {
 
 export class LibraryError extends Error {
   constructor(
-    public readonly code:
-      | "bad_request"
-      | "forbidden"
-      | "not_found"
-      | "conflict"
-      | "internal",
+    public readonly code: "bad_request" | "forbidden" | "not_found" | "conflict" | "internal",
     message: string,
   ) {
     super(message);
@@ -66,9 +61,7 @@ export async function createEntry(
   const visibility: LibraryVisibility =
     input.scope === "user" ? "private" : (input.visibility ?? "private");
 
-  if (
-    !(await canWriteScope(db, userId, input.scope, input.scopeId ?? null))
-  ) {
+  if (!(await canWriteScope(db, userId, input.scope, input.scopeId ?? null))) {
     throw new LibraryError("forbidden", "Cannot write under this scope");
   }
 
@@ -116,10 +109,7 @@ export async function createEntry(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("library_entry_scope_name_unique")) {
-      throw new LibraryError(
-        "conflict",
-        `An entry named "${name}" already exists in this scope`,
-      );
+      throw new LibraryError("conflict", `An entry named "${name}" already exists in this scope`);
     }
     throw err;
   }
@@ -181,28 +171,19 @@ export async function listEntries(
     // (project entries I see). We assemble by separate clauses inside an OR.
     const orgIds = input.orgIds ?? [];
     const projectIds = input.projectIds ?? [];
-    const userClause = and(
-      eq(libraryEntry.scope, "user"),
-      eq(libraryEntry.createdBy, userId),
-    );
+    const userClause = and(eq(libraryEntry.scope, "user"), eq(libraryEntry.createdBy, userId));
     const orgClause = orgIds.length
       ? and(
           eq(libraryEntry.scope, "org"),
           inArray(libraryEntry.scopeId, orgIds),
-          or(
-            eq(libraryEntry.visibility, "shared"),
-            eq(libraryEntry.createdBy, userId),
-          ),
+          or(eq(libraryEntry.visibility, "shared"), eq(libraryEntry.createdBy, userId)),
         )
       : null;
     const projectClause = projectIds.length
       ? and(
           eq(libraryEntry.scope, "project"),
           inArray(libraryEntry.scopeId, projectIds),
-          or(
-            eq(libraryEntry.visibility, "shared"),
-            eq(libraryEntry.createdBy, userId),
-          ),
+          or(eq(libraryEntry.visibility, "shared"), eq(libraryEntry.createdBy, userId)),
         )
       : null;
     const combined = or(
@@ -275,12 +256,7 @@ export async function getEntry(
   const actRows = await db
     .select()
     .from(libraryActivation)
-    .where(
-      and(
-        eq(libraryActivation.entryId, entryId),
-        eq(libraryActivation.userId, userId),
-      ),
-    )
+    .where(and(eq(libraryActivation.entryId, entryId), eq(libraryActivation.userId, userId)))
     .limit(1);
   const a = actRows[0];
   return rowToRecord(
@@ -314,10 +290,7 @@ export async function updateEntry(
   }
   if (patch.payload) validatePayload(existing.kind, patch.payload);
   // Visibility cannot be set to "shared" on user-scope entries.
-  if (
-    patch.visibility === "shared" &&
-    existing.scope === "user"
-  ) {
+  if (patch.visibility === "shared" && existing.scope === "user") {
     throw new LibraryError("bad_request", "user-scope entries are always private");
   }
   await db
@@ -334,19 +307,12 @@ export async function updateEntry(
   return getEntry(db, userId, entryId);
 }
 
-export async function deleteEntry(
-  db: DbLike,
-  userId: string,
-  entryId: string,
-): Promise<void> {
+export async function deleteEntry(db: DbLike, userId: string, entryId: string): Promise<void> {
   const existing = await getEntry(db, userId, entryId);
   if (existing.createdBy !== userId) {
     throw new LibraryError("forbidden", "Only the creator can delete");
   }
-  await db
-    .update(libraryEntry)
-    .set({ deletedAt: new Date() })
-    .where(eq(libraryEntry.id, entryId));
+  await db.update(libraryEntry).set({ deletedAt: new Date() }).where(eq(libraryEntry.id, entryId));
 }
 
 export async function setActivation(
@@ -442,10 +408,7 @@ function validateSyncTargets(
   // Skills don't sync to external CLI configs in v1 (they live in
   // ~/.agentskills/ which the daemon manages); reject any target.
   if (kind === "skill" && targets.length > 0) {
-    throw new LibraryError(
-      "bad_request",
-      "Skills do not support sync targets in v1",
-    );
+    throw new LibraryError("bad_request", "Skills do not support sync targets in v1");
   }
   if (kind !== "mcp") return;
   const mcp = payload as McpPayload;
@@ -459,15 +422,12 @@ function validateSyncTargets(
   }
 }
 
-function defaultSyncTargetsFor(
-  kind: LibraryKind,
-  payload: LibraryPayload,
-): LibrarySyncTarget[] {
+function defaultSyncTargetsFor(kind: LibraryKind, payload: LibraryPayload): LibrarySyncTarget[] {
   if (kind !== "mcp") return [];
   const mcp = payload as McpPayload;
   // Default to every target whose transport supports this MCP. Users can
   // narrow afterwards.
-  return (Object.keys(TRANSPORT_BY_TARGET) as LibrarySyncTarget[]).filter(
-    (t) => TRANSPORT_BY_TARGET[t].includes(mcp.transport),
+  return (Object.keys(TRANSPORT_BY_TARGET) as LibrarySyncTarget[]).filter((t) =>
+    TRANSPORT_BY_TARGET[t].includes(mcp.transport),
   );
 }

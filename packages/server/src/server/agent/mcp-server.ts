@@ -55,6 +55,18 @@ export interface AgentMcpServerOptions {
   terminalManager?: TerminalManager | null;
   scheduleService?: ScheduleService | null;
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
+  /**
+   * Optional hook that exposes the code-review-graph MCP client + a
+   * per-caller state resolver. When provided, the bridge layer registers
+   * crg tools (`crg_*`) on the resulting MCP server scoped to the caller.
+   */
+  indexingBridge?: {
+    mcpClient: import("../indexing/mcp-client.js").CrgMcpClient;
+    resolveAgentId: (callerAgentId: string | undefined) => string | null;
+    resolveState: (
+      callerAgentId: string | undefined,
+    ) => Promise<import("../indexing/types.js").IndexingState | null>;
+  };
   hubcodeHome?: string;
   /**
    * ID of the agent that is connecting to this MCP server.
@@ -1653,6 +1665,38 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
   // Local fs/shell/git tools — no managers needed, all operate on the
   // `cwd` argument the agent passes in.
   registerLocalTools(server, childLogger);
+
+  // code-review-graph tools (if the indexing runtime is attached + caller
+  // has a resolvable agent identity). Registration is all-or-nothing at this
+  // layer; authorization is re-checked per call so mid-session settings
+  // toggles apply without reconnecting the agent.
+  if (options.indexingBridge) {
+    try {
+      const { registerCrgToolsOnServer } = await import("../indexing/mcp-tool-bridge.js");
+      const bridge = options.indexingBridge;
+      const agentId = bridge.resolveAgentId(callerAgentId);
+      const outcome = registerCrgToolsOnServer({
+        logger: childLogger,
+        server: server as unknown as import("../indexing/mcp-tool-bridge.js").RegisterableMcpServer,
+        mcpClient: bridge.mcpClient,
+        agentId,
+        getIndexingState: () => bridge.resolveState(callerAgentId),
+      });
+      if (outcome.registered > 0) {
+        childLogger.debug(
+          { count: outcome.registered, agentId },
+          "Registered code-review-graph tools on agent MCP server",
+        );
+      } else if (outcome.skippedReason) {
+        childLogger.debug(
+          { reason: outcome.skippedReason },
+          "Skipped registering crg tools on agent MCP server",
+        );
+      }
+    } catch (err) {
+      childLogger.warn({ err }, "Failed to register crg tools on agent MCP server");
+    }
+  }
 
   return server;
 }

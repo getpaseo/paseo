@@ -22,8 +22,7 @@ export function CompactOrgSwitcher({ onAfterSwitch }: { onAfterSwitch?: () => vo
 
   if (organizations.length === 0) return null;
 
-  const activeOrg =
-    organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
+  const activeOrg = organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
   if (!activeOrg) return null;
 
   const initial = (activeOrg.name ?? "").trim().charAt(0).toUpperCase() || "?";
@@ -58,11 +57,7 @@ export function CompactOrgSwitcher({ onAfterSwitch }: { onAfterSwitch?: () => vo
         <ChevronDown size={16} color={theme.colors.foregroundMuted} />
       </Pressable>
 
-      <AdaptiveModalSheet
-        visible={open}
-        onClose={() => setOpen(false)}
-        title="Switch organization"
-      >
+      <AdaptiveModalSheet visible={open} onClose={() => setOpen(false)} title="Switch organization">
         <View style={styles.list}>
           {organizations.map((o) => {
             const active = o.id === activeOrg.id;

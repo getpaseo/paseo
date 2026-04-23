@@ -23,11 +23,7 @@ import {
   Wrench,
   Cpu,
 } from "lucide-react-native";
-import {
-  TRANSPORT_BY_TARGET,
-  type LibrarySyncTarget,
-  type McpTransport,
-} from "@/api/library";
+import { TRANSPORT_BY_TARGET, type LibrarySyncTarget, type McpTransport } from "@/api/library";
 import type { ReactNode } from "react";
 import { useInstalledAgents } from "@/hooks/library/use-installed-agents";
 
@@ -107,8 +103,7 @@ export function SyncTargetsPicker({
   });
 
   const anyTransportDisabled =
-    surface === "mcp" &&
-    visible.some((a) => !TRANSPORT_BY_TARGET[a.id].includes(transport));
+    surface === "mcp" && visible.some((a) => !TRANSPORT_BY_TARGET[a.id].includes(transport));
 
   return (
     <View style={styles.wrap}>
@@ -163,9 +158,7 @@ function TargetChip({
 }) {
   // Skills don't care about transport — every agent gets a folder.
   const supported =
-    surface === "skill"
-      ? true
-      : (TRANSPORT_BY_TARGET[target] ?? []).includes(transport);
+    surface === "skill" ? true : (TRANSPORT_BY_TARGET[target] ?? []).includes(transport);
   return (
     <Pressable
       onPress={supported ? onPress : undefined}
@@ -180,14 +173,7 @@ function TargetChip({
       accessibilityState={{ selected: active, disabled: !supported }}
     >
       {icon}
-      <Text
-        style={[
-          styles.chipLabel,
-          active && supported && styles.chipLabelActive,
-        ]}
-      >
-        {label}
-      </Text>
+      <Text style={[styles.chipLabel, active && supported && styles.chipLabelActive]}>{label}</Text>
     </Pressable>
   );
 }

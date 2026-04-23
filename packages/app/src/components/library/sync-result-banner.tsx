@@ -17,7 +17,11 @@ interface SyncResultBannerProps {
  *  - Running agents: yellow hint, persistent.
  *  - Success: green "Synced N item(s) across M agent(s)", auto-fades.
  */
-export function SyncResultBanner({ error, lastResult, hideAfterMs = 6_000 }: SyncResultBannerProps) {
+export function SyncResultBanner({
+  error,
+  lastResult,
+  hideAfterMs = 6_000,
+}: SyncResultBannerProps) {
   const [hidden, setHidden] = useState(false);
 
   useEffect(() => {
@@ -44,8 +48,8 @@ export function SyncResultBanner({ error, lastResult, hideAfterMs = 6_000 }: Syn
       <View style={[styles.banner, styles.warn]}>
         <AlertTriangle size={14} color="currentColor" />
         <Text style={styles.warnText}>
-          Synced. {runningCount} agent{runningCount === 1 ? "" : "s"} running — restart
-          to pick up the new library.
+          Synced. {runningCount} agent{runningCount === 1 ? "" : "s"} running — restart to pick up
+          the new library.
         </Text>
       </View>
     );

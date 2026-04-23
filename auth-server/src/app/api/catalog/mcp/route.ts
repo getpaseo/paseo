@@ -26,9 +26,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     console.error("[catalog] mcp fetch failed", err);
-    return NextResponse.json(
-      { error: "Catalog temporarily unavailable" },
-      { status: 503 },
-    );
+    return NextResponse.json({ error: "Catalog temporarily unavailable" }, { status: 503 });
   }
 }

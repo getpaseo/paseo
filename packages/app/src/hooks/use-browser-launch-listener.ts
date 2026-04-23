@@ -1,9 +1,6 @@
 import { useEffect } from "react";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import {
-  findPaneContainingTab,
-  useWorkspaceLayoutStore,
-} from "@/stores/workspace-layout-store";
+import { findPaneContainingTab, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 
 /**
@@ -37,36 +34,31 @@ export function useBrowserLaunchListener(
     // the daemon no longer tracks. Without this, stale tabs silently
     // time out on every agent interaction until the user closes them.
     console.log("[BrowserLaunchListener] mounted, registering listeners for", workspaceKey);
-    const unsubscribeActive = client.on(
-      "browser_active_list" as any,
-      (msg: any) => {
-        const activeIds = new Set<string>(
-          Array.isArray(msg?.payload?.browserIds) ? msg.payload.browserIds : [],
-        );
-        const state = useWorkspaceLayoutStore.getState();
-        const tabs = state.getWorkspaceTabs(workspaceKey);
-        const browserTabs = tabs.filter((t) => t.target.kind === "browser");
-        console.log(
-          "[BrowserLaunchListener] received browser_active_list — server active:",
-          Array.from(activeIds),
-          "client browser tabs:",
-          browserTabs.map((t) =>
-            t.target.kind === "browser" ? t.target.browserId : "?",
-          ),
-        );
-        const stale = browserTabs.filter(
-          (tab) => tab.target.kind === "browser" && !activeIds.has(tab.target.browserId),
-        );
-        if (stale.length === 0) return;
-        console.log(
-          "[BrowserLaunchListener] dropping stale tabs:",
-          stale.map((t) => (t.target.kind === "browser" ? t.target.browserId : "?")),
-        );
-        for (const tab of stale) {
-          state.closeTab(workspaceKey, tab.tabId);
-        }
-      },
-    );
+    const unsubscribeActive = client.on("browser_active_list" as any, (msg: any) => {
+      const activeIds = new Set<string>(
+        Array.isArray(msg?.payload?.browserIds) ? msg.payload.browserIds : [],
+      );
+      const state = useWorkspaceLayoutStore.getState();
+      const tabs = state.getWorkspaceTabs(workspaceKey);
+      const browserTabs = tabs.filter((t) => t.target.kind === "browser");
+      console.log(
+        "[BrowserLaunchListener] received browser_active_list — server active:",
+        Array.from(activeIds),
+        "client browser tabs:",
+        browserTabs.map((t) => (t.target.kind === "browser" ? t.target.browserId : "?")),
+      );
+      const stale = browserTabs.filter(
+        (tab) => tab.target.kind === "browser" && !activeIds.has(tab.target.browserId),
+      );
+      if (stale.length === 0) return;
+      console.log(
+        "[BrowserLaunchListener] dropping stale tabs:",
+        stale.map((t) => (t.target.kind === "browser" ? t.target.browserId : "?")),
+      );
+      for (const tab of stale) {
+        state.closeTab(workspaceKey, tab.tabId);
+      }
+    });
 
     // Defined first because the WS callback below schedules it via
     // queueMicrotask — moving this above the `client.on` call avoids
@@ -89,9 +81,7 @@ export function useBrowserLaunchListener(
       const stale = existingTabs.filter((tab) => tab.target.kind === "browser");
       if (stale.length > 0) {
         const layout = state.layoutByWorkspace[workspaceKey];
-        const stalePane = layout
-          ? findPaneContainingTab(layout.root, stale[0]!.tabId)
-          : null;
+        const stalePane = layout ? findPaneContainingTab(layout.root, stale[0]!.tabId) : null;
         if (stalePane) {
           // Focus the pane that held the stale browser BEFORE opening, so
           // openTab lands there (the store's openTab targets the focused
@@ -139,9 +129,7 @@ export function useBrowserLaunchListener(
       console.log("[BrowserLaunchListener] received browser_closed", closedId);
       const state = useWorkspaceLayoutStore.getState();
       const tabs = state.getWorkspaceTabs(workspaceKey);
-      const tab = tabs.find(
-        (t) => t.target.kind === "browser" && t.target.browserId === closedId,
-      );
+      const tab = tabs.find((t) => t.target.kind === "browser" && t.target.browserId === closedId);
       if (tab) state.closeTab(workspaceKey, tab.tabId);
     });
 

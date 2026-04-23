@@ -293,12 +293,15 @@ function enrichFromPrompt(item: LinkedIntegration, prompt: string | undefined): 
 
   const firstLine = block.split("\n")[0]?.trim() ?? "";
   const titleFromFirstLine = (() => {
-    const emDashIdx = firstLine.indexOf("—");
+    // Prompt format is `<label> — <identifier> — <title>`. Take the slice
+    // after the *last* em-dash so the title doesn't accidentally include
+    // the identifier prefix.
+    const emDashIdx = firstLine.lastIndexOf("—");
     if (emDashIdx >= 0) {
       const value = firstLine.slice(emDashIdx + 1).trim();
       return value.length > 0 ? value : null;
     }
-    const hyphenIdx = firstLine.indexOf(" - ");
+    const hyphenIdx = firstLine.lastIndexOf(" - ");
     if (hyphenIdx >= 0) {
       const value = firstLine.slice(hyphenIdx + 3).trim();
       return value.length > 0 ? value : null;
@@ -306,12 +309,15 @@ function enrichFromPrompt(item: LinkedIntegration, prompt: string | undefined): 
     return null;
   })();
 
+  // Prefer values already on the item (e.g. from metadata). Fall back to the
+  // prompt-extracted ones only when the item field is empty — metadata is
+  // authoritative.
   const urlMatch = block.match(/URL:\s*(https?:\/\/\S+)/i);
-  const url = urlMatch?.[1] ?? item.url ?? null;
+  const url = item.url ?? urlMatch?.[1] ?? null;
 
   const descriptionMatch = block.match(/Issue Description:\s*([\s\S]*)$/i);
   const extractedDescription = descriptionMatch?.[1]?.trim() ?? "";
-  const description = extractedDescription || item.description || null;
+  const description = item.description || extractedDescription || null;
 
   return {
     ...item,

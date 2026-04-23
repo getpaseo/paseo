@@ -24,7 +24,7 @@ describe("assistant image metadata", () => {
     setAssistantImageMetadata(
       {
         source: "/tmp/hubcode-codex-screenshot.png",
-        workspaceRoot: "/Users/moboudra/dev/hubcode",
+        workspaceRoot: "/tmp/hubcode",
         serverId: "server-1",
       },
       { width: 1200, height: 800 },

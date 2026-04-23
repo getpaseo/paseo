@@ -81,10 +81,7 @@ function normalizeServer(raw: PulseMcpServer): CatalogItem {
     id,
     kind: "mcp",
     name: raw.name,
-    description:
-      raw.short_description ??
-      raw.EXPERIMENTAL_ai_generated_description ??
-      "",
+    description: raw.short_description ?? raw.EXPERIMENTAL_ai_generated_description ?? "",
     iconUrl: deriveLogoUrl(raw),
     // Prefer the GitHub repo (where the README with install + env var docs
     // lives) over the PulseMCP catalog mirror page. UI wraps this to build

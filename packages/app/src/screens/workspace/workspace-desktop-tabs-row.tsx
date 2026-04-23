@@ -567,9 +567,7 @@ export function WorkspaceDesktopTabsRow({
             <DropdownMenuLabel>New agent tab</DropdownMenuLabel>
             <DropdownMenuItem
               testID="workspace-new-gui-agent-tab"
-              onSelect={() =>
-                onSelectNewTabOption({ optionId: newTabAgentOptionId, paneId })
-              }
+              onSelect={() => onSelectNewTabOption({ optionId: newTabAgentOptionId, paneId })}
               leading={<SquarePen size={16} color={theme.colors.foreground} />}
               trailing={
                 newAgentTabKeys ? (

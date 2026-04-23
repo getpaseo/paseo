@@ -9,7 +9,15 @@ import {
   View,
 } from "react-native";
 import Markdown from "react-native-markdown-display";
-import { FileIcon, MessageSquare, Pencil, Pin, Reply, SmilePlus, Trash2 } from "lucide-react-native";
+import {
+  FileIcon,
+  MessageSquare,
+  Pencil,
+  Pin,
+  Reply,
+  SmilePlus,
+  Trash2,
+} from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { ChatChannel, ChatMember, ChatMessage, ChatReactionGroup } from "@/api/chat";
 import { isNative, isWeb } from "@/constants/platform";
@@ -415,10 +423,7 @@ function AttachmentView({ attachment }: { attachment: ChatMessage["attachments"]
             attachment.width && attachment.height ? attachment.width / attachment.height : undefined
           }
         />
-        <Text
-          style={[styles.attachmentSize, { marginTop: 4 }]}
-          numberOfLines={1}
-        >
+        <Text style={[styles.attachmentSize, { marginTop: 4 }]} numberOfLines={1}>
           🎬 {attachment.filename} · {formatBytes(attachment.sizeBytes)}
         </Text>
       </Pressable>

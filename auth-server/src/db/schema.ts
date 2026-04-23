@@ -481,12 +481,7 @@ export const libraryEntry = pgTable(
     index("library_entry_created_by_idx").on(t.createdBy),
     // Prevent duplicate names within the same scope/kind. Two members in the
     // same org cannot both name an entry "linear" under that org.
-    uniqueIndex("library_entry_scope_name_unique").on(
-      t.scope,
-      t.scopeId,
-      t.kind,
-      t.name,
-    ),
+    uniqueIndex("library_entry_scope_name_unique").on(t.scope, t.scopeId, t.kind, t.name),
   ],
 );
 
@@ -531,13 +526,10 @@ export const catalogCache = pgTable(
 // Remote icons cached as bytes so we never 404 if upstream moves them and so
 // clients don't hit a third-party host on every render. Keyed by SHA-256 of
 // the original URL.
-export const catalogIconCache = pgTable(
-  "catalog_icon_cache",
-  {
-    hash: text("hash").primaryKey(), // sha256 of source url
-    sourceUrl: text("source_url").notNull(),
-    mimeType: text("mime_type").notNull(),
-    bytes: text("bytes").notNull(), // base64-encoded payload
-    fetchedAt: timestamp("fetched_at").notNull().defaultNow(),
-  },
-);
+export const catalogIconCache = pgTable("catalog_icon_cache", {
+  hash: text("hash").primaryKey(), // sha256 of source url
+  sourceUrl: text("source_url").notNull(),
+  mimeType: text("mime_type").notNull(),
+  bytes: text("bytes").notNull(), // base64-encoded payload
+  fetchedAt: timestamp("fetched_at").notNull().defaultNow(),
+});

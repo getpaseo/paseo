@@ -16,11 +16,15 @@ interface RoomCreateOptions {
 interface JoinOptions {
   shareToken: string;
   sessionToken: string;
+  // Pre-join clients pass observerOnly=true so they can subscribe to the
+  // participant list without being counted as participants themselves.
+  observerOnly?: boolean;
 }
 
 interface AuthData extends ValidatedUser {
   shareToken: string;
   sessionToken: string;
+  observerOnly: boolean;
 }
 
 interface ChatToAgentMessage {
@@ -281,14 +285,27 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
       ...validation.user,
       shareToken: options.shareToken,
       sessionToken: options.sessionToken,
+      observerOnly: options.observerOnly === true,
     };
   }
 
   onJoin(client: Client, _options: JoinOptions | undefined, auth: AuthData | undefined): void {
     if (!auth) throw new Error("onJoin called without auth — onAuth should have rejected");
     console.log(
-      `[room] onJoin client=${client.sessionId} user=${auth.username} roomId=${this.roomId}`,
+      `[room] onJoin client=${client.sessionId} user=${auth.username} roomId=${this.roomId} observer=${auth.observerOnly}`,
     );
+
+    // Observers (pre-join screen) are auth'd WS clients that receive broadcasts
+    // but aren't counted as participants. Skip adding to state.participants,
+    // recordJoin, and chat replay — just send them the current snapshot so
+    // they see who's already in the room.
+    (client as any).auth = auth;
+    if (!this.shareToken) this.shareToken = auth.shareToken;
+    if (auth.observerOnly) {
+      this.broadcastParticipantsSnapshot();
+      return;
+    }
+
     // Key by sessionId (unique per Colyseus connection) NOT by userId — otherwise
     // multiple tabs/reconnects from the same user would overwrite + delete each
     // other from state.participants, leaving the map empty.
@@ -312,12 +329,6 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
       )}`,
     );
 
-    // Store auth data on client for later use
-    (client as any).auth = auth;
-
-    // Store share token for API calls
-    if (!this.shareToken) this.shareToken = auth.shareToken;
-
     // Track in auth-server (fire-and-forget)
     void this.authService.recordJoin(this.shareToken, auth.userId);
 
@@ -340,6 +351,7 @@ export class SharedSessionRoom extends Room<SharedSessionState> {
     );
     void consented;
     if (!auth) return;
+    if (auth.observerOnly) return;
 
     // Immediate delete keyed by sessionId (matches onJoin). Browser refreshes +
     // reconnects create fresh sessionIds, so there's no point keeping stale

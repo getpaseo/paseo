@@ -190,6 +190,7 @@ import { ChatServiceError, FileBackedChatService } from "./chat/chat-service.js"
 import { notifyChatMentions } from "./chat/chat-mentions.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
+import type { IndexingService } from "./indexing/service.js";
 import { execCommand } from "../utils/spawn.js";
 import {
   assertSafeGitRef as assertWorktreeSafeGitRef,
@@ -412,6 +413,7 @@ export type SessionOptions = {
   workspaceRegistry: WorkspaceRegistry;
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
+  indexingService?: IndexingService | null;
   loopService: LoopService;
   checkoutDiffManager: CheckoutDiffManager;
   workspaceGitService: WorkspaceGitService;
@@ -625,6 +627,11 @@ export class Session {
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly chatService: FileBackedChatService;
   private readonly scheduleService: ScheduleService;
+  private readonly indexingService: IndexingService | null;
+  private unsubscribeIndexingStatus: (() => void) | null = null;
+  private unsubscribeIndexingProcessState: (() => void) | null = null;
+  private unsubscribeIndexingToolsChanged: (() => void) | null = null;
+  private unsubscribeIndexingFsTrigger: (() => void) | null = null;
   private readonly loopService: LoopService;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly workspaceGitService: WorkspaceGitService;
@@ -696,6 +703,7 @@ export class Session {
       workspaceRegistry,
       chatService,
       scheduleService,
+      indexingService,
       loopService,
       checkoutDiffManager,
       workspaceGitService,
@@ -727,6 +735,7 @@ export class Session {
     this.workspaceRegistry = workspaceRegistry;
     this.chatService = chatService;
     this.scheduleService = scheduleService;
+    this.indexingService = indexingService ?? null;
     this.loopService = loopService;
     this.checkoutDiffManager = checkoutDiffManager;
     this.workspaceGitService = workspaceGitService;
@@ -751,8 +760,8 @@ export class Session {
     this.clientBrowserManager =
       (options.clientBrowserManager as PlaywrightBrowserManager | null) ??
       new PlaywrightBrowserManager({ logger });
-    this.releaseClientBrowserEmit = this.clientBrowserManager.setEmit(
-      (message) => this.emit(message as any),
+    this.releaseClientBrowserEmit = this.clientBrowserManager.setEmit((message) =>
+      this.emit(message as any),
     );
     this.unsubscribeBrowserLaunched = this.browserManager.onBrowserLaunched((event) => {
       this.emit({
@@ -829,6 +838,54 @@ export class Session {
       runtimeSettings: this.agentProviderRuntimeSettings,
       providerOverrides: this.providerOverrides,
     });
+    if (this.indexingService) {
+      this.unsubscribeIndexingStatus = this.indexingService.onStatus((event) => {
+        try {
+          this.emit({
+            type: "indexing/status",
+            payload: { workspaceId: event.workspaceId, status: event.status },
+          });
+        } catch (err) {
+          this.sessionLogger.warn({ err }, "Failed to emit indexing/status");
+        }
+      });
+      this.unsubscribeIndexingProcessState = this.indexingService.onProcessState((state) => {
+        try {
+          this.emit({
+            type: "indexing/process-state",
+            payload: {
+              phase: state.phase,
+              ...(state.pid != null ? { pid: state.pid } : {}),
+              ...(state.startedAt != null ? { startedAt: state.startedAt } : {}),
+              restartCount: state.restartCount,
+              ...(state.lastError ? { lastError: state.lastError } : {}),
+            },
+          });
+        } catch (err) {
+          this.sessionLogger.warn({ err }, "Failed to emit indexing/process-state");
+        }
+      });
+      this.unsubscribeIndexingToolsChanged = this.indexingService.onToolsChanged((event) => {
+        try {
+          this.emit({
+            type: "indexing/tools-changed",
+            payload: {
+              ...(event.workspaceId ? { workspaceId: event.workspaceId } : {}),
+              agentId: event.agentId,
+            },
+          });
+        } catch (err) {
+          this.sessionLogger.warn({ err }, "Failed to emit indexing/tools-changed");
+        }
+      });
+      this.unsubscribeIndexingFsTrigger = this.indexingService.onFsTrigger((event) => {
+        try {
+          this.emit({ type: "indexing/fs-trigger", payload: event });
+        } catch (err) {
+          this.sessionLogger.warn({ err }, "Failed to emit indexing/fs-trigger");
+        }
+      });
+    }
 
     // Initialize per-session managers
     this.ttsManager = new TTSManager(this.sessionId, this.sessionLogger, tts);
@@ -2380,6 +2437,38 @@ export class Session {
             await this.handleLoopStopRequest(msg);
             break;
 
+          // Code indexing RPC
+          case "indexing/list":
+            await this.handleIndexingListRequest(msg);
+            break;
+          case "indexing/get":
+            await this.handleIndexingGetRequest(msg);
+            break;
+          case "indexing/set-enabled":
+            await this.handleIndexingSetEnabledRequest(msg);
+            break;
+          case "indexing/set-expose-to":
+            await this.handleIndexingSetExposeToRequest(msg);
+            break;
+          case "indexing/set-embedding-provider":
+            await this.handleIndexingSetEmbeddingProviderRequest(msg);
+            break;
+          case "indexing/set-watchlist":
+            await this.handleIndexingSetWatchlistRequest(msg);
+            break;
+          case "indexing/detect":
+            await this.handleIndexingDetectRequest(msg);
+            break;
+          case "indexing/install":
+            await this.handleIndexingInstallRequest(msg);
+            break;
+          case "indexing/tools/list":
+            await this.handleIndexingToolsListRequest(msg);
+            break;
+          case "indexing/reindex":
+            await this.handleIndexingReindexRequest(msg);
+            break;
+
           // Integration RPC
           case "integration_list_status_request":
             await this.handleIntegrationListStatus(msg);
@@ -2425,19 +2514,15 @@ export class Session {
               });
             break;
           case "browser_unsubscribe_frames":
-            void this.clientBrowserManager
-              .stopScreencast(msg.payload.browserId)
-              .catch(() => {});
+            void this.clientBrowserManager.stopScreencast(msg.payload.browserId).catch(() => {});
             break;
           case "browser_input":
-            void this.clientBrowserManager
-              .dispatchInput(msg.payload)
-              .catch((err: unknown) => {
-                this.sessionLogger.debug(
-                  { err, kind: msg.payload.kind, browserId: msg.payload.browserId },
-                  "browser_input dispatch failed",
-                );
-              });
+            void this.clientBrowserManager.dispatchInput(msg.payload).catch((err: unknown) => {
+              this.sessionLogger.debug(
+                { err, kind: msg.payload.kind, browserId: msg.payload.browserId },
+                "browser_input dispatch failed",
+              );
+            });
             break;
 
           // Library sync (PR7) — apply user's activated MCP/Skill entries to
@@ -3358,9 +3443,7 @@ export class Session {
         ...config,
         ...(provisionalTitle ? { title: provisionalTitle } : {}),
         ...(mergedMcpServers ? { mcpServers: mergedMcpServers } : {}),
-        ...(mergedSystemPrompt !== config.systemPrompt
-          ? { systemPrompt: mergedSystemPrompt }
-          : {}),
+        ...(mergedSystemPrompt !== config.systemPrompt ? { systemPrompt: mergedSystemPrompt } : {}),
       };
 
       const { sessionConfig, worktreeConfig } = await this.buildAgentSessionConfig(
@@ -8011,6 +8094,23 @@ export class Session {
     this.terminalExitSubscriptions.clear();
     this.disposeTerminalSubscriptions();
 
+    if (this.unsubscribeIndexingStatus) {
+      this.unsubscribeIndexingStatus();
+      this.unsubscribeIndexingStatus = null;
+    }
+    if (this.unsubscribeIndexingProcessState) {
+      this.unsubscribeIndexingProcessState();
+      this.unsubscribeIndexingProcessState = null;
+    }
+    if (this.unsubscribeIndexingToolsChanged) {
+      this.unsubscribeIndexingToolsChanged();
+      this.unsubscribeIndexingToolsChanged = null;
+    }
+    if (this.unsubscribeIndexingFsTrigger) {
+      this.unsubscribeIndexingFsTrigger();
+      this.unsubscribeIndexingFsTrigger = null;
+    }
+
     for (const unsubscribe of this.checkoutDiffSubscriptions.values()) {
       unsubscribe();
     }
@@ -9545,6 +9645,339 @@ export class Session {
   private disposeTerminalSubscriptions(): void {
     for (const terminalId of [...this.terminalIdToSlot.keys()]) {
       this.detachTerminalStream(terminalId, { emitExit: false });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Code indexing RPC (PR2a — server-only wiring; lifecycle + UI land later)
+  // -------------------------------------------------------------------------
+
+  private ensureIndexingService(): IndexingService | null {
+    return this.indexingService;
+  }
+
+  private emitIndexingError(
+    requestId: string,
+    responseType:
+      | "indexing/list/response"
+      | "indexing/get/response"
+      | "indexing/state/response"
+      | "indexing/detect/response",
+    error: unknown,
+  ): void {
+    const message = error instanceof Error ? error.message : String(error);
+    if (responseType === "indexing/list/response") {
+      this.emit({
+        type: responseType,
+        payload: { requestId, error: message, entries: [] },
+      });
+      return;
+    }
+    if (responseType === "indexing/get/response") {
+      this.emit({
+        type: responseType,
+        payload: { requestId, error: message, entry: null },
+      });
+      return;
+    }
+    if (responseType === "indexing/state/response") {
+      this.emit({
+        type: responseType,
+        payload: { requestId, error: message, workspaceId: "", indexing: null },
+      });
+      return;
+    }
+    this.emit({
+      type: responseType,
+      payload: { requestId, error: message, detection: null },
+    });
+  }
+
+  private async handleIndexingListRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/list" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emitIndexingError(
+        request.requestId,
+        "indexing/list/response",
+        "Indexing service unavailable",
+      );
+      return;
+    }
+    try {
+      // Return ALL workspaces (with default state when not yet enabled) so
+      // the UI can render per-workspace toggles before any are turned on.
+      const entries = (await svc.listAll()).map((e) => ({
+        workspaceId: e.workspaceId,
+        indexing: e.state,
+      }));
+      this.emit({
+        type: "indexing/list/response",
+        payload: { requestId: request.requestId, error: null, entries },
+      });
+    } catch (err) {
+      this.emitIndexingError(request.requestId, "indexing/list/response", err);
+    }
+  }
+
+  private async handleIndexingGetRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/get" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emitIndexingError(
+        request.requestId,
+        "indexing/get/response",
+        "Indexing service unavailable",
+      );
+      return;
+    }
+    try {
+      const state = await svc.getState(request.workspaceId);
+      this.emit({
+        type: "indexing/get/response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+          entry: { workspaceId: request.workspaceId, indexing: state },
+        },
+      });
+    } catch (err) {
+      this.emitIndexingError(request.requestId, "indexing/get/response", err);
+    }
+  }
+
+  private async handleIndexingSetEnabledRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/set-enabled" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emitIndexingError(
+        request.requestId,
+        "indexing/state/response",
+        "Indexing service unavailable",
+      );
+      return;
+    }
+    try {
+      const state = await svc.setEnabled(request.workspaceId, request.enabled);
+      this.emit({
+        type: "indexing/state/response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+          workspaceId: request.workspaceId,
+          indexing: state,
+        },
+      });
+    } catch (err) {
+      this.emitIndexingError(request.requestId, "indexing/state/response", err);
+    }
+  }
+
+  private async handleIndexingSetExposeToRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/set-expose-to" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emitIndexingError(
+        request.requestId,
+        "indexing/state/response",
+        "Indexing service unavailable",
+      );
+      return;
+    }
+    try {
+      const state = await svc.setExposeTo(request.workspaceId, request.agentId, request.entry);
+      this.emit({
+        type: "indexing/state/response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+          workspaceId: request.workspaceId,
+          indexing: state,
+        },
+      });
+    } catch (err) {
+      this.emitIndexingError(request.requestId, "indexing/state/response", err);
+    }
+  }
+
+  private async handleIndexingSetEmbeddingProviderRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/set-embedding-provider" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emitIndexingError(
+        request.requestId,
+        "indexing/state/response",
+        "Indexing service unavailable",
+      );
+      return;
+    }
+    try {
+      const state = await svc.update(request.workspaceId, {
+        embeddingProvider: request.provider ?? undefined,
+      });
+      this.emit({
+        type: "indexing/state/response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+          workspaceId: request.workspaceId,
+          indexing: state,
+        },
+      });
+    } catch (err) {
+      this.emitIndexingError(request.requestId, "indexing/state/response", err);
+    }
+  }
+
+  private async handleIndexingSetWatchlistRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/set-watchlist" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emitIndexingError(
+        request.requestId,
+        "indexing/state/response",
+        "Indexing service unavailable",
+      );
+      return;
+    }
+    try {
+      const state = await svc.update(request.workspaceId, { watchlist: request.watchlist });
+      this.emit({
+        type: "indexing/state/response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+          workspaceId: request.workspaceId,
+          indexing: state,
+        },
+      });
+    } catch (err) {
+      this.emitIndexingError(request.requestId, "indexing/state/response", err);
+    }
+  }
+
+  private async handleIndexingDetectRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/detect" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emitIndexingError(
+        request.requestId,
+        "indexing/detect/response",
+        "Indexing service unavailable",
+      );
+      return;
+    }
+    try {
+      const detection = await svc.getDetection(request.force === true);
+      this.emit({
+        type: "indexing/detect/response",
+        payload: { requestId: request.requestId, error: null, detection },
+      });
+    } catch (err) {
+      this.emitIndexingError(request.requestId, "indexing/detect/response", err);
+    }
+  }
+
+  private async handleIndexingToolsListRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/tools/list" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emit({
+        type: "indexing/tools/list/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Indexing service unavailable",
+          tools: [],
+        },
+      });
+      return;
+    }
+    try {
+      const tools = svc.getCrgTools().map((t) => ({ name: t.name, description: t.description }));
+      this.emit({
+        type: "indexing/tools/list/response",
+        payload: { requestId: request.requestId, error: null, tools },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emit({
+        type: "indexing/tools/list/response",
+        payload: { requestId: request.requestId, error: message, tools: [] },
+      });
+    }
+  }
+
+  private async handleIndexingReindexRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/reindex" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emitIndexingError(
+        request.requestId,
+        "indexing/state/response",
+        "Indexing service unavailable",
+      );
+      return;
+    }
+    try {
+      const result = await svc.reindex(request.workspaceId);
+      const state = await svc.getState(request.workspaceId);
+      this.emit({
+        type: "indexing/state/response",
+        payload: {
+          requestId: request.requestId,
+          error: result.ok ? null : (result.error ?? "Reindex failed"),
+          workspaceId: request.workspaceId,
+          indexing: state,
+        },
+      });
+    } catch (err) {
+      this.emitIndexingError(request.requestId, "indexing/state/response", err);
+    }
+  }
+
+  private async handleIndexingInstallRequest(
+    request: Extract<SessionInboundMessage, { type: "indexing/install" }>,
+  ): Promise<void> {
+    const svc = this.ensureIndexingService();
+    if (!svc) {
+      this.emit({
+        type: "indexing/install/event",
+        payload: {
+          requestId: request.requestId,
+          event: {
+            type: "completed",
+            success: false,
+            error: "Indexing service unavailable",
+          },
+        },
+      });
+      return;
+    }
+    try {
+      for await (const event of svc.runInstall()) {
+        this.emit({
+          type: "indexing/install/event",
+          payload: { requestId: request.requestId, event },
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emit({
+        type: "indexing/install/event",
+        payload: {
+          requestId: request.requestId,
+          event: { type: "completed", success: false, error: message },
+        },
+      });
     }
   }
 }

@@ -49,8 +49,7 @@ const SCROLL_SELECTOR = '[data-testid="agent-chat-scroll"]';
 const ANCHOR_PREFIX = "shared-anchor-";
 
 function findAnchor(node: Node | null): HTMLElement | null {
-  let el: Element | null =
-    node?.nodeType === 1 ? (node as Element) : (node?.parentElement ?? null);
+  let el: Element | null = node?.nodeType === 1 ? (node as Element) : (node?.parentElement ?? null);
   while (el) {
     if (el instanceof HTMLElement && el.id.startsWith(ANCHOR_PREFIX)) return el;
     el = el.parentElement;
@@ -218,8 +217,7 @@ export function SharedSelectionOverlay() {
 
   // Clip overlay to the chat scroll container so highlights don't leak
   // outside when a message is scrolled partially off-screen.
-  const clipEl =
-    (document.querySelector(SCROLL_SELECTOR) as HTMLElement | null) ?? null;
+  const clipEl = (document.querySelector(SCROLL_SELECTOR) as HTMLElement | null) ?? null;
   const clipRect = clipEl?.getBoundingClientRect();
 
   const anchorCache = new Map<string, DOMRect | null>();
@@ -250,9 +248,7 @@ export function SharedSelectionOverlay() {
         // Find the first resolvable anchor in the selection to place the
         // user's name label.
         const firstResolvable = s.rects.find((r) => !!getAnchorRect(r.anchorId));
-        const firstAnchorRect = firstResolvable
-          ? getAnchorRect(firstResolvable.anchorId)
-          : null;
+        const firstAnchorRect = firstResolvable ? getAnchorRect(firstResolvable.anchorId) : null;
         return (
           <div key={s.userId}>
             {s.rects.map((r, i) => {
@@ -285,15 +281,8 @@ export function SharedSelectionOverlay() {
               <div
                 style={{
                   position: "absolute",
-                  left:
-                    firstAnchorRect.left +
-                    firstResolvable.x -
-                    (clipRect?.left ?? 0),
-                  top:
-                    firstAnchorRect.top +
-                    firstResolvable.y -
-                    (clipRect?.top ?? 0) -
-                    14,
+                  left: firstAnchorRect.left + firstResolvable.x - (clipRect?.left ?? 0),
+                  top: firstAnchorRect.top + firstResolvable.y - (clipRect?.top ?? 0) - 14,
                   background: s.color,
                   color: "white",
                   fontSize: 10,
@@ -302,8 +291,7 @@ export function SharedSelectionOverlay() {
                   borderRadius: 3,
                   whiteSpace: "nowrap",
                   boxShadow: "0 1px 2px rgba(0,0,0,0.25)",
-                  fontFamily:
-                    "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+                  fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
                 }}
               >
                 {s.username || "member"}

@@ -18,9 +18,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (err) {
     console.error("[catalog] skills fetch failed", err);
-    return NextResponse.json(
-      { error: "Catalog temporarily unavailable" },
-      { status: 503 },
-    );
+    return NextResponse.json({ error: "Catalog temporarily unavailable" }, { status: 503 });
   }
 }

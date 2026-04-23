@@ -554,18 +554,9 @@ export function registerBrowserTools(
         "Scroll the current page. Use when a result is below the fold, or when content is lazy-loaded and needs to appear (e.g. infinite-scroll feeds, Google Images thumbnails). Options: `deltaY` pixels, jump to `top`/`bottom`, or scroll a `selector` into view.",
       inputSchema: {
         browserId: z.string().describe("ID of the browser instance"),
-        deltaY: z
-          .number()
-          .optional()
-          .describe("Pixels to scroll (positive = down). Default 500"),
-        to: z
-          .enum(["top", "bottom"])
-          .optional()
-          .describe("Jump to top or bottom of the page"),
-        selector: z
-          .string()
-          .optional()
-          .describe("CSS selector to scroll into view"),
+        deltaY: z.number().optional().describe("Pixels to scroll (positive = down). Default 500"),
+        to: z.enum(["top", "bottom"]).optional().describe("Jump to top or bottom of the page"),
+        selector: z.string().optional().describe("CSS selector to scroll into view"),
       },
       outputSchema: { success: z.boolean() },
     },
@@ -654,11 +645,7 @@ export function registerBrowserTools(
           .enum(["visible", "attached", "hidden", "detached"])
           .optional()
           .describe("Desired state (default 'visible')"),
-        timeoutMs: z
-          .number()
-          .int()
-          .optional()
-          .describe("Max wait in ms (default 10000)"),
+        timeoutMs: z.number().int().optional().describe("Max wait in ms (default 10000)"),
       },
       outputSchema: { success: z.boolean() },
     },
@@ -689,11 +676,7 @@ export function registerBrowserTools(
           .string()
           .optional()
           .describe("CSS selector of a container to scope the search (default: body)"),
-        limit: z
-          .number()
-          .int()
-          .optional()
-          .describe("Max links to return (default 60)"),
+        limit: z.number().int().optional().describe("Max links to return (default 60)"),
         viewportOnly: z
           .boolean()
           .optional()

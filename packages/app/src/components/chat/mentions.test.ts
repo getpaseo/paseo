@@ -45,12 +45,12 @@ describe("expandMentions", () => {
     expect(out).toBe("hey **@Alice** in **#general**");
   });
 
-  it("leaves unknown ids as-is", () => {
+  it("falls back to a generic chip when ids are unknown (never leaks the raw token)", () => {
     const out = expandMentions("hi <@ghost> and <#nowhere>", {
       membersById: new Map(),
       channelsById: new Map(),
     });
-    expect(out).toBe("hi <@ghost> and <#nowhere>");
+    expect(out).toBe("hi **@user** and **#channel**");
   });
 });
 

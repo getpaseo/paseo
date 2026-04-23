@@ -332,10 +332,7 @@ describe("gitBlame (integration)", () => {
 
   it("limits range with startLine/endLine", async () => {
     initRepo(tmp);
-    await fs.writeFile(
-      path.join(tmp, "f.txt"),
-      "a\nb\nc\nd\ne\n",
-    );
+    await fs.writeFile(path.join(tmp, "f.txt"), "a\nb\nc\nd\ne\n");
     git(tmp, "add", ".");
     git(tmp, "commit", "-m", "init");
     const r = await gitBlame({ cwd: tmp, path: "f.txt", startLine: 2, endLine: 4 });
@@ -389,9 +386,7 @@ describe("gitCheckout (integration)", () => {
     await fs.writeFile(path.join(tmp, "f.txt"), "x");
     git(tmp, "add", ".");
     git(tmp, "commit", "-m", "init");
-    await expect(
-      gitCheckout({ cwd: tmp, branch: "does-not-exist" }),
-    ).rejects.toThrow();
+    await expect(gitCheckout({ cwd: tmp, branch: "does-not-exist" })).rejects.toThrow();
   });
 });
 

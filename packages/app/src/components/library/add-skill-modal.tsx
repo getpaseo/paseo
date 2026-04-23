@@ -43,7 +43,11 @@ export interface AddSkillModalProps {
 const ALL_TARGETS: LibrarySyncTarget[] = ["claude-code", "codex", "opencode"];
 
 const slugify = (s: string) =>
-  s.toLowerCase().trim().replace(/\s+/g, "-").replace(/[^a-z0-9-_]/g, "");
+  s
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-_]/g, "");
 
 export function AddSkillModal({
   visible,
@@ -72,7 +76,7 @@ export function AddSkillModal({
   useEffect(() => {
     if (!visible) return;
     const c = initial?.fromCatalog;
-    setName(c ? slugify(c.name) : initial?.suggestedName ?? "");
+    setName(c ? slugify(c.name) : (initial?.suggestedName ?? ""));
     setDisplayName(c?.name ?? "");
     setDescription(c?.description ?? "");
     setInstructions("");
@@ -87,9 +91,7 @@ export function AddSkillModal({
       setLoadingBody(true);
       void fetchSkillBody({ sessionToken, url: c.instructionsUrl })
         .then((body) => setInstructions(body))
-        .catch((err: unknown) =>
-          setBodyError(err instanceof Error ? err.message : String(err)),
-        )
+        .catch((err: unknown) => setBodyError(err instanceof Error ? err.message : String(err)))
         .finally(() => setLoadingBody(false));
     }
   }, [visible, initial, sessionToken]);
@@ -120,9 +122,7 @@ export function AddSkillModal({
     });
   };
 
-  const title = initial?.fromCatalog
-    ? `Add ${initial.fromCatalog.name}`
-    : "New Skill";
+  const title = initial?.fromCatalog ? `Add ${initial.fromCatalog.name}` : "New Skill";
 
   return (
     <AdaptiveModalSheet title={title} visible={visible} onClose={onClose}>
@@ -164,9 +164,7 @@ export function AddSkillModal({
               <Text style={styles.loadingText}>Loading skill content…</Text>
             </View>
           ) : null}
-          {bodyError ? (
-            <Text style={styles.errorText}>Couldn't load: {bodyError}</Text>
-          ) : null}
+          {bodyError ? <Text style={styles.errorText}>Couldn't load: {bodyError}</Text> : null}
           <TextInput
             value={instructions}
             onChangeText={setInstructions}

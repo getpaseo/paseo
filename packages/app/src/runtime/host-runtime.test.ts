@@ -1004,7 +1004,7 @@ describe("HostRuntimeStore", () => {
         entries: [
           makeFetchAgentsEntry({
             id: "agent-recent",
-            cwd: "/Users/moboudra/dev/hubcode",
+            cwd: "/tmp/hubcode",
             updatedAt: "2026-03-04T12:00:00.000Z",
             title: "Recent agent",
           }),
@@ -1017,7 +1017,7 @@ describe("HostRuntimeStore", () => {
         entries: [
           makeFetchAgentsEntry({
             id: "agent-stale-attention",
-            cwd: "/Users/moboudra/dev/hubcode-pr67-review",
+            cwd: "/tmp/hubcode-pr67-review",
             updatedAt: "2026-02-20T08:00:00.000Z",
             title: "Needs triage",
             requiresAttention: true,
@@ -1166,7 +1166,7 @@ describe("HostRuntimeStore", () => {
         entries: [
           makeFetchAgentsEntry({
             id: "agent-archived",
-            cwd: "/Users/moboudra/dev/hubcode",
+            cwd: "/tmp/hubcode",
             updatedAt: "2026-03-30T15:30:00.000Z",
             archivedAt: "2026-03-30T15:31:00.000Z",
             title: "Archived remotely",
@@ -1193,7 +1193,7 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().setAgents(host.serverId, () => {
       const stale = makeFetchAgentsEntry({
         id: "agent-archived",
-        cwd: "/Users/moboudra/dev/hubcode",
+        cwd: "/tmp/hubcode",
         updatedAt: "2026-03-30T15:29:00.000Z",
         archivedAt: null,
         title: "Stale active copy",

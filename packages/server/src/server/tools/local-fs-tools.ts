@@ -42,9 +42,7 @@ export function resolveInsideCwd(cwd: string, p: string): string {
   const target = path.resolve(absCwd, p);
   const rel = path.relative(absCwd, target);
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error(
-      `Path escapes cwd: ${p} (resolved to ${target}, cwd is ${absCwd})`,
-    );
+    throw new Error(`Path escapes cwd: ${p} (resolved to ${target}, cwd is ${absCwd})`);
   }
   return target;
 }
@@ -97,7 +95,7 @@ export interface WriteFileResult {
 
 export async function writeFile(input: WriteFileInput): Promise<WriteFileResult> {
   const abs = resolveInsideCwd(input.cwd, input.path);
-  if ((input.createDirs ?? true)) {
+  if (input.createDirs ?? true) {
     await fs.mkdir(path.dirname(abs), { recursive: true });
   }
   const buf =
@@ -268,10 +266,7 @@ async function runRipgrep(
         try {
           const evt = JSON.parse(line);
           if (evt.type !== "match") continue;
-          const rel = path.relative(
-            path.resolve(input.cwd),
-            evt.data.path.text,
-          );
+          const rel = path.relative(path.resolve(input.cwd), evt.data.path.text);
           matches.push({
             path: rel,
             lineNumber: evt.data.line_number,
@@ -297,12 +292,8 @@ async function runJsGrep(
 ): Promise<GrepProjectResult> {
   const matches: GrepMatch[] = [];
   const flags = input.caseSensitive ? "" : "i";
-  const re = input.fixedString
-    ? null
-    : new RegExp(input.pattern, flags);
-  const needle = input.caseSensitive
-    ? input.pattern
-    : input.pattern.toLowerCase();
+  const re = input.fixedString ? null : new RegExp(input.pattern, flags);
+  const needle = input.caseSensitive ? input.pattern : input.pattern.toLowerCase();
 
   const isMatch = (text: string): boolean => {
     if (re) return re.test(text);

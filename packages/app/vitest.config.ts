@@ -31,7 +31,15 @@ export default defineConfig({
     server: {
       deps: {
         fallbackCJS: true,
-        inline: ["zustand", "@tanstack/react-query", "react-native-web"],
+        inline: [
+          "zustand",
+          "@tanstack/react-query",
+          "react-native-web",
+          // Force vite to transform lucide; otherwise Node's ESM loader
+          // accidentally compiles its `.d.ts` (typings field) and chokes on
+          // `import * as react from 'react'` style declarations.
+          "lucide-react-native",
+        ],
       },
     },
   },
@@ -49,9 +57,11 @@ export default defineConfig({
       { find: "@server", replacement: path.resolve(__dirname, "../server/src") },
       // Point to the ESM build so Vite can transform its imports and apply the
       // react alias below (the CJS build uses require('react') which bypasses
-      // Vite alias resolution).
+      // Vite alias resolution). The exact-match form (anchored regex) keeps
+      // submodule paths like `react-native-svg` from accidentally hitting
+      // this rewrite.
       {
-        find: "react-native",
+        find: /^react-native$/,
         replacement: path.resolve(rootNodeModules, "react-native-web/dist/index.js"),
       },
       { find: "react", replacement: resolvePackageEntry("react") },
@@ -63,6 +73,36 @@ export default defineConfig({
         find: "@xterm/addon-ligatures",
         replacement: path.resolve(__dirname, "test-stubs/xterm-addon-ligatures.ts"),
       },
+      // lucide-react-native's CJS entry require()s `react-native` directly,
+      // bypassing Vite's react-native-web alias. Node's ESM loader then
+      // hits Flow syntax in react-native/index.js. Tests never render
+      // icons, so swap the whole package for a no-op proxy.
+      {
+        find: /^lucide-react-native$/,
+        replacement: path.resolve(__dirname, "test-stubs/lucide-stub.ts"),
+      },
     ],
   },
+  plugins: [
+    // The codebase uses `require("./img.png")` (Metro pattern) for assets.
+    // Vitest can't parse PNG bytes as JS — Node throws SyntaxError. Rewrite
+    // the source so those requires become an inline stub object that
+    // satisfies `<Image source={...} />`.
+    {
+      name: "stub-png-requires",
+      enforce: "pre" as const,
+      transform(code: string, id: string) {
+        if (id.includes("/node_modules/")) return null;
+        if (!/\.(tsx?|jsx?)$/.test(id)) return null;
+        if (!/require\(\s*["'][^"']+\.(png|jpe?g|gif|webp|svg)["']\s*\)/.test(code)) {
+          return null;
+        }
+        const stubbed = code.replace(
+          /require\(\s*(["'])([^"']+\.(?:png|jpe?g|gif|webp|svg))\1\s*\)/g,
+          '({ uri: "stub://$2", width: 0, height: 0 })',
+        );
+        return { code: stubbed, map: null };
+      },
+    },
+  ],
 });

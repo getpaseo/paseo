@@ -108,9 +108,7 @@ export async function syncLibraryToTargets(input: SyncInput): Promise<SyncReport
   for (const a of AGENT_INTEGRATIONS) {
     previousSkillKeysByTarget[a.id] = manifest.targets[a.id]?.skillKeys ?? [];
   }
-  const previousSkillKeys = unique(
-    Object.values(previousSkillKeysByTarget).flat(),
-  );
+  const previousSkillKeys = unique(Object.values(previousSkillKeysByTarget).flat());
   await writeCanonicalSkills({
     skillsDir: paths.skillsDir,
     entries: skillsForAll,
@@ -162,9 +160,7 @@ function emptyTargetBucket<T>(): Record<string, T[]> {
   return out;
 }
 
-function bucketByTarget(
-  mcps: MaterializedMcpEntry[],
-): Record<string, MaterializedMcpEntry[]> {
+function bucketByTarget(mcps: MaterializedMcpEntry[]): Record<string, MaterializedMcpEntry[]> {
   const out = emptyTargetBucket<MaterializedMcpEntry>();
   for (const entry of mcps) {
     for (const target of entry.syncTargets) {
@@ -176,9 +172,7 @@ function bucketByTarget(
   return out;
 }
 
-function bucketSkills(
-  skills: MaterializedSkillEntry[],
-): Record<string, MaterializedSkillEntry[]> {
+function bucketSkills(skills: MaterializedSkillEntry[]): Record<string, MaterializedSkillEntry[]> {
   const out = emptyTargetBucket<MaterializedSkillEntry>();
   for (const entry of skills) {
     for (const target of entry.syncTargets) (out[target] ??= []).push(entry);
@@ -253,11 +247,9 @@ async function writeJsonMcps(args: {
   serversKey: string;
   toEntry: (payload: MaterializedMcpEntry["payload"]) => unknown;
 }): Promise<void> {
-  const existing =
-    (await readJsonIfExists<Record<string, unknown>>(args.configPath)) ?? {};
+  const existing = (await readJsonIfExists<Record<string, unknown>>(args.configPath)) ?? {};
   const previousOwned = new Set(args.previousKeys);
-  const existingServers =
-    (existing[args.serversKey] as Record<string, unknown> | undefined) ?? {};
+  const existingServers = (existing[args.serversKey] as Record<string, unknown> | undefined) ?? {};
   const servers: Record<string, unknown> = { ...existingServers };
 
   for (const key of previousOwned) {

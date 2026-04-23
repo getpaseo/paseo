@@ -83,6 +83,8 @@ import type {
   AgentSessionConfig,
 } from "../server/agent/agent-sdk-types.js";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
+import type { EmbeddingProvider, ExposeToEntry, IndexingState } from "../server/indexing/types.js";
+import type { IndexingToolDetection } from "../server/indexing/detector.js";
 import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
 import {
   asUint8Array,
@@ -2602,13 +2604,7 @@ export class DaemonClient {
 
   sendBrowserInput(payload: {
     browserId: string;
-    kind:
-      | "mouse_move"
-      | "mouse_down"
-      | "mouse_up"
-      | "mouse_wheel"
-      | "key_down"
-      | "key_up";
+    kind: "mouse_move" | "mouse_down" | "mouse_up" | "mouse_wheel" | "key_down" | "key_up";
     x?: number;
     y?: number;
     button?: "left" | "right" | "middle";
@@ -2935,6 +2931,231 @@ export class DaemonClient {
       },
       responseType: "set_daemon_config_response",
       timeout: 10000,
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Code indexing (code-review-graph)
+  // ──────────────────────────────────────────────────────────────────────
+
+  async indexingList(requestId?: string): Promise<{
+    entries: Array<{ workspaceId: string; indexing?: IndexingState }>;
+    error: string | null;
+  }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/list" },
+      responseType: "indexing/list/response",
+      timeout: 10000,
+    });
+    return {
+      entries: payload.entries as Array<{ workspaceId: string; indexing?: IndexingState }>,
+      error: payload.error,
+    };
+  }
+
+  async indexingGet(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<{
+    entry: { workspaceId: string; indexing?: IndexingState } | null;
+    error: string | null;
+  }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/get", workspaceId },
+      responseType: "indexing/get/response",
+      timeout: 10000,
+    });
+    return {
+      entry: payload.entry as { workspaceId: string; indexing?: IndexingState } | null,
+      error: payload.error,
+    };
+  }
+
+  async indexingSetEnabled(
+    workspaceId: string,
+    enabled: boolean,
+    requestId?: string,
+  ): Promise<{ workspaceId: string; indexing: IndexingState | null; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/set-enabled", workspaceId, enabled },
+      responseType: "indexing/state/response",
+      timeout: 10000,
+    });
+    return {
+      workspaceId: payload.workspaceId,
+      indexing: payload.indexing as IndexingState | null,
+      error: payload.error,
+    };
+  }
+
+  async indexingSetExposeTo(
+    workspaceId: string,
+    agentId: string,
+    entry: ExposeToEntry | null,
+    requestId?: string,
+  ): Promise<{ workspaceId: string; indexing: IndexingState | null; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/set-expose-to", workspaceId, agentId, entry },
+      responseType: "indexing/state/response",
+      timeout: 10000,
+    });
+    return {
+      workspaceId: payload.workspaceId,
+      indexing: payload.indexing as IndexingState | null,
+      error: payload.error,
+    };
+  }
+
+  async indexingSetEmbeddingProvider(
+    workspaceId: string,
+    provider: EmbeddingProvider | null,
+    requestId?: string,
+  ): Promise<{ workspaceId: string; indexing: IndexingState | null; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/set-embedding-provider", workspaceId, provider },
+      responseType: "indexing/state/response",
+      timeout: 10000,
+    });
+    return {
+      workspaceId: payload.workspaceId,
+      indexing: payload.indexing as IndexingState | null,
+      error: payload.error,
+    };
+  }
+
+  async indexingSetWatchlist(
+    workspaceId: string,
+    watchlist: string[],
+    requestId?: string,
+  ): Promise<{ workspaceId: string; indexing: IndexingState | null; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/set-watchlist", workspaceId, watchlist },
+      responseType: "indexing/state/response",
+      timeout: 10000,
+    });
+    return {
+      workspaceId: payload.workspaceId,
+      indexing: payload.indexing as IndexingState | null,
+      error: payload.error,
+    };
+  }
+
+  async indexingReindex(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<{ workspaceId: string; indexing: IndexingState | null; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/reindex", workspaceId },
+      responseType: "indexing/state/response",
+      timeout: 600_000,
+    });
+    return {
+      workspaceId: payload.workspaceId,
+      indexing: payload.indexing as IndexingState | null,
+      error: payload.error,
+    };
+  }
+
+  async indexingToolsList(
+    requestId?: string,
+  ): Promise<{ tools: Array<{ name: string; description?: string }>; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "indexing/tools/list" },
+      responseType: "indexing/tools/list/response",
+      timeout: 10000,
+    });
+    return { tools: payload.tools, error: payload.error };
+  }
+
+  async indexingDetect(options?: {
+    force?: boolean;
+    requestId?: string;
+  }): Promise<{ detection: IndexingToolDetection | null; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: { type: "indexing/detect", force: options?.force ?? false },
+      responseType: "indexing/detect/response",
+      timeout: 15000,
+    });
+    return {
+      detection: payload.detection as IndexingToolDetection | null,
+      error: payload.error,
+    };
+  }
+
+  /**
+   * Kick off an auto-install run. Emits progress events via the `status`
+   * channel (`indexing/install/event`). Resolves when the daemon emits the
+   * terminal `completed` event; rejects on timeout or transport failure.
+   */
+  async indexingInstall(
+    onEvent: (event: unknown) => void,
+    options?: { requestId?: string; timeoutMs?: number; ackTimeoutMs?: number },
+  ): Promise<{ success: boolean; error?: string }> {
+    const requestId = this.createRequestId(options?.requestId);
+    const timeoutMs = options?.timeoutMs ?? 300_000;
+    // If the daemon doesn't ack with ANY install event within this window,
+    // treat it as a missing handler (older daemon) and surface a clear error
+    // instead of spinning forever. 60s is generous because the first
+    // event (`plan`) should be instant — but pipx warmup + event-channel
+    // routing can stall briefly under load.
+    const ackTimeoutMs = options?.ackTimeoutMs ?? 60_000;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let ackReceived = false;
+      const unsubscribe = this.on("status", (msg) => {
+        if (msg.type !== "indexing/install/event") return;
+        if (msg.payload.requestId !== requestId) return;
+        ackReceived = true;
+        clearTimeout(ackTimer);
+        onEvent(msg.payload.event);
+        if (msg.payload.event.type === "completed") {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          unsubscribe();
+          resolve({
+            success: msg.payload.event.success,
+            error: "error" in msg.payload.event ? msg.payload.event.error : undefined,
+          });
+        }
+      });
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        reject(new Error("indexingInstall timed out"));
+      }, timeoutMs);
+      const ackTimer = setTimeout(() => {
+        if (settled || ackReceived) return;
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe();
+        reject(
+          new Error(
+            "Daemon did not acknowledge install request — likely running an older version. Restart the daemon and try again.",
+          ),
+        );
+      }, ackTimeoutMs);
+      this.sendSessionMessageOrThrow({
+        type: "indexing/install",
+        requestId,
+      }).catch((err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(ackTimer);
+        unsubscribe();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      });
     });
   }
 
@@ -4502,10 +4723,7 @@ export class DaemonClient {
     });
   }
 
-  async listLibraryAgents(params?: {
-    requestId?: string;
-    timeoutMs?: number;
-  }): Promise<{
+  async listLibraryAgents(params?: { requestId?: string; timeoutMs?: number }): Promise<{
     agents: import("../shared/messages.js").LibraryAgentsResponse["agents"];
     installedIds: string[];
   }> {

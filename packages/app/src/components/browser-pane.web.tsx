@@ -211,8 +211,7 @@ export function BrowserPane({ serverId, browserId, initialUrl }: BrowserPaneProp
   );
 
   const buttonFromEvent = useCallback(
-    (b: number): "left" | "right" | "middle" =>
-      b === 2 ? "right" : b === 1 ? "middle" : "left",
+    (b: number): "left" | "right" | "middle" => (b === 2 ? "right" : b === 1 ? "middle" : "left"),
     [],
   );
 

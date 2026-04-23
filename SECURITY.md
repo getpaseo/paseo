@@ -63,4 +63,4 @@ Hubcode wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage thei
 
 ## Reporting vulnerabilities
 
-If you discover a security vulnerability, please report it privately by emailing hello@moboudra.com. Do not open a public issue.
+If you discover a security vulnerability, please report it privately by emailing ceo@hubtool.ai. Do not open a public issue.

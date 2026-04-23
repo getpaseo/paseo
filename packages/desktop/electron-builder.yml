@@ -36,7 +36,7 @@ linux:
   category: Development
   icon: assets
   artifactName: "Hubcode-${version}-${arch}.${ext}"
-  maintainer: "Mohamed Boudra <hello@moboudra.com>"
+  maintainer: "Mohamed Boudra <ceo@hubtool.ai>"
   vendor: "Hubcode"
   extraResources:
     - from: bin/hubcode

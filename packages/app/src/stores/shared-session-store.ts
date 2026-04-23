@@ -12,10 +12,7 @@ import {
   setRemoteTyping,
   stopLocalTyping,
 } from "@/stores/shared-typing-store";
-import {
-  clearSessionChat,
-  wireSessionChatListeners,
-} from "@/stores/session-chat-store";
+import { clearSessionChat, wireSessionChatListeners } from "@/stores/session-chat-store";
 
 export interface SharedSessionUser {
   userId: string;
@@ -265,12 +262,7 @@ function wireTypingStatusListener(room: any) {
   try {
     room?.onMessage?.(
       "typing_status",
-      (payload: {
-        userId?: string;
-        username?: string;
-        avatarUrl?: string;
-        typing?: boolean;
-      }) => {
+      (payload: { userId?: string; username?: string; avatarUrl?: string; typing?: boolean }) => {
         const userId = String(payload?.userId ?? "");
         if (!userId) return;
         setRemoteTyping(

@@ -20,8 +20,7 @@ export const libraryKeys = {
   all: ["library"] as const,
   list: (kind: LibraryKind | undefined, scope?: LibraryScope, scopeId?: string) =>
     ["library", "list", kind ?? "all", scope ?? "any", scopeId ?? "any"] as const,
-  catalog: (kind: "mcp" | "skills", query: string) =>
-    ["library", "catalog", kind, query] as const,
+  catalog: (kind: "mcp" | "skills", query: string) => ["library", "catalog", kind, query] as const,
 };
 
 export function useLibraryEntries(
@@ -38,10 +37,7 @@ export function useLibraryEntries(
   });
 }
 
-export function useMcpCatalog(
-  sessionToken: string | null,
-  query: string,
-) {
+export function useMcpCatalog(sessionToken: string | null, query: string) {
   return useQuery<CatalogPage>({
     queryKey: libraryKeys.catalog("mcp", query),
     enabled: sessionToken !== null,
@@ -53,10 +49,7 @@ export function useMcpCatalog(
   });
 }
 
-export function useSkillsCatalog(
-  sessionToken: string | null,
-  query: string,
-) {
+export function useSkillsCatalog(sessionToken: string | null, query: string) {
   return useQuery<CatalogPage>({
     queryKey: libraryKeys.catalog("skills", query),
     enabled: sessionToken !== null,
@@ -118,11 +111,8 @@ export function useDeleteLibraryEntry(sessionToken: string | null) {
 export function useSetLibraryActivation(sessionToken: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: {
-      entryId: string;
-      active?: boolean;
-      syncTargets?: LibrarySyncTarget[];
-    }) => setLibraryActivation({ sessionToken, ...input }),
+    mutationFn: (input: { entryId: string; active?: boolean; syncTargets?: LibrarySyncTarget[] }) =>
+      setLibraryActivation({ sessionToken, ...input }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: libraryKeys.all });
     },

@@ -44,10 +44,7 @@ const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_MAX_BYTES = 1024 * 1024;
 
 export async function runCommand(input: RunCommandInput): Promise<RunCommandResult> {
-  const timeoutMs = Math.min(
-    Math.max(1, input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-    MAX_TIMEOUT_MS,
-  );
+  const timeoutMs = Math.min(Math.max(1, input.timeoutMs ?? DEFAULT_TIMEOUT_MS), MAX_TIMEOUT_MS);
   const maxBytes = input.maxBytes ?? DEFAULT_MAX_BYTES;
   const start = Date.now();
 

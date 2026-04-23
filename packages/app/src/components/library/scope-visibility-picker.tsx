@@ -123,9 +123,7 @@ function ScopeChip({ label, icon, hint, active, disabled, onPress }: ChipProps) 
     >
       <View style={styles.chipHeader}>
         {icon}
-        <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>
-          {label}
-        </Text>
+        <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{label}</Text>
       </View>
       <Text style={styles.chipHint} numberOfLines={1}>
         {hint}

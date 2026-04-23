@@ -25,8 +25,12 @@ let sharedAudioCtx: AudioContext | null = null;
 function playNotificationChime(): void {
   if (!isWeb || typeof window === "undefined") return;
   const AC =
-    (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
-      .AudioContext ??
+    (
+      window as unknown as {
+        AudioContext?: typeof AudioContext;
+        webkitAudioContext?: typeof AudioContext;
+      }
+    ).AudioContext ??
     (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!AC) return;
   try {
@@ -134,8 +138,7 @@ export function useChatNotifications(params: Params): void {
       const windowFocused = isWindowFocused();
       if (activeChannelId === msg.channelId && windowFocused) return;
 
-      const authorName =
-        curMembers?.find((m) => m.userId === msg.userId)?.user?.name ?? "Someone";
+      const authorName = curMembers?.find((m) => m.userId === msg.userId)?.user?.name ?? "Someone";
       const channelLabel = channel
         ? channel.kind === "dm"
           ? authorName
@@ -160,9 +163,7 @@ export function useChatNotifications(params: Params): void {
             const n = new N(channelLabel, {
               body: `${authorName}: ${preview}`,
               tag: `hubcode-chat-${msg.channelId}`,
-              ...(HUBCODE_ICON_URI
-                ? { icon: HUBCODE_ICON_URI, badge: HUBCODE_ICON_URI }
-                : {}),
+              ...(HUBCODE_ICON_URI ? { icon: HUBCODE_ICON_URI, badge: HUBCODE_ICON_URI } : {}),
             });
             n.onclick = () => {
               try {

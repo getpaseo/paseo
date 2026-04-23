@@ -19,7 +19,9 @@ export async function GET(request: NextRequest) {
   const scope = (url.searchParams.get("scope") as LibraryScope | null) ?? undefined;
   const scopeId = url.searchParams.get("scopeId") ?? undefined;
   try {
-    const { orgIds, projectIds } = scope ? { orgIds: [], projectIds: [] } : await loadVisibleScopes(db, me.id);
+    const { orgIds, projectIds } = scope
+      ? { orgIds: [], projectIds: [] }
+      : await loadVisibleScopes(db, me.id);
     const entries = await listEntries(db, me.id, {
       kind,
       scope,
@@ -55,10 +57,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
   if (!body.kind || !body.name || !body.payload || !body.scope) {
-    return NextResponse.json(
-      { error: "kind, name, payload, scope are required" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "kind, name, payload, scope are required" }, { status: 400 });
   }
   try {
     const entry = await createEntry(db, me.id, {

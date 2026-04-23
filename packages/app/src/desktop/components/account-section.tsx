@@ -294,20 +294,17 @@ function OrgDetailsCard({ org }: { org: DesktopOrganization }) {
     fileInputRef.current.click();
   }, []);
 
-  const handleLogoFileChange = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      try {
-        const dataUrl = await resizeImageToDataUrl(file, { targetSize: 256 });
-        setLogoDataUrl(dataUrl);
-        setLocalError(null);
-      } catch (err) {
-        setLocalError(err instanceof Error ? err.message : "Failed to process image");
-      }
-    },
-    [],
-  );
+  const handleLogoFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await resizeImageToDataUrl(file, { targetSize: 256 });
+      setLogoDataUrl(dataUrl);
+      setLocalError(null);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "Failed to process image");
+    }
+  }, []);
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -379,7 +376,14 @@ function OrgDetailsCard({ org }: { org: DesktopOrganization }) {
       <TextInput
         value={name}
         onChangeText={setName}
-        style={[orgEditStyles.input, { color: theme.colors.foreground, borderColor: theme.colors.border, backgroundColor: theme.colors.surface1 }]}
+        style={[
+          orgEditStyles.input,
+          {
+            color: theme.colors.foreground,
+            borderColor: theme.colors.border,
+            backgroundColor: theme.colors.surface1,
+          },
+        ]}
         placeholder="Organization name"
         placeholderTextColor={theme.colors.foregroundMuted}
       />
@@ -387,12 +391,7 @@ function OrgDetailsCard({ org }: { org: DesktopOrganization }) {
       {errorMessage ? <Text style={orgEditStyles.error}>{errorMessage}</Text> : null}
 
       <View style={orgEditStyles.footer}>
-        <Button
-          variant="default"
-          size="sm"
-          onPress={handleSave}
-          disabled={!dirty || isUpdating}
-        >
+        <Button variant="default" size="sm" onPress={handleSave} disabled={!dirty || isUpdating}>
           {isUpdating ? "Saving…" : "Save changes"}
         </Button>
       </View>

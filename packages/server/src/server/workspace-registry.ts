@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
 
+import { IndexingStateSchema } from "./indexing/types.js";
 import type { PersistedProjectKind, PersistedWorkspaceKind } from "./workspace-registry-model.js";
 
 const PersistedProjectRecordSchema = z.object({
@@ -50,6 +51,9 @@ const PersistedWorkspaceRecordSchema = z.object({
   // only show when the matching org is active. Absent means "unscoped" and
   // the workspace is visible under any org (legacy behavior).
   orgId: z.string().optional(),
+  // Code-indexing state (code-review-graph integration). Optional so workspaces
+  // created before this feature parse without migration.
+  indexing: IndexingStateSchema.optional(),
 });
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;

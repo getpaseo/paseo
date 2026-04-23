@@ -119,7 +119,7 @@ export function AddMcpModal({
     setName(c?.name.toLowerCase().replace(/\s+/g, "-") ?? initial?.suggestedName ?? "");
     const initialTransport: McpTransport = c?.install?.url
       ? "http"
-      : c?.transports?.[0] ?? "stdio";
+      : (c?.transports?.[0] ?? "stdio");
     setTransport(initialTransport);
     setCommand(c?.install?.command ?? "");
     setArgsText((c?.install?.args ?? []).join("\n"));
@@ -133,9 +133,7 @@ export function AddMcpModal({
     setScope("user");
     setScopeId(null);
     setVisibility("private");
-    setSyncTargets(
-      ALL_TARGETS.filter((t) => TRANSPORT_BY_TARGET[t].includes(initialTransport)),
-    );
+    setSyncTargets(ALL_TARGETS.filter((t) => TRANSPORT_BY_TARGET[t].includes(initialTransport)));
   };
 
   // Reset every time the modal opens — prevents stale state from a previous
@@ -160,24 +158,17 @@ export function AddMcpModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, initial]);
 
-  const displayName = useMemo(
-    () => initial?.fromCatalog?.name ?? name ?? "",
-    [initial, name],
-  );
+  const displayName = useMemo(() => initial?.fromCatalog?.name ?? name ?? "", [initial, name]);
 
   const isValid =
     name.trim().length > 0 &&
-    (transport === "stdio"
-      ? command.trim().length > 0
-      : url.trim().length > 0);
+    (transport === "stdio" ? command.trim().length > 0 : url.trim().length > 0);
 
   // True when the catalog couldn't suggest a Command/URL — usually means the
   // server isn't published as an npm/pypi package and has no remote endpoint,
   // so the user needs to copy the install line from the project's README.
   const needsManualInstall =
-    !!initial?.fromCatalog &&
-    transport === "stdio" &&
-    !initial.fromCatalog.install?.command;
+    !!initial?.fromCatalog && transport === "stdio" && !initial.fromCatalog.install?.command;
 
   const handleSubmit = async () => {
     if (!isValid || submitting) return;
@@ -210,9 +201,7 @@ export function AddMcpModal({
       scope,
       scopeId,
       visibility,
-      syncTargets: syncTargets.filter((t) =>
-        TRANSPORT_BY_TARGET[t].includes(transport),
-      ),
+      syncTargets: syncTargets.filter((t) => TRANSPORT_BY_TARGET[t].includes(transport)),
     });
   };
 
@@ -220,21 +209,14 @@ export function AddMcpModal({
   // disabled state but we also want the stored value to stay consistent if
   // the user never touches it.
   useEffect(() => {
-    setSyncTargets((current) =>
-      current.filter((t) => TRANSPORT_BY_TARGET[t].includes(transport)),
-    );
+    setSyncTargets((current) => current.filter((t) => TRANSPORT_BY_TARGET[t].includes(transport)));
   }, [transport]);
 
-  const title = initial?.fromCatalog
-    ? `Add ${initial.fromCatalog.name}`
-    : "Add Custom MCP Server";
+  const title = initial?.fromCatalog ? `Add ${initial.fromCatalog.name}` : "Add Custom MCP Server";
 
   return (
     <AdaptiveModalSheet title={title} visible={visible} onClose={onClose}>
-      <ScrollView
-        contentContainerStyle={styles.body}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         {initial?.fromCatalog?.description ? (
           <Text style={styles.subtitle}>{initial.fromCatalog.description}</Text>
         ) : null}
@@ -283,8 +265,8 @@ export function AddMcpModal({
             {needsManualInstall ? (
               <View style={styles.helperBanner}>
                 <Text style={styles.helperBannerText}>
-                  This server isn't published as a package, so we couldn't
-                  pre-fill the install command. Check the project's README
+                  This server isn't published as a package, so we couldn't pre-fill the install
+                  command. Check the project's README
                   {readmeUrlFor(initial?.fromCatalog) ? (
                     <Text
                       style={styles.helperLink}
@@ -294,7 +276,8 @@ export function AddMcpModal({
                         if (url) void openExternalUrl(url);
                       }}
                     >
-                      {" "}({hostnameOf(readmeUrlFor(initial?.fromCatalog)!)})
+                      {" "}
+                      ({hostnameOf(readmeUrlFor(initial?.fromCatalog)!)})
                     </Text>
                   ) : null}{" "}
                   and paste the command + args below.
@@ -372,19 +355,12 @@ export function AddMcpModal({
           activeProjectId={activeProjectId}
         />
 
-        <SyncTargetsPicker
-          transport={transport}
-          value={syncTargets}
-          onChange={setSyncTargets}
-        />
+        <SyncTargetsPicker transport={transport} value={syncTargets} onChange={setSyncTargets} />
 
         <View style={styles.actions}>
           <Pressable
             onPress={onClose}
-            style={({ hovered }) => [
-              styles.cancelBtn,
-              hovered && styles.cancelBtnHovered,
-            ]}
+            style={({ hovered }) => [styles.cancelBtn, hovered && styles.cancelBtnHovered]}
             accessibilityRole="button"
           >
             <Text style={styles.cancelText}>Cancel</Text>
@@ -407,13 +383,7 @@ export function AddMcpModal({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>

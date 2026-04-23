@@ -49,9 +49,7 @@ export async function runMcpLsCommand(
   const rows: McpRow[] = entries.map((e) => {
     const transport = (e.payload as McpPayload).transport;
     const scopeLabel =
-      e.scope === "user"
-        ? "user"
-        : `${e.scope}:${e.scopeId ? e.scopeId.slice(0, 8) : "?"}`;
+      e.scope === "user" ? "user" : `${e.scope}:${e.scopeId ? e.scopeId.slice(0, 8) : "?"}`;
     return {
       id: e.id.slice(0, 12),
       name: e.displayName || e.name,

@@ -25,7 +25,17 @@ interface RichTextInputProps {
 
 export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>(
   function RichTextInput(
-    { value, placeholder, onChangeText, onSubmit, disabled, minHeight = 38, maxHeight = 140, style, placeholderTextColor },
+    {
+      value,
+      placeholder,
+      onChangeText,
+      onSubmit,
+      disabled,
+      minHeight = 38,
+      maxHeight = 140,
+      style,
+      placeholderTextColor,
+    },
     ref,
   ) {
     const inputRef = useRef<TextInput>(null);

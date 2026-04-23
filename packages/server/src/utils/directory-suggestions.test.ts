@@ -58,11 +58,11 @@ describe("searchHomeDirectories", () => {
   it("supports home-relative path query syntax", async () => {
     const results = await searchHomeDirectories({
       homeDir,
-      query: "~/projects/pa",
+      query: "~/projects/pl",
       limit: 10,
     });
 
-    expect(results).toEqual([path.join(homeDir, "projects", "hubcode")]);
+    expect(results).toEqual([path.join(homeDir, "projects", "playground")]);
   });
 
   it("prioritizes exact segment matches before segment-prefix matches", async () => {

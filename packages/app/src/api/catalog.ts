@@ -95,10 +95,7 @@ export async function fetchSkillBody(args: {
   url: string;
 }): Promise<string> {
   const qs = new URLSearchParams({ url: args.url });
-  const body = await request<{ body: string }>(
-    `/api/catalog/skills/body?${qs}`,
-    args.sessionToken,
-  );
+  const body = await request<{ body: string }>(`/api/catalog/skills/body?${qs}`, args.sessionToken);
   return body.body;
 }
 

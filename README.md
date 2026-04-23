@@ -4,21 +4,6 @@
 
 <h1 align="center">Hubcode</h1>
 
-<p align="center">
-  <a href="https://github.com/hubtool/hubcode/stargazers">
-    <img src="https://img.shields.io/github/stars/hubtool/hubcode?style=flat&logo=github" alt="GitHub stars">
-  </a>
-  <a href="https://github.com/hubtool/hubcode/releases">
-    <img src="https://img.shields.io/github/v/release/hubtool/hubcode?style=flat&logo=github" alt="GitHub release">
-  </a>
-  <a href="https://x.com/moboudra">
-    <img src="https://img.shields.io/badge/%40moboudra-555?logo=x" alt="X">
-  </a>
-  <a href="https://discord.gg/jz8T2uahpH">
-    <img src="https://img.shields.io/badge/Discord-555?logo=discord" alt="Discord">
-  </a>
-</p>
-
 <p align="center">One interface for all your Claude Code, Codex and OpenCode agents.</p>
 
 <p align="center">

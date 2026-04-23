@@ -341,9 +341,7 @@ export function useCommandCenter() {
       didNavigateRef.current = true;
       clearCommandCenterFocusRestoreElement();
       setOpen(false);
-      router.navigate(
-        buildHostWorkspaceRoute(workspace.serverId, workspace.workspaceId),
-      );
+      router.navigate(buildHostWorkspaceRoute(workspace.serverId, workspace.workspaceId));
     },
     [setOpen],
   );

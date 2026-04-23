@@ -218,7 +218,13 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
 
   const progressSteps =
     phase === "starting-daemon"
-      ? [{ key: "starting-daemon", label: "Waking up your local agent…", status: "active" as const }]
+      ? [
+          {
+            key: "starting-daemon",
+            label: "Waking up your local agent…",
+            status: "active" as const,
+          },
+        ]
       : phase === "connecting"
         ? [
             { key: "starting-daemon", label: "Local agent ready", status: "complete" as const },
@@ -299,7 +305,9 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
         <View style={styles.errorContent}>
           <View style={styles.errorHeader}>
             <HubcodeLogo size={64} />
-            <Text style={[styles.title, styles.titleError]}>We couldn't start your local agent</Text>
+            <Text style={[styles.title, styles.titleError]}>
+              We couldn't start your local agent
+            </Text>
           </View>
 
           <Text style={styles.errorDescription}>

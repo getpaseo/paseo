@@ -12,6 +12,7 @@ import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js
 import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
+import type { IndexingService } from "./indexing/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
@@ -295,6 +296,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly chatService: FileBackedChatService;
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
+  private readonly indexingService: IndexingService | null;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly workspaceGitService: WorkspaceGitServiceImpl;
   private readonly downloadTokenStore: DownloadTokenStore;
@@ -370,6 +372,7 @@ export class VoiceAssistantWebSocketServer {
     checkoutDiffManager?: CheckoutDiffManager,
     browserManager?: BrowserManager | null,
     clientBrowserManager?: any,
+    indexingService?: IndexingService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -397,6 +400,7 @@ export class VoiceAssistantWebSocketServer {
       throw new Error("VoiceAssistantWebSocketServer requires a checkout diff manager.");
     }
     this.checkoutDiffManager = checkoutDiffManager;
+    this.indexingService = indexingService ?? null;
     this.workspaceGitService = new WorkspaceGitServiceImpl({
       logger: this.logger,
       hubcodeHome,
@@ -712,6 +716,7 @@ export class VoiceAssistantWebSocketServer {
       chatService: this.chatService,
       loopService: this.loopService,
       scheduleService: this.scheduleService,
+      indexingService: this.indexingService,
       checkoutDiffManager: this.checkoutDiffManager,
       workspaceGitService: this.workspaceGitService,
       daemonConfigStore: this.daemonConfigStore,

@@ -37,15 +37,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import {
-  app,
-  BrowserWindow,
-  ipcMain,
-  nativeImage,
-  nativeTheme,
-  net,
-  protocol,
-} from "electron";
+import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, net, protocol } from "electron";
 
 // Enable Chrome DevTools Protocol so the Hubcode daemon can drive our
 // <webview> panes with Playwright via `chromium.connectOverCDP`. The

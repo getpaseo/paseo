@@ -12,11 +12,7 @@ import { resolveSkillRawUrl } from "@/lib/library/catalog/skills-sh";
  * allow-list of known hosts so we don't turn this into an open redirect /
  * SSRF hazard.
  */
-const ALLOWED_HOSTS = new Set([
-  "raw.githubusercontent.com",
-  "skills.sh",
-  "www.skills.sh",
-]);
+const ALLOWED_HOSTS = new Set(["raw.githubusercontent.com", "skills.sh", "www.skills.sh"]);
 
 export async function GET(request: NextRequest) {
   const me = await authenticateRequest(request);

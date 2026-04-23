@@ -27,10 +27,7 @@ import {
   useIsSpeaking,
   type TrackReferenceOrPlaceholder,
 } from "@livekit/components-react";
-import {
-  sendSessionChat,
-  useSessionChatMessages,
-} from "@/stores/session-chat-store";
+import { sendSessionChat, useSessionChatMessages } from "@/stores/session-chat-store";
 import { Track } from "livekit-client";
 import { useSharedSessionStore } from "@/stores/shared-session-store";
 import { getSharedMediaPreferences } from "@/stores/shared-media-preferences";
@@ -737,9 +734,7 @@ function SessionChat() {
                 </div>
                 <div
                   style={{
-                    background: mine
-                      ? "rgba(196,25,139,0.25)"
-                      : "rgba(39,39,42,0.8)",
+                    background: mine ? "rgba(196,25,139,0.25)" : "rgba(39,39,42,0.8)",
                     border: mine
                       ? "1px solid rgba(196,25,139,0.4)"
                       : "1px solid rgba(255,255,255,0.06)",

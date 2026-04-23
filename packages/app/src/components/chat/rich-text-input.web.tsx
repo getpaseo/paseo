@@ -12,7 +12,15 @@
  * It exposes a `value` / `onChangeText` / `onSubmit` API so the outer
  * `Composer` (uploads, slash commands, reply quotes) stays the same.
  */
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import {
+  type JSX,
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+} from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -21,7 +29,11 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { TRANSFORMERS, $convertToMarkdownString, $convertFromMarkdownString } from "@lexical/markdown";
+import {
+  TRANSFORMERS,
+  $convertToMarkdownString,
+  $convertFromMarkdownString,
+} from "@lexical/markdown";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListItemNode, ListNode } from "@lexical/list";
 import { LinkNode } from "@lexical/link";
@@ -154,7 +166,13 @@ function SubmitOnEnterPlugin({ onSubmit }: { onSubmit: () => void }) {
 
 // ─── External value sync (controlled-ish) ───────────────────────────────────
 
-function ValueSyncPlugin({ value, lastInjectedRef }: { value: string; lastInjectedRef: React.MutableRefObject<string> }) {
+function ValueSyncPlugin({
+  value,
+  lastInjectedRef,
+}: {
+  value: string;
+  lastInjectedRef: React.MutableRefObject<string>;
+}) {
   const [editor] = useLexicalComposerContext();
   useEffect(() => {
     // Only push external `value` into the editor when it diverges from what
@@ -234,7 +252,11 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
           const caret = anchor.offset;
           const before = text.slice(0, caret);
           const atIdx = before.lastIndexOf("@");
-          if (atIdx >= 0 && "setTextContent" in node && typeof (node as { setTextContent?: unknown }).setTextContent === "function") {
+          if (
+            atIdx >= 0 &&
+            "setTextContent" in node &&
+            typeof (node as { setTextContent?: unknown }).setTextContent === "function"
+          ) {
             (node as { setTextContent: (v: string) => void }).setTextContent(
               before.slice(0, atIdx) + text.slice(caret),
             );
@@ -315,7 +337,11 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
   },
 );
 
-function EditorRefGrabber({ editorRef }: { editorRef: React.MutableRefObject<LexicalEditor | null> }) {
+function EditorRefGrabber({
+  editorRef,
+}: {
+  editorRef: React.MutableRefObject<LexicalEditor | null>;
+}) {
   const [editor] = useLexicalComposerContext();
   useEffect(() => {
     editorRef.current = editor;

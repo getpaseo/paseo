@@ -95,10 +95,7 @@ describe("writeFile", () => {
       path: "nested/deep/path/file.txt",
       content: "x",
     });
-    const onDisk = await fs.readFile(
-      path.join(tmp, "nested/deep/path/file.txt"),
-      "utf-8",
-    );
+    const onDisk = await fs.readFile(path.join(tmp, "nested/deep/path/file.txt"), "utf-8");
     expect(onDisk).toBe("x");
   });
 
@@ -132,9 +129,9 @@ describe("writeFile", () => {
   });
 
   it("rejects paths escaping cwd", async () => {
-    await expect(
-      writeFile({ cwd: tmp, path: "../evil", content: "x" }),
-    ).rejects.toThrow(/escapes cwd/);
+    await expect(writeFile({ cwd: tmp, path: "../evil", content: "x" })).rejects.toThrow(
+      /escapes cwd/,
+    );
   });
 });
 
@@ -169,9 +166,7 @@ describe("listDir", () => {
 
   it("rejects a path that is a file", async () => {
     await fs.writeFile(path.join(tmp, "f.txt"), "x");
-    await expect(listDir({ cwd: tmp, path: "f.txt" })).rejects.toThrow(
-      /Not a directory/,
-    );
+    await expect(listDir({ cwd: tmp, path: "f.txt" })).rejects.toThrow(/Not a directory/);
   });
 });
 

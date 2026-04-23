@@ -61,9 +61,7 @@ function normalizeSkill(raw: SkillsShResult): CatalogItem {
     kind: "skill",
     name: humanize(raw.name),
     description: "",
-    iconUrl: owner
-      ? `https://avatars.githubusercontent.com/${owner}`
-      : null,
+    iconUrl: owner ? `https://avatars.githubusercontent.com/${owner}` : null,
     homepage: `https://skills.sh/s/${encodeURIComponent(raw.id)}`,
     instructionsUrl:
       owner && repo
@@ -92,10 +90,7 @@ function humanize(slug: string): string {
  * none match. Used by the detail body fetch as a fallback to the optimistic
  * `instructionsUrl` set during normalization.
  */
-export async function resolveSkillRawUrl(
-  source: string,
-  skillId: string,
-): Promise<string | null> {
+export async function resolveSkillRawUrl(source: string, skillId: string): Promise<string | null> {
   const [owner, repo] = source.split("/", 2);
   if (!owner || !repo) return null;
   for (const template of SKILL_PATH_TEMPLATES) {

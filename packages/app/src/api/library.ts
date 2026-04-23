@@ -217,9 +217,7 @@ export async function updateLibraryEntry(
   return body.entry;
 }
 
-export async function deleteLibraryEntry(
-  args: FetchArgs & { entryId: string },
-): Promise<void> {
+export async function deleteLibraryEntry(args: FetchArgs & { entryId: string }): Promise<void> {
   await request(`/api/library/${encodeURIComponent(args.entryId)}`, {
     sessionToken: args.sessionToken,
     method: "DELETE",

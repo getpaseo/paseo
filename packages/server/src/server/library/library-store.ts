@@ -73,12 +73,9 @@ export class LibraryStore {
     }
     if (blocks.length === 0) return userSystemPrompt;
 
-    const header =
-      "The following skills are available — load them contextually when relevant:";
+    const header = "The following skills are available — load them contextually when relevant:";
     const skillsSection = [header, ...blocks].join("\n\n");
-    return userSystemPrompt
-      ? `${userSystemPrompt}\n\n${skillsSection}`
-      : skillsSection;
+    return userSystemPrompt ? `${userSystemPrompt}\n\n${skillsSection}` : skillsSection;
   }
 }
 
@@ -99,9 +96,7 @@ function toMcpServerConfig(entry: MaterializedMcpEntry): McpServerConfig {
     return {
       type: "stdio",
       command: entry.payload.command,
-      ...(entry.payload.args && entry.payload.args.length > 0
-        ? { args: entry.payload.args }
-        : {}),
+      ...(entry.payload.args && entry.payload.args.length > 0 ? { args: entry.payload.args } : {}),
       ...(entry.payload.env && Object.keys(entry.payload.env).length > 0
         ? { env: entry.payload.env }
         : {}),

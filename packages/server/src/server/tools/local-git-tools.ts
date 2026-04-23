@@ -166,10 +166,12 @@ const DEFAULT_DIFF_MAX_BYTES = 512 * 1024;
 const DEFAULT_LOG_COUNT = 50;
 
 export async function gitStatus(input: GitStatusInput): Promise<GitStatusResult> {
-  const raw = await runGit(
-    input.cwd,
-    ["status", "--porcelain=v1", "--branch", "--untracked-files=all"],
-  );
+  const raw = await runGit(input.cwd, [
+    "status",
+    "--porcelain=v1",
+    "--branch",
+    "--untracked-files=all",
+  ]);
   return parseGitStatus(raw);
 }
 
@@ -272,23 +274,11 @@ export async function gitDiff(input: GitDiffInput): Promise<GitDiffResult> {
  */
 const LOG_FIELD_SEP = "\x1f";
 const LOG_RECORD_SEP = "\x1e";
-const LOG_FORMAT = [
-  "%H",
-  "%h",
-  "%an",
-  "%ae",
-  "%aI",
-  "%s",
-  "%b",
-].join(LOG_FIELD_SEP);
+const LOG_FORMAT = ["%H", "%h", "%an", "%ae", "%aI", "%s", "%b"].join(LOG_FIELD_SEP);
 
 export async function gitLog(input: GitLogInput): Promise<GitLogResult> {
   const maxCount = input.maxCount ?? DEFAULT_LOG_COUNT;
-  const args = [
-    "log",
-    `-n${maxCount}`,
-    `--pretty=format:${LOG_FORMAT}${LOG_RECORD_SEP}`,
-  ];
+  const args = ["log", `-n${maxCount}`, `--pretty=format:${LOG_FORMAT}${LOG_RECORD_SEP}`];
   if (input.since) args.push(`--since=${input.since}`);
   if (input.author) args.push(`--author=${input.author}`);
   if (input.ref) args.push(input.ref);
@@ -334,10 +324,7 @@ export async function gitBlame(input: GitBlameInput): Promise<GitBlameResult> {
  * own test matrix separate from the spawn-git integration. */
 export function parseBlamePorcelain(raw: string): GitBlameLine[] {
   const lines: GitBlameLine[] = [];
-  const commitCache = new Map<
-    string,
-    { author: string; date: string; shortHash: string }
-  >();
+  const commitCache = new Map<string, { author: string; date: string; shortHash: string }>();
   const rows = raw.split("\n");
   let i = 0;
   while (i < rows.length) {
@@ -429,11 +416,7 @@ export async function gitCheckout(input: GitCheckoutInput): Promise<GitCheckoutR
 export async function gitStash(input: GitStashInput): Promise<GitStashResult> {
   switch (input.action) {
     case "list": {
-      const raw = await runGit(input.cwd, [
-        "stash",
-        "list",
-        "--format=%gd\x1f%s",
-      ]);
+      const raw = await runGit(input.cwd, ["stash", "list", "--format=%gd\x1f%s"]);
       const entries: GitStashEntry[] = [];
       for (const line of raw.split("\n")) {
         if (!line) continue;
@@ -464,11 +447,7 @@ export async function gitStash(input: GitStashInput): Promise<GitStashResult> {
 
 // ─── internals ──────────────────────────────────────────────────────
 
-function runGit(
-  cwd: string,
-  args: string[],
-  opts: { maxBytes?: number } = {},
-): Promise<string> {
+function runGit(cwd: string, args: string[], opts: { maxBytes?: number } = {}): Promise<string> {
   const maxBytes = opts.maxBytes ?? 10 * 1024 * 1024;
   return new Promise((resolve, reject) => {
     let stdout = "";

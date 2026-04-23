@@ -469,9 +469,7 @@ function LibraryRow({
       accessibilityLabel={label}
     >
       {icon}
-      <Text style={[styles.libraryRowText, active && styles.libraryRowTextActive]}>
-        {label}
-      </Text>
+      <Text style={[styles.libraryRowText, active && styles.libraryRowTextActive]}>{label}</Text>
     </Pressable>
   );
 }

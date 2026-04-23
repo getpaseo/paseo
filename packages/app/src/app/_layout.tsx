@@ -9,9 +9,7 @@ import { LogBox } from "react-native";
 // unchanged). It's a `console.error`, not a throw — app keeps
 // running fine — but it clogs LogBox and makes real errors hard to
 // spot. Safe to ignore.
-LogBox.ignoreLogs([
-  "Internal React error: Expected static flag was missing",
-]);
+LogBox.ignoreLogs(["Internal React error: Expected static flag was missing"]);
 
 // Global error capture: log the full stack of any uncaught error so we
 // can actually diagnose minified "Xx is not a function" crashes that

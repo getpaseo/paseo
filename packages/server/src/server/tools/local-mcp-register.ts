@@ -9,12 +9,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Logger } from "pino";
 import { ensureValidJson } from "../json-utils.js";
-import {
-  grepProject,
-  listDir,
-  readFile,
-  writeFile,
-} from "./local-fs-tools.js";
+import { grepProject, listDir, readFile, writeFile } from "./local-fs-tools.js";
 import { runCommand } from "./local-shell-tools.js";
 import {
   gitBlame,

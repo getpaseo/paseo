@@ -78,15 +78,12 @@ contextBridge.exposeInMainWorld("hubcodeDesktop", {
       ipcRenderer.invoke("hubcode:browser-view:destroy", payload),
     loadUrl: (payload: { browserId: string; url: string }) =>
       ipcRenderer.invoke("hubcode:browser-view:load-url", payload),
-    nav: (payload: {
-      browserId: string;
-      action: "back" | "forward" | "reload";
-    }) => ipcRenderer.invoke("hubcode:browser-view:nav", payload),
+    nav: (payload: { browserId: string; action: "back" | "forward" | "reload" }) =>
+      ipcRenderer.invoke("hubcode:browser-view:nav", payload),
     getState: (payload: { browserId: string }) =>
       ipcRenderer.invoke("hubcode:browser-view:get-state", payload),
     onState: (handler: (payload: any) => void): (() => void) => {
-      const listener = (_e: Electron.IpcRendererEvent, payload: unknown) =>
-        handler(payload);
+      const listener = (_e: Electron.IpcRendererEvent, payload: unknown) => handler(payload);
       ipcRenderer.on("hubcode:browser-view:state", listener);
       return () => ipcRenderer.removeListener("hubcode:browser-view:state", listener);
     },

@@ -347,9 +347,7 @@ export class OrgChatRoom extends Room<OrgChatState> {
     }
   }
 
-  private async getChannelKind(
-    channelId: string,
-  ): Promise<"public" | "private" | "dm" | null> {
+  private async getChannelKind(channelId: string): Promise<"public" | "private" | "dm" | null> {
     const cached = this.channelKindCache.get(channelId);
     const now = Date.now();
     if (cached && now - cached.fetchedAt < OrgChatRoom.CHANNEL_KIND_TTL_MS) {

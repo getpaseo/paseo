@@ -280,7 +280,7 @@ describe("claude tool-call mapper", () => {
         name: "Grep",
         input: {
           pattern: '\\\\\\"cli\\\\\\""',
-          path: "/Users/moboudra/dev/hubcode/packages/desktop/src",
+          path: "/tmp/hubcode/packages/desktop/src",
           output_mode: "content",
           "-n": true,
         },

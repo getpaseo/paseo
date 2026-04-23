@@ -26,6 +26,7 @@ import {
   Plug,
   Terminal,
   Zap,
+  Network,
 } from "lucide-react-native";
 import { useAppSettings, type AppSettings, type SendBehavior } from "@/hooks/use-settings";
 import { THEME_SWATCHES, type ThemeName } from "@/styles/theme";
@@ -78,6 +79,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { isWeb } from "@/constants/platform";
 import { CliAgentsSection } from "@/screens/settings/cli-agents-section";
+import { IndexingSection } from "@/screens/settings/indexing-section";
 import { AccountSection } from "@/desktop/components/account-section";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { PlanUpgradeSection } from "@/components/plan-upgrade-section";
@@ -96,6 +98,7 @@ type SettingsSectionId =
   | "task-integrations"
   | "providers"
   | "cli-agents"
+  | "indexing"
   | "diagnostics"
   | "about"
   | "permissions"
@@ -135,6 +138,7 @@ function getSettingsSections(context: {
       { id: "daemon", label: "Daemon", icon: Settings },
       { id: "providers", label: "Providers", icon: Blocks },
       { id: "cli-agents", label: "CLI Agents", icon: Terminal },
+      { id: "indexing", label: "Code Indexing", icon: Network },
     );
   }
 
@@ -756,6 +760,8 @@ function SettingsSectionContent({
       return <ProvidersSection {...providersProps} />;
     case "cli-agents":
       return isDesktopApp ? <CliAgentsSection routeServerId={routeServerId} /> : null;
+    case "indexing":
+      return isDesktopApp ? <IndexingSection routeServerId={routeServerId} /> : null;
     case "diagnostics":
       return <DiagnosticsSection {...diagnosticsProps} />;
     case "about":

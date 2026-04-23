@@ -33,6 +33,7 @@
     "better-auth": "^1.2.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
+    "colyseus.js": "^0.15.28",
     "drizzle-orm": "^0.38.0",
     "livekit-client": "^2.18.3",
     "livekit-server-sdk": "^2.15.1",
