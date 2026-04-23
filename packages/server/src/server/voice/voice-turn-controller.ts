@@ -89,6 +89,7 @@ export function createVoiceTurnController(params: {
     submissionQueue = submissionQueue
       .then(async () => {
         await params.utteranceSink.submitUtterance(utterance);
+        return;
       })
       .catch((error) => {
         fail(error);

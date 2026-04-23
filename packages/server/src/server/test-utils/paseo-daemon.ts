@@ -59,6 +59,7 @@ async function startDaemonWithTimeout(
       () => {
         clearTimeout(timeoutHandle);
         resolve();
+        return;
       },
       (error) => {
         clearTimeout(timeoutHandle);

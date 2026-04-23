@@ -614,6 +614,7 @@ export async function runAsyncWorktreeBootstrap(
           "Failed to emit live worktree setup timeline update",
         );
       }
+      return;
     });
   };
 

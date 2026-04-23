@@ -1914,6 +1914,7 @@ export class AgentManager {
               permission,
               lastMessage,
             });
+            return;
           })
           .catch(reject);
       };
@@ -2191,6 +2192,7 @@ export class AgentManager {
           return;
         }
         await this.dispatchSessionEvent(current, event);
+        return;
       })
       .catch((err) => {
         this.logger.error(

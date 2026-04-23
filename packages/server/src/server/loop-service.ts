@@ -885,6 +885,7 @@ export class LoopService {
         left.createdAt.localeCompare(right.createdAt),
       );
       await fs.writeFile(this.storePath, JSON.stringify(records, null, 2), "utf8");
+      return;
     });
     this.persistQueue = nextPersist.catch(() => {});
     await nextPersist;

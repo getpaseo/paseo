@@ -317,6 +317,7 @@ export class TTSManager {
         if (result.kind === "prepared") {
           this.destroySpeechStream(result.prepared.stream);
         }
+        return;
       });
     }
   }

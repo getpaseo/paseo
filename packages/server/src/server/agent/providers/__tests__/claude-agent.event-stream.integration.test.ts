@@ -123,6 +123,7 @@ async function startTurnAndCollectEvents(
       .startTurn(prompt)
       .then((result) => {
         turnId = result.turnId;
+        return;
       })
       .catch((error) => {
         clearTimeout(timeout);
@@ -384,6 +385,7 @@ test("Test 5: Interruption", async () => {
             return;
           }
           turnId = result.turnId;
+          return;
         })
         .catch((error) => {
           clearTimeout(timeout);

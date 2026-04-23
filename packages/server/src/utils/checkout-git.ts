@@ -1557,6 +1557,7 @@ export function warmCheckoutShortstatInBackground(
   void getOrLoadCheckoutShortstat(cwd, context)
     .then(() => {
       onComplete?.();
+      return;
     })
     .catch(() => {
       // Non-critical: keep listing path resilient even if git commands fail.

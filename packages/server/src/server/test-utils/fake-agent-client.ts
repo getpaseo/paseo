@@ -961,6 +961,7 @@ class FakeAgentSession implements AgentSession {
     let interrupted = false;
     const interrupt = this.interruptSignal.promise.then(() => {
       interrupted = true;
+      return;
     });
     await Promise.race([interrupt, new Promise((r) => setTimeout(r, 500))]);
     if (!interrupted) {

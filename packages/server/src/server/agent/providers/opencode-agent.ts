@@ -2057,6 +2057,7 @@ class OpenCodeAgentSession implements AgentSession {
               turnId,
             );
           }
+          return;
         })
         .catch((err) => {
           if (isOpenCodeHeadersTimeoutFailure(err)) {
@@ -2105,6 +2106,7 @@ class OpenCodeAgentSession implements AgentSession {
               turnId,
             );
           }
+          return;
         })
         .catch((error) => {
           this.finishForegroundTurn(

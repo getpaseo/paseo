@@ -3769,6 +3769,7 @@ export class DaemonClient {
         .arrayBuffer()
         .then((buffer) => {
           this.handleTransportMessage(buffer);
+          return;
         })
         .catch(() => {
           // Ignore failed blob decoding and allow reconnect logic to recover.

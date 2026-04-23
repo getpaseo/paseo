@@ -140,6 +140,7 @@ export class AgentStorage {
 
       this.cache.set(agentId, record);
       this.pathById.set(agentId, nextPath);
+      return;
     });
 
     this.pendingWrites.set(

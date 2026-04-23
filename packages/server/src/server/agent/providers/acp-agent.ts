@@ -908,6 +908,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       })
       .then((response) => {
         this.handlePromptResponse(response, turnId);
+        return;
       })
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
