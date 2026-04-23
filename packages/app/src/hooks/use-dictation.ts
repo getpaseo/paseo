@@ -155,8 +155,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       if (!isRecordingRef.current) {
         return;
       }
-      void startNewStream("reconnect").catch((error) => {
-        reportError(error, "Failed to restart dictation stream after reconnect");
+      void startNewStream("reconnect").catch((err) => {
+        reportError(err, "Failed to restart dictation stream after reconnect");
       });
     });
   }, [client, reportError, startNewStream]);
