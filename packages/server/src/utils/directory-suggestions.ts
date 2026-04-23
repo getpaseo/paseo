@@ -764,30 +764,26 @@ async function listWorkspaceChildEntries(input: {
   const dirents = await readdir(input.directory, { withFileTypes: true }).catch(
     () => [] as Dirent[],
   );
-  const entries: ChildWorkspaceEntry[] = [];
-  for (const dirent of dirents) {
-    if (isHiddenDirectoryName(dirent.name)) {
-      continue;
-    }
-    if (isIgnoredWorkspaceDirectoryName(dirent.name)) {
-      continue;
-    }
-
-    const candidatePath = path.join(input.directory, dirent.name);
-    const entry = await resolveWorkspaceCandidate({
-      candidatePath,
-      dirent,
-      workspaceRoot: input.workspaceRoot,
-    });
-    if (!entry) {
-      continue;
-    }
-    entries.push({
-      name: dirent.name,
-      absolutePath: entry.absolutePath,
-      kind: entry.kind,
-    });
-  }
+  const candidates = dirents.filter(
+    (dirent) =>
+      !isHiddenDirectoryName(dirent.name) && !isIgnoredWorkspaceDirectoryName(dirent.name),
+  );
+  const resolved = await Promise.all(
+    candidates.map(async (dirent) => {
+      const candidatePath = path.join(input.directory, dirent.name);
+      const entry = await resolveWorkspaceCandidate({
+        candidatePath,
+        dirent,
+        workspaceRoot: input.workspaceRoot,
+      });
+      return entry
+        ? { name: dirent.name, absolutePath: entry.absolutePath, kind: entry.kind }
+        : null;
+    }),
+  );
+  const entries: ChildWorkspaceEntry[] = resolved.filter(
+    (entry): entry is ChildWorkspaceEntry => entry !== null,
+  );
 
   setWorkspaceEntryListCache(input.directory, {
     expiresAt: now + DIRECTORY_LIST_CACHE_TTL_MS,

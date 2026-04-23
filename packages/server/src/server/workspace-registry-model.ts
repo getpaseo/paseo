@@ -188,9 +188,14 @@ export async function detectStaleWorkspaces(
 ): Promise<Set<string>> {
   const staleWorkspaceIds = new Set<string>();
 
-  for (const workspace of input.activeWorkspaces) {
-    const dirExists = await input.checkDirectoryExists(workspace.cwd);
-    if (!dirExists) {
+  const existenceChecks = await Promise.all(
+    input.activeWorkspaces.map(async (workspace) => ({
+      workspace,
+      exists: await input.checkDirectoryExists(workspace.cwd),
+    })),
+  );
+  for (const { workspace, exists } of existenceChecks) {
+    if (!exists) {
       staleWorkspaceIds.add(workspace.workspaceId);
     }
   }

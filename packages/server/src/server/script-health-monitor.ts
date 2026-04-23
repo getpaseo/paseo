@@ -98,13 +98,15 @@ export class ScriptHealthMonitor {
       const changedWorkspaceIds = new Set<string>();
       const now = Date.now();
 
-      for (const route of routes) {
-        const state = this.getOrCreateState(route, now);
-        if (now - state.registeredAt < this.graceMs) {
-          continue;
-        }
-
-        const isHealthy = await this.probeRoute(route.port);
+      const probeTargets = routes
+        .map((route) => ({ route, state: this.getOrCreateState(route, now) }))
+        .filter(({ state }) => now - state.registeredAt >= this.graceMs);
+      const healthResults = await Promise.all(
+        probeTargets.map(({ route }) => this.probeRoute(route.port)),
+      );
+      for (let i = 0; i < probeTargets.length; i += 1) {
+        const { route, state } = probeTargets[i]!;
+        const isHealthy = healthResults[i]!;
         const previousHealth = state.health;
 
         if (isHealthy) {

@@ -858,11 +858,13 @@ export async function createPaseoDaemon(
 
 async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<void> {
   const agents = agentManager.listAgents();
-  for (const agent of agents) {
-    try {
-      await agentManager.closeAgent(agent.id);
-    } catch (err) {
-      logger.error({ err, agentId: agent.id }, "Failed to close agent");
-    }
-  }
+  await Promise.all(
+    agents.map(async (agent) => {
+      try {
+        await agentManager.closeAgent(agent.id);
+      } catch (err) {
+        logger.error({ err, agentId: agent.id }, "Failed to close agent");
+      }
+    }),
+  );
 }

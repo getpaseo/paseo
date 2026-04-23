@@ -77,13 +77,18 @@ export async function bootstrapWorkspaceRegistries(options: {
       records: StoredAgentRecord[];
     }
   >();
-  for (const record of activeRecords) {
-    const normalizedCwd = normalizeWorkspaceId(record.cwd);
-    const placement = await buildProjectPlacementForCwd({
-      cwd: normalizedCwd,
-      workspaceGitService: options.workspaceGitService,
-    });
-    const workspaceId = deriveWorkspaceId(normalizedCwd, placement.checkout);
+  const placements = await Promise.all(
+    activeRecords.map(async (record) => {
+      const normalizedCwd = normalizeWorkspaceId(record.cwd);
+      const placement = await buildProjectPlacementForCwd({
+        cwd: normalizedCwd,
+        workspaceGitService: options.workspaceGitService,
+      });
+      const workspaceId = deriveWorkspaceId(normalizedCwd, placement.checkout);
+      return { record, placement, workspaceId };
+    }),
+  );
+  for (const { record, placement, workspaceId } of placements) {
     const existing = recordsByWorkspaceId.get(workspaceId) ?? { placement, records: [] };
     existing.records.push(record);
     recordsByWorkspaceId.set(workspaceId, existing);

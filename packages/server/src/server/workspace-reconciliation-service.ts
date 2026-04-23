@@ -150,13 +150,18 @@ export class WorkspaceReconciliationService {
     }
 
     // 3. Reconcile git metadata for active projects whose directories still exist
-    for (const project of activeProjects) {
-      if (project.archivedAt) continue;
+    const projectsToReconcile = activeProjects.filter((project) => {
+      if (project.archivedAt) return false;
       const siblings = workspacesByProject.get(project.projectId) ?? [];
-      if (siblings.length === 0) continue;
-      if (!existsSync(project.rootPath)) continue;
-      await this.reconcileProject(project, siblings, changes);
-    }
+      if (siblings.length === 0) return false;
+      if (!existsSync(project.rootPath)) return false;
+      return true;
+    });
+    await Promise.all(
+      projectsToReconcile.map((project) =>
+        this.reconcileProject(project, workspacesByProject.get(project.projectId) ?? [], changes),
+      ),
+    );
 
     if (changes.length > 0 && this.onChanges) {
       this.onChanges(changes);
@@ -208,27 +213,28 @@ export class WorkspaceReconciliationService {
       });
     }
 
-    for (const workspace of siblings) {
-      if (!existsSync(workspace.cwd)) continue;
+    const existingSiblings = siblings.filter((workspace) => existsSync(workspace.cwd));
+    await Promise.all(
+      existingSiblings.map(async (workspace) => {
+        const wsDirName = workspace.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace.cwd;
+        const wsGit = await this.readWorkspaceGitMetadata(workspace.cwd, wsDirName);
 
-      const wsDirName = workspace.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace.cwd;
-      const wsGit = await this.readWorkspaceGitMetadata(workspace.cwd, wsDirName);
-
-      if (wsGit.projectKind === "git" && workspace.displayName !== wsGit.workspaceDisplayName) {
-        const timestamp = new Date().toISOString();
-        await this.workspaceRegistry.upsert({
-          ...workspace,
-          displayName: wsGit.workspaceDisplayName,
-          updatedAt: timestamp,
-        });
-        changes.push({
-          kind: "workspace_updated",
-          workspaceId: workspace.workspaceId,
-          directory: workspace.cwd,
-          fields: { displayName: wsGit.workspaceDisplayName },
-        });
-      }
-    }
+        if (wsGit.projectKind === "git" && workspace.displayName !== wsGit.workspaceDisplayName) {
+          const timestamp = new Date().toISOString();
+          await this.workspaceRegistry.upsert({
+            ...workspace,
+            displayName: wsGit.workspaceDisplayName,
+            updatedAt: timestamp,
+          });
+          changes.push({
+            kind: "workspace_updated",
+            workspaceId: workspace.workspaceId,
+            directory: workspace.cwd,
+            fields: { displayName: wsGit.workspaceDisplayName },
+          });
+        }
+      }),
+    );
   }
 
   private async readWorkspaceGitMetadata(cwd: string, directoryName: string) {

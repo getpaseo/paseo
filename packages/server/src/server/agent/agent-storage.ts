@@ -163,16 +163,21 @@ export class AgentStorage {
     this.beginDelete(agentId);
     await (this.pendingWrites.get(agentId) ?? Promise.resolve());
     const paths = Array.from(this.pathsById.get(agentId) ?? []);
-    for (const filePath of paths) {
-      try {
-        await fs.unlink(filePath);
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code && code !== "ENOENT") {
-          this.logger.warn({ err: error, agentId, filePath }, "Failed to remove agent record file");
+    await Promise.all(
+      paths.map(async (filePath) => {
+        try {
+          await fs.unlink(filePath);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code && code !== "ENOENT") {
+            this.logger.warn(
+              { err: error, agentId, filePath },
+              "Failed to remove agent record file",
+            );
+          }
         }
-      }
-    }
+      }),
+    );
 
     this.cache.delete(agentId);
     this.pathById.delete(agentId);
