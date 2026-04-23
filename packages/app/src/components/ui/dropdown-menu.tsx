@@ -34,6 +34,8 @@ import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 // Action status for menu items with loading/success feedback
 export type ActionStatus = "idle" | "pending" | "success";
 
+const DROPDOWN_SCROLL_CONTENT_STYLE = { flexGrow: 1 } as const;
+
 type Placement = "top" | "bottom" | "left" | "right";
 type Alignment = "start" | "center" | "end";
 
@@ -432,6 +434,20 @@ export function DropdownMenuContent({
         ...(typeof maxWidth === "number" ? { maxWidth } : null),
       };
 
+  const contentStyle = useMemo(
+    () => [
+      styles.content,
+      resolvedWidthStyle,
+      {
+        position: "absolute" as const,
+        top: position?.y ?? -9999,
+        left: position?.x ?? -9999,
+        transformOrigin: getTransformOrigin(actualPlacement, align),
+      },
+    ],
+    [resolvedWidthStyle, position?.x, position?.y, actualPlacement, align],
+  );
+
   return (
     <Modal
       visible={modalVisible}
@@ -461,22 +477,13 @@ export function DropdownMenuContent({
             collapsable={false}
             testID={testID}
             onLayout={handleContentLayout}
-            style={[
-              styles.content,
-              resolvedWidthStyle,
-              {
-                position: "absolute",
-                top: position?.y ?? -9999,
-                left: position?.x ?? -9999,
-                transformOrigin: getTransformOrigin(actualPlacement, align),
-              },
-            ]}
+            style={contentStyle}
           >
             <ScrollView
               bounces={false}
               showsVerticalScrollIndicator
               style={webScrollbarStyle}
-              contentContainerStyle={{ flexGrow: 1 }}
+              contentContainerStyle={DROPDOWN_SCROLL_CONTENT_STYLE}
             >
               {children}
             </ScrollView>
@@ -492,8 +499,9 @@ export function DropdownMenuLabel({
   style,
   testID,
 }: PropsWithChildren<{ style?: ViewStyle | ViewStyle[]; testID?: string }>): ReactElement {
+  const labelContainerStyle = useMemo(() => [styles.labelContainer, style], [style]);
   return (
-    <View style={[styles.labelContainer, style]} testID={testID}>
+    <View style={labelContainerStyle} testID={testID}>
       <Text style={styles.labelText}>{children}</Text>
     </View>
   );
@@ -506,7 +514,8 @@ export function DropdownMenuSeparator({
   style?: ViewStyle;
   testID?: string;
 }): ReactElement {
-  return <View style={[styles.separator, style]} testID={testID} />;
+  const separatorStyle = useMemo(() => [styles.separator, style], [style]);
+  return <View style={separatorStyle} testID={testID} />;
 }
 
 export function DropdownMenuHint({
@@ -618,6 +627,25 @@ export function DropdownMenuItem({
     [selected, selectedVariant, isDisabled, muted],
   );
 
+  const itemTextStyle = useMemo(
+    () => [
+      styles.itemText,
+      destructive && !isSuccess ? styles.itemTextDestructive : null,
+      isSuccess ? styles.itemTextSuccess : null,
+      selected && selectedVariant === "accent" ? styles.itemTextSelectedAccent : null,
+      muted && !isDisabled ? styles.itemTextMuted : null,
+    ],
+    [destructive, isSuccess, selected, selectedVariant, muted, isDisabled],
+  );
+
+  const itemDescriptionStyle = useMemo(
+    () => [
+      styles.itemDescription,
+      selected && selectedVariant === "accent" ? styles.itemDescriptionSelectedAccent : null,
+    ],
+    [selected, selectedVariant],
+  );
+
   const content = (
     <Pressable
       testID={testID}
@@ -633,28 +661,11 @@ export function DropdownMenuItem({
       ) : null}
       {leadingContent ? <View style={styles.leadingSlot}>{leadingContent}</View> : null}
       <View style={styles.itemContent}>
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.itemText,
-            destructive && !isSuccess ? styles.itemTextDestructive : null,
-            isSuccess ? styles.itemTextSuccess : null,
-            selected && selectedVariant === "accent" ? styles.itemTextSelectedAccent : null,
-            muted && !isDisabled ? styles.itemTextMuted : null,
-          ]}
-        >
+        <Text numberOfLines={1} style={itemTextStyle}>
           {label}
         </Text>
         {description && !isPending && !isSuccess ? (
-          <Text
-            numberOfLines={2}
-            style={[
-              styles.itemDescription,
-              selected && selectedVariant === "accent"
-                ? styles.itemDescriptionSelectedAccent
-                : null,
-            ]}
-          >
+          <Text numberOfLines={2} style={itemDescriptionStyle}>
             {description}
           </Text>
         ) : null}
