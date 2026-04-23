@@ -126,18 +126,18 @@ function ThemeIcon({
 }
 
 function ThemeSwatch({ color, size }: { color: string; size: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: color,
-        borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.15)",
-      }}
-    />
+  const swatchStyle = useMemo(
+    () => ({
+      width: size,
+      height: size,
+      borderRadius: size / 2,
+      backgroundColor: color,
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.15)",
+    }),
+    [color, size],
   );
+  return <View style={swatchStyle} />;
 }
 
 function themeTriggerStyle({ pressed }: PressableStateCallbackType) {
@@ -165,6 +165,18 @@ const THEME_LABELS: Record<AppSettings["theme"], string> = {
   ghostty: "Ghostty",
   auto: "System",
 };
+
+const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
+
+const SEND_BEHAVIOR_OPTIONS = [
+  { value: "interrupt" as const, label: "Interrupt" },
+  { value: "queue" as const, label: "Queue" },
+];
+
+const RELEASE_CHANNEL_OPTIONS = [
+  { value: "stable" as const, label: "Stable" },
+  { value: "beta" as const, label: "Beta" },
+];
 
 // ---------------------------------------------------------------------------
 // Section components
@@ -252,7 +264,7 @@ function GeneralSection({
             </DropdownMenuContent>
           </DropdownMenu>
         </View>
-        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={ROW_WITH_BORDER_STYLE}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>Default send</Text>
             <Text style={settingsStyles.rowHint}>
@@ -263,10 +275,7 @@ function GeneralSection({
             size="sm"
             value={settings.sendBehavior}
             onValueChange={handleSendBehaviorChange}
-            options={[
-              { value: "interrupt", label: "Interrupt" },
-              { value: "queue", label: "Queue" },
-            ]}
+            options={SEND_BEHAVIOR_OPTIONS}
           />
         </View>
       </View>
@@ -401,7 +410,7 @@ function DesktopAppUpdateRow() {
 
   return (
     <>
-      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={ROW_WITH_BORDER_STYLE}>
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>Release channel</Text>
           <Text style={settingsStyles.rowHint}>
@@ -412,13 +421,10 @@ function DesktopAppUpdateRow() {
           size="sm"
           value={settings.releaseChannel}
           onValueChange={handleReleaseChannelChange}
-          options={[
-            { value: "stable", label: "Stable" },
-            { value: "beta", label: "Beta" },
-          ]}
+          options={RELEASE_CHANNEL_OPTIONS}
         />
       </View>
-      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={ROW_WITH_BORDER_STYLE}>
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>App updates</Text>
           <Text style={settingsStyles.rowHint}>{statusText}</Text>
@@ -503,10 +509,15 @@ function SidebarSectionButton({
   const handlePress = useCallback(() => {
     onSelect(itemId);
   }, [onSelect, itemId]);
+  const accessibilityState = useMemo(() => ({ selected: isSelected }), [isSelected]);
+  const labelStyle = useMemo(
+    () => [sidebarStyles.label, isSelected && { color: theme.colors.foreground }],
+    [isSelected, theme.colors.foreground],
+  );
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ selected: isSelected }}
+      accessibilityState={accessibilityState}
       onPress={handlePress}
       style={isSelected ? selectedSidebarItemStyle : sidebarItemStyle}
     >
@@ -514,10 +525,7 @@ function SidebarSectionButton({
         size={theme.iconSize.md}
         color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
       />
-      <Text
-        style={[sidebarStyles.label, isSelected && { color: theme.colors.foreground }]}
-        numberOfLines={1}
-      >
+      <Text style={labelStyle} numberOfLines={1}>
         {label}
       </Text>
     </Pressable>
@@ -537,10 +545,15 @@ function SidebarHostItem({ serverId, label, isSelected, isLocal, onSelect }: Sid
   const handlePress = useCallback(() => {
     onSelect(serverId);
   }, [onSelect, serverId]);
+  const accessibilityState = useMemo(() => ({ selected: isSelected }), [isSelected]);
+  const labelStyle = useMemo(
+    () => [sidebarStyles.label, isSelected && { color: theme.colors.foreground }],
+    [isSelected, theme.colors.foreground],
+  );
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ selected: isSelected }}
+      accessibilityState={accessibilityState}
       onPress={handlePress}
       testID={`settings-host-entry-${serverId}`}
       style={isSelected ? selectedSidebarItemStyle : sidebarItemStyle}
@@ -549,10 +562,7 @@ function SidebarHostItem({ serverId, label, isSelected, isLocal, onSelect }: Sid
         size={theme.iconSize.md}
         color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
       />
-      <Text
-        style={[sidebarStyles.label, isSelected && { color: theme.colors.foreground }]}
-        numberOfLines={1}
-      >
+      <Text style={labelStyle} numberOfLines={1}>
         {label}
       </Text>
       {isLocal ? (
@@ -604,13 +614,14 @@ function SettingsSidebar({
   const containerStyle = isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer;
   const selectedSectionId = view.kind === "section" ? view.section : null;
   const selectedServerId = view.kind === "host" ? view.serverId : null;
+  const paddingTopStyle = useMemo(() => ({ height: padding.top }), [padding.top]);
 
   return (
     <View style={containerStyle} testID="settings-sidebar">
       {isDesktop ? (
         <>
           <TitlebarDragRegion />
-          {padding.top > 0 ? <View style={{ height: padding.top }} /> : null}
+          {padding.top > 0 ? <View style={paddingTopStyle} /> : null}
         </>
       ) : null}
       {isDesktop ? (
@@ -685,6 +696,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const appVersionText = formatVersionWithPrefix(appVersion);
   const isCompactLayout = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
+  const insetBottomStyle = useMemo(() => ({ paddingBottom: insets.bottom }), [insets.bottom]);
   const hosts = useHosts();
   const hostServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const anyOnlineServerId = useAnyOnlineHostServerId(hostServerIds);
@@ -935,10 +947,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     return (
       <View style={styles.container}>
         <BackHeader title="Settings" onBack={handleBackToWorkspace} />
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={{ paddingBottom: insets.bottom }}
-        >
+        <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <SettingsSidebar
             view={view}
             onSelectSection={handleSelectSection}
@@ -962,10 +971,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           titleAccessory={detailHeader?.titleAccessory}
           onBack={handleBackToRoot}
         />
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={{ paddingBottom: insets.bottom }}
-        >
+        <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <View style={styles.content}>{content}</View>
         </ScrollView>
         {addHostModals}
@@ -1009,10 +1015,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             }
             leftStyle={desktopStyles.detailLeft}
           />
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={{ paddingBottom: insets.bottom }}
-          >
+          <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
             <View style={styles.content}>{content}</View>
           </ScrollView>
         </View>

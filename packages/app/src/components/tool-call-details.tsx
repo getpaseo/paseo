@@ -55,20 +55,69 @@ export function ToolCallDetailsContent({
       detail?.type === "sub_agent");
   const codeBlockStyle = isFullBleed ? styles.fullBleedBlock : styles.diffContainer;
 
+  const sectionFillStyle = useMemo(
+    () => [styles.section, shouldFill && styles.fillHeight],
+    [shouldFill],
+  );
+  const codeBlockFillStyle = useMemo(
+    () => [codeBlockStyle, shouldFill && styles.fillHeight],
+    [codeBlockStyle, shouldFill],
+  );
+  const codeVerticalScrollStyle = useMemo(
+    () => [
+      styles.codeVerticalScroll,
+      resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+      shouldFill && styles.fillHeight,
+      webScrollbarStyle,
+    ],
+    [resolvedMaxHeight, shouldFill, webScrollbarStyle],
+  );
+  const scrollAreaFillStyle = useMemo(
+    () => [
+      styles.scrollArea,
+      resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+      shouldFill && styles.fillHeight,
+      webScrollbarStyle,
+    ],
+    [resolvedMaxHeight, shouldFill, webScrollbarStyle],
+  );
+  const scrollAreaStyle = useMemo(
+    () => [
+      styles.scrollArea,
+      resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+      webScrollbarStyle,
+    ],
+    [resolvedMaxHeight, webScrollbarStyle],
+  );
+  const jsonScrollCombined = useMemo(
+    () => [styles.jsonScroll, webScrollbarStyle],
+    [webScrollbarStyle],
+  );
+  const jsonScrollErrorCombined = useMemo(
+    () => [styles.jsonScroll, styles.jsonScrollError, webScrollbarStyle],
+    [webScrollbarStyle],
+  );
+  const fullBleedContainerStyle = useMemo(
+    () => [
+      isFullBleed ? styles.fullBleedContainer : styles.paddedContainer,
+      shouldFill && styles.fillHeight,
+    ],
+    [isFullBleed, shouldFill],
+  );
+  const loadingContainerStyle = useMemo(
+    () => [styles.loadingContainer, fillAvailableHeight && styles.fillHeight],
+    [fillAvailableHeight],
+  );
+
   if (detail?.type === "shell") {
     const command = detail.command.replace(/\n+$/, "");
     const commandOutput = (detail.output ?? "").replace(/^\n+/, "");
     const hasOutput = commandOutput.length > 0;
     sections.push(
-      <View key="shell" style={[styles.section, shouldFill && styles.fillHeight]}>
-        <View style={[codeBlockStyle, shouldFill && styles.fillHeight]}>
+      <View key="shell" style={sectionFillStyle}>
+        <View style={codeBlockFillStyle}>
           <ScrollView
-            style={[
-              styles.codeVerticalScroll,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
+            style={codeVerticalScrollStyle}
             contentContainerStyle={styles.codeVerticalContent}
             nestedScrollEnabled
             showsVerticalScrollIndicator
@@ -96,15 +145,10 @@ export function ToolCallDetailsContent({
     const setupLog = detail.log.replace(/^\n+/, "");
     const hasLog = setupLog.length > 0;
     sections.push(
-      <View key="worktree-setup" style={[styles.section, shouldFill && styles.fillHeight]}>
-        <View style={[codeBlockStyle, shouldFill && styles.fillHeight]}>
+      <View key="worktree-setup" style={sectionFillStyle}>
+        <View style={codeBlockFillStyle}>
           <ScrollView
-            style={[
-              styles.codeVerticalScroll,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
+            style={codeVerticalScrollStyle}
             contentContainerStyle={styles.codeVerticalContent}
             nestedScrollEnabled
             showsVerticalScrollIndicator
@@ -136,15 +180,10 @@ export function ToolCallDetailsContent({
         ? `${detail.subAgentType}: ${detail.description}`
         : (detail.subAgentType ?? detail.description ?? "Sub-agent activity");
     sections.push(
-      <View key="sub-agent" style={[styles.section, shouldFill && styles.fillHeight]}>
-        <View style={[codeBlockStyle, shouldFill && styles.fillHeight]}>
+      <View key="sub-agent" style={sectionFillStyle}>
+        <View style={codeBlockFillStyle}>
           <ScrollView
-            style={[
-              styles.codeVerticalScroll,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
+            style={codeVerticalScrollStyle}
             contentContainerStyle={styles.codeVerticalContent}
             nestedScrollEnabled
             showsVerticalScrollIndicator
@@ -168,9 +207,9 @@ export function ToolCallDetailsContent({
     );
   } else if (detail?.type === "edit") {
     sections.push(
-      <View key="edit" style={[styles.section, shouldFill && styles.fillHeight]}>
+      <View key="edit" style={sectionFillStyle}>
         {diffLines ? (
-          <View style={[codeBlockStyle, shouldFill && styles.fillHeight]}>
+          <View style={codeBlockFillStyle}>
             <DiffViewer
               diffLines={diffLines}
               maxHeight={resolvedMaxHeight}
@@ -182,15 +221,10 @@ export function ToolCallDetailsContent({
     );
   } else if (detail?.type === "write") {
     sections.push(
-      <View key="write" style={[styles.section, shouldFill && styles.fillHeight]}>
+      <View key="write" style={sectionFillStyle}>
         {detail.content ? (
           <ScrollView
-            style={[
-              styles.scrollArea,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
+            style={scrollAreaFillStyle}
             contentContainerStyle={styles.scrollContent}
             nestedScrollEnabled
             showsVerticalScrollIndicator={true}
@@ -212,14 +246,9 @@ export function ToolCallDetailsContent({
   } else if (detail?.type === "read") {
     if (detail.content) {
       sections.push(
-        <View key="read" style={[styles.section, shouldFill && styles.fillHeight]}>
+        <View key="read" style={sectionFillStyle}>
           <ScrollView
-            style={[
-              styles.scrollArea,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
+            style={scrollAreaFillStyle}
             contentContainerStyle={styles.scrollContent}
             nestedScrollEnabled
             showsVerticalScrollIndicator={true}
@@ -253,11 +282,7 @@ export function ToolCallDetailsContent({
       searchSections.push(
         <View key="search-content" style={styles.section}>
           <ScrollView
-            style={[
-              styles.scrollArea,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              webScrollbarStyle,
-            ]}
+            style={scrollAreaStyle}
             contentContainerStyle={styles.scrollContent}
             nestedScrollEnabled
             showsVerticalScrollIndicator
@@ -306,14 +331,9 @@ export function ToolCallDetailsContent({
     sections.push(...searchSections);
   } else if (detail?.type === "fetch") {
     sections.push(
-      <View key="fetch" style={[styles.section, shouldFill && styles.fillHeight]}>
+      <View key="fetch" style={sectionFillStyle}>
         <ScrollView
-          style={[
-            styles.scrollArea,
-            resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-            shouldFill && styles.fillHeight,
-            webScrollbarStyle,
-          ]}
+          style={scrollAreaFillStyle}
           contentContainerStyle={styles.scrollContent}
           nestedScrollEnabled
           showsVerticalScrollIndicator
@@ -388,7 +408,7 @@ export function ToolCallDetailsContent({
             <ScrollView
               horizontal
               nestedScrollEnabled
-              style={[styles.jsonScroll, webScrollbarStyle]}
+              style={jsonScrollCombined}
               contentContainerStyle={styles.jsonContent}
               showsHorizontalScrollIndicator={true}
             >
@@ -406,15 +426,15 @@ export function ToolCallDetailsContent({
   if (errorText) {
     sections.push(
       <View key="error" style={styles.section}>
-        <Text style={[styles.sectionTitle, styles.errorText]}>Error</Text>
+        <Text style={SECTION_TITLE_ERROR_STYLE}>Error</Text>
         <ScrollView
           horizontal
           nestedScrollEnabled
-          style={[styles.jsonScroll, styles.jsonScrollError, webScrollbarStyle]}
+          style={jsonScrollErrorCombined}
           contentContainerStyle={styles.jsonContent}
           showsHorizontalScrollIndicator={true}
         >
-          <Text selectable style={[styles.scrollText, styles.errorText]}>
+          <Text selectable style={SCROLL_TEXT_ERROR_STYLE}>
             {errorText}
           </Text>
         </ScrollView>
@@ -425,7 +445,7 @@ export function ToolCallDetailsContent({
   if (sections.length === 0) {
     if (showLoadingSkeleton) {
       return (
-        <View style={[styles.loadingContainer, fillAvailableHeight && styles.fillHeight]}>
+        <View style={loadingContainerStyle}>
           <View style={styles.loadingLineWide} />
           <View style={styles.loadingLineMedium} />
           <View style={styles.loadingLineShort} />
@@ -435,16 +455,7 @@ export function ToolCallDetailsContent({
     return <Text style={styles.emptyStateText}>No additional details available</Text>;
   }
 
-  return (
-    <View
-      style={[
-        isFullBleed ? styles.fullBleedContainer : styles.paddedContainer,
-        shouldFill && styles.fillHeight,
-      ]}
-    >
-      {sections}
-    </View>
-  );
+  return <View style={fullBleedContainerStyle}>{sections}</View>;
 }
 
 // ---- Styles ----
@@ -598,3 +609,6 @@ const styles = StyleSheet.create((theme) => {
     },
   };
 });
+
+const SECTION_TITLE_ERROR_STYLE = [styles.sectionTitle, styles.errorText];
+const SCROLL_TEXT_ERROR_STYLE = [styles.scrollText, styles.errorText];
