@@ -182,8 +182,13 @@ const MountedTabSlot = memo(function MountedTabSlot({
     [buildPaneContentModel, paneId, tabDescriptor],
   );
 
+  const wrapperStyle = useMemo(
+    () => ({ display: (isVisible ? "flex" : "none") as "flex" | "none", flex: 1 }),
+    [isVisible],
+  );
+
   return (
-    <View style={{ display: isVisible ? "flex" : "none", flex: 1 }}>
+    <View style={wrapperStyle}>
       <WorkspacePaneContent
         content={content}
         isWorkspaceFocused={isWorkspaceFocused}
@@ -568,15 +573,21 @@ function DragOverlayTabChip({
   normalizedWorkspaceId: string;
 }) {
   const tab = uiTabs.find((t) => t.tabId === tabId);
-  if (!tab) {
+  const descriptor = useMemo<WorkspaceTabDescriptor | null>(
+    () =>
+      tab
+        ? {
+            key: tab.tabId,
+            tabId: tab.tabId,
+            kind: tab.target.kind,
+            target: tab.target,
+          }
+        : null,
+    [tab],
+  );
+  if (!descriptor) {
     return null;
   }
-  const descriptor: WorkspaceTabDescriptor = {
-    key: tab.tabId,
-    tabId: tab.tabId,
-    kind: tab.target.kind,
-    target: tab.target,
-  };
   return (
     <DragOverlayTabChipInner
       tab={descriptor}
@@ -597,6 +608,21 @@ function DragOverlayTabChipInner({
 }) {
   const { theme } = useUnistyles();
 
+  const chipStyle = useMemo(
+    () => [
+      styles.dragOverlayChip,
+      {
+        backgroundColor: theme.colors.surface1,
+        borderColor: theme.colors.borderAccent,
+      },
+    ],
+    [theme.colors.surface1, theme.colors.borderAccent],
+  );
+  const chipLabelStyle = useMemo(
+    () => [styles.dragOverlayLabel, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+
   return (
     <WorkspaceTabPresentationResolver
       tab={tab}
@@ -607,20 +633,9 @@ function DragOverlayTabChipInner({
         const label = presentation.titleState === "loading" ? "Loading..." : presentation.label;
 
         return (
-          <View
-            style={[
-              styles.dragOverlayChip,
-              {
-                backgroundColor: theme.colors.surface1,
-                borderColor: theme.colors.borderAccent,
-              },
-            ]}
-          >
+          <View style={chipStyle}>
             <WorkspaceTabIcon presentation={presentation} active size={14} />
-            <Text
-              numberOfLines={1}
-              style={[styles.dragOverlayLabel, { color: theme.colors.foreground }]}
-            >
+            <Text numberOfLines={1} style={chipLabelStyle}>
               {label}
             </Text>
           </View>
@@ -628,6 +643,11 @@ function DragOverlayTabChipInner({
       }}
     </WorkspaceTabPresentationResolver>
   );
+}
+
+function SplitGroupChild({ flex, children }: { flex: number; children: ReactNode }) {
+  const childStyle = useMemo(() => [styles.groupChild, { flex }], [flex]);
+  return <View style={childStyle}>{children}</View>;
 }
 
 function SplitNodeView({
@@ -707,16 +727,19 @@ function SplitNodeView({
       (state) => state.splitSizesByWorkspace[workspaceKey]?.[node.group.id],
     ) ?? node.group.sizes;
 
+  const groupStyle = useMemo(
+    () => [
+      styles.group,
+      node.group.direction === "horizontal" ? styles.groupHorizontal : styles.groupVertical,
+    ],
+    [node.group.direction],
+  );
+
   return (
-    <View
-      style={[
-        styles.group,
-        node.group.direction === "horizontal" ? styles.groupHorizontal : styles.groupVertical,
-      ]}
-    >
+    <View style={groupStyle}>
       {node.group.children.map((child, index) => (
         <Fragment key={getNodeKey(child)}>
-          <View style={[styles.groupChild, { flex: groupSizes[index] ?? 1 }]}>
+          <SplitGroupChild flex={groupSizes[index] ?? 1}>
             <SplitNodeView
               node={child}
               workspaceKey={workspaceKey}
@@ -752,7 +775,7 @@ function SplitNodeView({
               dropPreview={dropPreview}
               tabDropPreview={tabDropPreview}
             />
-          </View>
+          </SplitGroupChild>
           {index < node.group.children.length - 1 ? (
             <ResizeHandle
               direction={node.group.direction}
@@ -903,10 +926,14 @@ function SplitPaneView({
     () => onSplitPaneEmpty({ targetPaneId: paneId, position: "bottom" }),
     [onSplitPaneEmpty, paneId],
   );
+  const paneTabsStyle = useMemo(
+    () => [styles.paneTabs, { paddingLeft: padding.left, paddingRight: padding.right }],
+    [padding.left, padding.right],
+  );
 
   return (
     <View ref={paneRef} collapsable={false} style={styles.pane}>
-      <View style={[styles.paneTabs, { paddingLeft: padding.left, paddingRight: padding.right }]}>
+      <View style={paneTabsStyle}>
         <TitlebarDragRegion />
         <WorkspaceDesktopTabsRow
           paneId={pane.id}
