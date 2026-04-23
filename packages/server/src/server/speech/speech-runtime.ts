@@ -100,20 +100,19 @@ async function findMissingRequiredLocalModels(params: {
   const specsById = new Map(listLocalSpeechModels().map((model) => [model.id, model]));
   const missing = new Set<LocalSpeechModelId>();
 
-  for (const modelId of requiredModelIds) {
-    const spec = specsById.get(modelId);
-    if (!spec) {
-      missing.add(modelId);
-      continue;
-    }
-    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
-    for (const relPath of spec.requiredFiles) {
-      const filePath = join(modelDir, relPath);
-      if (!(await hasRequiredLocalModelFile(filePath))) {
-        missing.add(modelId);
-        break;
-      }
-    }
+  const checks = await Promise.all(
+    requiredModelIds.map(async (modelId) => {
+      const spec = specsById.get(modelId);
+      if (!spec) return { modelId, missing: true };
+      const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
+      const filePresence = await Promise.all(
+        spec.requiredFiles.map((relPath) => hasRequiredLocalModelFile(join(modelDir, relPath))),
+      );
+      return { modelId, missing: !filePresence.every((present) => present) };
+    }),
+  );
+  for (const check of checks) {
+    if (check.missing) missing.add(check.modelId);
   }
 
   return Array.from(missing);

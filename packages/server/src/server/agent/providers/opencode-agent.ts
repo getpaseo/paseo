@@ -2530,10 +2530,11 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async configureMcpServers(mcpServers: Record<string, McpServerConfig>): Promise<void> {
-    for (const [name, serverConfig] of Object.entries(mcpServers)) {
-      const mappedConfig = toOpenCodeMcpConfig(serverConfig);
-      await this.registerMcpServer(name, mappedConfig);
-    }
+    await Promise.all(
+      Object.entries(mcpServers).map(([name, serverConfig]) =>
+        this.registerMcpServer(name, toOpenCodeMcpConfig(serverConfig)),
+      ),
+    );
   }
 
   private async registerMcpServer(name: string, config: OpenCodeMcpConfig): Promise<void> {
