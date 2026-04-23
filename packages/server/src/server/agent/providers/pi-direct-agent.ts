@@ -1128,24 +1128,26 @@ export class PiDirectAgentSession implements AgentSession {
       if (message.role === "assistant") {
         for (const content of message.content) {
           if (content.type === "text") {
-            if (content.text) {
-              yield {
-                type: "timeline",
-                provider: PI_PROVIDER,
-                item: { type: "assistant_message", text: content.text },
-              };
+            if (!content.text) {
+              continue;
             }
+            yield {
+              type: "timeline",
+              provider: PI_PROVIDER,
+              item: { type: "assistant_message", text: content.text },
+            };
             continue;
           }
 
           if (content.type === "thinking") {
-            if (content.thinking) {
-              yield {
-                type: "timeline",
-                provider: PI_PROVIDER,
-                item: { type: "reasoning", text: content.thinking },
-              };
+            if (!content.thinking) {
+              continue;
             }
+            yield {
+              type: "timeline",
+              provider: PI_PROVIDER,
+              item: { type: "reasoning", text: content.thinking },
+            };
             continue;
           }
 
