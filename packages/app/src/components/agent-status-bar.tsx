@@ -170,22 +170,6 @@ function alwaysTrue() {
   return true;
 }
 
-function modeBadgeStyle({ pressed, hovered }: PressableStateCallbackType) {
-  return [styles.modeBadge, hovered && styles.modeBadgeHovered, pressed && styles.modeBadgePressed];
-}
-
-function modeIconBadgeStyle({ pressed, hovered }: PressableStateCallbackType) {
-  return [
-    styles.modeIconBadge,
-    hovered && styles.modeBadgeHovered,
-    pressed && styles.modeBadgePressed,
-  ];
-}
-
-function sheetSelectStyle({ pressed }: PressableStateCallbackType) {
-  return [styles.sheetSelect, pressed && styles.sheetSelectPressed];
-}
-
 function getModeIconColor(
   colorTier: AgentModeColorTier | undefined,
   palette: {
@@ -1170,6 +1154,124 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     }));
   }, [modelSelection.thinkingOptions]);
 
+  const agentProvider = agent?.provider;
+  const activeModelId = modelSelection.activeModelId;
+
+  const handleSelectMode = useCallback(
+    (modeId: string) => {
+      if (!client) {
+        return;
+      }
+      void client.setAgentMode(agentId, modeId).catch((error) => {
+        console.warn("[AgentStatusBar] setAgentMode failed", error);
+        toast.error(toErrorMessage(error));
+      });
+    },
+    [agentId, client, toast],
+  );
+
+  const handleSelectModel = useCallback(
+    (modelId: string) => {
+      if (!client || !agentProvider) {
+        return;
+      }
+      void updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider: agentProvider,
+          updates: {
+            model: modelId,
+          },
+        }),
+      ).catch((error) => {
+        console.warn("[AgentStatusBar] persist model preference failed", error);
+      });
+      void client.setAgentModel(agentId, modelId).catch((error) => {
+        console.warn("[AgentStatusBar] setAgentModel failed", error);
+        toast.error(toErrorMessage(error));
+      });
+    },
+    [agentId, agentProvider, client, toast, updatePreferences],
+  );
+
+  const handleToggleFavoriteModel = useCallback(
+    (provider: string, modelId: string) => {
+      void updatePreferences((current) =>
+        toggleFavoriteModel({ preferences: current, provider, modelId }),
+      ).catch((error) => {
+        console.warn("[AgentStatusBar] toggle favorite model failed", error);
+      });
+    },
+    [updatePreferences],
+  );
+
+  const handleSelectThinkingOption = useCallback(
+    (thinkingOptionId: string) => {
+      if (!client || !agentProvider) {
+        return;
+      }
+      if (activeModelId) {
+        void updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: agentProvider,
+            updates: {
+              model: activeModelId,
+              thinkingByModel: {
+                [activeModelId]: thinkingOptionId,
+              },
+            },
+          }),
+        ).catch((error) => {
+          console.warn("[AgentStatusBar] persist thinking preference failed", error);
+        });
+      }
+      void client.setAgentThinkingOption(agentId, thinkingOptionId).catch((error) => {
+        console.warn("[AgentStatusBar] setAgentThinkingOption failed", error);
+        toast.error(toErrorMessage(error));
+      });
+    },
+    [activeModelId, agentId, agentProvider, client, toast, updatePreferences],
+  );
+
+  const handleSetFeature = useCallback(
+    (featureId: string, value: unknown) => {
+      if (!client || !agentProvider) {
+        return;
+      }
+      void updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider: agentProvider,
+          updates: {
+            featureValues: {
+              [featureId]: value,
+            },
+          },
+        }),
+      ).catch((error) => {
+        console.warn("[AgentStatusBar] persist feature preference failed", error);
+      });
+      void client.setAgentFeature(agentId, featureId, value).catch((error) => {
+        console.warn("[AgentStatusBar] setAgentFeature failed", error);
+        toast.error(toErrorMessage(error));
+      });
+    },
+    [agentId, agentProvider, client, toast, updatePreferences],
+  );
+
+  const handleModelSelectorOpen = useCallback(() => {
+    refetchSnapshotIfStale(agentProvider);
+  }, [agentProvider, refetchSnapshotIfStale]);
+
+  const fallbackModeOptions = useMemo<StatusOption[]>(
+    () =>
+      modeOptions.length > 0
+        ? modeOptions
+        : [{ id: agent?.currentModeId ?? "", label: displayMode }],
+    [agent?.currentModeId, displayMode, modeOptions],
+  );
+
   if (!agent) {
     return null;
   }
@@ -1177,106 +1279,23 @@ export const AgentStatusBar = memo(function AgentStatusBar({
   return (
     <ControlledStatusBar
       provider={agent.provider}
-      modeOptions={
-        modeOptions.length > 0
-          ? modeOptions
-          : [{ id: agent.currentModeId ?? "", label: displayMode }]
-      }
+      modeOptions={fallbackModeOptions}
       selectedModeId={agent.currentModeId ?? undefined}
       providerDefinitions={agentProviderDefinitions}
       allProviderModels={agentProviderModels}
-      onSelectMode={(modeId) => {
-        if (!client) {
-          return;
-        }
-        void client.setAgentMode(agentId, modeId).catch((error) => {
-          console.warn("[AgentStatusBar] setAgentMode failed", error);
-          toast.error(toErrorMessage(error));
-        });
-      }}
+      onSelectMode={handleSelectMode}
       modelOptions={modelOptions}
       selectedModelId={modelSelection.activeModelId ?? undefined}
-      onSelectModel={(modelId) => {
-        if (!client) {
-          return;
-        }
-        void updatePreferences((current) =>
-          mergeProviderPreferences({
-            preferences: current,
-            provider: agent.provider,
-            updates: {
-              model: modelId,
-            },
-          }),
-        ).catch((error) => {
-          console.warn("[AgentStatusBar] persist model preference failed", error);
-        });
-        void client.setAgentModel(agentId, modelId).catch((error) => {
-          console.warn("[AgentStatusBar] setAgentModel failed", error);
-          toast.error(toErrorMessage(error));
-        });
-      }}
+      onSelectModel={handleSelectModel}
       favoriteKeys={favoriteKeys}
-      onToggleFavoriteModel={(provider, modelId) => {
-        void updatePreferences((current) =>
-          toggleFavoriteModel({ preferences: current, provider, modelId }),
-        ).catch((error) => {
-          console.warn("[AgentStatusBar] toggle favorite model failed", error);
-        });
-      }}
+      onToggleFavoriteModel={handleToggleFavoriteModel}
       thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
       selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
-      onSelectThinkingOption={(thinkingOptionId) => {
-        if (!client) {
-          return;
-        }
-        const activeModelId = modelSelection.activeModelId;
-        if (activeModelId) {
-          void updatePreferences((current) =>
-            mergeProviderPreferences({
-              preferences: current,
-              provider: agent.provider,
-              updates: {
-                model: activeModelId,
-                thinkingByModel: {
-                  [activeModelId]: thinkingOptionId,
-                },
-              },
-            }),
-          ).catch((error) => {
-            console.warn("[AgentStatusBar] persist thinking preference failed", error);
-          });
-        }
-        void client.setAgentThinkingOption(agentId, thinkingOptionId).catch((error) => {
-          console.warn("[AgentStatusBar] setAgentThinkingOption failed", error);
-          toast.error(toErrorMessage(error));
-        });
-      }}
+      onSelectThinkingOption={handleSelectThinkingOption}
       features={agent.features}
-      onSetFeature={(featureId, value) => {
-        if (!client) {
-          return;
-        }
-        void updatePreferences((current) =>
-          mergeProviderPreferences({
-            preferences: current,
-            provider: agent.provider,
-            updates: {
-              featureValues: {
-                [featureId]: value,
-              },
-            },
-          }),
-        ).catch((error) => {
-          console.warn("[AgentStatusBar] persist feature preference failed", error);
-        });
-        void client.setAgentFeature(agentId, featureId, value).catch((error) => {
-          console.warn("[AgentStatusBar] setAgentFeature failed", error);
-          toast.error(toErrorMessage(error));
-        });
-      }}
+      onSetFeature={handleSetFeature}
       isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
-      onModelSelectorOpen={() => refetchSnapshotIfStale(agent?.provider)}
+      onModelSelectorOpen={handleModelSelectorOpen}
       onDropdownClose={onDropdownClose}
       disabled={!client}
     />
@@ -1334,6 +1353,17 @@ export function DraftAgentStatusBar({
     selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
   const hasSelectedProvider = selectedProvider !== null;
 
+  const handleToggleFavorite = useCallback(
+    (provider: string, modelId: string) => {
+      void updatePreferences((current) =>
+        toggleFavoriteModel({ preferences: current, provider, modelId }),
+      ).catch((error) => {
+        console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
+      });
+    },
+    [updatePreferences],
+  );
+
   if (platformIsWeb) {
     return (
       <View style={styles.container}>
@@ -1344,13 +1374,7 @@ export function DraftAgentStatusBar({
           selectedModel={selectedModel}
           onSelect={onSelectProviderAndModel}
           favoriteKeys={favoriteKeys}
-          onToggleFavorite={(provider, modelId) => {
-            void updatePreferences((current) =>
-              toggleFavoriteModel({ preferences: current, provider, modelId }),
-            ).catch((error) => {
-              console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
-            });
-          }}
+          onToggleFavorite={handleToggleFavorite}
           isLoading={isAllModelsLoading}
           disabled={disabled}
           onOpen={onModelSelectorOpen}
@@ -1391,17 +1415,11 @@ export function DraftAgentStatusBar({
       onSelectMode={onSelectMode}
       modelOptions={modelOptions}
       selectedModelId={selectedModel}
-      onSelectModel={(modelId) => onSelectModel(modelId)}
+      onSelectModel={onSelectModel}
       onSelectProviderAndModel={onSelectProviderAndModel}
       isModelLoading={isAllModelsLoading}
       favoriteKeys={favoriteKeys}
-      onToggleFavoriteModel={(provider, modelId) => {
-        void updatePreferences((current) =>
-          toggleFavoriteModel({ preferences: current, provider, modelId }),
-        ).catch((error) => {
-          console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
-        });
-      }}
+      onToggleFavoriteModel={handleToggleFavorite}
       thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
       selectedThinkingOptionId={effectiveSelectedThinkingOption}
       onSelectThinkingOption={onSelectThinkingOption}
