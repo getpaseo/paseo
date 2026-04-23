@@ -70,22 +70,22 @@ Matriz feature × tier. Construída em cima de `FEATURE_COSTS.md` — tudo com c
 
 > *Chat é feature de time por natureza — não faz sentido no Free/Dev/Pro individual.*
 
-## 4. Shared sessions / Pair programming (LiveKit)
+## 4. Shared sessions / Pair programming (LiveKit self-hosted)
 
 | Feature | Free | Dev | Pro | Team | Enterprise |
 |---|---|---|---|---|---|
 | Invite flow + share links | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Access levels (read-only / full-access) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **LiveKit minutes-participant / mês** | **30 min** | **600 min (10h)** | **3.000 min (50h)** | **10.000 min / seat** | ilimitado |
-| Máx. participantes por sala | **2** | 3 | 5 | 10 | 50 |
+| **LiveKit minutes-participant / mês** | **2 h (soft cap anti-abuso)** | **20 h** | **100 h** | **ilimitado (fair-use)** | ilimitado |
+| Máx. participantes por sala | **3** | 5 | 10 | 20 | 50 |
 | Session chat dedicado | ✅ | ✅ | ✅ | ✅ | ✅ |
 | FIFO queue de mensagens | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Cursors / selection rects / drawing | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Owner controls (ejetar / revogar) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Gravação de sessão** | ❌ | ❌ | 🟡 **5 h / mês** | **20 h / seat** | ilimitado |
-| Transcrição automática | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **Gravação de sessão** (egress p/ S3) | ❌ | 🟡 **2 h / mês** | **10 h / mês** | **40 h / seat** | ilimitado |
+| Transcrição automática | ❌ | ❌ | 🟡 BYOK | ✅ | ✅ |
 
-> *Maior vetor de custo variável. Caps aqui são obrigatórios.*
+> *Self-hosted deixa o custo variável em egress (≈ $0.03–0.06 / hora-participante). Caps servem só pra segurar abuso (bot streaming 24/7) — é seguro ser muito mais generoso que LiveKit Cloud.*
 
 ## 5. Workspaces / Projects
 
@@ -284,7 +284,7 @@ Matriz feature × tier. Construída em cima de `FEATURE_COSTS.md` — tudo com c
 | **Preço / mês** | $0 | ~$7 | ~$15 | ~$25 / seat | custom |
 | **Seats** | 1 | 1 | 1 | 3–50 | 50+ |
 | **Relay bandwidth** | 5 GB | 50 GB | 200 GB | 500 GB / seat | ilimitado |
-| **LiveKit minutes** | 30 min | 10 h | 50 h | 167 h / seat | ilimitado |
+| **LiveKit minutes** (self-host) | 2 h | 20 h | 100 h | fair-use | ilimitado |
 | **Rotinas agendadas** | ❌ | 2 | 10 | 20 / seat | ilimitado |
 | **Retenção (activity/chat)** | 7 d | 30 d | ilimitada | ilimitada | ilimitada |
 | **Org features (chat/roles/admin)** | ❌ | ❌ | ❌ | ✅ | ✅ |
@@ -300,5 +300,5 @@ Matriz feature × tier. Construída em cima de `FEATURE_COSTS.md` — tudo com c
 - **Dev vs Pro** — a diferença principal é **automação server-side** (rotinas, loops pesados, scheduled remote agents). Dev é "remote access sério", Pro é "trabalho assíncrono".
 - **Team é quando o Colyseus + chat + org valem a pena cobrar.** Antes disso, tudo que é "social" fica fora.
 - **Enterprise só compensa com self-host + SSO + SOC2** — pouco volume, muito esforço. Mire nos 1–2 deals de $50k+ ARR antes de investir em certificações.
-- **LiveKit é onde você sangra se errar.** 30min free × 10k usuários ativos = 5000h ≈ $1200/mês só de A/V. Os 10 h do Dev já dão uma folga pra gente engajada; 50 h do Pro cobre a maioria dos power users.
+- **LiveKit self-hosted muda a conversa.** Com SFU próprio, o custo real é egress (~$0.03–0.06/hora-participante) + uma VPS fixa. Isso libera ser **muito generoso** no pair programming — não é preciso cap agressivo pra proteger margem, só anti-abuso. Aproveite pra fazer disso um diferencial forte vs. concorrentes que pagam LiveKit Cloud.
 - **Metering-first:** implemente medição de bandwidth/minutos/rotinas antes dos caps duros. Melhor começar com soft-cap e email "você passou do limite" do que cortar abruptamente e queimar confiança.

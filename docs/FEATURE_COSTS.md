@@ -252,11 +252,12 @@ Estimativa de custo de infraestrutura por feature. Números de referência usado
 
 ## Onde focar o metering
 
-1. **LiveKit minutes** — cap duro no free (ex: 30 min/mês), métrica principal pro Pro.
-2. **Relay bandwidth** — soft cap no free (5–10 GB), ilimitado fair-use no Pro.
+1. **Relay bandwidth** — soft cap no free (5–10 GB), generoso no Pro. **É o maior custo variável agora que LiveKit é self-host.**
+2. **LiveKit minutes** — cap moderado no free (pode ser ~2 h/mês ao invés de 30 min, dado o custo baixo). Objetivo aqui é só segurar abuso (streaming 24/7), não proteger margem.
 3. **S3 storage** — quota de anexos (ex: 500 MB no free, 10 GB no Pro).
 4. **Retenção de chat/activity** — 30 dias free, ilimitado Pro (economiza Postgres a longo prazo).
 5. **Scheduled routines server-side** (se vier existir) — cap por min de execução.
+6. **Capacidade do SFU** — ficar de olho no # de peers simultâneos; escalar VPS horizontalmente antes de estourar CPU/bandwidth.
 
 ## Onde NÃO metere
 
