@@ -300,7 +300,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.lg,
     paddingVertical: theme.spacing[1],
     outlineStyle: "none",
-  } as any,
+  } as object,
   results: {
     flexGrow: 0,
   },

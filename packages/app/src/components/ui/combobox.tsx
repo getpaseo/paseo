@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactElement, ReactNode } from "react";
+import type { ReactElement, ReactNode, Ref } from "react";
 import {
   View,
   Text,
@@ -155,7 +155,7 @@ export function SearchInput({
     <View style={styles.searchInputContainer}>
       <Search size={16} color={theme.colors.foregroundMuted} />
       <InputComponent
-        ref={inputRef as any}
+        ref={inputRef as unknown as Ref<never>}
         // @ts-expect-error - outlineStyle is web-only
         style={SEARCH_INPUT_STYLE}
         placeholder={placeholder}

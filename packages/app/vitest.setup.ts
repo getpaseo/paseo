@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { vi } from "vitest";
 
-const globalWithTestShims = globalThis as typeof globalThis & Record<string, any>;
+const globalWithTestShims = globalThis as typeof globalThis & Record<string, unknown>;
 
 globalWithTestShims.__DEV__ = false;
 

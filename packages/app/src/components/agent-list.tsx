@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
@@ -319,7 +319,7 @@ export function AgentList({
       onAgentSelect?.();
 
       if (!workspaceId) {
-        router.navigate(buildHostAgentDetailRoute(serverId, agentId) as any);
+        router.navigate(buildHostAgentDetailRoute(serverId, agentId) as Href);
         return;
       }
 

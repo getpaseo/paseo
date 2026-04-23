@@ -1,3 +1,5 @@
+import type { Theme } from "@/styles/theme";
+
 /**
  * Compute the pixel width for a line-number gutter based on the highest
  * line number that will be displayed. Minimum width accommodates 2 digits.
@@ -7,7 +9,7 @@ export function lineNumberGutterWidth(maxLineNumber: number): number {
   return digits * 8 + 12;
 }
 
-export function getCodeInsets(theme: any) {
+export function getCodeInsets(theme: Theme) {
   let padding: number;
   if (typeof theme.spacing?.[3] === "number") padding = theme.spacing[3];
   else if (typeof theme.spacing?.[4] === "number") padding = theme.spacing[4];

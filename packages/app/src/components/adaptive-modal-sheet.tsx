@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useMemo } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import type { TextInputProps } from "react-native";
@@ -333,7 +333,7 @@ export const AdaptiveTextInput = forwardRef<TextInput, TextInputProps>(
     const isMobile = useIsCompactFormFactor();
 
     if (isMobile) {
-      return <BottomSheetTextInput ref={ref as any} {...props} />;
+      return <BottomSheetTextInput ref={ref as unknown as Ref<never>} {...props} />;
     }
 
     return <TextInput ref={ref} {...props} />;

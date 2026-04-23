@@ -6,7 +6,11 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
+import {
+  ScrollView,
+  type ScrollView as ScrollViewType,
+  type GestureType,
+} from "react-native-gesture-handler";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 
@@ -31,7 +35,7 @@ export function DiffScroll({
   const scrollViewRef = useRef<ScrollViewType>(null);
 
   // Get the close gesture ref from animation context (may not be available outside sidebar)
-  let closeGestureRef: React.MutableRefObject<any> | undefined;
+  let closeGestureRef: React.MutableRefObject<GestureType | undefined> | undefined;
   try {
     const animation = useExplorerSidebarAnimation();
     closeGestureRef = animation.closeGestureRef;

@@ -196,5 +196,5 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     outlineStyle: "none",
-  } as any,
+  } as object,
 }));

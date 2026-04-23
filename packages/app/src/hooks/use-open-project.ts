@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
@@ -76,7 +76,7 @@ export function useOpenProject(serverId: string | null): (path: string) => Promi
             draftId: generateDraftId(),
           }),
         replaceRoute: (route) => {
-          router.replace(route as any);
+          router.replace(route as Href);
         },
       });
     },

@@ -51,7 +51,18 @@ function getWebNotificationConstructor(): {
     },
   ): unknown;
 } | null {
-  const NotificationConstructor = (globalThis as { Notification?: any }).Notification;
+  const NotificationConstructor = (
+    globalThis as {
+      Notification?: {
+        permission: string;
+        requestPermission?: () => Promise<string>;
+        new (
+          title: string,
+          options?: { body?: string; data?: Record<string, unknown>; icon?: string },
+        ): unknown;
+      };
+    }
+  ).Notification;
   return NotificationConstructor ?? null;
 }
 

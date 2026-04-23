@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type Ref } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -62,7 +62,7 @@ export function SplitDropZone({ paneId, active, preview }: SplitDropZoneProps) {
   }
 
   return (
-    <View ref={setNodeRef as any} style={styles.overlay} pointerEvents="none">
+    <View ref={setNodeRef as unknown as Ref<View>} style={styles.overlay} pointerEvents="none">
       {previewStyles ? (
         <>
           <View pointerEvents="none" style={previewStyles.overlay} />

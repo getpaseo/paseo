@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Ref } from "react";
 import {
   View,
   Text,
@@ -462,7 +463,7 @@ function ProviderSearchInput({
     <View style={styles.providerSearchContainer}>
       <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
       <InputComponent
-        ref={inputRef as any}
+        ref={inputRef as unknown as Ref<never>}
         // @ts-expect-error - outlineStyle is web-only
         style={inputStyle}
         placeholder="Search models..."

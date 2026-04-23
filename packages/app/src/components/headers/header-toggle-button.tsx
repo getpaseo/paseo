@@ -39,7 +39,7 @@ export function HeaderToggleButton({
   const expandedState = (props.accessibilityState as { expanded?: boolean } | undefined)?.expanded;
   const ariaExpandedProps =
     isWeb && typeof expandedState === "boolean"
-      ? ({ "aria-expanded": expandedState } as any)
+      ? ({ "aria-expanded": expandedState } as Record<string, boolean>)
       : null;
 
   const combinedStyle = useMemo(() => [headerIconSlotStyle.slot, style], [style]);

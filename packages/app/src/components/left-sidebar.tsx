@@ -728,7 +728,7 @@ function DesktopSidebar({
   );
   const desktopSidebarBorderStyle = useMemo(() => [styles.desktopSidebarBorder, { flex: 1 }], []);
   const resizeHandleStyle = useMemo(
-    () => [styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as any)],
+    () => [styles.resizeHandle, isWeb && ({ cursor: "col-resize" } as object)],
     [],
   );
 

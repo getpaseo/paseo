@@ -209,7 +209,7 @@ export function useCommandCenter() {
         workspaceDirectory: agent.cwd,
       });
       if (!workspaceId) {
-        router.navigate(buildHostAgentDetailRoute(agent.serverId, agent.id) as any);
+        router.navigate(buildHostAgentDetailRoute(agent.serverId, agent.id) as Href);
         return;
       }
       const route = prepareWorkspaceTab({

@@ -680,7 +680,7 @@ function OfferLinkListener({
       void upsertDaemonFromOfferUrl(url)
         .then((profile) => {
           if (cancelled) return;
-          const serverId = (profile as any)?.serverId;
+          const serverId = (profile as { serverId?: unknown } | null)?.serverId;
           if (typeof serverId !== "string" || !serverId) return;
           router.replace(buildHostRootRoute(serverId));
           return;
