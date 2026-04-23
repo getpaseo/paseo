@@ -75,18 +75,26 @@ afterEach(() => {
 
 const DATA: string[] = ["alpha", "beta"];
 
+function keyExtractor(item: string): string {
+  return item;
+}
+
+function renderItem({ item, isActive }: { item: string; isActive: boolean }) {
+  return (
+    <div data-active={String(isActive)} data-testid={`item-${item}`}>
+      {item}
+    </div>
+  );
+}
+
 function renderList(): void {
   act(() => {
     root?.render(
       <SortableInlineList
         data={DATA}
-        keyExtractor={(item) => item}
+        keyExtractor={keyExtractor}
         onDragEnd={vi.fn()}
-        renderItem={({ item, isActive }) => (
-          <div data-active={String(isActive)} data-testid={`item-${item}`}>
-            {item}
-          </div>
-        )}
+        renderItem={renderItem}
       />,
     );
   });

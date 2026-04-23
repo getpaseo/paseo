@@ -231,6 +231,18 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     }
   }, [daemons, handleClose, isMobile, isSaving, onSaved, upsertDirectConnection]);
 
+  const handleChangeEndpoint = useCallback((next: string) => {
+    endpointRawRef.current = next;
+  }, []);
+
+  const handleSubmitEditing = useCallback(() => {
+    void handleSave();
+  }, [handleSave]);
+
+  const handleSavePress = useCallback(() => {
+    void handleSave();
+  }, [handleSave]);
+
   return (
     <AdaptiveModalSheet
       title="Direct connection"
@@ -247,9 +259,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           testID="direct-host-input"
           nativeID="direct-host-input"
           accessibilityLabel="direct-host-input"
-          onChangeText={(next) => {
-            endpointRawRef.current = next;
-          }}
+          onChangeText={handleChangeEndpoint}
           placeholder="hostname:port"
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
@@ -258,7 +268,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           keyboardType="url"
           editable={!isSaving}
           returnKeyType="done"
-          onSubmitEditing={() => void handleSave()}
+          onSubmitEditing={handleSubmitEditing}
         />
         {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
       </View>
@@ -270,7 +280,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
         <Button
           style={{ flex: 1 }}
           variant="default"
-          onPress={() => void handleSave()}
+          onPress={handleSavePress}
           disabled={isSaving}
           leftIcon={<Link2 size={16} color={theme.colors.palette.white} />}
           testID="direct-host-submit"

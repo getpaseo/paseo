@@ -21,6 +21,7 @@ import {
   Platform,
   StatusBar,
   type PressableProps,
+  type PressableStateCallbackType,
   type ViewStyle,
   type StyleProp,
 } from "react-native";
@@ -249,6 +250,24 @@ export function DropdownMenuTrigger({
     ctx.setOpen(!ctx.open);
   }, [disabled, ctx]);
 
+  const pressableStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+      if (typeof style === "function") {
+        return style({ pressed, hovered: Boolean(hovered), open: ctx.open });
+      }
+      return style;
+    },
+    [style, ctx.open],
+  );
+
+  const renderChildren = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+      const state: TriggerState = { pressed, hovered: Boolean(hovered), open: ctx.open };
+      return typeof children === "function" ? children(state) : children;
+    },
+    [children, ctx.open],
+  );
+
   return (
     <Pressable
       {...props}
@@ -256,17 +275,9 @@ export function DropdownMenuTrigger({
       collapsable={false}
       disabled={disabled}
       onPress={handlePress}
-      style={({ pressed, hovered = false }) => {
-        if (typeof style === "function") {
-          return style({ pressed, hovered: Boolean(hovered), open: ctx.open });
-        }
-        return style;
-      }}
+      style={pressableStyle}
     >
-      {({ pressed, hovered = false }) => {
-        const state: TriggerState = { pressed, hovered: Boolean(hovered), open: ctx.open };
-        return typeof children === "function" ? children(state) : children;
-      }}
+      {renderChildren}
     </Pressable>
   );
 }
@@ -583,30 +594,37 @@ export function DropdownMenuItem({
       <Check size={16} color={theme.colors.foregroundMuted} />
     ) : null);
 
+  const handleItemPress = useCallback(() => {
+    if (isDisabled) return;
+    selectItem(onSelect, closeOnSelect);
+  }, [isDisabled, selectItem, onSelect, closeOnSelect]);
+
+  const itemPressableStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.item,
+      selected
+        ? selectedVariant === "accent"
+          ? styles.itemSelectedAccent
+          : styles.itemSelected
+        : null,
+      selected && (Boolean(hovered) || pressed) && selectedVariant !== "accent"
+        ? styles.itemSelectedInteractive
+        : null,
+      isDisabled ? styles.itemDisabled : null,
+      muted && !isDisabled ? styles.itemMuted : null,
+      Boolean(hovered) && !pressed && !isDisabled ? styles.itemHovered : null,
+      pressed && !isDisabled ? styles.itemPressed : null,
+    ],
+    [selected, selectedVariant, isDisabled, muted],
+  );
+
   const content = (
     <Pressable
       testID={testID}
       accessibilityRole="button"
       disabled={isDisabled}
-      onPress={() => {
-        if (isDisabled) return;
-        selectItem(onSelect, closeOnSelect);
-      }}
-      style={({ pressed, hovered }) => [
-        styles.item,
-        selected
-          ? selectedVariant === "accent"
-            ? styles.itemSelectedAccent
-            : styles.itemSelected
-          : null,
-        selected && (hovered || pressed) && selectedVariant !== "accent"
-          ? styles.itemSelectedInteractive
-          : null,
-        isDisabled ? styles.itemDisabled : null,
-        muted && !isDisabled ? styles.itemMuted : null,
-        hovered && !pressed && !isDisabled ? styles.itemHovered : null,
-        pressed && !isDisabled ? styles.itemPressed : null,
-      ]}
+      onPress={handleItemPress}
+      style={itemPressableStyle}
     >
       {showSelectedCheck ? (
         <View style={styles.checkSlot}>

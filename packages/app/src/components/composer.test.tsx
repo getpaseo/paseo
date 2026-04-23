@@ -459,13 +459,14 @@ vi.mock("@/components/ui/dropdown-menu", () => {
       disabled?: boolean;
     }) => {
       const menu = React.useContext(DropdownContext);
+      const handleClick = React.useCallback(() => menu?.setOpen(true), [menu]);
       return (
         <button
           type="button"
           data-testid={testID}
           aria-label={accessibilityLabel}
           disabled={disabled}
-          onClick={() => menu?.setOpen(true)}
+          onClick={handleClick}
         >
           {typeof children === "function"
             ? children({ hovered: false, pressed: false, open: menu?.open ?? false })
@@ -654,6 +655,17 @@ function ComposerHarness({
   const [attachments, setAttachments] = useState(initialAttachments);
   latestAttachments = attachments;
 
+  const handleChangeAttachments = React.useCallback(
+    (updater: ComposerAttachment[] | ((current: ComposerAttachment[]) => ComposerAttachment[])) => {
+      setAttachments((current) => {
+        const next = typeof updater === "function" ? updater(current) : updater;
+        latestAttachments = next;
+        return next;
+      });
+    },
+    [],
+  );
+
   return (
     <QueryClientProvider client={queryClient!}>
       <Composer
@@ -663,13 +675,7 @@ function ComposerHarness({
         value={text}
         onChangeText={setText}
         attachments={attachments}
-        onChangeAttachments={(updater) => {
-          setAttachments((current) => {
-            const next = typeof updater === "function" ? updater(current) : updater;
-            latestAttachments = next;
-            return next;
-          });
-        }}
+        onChangeAttachments={handleChangeAttachments}
         isSubmitLoading={isSubmitLoading}
         submitBehavior={submitBehavior}
         cwd="/repo"

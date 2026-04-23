@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { FolderOpen, Smartphone } from "lucide-react-native";
@@ -35,6 +35,13 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
     }
   }, [isCompactLayout, openDesktopAgentList]);
 
+  const handleOpenPicker = useCallback(() => {
+    void openProjectPicker();
+  }, [openProjectPicker]);
+
+  const handleOpenPairDevice = useCallback(() => setIsPairDeviceOpen(true), []);
+  const handleClosePairDevice = useCallback(() => setIsPairDeviceOpen(false), []);
+
   return (
     <View style={styles.container}>
       <MenuHeader borderless />
@@ -55,7 +62,7 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
           <Button
             variant="default"
             leftIcon={FolderOpen}
-            onPress={() => void openProjectPicker()}
+            onPress={handleOpenPicker}
             testID="open-project-submit"
           >
             Add a project
@@ -64,7 +71,7 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
             <Button
               variant="outline"
               leftIcon={Smartphone}
-              onPress={() => setIsPairDeviceOpen(true)}
+              onPress={handleOpenPairDevice}
               testID="open-project-pair-device"
             >
               Pair device
@@ -74,7 +81,7 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
       </View>
       <PairDeviceModal
         visible={isPairDeviceOpen}
-        onClose={() => setIsPairDeviceOpen(false)}
+        onClose={handleClosePairDevice}
         testID="open-project-pair-device-modal"
       />
     </View>

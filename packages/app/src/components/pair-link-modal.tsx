@@ -151,6 +151,14 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
     }
   }, [daemons, handleClose, isMobile, isSaving, onSaved, upsertDaemonFromOfferUrl]);
 
+  const handleChangeOfferUrl = useCallback((next: string) => {
+    offerUrlRef.current = next;
+  }, []);
+
+  const handleSavePress = useCallback(() => {
+    void handleSave();
+  }, [handleSave]);
+
   return (
     <AdaptiveModalSheet
       title="Paste pairing link"
@@ -167,9 +175,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
           testID="pair-link-input"
           nativeID="pair-link-input"
           accessibilityLabel="pair-link-input"
-          onChangeText={(next) => {
-            offerUrlRef.current = next;
-          }}
+          onChangeText={handleChangeOfferUrl}
           placeholder="https://app.paseo.sh/#offer=..."
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
@@ -196,7 +202,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
         <Button
           style={{ flex: 1 }}
           variant="default"
-          onPress={() => void handleSave()}
+          onPress={handleSavePress}
           disabled={isSaving}
           testID="pair-link-submit"
           accessibilityRole="button"

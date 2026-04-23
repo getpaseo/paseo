@@ -198,10 +198,15 @@ export default function PairScanScreen() {
     [isPairing, navigateToPairedHost, upsertDaemonFromOfferUrl],
   );
 
+  const handleRouterBack = useCallback(() => router.back(), [router]);
+  const handleRequestPermission = useCallback(() => {
+    void requestPermission();
+  }, [requestPermission]);
+
   if (isWeb) {
     return (
       <View style={styles.container}>
-        <BackHeader title="Scan QR" onBack={() => router.back()} />
+        <BackHeader title="Scan QR" onBack={handleRouterBack} />
         <View style={[styles.body, { paddingBottom: insets.bottom + theme.spacing[6] }]}>
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>Not available on web</Text>
@@ -230,7 +235,7 @@ export default function PairScanScreen() {
             <Text style={styles.permissionBody}>
               Allow camera access to scan the pairing QR code from your daemon.
             </Text>
-            <Pressable style={styles.permissionButton} onPress={() => void requestPermission()}>
+            <Pressable style={styles.permissionButton} onPress={handleRequestPermission}>
               <Text style={styles.permissionButtonText}>Grant permission</Text>
             </Pressable>
           </View>

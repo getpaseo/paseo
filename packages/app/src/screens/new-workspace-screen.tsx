@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
+import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated from "react-native-reanimated";
@@ -284,6 +285,27 @@ export function NewWorkspaceScreen({
     setPickerOpen(true);
   }, []);
 
+  const handleClearDraft = useCallback(() => {
+    // No-op: screen navigates away on success, text should stay for retry on error
+  }, []);
+
+  const badgePressableStyle = useCallback(
+    ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.badge,
+      Boolean(hovered) && !isPending && styles.badgeHovered,
+      pressed && !isPending && styles.badgePressed,
+      isPending && styles.badgeDisabled,
+    ],
+    [isPending],
+  );
+
+  const handlePickerOpenChange = useCallback((nextOpen: boolean) => {
+    setPickerOpen(nextOpen);
+    if (!nextOpen) {
+      setPickerSearchQuery("");
+    }
+  }, []);
+
   const buildCreateWorktreeInput = useCallback(
     (input: { cwd: string; attachments: AgentAttachment[] }) => {
       const checkoutRequest = pickerItemToCheckoutRequest(selectedItem);
@@ -496,9 +518,7 @@ export function NewWorkspaceScreen({
             attachments={chatDraft.attachments}
             onChangeAttachments={chatDraft.setAttachments}
             cwd={chatDraft.cwd}
-            clearDraft={() => {
-              // No-op: screen navigates away on success, text should stay for retry on error
-            }}
+            clearDraft={handleClearDraft}
             autoFocus
             commandDraftConfig={composerState?.commandDraftConfig}
             statusControls={
@@ -520,12 +540,7 @@ export function NewWorkspaceScreen({
                     testID="new-workspace-ref-picker-trigger"
                     onPress={openPicker}
                     disabled={isPending}
-                    style={({ pressed, hovered }) => [
-                      styles.badge,
-                      hovered && !isPending && styles.badgeHovered,
-                      pressed && !isPending && styles.badgePressed,
-                      isPending && styles.badgeDisabled,
-                    ]}
+                    style={badgePressableStyle}
                     accessibilityRole="button"
                     accessibilityLabel="Starting ref"
                   >
@@ -557,12 +572,7 @@ export function NewWorkspaceScreen({
                 searchPlaceholder="Search branches and PRs"
                 title="Start from"
                 open={pickerOpen}
-                onOpenChange={(nextOpen) => {
-                  setPickerOpen(nextOpen);
-                  if (!nextOpen) {
-                    setPickerSearchQuery("");
-                  }
-                }}
+                onOpenChange={handlePickerOpenChange}
                 onSearchQueryChange={setPickerSearchQuery}
                 desktopPlacement="bottom-start"
                 anchorRef={pickerAnchorRef}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -22,6 +22,14 @@ interface StartupSplashScreenProps {
 
 const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
 const DOCS_URL = "https://paseo.sh/docs";
+
+function openGithubIssue(): void {
+  void openExternalUrl(GITHUB_ISSUE_URL);
+}
+
+function openDocs(): void {
+  void openExternalUrl(DOCS_URL);
+}
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -240,12 +248,12 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
     return "No daemon logs available.";
   }, [daemonLogs?.contents, isLoadingLogs, logsError]);
 
-  const handleCopyLogs = () => {
+  const handleCopyLogs = useCallback(() => {
     const payload = daemonLogs?.logPath
       ? `${daemonLogs.logPath}\n\n${daemonLogs.contents}`
       : logsText;
     void Clipboard.setStringAsync(payload);
-  };
+  }, [daemonLogs?.logPath, daemonLogs?.contents, logsText]);
 
   if (isSimpleSplash) {
     return (
@@ -327,14 +335,14 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
             <Button
               variant="outline"
               leftIcon={<TriangleAlert size={16} color={theme.colors.foreground} />}
-              onPress={() => void openExternalUrl(GITHUB_ISSUE_URL)}
+              onPress={openGithubIssue}
             >
               Open GitHub issue
             </Button>
             <Button
               variant="outline"
               leftIcon={<BookOpen size={16} color={theme.colors.foreground} />}
-              onPress={() => void openExternalUrl(DOCS_URL)}
+              onPress={openDocs}
             >
               Docs
             </Button>

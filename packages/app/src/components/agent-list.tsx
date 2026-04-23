@@ -6,6 +6,7 @@ import {
   RefreshControl,
   FlatList,
   type ListRenderItem,
+  type PressableStateCallbackType,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallback, useMemo, useState, type ReactElement } from "react";
@@ -194,16 +195,24 @@ function SessionRow({
   const projectPath = shortenPath(agent.cwd);
   const ProviderIcon = getProviderIcon(agent.provider);
 
+  const pressableStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.row,
+      isSelected && styles.rowSelected,
+      Boolean(hovered) && styles.rowHovered,
+      pressed && styles.rowPressed,
+    ],
+    [isSelected],
+  );
+
+  const handlePress = useCallback(() => onPress(agent), [onPress, agent]);
+  const handleLongPress = useCallback(() => onLongPress(agent), [onLongPress, agent]);
+
   return (
     <Pressable
-      style={({ pressed, hovered }) => [
-        styles.row,
-        isSelected && styles.rowSelected,
-        hovered && styles.rowHovered,
-        pressed && styles.rowPressed,
-      ]}
-      onPress={() => onPress(agent)}
-      onLongPress={() => onLongPress(agent)}
+      style={pressableStyle}
+      onPress={handlePress}
+      onLongPress={handleLongPress}
       testID={`agent-row-${agent.serverId}-${agent.id}`}
     >
       <View style={styles.rowContent}>

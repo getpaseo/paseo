@@ -289,62 +289,85 @@ function WorkspaceHoverCardContent({
           {prHint?.checks && prHint.checks.length > 0 ? (
             <>
               <View style={styles.separator} />
-              <Pressable
-                style={({ hovered }) => [styles.checksSummaryRow, hovered && styles.listRowHovered]}
-                onPress={() => void openExternalUrl(`${prHint.url}/checks`)}
-              >
-                {({ hovered }) => {
-                  const checks = prHint.checks!;
-                  const failed = checks.filter((c) => c.status === "failure").length;
-                  const pending = checks.filter((c) => c.status === "pending").length;
-
-                  let badgeColor: string;
-                  let badgeLabel: string;
-
-                  if (failed > 0) {
-                    badgeColor = theme.colors.palette.red[500];
-                    badgeLabel = `${failed} failed`;
-                  } else if (pending > 0) {
-                    badgeColor = theme.colors.palette.amber[500];
-                    badgeLabel = `${pending} running`;
-                  } else {
-                    badgeColor = theme.colors.palette.green[500];
-                    badgeLabel = `${checks.length} passed`;
-                  }
-
-                  const iconColor = hovered
-                    ? theme.colors.foreground
-                    : theme.colors.foregroundMuted;
-                  return (
-                    <>
-                      {hovered ? (
-                        <ExternalLink size={12} color={iconColor} />
-                      ) : (
-                        <GitHubIcon size={12} color={iconColor} />
-                      )}
-                      <Text
-                        style={[
-                          styles.checksSummaryLabel,
-                          hovered && styles.checksSummaryLabelHovered,
-                        ]}
-                      >
-                        Checks
-                      </Text>
-                      <View style={styles.checksSummaryCounts}>
-                        <View style={[styles.checksDot, { backgroundColor: badgeColor }]} />
-                        <Text style={[styles.checksStatusText, { color: badgeColor }]}>
-                          {badgeLabel}
-                        </Text>
-                      </View>
-                    </>
-                  );
-                }}
-              </Pressable>
+              <ChecksSummaryPressable checks={prHint.checks} url={prHint.url} theme={theme} />
             </>
           ) : null}
         </Animated.View>
       </View>
     </Portal>
+  );
+}
+
+function ChecksSummaryPressable({
+  checks,
+  url,
+  theme,
+}: {
+  checks: NonNullable<PrHint["checks"]>;
+  url: string;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+}) {
+  const handlePress = useCallback(() => {
+    void openExternalUrl(`${url}/checks`);
+  }, [url]);
+
+  const pressableStyle = useCallback(
+    ({ hovered }: { pressed: boolean; hovered?: boolean }) => [
+      styles.checksSummaryRow,
+      Boolean(hovered) && styles.listRowHovered,
+    ],
+    [],
+  );
+
+  const renderChildren = useCallback(
+    ({ hovered }: { pressed: boolean; hovered?: boolean }) => {
+      const failed = checks.filter((c) => c.status === "failure").length;
+      const pending = checks.filter((c) => c.status === "pending").length;
+
+      let badgeColor: string;
+      let badgeLabel: string;
+
+      if (failed > 0) {
+        badgeColor = theme.colors.palette.red[500];
+        badgeLabel = `${failed} failed`;
+      } else if (pending > 0) {
+        badgeColor = theme.colors.palette.amber[500];
+        badgeLabel = `${pending} running`;
+      } else {
+        badgeColor = theme.colors.palette.green[500];
+        badgeLabel = `${checks.length} passed`;
+      }
+
+      const iconColor = hovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+      return (
+        <>
+          {hovered ? (
+            <ExternalLink size={12} color={iconColor} />
+          ) : (
+            <GitHubIcon size={12} color={iconColor} />
+          )}
+          <Text
+            style={[
+              styles.checksSummaryLabel,
+              Boolean(hovered) && styles.checksSummaryLabelHovered,
+            ]}
+          >
+            Checks
+          </Text>
+          <View style={styles.checksSummaryCounts}>
+            <View style={[styles.checksDot, { backgroundColor: badgeColor }]} />
+            <Text style={[styles.checksStatusText, { color: badgeColor }]}>{badgeLabel}</Text>
+          </View>
+        </>
+      );
+    },
+    [checks, theme],
+  );
+
+  return (
+    <Pressable style={pressableStyle} onPress={handlePress}>
+      {renderChildren}
+    </Pressable>
   );
 }
 

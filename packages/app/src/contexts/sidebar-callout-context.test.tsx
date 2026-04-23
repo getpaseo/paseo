@@ -57,6 +57,12 @@ import {
   useSidebarCallouts,
 } from "./sidebar-callout-context";
 
+const apiSink: { current: SidebarCalloutsApi | null } = { current: null };
+
+function handleApi(nextApi: SidebarCalloutsApi): void {
+  apiSink.current = nextApi;
+}
+
 function CaptureApi({ onApi }: { onApi: (api: SidebarCalloutsApi) => void }) {
   const api = useSidebarCallouts();
   onApi(api);
@@ -70,6 +76,7 @@ describe("SidebarCalloutProvider", () => {
 
   beforeEach(async () => {
     api = null;
+    apiSink.current = null;
     asyncStorage.values.clear();
     asyncStorage.getItem.mockClear();
     asyncStorage.setItem.mockClear();
@@ -79,12 +86,13 @@ describe("SidebarCalloutProvider", () => {
     await act(async () => {
       root?.render(
         <SidebarCalloutProvider>
-          <CaptureApi onApi={(nextApi) => (api = nextApi)} />
+          <CaptureApi onApi={handleApi} />
           <SidebarCalloutViewport />
         </SidebarCalloutProvider>,
       );
       await Promise.resolve();
     });
+    api = apiSink.current;
   });
 
   afterEach(() => {
@@ -142,11 +150,12 @@ describe("SidebarCalloutProvider", () => {
       root?.render(
         <SidebarCalloutProvider>
           <Producer />
-          <CaptureApi onApi={(nextApi) => (api = nextApi)} />
+          <CaptureApi onApi={handleApi} />
           <SidebarCalloutViewport />
         </SidebarCalloutProvider>,
       );
     });
+    api = apiSink.current;
     const firstApi = renders.mock.calls[0]?.[0];
 
     act(() => {

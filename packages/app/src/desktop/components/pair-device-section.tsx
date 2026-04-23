@@ -42,6 +42,14 @@ export function PairDeviceSection() {
     setTimeout(() => setCopied(false), 2000);
   }, [pairingQuery.data?.url]);
 
+  const handleRefetch = useCallback(() => {
+    void pairingQuery.refetch();
+  }, [pairingQuery]);
+
+  const handleCopyPress = useCallback(() => {
+    void handleCopyLink();
+  }, [handleCopyLink]);
+
   if (!showSection) return null;
 
   return (
@@ -63,7 +71,7 @@ export function PairDeviceSection() {
               variant="outline"
               size="sm"
               leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
-              onPress={() => void pairingQuery.refetch()}
+              onPress={handleRefetch}
             >
               Retry
             </Button>
@@ -79,7 +87,7 @@ export function PairDeviceSection() {
               variant="outline"
               size="sm"
               leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
-              onPress={() => void pairingQuery.refetch()}
+              onPress={handleRefetch}
             >
               Retry
             </Button>
@@ -118,7 +126,7 @@ export function PairDeviceSection() {
                     <Copy size={theme.iconSize.sm} color={theme.colors.foreground} />
                   )
                 }
-                onPress={() => void handleCopyLink()}
+                onPress={handleCopyPress}
               >
                 {copied ? "Copied" : "Copy"}
               </Button>

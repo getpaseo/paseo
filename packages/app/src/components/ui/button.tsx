@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useMemo,
   useState,
   type ComponentType,
@@ -6,7 +7,13 @@ import {
   type ReactElement,
 } from "react";
 import { Pressable, Text, View } from "react-native";
-import type { PressableProps, StyleProp, TextStyle, ViewStyle } from "react-native";
+import type {
+  PressableProps,
+  PressableStateCallbackType,
+  StyleProp,
+  TextStyle,
+  ViewStyle,
+} from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 type ButtonVariant = "default" | "secondary" | "outline" | "ghost" | "destructive";
@@ -125,6 +132,21 @@ export function Button({
   const sizeStyle = size === "sm" ? styles.sm : size === "lg" ? styles.lg : styles.md;
   const isGhostHovered = hovered && variant === "ghost";
 
+  const handleHoverIn = useCallback(() => setHovered(true), []);
+  const handleHoverOut = useCallback(() => setHovered(false), []);
+
+  const pressableStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType): StyleProp<ViewStyle> => [
+      styles.base,
+      sizeStyle,
+      variantStyle,
+      pressed ? styles.pressed : null,
+      disabled ? styles.disabled : null,
+      style,
+    ],
+    [sizeStyle, variantStyle, disabled, style],
+  );
+
   const resolvedTextStyle = useMemo(
     () => [
       styles.text,
@@ -178,16 +200,9 @@ export function Button({
       {...props}
       accessibilityRole={accessibilityRole ?? "button"}
       disabled={disabled}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
-      style={({ pressed }) => [
-        styles.base,
-        sizeStyle,
-        variantStyle,
-        pressed ? styles.pressed : null,
-        disabled ? styles.disabled : null,
-        style,
-      ]}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
+      style={pressableStyle}
     >
       {renderIcon()}
       {children != null ? <Text style={resolvedTextStyle}>{children}</Text> : null}

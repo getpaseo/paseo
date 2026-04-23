@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import React, { useRef, type RefObject } from "react";
+import React, { useCallback, useRef, type RefObject } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { View } from "react-native";
@@ -73,20 +73,20 @@ function Harness({
     onLeaveSafeZone,
   });
 
+  const handleTriggerRef = useCallback((node: HTMLDivElement | null) => {
+    triggerRef.current = node;
+    installRect(node, { left: 0, right: 100, top: 20, bottom: 60 });
+  }, []);
+
+  const handleContentRef = useCallback((node: HTMLDivElement | null) => {
+    contentRef.current = node;
+    installRect(node, { left: 120, right: 240, top: 20, bottom: 120 });
+  }, []);
+
   return (
     <>
-      <div
-        ref={(node) => {
-          triggerRef.current = node;
-          installRect(node, { left: 0, right: 100, top: 20, bottom: 60 });
-        }}
-      />
-      <div
-        ref={(node) => {
-          contentRef.current = node;
-          installRect(node, { left: 120, right: 240, top: 20, bottom: 120 });
-        }}
-      />
+      <div ref={handleTriggerRef} />
+      <div ref={handleContentRef} />
     </>
   );
 }

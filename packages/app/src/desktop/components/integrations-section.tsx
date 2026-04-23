@@ -77,6 +77,14 @@ export function IntegrationsSection() {
       });
   }, [isInstallingSkills]);
 
+  const handleOpenCliDocs = useCallback(() => {
+    void openExternalUrl(CLI_DOCS_URL);
+  }, []);
+
+  const handleOpenSkillsDocs = useCallback(() => {
+    void openExternalUrl(SKILLS_DOCS_URL);
+  }, []);
+
   if (!showSection) {
     return null;
   }
@@ -89,7 +97,7 @@ export function IntegrationsSection() {
         leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
         textStyle={settingsStyles.sectionHeaderLinkText}
         style={settingsStyles.sectionHeaderLink}
-        onPress={() => void openExternalUrl(CLI_DOCS_URL)}
+        onPress={handleOpenCliDocs}
         accessibilityLabel="Open CLI documentation"
       >
         CLI docs
@@ -100,7 +108,7 @@ export function IntegrationsSection() {
         leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
         textStyle={settingsStyles.sectionHeaderLinkText}
         style={settingsStyles.sectionHeaderLink}
-        onPress={() => void openExternalUrl(SKILLS_DOCS_URL)}
+        onPress={handleOpenSkillsDocs}
         accessibilityLabel="Open skills documentation"
       >
         Skills docs

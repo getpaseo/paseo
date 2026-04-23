@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+  type PressableStateCallbackType,
+} from "react-native";
 import { Folder } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQuery } from "@tanstack/react-query";
@@ -11,6 +19,40 @@ import { useOpenProject } from "@/hooks/use-open-project";
 import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
 import { isNative } from "@/constants/platform";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
+
+interface PathRowProps {
+  path: string;
+  active: boolean;
+  onSelect: (path: string) => void;
+}
+
+function PathRow({ path, active, onSelect }: PathRowProps) {
+  const { theme } = useUnistyles();
+  const handlePress = useCallback(() => {
+    void onSelect(path);
+  }, [onSelect, path]);
+  const pressableStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.row,
+      (Boolean(hovered) || pressed || active) && {
+        backgroundColor: theme.colors.surface1,
+      },
+    ],
+    [active, theme.colors.surface1],
+  );
+  return (
+    <Pressable style={pressableStyle} onPress={handlePress}>
+      <View style={styles.rowContent}>
+        <View style={styles.iconSlot}>
+          <Folder size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
+        </View>
+        <Text style={[styles.rowText, { color: theme.colors.foreground }]} numberOfLines={1}>
+          {shortenPath(path)}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
 
 export function ProjectPickerModal() {
   const { theme } = useUnistyles();
@@ -85,6 +127,11 @@ export function ProjectPickerModal() {
     if (!trimmed) return;
     void handleSelectPath(trimmed);
   }, [handleSelectPath, query]);
+
+  const handleChangeQuery = useCallback((text: string) => {
+    setQuery(text);
+    setActiveIndex(0);
+  }, []);
 
   // Reset state when opening/closing
   useEffect(() => {
@@ -165,10 +212,7 @@ export function ProjectPickerModal() {
             <TextInput
               ref={inputRef}
               value={query}
-              onChangeText={(text) => {
-                setQuery(text);
-                setActiveIndex(0);
-              }}
+              onChangeText={handleChangeQuery}
               placeholder="Type a directory path..."
               placeholderTextColor={theme.colors.foregroundMuted}
               style={[styles.input, { color: theme.colors.foreground }]}
@@ -195,37 +239,14 @@ export function ProjectPickerModal() {
               </Text>
             ) : (
               <>
-                {options.map((path, index) => {
-                  const active = index === activeIndex;
-                  return (
-                    <Pressable
-                      key={path}
-                      style={({ hovered, pressed }) => [
-                        styles.row,
-                        (hovered || pressed || active) && {
-                          backgroundColor: theme.colors.surface1,
-                        },
-                      ]}
-                      onPress={() => void handleSelectPath(path)}
-                    >
-                      <View style={styles.rowContent}>
-                        <View style={styles.iconSlot}>
-                          <Folder
-                            size={16}
-                            strokeWidth={2.2}
-                            color={theme.colors.foregroundMuted}
-                          />
-                        </View>
-                        <Text
-                          style={[styles.rowText, { color: theme.colors.foreground }]}
-                          numberOfLines={1}
-                        >
-                          {shortenPath(path)}
-                        </Text>
-                      </View>
-                    </Pressable>
-                  );
-                })}
+                {options.map((path, index) => (
+                  <PathRow
+                    key={path}
+                    path={path}
+                    active={index === activeIndex}
+                    onSelect={handleSelectPath}
+                  />
+                ))}
               </>
             )}
           </ScrollView>

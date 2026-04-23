@@ -10,6 +10,8 @@ import {
   Platform,
   StatusBar,
   useWindowDimensions,
+  type LayoutChangeEvent,
+  type PressableStateCallbackType,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -210,19 +212,20 @@ export function ComboboxItem({
     </View>
   ) : null;
 
+  const itemPressableStyle = useCallback(
+    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.comboboxItem,
+      Boolean(hovered) &&
+        (elevated ? styles.comboboxItemHoveredElevated : styles.comboboxItemHovered),
+      pressed && (elevated ? styles.comboboxItemPressedElevated : styles.comboboxItemPressed),
+      active && styles.comboboxItemActive,
+      disabled && styles.comboboxItemDisabled,
+    ],
+    [elevated, active, disabled],
+  );
+
   return (
-    <Pressable
-      testID={testID}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed, hovered = false }) => [
-        styles.comboboxItem,
-        hovered && (elevated ? styles.comboboxItemHoveredElevated : styles.comboboxItemHovered),
-        pressed && (elevated ? styles.comboboxItemPressedElevated : styles.comboboxItemPressed),
-        active && styles.comboboxItemActive,
-        disabled && styles.comboboxItemDisabled,
-      ]}
-    >
+    <Pressable testID={testID} disabled={disabled} onPress={onPress} style={itemPressableStyle}>
       {leadingContent}
       <View style={[styles.comboboxItemContent, description && styles.comboboxItemContentInline]}>
         <Text numberOfLines={1} style={styles.comboboxItemLabel}>
@@ -251,6 +254,33 @@ export function ComboboxEmpty({ children }: { children: ReactNode }): ReactEleme
     <Text testID="combobox-empty-text" style={styles.emptyText}>
       {children}
     </Text>
+  );
+}
+
+type RenderOptionFn = NonNullable<ComboboxProps["renderOption"]>;
+
+interface OptionRowProps {
+  option: ComboboxOption;
+  selected: boolean;
+  active: boolean;
+  onSelect: (id: string) => void;
+  renderOption: RenderOptionFn | undefined;
+}
+
+function OptionRow({ option, selected, active, onSelect, renderOption }: OptionRowProps) {
+  const handlePress = useCallback(() => onSelect(option.id), [onSelect, option.id]);
+  if (renderOption) {
+    return <View>{renderOption({ option, selected, active, onPress: handlePress })}</View>;
+  }
+  return (
+    <ComboboxItem
+      label={option.label}
+      description={option.description}
+      kind={option.kind}
+      selected={selected}
+      active={active}
+      onPress={handlePress}
+    />
   );
 }
 
@@ -525,6 +555,17 @@ export function Combobox({
     [effectiveOptionsPosition, visibleOptions],
   );
 
+  const handleDesktopContentLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const { width } = event.nativeEvent.layout;
+      setDesktopContentWidth((prev) => (prev === width ? prev : width));
+      if (!useMeasuredTopStartPosition || !hasResolvedDesktopPosition) {
+        void update();
+      }
+    },
+    [useMeasuredTopStartPosition, hasResolvedDesktopPosition, update],
+  );
+
   const pinDesktopOptionsToBottom = useCallback(() => {
     if (isMobile || effectiveOptionsPosition !== "above-search") {
       return;
@@ -661,28 +702,16 @@ export function Combobox({
   const optionsList = (
     <>
       {orderedVisibleOptions.length > 0 ? (
-        orderedVisibleOptions.map((opt, index) =>
-          renderOption ? (
-            <View key={opt.id}>
-              {renderOption({
-                option: opt,
-                selected: opt.id === value,
-                active: index === activeIndex,
-                onPress: () => handleSelect(opt.id),
-              })}
-            </View>
-          ) : (
-            <ComboboxItem
-              key={opt.id}
-              label={opt.label}
-              description={opt.description}
-              kind={opt.kind}
-              selected={opt.id === value}
-              active={index === activeIndex}
-              onPress={() => handleSelect(opt.id)}
-            />
-          ),
-        )
+        orderedVisibleOptions.map((opt, index) => (
+          <OptionRow
+            key={opt.id}
+            option={opt}
+            selected={opt.id === value}
+            active={index === activeIndex}
+            onSelect={handleSelect}
+            renderOption={renderOption}
+          />
+        ))
       ) : (
         <ComboboxEmpty>{emptyText}</ComboboxEmpty>
       )}
@@ -754,13 +783,7 @@ export function Combobox({
           ]}
           ref={refs.setFloating}
           collapsable={false}
-          onLayout={(event) => {
-            const { width, height } = event.nativeEvent.layout;
-            setDesktopContentWidth((prev) => (prev === width ? prev : width));
-            if (!useMeasuredTopStartPosition || !hasResolvedDesktopPosition) {
-              void update();
-            }
-          }}
+          onLayout={handleDesktopContentLayout}
         >
           {children ? (
             <>

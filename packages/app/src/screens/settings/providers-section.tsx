@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
@@ -11,6 +11,66 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { RotateCw } from "lucide-react-native";
+
+type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
+type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];
+
+interface ProviderRowProps {
+  def: ProviderDefinition;
+  entry: ProviderEntry | undefined;
+  isFirst: boolean;
+  onPress: (providerId: string) => void;
+}
+
+function ProviderRow({ def, entry, isFirst, onPress }: ProviderRowProps) {
+  const { theme } = useUnistyles();
+  const status = entry?.status ?? "unavailable";
+  const ProviderIcon = getProviderIcon(def.id);
+  const providerError =
+    status === "error" && typeof entry?.error === "string" && entry.error.trim().length > 0
+      ? entry.error.trim()
+      : null;
+  const modelCount = entry?.models?.length ?? 0;
+
+  const handlePress = useCallback(() => onPress(def.id), [def.id, onPress]);
+
+  return (
+    <Pressable
+      style={[settingsStyles.row, !isFirst && settingsStyles.rowBorder]}
+      onPress={handlePress}
+      accessibilityRole="button"
+    >
+      <View style={settingsStyles.rowContent}>
+        <View style={styles.titleRow}>
+          <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foreground} />
+          <Text style={settingsStyles.rowTitle}>{def.label}</Text>
+        </View>
+        {providerError ? (
+          <Text style={styles.errorText} numberOfLines={3}>
+            {providerError}
+          </Text>
+        ) : null}
+        {status === "ready" && modelCount > 0 ? (
+          <Text style={settingsStyles.rowHint}>
+            {modelCount === 1 ? "1 model" : `${modelCount} models`}
+          </Text>
+        ) : null}
+      </View>
+      <StatusBadge
+        label={
+          status === "ready"
+            ? "Available"
+            : status === "error"
+              ? "Error"
+              : status === "loading"
+                ? "Loading..."
+                : "Not installed"
+        }
+        variant={status === "ready" ? "success" : status === "error" ? "error" : "muted"}
+      />
+    </Pressable>
+  );
+}
 
 export interface ProvidersSectionProps {
   serverId: string;
@@ -26,10 +86,16 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
     isRefreshing || (entries?.some((entry) => entry.status === "loading") ?? false);
   const hasServer = serverId.length > 0;
 
+  const handleRefresh = useCallback(() => {
+    void refresh();
+  }, [refresh]);
+
+  const handleCloseDiagnostic = useCallback(() => setDiagnosticProvider(null), []);
+
   const refreshAction =
     hasServer && isConnected ? (
       <Pressable
-        onPress={() => void refresh()}
+        onPress={handleRefresh}
         disabled={providerRefreshInFlight}
         hitSlop={8}
         style={settingsStyles.sectionHeaderLink}
@@ -62,58 +128,15 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
           </View>
         ) : (
           <View style={settingsStyles.card}>
-            {providerDefinitions.map((def, index) => {
-              const entry = entries?.find((e) => e.provider === def.id);
-              const status = entry?.status ?? "unavailable";
-              const ProviderIcon = getProviderIcon(def.id);
-              const providerError =
-                status === "error" &&
-                typeof entry?.error === "string" &&
-                entry.error.trim().length > 0
-                  ? entry.error.trim()
-                  : null;
-              const modelCount = entry?.models?.length ?? 0;
-
-              return (
-                <Pressable
-                  key={def.id}
-                  style={[settingsStyles.row, index > 0 && settingsStyles.rowBorder]}
-                  onPress={() => setDiagnosticProvider(def.id)}
-                  accessibilityRole="button"
-                >
-                  <View style={settingsStyles.rowContent}>
-                    <View style={styles.titleRow}>
-                      <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foreground} />
-                      <Text style={settingsStyles.rowTitle}>{def.label}</Text>
-                    </View>
-                    {providerError ? (
-                      <Text style={styles.errorText} numberOfLines={3}>
-                        {providerError}
-                      </Text>
-                    ) : null}
-                    {status === "ready" && modelCount > 0 ? (
-                      <Text style={settingsStyles.rowHint}>
-                        {modelCount === 1 ? "1 model" : `${modelCount} models`}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <StatusBadge
-                    label={
-                      status === "ready"
-                        ? "Available"
-                        : status === "error"
-                          ? "Error"
-                          : status === "loading"
-                            ? "Loading..."
-                            : "Not installed"
-                    }
-                    variant={
-                      status === "ready" ? "success" : status === "error" ? "error" : "muted"
-                    }
-                  />
-                </Pressable>
-              );
-            })}
+            {providerDefinitions.map((def, index) => (
+              <ProviderRow
+                key={def.id}
+                def={def}
+                entry={entries?.find((e) => e.provider === def.id)}
+                isFirst={index === 0}
+                onPress={setDiagnosticProvider}
+              />
+            ))}
           </View>
         )}
       </SettingsSection>
@@ -122,7 +145,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         <ProviderDiagnosticSheet
           provider={diagnosticProvider}
           visible
-          onClose={() => setDiagnosticProvider(null)}
+          onClose={handleCloseDiagnostic}
           serverId={serverId}
         />
       ) : null}
