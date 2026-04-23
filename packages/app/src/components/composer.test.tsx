@@ -441,9 +441,8 @@ vi.mock("@/components/ui/dropdown-menu", () => {
   return {
     DropdownMenu: ({ children }: { children: React.ReactNode }) => {
       const [open, setOpen] = React.useState(false);
-      return (
-        <DropdownContext.Provider value={{ open, setOpen }}>{children}</DropdownContext.Provider>
-      );
+      const contextValue = React.useMemo(() => ({ open, setOpen }), [open]);
+      return <DropdownContext.Provider value={contextValue}>{children}</DropdownContext.Provider>;
     },
     DropdownMenuTrigger: ({
       children,

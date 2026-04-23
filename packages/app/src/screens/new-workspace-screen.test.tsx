@@ -17,7 +17,7 @@ const {
   saveDraftInputMock,
   clearDraftInputMock,
   queueDraftSubmissionMock,
-  createdAgent,
+  createdAgent: _createdAgent,
   createdWorkspace,
   prItem,
   prItemB,
@@ -163,6 +163,13 @@ vi.mock("lucide-react-native", () => {
   };
 });
 
+function flattenReanimatedStyle(style: unknown) {
+  if (!Array.isArray(style)) {
+    return style;
+  }
+  return Object.assign({}, ...style.filter(Boolean));
+}
+
 vi.mock("react-native-reanimated", () => ({
   default: {
     View: ({
@@ -170,9 +177,7 @@ vi.mock("react-native-reanimated", () => ({
       style,
       ...props
     }: React.HTMLAttributes<HTMLDivElement> & { testID?: string; style?: unknown }) => {
-      const flattenedStyle = Array.isArray(style)
-        ? Object.assign({}, ...style.filter(Boolean))
-        : style;
+      const flattenedStyle = flattenReanimatedStyle(style);
       return <div {...props} data-testid={testID} style={flattenedStyle as React.CSSProperties} />;
     },
   },

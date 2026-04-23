@@ -294,6 +294,19 @@ function seedReadyAgent(agent: Agent = makeAgent()) {
   store.setAgentAuthoritativeHistoryApplied("server", "agent", true);
 }
 
+function buildTestPaneValue() {
+  return {
+    serverId: "server",
+    workspaceId: "workspace",
+    tabId: "agent-agent",
+    target: { kind: "agent" as const, agentId: "agent" },
+    openTab: vi.fn(),
+    closeCurrentTab: vi.fn(),
+    retargetCurrentTab: vi.fn(),
+    openFileInWorkspace: vi.fn(),
+  };
+}
+
 async function renderAgentPanel(
   root: Root,
   focus: PaneFocusContextValue = {
@@ -309,21 +322,11 @@ async function renderAgentPanel(
       mutations: { retry: false },
     },
   });
+  const paneValue = buildTestPaneValue();
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <PaneProvider
-          value={{
-            serverId: "server",
-            workspaceId: "workspace",
-            tabId: "agent-agent",
-            target: { kind: "agent", agentId: "agent" },
-            openTab: vi.fn(),
-            closeCurrentTab: vi.fn(),
-            retargetCurrentTab: vi.fn(),
-            openFileInWorkspace: vi.fn(),
-          }}
-        >
+        <PaneProvider value={paneValue}>
           <PaneFocusProvider value={focus}>
             <AgentPanel />
           </PaneFocusProvider>

@@ -57,6 +57,22 @@ vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 import { CalloutCard } from "./callout-card";
 
+type CalloutCardActions = React.ComponentProps<typeof CalloutCard>["actions"];
+
+function buildSingleAction(onPress: () => void): CalloutCardActions {
+  return [{ label: "Undo", onPress }];
+}
+
+function buildTwoActions(
+  onWhatsNew: () => void,
+  onInstall: () => void,
+): CalloutCardActions {
+  return [
+    { label: "What's new", onPress: onWhatsNew },
+    { label: "Install & restart", onPress: onInstall, variant: "primary" },
+  ];
+}
+
 describe("CalloutCard", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
@@ -101,7 +117,7 @@ describe("CalloutCard", () => {
 
   it("renders one action when one is provided", () => {
     const onPress = vi.fn();
-    const actions = [{ label: "Undo", onPress }];
+    const actions = buildSingleAction(onPress);
     act(() => {
       root?.render(<CalloutCard description="Saved." actions={actions} testID="callout" />);
     });
@@ -114,10 +130,7 @@ describe("CalloutCard", () => {
   });
 
   it("renders up to two actions", () => {
-    const actions: React.ComponentProps<typeof CalloutCard>["actions"] = [
-      { label: "What's new", onPress: vi.fn() },
-      { label: "Install & restart", onPress: vi.fn(), variant: "primary" },
-    ];
+    const actions = buildTwoActions(vi.fn(), vi.fn());
     act(() => {
       root?.render(
         <CalloutCard

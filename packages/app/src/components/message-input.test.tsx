@@ -5,6 +5,10 @@ import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessageInput, type AttachmentMenuItem, type MessageInputRef } from "./message-input";
 
+const EMPTY_ATTACHMENTS: React.ComponentProps<typeof MessageInput>["attachments"] = [];
+const EMPTY_ATTACHMENT_MENU_ITEMS: AttachmentMenuItem[] = [];
+const FAKE_CONNECTED_CLIENT = { isConnected: true } as never;
+
 const { startDictationMock, cancelDictationMock, confirmDictationMock } = vi.hoisted(() => ({
   startDictationMock: vi.fn(),
   cancelDictationMock: vi.fn(),
@@ -251,10 +255,10 @@ function renderMessageInput(
         value={value}
         onChangeText={vi.fn()}
         onSubmit={vi.fn()}
-        attachments={[]}
+        attachments={EMPTY_ATTACHMENTS}
         cwd="/repo"
         attachmentMenuItems={menuItems}
-        client={{ isConnected: true } as never}
+        client={FAKE_CONNECTED_CLIENT}
         isAgentRunning={false}
         submitIcon={submitIcon}
         onQueue={vi.fn()}
@@ -346,10 +350,10 @@ describe("MessageInput dictation shortcuts", () => {
           value=""
           onChangeText={vi.fn()}
           onSubmit={vi.fn()}
-          attachments={[]}
+          attachments={EMPTY_ATTACHMENTS}
           cwd="/repo"
-          attachmentMenuItems={[]}
-          client={{ isConnected: true } as never}
+          attachmentMenuItems={EMPTY_ATTACHMENT_MENU_ITEMS}
+          client={FAKE_CONNECTED_CLIENT}
           isAgentRunning={false}
           isReadyForDictation={false}
           onQueue={vi.fn()}
@@ -370,10 +374,10 @@ describe("MessageInput dictation shortcuts", () => {
           value=""
           onChangeText={vi.fn()}
           onSubmit={vi.fn()}
-          attachments={[]}
+          attachments={EMPTY_ATTACHMENTS}
           cwd="/repo"
-          attachmentMenuItems={[]}
-          client={{ isConnected: true } as never}
+          attachmentMenuItems={EMPTY_ATTACHMENT_MENU_ITEMS}
+          client={FAKE_CONNECTED_CLIENT}
           isAgentRunning={false}
           isReadyForDictation
           onQueue={vi.fn()}
