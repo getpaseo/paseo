@@ -105,15 +105,19 @@ const CodeLine = React.memo(function CodeLine({
     () => [codeLineStyles.gutterText, { color: baseColor }],
     [baseColor],
   );
+  const keyedTokens = useMemo(
+    () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
+    [tokens],
+  );
   return (
     <View style={codeLineStyles.line}>
       <View style={gutterStyle}>
         <Text style={gutterTextStyle}>{String(lineNumber)}</Text>
       </View>
       <Text selectable style={codeLineStyles.lineText}>
-        {tokens.map((token, index) => (
+        {keyedTokens.map(({ key, token }) => (
           <CodeLineToken
-            key={index}
+            key={key}
             color={token.style ? (colorMap[token.style] ?? baseColor) : baseColor}
             text={token.text}
           />
@@ -238,13 +242,18 @@ function FilePreviewBody({
     }
 
     const lines = highlightedLines ?? [[{ text: preview.content ?? "", style: null }]];
+    const keyedLines = lines.map((tokens, index) => ({
+      key: `line-${index}`,
+      tokens,
+      lineNumber: index + 1,
+    }));
     const codeLines = (
       <View>
-        {lines.map((tokens, index) => (
+        {keyedLines.map(({ key, tokens, lineNumber }) => (
           <CodeLine
-            key={index}
+            key={key}
             tokens={tokens}
-            lineNumber={index + 1}
+            lineNumber={lineNumber}
             gutterWidth={gutterWidth}
             colorMap={colorMap}
             baseColor={baseColor}

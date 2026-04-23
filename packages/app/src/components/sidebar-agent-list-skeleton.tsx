@@ -3,6 +3,10 @@ import { Animated, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 const SECTION_OPACITIES: readonly number[] = [1, 0.7, 0.4];
+const SECTION_KEYS = SECTION_OPACITIES.map((_, i) => `skeleton-section-${i}`);
+const ROW_KEYS_BY_SECTION: readonly (readonly string[])[] = SECTION_OPACITIES.map((_, sIdx) =>
+  [0, 1, 2].map((r) => `skeleton-row-${sIdx}-${r}`),
+);
 
 function SkeletonPulse({ pulse, style }: { pulse: Animated.Value; style: StyleProp<ViewStyle> }) {
   const opacity = pulse.interpolate({
@@ -37,8 +41,8 @@ function SkeletonSection({
       </View>
 
       <View style={styles.rows}>
-        {Array.from({ length: 3 }).map((__, rowIdx) => (
-          <View key={`skeleton-row-${sectionIdx}-${rowIdx}`} style={styles.row}>
+        {ROW_KEYS_BY_SECTION[sectionIdx]?.map((key) => (
+          <View key={key} style={styles.row}>
             <SkeletonPulse pulse={pulse} style={styles.rowDot} />
             <SkeletonPulse pulse={pulse} style={styles.rowTitle} />
             <SkeletonPulse pulse={pulse} style={styles.rowBadge} />
@@ -76,7 +80,7 @@ export function SidebarAgentListSkeleton() {
     <View style={styles.container}>
       {SECTION_OPACITIES.map((sectionOpacity, sectionIdx) => (
         <SkeletonSection
-          key={`skeleton-section-${sectionIdx}`}
+          key={SECTION_KEYS[sectionIdx]}
           pulse={pulse}
           sectionOpacity={sectionOpacity}
           sectionIdx={sectionIdx}

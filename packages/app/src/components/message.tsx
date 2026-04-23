@@ -421,8 +421,8 @@ export const UserMessage = memo(function UserMessage({
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
             <View style={imagePreviewContainerStyle}>
-              {images.map((image, index) => (
-                <View key={`${image.id}-${index}`} style={userMessageStylesheet.imagePill}>
+              {images.map((image) => (
+                <View key={image.id} style={userMessageStylesheet.imagePill}>
                   <UserMessageAttachmentThumbnail image={image} />
                 </View>
               ))}
@@ -1416,6 +1416,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, [client, handleLinkPress, markdownParser, onInlinePathPress, serverId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
+  const keyedBlocks = useMemo(
+    () => blocks.map((block, index) => ({ key: `${index}:${block.slice(0, 32)}`, block })),
+    [blocks],
+  );
 
   const assistantContainerStyle = useMemo(
     () => [
@@ -1431,10 +1435,10 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <View testID="assistant-message" style={assistantContainerStyle}>
-      {blocks.map((block, index) => (
+      {keyedBlocks.map(({ key, block }, index) => (
         <AssistantMessageBlockContainer
-          key={index}
-          marginBottom={index < blocks.length - 1 ? theme.spacing[3] : 0}
+          key={key}
+          marginBottom={index < keyedBlocks.length - 1 ? theme.spacing[3] : 0}
         >
           <MemoizedMarkdownBlock
             text={block}
@@ -1844,12 +1848,8 @@ export const TodoListCard = memo(function TodoListCard({
           {items.length === 0 ? (
             <Text style={todoListCardStylesheet.emptyText}>No tasks yet.</Text>
           ) : (
-            items.map((item, idx) => (
-              <TodoListItemRow
-                key={`${item.text}-${idx}`}
-                text={item.text}
-                completed={item.completed}
-              />
+            items.map((item) => (
+              <TodoListItemRow key={item.text} text={item.text} completed={item.completed} />
             ))
           )}
         </View>

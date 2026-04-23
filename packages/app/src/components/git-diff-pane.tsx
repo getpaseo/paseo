@@ -162,11 +162,16 @@ function HighlightedText({ tokens, wrapLines = false }: HighlightedTextProps) {
     [lineHeight, wrapLines],
   );
 
+  const keyedTokens = useMemo(
+    () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
+    [tokens],
+  );
+
   return (
     <Text style={containerStyle}>
-      {tokens.map((token, index) => (
+      {keyedTokens.map(({ key, token }) => (
         <HighlightedToken
-          key={index}
+          key={key}
           text={token.text}
           color={getTokenColor(token.style)}
           lineHeight={lineHeight}
@@ -422,21 +427,23 @@ function SplitDiffColumn({
     [scrollWidth],
   );
 
+  const keyedRows = useMemo(() => rows.map((row, i) => ({ key: `row-${i}`, row })), [rows]);
+
   if (wrapLines) {
     return (
       <View style={wrapCellStyle}>
         <View style={styles.linesContainer}>
-          {rows.map((row, i) => {
+          {keyedRows.map(({ key, row }) => {
             if (row.kind === "header") {
               return (
-                <View key={`header-${i}`} style={styles.splitHeaderRow}>
+                <View key={key} style={styles.splitHeaderRow}>
                   <Text style={HEADER_LINE_TEXT_STYLE}>{row.content}</Text>
                 </View>
               );
             }
             return (
               <SplitDiffLine
-                key={`line-${i}`}
+                key={key}
                 line={side === "left" ? row.left : row.right}
                 gutterWidth={gutterWidth}
                 wrapLines={wrapLines}
@@ -451,21 +458,16 @@ function SplitDiffColumn({
   return (
     <View style={rowCellStyle}>
       <View style={styles.gutterColumn}>
-        {rows.map((row, i) => {
+        {keyedRows.map(({ key, row }) => {
           if (row.kind === "header") {
             return (
-              <DiffGutterCell
-                key={`g-${i}`}
-                lineNumber={null}
-                type="header"
-                gutterWidth={gutterWidth}
-              />
+              <DiffGutterCell key={key} lineNumber={null} type="header" gutterWidth={gutterWidth} />
             );
           }
           const line = side === "left" ? row.left : row.right;
           return (
             <DiffGutterCell
-              key={`g-${i}`}
+              key={key}
               lineNumber={line?.lineNumber ?? null}
               type={line?.type}
               gutterWidth={gutterWidth}
@@ -480,17 +482,17 @@ function SplitDiffColumn({
         contentContainerStyle={styles.diffContentInner}
       >
         <View style={linesContainerRowStyle}>
-          {rows.map((row, i) => {
+          {keyedRows.map(({ key, row }) => {
             if (row.kind === "header") {
               return (
-                <View key={`t-${i}`} style={styles.splitHeaderRow}>
+                <View key={key} style={styles.splitHeaderRow}>
                   <Text style={HEADER_LINE_TEXT_STYLE}>{row.content}</Text>
                 </View>
               );
             }
             return (
               <SplitTextLine
-                key={`t-${i}`}
+                key={key}
                 line={side === "left" ? row.left : row.right}
                 wrapLines={false}
               />

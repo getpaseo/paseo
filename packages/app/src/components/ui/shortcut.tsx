@@ -37,9 +37,9 @@ export function Shortcut({
 
   return (
     <View style={sequenceStyle}>
-      {displayChord.map(function (combo, index) {
+      {displayChord.map(function (combo) {
         return (
-          <View key={`${combo.join("+")}-${index}`} style={styles.badge}>
+          <View key={combo.join("+")} style={styles.badge}>
             <Text style={textCombinedStyle}>{formatShortcut(combo, shortcutOs)}</Text>
           </View>
         );

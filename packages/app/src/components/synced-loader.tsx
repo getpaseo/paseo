@@ -16,6 +16,7 @@ const DOT_COUNT = DOT_SEQUENCE.length;
 const GRID_COLUMNS = 2;
 const SNAKE_SEGMENT_OFFSETS = [0, -1, -2, -3, -4] as const;
 const SNAKE_OPACITIES = [1, 0.78, 0.56, 0.34, 0] as const;
+const DOT_KEYS = Array.from({ length: DOT_COUNT }, (_, i) => `dot-${i}`);
 const sharedStepProgress = makeMutable(0);
 let sharedLoopStarted = false;
 
@@ -91,7 +92,7 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
 
           return (
             <SpinnerDot
-              key={dotIndex}
+              key={DOT_KEYS[dotIndex]}
               color={color}
               dotSize={dotSize}
               sequenceIndex={sequenceIndex}

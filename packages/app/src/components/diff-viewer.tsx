@@ -46,8 +46,12 @@ function DiffLineRow({ line }: { line: DiffLine }) {
           <Text style={line.type === "add" ? styles.addText : styles.removeText}>
             {line.content[0]}
           </Text>
-          {line.segments.map((segment, segIdx) => (
-            <DiffSegment key={segIdx} segment={segment} lineType={line.type} />
+          {line.segments.map((segment) => (
+            <DiffSegment
+              key={`${segment.changed ? "c" : "u"}:${segment.text}`}
+              segment={segment}
+              lineType={line.type}
+            />
           ))}
         </Text>
       ) : (
@@ -101,6 +105,10 @@ export function DiffViewer({
     () => [styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }],
     [scrollViewWidth],
   );
+  const keyedDiffLines = React.useMemo(
+    () => diffLines.map((line, index) => ({ key: `${index}-${line.type}-${line.content}`, line })),
+    [diffLines],
+  );
 
   if (!diffLines.length) {
     return (
@@ -126,8 +134,8 @@ export function DiffViewer({
         onLayout={handleInnerLayout}
       >
         <View style={linesContainerStyle}>
-          {diffLines.map((line, index) => (
-            <DiffLineRow key={`${line.type}-${index}`} line={line} />
+          {keyedDiffLines.map(({ key, line }) => (
+            <DiffLineRow key={key} line={line} />
           ))}
         </View>
       </ScrollView>

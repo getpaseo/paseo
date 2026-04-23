@@ -67,6 +67,10 @@ export function PrPane({ data }: { data: PrPaneData }) {
   const StateIcon = getStateIcon(data.state);
   const stateLabel = getStateLabel(data.state);
   const stateLabelStyle = useMemo(() => [styles.stateLabel, { color: stateColor }], [stateColor]);
+  const keyedActivity = useMemo(
+    () => data.activity.map((item, idx) => ({ key: `${item.author}-${item.kind}-${idx}`, item })),
+    [data.activity],
+  );
 
   return (
     <View style={styles.root}>
@@ -116,8 +120,8 @@ export function PrPane({ data }: { data: PrPaneData }) {
           </>
         }
       >
-        {data.checks.map((check, idx) => (
-          <CheckRow key={`${check.name}-${idx}`} check={check} />
+        {data.checks.map((check) => (
+          <CheckRow key={check.name} check={check} />
         ))}
       </Section>
 
@@ -147,8 +151,8 @@ export function PrPane({ data }: { data: PrPaneData }) {
           </>
         }
       >
-        {data.activity.map((item, idx) => (
-          <ActivityRow key={`${item.author}-${idx}`} item={item} />
+        {keyedActivity.map(({ key, item }) => (
+          <ActivityRow key={key} item={item} />
         ))}
       </Section>
     </View>

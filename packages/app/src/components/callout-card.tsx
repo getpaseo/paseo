@@ -95,7 +95,7 @@ export function CalloutCard({
           <View style={styles.actionRow} testID={testID ? `${testID}-actions` : undefined}>
             {visibleActions.map((action, index) => (
               <CalloutActionButton
-                key={`${action.label}-${index}`}
+                key={action.label}
                 action={action}
                 testID={action.testID ?? (testID ? `${testID}-action-${index}` : undefined)}
               />

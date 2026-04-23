@@ -1156,7 +1156,7 @@ export function Composer({
                   if (attachment.kind === "image") {
                     return (
                       <ImageAttachmentPill
-                        key={`${attachment.metadata.id}-${index}`}
+                        key={attachment.metadata.id}
                         attachment={attachment}
                         index={index}
                         disabled={isComposerLocked}

@@ -356,7 +356,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         const otherText = otherTexts[qIndex] ?? "";
 
         return (
-          <View key={qIndex} style={styles.questionBlock}>
+          <View key={q.question} style={styles.questionBlock}>
             <View style={styles.questionHeader}>
               <Text style={questionTextStyle}>{q.question}</Text>
               <CircleHelp size={14} color={theme.colors.foregroundMuted} />
@@ -364,7 +364,7 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
             <View style={styles.optionsWrap}>
               {q.options.map((opt, optIndex) => (
                 <QuestionOptionRow
-                  key={optIndex}
+                  key={opt.label}
                   qIndex={qIndex}
                   optIndex={optIndex}
                   option={opt}
