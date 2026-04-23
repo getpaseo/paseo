@@ -215,6 +215,11 @@ function SessionRow({
     [isSelected],
   );
 
+  const archivedIcon = useMemo(
+    () => <Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />,
+    [theme.fontSize.xs, theme.colors.foregroundMuted],
+  );
+
   return (
     <Pressable
       style={pressableStyle}
@@ -230,12 +235,7 @@ function SessionRow({
           <Text style={sessionTitleStyle} numberOfLines={1}>
             {agent.title || "New session"}
           </Text>
-          {agent.archivedAt ? (
-            <SessionBadge
-              label="Archived"
-              icon={<Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />}
-            />
-          ) : null}
+          {agent.archivedAt ? <SessionBadge label="Archived" icon={archivedIcon} /> : null}
           {(agent.pendingPermissionCount ?? 0) > 0 ? (
             <SessionBadge label={`${agent.pendingPermissionCount} pending`} tone="warning" />
           ) : null}
@@ -428,6 +428,19 @@ export function AgentList({
     [isActionDaemonUnavailable],
   );
 
+  const refreshControl = useMemo(
+    () =>
+      onRefresh ? (
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={onRefresh}
+          tintColor={theme.colors.foregroundMuted}
+          colors={refreshColors}
+        />
+      ) : undefined,
+    [onRefresh, isRefreshing, theme.colors.foregroundMuted, refreshColors],
+  );
+
   return (
     <>
       <FlatList
@@ -439,16 +452,7 @@ export function AgentList({
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         ListFooterComponent={listFooterComponent}
-        refreshControl={
-          onRefresh ? (
-            <RefreshControl
-              refreshing={isRefreshing}
-              onRefresh={onRefresh}
-              tintColor={theme.colors.foregroundMuted}
-              colors={refreshColors}
-            />
-          ) : undefined
-        }
+        refreshControl={refreshControl}
       />
 
       <Modal

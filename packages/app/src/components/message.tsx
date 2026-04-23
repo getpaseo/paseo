@@ -1129,26 +1129,27 @@ const NativeExpandableBadgeShimmer = memo(function NativeExpandableBadgeShimmer(
     [nativeShimmerPeakStyle, peakWidth, rowHeight],
   );
 
+  const maskElement = useMemo(
+    () => (
+      <View pointerEvents="none" style={nativeShimmerMaskStyle}>
+        <Text style={nativeLabelMaskStyle} numberOfLines={1}>
+          {label}
+        </Text>
+        {secondaryLabel ? (
+          <Text style={nativeSecondaryMaskStyle} numberOfLines={1}>
+            {secondaryLabel}
+          </Text>
+        ) : (
+          <View style={expandableBadgeStylesheet.spacer} />
+        )}
+      </View>
+    ),
+    [nativeShimmerMaskStyle, nativeLabelMaskStyle, nativeSecondaryMaskStyle, label, secondaryLabel],
+  );
+
   return (
     <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none">
-      <MaskedView
-        pointerEvents="none"
-        style={nativeShimmerTrackStyle}
-        maskElement={
-          <View pointerEvents="none" style={nativeShimmerMaskStyle}>
-            <Text style={nativeLabelMaskStyle} numberOfLines={1}>
-              {label}
-            </Text>
-            {secondaryLabel ? (
-              <Text style={nativeSecondaryMaskStyle} numberOfLines={1}>
-                {secondaryLabel}
-              </Text>
-            ) : (
-              <View style={expandableBadgeStylesheet.spacer} />
-            )}
-          </View>
-        }
-      >
+      <MaskedView pointerEvents="none" style={nativeShimmerTrackStyle} maskElement={maskElement}>
         <View pointerEvents="none" style={nativeShimmerTrackStyle}>
           <Animated.View pointerEvents="none" style={nativeShimmerPeakCombinedStyle}>
             <Svg width="100%" height="100%" preserveAspectRatio="none">

@@ -142,6 +142,15 @@ function TreeRowItem({
     [isExpanded],
   );
 
+  const copyLeading = useMemo(
+    () => <Copy size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const downloadLeading = useMemo(
+    () => <Download size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+
   return (
     <Pressable onPress={handlePress} style={pressableStyle}>
       {depth > 0 && Array.from({ length: depth }, (_, i) => <IndentGuide key={i} index={i} />)}
@@ -187,17 +196,11 @@ function TreeRowItem({
             </View>
           </View>
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            leading={<Copy size={14} color={theme.colors.foregroundMuted} />}
-            onSelect={handleCopy}
-          >
+          <DropdownMenuItem leading={copyLeading} onSelect={handleCopy}>
             Copy path
           </DropdownMenuItem>
           {entry.kind === "file" ? (
-            <DropdownMenuItem
-              leading={<Download size={14} color={theme.colors.foregroundMuted} />}
-              onSelect={handleDownload}
-            >
+            <DropdownMenuItem leading={downloadLeading} onSelect={handleDownload}>
               Download
             </DropdownMenuItem>
           ) : null}

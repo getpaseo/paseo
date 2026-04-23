@@ -316,19 +316,17 @@ function ControlledStatusBar({
       selected: boolean;
       active: boolean;
       onPress: () => void;
-    }) => {
-      const visuals = getModeVisuals(provider, option.id, providerDefinitions);
-      const IconComponent = visuals?.icon ? MODE_ICONS[visuals.icon] : ShieldCheck;
-      return (
-        <ComboboxItem
-          label={option.label}
-          selected={selected}
-          active={active}
-          onPress={onPress}
-          leadingSlot={<IconComponent size={16} color={theme.colors.foreground} />}
-        />
-      );
-    },
+    }) => (
+      <ModeComboboxOption
+        option={option}
+        selected={selected}
+        active={active}
+        onPress={onPress}
+        provider={provider}
+        providerDefinitions={providerDefinitions}
+        iconColor={theme.colors.foreground}
+      />
+    ),
     [provider, providerDefinitions, theme.colors.foreground],
   );
 
@@ -1021,6 +1019,40 @@ function ThinkingMenuItem({
   );
 }
 
+function ModeComboboxOption({
+  option,
+  selected,
+  active,
+  onPress,
+  provider,
+  providerDefinitions,
+  iconColor,
+}: {
+  option: ComboboxOption;
+  selected: boolean;
+  active: boolean;
+  onPress: () => void;
+  provider: string;
+  providerDefinitions: AgentProviderDefinition[];
+  iconColor: string;
+}) {
+  const visuals = getModeVisuals(provider, option.id, providerDefinitions);
+  const IconComponent = visuals?.icon ? MODE_ICONS[visuals.icon] : ShieldCheck;
+  const leadingSlot = useMemo(
+    () => <IconComponent size={16} color={iconColor} />,
+    [IconComponent, iconColor],
+  );
+  return (
+    <ComboboxItem
+      label={option.label}
+      selected={selected}
+      active={active}
+      onPress={onPress}
+      leadingSlot={leadingSlot}
+    />
+  );
+}
+
 function ModeMenuItem({
   mode,
   provider,
@@ -1042,12 +1074,13 @@ function ModeMenuItem({
     onSelectMode?.(mode.id);
   }, [mode.id, onSelectMode]);
 
+  const leadingIcon = useMemo(
+    () => <Icon size={16} color={theme.colors.foreground} />,
+    [Icon, theme.colors.foreground],
+  );
+
   return (
-    <DropdownMenuItem
-      selected={selected}
-      onSelect={handleSelect}
-      leading={<Icon size={16} color={theme.colors.foreground} />}
-    >
+    <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leadingIcon}>
       {mode.label}
     </DropdownMenuItem>
   );

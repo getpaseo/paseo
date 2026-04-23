@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactElement } from "react";
+import { useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useToast } from "@/contexts/toast-context";
 import type { GitAction, GitActions } from "@/components/git-actions-policy";
 
@@ -28,7 +29,7 @@ interface GitActionsSplitButtonProps {
 interface GitActionMenuItemProps {
   action: GitAction;
   onSelect: (action: GitAction) => void;
-  trailing?: ReactElement | null;
+  archiveShortcutKeys?: ShortcutKey[][] | null;
   needsSeparator?: boolean;
   showSeparator?: boolean;
   closeOnSelect?: boolean;
@@ -37,12 +38,19 @@ interface GitActionMenuItemProps {
 function GitActionMenuItem({
   action,
   onSelect,
-  trailing,
+  archiveShortcutKeys,
   needsSeparator,
   showSeparator,
   closeOnSelect,
 }: GitActionMenuItemProps) {
   const handleSelect = useCallback(() => onSelect(action), [onSelect, action]);
+  const trailing = useMemo(
+    () =>
+      action.id === "archive-worktree" && archiveShortcutKeys ? (
+        <Shortcut chord={archiveShortcutKeys} />
+      ) : undefined,
+    [action.id, archiveShortcutKeys],
+  );
   return (
     <View>
       {needsSeparator && showSeparator ? <DropdownMenuSeparator /> : null}
@@ -154,11 +162,7 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
                     key={action.id}
                     action={action}
                     onSelect={handleActionSelect}
-                    trailing={
-                      action.id === "archive-worktree" && archiveShortcutKeys ? (
-                        <Shortcut chord={archiveShortcutKeys} />
-                      ) : undefined
-                    }
+                    archiveShortcutKeys={archiveShortcutKeys}
                     needsSeparator={
                       action.id === "merge-from-base" || action.id === "archive-worktree"
                     }
