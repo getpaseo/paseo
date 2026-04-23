@@ -253,6 +253,27 @@ function TabChip({
     [],
   );
 
+  const tabAccessibilityState = useMemo(() => ({ selected: isActive }), [isActive]);
+  const tabFocusIndicatorStyle = useMemo(
+    () => [styles.tabFocusIndicator, !isFocused && styles.tabFocusIndicatorUnfocused],
+    [isFocused],
+  );
+  const tabLabelSkeletonStyle = useMemo(
+    () => [
+      styles.tabLabelSkeleton,
+      showCloseButton && styles.tabLabelSkeletonWithCloseButton,
+    ],
+    [showCloseButton],
+  );
+  const tabLabelStyle = useMemo(
+    () => [
+      styles.tabLabel,
+      isHighlighted && styles.tabLabelActive,
+      showCloseButton && styles.tabLabelWithCloseButton,
+    ],
+    [isHighlighted, showCloseButton],
+  );
+
   return (
     <View ref={middleClickRef}>
       <ContextMenu key={tab.key}>
@@ -271,36 +292,20 @@ function TabChip({
               onPress={handleNavigateTab}
               accessibilityRole="button"
               accessibilityLabel={tooltipLabel}
-              accessibilityState={{ selected: isActive }}
+              accessibilityState={tabAccessibilityState}
               aria-selected={isActive}
             >
-              {isActive && (
-                <View
-                  style={[
-                    styles.tabFocusIndicator,
-                    !isFocused && styles.tabFocusIndicatorUnfocused,
-                  ]}
-                />
-              )}
+              {isActive && <View style={tabFocusIndicatorStyle} />}
               <View style={styles.tabHandle}>
                 <View style={styles.tabIcon}>
                   <WorkspaceTabIcon presentation={presentation} active={isHighlighted} />
                 </View>
                 {showLabel ? (
                   presentation.titleState === "loading" ? (
-                    <View
-                      style={[
-                        styles.tabLabelSkeleton,
-                        showCloseButton && styles.tabLabelSkeletonWithCloseButton,
-                      ]}
-                    />
+                    <View style={tabLabelSkeletonStyle} />
                   ) : (
                     <Text
-                      style={[
-                        styles.tabLabel,
-                        isHighlighted && styles.tabLabelActive,
-                        showCloseButton && styles.tabLabelWithCloseButton,
-                      ]}
+                      style={tabLabelStyle}
                       selectable={false}
                       numberOfLines={1}
                       ellipsizeMode="tail"
@@ -582,6 +587,16 @@ export function WorkspaceDesktopTabsRow({
     ],
   );
 
+  const tabsScrollStyle = useMemo(
+    () => [
+      styles.tabsScroll,
+      layout.requiresHorizontalScrollFallback
+        ? styles.tabsScrollOverflow
+        : styles.tabsScrollFitContent,
+    ],
+    [layout.requiresHorizontalScrollFallback],
+  );
+
   return (
     <View
       style={styles.tabsContainer}
@@ -592,12 +607,7 @@ export function WorkspaceDesktopTabsRow({
         horizontal
         scrollEnabled={layout.requiresHorizontalScrollFallback}
         testID="workspace-tabs-scroll"
-        style={[
-          styles.tabsScroll,
-          layout.requiresHorizontalScrollFallback
-            ? styles.tabsScrollOverflow
-            : styles.tabsScrollFitContent,
-        ]}
+        style={tabsScrollStyle}
         contentContainerStyle={styles.tabsContent}
         showsHorizontalScrollIndicator={false}
       >
@@ -792,7 +802,7 @@ function ResolvedDesktopTabChip({
         return (
           <View style={styles.tabSlot}>
             {showDropIndicatorBefore ? (
-              <View style={[styles.tabDropIndicator, styles.tabDropIndicatorBefore]} />
+              <View style={TAB_DROP_INDICATOR_BEFORE_STYLE} />
             ) : null}
             <TabChip
               tab={item.tab}
@@ -814,7 +824,7 @@ function ResolvedDesktopTabChip({
               dragHandleProps={dragHandleProps}
             />
             {showDropIndicatorAfter ? (
-              <View style={[styles.tabDropIndicator, styles.tabDropIndicatorAfter]} />
+              <View style={TAB_DROP_INDICATOR_AFTER_STYLE} />
             ) : null}
           </View>
         );
@@ -985,3 +995,12 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
   },
 }));
+
+const TAB_DROP_INDICATOR_BEFORE_STYLE = [
+  styles.tabDropIndicator,
+  styles.tabDropIndicatorBefore,
+];
+const TAB_DROP_INDICATOR_AFTER_STYLE = [
+  styles.tabDropIndicator,
+  styles.tabDropIndicatorAfter,
+];
