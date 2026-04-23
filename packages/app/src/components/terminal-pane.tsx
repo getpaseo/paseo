@@ -317,15 +317,15 @@ export function TerminalPane({
     const controller = new TerminalStreamController({
       client,
       getPreferredSize: () => lastReportedSizeRef.current,
-      onOutput: ({ terminalId, text }) => {
-        if (!isWorkspaceFocused || terminalIdRef.current !== terminalId) {
+      onOutput: ({ terminalId: outputTerminalId, text }) => {
+        if (!isWorkspaceFocused || terminalIdRef.current !== outputTerminalId) {
           return;
         }
         emulatorRef.current?.writeOutput(text);
       },
-      onSnapshot: ({ terminalId, state }) => {
-        workspaceTerminalSession.snapshots.set({ terminalId, state });
-        if (!isWorkspaceFocused || terminalIdRef.current !== terminalId) {
+      onSnapshot: ({ terminalId: snapshotTerminalId, state }) => {
+        workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });
+        if (!isWorkspaceFocused || terminalIdRef.current !== snapshotTerminalId) {
           return;
         }
         emulatorRef.current?.renderSnapshot(state);

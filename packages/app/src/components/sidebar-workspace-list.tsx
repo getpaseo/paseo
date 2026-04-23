@@ -1261,9 +1261,9 @@ function WorkspaceRowWithMenu({
       if (!confirmed) {
         return;
       }
-      let workspaceDirectory: string;
+      let archiveDirectory: string;
       try {
-        workspaceDirectory = requireWorkspaceExecutionDirectory({
+        archiveDirectory = requireWorkspaceExecutionDirectory({
           workspaceId: workspace.workspaceId,
           workspaceDirectory: workspace.workspaceDirectory,
         });
@@ -1272,7 +1272,7 @@ function WorkspaceRowWithMenu({
         return;
       }
 
-      if (!workspaceDirectory) {
+      if (!archiveDirectory) {
         toast.error("Workspace path not available");
         return;
       }
@@ -1281,8 +1281,8 @@ function WorkspaceRowWithMenu({
 
       void archiveWorktree({
         serverId: workspace.serverId,
-        cwd: workspaceDirectory,
-        worktreePath: workspaceDirectory,
+        cwd: archiveDirectory,
+        worktreePath: archiveDirectory,
       }).catch((error) => {
         const message = error instanceof Error ? error.message : "Failed to archive worktree";
         toast.error(message);
@@ -1348,9 +1348,9 @@ function WorkspaceRowWithMenu({
   ]);
 
   const handleCopyPath = useCallback(() => {
-    let workspaceDirectory: string;
+    let copyTargetDirectory: string;
     try {
-      workspaceDirectory = requireWorkspaceExecutionDirectory({
+      copyTargetDirectory = requireWorkspaceExecutionDirectory({
         workspaceId: workspace.workspaceId,
         workspaceDirectory: workspace.workspaceDirectory,
       });
@@ -1358,7 +1358,7 @@ function WorkspaceRowWithMenu({
       toast.error(error instanceof Error ? error.message : "Workspace path not available");
       return;
     }
-    void Clipboard.setStringAsync(workspaceDirectory);
+    void Clipboard.setStringAsync(copyTargetDirectory);
     toast.copied("Path copied");
   }, [toast, workspace.workspaceDirectory, workspace.workspaceId]);
 

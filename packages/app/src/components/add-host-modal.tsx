@@ -216,10 +216,10 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       onSaved?.({ profile, serverId, hostname, isNewHost });
       handleClose();
     } catch (error) {
-      const { title, detail, raw } = buildConnectionFailureCopy(endpoint, error);
+      const { title, detail, raw: rawDetail } = buildConnectionFailureCopy(endpoint, error);
       const combined =
-        raw && detail && raw !== detail
-          ? `${title}\n${detail}\nDetails: ${raw}`
+        rawDetail && detail && rawDetail !== detail
+          ? `${title}\n${detail}\nDetails: ${rawDetail}`
           : detail
             ? `${title}\n${detail}`
             : title;

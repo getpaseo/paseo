@@ -154,9 +154,9 @@ function SetupPanel() {
         next.add(index);
         // If the user re-expands, remove from manually collapsed
         setManuallyCollapsed((mc) => {
-          const next = new Set(mc);
-          next.delete(index);
-          return next;
+          const updated = new Set(mc);
+          updated.delete(index);
+          return updated;
         });
       }
       return next;

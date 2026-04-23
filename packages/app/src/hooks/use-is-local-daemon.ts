@@ -24,7 +24,7 @@ export function useLocalDaemonServerId(): string | null {
     enabled: isDesktopApp,
     staleTime: Infinity,
     gcTime: Infinity,
-    refetchInterval: (query) => (query.state.data?.serverId ? false : 1000),
+    refetchInterval: (activeQuery) => (activeQuery.state.data?.serverId ? false : 1000),
     refetchOnMount: false,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,

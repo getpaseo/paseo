@@ -354,9 +354,9 @@ export function NewWorkspaceScreen({
         }
 
         const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments);
-        const workspace = await ensureWorkspace({ cwd, attachments: reviewAttachments });
+        const ensuredWorkspace = await ensureWorkspace({ cwd, attachments: reviewAttachments });
         const draftId = generateDraftId();
-        const workspaceDirectory = workspace.workspaceDirectory;
+        const workspaceDirectory = ensuredWorkspace.workspaceDirectory;
         useDraftStore.getState().saveDraftInput({
           draftKey: buildDraftStoreKey({
             serverId,
@@ -371,7 +371,7 @@ export function NewWorkspaceScreen({
         });
         useWorkspaceDraftSubmissionStore.getState().setPending({
           serverId,
-          workspaceId: workspace.id,
+          workspaceId: ensuredWorkspace.id,
           draftId,
           text,
           attachments,
@@ -389,7 +389,7 @@ export function NewWorkspaceScreen({
         });
         navigateToPreparedWorkspaceTab({
           serverId,
-          workspaceId: workspace.id,
+          workspaceId: ensuredWorkspace.id,
           target: { kind: "draft", draftId },
           navigationMethod: "replace",
         });

@@ -369,8 +369,8 @@ function ControlledStatusBar({
   const handleModeSelect = useCallback((id: string) => onSelectMode?.(id), [onSelectMode]);
 
   const handleDesktopModelSelect = useCallback(
-    (selectedProviderId: string, modelId: string) => {
-      if (selectedProviderId === provider) {
+    (nextProviderId: string, modelId: string) => {
+      if (nextProviderId === provider) {
         onSelectModel?.(modelId);
       }
     },
@@ -425,13 +425,13 @@ function ControlledStatusBar({
   );
 
   const handleSheetModelSelect = useCallback(
-    (selectedProviderId: string, modelId: string) => {
+    (nextProviderId: string, modelId: string) => {
       if (onSelectProviderAndModel) {
-        onSelectProviderAndModel(selectedProviderId, modelId);
+        onSelectProviderAndModel(nextProviderId, modelId);
         return;
       }
-      if (selectedProviderId !== provider) {
-        onSelectProvider?.(selectedProviderId);
+      if (nextProviderId !== provider) {
+        onSelectProvider?.(nextProviderId);
       }
       onSelectModel?.(modelId);
     },

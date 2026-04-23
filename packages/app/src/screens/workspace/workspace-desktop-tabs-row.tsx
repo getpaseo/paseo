@@ -324,12 +324,12 @@ function TabChip({
                   onPress={handleCloseButtonPress}
                   style={closeButtonStyle}
                 >
-                  {({ hovered, pressed }) =>
+                  {({ hovered: closeHovered, pressed }) =>
                     isClosingTab ? (
                       <ActivityIndicator
                         size={12}
                         color={
-                          hovered || pressed
+                          closeHovered || pressed
                             ? theme.colors.foreground
                             : theme.colors.foregroundMuted
                         }
@@ -338,7 +338,7 @@ function TabChip({
                       <X
                         size={12}
                         color={
-                          hovered || pressed
+                          closeHovered || pressed
                             ? theme.colors.foreground
                             : theme.colors.foregroundMuted
                         }

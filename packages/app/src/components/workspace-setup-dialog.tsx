@@ -176,7 +176,7 @@ export function WorkspaceSetupDialog() {
       try {
         setPendingAction("chat");
         setErrorMessage(null);
-        const workspace = await ensureWorkspace({ cwd, attachments });
+        const ensuredWorkspace = await ensureWorkspace({ cwd, attachments });
         const connectedClient = withConnectedClient();
         if (!composerState) {
           throw new Error("Workspace setup composer state is required");
@@ -188,12 +188,12 @@ export function WorkspaceSetupDialog() {
         const wirePayload = splitComposerAttachmentsForSubmit(attachments);
         const encodedImages = await encodeImages(wirePayload.images);
         const workspaceDirectory = requireWorkspaceExecutionAuthority({
-          workspace,
+          workspace: ensuredWorkspace,
         }).workspaceDirectory;
         const agent = await connectedClient.createAgent({
           provider: composerState.selectedProvider,
           cwd: workspaceDirectory,
-          workspaceId: workspace.id,
+          workspaceId: ensuredWorkspace.id,
           ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
             ? { modeId: composerState.selectedMode }
             : {}),
@@ -215,7 +215,7 @@ export function WorkspaceSetupDialog() {
           next.set(agent.id, normalizeAgentSnapshot(agent, serverId));
           return next;
         });
-        navigateAfterCreation(workspace.id, { kind: "agent", agentId: agent.id });
+        navigateAfterCreation(ensuredWorkspace.id, { kind: "agent", agentId: agent.id });
       } catch (error) {
         const message = toErrorMessage(error);
         setErrorMessage(message);
