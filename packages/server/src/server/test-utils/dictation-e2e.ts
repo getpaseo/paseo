@@ -65,30 +65,36 @@ export function parsePcm16MonoWav(buffer: Buffer): { sampleRate: number; pcm16: 
 
 export async function findLargestDebugWavFixture(): Promise<string> {
   const base = path.resolve(process.cwd(), ".debug", "recordings");
-  const files: Array<{ filePath: string; size: number }> = [];
-
-  const walk = async (dir: string): Promise<void> => {
-    const entries = await import("node:fs/promises").then((fs) =>
-      fs.readdir(dir, { withFileTypes: true }),
-    );
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full);
-        continue;
-      }
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".wav")) {
-        continue;
-      }
-      const stat = await import("node:fs/promises").then((fs) => fs.stat(full));
-      files.push({ filePath: full, size: stat.size });
-    }
-  };
-
   if (!existsSync(base)) {
     throw new Error(`Missing debug recordings dir: ${base}`);
   }
-  await walk(base);
+
+  const fs = await import("node:fs/promises");
+  const files: Array<{ filePath: string; size: number }> = [];
+  let currentLevel: string[] = [base];
+  while (currentLevel.length > 0) {
+    const levelResults = await Promise.all(
+      currentLevel.map((dir) => fs.readdir(dir, { withFileTypes: true }).then((entries) => ({ dir, entries }))),
+    );
+    const wavPaths: string[] = [];
+    const nextLevel: string[] = [];
+    for (const { dir, entries } of levelResults) {
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          nextLevel.push(full);
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".wav")) {
+          wavPaths.push(full);
+        }
+      }
+    }
+    const stats = await Promise.all(wavPaths.map((full) => fs.stat(full)));
+    for (let i = 0; i < wavPaths.length; i += 1) {
+      files.push({ filePath: wavPaths[i]!, size: stats[i]!.size });
+    }
+    currentLevel = nextLevel;
+  }
+
   if (files.length === 0) {
     throw new Error(`No .wav files found under ${base}`);
   }
