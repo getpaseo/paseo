@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import { listAvailableEditorTargets, openInEditorTarget } from "./editor-targets.js";
 
@@ -45,7 +46,7 @@ describe("editor-targets", () => {
       return child;
     });
     const child = { once, unref };
-    const spawn = vi.fn(() => child as any);
+    const spawn = vi.fn(() => child as unknown as ChildProcess);
 
     await openInEditorTarget(
       {
