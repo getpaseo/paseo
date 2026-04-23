@@ -97,7 +97,9 @@ export async function determineAgentMetadataNeeds(
   };
 }
 
-function buildMetadataSchema(needs: AgentMetadataNeeds): z.ZodObject<any> | null {
+function buildMetadataSchema(
+  needs: AgentMetadataNeeds,
+): z.ZodObject<Record<string, z.ZodTypeAny>> | null {
   if (!needs.needsTitle && !needs.needsBranch) {
     return null;
   }

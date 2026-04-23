@@ -55,7 +55,7 @@ async function downloadToFile(options: DownloadToFileOptions): Promise<void> {
   const tmpPath = `${outputPath}.tmp-${Date.now()}`;
   await mkdir(path.dirname(outputPath), { recursive: true });
 
-  const nodeStream = Readable.fromWeb(res.body as any);
+  const nodeStream = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
 
   try {
     await pipeline(nodeStream, createWriteStream(tmpPath));

@@ -533,7 +533,8 @@ export function getProviderIds(
 }
 
 // Deprecated: Use buildProviderRegistry instead
-export const PROVIDER_REGISTRY: Record<AgentProvider, ProviderDefinition> = null as any;
+export const PROVIDER_REGISTRY: Record<AgentProvider, ProviderDefinition> =
+  null as unknown as Record<AgentProvider, ProviderDefinition>;
 
 export function createAllClients(
   logger: Logger,

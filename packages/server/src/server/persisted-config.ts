@@ -312,7 +312,7 @@ const DEFAULT_PERSISTED_CONFIG = PersistedConfigSchema.parse({
 
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
-  info(...args: any[]): void;
+  info(...args: unknown[]): void;
 }
 
 function getConfigPath(paseoHome: string): string {

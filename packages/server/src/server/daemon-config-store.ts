@@ -12,7 +12,7 @@ type MutableDaemonConfigPatch = import("../shared/messages.js").MutableDaemonCon
 
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
-  info(...args: any[]): void;
+  info(...args: unknown[]): void;
 }
 
 type ConfigListener = (config: MutableDaemonConfig) => void;

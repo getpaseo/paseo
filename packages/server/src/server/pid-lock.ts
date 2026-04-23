@@ -94,8 +94,8 @@ export async function acquirePidLock(
   try {
     fd = await open(pidPath, "wx");
     await fd.write(JSON.stringify(lockInfo));
-  } catch (err: any) {
-    if (err.code === "EEXIST") {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
       // Race condition - another process created the file
       // Re-read and check
       try {

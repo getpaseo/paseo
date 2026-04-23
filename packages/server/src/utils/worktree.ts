@@ -379,13 +379,14 @@ async function execSetupCommand(
       exitCode: 0,
       durationMs: Date.now() - startedAt,
     };
-  } catch (error: any) {
+  } catch (error) {
+    const execErr = error as { stdout?: string; stderr?: string; code?: unknown } | undefined;
     return {
       command,
       cwd: options.cwd,
-      stdout: error?.stdout ?? "",
-      stderr: error?.stderr ?? (error instanceof Error ? error.message : String(error)),
-      exitCode: typeof error?.code === "number" ? error.code : null,
+      stdout: execErr?.stdout ?? "",
+      stderr: execErr?.stderr ?? (error instanceof Error ? error.message : String(error)),
+      exitCode: typeof execErr?.code === "number" ? execErr.code : null,
       durationMs: Date.now() - startedAt,
     };
   }

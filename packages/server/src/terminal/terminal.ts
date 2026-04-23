@@ -305,7 +305,13 @@ function extractScrollback(terminal: TerminalType): TerminalCell[][] {
 }
 
 function extractCursorState(terminal: TerminalType): TerminalState["cursor"] {
-  const coreService = (terminal as any)._core?.coreService;
+  const coreService = (terminal as unknown as { _core?: { coreService?: Record<string, unknown> } })
+    ._core?.coreService as
+    | {
+        decPrivateModes?: { cursorStyle?: unknown; cursorBlink?: unknown };
+        isCursorHidden?: unknown;
+      }
+    | undefined;
   const cursorStyle = coreService?.decPrivateModes?.cursorStyle;
   const normalizedCursorStyle =
     cursorStyle === "block" || cursorStyle === "underline" || cursorStyle === "bar"
