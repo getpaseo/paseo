@@ -139,9 +139,7 @@ describe("ScriptHealthMonitor", () => {
   afterEach(async () => {
     vi.useRealTimers();
 
-    for (const server of servers) {
-      await closeServer(server);
-    }
+    await Promise.all(Array.from(servers, (server) => closeServer(server)));
     servers.clear();
   });
 
