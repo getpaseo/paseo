@@ -419,30 +419,33 @@ async function listCodexSkills(
 
   candidates.push(path.join(resolveCodexHomeDir(), "skills"));
 
+  const candidateReads = await Promise.all(
+    candidates.map(async (dir) => {
+      let entries: Dirent[];
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return [] as string[];
+      }
+      const dirEntries = entries.filter((entry) => entry.isDirectory() || entry.isSymbolicLink());
+      const skillContents = await Promise.all(
+        dirEntries.map(async (entry) => {
+          const skillDir = path.join(dir, entry.name);
+          const skillPath = path.join(skillDir, "SKILL.md");
+          try {
+            return await fs.readFile(skillPath, "utf8");
+          } catch {
+            return null;
+          }
+        }),
+      );
+      return skillContents.filter((content): content is string => content !== null);
+    }),
+  );
+
   const commandsByName = new Map<string, AgentSlashCommand>();
-
-  for (const dir of candidates) {
-    let entries: Dirent[];
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    const dirEntries = entries.filter((entry) => entry.isDirectory() || entry.isSymbolicLink());
-    const skillContents = await Promise.all(
-      dirEntries.map(async (entry) => {
-        const skillDir = path.join(dir, entry.name);
-        const skillPath = path.join(skillDir, "SKILL.md");
-        try {
-          return await fs.readFile(skillPath, "utf8");
-        } catch {
-          return null;
-        }
-      }),
-    );
+  for (const skillContents of candidateReads) {
     for (const content of skillContents) {
-      if (!content) continue;
       const { frontMatter } = parseFrontMatter(content);
       const name = frontMatter["name"];
       const description = frontMatter["description"];
