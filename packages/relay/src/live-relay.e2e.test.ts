@@ -15,18 +15,20 @@ async function withRetry<T>(
   fn: () => Promise<T>,
   options: { retries: number; delayMs: number },
 ): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= options.retries; attempt++) {
+  async function attempt(attemptNumber: number, lastError: unknown): Promise<T> {
+    if (attemptNumber > options.retries) {
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    }
     try {
       return await fn();
     } catch (error) {
-      lastError = error;
-      if (attempt < options.retries) {
+      if (attemptNumber < options.retries) {
         await new Promise((r) => setTimeout(r, options.delayMs));
       }
+      return attempt(attemptNumber + 1, error);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  return attempt(0, null);
 }
 
 function waitOpen(ws: WebSocket, label: string): Promise<void> {
