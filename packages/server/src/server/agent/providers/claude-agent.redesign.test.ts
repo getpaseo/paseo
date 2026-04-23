@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Logger } from "pino";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";

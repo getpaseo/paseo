@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { it, expect, afterEach } from "vitest";
 import { createTerminalManager, type TerminalManager } from "./terminal-manager.js";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";

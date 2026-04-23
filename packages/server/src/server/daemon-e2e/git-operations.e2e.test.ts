@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { test, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync, realpathSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";

@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 import { Session } from "./session.js";
 import type {
   AgentSnapshotPayload,

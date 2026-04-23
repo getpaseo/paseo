@@ -10,7 +10,7 @@
  * CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in the environment.
  * They are skipped automatically when credentials are unavailable.
  */
-import { beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { beforeAll, beforeEach, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";

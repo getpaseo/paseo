@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readdirSync } from "fs";
+import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
@@ -8,8 +8,6 @@ import { createMessageCollector, type MessageCollector } from "../test-utils/mes
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
 }
-
-const CODEX_TEST_MODEL = "gpt-5.4-mini";
 
 let ctx: DaemonTestContext;
 let collector: MessageCollector;

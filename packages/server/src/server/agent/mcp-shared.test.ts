@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { setupFinishNotification } from "./mcp-shared.js";

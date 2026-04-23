@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { test, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";

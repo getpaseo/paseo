@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 vi.mock("@opencode-ai/sdk/v2/client", () => ({
   createOpencodeClient: vi.fn(),

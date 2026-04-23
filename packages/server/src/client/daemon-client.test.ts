@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
+import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { DaemonClient, type DaemonTransport } from "./daemon-client";
 import {
   asUint8Array,
