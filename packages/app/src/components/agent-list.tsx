@@ -150,24 +150,26 @@ function SessionBadge({
   icon?: ReactElement;
   tone?: "neutral" | "warning" | "danger";
 }) {
+  const badgeStyle = useMemo(
+    () => [
+      styles.badge,
+      tone === "warning" && styles.badgeWarning,
+      tone === "danger" && styles.badgeDanger,
+    ],
+    [tone],
+  );
+  const badgeTextStyle = useMemo(
+    () => [
+      styles.badgeText,
+      tone === "warning" && styles.badgeTextWarning,
+      tone === "danger" && styles.badgeTextDanger,
+    ],
+    [tone],
+  );
   return (
-    <View
-      style={[
-        styles.badge,
-        tone === "warning" && styles.badgeWarning,
-        tone === "danger" && styles.badgeDanger,
-      ]}
-    >
+    <View style={badgeStyle}>
       {icon}
-      <Text
-        style={[
-          styles.badgeText,
-          tone === "warning" && styles.badgeTextWarning,
-          tone === "danger" && styles.badgeTextDanger,
-        ]}
-      >
-        {label}
-      </Text>
+      <Text style={badgeTextStyle}>{label}</Text>
     </View>
   );
 }
@@ -208,6 +210,11 @@ function SessionRow({
   const handlePress = useCallback(() => onPress(agent), [onPress, agent]);
   const handleLongPress = useCallback(() => onLongPress(agent), [onLongPress, agent]);
 
+  const sessionTitleStyle = useMemo(
+    () => [styles.sessionTitle, isSelected && styles.sessionTitleHighlighted],
+    [isSelected],
+  );
+
   return (
     <Pressable
       style={pressableStyle}
@@ -220,10 +227,7 @@ function SessionRow({
           <View style={styles.providerIconWrap}>
             <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           </View>
-          <Text
-            style={[styles.sessionTitle, isSelected && styles.sessionTitleHighlighted]}
-            numberOfLines={1}
-          >
+          <Text style={sessionTitleStyle} numberOfLines={1}>
             {agent.title || "New session"}
           </Text>
           {agent.archivedAt ? (
@@ -411,6 +415,19 @@ export function AgentList({
 
   const keyExtractor = useCallback((item: FlatListItem) => item.key, []);
 
+  const refreshColors = useMemo(
+    () => [theme.colors.foregroundMuted],
+    [theme.colors.foregroundMuted],
+  );
+  const sheetContainerStyle = useMemo(
+    () => [styles.sheetContainer, { paddingBottom: Math.max(insets.bottom, theme.spacing[6]) }],
+    [insets.bottom, theme.spacing],
+  );
+  const sheetArchiveTextStyle = useMemo(
+    () => [styles.sheetArchiveText, isActionDaemonUnavailable && styles.sheetArchiveTextDisabled],
+    [isActionDaemonUnavailable],
+  );
+
   return (
     <>
       <FlatList
@@ -428,7 +445,7 @@ export function AgentList({
               refreshing={isRefreshing}
               onRefresh={onRefresh}
               tintColor={theme.colors.foregroundMuted}
-              colors={[theme.colors.foregroundMuted]}
+              colors={refreshColors}
             />
           ) : undefined
         }
@@ -442,12 +459,7 @@ export function AgentList({
       >
         <View style={styles.sheetOverlay}>
           <Pressable style={styles.sheetBackdrop} onPress={handleCloseActionSheet} />
-          <View
-            style={[
-              styles.sheetContainer,
-              { paddingBottom: Math.max(insets.bottom, theme.spacing[6]) },
-            ]}
-          >
+          <View style={sheetContainerStyle}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>
               {isActionDaemonUnavailable
@@ -456,7 +468,7 @@ export function AgentList({
             </Text>
             <View style={styles.sheetButtonRow}>
               <Pressable
-                style={[styles.sheetButton, styles.sheetCancelButton]}
+                style={SHEET_CANCEL_BUTTON_STYLE}
                 onPress={handleCloseActionSheet}
                 testID="agent-action-cancel"
               >
@@ -464,18 +476,11 @@ export function AgentList({
               </Pressable>
               <Pressable
                 disabled={isActionDaemonUnavailable}
-                style={[styles.sheetButton, styles.sheetArchiveButton]}
+                style={SHEET_ARCHIVE_BUTTON_STYLE}
                 onPress={handleArchiveAgent}
                 testID="agent-action-archive"
               >
-                <Text
-                  style={[
-                    styles.sheetArchiveText,
-                    isActionDaemonUnavailable && styles.sheetArchiveTextDisabled,
-                  ]}
-                >
-                  Archive
-                </Text>
+                <Text style={sheetArchiveTextStyle}>Archive</Text>
               </Pressable>
             </View>
           </View>
@@ -686,3 +691,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
 }));
+
+const SHEET_CANCEL_BUTTON_STYLE = [styles.sheetButton, styles.sheetCancelButton];
+const SHEET_ARCHIVE_BUTTON_STYLE = [styles.sheetButton, styles.sheetArchiveButton];
