@@ -31,6 +31,20 @@ export function DiffViewer({
     [],
   );
 
+  const outerScrollStyle = React.useMemo(
+    () => [
+      styles.verticalScroll,
+      maxHeight !== undefined && { maxHeight },
+      fillAvailableHeight && styles.fillHeight,
+      webScrollbarStyle,
+    ],
+    [maxHeight, fillAvailableHeight, webScrollbarStyle],
+  );
+  const linesContainerStyle = React.useMemo(
+    () => [styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }],
+    [scrollViewWidth],
+  );
+
   if (!diffLines.length) {
     return (
       <View style={styles.emptyState}>
@@ -41,12 +55,7 @@ export function DiffViewer({
 
   return (
     <ScrollView
-      style={[
-        styles.verticalScroll,
-        maxHeight !== undefined && { maxHeight },
-        fillAvailableHeight && styles.fillHeight,
-        webScrollbarStyle,
-      ]}
+      style={outerScrollStyle}
       contentContainerStyle={styles.verticalContent}
       nestedScrollEnabled
       showsVerticalScrollIndicator
@@ -59,7 +68,7 @@ export function DiffViewer({
         contentContainerStyle={styles.horizontalContent}
         onLayout={handleInnerLayout}
       >
-        <View style={[styles.linesContainer, scrollViewWidth > 0 && { minWidth: scrollViewWidth }]}>
+        <View style={linesContainerStyle}>
           {diffLines.map((line, index) => (
             <View
               key={`${line.type}-${index}`}
