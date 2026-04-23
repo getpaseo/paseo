@@ -400,7 +400,7 @@ describe("HostRuntimeController", () => {
         createClient: () => {
           throw new Error("should adopt the probe client");
         },
-        connectToDaemon: async ({ host, connection }) => {
+        connectToDaemon: async ({ host: hostProfile, connection }) => {
           const client = makeConnectedProbeClient(connection.id === "direct:lan:6767" ? 12 : 30);
           if (connection.id === "relay:relay.paseo.sh:443") {
             client.ping = async () => ({ rttMs: await slowPing.promise });
@@ -408,8 +408,8 @@ describe("HostRuntimeController", () => {
           clients.push(client);
           return {
             client: client as unknown as DaemonClient,
-            serverId: host.serverId,
-            hostname: host.label ?? null,
+            serverId: hostProfile.serverId,
+            hostname: hostProfile.label ?? null,
           };
         },
         getClientId: async () => "cid_test_runtime",
@@ -450,7 +450,7 @@ describe("HostRuntimeController", () => {
         createClient: () => {
           throw new Error("should adopt probe clients");
         },
-        connectToDaemon: async ({ host, connection }) => {
+        connectToDaemon: async ({ host: hostProfile, connection }) => {
           probeAttempts.push(connection.id);
           const value = latencies[connection.id];
           if (value instanceof Error) {
@@ -461,8 +461,8 @@ describe("HostRuntimeController", () => {
           }
           return {
             client: makeConnectedProbeClient(value) as unknown as DaemonClient,
-            serverId: host.serverId,
-            hostname: host.label ?? null,
+            serverId: hostProfile.serverId,
+            hostname: hostProfile.label ?? null,
           };
         },
         getClientId: async () => "cid_test_runtime",
@@ -873,10 +873,10 @@ describe("HostRuntimeController", () => {
         createdClients.push(client);
         return client as unknown as DaemonClient;
       },
-      connectToDaemon: async ({ host }) => ({
+      connectToDaemon: async ({ host: hostProfile }) => ({
         client: makeConnectedProbeClient(10) as unknown as DaemonClient,
-        serverId: host.serverId,
-        hostname: host.label ?? null,
+        serverId: hostProfile.serverId,
+        hostname: hostProfile.label ?? null,
       }),
       getClientId: async () => "cid_test_runtime",
     };
@@ -950,7 +950,7 @@ describe("HostRuntimeController", () => {
       host,
       deps: {
         createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
-        connectToDaemon: async ({ host }) => {
+        connectToDaemon: async ({ host: hostProfile }) => {
           probeCalls += 1;
           const client = new FakeDaemonClient();
           client.connectCalls = 1;
@@ -963,8 +963,8 @@ describe("HostRuntimeController", () => {
           };
           return {
             client: client as unknown as DaemonClient,
-            serverId: host.serverId,
-            hostname: host.label ?? null,
+            serverId: hostProfile.serverId,
+            hostname: hostProfile.label ?? null,
           };
         },
         getClientId: async () => "cid_test_runtime",
@@ -1005,12 +1005,12 @@ describe("HostRuntimeController", () => {
           createdClients.push(client);
           return client as unknown as DaemonClient;
         },
-        connectToDaemon: async ({ host }) => {
+        connectToDaemon: async ({ host: hostProfile }) => {
           const client = makeConnectedProbeClient(10);
           return {
             client: client as unknown as DaemonClient,
-            serverId: host.serverId,
-            hostname: host.label ?? null,
+            serverId: hostProfile.serverId,
+            hostname: hostProfile.label ?? null,
           };
         },
         getClientId: async () => "cid_test_runtime",
@@ -1173,10 +1173,10 @@ describe("HostRuntimeStore", () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host }) => ({
+        connectToDaemon: async ({ host: hostProfile }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: host.serverId,
-          hostname: host.label ?? null,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },
@@ -1224,10 +1224,10 @@ describe("HostRuntimeStore", () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host }) => ({
+        connectToDaemon: async ({ host: hostProfile }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: host.serverId,
-          hostname: host.label ?? null,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },
@@ -1295,10 +1295,10 @@ describe("HostRuntimeStore", () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host }) => ({
+        connectToDaemon: async ({ host: hostProfile }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: host.serverId,
-          hostname: host.label ?? null,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },
@@ -1364,10 +1364,10 @@ describe("HostRuntimeStore", () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host }) => ({
+        connectToDaemon: async ({ host: hostProfile }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: host.serverId,
-          hostname: host.label ?? null,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },
@@ -1435,10 +1435,10 @@ describe("HostRuntimeStore", () => {
     const store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
-        connectToDaemon: async ({ host }) => ({
+        connectToDaemon: async ({ host: hostProfile }) => ({
           client: fakeClient as unknown as DaemonClient,
-          serverId: host.serverId,
-          hostname: host.label ?? null,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
         }),
         getClientId: async () => "cid_test_runtime",
       },

@@ -25,7 +25,7 @@ const {
   initialAttachments,
   initialDraftState,
 } = vi.hoisted(() => {
-  const theme = {
+  const hoistedTheme = {
     spacing: { 1: 4, 2: 8, 3: 12, 4: 16, 6: 24, 8: 32 },
     iconSize: { sm: 14, md: 18, lg: 22 },
     borderWidth: { 1: 1 },
@@ -48,7 +48,7 @@ const {
     },
   };
 
-  const prItem: GitHubSearchItem = {
+  const hoistedPrItem: GitHubSearchItem = {
     kind: "pr",
     number: 202,
     title: "Refactor picker",
@@ -60,7 +60,7 @@ const {
     headRefName: "feature/picker",
   };
 
-  const prItemB: GitHubSearchItem = {
+  const hoistedPrItemB: GitHubSearchItem = {
     kind: "pr",
     number: 303,
     title: "Polish composer chip",
@@ -72,7 +72,7 @@ const {
     headRefName: "feature/composer-chip",
   };
 
-  const issueItem: GitHubSearchItem = {
+  const hoistedIssueItem: GitHubSearchItem = {
     kind: "issue",
     number: 44,
     title: "Keep manual attachment",
@@ -82,50 +82,50 @@ const {
     labels: [],
   };
 
-  const initialAttachments: ComposerAttachment[] = [];
-  const initialDraftState = { text: "" };
+  const hoistedInitialAttachments: ComposerAttachment[] = [];
+  const hoistedInitialDraftState = { text: "" };
 
-  const createdWorkspace = {
+  const hoistedCreatedWorkspace = {
     id: "workspace-1",
     workspaceDirectory: "/repo/.paseo/worktrees/workspace-1",
   };
 
-  const createdAgent = {
+  const hoistedCreatedAgent = {
     id: "agent-1",
-    cwd: createdWorkspace.workspaceDirectory,
+    cwd: hoistedCreatedWorkspace.workspaceDirectory,
   };
 
-  const mockClient = {
+  const hoistedMockClient = {
     isConnected: true,
     getCheckoutStatus: vi.fn(async () => ({ currentBranch: "main" })),
     getBranchSuggestions: vi.fn(async () => ({ branches: ["main", "dev", "feat/x"] })),
     searchGitHub: vi.fn(async () => ({
-      items: [prItem, prItemB],
+      items: [hoistedPrItem, hoistedPrItemB],
       githubFeaturesEnabled: true,
       error: null,
     })),
     createPaseoWorktree: vi.fn(async (_input: CreatePaseoWorktreeInput) => ({
-      workspace: createdWorkspace,
+      workspace: hoistedCreatedWorkspace,
       error: null,
     })),
-    createAgent: vi.fn(async () => createdAgent),
+    createAgent: vi.fn(async () => hoistedCreatedAgent),
   };
 
   return {
-    theme,
-    mockClient,
+    theme: hoistedTheme,
+    mockClient: hoistedMockClient,
     mergeWorkspacesMock: vi.fn(),
     navigateMock: vi.fn(),
     saveDraftInputMock: vi.fn(),
     clearDraftInputMock: vi.fn(),
     queueDraftSubmissionMock: vi.fn(),
-    createdAgent,
-    createdWorkspace,
-    prItem,
-    prItemB,
-    issueItem,
-    initialAttachments,
-    initialDraftState,
+    createdAgent: hoistedCreatedAgent,
+    createdWorkspace: hoistedCreatedWorkspace,
+    prItem: hoistedPrItem,
+    prItemB: hoistedPrItemB,
+    issueItem: hoistedIssueItem,
+    initialAttachments: hoistedInitialAttachments,
+    initialDraftState: hoistedInitialDraftState,
   };
 });
 
