@@ -80,18 +80,22 @@ describe("runAsyncWorktreeBootstrap", () => {
   });
 
   afterEach(async () => {
-    for (const terminalManager of realTerminalManagers) {
-      for (const cwd of terminalManager.listDirectories()) {
-        const terminals = await terminalManager.getTerminals(cwd);
-        for (const terminal of terminals) {
-          await terminalManager.killTerminalAndWait(terminal.id, {
-            gracefulTimeoutMs: 100,
-            forceTimeoutMs: 100,
-          });
-        }
-      }
-      terminalManager.killAll();
-    }
+    await Promise.all(
+      realTerminalManagers.map(async (terminalManager) => {
+        const terminalsByCwd = await Promise.all(
+          terminalManager.listDirectories().map((cwd) => terminalManager.getTerminals(cwd)),
+        );
+        await Promise.all(
+          terminalsByCwd.flat().map((terminal) =>
+            terminalManager.killTerminalAndWait(terminal.id, {
+              gracefulTimeoutMs: 100,
+              forceTimeoutMs: 100,
+            }),
+          ),
+        );
+        terminalManager.killAll();
+      }),
+    );
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -1374,19 +1378,21 @@ describe("runAsyncWorktreeBootstrap", () => {
     const terminalManager = createTerminalManager();
     realTerminalManagers.push(terminalManager);
 
-    for (const scriptName of ["api", "web"]) {
-      await spawnWorkspaceScript({
-        repoRoot: repoDir,
-        workspaceId: repoDir,
-        projectSlug: "repo",
-        branchName: "feature-peer-env",
-        scriptName,
-        daemonPort: 6767,
-        routeStore,
-        runtimeStore,
-        terminalManager,
-      });
-    }
+    await Promise.all(
+      ["api", "web"].map((scriptName) =>
+        spawnWorkspaceScript({
+          repoRoot: repoDir,
+          workspaceId: repoDir,
+          projectSlug: "repo",
+          branchName: "feature-peer-env",
+          scriptName,
+          daemonPort: 6767,
+          routeStore,
+          runtimeStore,
+          terminalManager,
+        }),
+      ),
+    );
 
     const apiEnvPath = join(repoDir, "api-env.json");
     const webEnvPath = join(repoDir, "web-env.json");
