@@ -530,41 +530,43 @@ async function runWorktreeTerminalBootstrap(
     return;
   }
 
-  const results: WorktreeBootstrapTerminalResult[] = [];
-  for (const spec of terminalSpecs) {
-    try {
-      const terminal = await options.terminalManager.createTerminal({
-        cwd: options.worktree.worktreePath,
-        name: spec.name,
-        env: runtimeEnv,
-      });
-      await waitForTerminalBootstrapReadiness(terminal);
-      terminal.send({
-        type: "input",
-        data: `${spec.command}\r`,
-      });
-      results.push({
-        name: terminal.name ?? spec.name ?? null,
-        command: spec.command,
-        status: "started",
-        terminalId: terminal.id,
-        error: null,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      options.logger?.warn(
-        { agentId: options.agentId, command: spec.command, err: error },
-        "Failed to bootstrap worktree terminal",
-      );
-      results.push({
-        name: spec.name ?? null,
-        command: spec.command,
-        status: "failed",
-        terminalId: null,
-        error: message,
-      });
-    }
-  }
+  const terminalManager = options.terminalManager;
+  const results = await Promise.all(
+    terminalSpecs.map(async (spec): Promise<WorktreeBootstrapTerminalResult> => {
+      try {
+        const terminal = await terminalManager.createTerminal({
+          cwd: options.worktree.worktreePath,
+          name: spec.name,
+          env: runtimeEnv,
+        });
+        await waitForTerminalBootstrapReadiness(terminal);
+        terminal.send({
+          type: "input",
+          data: `${spec.command}\r`,
+        });
+        return {
+          name: terminal.name ?? spec.name ?? null,
+          command: spec.command,
+          status: "started",
+          terminalId: terminal.id,
+          error: null,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        options.logger?.warn(
+          { agentId: options.agentId, command: spec.command, err: error },
+          "Failed to bootstrap worktree terminal",
+        );
+        return {
+          name: spec.name ?? null,
+          command: spec.command,
+          status: "failed",
+          terminalId: null,
+          error: message,
+        };
+      }
+    }),
+  );
 
   await options.appendTimelineItem(
     buildTerminalTimelineItem({
