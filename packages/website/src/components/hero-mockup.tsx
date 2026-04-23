@@ -316,36 +316,23 @@ const DIFF_LINES: DiffLine[] = [
 
 // ── Implementation agent chat data ──────────────────────
 
-const IMPLEMENT_CHAT: ChatItem[] = [
-  { type: "text", text: "Starting implementation of the returns dashboard.", bold: true },
-  { type: "tool", label: "Edit file", summary: "src/pages/dashboard.tsx", status: "done" },
-  { type: "tool", label: "Edit file", summary: "src/components/return-table.tsx", status: "done" },
-  { type: "tool", label: "Edit file", summary: "src/components/filter-bar.tsx", status: "done" },
-  { type: "tool", label: "Edit file", summary: "src/components/status-chart.tsx", status: "done" },
-  { type: "tool", label: "Run command", summary: "npm run typecheck", status: "done" },
-  { type: "text", text: "Typecheck passes. Adding API route and data fetching." },
-  { type: "tool", label: "Edit file", summary: "src/api/returns.ts", status: "done" },
-  { type: "tool", label: "Edit file", summary: "src/hooks/use-returns.ts", status: "done" },
-  { type: "tool", label: "Run command", summary: "npm run typecheck", status: "running" },
-];
-
 // ── Terminal log lines ─────────────────────────────────
 
 const TERMINAL_LINES = [
-  { text: "$ npm run dev", cls: "text-mock-fg" },
-  { text: "", cls: "" },
-  { text: "> acme-returns@0.1.0 dev", cls: "text-mock-fg-muted" },
-  { text: "> next dev --turbopack", cls: "text-mock-fg-muted" },
-  { text: "", cls: "" },
-  { text: "  ▲ Next.js 15.3.1 (Turbopack)", cls: "text-mock-fg" },
-  { text: "  - Local:   http://localhost:3000", cls: "text-mock-fg-muted" },
-  { text: "", cls: "" },
-  { text: " ✓ Starting...", cls: "text-mock-green" },
-  { text: " ✓ Ready in 1.2s", cls: "text-mock-green" },
-  { text: " ○ Compiling /dashboard ...", cls: "text-mock-fg-muted" },
-  { text: " ✓ Compiled /dashboard in 340ms", cls: "text-mock-green" },
-  { text: " ○ Compiling /api/returns ...", cls: "text-mock-fg-muted" },
-  { text: " ✓ Compiled /api/returns in 120ms", cls: "text-mock-green" },
+  { id: "cmd", text: "$ npm run dev", cls: "text-mock-fg" },
+  { id: "blank1", text: "", cls: "" },
+  { id: "pkg", text: "> acme-returns@0.1.0 dev", cls: "text-mock-fg-muted" },
+  { id: "pkg-cmd", text: "> next dev --turbopack", cls: "text-mock-fg-muted" },
+  { id: "blank2", text: "", cls: "" },
+  { id: "next-ver", text: "  ▲ Next.js 15.3.1 (Turbopack)", cls: "text-mock-fg" },
+  { id: "next-local", text: "  - Local:   http://localhost:3000", cls: "text-mock-fg-muted" },
+  { id: "blank3", text: "", cls: "" },
+  { id: "starting", text: " ✓ Starting...", cls: "text-mock-green" },
+  { id: "ready", text: " ✓ Ready in 1.2s", cls: "text-mock-green" },
+  { id: "compiling-dashboard", text: " ○ Compiling /dashboard ...", cls: "text-mock-fg-muted" },
+  { id: "compiled-dashboard", text: " ✓ Compiled /dashboard in 340ms", cls: "text-mock-green" },
+  { id: "compiling-api", text: " ○ Compiling /api/returns ...", cls: "text-mock-fg-muted" },
+  { id: "compiled-api", text: " ✓ Compiled /api/returns in 120ms", cls: "text-mock-green" },
 ];
 
 // ── Sub-components ──────────────────────────────────────
@@ -471,13 +458,112 @@ function Composer({
   );
 }
 
+function prStateLabel(state: "open" | "merged" | "closed"): string {
+  if (state === "open") return "Open";
+  if (state === "merged") return "Merged";
+  return "Closed";
+}
+
+function WorkspaceIcon({ workspace }: { workspace: SidebarWorkspace }) {
+  if (workspace.status === "syncing") return <SyncedLoader size={11} />;
+  const icon =
+    workspace.kind === "worktree" ? (
+      <FolderGit2 size={14} className="text-mock-fg-muted" />
+    ) : (
+      <Monitor size={14} className="text-mock-fg-muted" />
+    );
+  return (
+    <>
+      {icon}
+      {workspace.status !== "idle" && (
+        <div className="absolute bottom-0 right-0">
+          <WorkspaceStatusDot status={workspace.status} />
+        </div>
+      )}
+    </>
+  );
+}
+
+function SidebarWorkspaceRow({ workspace }: { workspace: SidebarWorkspace }) {
+  return (
+    <div className={`mb-1 mx-1.5 rounded-lg ${workspace.selected ? "bg-mock-surface1" : ""}`}>
+      <div className="flex items-center gap-2 min-h-[28px] py-1 pl-[22px] pr-1">
+        <div className="relative w-[14px] h-4 flex-shrink-0 flex items-center justify-center">
+          <WorkspaceIcon workspace={workspace} />
+        </div>
+        <span className="text-[12px] text-mock-fg/[0.76] font-normal truncate flex-1 min-w-0 leading-[1.4]">
+          {workspace.name}
+        </span>
+        {workspace.diffStat && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <span className="text-[10px] text-mock-green-400 font-normal leading-none">
+              +{workspace.diffStat.additions}
+            </span>
+            <span className="text-[10px] text-mock-red font-normal leading-none">
+              -{workspace.diffStat.deletions}
+            </span>
+          </div>
+        )}
+      </div>
+      {workspace.pr && (
+        <div className="flex items-center gap-1 pl-[42px] pr-2 pb-0.5">
+          <GitPullRequest size={11} className="text-mock-fg-muted" />
+          <span className="text-[10px] text-mock-fg-muted leading-none truncate">
+            #{workspace.pr.number} · {prStateLabel(workspace.pr.state)}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function diffLineBg(type: DiffLineType): string {
+  if (type === "add") return "bg-mock-diff-add";
+  if (type === "remove") return "bg-mock-diff-remove";
+  return "bg-mock-surface1";
+}
+
+function diffLineNumCls(type: DiffLineType): string {
+  if (type === "add") return "text-mock-green-400";
+  if (type === "remove") return "text-mock-red";
+  return "text-mock-fg-muted";
+}
+
+function DiffLineRow({ line }: { line: DiffLine }) {
+  const lineBg = diffLineBg(line.type);
+  const lineNumCls = diffLineNumCls(line.type);
+  return (
+    <div className={`flex items-stretch ${lineBg}`}>
+      <div className="w-8 border-r border-mock-border flex-shrink-0 flex items-center justify-end">
+        <code className={`text-[10px] font-mono ${lineNumCls} select-none pr-2 py-[1px]`}>
+          {line.ln ?? ""}
+        </code>
+      </div>
+      <code className="text-[10px] font-mono text-mock-fg pl-3 pr-3 py-[1px] whitespace-pre flex-1 min-w-0">
+        {line.tokens?.map((tok) => (
+          <span key={`${tok.cls}:${tok.text}`} className={tok.cls}>
+            {tok.text}
+          </span>
+        ))}
+      </code>
+    </div>
+  );
+}
+
+function chatItemKey(item: ChatItem): string {
+  if (item.type === "user") return `user-${item.text}`;
+  if (item.type === "tool") return `tool-${item.label}-${item.summary ?? ""}`;
+  return `text-${item.text}`;
+}
+
 function ChatMessages({ items }: { items: ChatItem[] }) {
   return (
     <div className="flex-1 overflow-hidden px-2 py-2">
-      {items.map((item, i) => {
+      {items.map((item) => {
+        const key = chatItemKey(item);
         if (item.type === "user") {
           return (
-            <div key={i} className="flex justify-end py-1">
+            <div key={key} className="flex justify-end py-1">
               <div
                 className="bg-mock-surface2 px-2.5 py-1.5 max-w-[85%] leading-none"
                 style={USER_BUBBLE_STYLE}
@@ -491,7 +577,7 @@ function ChatMessages({ items }: { items: ChatItem[] }) {
           const isDone = item.status === "done";
           return (
             <div
-              key={i}
+              key={key}
               className="flex items-center rounded-lg px-2 py-[1px] -mx-[6px] border border-transparent"
             >
               <div className="w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0 mr-1">
@@ -517,7 +603,7 @@ function ChatMessages({ items }: { items: ChatItem[] }) {
         }
         return (
           <p
-            key={i}
+            key={key}
             className={`text-[11px] px-2 py-[1px] text-mock-fg leading-[1.5] ${item.bold ? "font-medium" : ""}`}
           >
             {item.text}
@@ -537,21 +623,12 @@ function ChatArea() {
   );
 }
 
-function ImplementPane() {
-  return (
-    <div className="flex flex-col flex-1 min-w-0 min-h-0 bg-mock-surface0">
-      <ChatMessages items={IMPLEMENT_CHAT} />
-      <Composer provider="codex" model="gpt-5.4" />
-    </div>
-  );
-}
-
 function TerminalPane() {
   return (
     <div className="flex flex-col flex-1 min-w-0 min-h-0 bg-mock-surface0">
       <div className="flex-1 overflow-hidden px-3 py-2">
-        {TERMINAL_LINES.map((line, i) => (
-          <div key={i} className="leading-[1.3]">
+        {TERMINAL_LINES.map((line) => (
+          <div key={line.id} className="leading-[1.3]">
             <code className={`text-[10px] font-mono ${line.cls} whitespace-pre`}>{line.text}</code>
           </div>
         ))}
@@ -609,37 +686,9 @@ function ExplorerSidebar() {
 
       {/* Diff lines */}
       <div className="overflow-hidden bg-mock-surface1">
-        {DIFF_LINES.map((line, i) => {
-          const isAdd = line.type === "add";
-          const isRemove = line.type === "remove";
-          const lineBg = isAdd
-            ? "bg-mock-diff-add"
-            : isRemove
-              ? "bg-mock-diff-remove"
-              : "bg-mock-surface1";
-          const lineNumCls = isAdd
-            ? "text-mock-green-400"
-            : isRemove
-              ? "text-mock-red"
-              : "text-mock-fg-muted";
-
-          return (
-            <div key={i} className={`flex items-stretch ${lineBg}`}>
-              <div className="w-8 border-r border-mock-border flex-shrink-0 flex items-center justify-end">
-                <code className={`text-[10px] font-mono ${lineNumCls} select-none pr-2 py-[1px]`}>
-                  {line.ln ?? ""}
-                </code>
-              </div>
-              <code className="text-[10px] font-mono text-mock-fg pl-3 pr-3 py-[1px] whitespace-pre flex-1 min-w-0">
-                {line.tokens?.map((tok, j) => (
-                  <span key={j} className={tok.cls}>
-                    {tok.text}
-                  </span>
-                ))}
-              </code>
-            </div>
-          );
-        })}
+        {DIFF_LINES.map((line) => (
+          <DiffLineRow key={`${line.type}-${line.ln ?? "blank"}`} line={line} />
+        ))}
       </div>
 
       {/* Collapsed file rows */}
@@ -684,6 +733,7 @@ function ExplorerSidebar() {
 const DOT_SEQUENCE = [0, 1, 3, 5, 4, 2] as const;
 const SYNCED_LOADER_DURATION_MS = 950;
 const DOT_COUNT = 6;
+const DOT_INDICES = Array.from({ length: DOT_COUNT }, (_, i) => i);
 const STEP_MS = SYNCED_LOADER_DURATION_MS / DOT_COUNT; // 158.333…ms per step
 
 interface SyncedLoaderDotProps {
@@ -743,8 +793,13 @@ function SyncedLoader({ size = 11 }: { size?: number }) {
   return (
     <div style={outerStyle}>
       <div style={innerStyle}>
-        {Array.from({ length: DOT_COUNT }).map((_, dotIndex) => (
-          <SyncedLoaderDot key={dotIndex} dotIndex={dotIndex} dotSize={dotSize} gap={gap} />
+        {DOT_INDICES.map((dotIndex) => (
+          <SyncedLoaderDot
+            key={`dot-${dotIndex}`}
+            dotIndex={dotIndex}
+            dotSize={dotSize}
+            gap={gap}
+          />
         ))}
       </div>
     </div>
@@ -792,57 +847,7 @@ function Sidebar() {
 
             {/* Workspace rows — indented one level */}
             {project.workspaces.map((workspace) => (
-              <div
-                key={workspace.name}
-                className={`mb-1 mx-1.5 rounded-lg ${workspace.selected ? "bg-mock-surface1" : ""}`}
-              >
-                <div className="flex items-center gap-2 min-h-[28px] py-1 pl-[22px] pr-1">
-                  <div className="relative w-[14px] h-4 flex-shrink-0 flex items-center justify-center">
-                    {workspace.status === "syncing" ? (
-                      <SyncedLoader size={11} />
-                    ) : (
-                      <>
-                        {workspace.kind === "worktree" ? (
-                          <FolderGit2 size={14} className="text-mock-fg-muted" />
-                        ) : (
-                          <Monitor size={14} className="text-mock-fg-muted" />
-                        )}
-                        {workspace.status !== "idle" && (
-                          <div className="absolute bottom-0 right-0">
-                            <WorkspaceStatusDot status={workspace.status} />
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                  <span className="text-[12px] text-mock-fg/[0.76] font-normal truncate flex-1 min-w-0 leading-[1.4]">
-                    {workspace.name}
-                  </span>
-                  {workspace.diffStat && (
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <span className="text-[10px] text-mock-green-400 font-normal leading-none">
-                        +{workspace.diffStat.additions}
-                      </span>
-                      <span className="text-[10px] text-mock-red font-normal leading-none">
-                        -{workspace.diffStat.deletions}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                {workspace.pr && (
-                  <div className="flex items-center gap-1 pl-[42px] pr-2 pb-0.5">
-                    <GitPullRequest size={11} className="text-mock-fg-muted" />
-                    <span className="text-[10px] text-mock-fg-muted leading-none truncate">
-                      #{workspace.pr.number} ·{" "}
-                      {workspace.pr.state === "open"
-                        ? "Open"
-                        : workspace.pr.state === "merged"
-                          ? "Merged"
-                          : "Closed"}
-                    </span>
-                  </div>
-                )}
-              </div>
+              <SidebarWorkspaceRow key={workspace.name} workspace={workspace} />
             ))}
           </div>
         ))}
@@ -863,6 +868,75 @@ function Sidebar() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+const TERMINAL_TABS: TabDef[] = [
+  { name: "npm run dev", provider: "terminal", done: false, active: true },
+];
+
+function TitleBarLeft() {
+  return (
+    <div className="flex items-center gap-2 flex-1 min-w-0">
+      <div className="px-2 py-1 rounded-lg flex items-center justify-center flex-shrink-0">
+        <PanelLeft size={14} className="text-mock-fg-muted" />
+      </div>
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <span className="text-[13px] font-light text-mock-fg truncate flex-shrink-0">main</span>
+        <span className="text-[13px] text-mock-fg-muted truncate flex-shrink min-w-0">
+          acme/returns-app
+        </span>
+        <div className="px-2 py-1 rounded-lg flex items-center justify-center flex-shrink-0">
+          <Ellipsis size={14} className="text-mock-fg-muted" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TitleBarRight() {
+  return (
+    <div className="flex items-center gap-2 ml-auto flex-shrink-0">
+      <div className="flex items-stretch rounded-md border border-mock-border-accent overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-1">
+          <GitCommitHorizontal size={12} className="text-mock-fg-muted flex-shrink-0" />
+          <span className="text-[11px] text-mock-fg font-normal">Commit</span>
+        </div>
+        <div className="flex items-center justify-center w-7 border-l border-mock-border-accent">
+          <ChevronDown size={12} className="text-mock-fg-muted" />
+        </div>
+      </div>
+      <div className="flex items-center gap-2 px-3 py-1 rounded-md">
+        <SourceControlIcon size={14} className="text-mock-fg-muted" />
+        <span className="text-[11px] font-normal text-mock-green-400">+247</span>
+        <span className="text-[11px] font-normal text-mock-red">-15</span>
+      </div>
+    </div>
+  );
+}
+
+function DesktopSplitPanes() {
+  return (
+    <div className="flex flex-1 min-h-0">
+      {/* Left pane: all agent tabs + chat */}
+      <div className="flex flex-col flex-1 min-w-0 min-h-0">
+        <motion.div {...fade(D.tabs)}>
+          <PaneTabBar tabs={TABS} focused />
+        </motion.div>
+        <motion.div {...fade(D.chat)} className="flex-1 flex min-h-0">
+          <ChatArea />
+        </motion.div>
+      </div>
+
+      {/* Resize handle */}
+      <div className="w-px bg-mock-border flex-shrink-0" />
+
+      {/* Right pane: terminal only */}
+      <motion.div {...fade(D.chat)} className="flex flex-col flex-1 min-w-0 min-h-0">
+        <PaneTabBar tabs={TERMINAL_TABS} />
+        <TerminalPane />
+      </motion.div>
     </div>
   );
 }
@@ -908,64 +982,11 @@ function DesktopMockup() {
               {...fade(D.titleBar)}
               className="flex items-center h-10 px-2 bg-mock-surface0 border-b border-mock-border flex-shrink-0"
             >
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div className="px-2 py-1 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <PanelLeft size={14} className="text-mock-fg-muted" />
-                </div>
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <span className="text-[13px] font-light text-mock-fg truncate flex-shrink-0">
-                    main
-                  </span>
-                  <span className="text-[13px] text-mock-fg-muted truncate flex-shrink min-w-0">
-                    acme/returns-app
-                  </span>
-                  <div className="px-2 py-1 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <Ellipsis size={14} className="text-mock-fg-muted" />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 ml-auto flex-shrink-0">
-                <div className="flex items-stretch rounded-md border border-mock-border-accent overflow-hidden">
-                  <div className="flex items-center gap-2 px-3 py-1">
-                    <GitCommitHorizontal size={12} className="text-mock-fg-muted flex-shrink-0" />
-                    <span className="text-[11px] text-mock-fg font-normal">Commit</span>
-                  </div>
-                  <div className="flex items-center justify-center w-7 border-l border-mock-border-accent">
-                    <ChevronDown size={12} className="text-mock-fg-muted" />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 px-3 py-1 rounded-md">
-                  <SourceControlIcon size={14} className="text-mock-fg-muted" />
-                  <span className="text-[11px] font-normal text-mock-green-400">+247</span>
-                  <span className="text-[11px] font-normal text-mock-red">-15</span>
-                </div>
-              </div>
+              <TitleBarLeft />
+              <TitleBarRight />
             </motion.div>
 
-            {/* Split panes */}
-            <div className="flex flex-1 min-h-0">
-              {/* Left pane: all agent tabs + chat */}
-              <div className="flex flex-col flex-1 min-w-0 min-h-0">
-                <motion.div {...fade(D.tabs)}>
-                  <PaneTabBar tabs={TABS} focused />
-                </motion.div>
-                <motion.div {...fade(D.chat)} className="flex-1 flex min-h-0">
-                  <ChatArea />
-                </motion.div>
-              </div>
-
-              {/* Resize handle */}
-              <div className="w-px bg-mock-border flex-shrink-0" />
-
-              {/* Right pane: terminal only */}
-              <motion.div {...fade(D.chat)} className="flex flex-col flex-1 min-w-0 min-h-0">
-                <PaneTabBar
-                  tabs={[{ name: "npm run dev", provider: "terminal", done: false, active: true }]}
-                />
-                <TerminalPane />
-              </motion.div>
-            </div>
+            <DesktopSplitPanes />
           </div>
 
           {/* Explorer sidebar — full height, pushes center column */}

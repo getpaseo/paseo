@@ -46,9 +46,14 @@ export function CommandDialog({
     };
   }, []);
 
+  const handleToggle = React.useCallback(() => setOpen((prev) => !prev), []);
+  const handleClose = React.useCallback(() => setOpen(false), []);
+
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen(!open)}>{trigger}</button>
+      <button type="button" onClick={handleToggle}>
+        {trigger}
+      </button>
       <AnimatePresence>
         {open && (
           <>
@@ -58,7 +63,7 @@ export function CommandDialog({
               exit={OVERLAY_EXIT}
               transition={OVERLAY_TRANSITION}
               className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
-              onClick={() => setOpen(false)}
+              onClick={handleClose}
             />
             <motion.div
               initial={PANEL_INITIAL}
@@ -84,11 +89,11 @@ export function CommandDialog({
 function CodeBlock({ children }: { children: string }) {
   const [copied, setCopied] = React.useState(false);
 
-  function handleCopy() {
+  const handleCopy = React.useCallback(() => {
     navigator.clipboard.writeText(children);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }
+  }, [children]);
 
   return (
     <div className="bg-black/30 backdrop-blur-sm rounded-lg p-3 md:p-4 font-mono text-sm flex items-center justify-between gap-2">
@@ -97,6 +102,7 @@ function CodeBlock({ children }: { children: string }) {
         <span className="text-foreground">{children}</span>
       </div>
       <button
+        type="button"
         onClick={handleCopy}
         className="text-muted-foreground hover:text-foreground transition-colors p-1"
         title="Copy to clipboard"

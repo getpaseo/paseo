@@ -26,6 +26,12 @@ export const Route = createFileRoute("/download")({
   component: Download,
 });
 
+const homebrewTrigger = (
+  <span className="inline-flex items-center justify-center rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:bg-foreground/85 transition-colors">
+    Homebrew
+  </span>
+);
+
 function Download() {
   const { version } = useRelease();
   const urls = downloadUrls(version);
@@ -110,11 +116,7 @@ function Download() {
                 <DownloadPill href={urls.macAppleSilicon} label="Apple Silicon" />
                 <DownloadPill href={urls.macIntel} label="Intel" />
                 <CommandDialog
-                  trigger={
-                    <span className="inline-flex items-center justify-center rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:bg-foreground/85 transition-colors">
-                      Homebrew
-                    </span>
-                  }
+                  trigger={homebrewTrigger}
                   title="Install via Homebrew"
                   command="brew install --cask paseo"
                 />
