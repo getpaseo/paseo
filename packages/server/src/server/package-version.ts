@@ -19,6 +19,26 @@ export class PackageVersionResolutionError extends Error {
   }
 }
 
+function readMatchingPackageVersion(
+  packageJsonPath: string,
+  packageName: string,
+  moduleUrl: string,
+): string | null {
+  let packageJson: PackageJson;
+  try {
+    packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as PackageJson;
+  } catch {
+    return null;
+  }
+  if (packageJson.name !== packageName) {
+    return null;
+  }
+  if (typeof packageJson.version === "string" && packageJson.version.trim().length > 0) {
+    return packageJson.version.trim();
+  }
+  throw new PackageVersionResolutionError({ moduleUrl, packageName });
+}
+
 export function resolvePackageVersion(params: ResolvePackageVersionParams): string {
   const moduleUrl = params.moduleUrl ?? import.meta.url;
   let currentDir = path.dirname(fileURLToPath(moduleUrl));
@@ -26,22 +46,9 @@ export function resolvePackageVersion(params: ResolvePackageVersionParams): stri
   while (true) {
     const packageJsonPath = path.join(currentDir, "package.json");
     if (existsSync(packageJsonPath)) {
-      try {
-        const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as PackageJson;
-        if (packageJson.name === params.packageName) {
-          if (typeof packageJson.version === "string" && packageJson.version.trim().length > 0) {
-            return packageJson.version.trim();
-          }
-          throw new PackageVersionResolutionError({
-            moduleUrl,
-            packageName: params.packageName,
-          });
-        }
-      } catch (error) {
-        if (error instanceof PackageVersionResolutionError) {
-          throw error;
-        }
-        // Continue searching parent directories.
+      const version = readMatchingPackageVersion(packageJsonPath, params.packageName, moduleUrl);
+      if (version !== null) {
+        return version;
       }
     }
 

@@ -143,18 +143,18 @@ const styles = StyleSheet.create((theme) => ({
 
 function SheetBackground({ style }: BottomSheetBackgroundProps) {
   const { theme } = useUnistyles();
-  return (
-    <View
-      style={[
-        style,
-        {
-          backgroundColor: theme.colors.surface1,
-          borderTopLeftRadius: theme.borderRadius.xl,
-          borderTopRightRadius: theme.borderRadius.xl,
-        },
-      ]}
-    />
+  const combinedStyle = useMemo(
+    () => [
+      style,
+      {
+        backgroundColor: theme.colors.surface1,
+        borderTopLeftRadius: theme.borderRadius.xl,
+        borderTopRightRadius: theme.borderRadius.xl,
+      },
+    ],
+    [style, theme.colors.surface1, theme.borderRadius.xl],
   );
+  return <View style={combinedStyle} />;
 }
 
 export interface AdaptiveModalSheetProps {
