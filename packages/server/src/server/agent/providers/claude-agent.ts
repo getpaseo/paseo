@@ -125,11 +125,21 @@ const DEFAULT_MODES: AgentMode[] = [
     description: "Analyze the codebase without executing tools or edits",
   },
   {
+    id: "auto",
+    label: "Auto",
+    description: "Use a model classifier to approve or deny permission prompts",
+  },
+  {
     id: "bypassPermissions",
     label: "Bypass",
     description: "Skip all permission prompts (use with caution)",
   },
 ];
+
+// SDK 0.2.71 types `PermissionMode` without `"auto"`; 0.2.91+ and the native
+// claude binary accept it. Local alias so we can round-trip the value without
+// casting on every assignment, cast to `PermissionMode` only at the SDK boundary.
+type ClaudePermissionMode = PermissionMode | "auto";
 
 const VALID_CLAUDE_MODES = new Set(DEFAULT_MODES.map((mode) => mode.id));
 
@@ -567,7 +577,7 @@ function isMcpServersRecord(value: unknown): value is Record<string, McpServerCo
   return true;
 }
 
-function isPermissionMode(value: string | undefined): value is PermissionMode {
+function isPermissionMode(value: string | undefined): value is ClaudePermissionMode {
   return typeof value === "string" && VALID_CLAUDE_MODES.has(value);
 }
 
@@ -683,12 +693,12 @@ function resolvePermissionKind(
   return "tool";
 }
 
-function getClaudeModeLabel(modeId: PermissionMode): string {
+function getClaudeModeLabel(modeId: ClaudePermissionMode): string {
   return DEFAULT_MODES.find((mode) => mode.id === modeId)?.label ?? modeId;
 }
 
 function buildClaudePlanPermissionActions(
-  resumeMode: PermissionMode | null,
+  resumeMode: ClaudePermissionMode | null,
 ): AgentPermissionAction[] {
   const actions: AgentPermissionAction[] = [
     {
@@ -1360,8 +1370,8 @@ class ClaudeAgentSession implements AgentSession {
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
-  private currentMode: PermissionMode;
-  private planResumeMode: PermissionMode | null = null;
+  private currentMode: ClaudePermissionMode;
+  private planResumeMode: ClaudePermissionMode | null = null;
   private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private toolUseIndexToId = new Map<number, string>();
@@ -1672,7 +1682,9 @@ class ClaudeAgentSession implements AgentSession {
     const normalized = isPermissionMode(modeId) ? modeId : "default";
     const previousMode = this.currentMode;
     const query = await this.ensureQuery();
-    await query.setPermissionMode(normalized);
+    // Cast: SDK 0.2.71 types `setPermissionMode` without `"auto"`, but the
+    // bundled cli.js forwards the value to the binary as `--permission-mode`.
+    await query.setPermissionMode(normalized as PermissionMode);
     if (normalized === "plan") {
       if (previousMode !== "plan") {
         this.planResumeMode = previousMode;
@@ -2149,7 +2161,7 @@ class ClaudeAgentSession implements AgentSession {
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
       includePartialMessages: true,
-      permissionMode: this.currentMode,
+      permissionMode: this.currentMode as PermissionMode,
       // Dynamic mode switching can recreate the underlying Claude query. Keep the
       // bypass launch capability available so later setPermissionMode("bypassPermissions")
       // calls do not fail after a model/thinking/rewind-driven restart.
