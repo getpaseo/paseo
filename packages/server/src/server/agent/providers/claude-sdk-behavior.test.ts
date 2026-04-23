@@ -53,6 +53,25 @@ function tmpCwd(): string {
   }
 }
 
+function extractTextFromEvents(events: SDKMessage[]): string {
+  let responseText = "";
+  for (const event of events) {
+    if (event.type !== "assistant" || !("message" in event) || !event.message?.content) {
+      continue;
+    }
+    const content = event.message.content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const block of content) {
+      if (block.type === "text" && block.text) {
+        responseText += block.text;
+      }
+    }
+  }
+  return responseText;
+}
+
 const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
 
@@ -134,19 +153,7 @@ describe("Claude SDK direct behavior", () => {
       }
 
       // Analyze response
-      let responseText = "";
-      for (const event of msg2Events) {
-        if (event.type === "assistant" && "message" in event && event.message?.content) {
-          const content = event.message.content;
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (block.type === "text" && block.text) {
-                responseText += block.text;
-              }
-            }
-          }
-        }
-      }
+      const responseText = extractTextFromEvents(msg2Events);
 
       const sawResult = msg2Events.some((event) => event.type === "result");
       // The SDK may short-circuit after interrupt without a result event.
