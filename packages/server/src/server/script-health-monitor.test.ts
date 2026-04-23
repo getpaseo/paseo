@@ -433,19 +433,21 @@ describe("ScriptHealthMonitor", () => {
       [];
 
     try {
-      for (const scriptName of ["typecheck", "api"]) {
-        await spawnWorkspaceScript({
-          repoRoot: workspace.repoDir,
-          workspaceId: workspace.repoDir,
-          projectSlug: "repo",
-          branchName: null,
-          scriptName,
-          daemonPort: null,
-          routeStore,
-          runtimeStore,
-          terminalManager: createStubTerminalManager(createTerminalCalls) as any,
-        });
-      }
+      await Promise.all(
+        ["typecheck", "api"].map((scriptName) =>
+          spawnWorkspaceScript({
+            repoRoot: workspace.repoDir,
+            workspaceId: workspace.repoDir,
+            projectSlug: "repo",
+            branchName: null,
+            scriptName,
+            daemonPort: null,
+            routeStore,
+            runtimeStore,
+            terminalManager: createStubTerminalManager(createTerminalCalls) as any,
+          }),
+        ),
+      );
 
       expect(createTerminalCalls).toHaveLength(2);
       expect(routeStore.listRoutes()).toEqual([
