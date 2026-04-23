@@ -8,7 +8,10 @@ async function processConversation() {
 
     process.stdout.write(`Loading conversation from: ${conversationPath}\n`);
 
-    const conversationData: any = JSON.parse(readFileSync(conversationPath, "utf-8"));
+    const conversationData = JSON.parse(readFileSync(conversationPath, "utf-8")) as {
+      conversationId: string;
+      messages: Parameters<typeof standardizePrompt>[0]["prompt"];
+    };
 
     process.stdout.write(
       `\nLoaded conversation ${conversationData.conversationId} with ${conversationData.messages.length} messages\n\n`,
