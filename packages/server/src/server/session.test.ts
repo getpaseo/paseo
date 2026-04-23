@@ -6,6 +6,7 @@ import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { CheckoutPrStatusSchema } from "../shared/messages.js";
+import type { WorkspaceDescriptorPayload } from "../shared/messages.js";
 import { normalizeCheckoutPrStatusPayload, Session } from "./session.js";
 import type {
   AgentClient,
@@ -16,6 +17,32 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import type { ProviderDefinition } from "./agent/provider-registry.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import type { SessionOptions } from "./session.js";
+
+interface SessionHandlerInternals {
+  handleCheckoutMergeRequest(params: unknown): Promise<unknown>;
+  handleCheckoutMergeFromBaseRequest(params: unknown): Promise<unknown>;
+  handleCheckoutCommitRequest(params: unknown): Promise<unknown>;
+  handleCheckoutPrCreateRequest(params: unknown): Promise<unknown>;
+  handleCheckoutPullRequest(params: unknown): Promise<unknown>;
+  handleCheckoutPushRequest(params: unknown): Promise<unknown>;
+  handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
+  describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
+  describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
+  handleValidateBranchRequest(params: unknown): Promise<unknown>;
+  createBranchFromBase(params: unknown): Promise<unknown>;
+  handleCheckoutSwitchBranchRequest(params: unknown): Promise<unknown>;
+  handleBranchSuggestionsRequest(params: unknown): Promise<unknown>;
+  handleStashListRequest(params: unknown): Promise<unknown>;
+  handleStashSaveRequest(params: unknown): Promise<unknown>;
+  handleStashPopRequest(params: unknown): Promise<unknown>;
+  createPaseoWorktree(params: unknown): Promise<unknown>;
+  handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
+}
+
+function asSessionInternals(session: Session): SessionHandlerInternals {
+  return session as unknown as SessionHandlerInternals;
+}
 
 const checkoutGitMocks = vi.hoisted(() => ({
   checkoutResolvedBranch: vi.fn(),
@@ -176,33 +203,31 @@ function createSessionForTest(options?: {
     clientId: "test-client",
     onMessage: (message) => messages.push(message),
     logger,
-    downloadTokenStore: {} as any,
-    pushTokenStore: {} as any,
+    downloadTokenStore: {} as unknown as SessionOptions["downloadTokenStore"],
+    pushTokenStore: {} as unknown as SessionOptions["pushTokenStore"],
     paseoHome: "/tmp/paseo-home",
     agentManager: {
       subscribe: vi.fn(() => () => {}),
-    } as any,
-    agentStorage: {} as any,
-    projectRegistry: {} as any,
-    workspaceRegistry:
-      options?.workspaceRegistry ??
-      ({
-        get: vi.fn(),
-        list: vi.fn().mockResolvedValue([]),
-      } as any),
-    chatService: {} as any,
-    scheduleService: {} as any,
-    loopService: {} as any,
-    checkoutDiffManager: checkoutDiffManager as any,
-    github: github as any,
-    workspaceGitService: workspaceGitService as any,
-    daemonConfigStore: {} as any,
+    } as unknown as SessionOptions["agentManager"],
+    agentStorage: {} as unknown as SessionOptions["agentStorage"],
+    projectRegistry: {} as unknown as SessionOptions["projectRegistry"],
+    workspaceRegistry: (options?.workspaceRegistry ?? {
+      get: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
+    }) as unknown as SessionOptions["workspaceRegistry"],
+    chatService: {} as unknown as SessionOptions["chatService"],
+    scheduleService: {} as unknown as SessionOptions["scheduleService"],
+    loopService: {} as unknown as SessionOptions["loopService"],
+    checkoutDiffManager: checkoutDiffManager as unknown as SessionOptions["checkoutDiffManager"],
+    github: github as unknown as SessionOptions["github"],
+    workspaceGitService: workspaceGitService as unknown as SessionOptions["workspaceGitService"],
+    daemonConfigStore: {} as unknown as SessionOptions["daemonConfigStore"],
     stt: null,
     tts: null,
-    terminalManager: (options?.terminalManager ?? null) as any,
+    terminalManager: (options?.terminalManager ?? null) as SessionOptions["terminalManager"],
     providerSnapshotManager: options?.providerSnapshotManager,
-    scriptRouteStore: options?.scriptRouteStore as any,
-    scriptRuntimeStore: options?.scriptRuntimeStore as any,
+    scriptRouteStore: options?.scriptRouteStore as SessionOptions["scriptRouteStore"],
+    scriptRuntimeStore: options?.scriptRuntimeStore as SessionOptions["scriptRuntimeStore"],
     getDaemonTcpPort: options?.getDaemonTcpPort,
     getDaemonTcpHost: options?.getDaemonTcpHost,
   });
@@ -470,7 +495,7 @@ describe("session checkout merge handling", () => {
 
     checkoutGitMocks.mergeToBase.mockResolvedValue("/tmp/base-worktree");
 
-    await (session as any).handleCheckoutMergeRequest({
+    await asSessionInternals(session).handleCheckoutMergeRequest({
       type: "checkout_merge_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -518,7 +543,7 @@ describe("session checkout merge handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutMergeFromBaseRequest({
+    await asSessionInternals(session).handleCheckoutMergeFromBaseRequest({
       type: "checkout_merge_from_base_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -556,7 +581,7 @@ describe("session checkout merge handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.mergeFromBase.mockResolvedValue(undefined);
 
-    await (session as any).handleCheckoutMergeFromBaseRequest({
+    await asSessionInternals(session).handleCheckoutMergeFromBaseRequest({
       type: "checkout_merge_from_base_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -594,7 +619,7 @@ describe("session checkout commit handling", () => {
 
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
 
-    await (session as any).handleCheckoutCommitRequest({
+    await asSessionInternals(session).handleCheckoutCommitRequest({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "Ship it",
@@ -648,7 +673,7 @@ describe("session checkout commit handling", () => {
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutCommitRequest({
+    await asSessionInternals(session).handleCheckoutCommitRequest({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "",
@@ -682,7 +707,7 @@ describe("session checkout commit handling", () => {
     const session = createSessionForTest({ workspaceGitService, messages });
     checkoutGitMocks.commitChanges.mockRejectedValue(new Error("nothing to commit"));
 
-    await (session as any).handleCheckoutCommitRequest({
+    await asSessionInternals(session).handleCheckoutCommitRequest({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "Ship it",
@@ -735,7 +760,7 @@ describe("session checkout pull request creation", () => {
     });
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutPrCreateRequest({
+    await asSessionInternals(session).handleCheckoutPrCreateRequest({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -786,7 +811,7 @@ describe("session checkout pull request creation", () => {
     });
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await (session as any).handleCheckoutPrCreateRequest({
+    await asSessionInternals(session).handleCheckoutPrCreateRequest({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -821,7 +846,7 @@ describe("session checkout pull and push handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.pullCurrentBranch.mockResolvedValue(undefined);
 
-    await (session as any).handleCheckoutPullRequest({
+    await asSessionInternals(session).handleCheckoutPullRequest({
       type: "checkout_pull_request",
       cwd: "/tmp/request-worktree",
       requestId: "request-pull",
@@ -851,7 +876,7 @@ describe("session checkout pull and push handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.pushCurrentBranch.mockResolvedValue(undefined);
 
-    await (session as any).handleCheckoutPushRequest({
+    await asSessionInternals(session).handleCheckoutPushRequest({
       type: "checkout_push_request",
       cwd: "/tmp/request-worktree",
       requestId: "request-push",
@@ -884,7 +909,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutStatusRequest({
+    await asSessionInternals(session).handleCheckoutStatusRequest({
       type: "checkout_status_request",
       cwd: "/tmp/service-worktree",
       requestId: "request-status",
@@ -932,7 +957,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutStatusRequest({
+    await asSessionInternals(session).handleCheckoutStatusRequest({
       type: "checkout_status_request",
       cwd: "/tmp/cold-worktree",
       requestId: "request-cold-status",
@@ -971,7 +996,7 @@ describe("session workspace descriptors", () => {
       deletions: 88,
     });
 
-    const descriptor = await (session as any).describeWorkspaceRecord(
+    const descriptor = await asSessionInternals(session).describeWorkspaceRecord(
       {
         workspaceId: "workspace-1",
         projectId: "project-1",
@@ -1001,7 +1026,7 @@ describe("session workspace descriptors", () => {
     };
     const session = createSessionForTest({ workspaceGitService });
 
-    const descriptor = await (session as any).describeWorkspaceRecordWithGitData(
+    const descriptor = await asSessionInternals(session).describeWorkspaceRecordWithGitData(
       {
         workspaceId: "workspace-1",
         projectId: "project-1",
@@ -1036,7 +1061,7 @@ describe("session branch validation", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleValidateBranchRequest({
+    await asSessionInternals(session).handleValidateBranchRequest({
       type: "validate_branch_request",
       cwd: "/tmp/repo",
       branchName: "feature",
@@ -1112,7 +1137,7 @@ describe("session branch creation handling", () => {
     const session = createSessionForTest({ workspaceGitService });
 
     await expect(
-      (session as any).createBranchFromBase({
+      asSessionInternals(session).createBranchFromBase({
         cwd: "/tmp/repo",
         baseBranch: "missing-base",
         newBranchName: "feature/new-work",
@@ -1138,7 +1163,7 @@ describe("session branch creation handling", () => {
     const session = createSessionForTest({ workspaceGitService });
 
     await expect(
-      (session as any).createBranchFromBase({
+      asSessionInternals(session).createBranchFromBase({
         cwd: "/tmp/repo",
         baseBranch: "main",
         newBranchName: "feature/existing",
@@ -1179,7 +1204,7 @@ describe("session branch creation handling", () => {
       truncated: false,
     });
 
-    await (session as any).createBranchFromBase({
+    await asSessionInternals(session).createBranchFromBase({
       cwd: "/tmp/repo",
       baseBranch: "main",
       newBranchName: "feature/new-work",
@@ -1214,7 +1239,7 @@ describe("session checkout switch branch handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.checkoutResolvedBranch.mockResolvedValue({ source: "local" });
 
-    await (session as any).handleCheckoutSwitchBranchRequest({
+    await asSessionInternals(session).handleCheckoutSwitchBranchRequest({
       type: "checkout_switch_branch_request",
       cwd: "/tmp/repo",
       branch: "release",
@@ -1257,7 +1282,7 @@ describe("session branch suggestions handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleBranchSuggestionsRequest({
+    await asSessionInternals(session).handleBranchSuggestionsRequest({
       type: "branch_suggestions_request",
       cwd: "/tmp/repo",
       query: "service",
@@ -1301,7 +1326,7 @@ describe("session stash list handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleStashListRequest({
+    await asSessionInternals(session).handleStashListRequest({
       type: "stash_list_request",
       cwd: "/tmp/repo",
       paseoOnly: true,
@@ -1332,7 +1357,7 @@ describe("session stash mutation handling", () => {
       truncated: false,
     });
 
-    await (session as any).handleStashSaveRequest({
+    await asSessionInternals(session).handleStashSaveRequest({
       type: "stash_save_request",
       cwd: "/tmp/repo",
       branch: "feature",
@@ -1366,7 +1391,7 @@ describe("session stash mutation handling", () => {
       truncated: false,
     });
 
-    await (session as any).handleStashPopRequest({
+    await asSessionInternals(session).handleStashPopRequest({
       type: "stash_pop_request",
       cwd: "/tmp/repo",
       stashIndex: 0,
@@ -1409,7 +1434,7 @@ describe("session paseo worktree creation handling", () => {
       created: true,
     });
 
-    await (session as any).createPaseoWorktree({
+    await asSessionInternals(session).createPaseoWorktree({
       cwd: "/tmp/repo",
       worktreeSlug: "new-worktree",
       runSetup: false,
@@ -1463,7 +1488,7 @@ describe("session workspace script handling", () => {
       messages,
     });
 
-    await (session as any).handleStartWorkspaceScriptRequest({
+    await asSessionInternals(session).handleStartWorkspaceScriptRequest({
       type: "start_workspace_script_request",
       workspaceId: "workspace-1",
       scriptName: "api",
