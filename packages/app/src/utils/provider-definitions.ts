@@ -9,11 +9,12 @@ import {
 function buildProviderModes(entry: ProviderSnapshotEntry): AgentProviderModeDefinition[] {
   const entryModes = entry.modes ?? [];
 
-  return entryModes.map((mode) => ({
-    ...mode,
-    icon: (mode.icon ?? "ShieldCheck") as AgentModeIcon,
-    colorTier: (mode.colorTier ?? "moderate") as AgentModeColorTier,
-  }));
+  return entryModes.map((mode) =>
+    Object.assign({}, mode, {
+      icon: (mode.icon ?? "ShieldCheck") as AgentModeIcon,
+      colorTier: (mode.colorTier ?? "moderate") as AgentModeColorTier,
+    }),
+  );
 }
 
 export function buildProviderDefinitions(

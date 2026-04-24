@@ -1004,12 +1004,11 @@ export async function listPaseoWorktrees({
 
   const rootPrefix = normalizePathForOwnership(worktreesRoot) + sep;
   return parseWorktreeList(stdout)
-    .map((entry) => ({ ...entry, path: normalizePathForOwnership(entry.path) }))
+    .map((entry) => Object.assign({}, entry, { path: normalizePathForOwnership(entry.path) }))
     .filter((entry) => entry.path.startsWith(rootPrefix))
-    .map((entry) => ({
-      ...entry,
-      createdAt: resolveWorktreeCreatedAtIso(entry.path),
-    }));
+    .map((entry) =>
+      Object.assign({}, entry, { createdAt: resolveWorktreeCreatedAtIso(entry.path) }),
+    );
 }
 
 export async function resolveExistingWorktreeForSlug({

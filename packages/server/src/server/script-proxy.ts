@@ -106,7 +106,7 @@ export class ScriptRouteStore {
   }
 
   listRoutes(): ScriptRouteEntry[] {
-    return Array.from(this.routes.values()).map((entry) => ({ ...entry }));
+    return Array.from(this.routes.values()).map((entry) => Object.assign({}, entry));
   }
 
   listRoutesForWorkspace(workspaceId: string): ScriptRouteEntry[] {

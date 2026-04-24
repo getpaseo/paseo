@@ -135,7 +135,7 @@ export function normalizeWorkspaceDescriptor(
     name: payload.name,
     status: payload.status,
     diffStat: payload.diffStat ?? null,
-    scripts: (payload.scripts ?? []).map((s) => ({ ...s })),
+    scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
   };
 }
 

@@ -271,12 +271,7 @@ function mergeModels(
   );
 
   return mergedModels.map((model) =>
-    additionalDefaultIds.has(model.id)
-      ? model
-      : {
-          ...model,
-          isDefault: false,
-        },
+    additionalDefaultIds.has(model.id) ? model : Object.assign({}, model, { isDefault: false }),
   );
 }
 
@@ -388,11 +383,10 @@ function createRegistryEntry(
         if (mode.icon && mode.colorTier) return mode;
         const definitionMode = resolved.definition.modes.find((d) => d.id === mode.id);
         if (!definitionMode) return mode;
-        return {
-          ...mode,
+        return Object.assign({}, mode, {
           icon: mode.icon ?? definitionMode.icon,
           colorTier: mode.colorTier ?? definitionMode.colorTier,
-        };
+        });
       });
     },
   };

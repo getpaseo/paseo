@@ -543,9 +543,7 @@ export class AgentManager {
   listAgents(): ManagedAgent[] {
     return Array.from(this.agents.values())
       .filter((agent) => !agent.internal)
-      .map((agent) => ({
-        ...agent,
-      }));
+      .map((agent) => Object.assign({}, agent));
   }
 
   async listPersistedAgents(

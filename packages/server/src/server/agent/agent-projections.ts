@@ -294,13 +294,14 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
 function sanitizePendingPermissions(
   pending: Map<string, AgentPermissionRequest>,
 ): AgentPermissionRequest[] {
-  return Array.from(pending.values()).map((request) => ({
-    ...request,
-    input: sanitizeMetadata(request.input),
-    suggestions: sanitizeMetadataArray(request.suggestions),
-    actions: request.actions?.map((action) => ({ ...action })),
-    metadata: sanitizeMetadata(request.metadata),
-  }));
+  return Array.from(pending.values()).map((request) =>
+    Object.assign({}, request, {
+      input: sanitizeMetadata(request.input),
+      suggestions: sanitizeMetadataArray(request.suggestions),
+      actions: request.actions?.map((action) => Object.assign({}, action)),
+      metadata: sanitizeMetadata(request.metadata),
+    }),
+  );
 }
 
 function sanitizePersistenceHandle(

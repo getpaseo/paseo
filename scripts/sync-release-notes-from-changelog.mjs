@@ -109,11 +109,10 @@ function parseChangelog(changelogText) {
       notesParts.push("", ...bodyLines);
     }
 
-    return {
-      ...heading,
+    return Object.assign({}, heading, {
       tag: `v${heading.version}`,
       notes: `${notesParts.join("\n").trim()}\n`,
-    };
+    });
   });
 }
 

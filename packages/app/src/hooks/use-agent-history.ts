@@ -126,10 +126,11 @@ export function useAgentHistory(options: {
     () =>
       (data?.pages ?? [])
         .flatMap((page) => page.agents)
-        .map((agent) => ({
-          ...agent,
-          serverLabel: serverLabel ?? agent.serverLabel,
-        })),
+        .map((agent) =>
+          Object.assign({}, agent, {
+            serverLabel: serverLabel ?? agent.serverLabel,
+          }),
+        ),
     [data?.pages, serverLabel],
   );
   const isInitialLoad = isLoading && agents.length === 0;

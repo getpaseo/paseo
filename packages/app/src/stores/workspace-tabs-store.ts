@@ -277,7 +277,7 @@ export const useWorkspaceTabsStore = create<WorkspaceTabsState>()(
           }
 
           const nextTabs = currentTabs.map((tab, tabIndex) =>
-            tabIndex === index ? { ...tab, target: normalizedTarget } : tab,
+            tabIndex === index ? Object.assign({}, tab, { target: normalizedTarget }) : tab,
           );
           retargetedTabId = normalizedTabId;
           return {

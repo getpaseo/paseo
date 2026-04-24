@@ -4379,10 +4379,11 @@ export class CodexAppServerAgentClient implements AgentClient {
           });
         }
 
-        const thinkingOptions = Array.from(thinkingById.values()).map((option) => ({
-          ...option,
-          isDefault: option.id === resolvedDefaultReasoningEffort,
-        }));
+        const thinkingOptions = Array.from(thinkingById.values()).map((option) =>
+          Object.assign({}, option, {
+            isDefault: option.id === resolvedDefaultReasoningEffort,
+          }),
+        );
         const defaultThinkingOptionId =
           resolvedDefaultReasoningEffort ??
           thinkingOptions.find((option) => option.isDefault)?.id ??
