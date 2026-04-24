@@ -685,6 +685,21 @@ function SplitNodeView({
   dropPreview,
   tabDropPreview,
 }: SplitNodeViewProps) {
+  const groupId = node.kind === "group" ? node.group.id : null;
+  const groupDirection = node.kind === "group" ? node.group.direction : null;
+
+  const storedGroupSizes = useWorkspaceLayoutStore((state) =>
+    groupId ? state.splitSizesByWorkspace[workspaceKey]?.[groupId] : undefined,
+  );
+
+  const groupStyle = useMemo(
+    () => [
+      styles.group,
+      groupDirection === "horizontal" ? styles.groupHorizontal : styles.groupVertical,
+    ],
+    [groupDirection],
+  );
+
   if (node.kind === "pane") {
     return (
       <SplitPaneView
@@ -722,18 +737,7 @@ function SplitNodeView({
     );
   }
 
-  const groupSizes =
-    useWorkspaceLayoutStore(
-      (state) => state.splitSizesByWorkspace[workspaceKey]?.[node.group.id],
-    ) ?? node.group.sizes;
-
-  const groupStyle = useMemo(
-    () => [
-      styles.group,
-      node.group.direction === "horizontal" ? styles.groupHorizontal : styles.groupVertical,
-    ],
-    [node.group.direction],
-  );
+  const groupSizes = storedGroupSizes ?? node.group.sizes;
 
   return (
     <View style={groupStyle}>
