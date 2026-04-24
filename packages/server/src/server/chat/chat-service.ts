@@ -418,7 +418,7 @@ export class FileBackedChatService {
       return;
     }
 
-    for (const waiter of [...waiters]) {
+    for (const waiter of Array.from(waiters)) {
       const messages =
         waiter.afterMessageId === null
           ? this.getRoomMessages(roomId).slice(-1)
@@ -446,7 +446,7 @@ export class FileBackedChatService {
     if (!waiters) {
       return;
     }
-    for (const waiter of [...waiters]) {
+    for (const waiter of Array.from(waiters)) {
       waiter.reject(error);
     }
   }

@@ -9237,7 +9237,7 @@ export class Session {
   }
 
   private disposeTerminalSubscriptions(): void {
-    for (const terminalId of [...this.terminalIdToSlot.keys()]) {
+    for (const terminalId of Array.from(this.terminalIdToSlot.keys())) {
       this.detachTerminalStream(terminalId, { emitExit: false });
     }
   }
