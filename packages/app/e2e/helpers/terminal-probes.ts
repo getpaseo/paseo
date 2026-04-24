@@ -624,7 +624,7 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
         });
       }
 
-      send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+      send(data: Parameters<WebSocket["send"]>[0]): void {
         const bytes = bytesFrom(data);
         if (bytes && bytes.byteLength >= 2 && bytes[0] === INPUT_OPCODE) {
           probe.inputFrames.push({

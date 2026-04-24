@@ -40,7 +40,9 @@ function ensurePrng(): void {
   const cryptoObj = (globalThis as unknown as { crypto?: Crypto }).crypto;
   if (cryptoObj?.getRandomValues) {
     nacl.setPRNG((x, n) => {
-      cryptoObj.getRandomValues(x.subarray(0, n));
+      const buf = new Uint8Array(n);
+      cryptoObj.getRandomValues(buf);
+      x.set(buf, 0);
     });
     prngReady = true;
     return;
