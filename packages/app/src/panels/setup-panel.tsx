@@ -98,6 +98,56 @@ function processCarriageReturns(text: string): string {
     .join("\n");
 }
 
+type SetupCommand = WorkspaceSetupSnapshot["detail"]["commands"][number];
+
+function resolveAutoExpandIndex(commands: { index: number; status: string }[]): number | null {
+  const running = commands.find((c) => c.status === "running");
+  if (running) return running.index;
+  if (commands.length > 0) return commands[commands.length - 1].index;
+  return null;
+}
+
+function resolveSetupStatusLabel(status: string | undefined): string {
+  if (status === "running") return "Running";
+  if (status === "completed") return "Completed";
+  if (status === "failed") return "Failed";
+  return "Waiting for setup output";
+}
+
+function resolveCommandLog(
+  command: SetupCommand,
+  autoExpandIndex: number | null,
+  log: string,
+): string {
+  if ("log" in command && typeof command.log === "string") {
+    return command.log;
+  }
+  if (command.index === autoExpandIndex) return log;
+  return "";
+}
+
+interface BuildCommandRowPropsArgs {
+  command: SetupCommand;
+  autoExpandIndex: number | null;
+  log: string;
+  expandedIndices: Set<number>;
+  manuallyCollapsed: Set<number>;
+  snapshotError: string | null | undefined;
+}
+
+function buildCommandRowState(args: BuildCommandRowPropsArgs) {
+  const { command, autoExpandIndex, log, expandedIndices, manuallyCollapsed, snapshotError } = args;
+  const isExpanded = expandedIndices.has(command.index);
+  const hasError = command.status === "failed" && Boolean(snapshotError);
+  const commandLog = resolveCommandLog(command, autoExpandIndex, log);
+  const hasLog = commandLog.trim().length > 0;
+  const isExpandable = command.status !== "running" || hasLog || hasError;
+  const isAutoExpanded = command.index === autoExpandIndex && !manuallyCollapsed.has(command.index);
+  const showDetail = isExpanded || isAutoExpanded;
+  const processedLog = hasLog ? processCarriageReturns(commandLog) : "";
+  return { hasError, hasLog, isExpandable, isAutoExpanded, showDetail, processedLog };
+}
+
 function SetupPanel() {
   const { theme } = useUnistyles();
   const { serverId, target } = usePaneContext();
@@ -163,19 +213,8 @@ function SetupPanel() {
     });
   }, []);
 
-  // Determine which command should auto-expand (running or last completed).
-  const autoExpandIndex = (() => {
-    const running = commands.find((c) => c.status === "running");
-    if (running) return running.index;
-    if (commands.length > 0) return commands[commands.length - 1].index;
-    return null;
-  })();
-
-  let statusLabel: string;
-  if (snapshot?.status === "running") statusLabel = "Running";
-  else if (snapshot?.status === "completed") statusLabel = "Completed";
-  else if (snapshot?.status === "failed") statusLabel = "Failed";
-  else statusLabel = "Waiting for setup output";
+  const autoExpandIndex = resolveAutoExpandIndex(commands);
+  const statusLabel = resolveSetupStatusLabel(snapshot?.status);
 
   return (
     <ScrollView
@@ -208,40 +247,25 @@ function SetupPanel() {
       {!isWaiting && !hasNoSetupCommands ? (
         <View style={styles.commandList}>
           {commands.map((command) => {
-            const isExpanded = expandedIndices.has(command.index);
-            const hasError = command.status === "failed" && snapshot?.error;
-
-            // Per-command log: use command.log if available, fall back to detail.log for the auto-expand target
-            const commandLog = (() => {
-              if ("log" in command && typeof command.log === "string") {
-                return command.log;
-              }
-              // Fallback: show detail.log on the auto-expand target command
-              if (command.index === autoExpandIndex) return log;
-              return "";
-            })();
-            const hasLog = commandLog.trim().length > 0;
-
-            // All non-running commands are expandable (completed/failed)
-            const isExpandable = command.status !== "running" || hasLog || !!hasError;
-
-            // Auto-expand the active command unless the user manually collapsed it
-            const isAutoExpanded =
-              command.index === autoExpandIndex && !manuallyCollapsed.has(command.index);
-            const showDetail = isExpanded || isAutoExpanded;
-
-            const processedLog = hasLog ? processCarriageReturns(commandLog) : "";
+            const rowState = buildCommandRowState({
+              command,
+              autoExpandIndex,
+              log,
+              expandedIndices,
+              manuallyCollapsed,
+              snapshotError: snapshot?.error,
+            });
 
             return (
               <SetupCommandRow
                 key={`${command.index}:${command.command}`}
                 command={command}
-                showDetail={showDetail}
-                isAutoExpanded={isAutoExpanded}
-                isExpandable={isExpandable}
-                hasLog={hasLog}
-                hasError={!!hasError}
-                processedLog={processedLog}
+                showDetail={rowState.showDetail}
+                isAutoExpanded={rowState.isAutoExpanded}
+                isExpandable={rowState.isExpandable}
+                hasLog={rowState.hasLog}
+                hasError={rowState.hasError}
+                processedLog={rowState.processedLog}
                 errorMessage={snapshot?.error ?? null}
                 foregroundMutedColor={theme.colors.foregroundMuted}
                 onToggle={toggleExpanded}
@@ -249,37 +273,13 @@ function SetupPanel() {
             );
           })}
 
-          {/* If there's log but no commands yet, or log without a target command, show standalone */}
-          {commands.length === 0 && log.trim().length > 0 ? (
-            <ScrollView
-              style={styles.logScroll}
-              contentContainerStyle={styles.logScrollContent}
-              showsVerticalScrollIndicator
-              testID="workspace-setup-log"
-              accessible
-              accessibilityLabel="Workspace setup log"
-            >
-              <Text selectable style={styles.logText}>
-                {log}
-              </Text>
-            </ScrollView>
-          ) : null}
-
-          {/* Show error at top level if no commands failed but there's a setup error */}
-          {snapshot?.error && !commands.some((c) => c.status === "failed") ? (
-            <View style={styles.errorCard}>
-              <Text selectable style={styles.errorText}>
-                {snapshot.error}
-              </Text>
-            </View>
-          ) : null}
+          <StandaloneLogView commands={commands} log={log} />
+          <TopLevelSetupError snapshotError={snapshot?.error ?? null} commands={commands} />
         </View>
       ) : null}
     </ScrollView>
   );
 }
-
-type SetupCommand = WorkspaceSetupSnapshot["detail"]["commands"][number];
 
 interface SetupCommandRowProps {
   command: SetupCommand;
@@ -392,6 +392,42 @@ function SetupCommandChevron({ showDetail, color }: { showDetail: boolean; color
     [showDetail],
   );
   return <ChevronRight size={14} color={color} style={chevronStyle} />;
+}
+
+function StandaloneLogView({ commands, log }: { commands: SetupCommand[]; log: string }) {
+  if (commands.length !== 0 || log.trim().length === 0) return null;
+  return (
+    <ScrollView
+      style={styles.logScroll}
+      contentContainerStyle={styles.logScrollContent}
+      showsVerticalScrollIndicator
+      testID="workspace-setup-log"
+      accessible
+      accessibilityLabel="Workspace setup log"
+    >
+      <Text selectable style={styles.logText}>
+        {log}
+      </Text>
+    </ScrollView>
+  );
+}
+
+function TopLevelSetupError({
+  snapshotError,
+  commands,
+}: {
+  snapshotError: string | null;
+  commands: SetupCommand[];
+}) {
+  if (!snapshotError) return null;
+  if (commands.some((c) => c.status === "failed")) return null;
+  return (
+    <View style={styles.errorCard}>
+      <Text selectable style={styles.errorText}>
+        {snapshotError}
+      </Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({
