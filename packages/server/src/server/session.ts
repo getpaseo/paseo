@@ -117,6 +117,7 @@ import {
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
+  type StructuredGenerationProvider,
 } from "./agent/agent-response-loop.js";
 import type {
   AgentPersistenceHandle,
@@ -305,6 +306,72 @@ export function resolveCreateAgentTitles(options: {
     explicitTitle,
     provisionalTitle,
   };
+}
+
+type StructuredHelperMcpCandidate = Pick<ManagedAgent, "cwd" | "lifecycle" | "updatedAt" | "config">;
+type StructuredHelperPreference = {
+  provider: AgentProvider;
+  model?: string | null;
+};
+
+export function resolveStructuredHelperMcpServers(options: {
+  cwd: string;
+  agents: ReadonlyArray<StructuredHelperMcpCandidate>;
+}): AgentSessionConfig["mcpServers"] | undefined {
+  const candidates = options.agents
+    .filter((agent) => agent.cwd === options.cwd)
+    .filter((agent) => {
+      const mcpServers = agent.config.mcpServers;
+      return Boolean(mcpServers && Object.keys(mcpServers).length > 0);
+    })
+    .sort((left, right) => {
+      const leftPriority = left.lifecycle === "running" ? 0 : 1;
+      const rightPriority = right.lifecycle === "running" ? 0 : 1;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+      return right.updatedAt.getTime() - left.updatedAt.getTime();
+    });
+
+  return candidates[0]?.config.mcpServers;
+}
+
+export function resolveStructuredHelperProviders(options?: {
+  helperProviders?: ReadonlyArray<StructuredHelperPreference> | undefined;
+}): StructuredGenerationProvider[] {
+  const configured = options?.helperProviders ?? [];
+  if (configured.length === 0) {
+    return [...DEFAULT_STRUCTURED_GENERATION_PROVIDERS];
+  }
+
+  const defaultsByProvider = new Map(
+    DEFAULT_STRUCTURED_GENERATION_PROVIDERS.map((candidate) => [candidate.provider, candidate]),
+  );
+  const seen = new Set<AgentProvider>();
+  const resolved: StructuredGenerationProvider[] = [];
+
+  for (const helper of configured) {
+    if (seen.has(helper.provider)) {
+      continue;
+    }
+    seen.add(helper.provider);
+
+    const fallback = defaultsByProvider.get(helper.provider);
+    if (fallback) {
+      resolved.push({
+        ...fallback,
+        ...(helper.model ? { model: helper.model } : {}),
+      });
+      continue;
+    }
+
+    resolved.push({
+      provider: helper.provider,
+      ...(helper.model ? { model: helper.model } : {}),
+    });
+  }
+
+  return resolved.length > 0 ? resolved : [...DEFAULT_STRUCTURED_GENERATION_PROVIDERS];
 }
 
 export function resolveWaitForFinishError(options: {
@@ -3521,7 +3588,14 @@ export class Session {
     return resolvedCandidate.startsWith(resolvedRoot + sep);
   }
 
-  private async generateCommitMessage(cwd: string): Promise<string> {
+  private async generateCommitMessage(
+    cwd: string,
+    helperProviders?: ReadonlyArray<StructuredHelperPreference>,
+  ): Promise<string> {
+    const helperMcpServers = resolveStructuredHelperMcpServers({
+      cwd,
+      agents: this.agentManager.listAgents(),
+    });
     const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
       mode: "uncommitted",
       includeStructured: true,
@@ -3565,10 +3639,11 @@ export class Session {
         schema,
         schemaName: "CommitMessage",
         maxRetries: 2,
-        providers: DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
+        providers: resolveStructuredHelperProviders({ helperProviders }),
         agentConfigOverrides: {
           title: "Commit generator",
           internal: true,
+          ...(helperMcpServers ? { mcpServers: helperMcpServers } : {}),
         },
       });
       return result.message;
@@ -3586,10 +3661,15 @@ export class Session {
   private async generatePullRequestText(
     cwd: string,
     baseRef?: string,
+    helperProviders?: ReadonlyArray<StructuredHelperPreference>,
   ): Promise<{
     title: string;
     body: string;
   }> {
+    const helperMcpServers = resolveStructuredHelperMcpServers({
+      cwd,
+      agents: this.agentManager.listAgents(),
+    });
     const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
       mode: "base",
       baseRef,
@@ -3631,10 +3711,11 @@ export class Session {
         schema,
         schemaName: "PullRequest",
         maxRetries: 2,
-        providers: DEFAULT_STRUCTURED_GENERATION_PROVIDERS,
+        providers: resolveStructuredHelperProviders({ helperProviders }),
         agentConfigOverrides: {
           title: "PR generator",
           internal: true,
+          ...(helperMcpServers ? { mcpServers: helperMcpServers } : {}),
         },
       });
     } catch (error) {
@@ -4702,7 +4783,7 @@ export class Session {
     try {
       let message = msg.message?.trim() ?? "";
       if (!message) {
-        message = await this.generateCommitMessage(cwd);
+        message = await this.generateCommitMessage(cwd, msg.helperProviders);
       }
       if (!message) {
         throw new Error("Commit message is required");
@@ -4912,7 +4993,7 @@ export class Session {
       let body = msg.body?.trim() ?? "";
 
       if (!title || !body) {
-        const generated = await this.generatePullRequestText(cwd, msg.baseRef);
+        const generated = await this.generatePullRequestText(cwd, msg.baseRef, msg.helperProviders);
         if (!title) title = generated.title;
         if (!body) body = generated.body;
       }

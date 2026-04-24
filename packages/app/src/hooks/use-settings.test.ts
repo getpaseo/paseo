@@ -69,6 +69,7 @@ describe("use-settings", () => {
       manageBuiltInDaemon: false,
       sendBehavior: "interrupt",
       releaseChannel: "stable",
+      helperProviders: [],
     });
     expect(asyncStorageMock.setItem).not.toHaveBeenCalled();
   });
@@ -87,5 +88,27 @@ describe("use-settings", () => {
     const result = await mod.loadSettingsFromStorage();
 
     expect(result.releaseChannel).toBe("beta");
+  });
+
+  it("loads persisted helper provider preferences", async () => {
+    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
+      if (key === "@paseo:app-settings") {
+        return JSON.stringify({
+          helperProviders: [
+            { provider: "codex", model: "gpt-5.4-mini" },
+            { provider: "claude", model: null },
+          ],
+        });
+      }
+      return null;
+    });
+
+    const mod = await import("./use-settings");
+    const result = await mod.loadSettingsFromStorage();
+
+    expect(result.helperProviders).toEqual([
+      { provider: "codex", model: "gpt-5.4-mini" },
+      { provider: "claude", model: null },
+    ]);
   });
 });

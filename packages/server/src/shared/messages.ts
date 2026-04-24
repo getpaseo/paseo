@@ -1134,6 +1134,14 @@ export const CheckoutCommitRequestSchema = z.object({
   cwd: z.string(),
   message: z.string().optional(),
   addAll: z.boolean().optional(),
+  helperProviders: z
+    .array(
+      z.object({
+        provider: AgentProviderSchema,
+        model: z.string().nullable().optional(),
+      }),
+    )
+    .optional(),
   requestId: z.string(),
 });
 
@@ -1172,6 +1180,14 @@ export const CheckoutPrCreateRequestSchema = z.object({
   title: z.string().optional(),
   body: z.string().optional(),
   baseRef: z.string().optional(),
+  helperProviders: z
+    .array(
+      z.object({
+        provider: AgentProviderSchema,
+        model: z.string().nullable().optional(),
+      }),
+    )
+    .optional(),
   requestId: z.string(),
 });
 
