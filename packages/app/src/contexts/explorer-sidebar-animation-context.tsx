@@ -154,3 +154,7 @@ export function useExplorerSidebarAnimation() {
   }
   return context;
 }
+
+export function useExplorerSidebarAnimationOptional() {
+  return useContext(ExplorerSidebarAnimationContext);
+}
