@@ -81,50 +81,28 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
   await page.reload();
 }
 
-async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
-  const port = getE2EDaemonPort();
-  const expectedEndpoint = `127.0.0.1:${port}`;
-  const expectedServerId = process.env.E2E_SERVER_ID;
-  if (!expectedServerId) {
-    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
-  }
-
-  const snapshot = await page.evaluate(() => {
-    const registryRaw = localStorage.getItem("@paseo:daemon-registry");
-    const prefsRaw = localStorage.getItem("@paseo:create-agent-preferences");
-    return { registryRaw, prefsRaw };
-  });
-
-  if (!snapshot.registryRaw) {
-    throw new Error("E2E expected @paseo:daemon-registry to be set before app load.");
-  }
-
+function parseRegistryEntry(registryRaw: string): { serverId: string; connections: unknown } {
   let registry: unknown;
   try {
-    registry = JSON.parse(snapshot.registryRaw);
+    registry = JSON.parse(registryRaw);
   } catch {
     throw new Error("E2E expected @paseo:daemon-registry to be valid JSON.");
   }
-
   if (!Array.isArray(registry) || registry.length !== 1) {
     throw new Error(
       `E2E expected @paseo:daemon-registry to contain exactly 1 daemon (got ${Array.isArray(registry) ? registry.length : "non-array"}).`,
     );
   }
-
   const daemon = registry[0] as { serverId?: string; connections?: unknown };
   if (typeof daemon?.serverId !== "string" || daemon.serverId.length === 0) {
     throw new Error(
       `E2E expected seeded daemon to have a string serverId (got ${String(daemon?.serverId)}).`,
     );
   }
-  if (daemon.serverId !== expectedServerId) {
-    throw new Error(
-      `E2E expected seeded daemon serverId to be ${expectedServerId} (got ${daemon.serverId}).`,
-    );
-  }
+  return { serverId: daemon.serverId, connections: daemon.connections };
+}
 
-  const connections: unknown = daemon?.connections;
+function assertDaemonConnections(connections: unknown, expectedEndpoint: string): void {
   if (
     !Array.isArray(connections) ||
     !connections.some(
@@ -147,15 +125,14 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
       `E2E detected a daemon endpoint pointing at :6767 (${JSON.stringify(connections)}).`,
     );
   }
+}
 
-  if (!snapshot.prefsRaw) {
-    throw new Error("E2E expected @paseo:create-agent-preferences to be set before app load.");
-  }
+function assertPreferencesMatch(prefsRaw: string, serverId: string): void {
   try {
-    const prefs = JSON.parse(snapshot.prefsRaw) as { serverId?: string };
-    if (prefs?.serverId !== daemon.serverId) {
+    const prefs = JSON.parse(prefsRaw) as { serverId?: string };
+    if (prefs?.serverId !== serverId) {
       throw new Error(
-        `E2E expected create-agent-preferences.serverId to match seeded daemon serverId (${daemon.serverId}) (got ${String(prefs?.serverId)}).`,
+        `E2E expected create-agent-preferences.serverId to match seeded daemon serverId (${serverId}) (got ${String(prefs?.serverId)}).`,
       );
     }
   } catch (error) {
@@ -164,6 +141,38 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
       cause: error,
     });
   }
+}
+
+async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
+  const port = getE2EDaemonPort();
+  const expectedEndpoint = `127.0.0.1:${port}`;
+  const expectedServerId = process.env.E2E_SERVER_ID;
+  if (!expectedServerId) {
+    throw new Error("E2E_SERVER_ID is not set (expected from Playwright globalSetup).");
+  }
+
+  const snapshot = await page.evaluate(() => {
+    const registryRaw = localStorage.getItem("@paseo:daemon-registry");
+    const prefsRaw = localStorage.getItem("@paseo:create-agent-preferences");
+    return { registryRaw, prefsRaw };
+  });
+
+  if (!snapshot.registryRaw) {
+    throw new Error("E2E expected @paseo:daemon-registry to be set before app load.");
+  }
+
+  const { serverId, connections } = parseRegistryEntry(snapshot.registryRaw);
+  if (serverId !== expectedServerId) {
+    throw new Error(
+      `E2E expected seeded daemon serverId to be ${expectedServerId} (got ${serverId}).`,
+    );
+  }
+  assertDaemonConnections(connections, expectedEndpoint);
+
+  if (!snapshot.prefsRaw) {
+    throw new Error("E2E expected @paseo:create-agent-preferences to be set before app load.");
+  }
+  assertPreferencesMatch(snapshot.prefsRaw, serverId);
 }
 
 export const gotoAppShell = async (page: Page) => {

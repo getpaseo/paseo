@@ -79,7 +79,10 @@ test.describe("Terminal alternate-screen transitions", () => {
         `for i in $(seq 1 80); do echo HISTORY_$i; done; echo ${historyReady}\n`,
         { delay: 0 },
       );
-      await waitForTerminalContent(page, (text) => text.includes(historyReady), 10_000);
+      function hasHistoryReady(text: string): boolean {
+        return text.includes(historyReady);
+      }
+      await waitForTerminalContent(page, hasHistoryReady, 10_000);
 
       await resetTerminalRenderProbe(page);
       await page.waitForTimeout(500);
@@ -118,14 +121,16 @@ test.describe("Terminal alternate-screen transitions", () => {
       expect(finalBufferText).toContain(historyReady);
       expect(finalBufferText).toContain(afterAlt);
 
-      const suspiciousFrames = probe.frames.filter(
-        (frame) =>
+      function isSuspiciousFrame(frame: (typeof probe.frames)[number]): boolean {
+        return (
           frame.text.includes("$") &&
           !frame.text.includes(historyReady) &&
           !frame.text.includes(afterAlt) &&
           frame.nonEmptyRows <= 2 &&
-          (frame.firstNonEmptyRow ?? Number.POSITIVE_INFINITY) <= 1,
-      );
+          (frame.firstNonEmptyRow ?? Number.POSITIVE_INFINITY) <= 1
+        );
+      }
+      const suspiciousFrames = probe.frames.filter(isSuspiciousFrame);
 
       expect(
         suspiciousFrames,

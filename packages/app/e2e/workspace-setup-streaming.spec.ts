@@ -353,10 +353,11 @@ test.describe("Workspace setup streaming", () => {
         error: null,
       });
 
+      const findEditorTerminal = (terminal: { name: string }) => terminal.name === "editor";
       await expect
         .poll(async () => {
           const terminals = await client.listTerminals(workspaceDir);
-          return terminals.terminals.find((terminal) => terminal.name === "editor") ?? null;
+          return terminals.terminals.find(findEditorTerminal) ?? null;
         })
         .toMatchObject({
           id: expect.any(String),

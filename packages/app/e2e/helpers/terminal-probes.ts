@@ -208,7 +208,7 @@ export async function installTerminalRenderProbe(page: Page): Promise<void> {
               typeof data === "string" ? data : new TextDecoder().decode(data as Uint8Array);
             probe.writeCount += 1;
             const preview = text
-              .replace(/\u001b/g, "\\x1b")
+              .replaceAll("\u001b", "\\x1b")
               .replace(/\r/g, "\\r")
               .replace(/\n/g, "\\n")
               .slice(0, 160);

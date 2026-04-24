@@ -3,7 +3,7 @@ import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-r
 
 // Extend base test to provide dynamic baseURL from global-setup
 const test = base.extend({
-  baseURL: async ({}, provide) => {
+  baseURL: async (_fixtures, provide) => {
     const metroPort = process.env.E2E_METRO_PORT;
     if (!metroPort) {
       throw new Error("E2E_METRO_PORT not set - globalSetup must run first");

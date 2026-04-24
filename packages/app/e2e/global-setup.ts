@@ -489,13 +489,16 @@ export default async function globalSetup() {
         });
 
         const readyDeadline = Date.now() + 5000;
-        while (
-          !relayReadyForSelectedPort &&
-          relayStartupFailureLine === null &&
-          relayProcess?.exitCode === null &&
-          relayProcess?.signalCode === null &&
-          Date.now() < readyDeadline
-        ) {
+        function isRelayReadyCheckPending(): boolean {
+          if (relayReadyForSelectedPort) return false;
+          if (relayStartupFailureLine !== null) return false;
+          if (relayProcess?.exitCode !== null) return false;
+          if (relayProcess?.signalCode !== null) return false;
+          if (Date.now() >= readyDeadline) return false;
+          return true;
+        }
+        for (;;) {
+          if (!isRelayReadyCheckPending()) break;
           await sleep(100);
         }
 
