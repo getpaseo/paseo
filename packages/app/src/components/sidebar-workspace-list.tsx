@@ -19,6 +19,7 @@ import {
   useEffect,
   useRef,
   type ReactElement,
+  type ReactNode,
   type MutableRefObject,
   type Ref,
 } from "react";
@@ -461,6 +462,30 @@ function ProjectLeadingVisual({
     return <View style={styles.projectLeadingVisualSlot}>{projectIcon}</View>;
   }
 
+  return (
+    <ProjectLeadingVisualStatus
+      projectIcon={projectIcon}
+      isArchiving={isArchiving}
+      shouldShowSyncedLoader={shouldShowSyncedLoader}
+      activeWorkspace={activeWorkspace}
+      theme={theme}
+    />
+  );
+}
+
+function ProjectLeadingVisualStatus({
+  projectIcon,
+  isArchiving,
+  shouldShowSyncedLoader,
+  activeWorkspace,
+  theme,
+}: {
+  projectIcon: ReactNode;
+  isArchiving: boolean;
+  shouldShowSyncedLoader: boolean;
+  activeWorkspace: SidebarWorkspaceEntry;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+}) {
   if (isArchiving) {
     return (
       <View style={styles.projectLeadingVisualSlot}>
