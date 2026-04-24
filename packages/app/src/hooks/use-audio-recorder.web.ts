@@ -332,10 +332,12 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
   }, [cleanupStream, detectSupportedMimeType, stopMetering]);
 
   useEffect(() => {
+    const attemptGuard = attemptGuardRef.current;
+    const mediaRecorder = mediaRecorderRef;
     return () => {
-      attemptGuardRef.current.cancel();
+      attemptGuard.cancel();
       try {
-        void mediaRecorderRef.current?.stop();
+        void mediaRecorder.current?.stop();
       } catch {
         // Ignore stop during unmount.
       }

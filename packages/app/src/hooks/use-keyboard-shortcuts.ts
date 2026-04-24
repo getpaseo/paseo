@@ -432,7 +432,9 @@ export function useKeyboardShortcuts({
     openProjectPickerAction,
     pathname,
     resetModifiers,
+    router,
     toggleAgentList,
+    toggleBothSidebars,
     toggleFocusMode,
   ]);
 }

@@ -71,7 +71,8 @@ export function useDraftAgentFeatures(input: {
       return payload.features ?? [];
     },
   });
-  const availableFeatures = featuresQuery.data ?? [];
+  const availableFeaturesRaw = featuresQuery.data;
+  const availableFeatures = useMemo(() => availableFeaturesRaw ?? [], [availableFeaturesRaw]);
   const featureValues = useMemo(
     () =>
       resolveFeatureValues({

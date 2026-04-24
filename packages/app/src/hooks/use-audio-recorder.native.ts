@@ -232,7 +232,7 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
         { cause: error },
       );
     }
-  }, [recordingOptions.sampleRate, recordingOptions.numberOfChannels, recordingOptions.bitRate]);
+  }, []);
 
   const stop = useCallback(async (): Promise<Blob> => {
     const recorder = recorderRef.current;

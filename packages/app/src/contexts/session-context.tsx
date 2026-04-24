@@ -806,10 +806,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     },
     [
       applyAuthoritativeAgentSnapshot,
+      queryClient,
       serverId,
+      setAgentAuthoritativeHistoryApplied,
       setAgents,
-      setPendingPermissions,
       setAgentTimelineCursor,
+      setPendingPermissions,
+      setQueuedMessages,
     ],
   );
 
@@ -984,6 +987,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       requestCanonicalCatchUp,
       serverId,
       setAgentAuthoritativeHistoryApplied,
+      setAgentStreamHead,
       setAgentStreamTail,
       setAgentTimelineCursor,
       setInitializingAgents,
@@ -1508,6 +1512,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     applyAgentUpdatePayload,
     applyWorkspaceSetupProgress,
     applyTimelineResponse,
+    updateSessionServerInfo,
     voiceRuntime,
     voiceAudioEngine,
   ]);

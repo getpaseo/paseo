@@ -532,6 +532,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   // - no URL override
   // - no stored preference applied
   // - user hasn't manually picked a host in this session
+  const onlineServerIdsKey = onlineServerIds.join("|");
   useEffect(() => {
     if (!isVisible || !isCreateFlow) return;
     if (isPreferencesLoading) return;
@@ -549,7 +550,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     isCreateFlow,
     isPreferencesLoading,
     isVisible,
-    onlineServerIds.join("|"),
+    onlineServerIds,
+    onlineServerIdsKey,
     userModified.serverId,
     validServerIds,
   ]);
@@ -783,7 +785,11 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     : undefined;
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
   const resolvedModelId = effectiveModel?.id ?? formState.model;
-  const availableThinkingOptions = effectiveModel?.thinkingOptions ?? [];
+  const availableThinkingOptionsRaw = effectiveModel?.thinkingOptions;
+  const availableThinkingOptions = useMemo(
+    () => availableThinkingOptionsRaw ?? [],
+    [availableThinkingOptionsRaw],
+  );
   const isModelLoading = snapshotIsLoading || selectedProviderIsLoading;
   const modelError = snapshotError;
 
