@@ -1090,78 +1090,84 @@ function helpMatchesPlatform(
 
 // --- Public API ---
 
-export function resolveKeyboardShortcut(input: {
+function buildMatchFromBinding(
+  binding: ParsedShortcutBinding,
+  event: KeyboardEvent,
+): KeyboardShortcutMatch {
+  return {
+    action: binding.action,
+    payload: resolvePayload(binding.payload, event),
+    preventDefault: binding.preventDefault ?? true,
+    stopPropagation: binding.stopPropagation ?? true,
+  };
+}
+
+function resolveInitialChordStep(input: {
   event: KeyboardEvent;
   context: KeyboardShortcutContext;
   chordState: ChordState;
   onChordReset: () => void;
-  bindings?: readonly ParsedShortcutBinding[];
-}): {
-  match: KeyboardShortcutMatch | null;
-  nextChordState: ChordState;
-  preventDefault: boolean;
-};
-export function resolveKeyboardShortcut(input: {
-  event: KeyboardEvent;
-  context: KeyboardShortcutContext;
-  chordState: ChordState;
-  onChordReset: () => void;
-  bindings?: readonly ParsedShortcutBinding[];
+  bindings: readonly ParsedShortcutBinding[];
 }): {
   match: KeyboardShortcutMatch | null;
   nextChordState: ChordState;
   preventDefault: boolean;
 } {
-  const { event, context, chordState, onChordReset, bindings = DEFAULT_BINDINGS } = input;
+  const { event, context, chordState, onChordReset, bindings } = input;
+  const advancingCandidateIndices: number[] = [];
+  let singleComboMatch: KeyboardShortcutMatch | null = null;
 
-  if (chordState.step === 0) {
-    const advancingCandidateIndices: number[] = [];
-    let singleComboMatch: KeyboardShortcutMatch | null = null;
-
-    for (const [index, binding] of bindings.entries()) {
-      const firstCombo = binding.parsedChord[0];
-      if (!firstCombo) {
-        continue;
-      }
-      if (!matchesCombo(firstCombo, event, context.isMac)) {
-        continue;
-      }
-      if (!matchesWhen(binding.when, context)) {
-        continue;
-      }
-      if (binding.parsedChord.length > 1) {
-        advancingCandidateIndices.push(index);
-        continue;
-      }
-      if (!singleComboMatch) {
-        singleComboMatch = {
-          action: binding.action,
-          payload: resolvePayload(binding.payload, event),
-          preventDefault: binding.preventDefault ?? true,
-          stopPropagation: binding.stopPropagation ?? true,
-        };
-      }
+  for (const [index, binding] of bindings.entries()) {
+    const firstCombo = binding.parsedChord[0];
+    if (!firstCombo) {
+      continue;
     }
-
-    if (advancingCandidateIndices.length > 0) {
-      return {
-        match: null,
-        nextChordState: {
-          candidateIndices: advancingCandidateIndices,
-          step: 1,
-          timeoutId: createChordTimeout(onChordReset),
-        },
-        preventDefault: true,
-      };
+    if (!matchesCombo(firstCombo, event, context.isMac)) {
+      continue;
     }
+    if (!matchesWhen(binding.when, context)) {
+      continue;
+    }
+    if (binding.parsedChord.length > 1) {
+      advancingCandidateIndices.push(index);
+      continue;
+    }
+    if (!singleComboMatch) {
+      singleComboMatch = buildMatchFromBinding(binding, event);
+    }
+  }
 
+  if (advancingCandidateIndices.length > 0) {
     return {
-      match: singleComboMatch,
-      nextChordState: resetChordState(chordState),
-      preventDefault: false,
+      match: null,
+      nextChordState: {
+        candidateIndices: advancingCandidateIndices,
+        step: 1,
+        timeoutId: createChordTimeout(onChordReset),
+      },
+      preventDefault: true,
     };
   }
 
+  return {
+    match: singleComboMatch,
+    nextChordState: resetChordState(chordState),
+    preventDefault: false,
+  };
+}
+
+function resolveAdvancingChordStep(input: {
+  event: KeyboardEvent;
+  context: KeyboardShortcutContext;
+  chordState: ChordState;
+  onChordReset: () => void;
+  bindings: readonly ParsedShortcutBinding[];
+}): {
+  match: KeyboardShortcutMatch | null;
+  nextChordState: ChordState;
+  preventDefault: boolean;
+} {
+  const { event, context, chordState, onChordReset, bindings } = input;
   const matchingCandidateIndices: number[] = [];
   let completedMatch: KeyboardShortcutMatch | null = null;
 
@@ -1181,12 +1187,7 @@ export function resolveKeyboardShortcut(input: {
       continue;
     }
     if (chordState.step + 1 === binding.parsedChord.length) {
-      completedMatch = {
-        action: binding.action,
-        payload: resolvePayload(binding.payload, event),
-        preventDefault: binding.preventDefault ?? true,
-        stopPropagation: binding.stopPropagation ?? true,
-      };
+      completedMatch = buildMatchFromBinding(binding, event);
       break;
     }
     matchingCandidateIndices.push(index);
@@ -1218,6 +1219,24 @@ export function resolveKeyboardShortcut(input: {
     nextChordState: resetChordState(chordState),
     preventDefault: false,
   };
+}
+
+export function resolveKeyboardShortcut(input: {
+  event: KeyboardEvent;
+  context: KeyboardShortcutContext;
+  chordState: ChordState;
+  onChordReset: () => void;
+  bindings?: readonly ParsedShortcutBinding[];
+}): {
+  match: KeyboardShortcutMatch | null;
+  nextChordState: ChordState;
+  preventDefault: boolean;
+} {
+  const { event, context, chordState, onChordReset, bindings = DEFAULT_BINDINGS } = input;
+  if (chordState.step === 0) {
+    return resolveInitialChordStep({ event, context, chordState, onChordReset, bindings });
+  }
+  return resolveAdvancingChordStep({ event, context, chordState, onChordReset, bindings });
 }
 
 export function getBindingIdForAction(

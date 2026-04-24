@@ -32,6 +32,13 @@ import {
   getNavigationActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 
+function hasPayloadKey<K extends string>(
+  payload: KeyboardShortcutPayload,
+  key: K,
+): payload is KeyboardShortcutPayload & Record<K, never> {
+  return !!payload && typeof payload === "object" && key in payload;
+}
+
 export function useKeyboardShortcuts({
   enabled,
   isMobile,
@@ -156,34 +163,16 @@ export function useKeyboardShortcuts({
           return false;
       }
     };
-    const handleAction = (input: {
-      action: string;
-      payload: KeyboardShortcutPayload;
-      event: KeyboardEvent;
-    }): boolean => {
-      switch (input.action) {
+    const handleDispatchOnlyAction = (action: string): boolean | null => {
+      switch (action) {
         case "agent.interrupt":
-          return keyboardActionDispatcher.dispatch({
-            id: "agent.interrupt",
-            scope: "global",
-          });
-        case "agent.new":
-          return openProjectPicker();
+          return keyboardActionDispatcher.dispatch({ id: "agent.interrupt", scope: "global" });
         case "workspace.tab.new":
-          return keyboardActionDispatcher.dispatch({
-            id: "workspace.tab.new",
-            scope: "workspace",
-          });
+          return keyboardActionDispatcher.dispatch({ id: "workspace.tab.new", scope: "workspace" });
         case "worktree.archive":
-          return keyboardActionDispatcher.dispatch({
-            id: "worktree.archive",
-            scope: "sidebar",
-          });
+          return keyboardActionDispatcher.dispatch({ id: "worktree.archive", scope: "sidebar" });
         case "worktree.new":
-          return keyboardActionDispatcher.dispatch({
-            id: "worktree.new",
-            scope: "sidebar",
-          });
+          return keyboardActionDispatcher.dispatch({ id: "worktree.new", scope: "sidebar" });
         case "workspace.terminal.new":
           return keyboardActionDispatcher.dispatch({
             id: "workspace.terminal.new",
@@ -194,23 +183,10 @@ export function useKeyboardShortcuts({
             id: "workspace.tab.close-current",
             scope: "workspace",
           });
-        case "workspace.tab.navigate.index":
-          if (!input.payload || typeof input.payload !== "object" || !("index" in input.payload)) {
-            return false;
-          }
+        case "sidebar.toggle.right":
           return keyboardActionDispatcher.dispatch({
-            id: "workspace.tab.navigate-index",
-            scope: "workspace",
-            index: input.payload.index,
-          });
-        case "workspace.tab.navigate.relative":
-          if (!input.payload || typeof input.payload !== "object" || !("delta" in input.payload)) {
-            return false;
-          }
-          return keyboardActionDispatcher.dispatch({
-            id: "workspace.tab.navigate-relative",
-            scope: "workspace",
-            delta: input.payload.delta,
+            id: "sidebar.toggle.right",
+            scope: "sidebar",
           });
         case "workspace.pane.split.right":
         case "workspace.pane.split.down":
@@ -223,52 +199,104 @@ export function useKeyboardShortcuts({
         case "workspace.pane.move-tab.up":
         case "workspace.pane.move-tab.down":
         case "workspace.pane.close":
+          return keyboardActionDispatcher.dispatch({ id: action, scope: "workspace" });
+        default:
+          return null;
+      }
+    };
+
+    const handlePayloadAction = (
+      action: string,
+      payload: KeyboardShortcutPayload,
+    ): boolean | null => {
+      switch (action) {
+        case "workspace.tab.navigate.index":
+          if (!hasPayloadKey(payload, "index")) return false;
           return keyboardActionDispatcher.dispatch({
-            id: input.action,
+            id: "workspace.tab.navigate-index",
             scope: "workspace",
+            index: payload.index,
+          });
+        case "workspace.tab.navigate.relative":
+          if (!hasPayloadKey(payload, "delta")) return false;
+          return keyboardActionDispatcher.dispatch({
+            id: "workspace.tab.navigate-relative",
+            scope: "workspace",
+            delta: payload.delta,
           });
         case "workspace.navigate.index":
-          if (!input.payload || typeof input.payload !== "object" || !("index" in input.payload)) {
-            return false;
-          }
-          return navigateToWorkspaceShortcut(input.payload.index);
+          if (!hasPayloadKey(payload, "index")) return false;
+          return navigateToWorkspaceShortcut(payload.index);
         case "workspace.navigate.relative":
-          if (!input.payload || typeof input.payload !== "object" || !("delta" in input.payload)) {
-            return false;
+          if (!hasPayloadKey(payload, "delta")) return false;
+          return navigateRelativeWorkspace(payload.delta);
+        case "message-input.action":
+          if (!hasPayloadKey(payload, "kind")) return false;
+          return dispatchMessageInputAction(payload.kind);
+        default:
+          return null;
+      }
+    };
+
+    const handleSettingsToggle = (): boolean => {
+      if (pathname.startsWith("/settings")) {
+        if (!isMobile) {
+          const lastWorkspaceRoute = getLastNavigationWorkspaceRouteSelection();
+          if (lastWorkspaceRoute) {
+            router.replace(
+              buildHostWorkspaceRoute(lastWorkspaceRoute.serverId, lastWorkspaceRoute.workspaceId),
+            );
+            return true;
           }
-          return navigateRelativeWorkspace(input.payload.delta);
+        }
+        router.back();
+        return true;
+      }
+      router.push(buildSettingsRoute());
+      return true;
+    };
+
+    const handleCommandCenterToggle = (event: KeyboardEvent): boolean => {
+      const store = useKeyboardShortcutsStore.getState();
+      if (!store.commandCenterOpen) {
+        const target = event.target instanceof Element ? (event.target as Element) : null;
+        const targetEl =
+          target?.closest?.("textarea, input, [contenteditable='true']") ??
+          (target instanceof HTMLElement ? target : null);
+        const active = document.activeElement;
+        const activeEl = active instanceof HTMLElement ? active : null;
+        setCommandCenterFocusRestoreElement((targetEl as HTMLElement | null) ?? activeEl ?? null);
+      }
+      store.setCommandCenterOpen(!store.commandCenterOpen);
+      return true;
+    };
+
+    const handleAction = (input: {
+      action: string;
+      payload: KeyboardShortcutPayload;
+      event: KeyboardEvent;
+    }): boolean => {
+      const dispatchOnlyResult = handleDispatchOnlyAction(input.action);
+      if (dispatchOnlyResult !== null) {
+        return dispatchOnlyResult;
+      }
+      const payloadResult = handlePayloadAction(input.action, input.payload);
+      if (payloadResult !== null) {
+        return payloadResult;
+      }
+      switch (input.action) {
+        case "agent.new":
+          return openProjectPicker();
         case "sidebar.toggle.left":
           toggleAgentList();
           return true;
         case "settings.toggle":
-          if (pathname.startsWith("/settings")) {
-            if (!isMobile) {
-              const lastWorkspaceRoute = getLastNavigationWorkspaceRouteSelection();
-              if (lastWorkspaceRoute) {
-                router.replace(
-                  buildHostWorkspaceRoute(
-                    lastWorkspaceRoute.serverId,
-                    lastWorkspaceRoute.workspaceId,
-                  ),
-                );
-                return true;
-              }
-            }
-            router.back();
-            return true;
-          }
-          router.push(buildSettingsRoute());
-          return true;
+          return handleSettingsToggle();
         case "sidebar.toggle.both":
           if (toggleBothSidebars) {
             toggleBothSidebars();
           }
           return true;
-        case "sidebar.toggle.right":
-          return keyboardActionDispatcher.dispatch({
-            id: "sidebar.toggle.right",
-            scope: "sidebar",
-          });
         case "view.toggle.focus":
           if (toggleFocusMode) {
             toggleFocusMode();
@@ -279,33 +307,13 @@ export function useKeyboardShortcuts({
             cycleTheme();
           }
           return true;
-        case "command-center.toggle": {
-          const store = useKeyboardShortcutsStore.getState();
-          if (!store.commandCenterOpen) {
-            const target =
-              input.event.target instanceof Element ? (input.event.target as Element) : null;
-            const targetEl =
-              target?.closest?.("textarea, input, [contenteditable='true']") ??
-              (target instanceof HTMLElement ? target : null);
-            const active = document.activeElement;
-            const activeEl = active instanceof HTMLElement ? active : null;
-            setCommandCenterFocusRestoreElement(
-              (targetEl as HTMLElement | null) ?? activeEl ?? null,
-            );
-          }
-          store.setCommandCenterOpen(!store.commandCenterOpen);
-          return true;
-        }
+        case "command-center.toggle":
+          return handleCommandCenterToggle(input.event);
         case "shortcuts.dialog.toggle": {
           const store = useKeyboardShortcutsStore.getState();
           store.setShortcutsDialogOpen(!store.shortcutsDialogOpen);
           return true;
         }
-        case "message-input.action":
-          if (!input.payload || typeof input.payload !== "object" || !("kind" in input.payload)) {
-            return false;
-          }
-          return dispatchMessageInputAction(input.payload.kind);
         default:
           return false;
       }
