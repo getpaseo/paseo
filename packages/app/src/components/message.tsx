@@ -7,6 +7,7 @@ import {
   type LayoutChangeEvent,
   StyleProp,
   ViewStyle,
+  type TextStyle,
 } from "react-native";
 import * as React from "react";
 import {
@@ -23,7 +24,13 @@ import {
   cloneElement,
 } from "react";
 import type { ReactNode, ComponentType } from "react";
-import Markdown, { MarkdownIt, type RenderRules } from "react-native-markdown-display";
+import Markdown, {
+  MarkdownIt,
+  type ASTNode,
+  type RenderRules,
+} from "react-native-markdown-display";
+
+type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
@@ -766,7 +773,7 @@ function MarkdownLink({
   children,
 }: {
   href: string;
-  style: any;
+  style: StyleProp<TextStyle>;
   onPress: (url: string) => void;
   children: ReactNode;
 }) {
@@ -774,8 +781,8 @@ function MarkdownLink({
   const handlePress = useCallback(() => onPress(href), [onPress, href]);
   const handleHoverIn = useCallback(() => setHovered(true), []);
   const handleHoverOut = useCallback(() => setHovered(false), []);
-  const hoveredTextStyle = useMemo(
-    () => [style, hovered && { textDecorationLine: "underline" }],
+  const hoveredTextStyle = useMemo<StyleProp<TextStyle>>(
+    () => [style, hovered && { textDecorationLine: "underline" as const }],
     [style, hovered],
   );
   if (isNative) {
@@ -1260,60 +1267,58 @@ export const AssistantMessage = memo(function AssistantMessage({
   const markdownRules = useMemo<RenderRules>(() => {
     return {
       text: (
-        node: any,
+        node: ASTNode,
         _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {},
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
       ) => (
         <Text key={node.key} style={[inheritedStyles, styles.text]}>
           {node.content}
         </Text>
       ),
       textgroup: (
-        node: any,
+        node: ASTNode,
         children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {},
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
       ) => (
         <Text key={node.key} style={[inheritedStyles, styles.textgroup]}>
           {children}
         </Text>
       ),
       code_block: (
-        node: any,
+        node: ASTNode,
         _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {},
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
       ) => (
         <Text key={node.key} style={[inheritedStyles, styles.code_block]}>
           {node.content}
         </Text>
       ),
       fence: (
-        node: any,
+        node: ASTNode,
         _children: ReactNode[],
-        _parent: any,
-        styles: any,
-        inheritedStyles: any = {},
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
       ) => (
         <Text key={node.key} style={[inheritedStyles, styles.fence]}>
           {node.content}
         </Text>
       ),
       code_inline: (
-        node: any,
+        node: ASTNode,
         _children: ReactNode[],
-        parent: any,
-        styles: any,
-        inheritedStyles: any = {},
+        parent: ASTNode[],
+        styles: MarkdownStyles,
+        inheritedStyles: TextStyle = {},
       ) => {
         const content = node.content ?? "";
-        const isLinkedInlineCode =
-          nodeHasParentType(parent, "link") ||
-          (!Array.isArray(parent) && typeof parent?.attributes?.href === "string");
+        const isLinkedInlineCode = nodeHasParentType(parent, "link");
         const parsed =
           onInlinePathPress && !isLinkedInlineCode ? parseInlinePathToken(content) : null;
 
@@ -1348,17 +1353,32 @@ export const AssistantMessage = memo(function AssistantMessage({
           </Text>
         );
       },
-      bullet_list: (node: any, children: ReactNode[], _parent: any, styles: any) => (
+      bullet_list: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
         <View key={node.key} style={styles.bullet_list}>
           {children}
         </View>
       ),
-      ordered_list: (node: any, children: ReactNode[], _parent: any, styles: any) => (
+      ordered_list: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
         <View key={node.key} style={styles.ordered_list}>
           {children}
         </View>
       ),
-      list_item: (node: any, children: ReactNode[], parent: any, styles: any) => {
+      list_item: (
+        node: ASTNode,
+        children: ReactNode[],
+        parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => {
         const { isOrdered, marker } = getMarkdownListMarker(node, parent);
         const iconStyle = isOrdered ? styles.ordered_list_icon : styles.bullet_list_icon;
         const contentStyle = isOrdered ? styles.ordered_list_content : styles.bullet_list_content;
@@ -1370,35 +1390,48 @@ export const AssistantMessage = memo(function AssistantMessage({
           </View>
         );
       },
-      paragraph: (node: any, children: ReactNode[], _parent: any, styles: any) => (
+      paragraph: (
+        node: ASTNode,
+        children: ReactNode[],
+        _parent: ASTNode[],
+        styles: MarkdownStyles,
+      ) => (
         <View key={node.key} style={[styles.paragraph, { marginBottom: 0 }]}>
           {children}
         </View>
       ),
-      link: (node: any, children: ReactNode[], _parent: any, styles: any) => (
+      link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <MarkdownLink
           key={node.key}
-          href={node.attributes?.href ?? ""}
+          href={typeof node.attributes?.href === "string" ? node.attributes.href : ""}
           style={styles.link}
           onPress={handleLinkPress}
         >
           {Children.map(children, (child) =>
             isValidElement(child)
               ? cloneElement(child, {
-                  style: [(child.props as any).style, { color: styles.link.color }],
-                } as any)
+                  style: [
+                    (child.props as { style?: StyleProp<TextStyle> }).style,
+                    { color: styles.link.color as string | undefined },
+                  ],
+                } as Partial<{ style: StyleProp<TextStyle> }>)
               : child,
           )}
         </MarkdownLink>
       ),
-      image: (node: any, _children: ReactNode[], parent: any, _styles: any) => {
+      image: (
+        node: ASTNode,
+        _children: ReactNode[],
+        parent: ASTNode[],
+        _styles: MarkdownStyles,
+      ) => {
         const paragraphNode = Array.isArray(parent)
-          ? parent.find((ancestor: any) => ancestor?.type === "paragraph")
+          ? parent.find((ancestor) => ancestor?.type === "paragraph")
           : null;
         const paragraphChildren = Array.isArray(paragraphNode?.children)
           ? paragraphNode.children
           : [];
-        const imageIndex = paragraphChildren.findIndex((child: any) => child?.key === node.key);
+        const imageIndex = paragraphChildren.findIndex((child: ASTNode) => child?.key === node.key);
         const hasLeadingContent = imageIndex > 0;
 
         return (
