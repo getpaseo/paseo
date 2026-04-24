@@ -305,6 +305,23 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     playback.activeGroupId = null;
   }
 
+  function retireFinishedGroup(
+    group: { groupId: string; started: boolean; isVoiceMode: boolean },
+    serverId: string,
+  ): void {
+    playback.groups.delete(group.groupId);
+    if (playback.orderedGroupIds[0] === group.groupId) {
+      playback.orderedGroupIds.shift();
+    } else {
+      playback.orderedGroupIds = playback.orderedGroupIds.filter(
+        (value) => value !== group.groupId,
+      );
+    }
+    if (group.started && group.isVoiceMode) {
+      api.onAssistantAudioFinished(serverId);
+    }
+  }
+
   async function acknowledgeChunk(chunkId: string): Promise<void> {
     const activeSession = getActiveSession();
     if (!activeSession) {
@@ -334,22 +351,14 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
 
         const nextChunk = group.chunks.get(group.nextChunkToPlay);
         if (!nextChunk) {
-          if (group.finalChunkIndex !== null && group.nextChunkToPlay > group.finalChunkIndex) {
-            playback.groups.delete(group.groupId);
-            if (playback.orderedGroupIds[0] === group.groupId) {
-              playback.orderedGroupIds.shift();
-            } else {
-              playback.orderedGroupIds = playback.orderedGroupIds.filter(
-                (value) => value !== group.groupId,
-              );
-            }
-            if (group.started && group.isVoiceMode) {
-              api.onAssistantAudioFinished(serverId);
-            }
-            activateNextPlaybackGroup();
-            continue;
+          const groupIsFinished =
+            group.finalChunkIndex !== null && group.nextChunkToPlay > group.finalChunkIndex;
+          if (!groupIsFinished) {
+            return;
           }
-          return;
+          retireFinishedGroup(group, serverId);
+          activateNextPlaybackGroup();
+          continue;
         }
 
         group.chunks.delete(group.nextChunkToPlay);
