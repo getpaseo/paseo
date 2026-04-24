@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactElement, type RefObject } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ActivityIndicator,
@@ -8,6 +8,8 @@ import {
   Text,
   View,
   type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -228,7 +230,6 @@ export function FileExplorerPane({
   workspaceRoot,
   onOpenFile,
 }: FileExplorerPaneProps) {
-  const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
 
@@ -274,19 +275,13 @@ export function FileExplorerPane({
     [expandedPathsArray],
   );
 
-  const directoriesRaw = explorerState?.directories;
-  const directories = useMemo(() => directoriesRaw ?? new Map(), [directoriesRaw]);
-  const pendingRequest = explorerState?.pendingRequest ?? null;
-  const isExplorerLoading = explorerState?.isLoading ?? false;
-  const error = explorerState?.lastError ?? null;
-  const selectedEntryPath = explorerState?.selectedEntryPath ?? null;
+  const explorerDerived = useMemo(() => deriveExplorerFields(explorerState), [explorerState]);
+  const { directories, pendingRequest, isExplorerLoading, error, selectedEntryPath } =
+    explorerDerived;
 
   const isDirectoryLoading = useCallback(
-    (path: string) =>
-      Boolean(
-        isExplorerLoading && pendingRequest?.mode === "list" && pendingRequest?.path === path,
-      ),
-    [isExplorerLoading, pendingRequest?.mode, pendingRequest?.path],
+    (path: string) => isPendingListForPath({ isExplorerLoading, pendingRequest, path }),
+    [isExplorerLoading, pendingRequest],
   );
 
   const treeListRef = useRef<FlatList<TreeRow>>(null);
@@ -301,62 +296,24 @@ export function FileExplorerPane({
   }, [workspaceStateKey]);
 
   useEffect(() => {
-    if (!hasWorkspaceScope) {
-      return;
-    }
-    if (hasInitializedRef.current) {
-      return;
-    }
-    // Mark initialized eagerly so concurrent effect re-runs don't double-fetch.
-    // If the root listing fails (e.g. client not yet connected), we reset the
-    // flag so the next time requestDirectoryListing is recreated (when client
-    // becomes available) this effect retries automatically.
-    hasInitializedRef.current = true;
-    void requestDirectoryListing(".", {
-      recordHistory: false,
-      setCurrentPath: false,
-    }).then((succeeded) => {
-      if (!succeeded) {
-        hasInitializedRef.current = false;
-        return;
-      }
-      const persistedPaths =
-        usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
-      if (persistedPaths) {
-        for (const path of persistedPaths) {
-          if (path !== ".") {
-            void requestDirectoryListing(path, {
-              recordHistory: false,
-              setCurrentPath: false,
-            });
-          }
-        }
-      }
-      return;
+    void initializeExplorer({
+      hasWorkspaceScope,
+      hasInitializedRef,
+      workspaceStateKey,
+      requestDirectoryListing,
     });
   }, [hasWorkspaceScope, requestDirectoryListing, workspaceStateKey]);
 
   const handleToggleDirectory = useCallback(
-    (entry: ExplorerEntry) => {
-      if (!workspaceStateKey) {
-        return;
-      }
-      const isExpanded = expandedPaths.has(entry.path);
-      if (isExpanded) {
-        setExpandedPathsForWorkspace(
-          workspaceStateKey,
-          Array.from(expandedPaths).filter((path) => path !== entry.path),
-        );
-      } else {
-        setExpandedPathsForWorkspace(workspaceStateKey, [...Array.from(expandedPaths), entry.path]);
-        if (!directories.has(entry.path)) {
-          void requestDirectoryListing(entry.path, {
-            recordHistory: false,
-            setCurrentPath: false,
-          });
-        }
-      }
-    },
+    (entry: ExplorerEntry) =>
+      toggleDirectory({
+        entry,
+        workspaceStateKey,
+        expandedPaths,
+        directories,
+        requestDirectoryListing,
+        setExpandedPathsForWorkspace,
+      }),
     [
       workspaceStateKey,
       expandedPaths,
@@ -402,20 +359,15 @@ export function FileExplorerPane({
 
   const startDownload = useDownloadStore((state) => state.startDownload);
   const handleDownloadEntry = useCallback(
-    (entry: ExplorerEntry) => {
-      if (!workspaceScopeId || entry.kind !== "file") {
-        return;
-      }
-
-      startDownload({
+    (entry: ExplorerEntry) =>
+      downloadExplorerEntry({
+        entry,
+        workspaceScopeId,
         serverId,
-        scopeId: workspaceScopeId,
-        fileName: entry.name,
-        path: entry.path,
         daemonProfile,
-        requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath),
-      });
-    },
+        startDownload,
+        requestFileDownloadToken,
+      }),
     [daemonProfile, requestFileDownloadToken, serverId, startDownload, workspaceScopeId],
   );
 
@@ -425,28 +377,18 @@ export function FileExplorerPane({
     setSortOption(SORT_OPTIONS[nextIndex].value);
   }, [sortOption, setSortOption]);
 
+  const refreshExplorer = useCallback(
+    () =>
+      refreshExplorerDirectories({
+        hasWorkspaceScope,
+        expandedPaths,
+        requestDirectoryListing,
+      }),
+    [expandedPaths, hasWorkspaceScope, requestDirectoryListing],
+  );
   const { refetch: refetchExplorer, isFetching: isRefreshFetching } = useQuery({
     queryKey: ["fileExplorerRefresh", serverId, workspaceStateKey],
-    queryFn: async () => {
-      if (!hasWorkspaceScope) {
-        return null;
-      }
-
-      const directoryPaths = Array.from(expandedPaths);
-      if (!directoryPaths.includes(".")) {
-        directoryPaths.unshift(".");
-      }
-
-      await Promise.all(
-        directoryPaths.map((path) =>
-          requestDirectoryListing(path, {
-            recordHistory: false,
-            setCurrentPath: false,
-          }),
-        ),
-      );
-      return null;
-    },
+    queryFn: refreshExplorer,
     enabled: false,
   });
 
@@ -454,50 +396,33 @@ export function FileExplorerPane({
     void refetchExplorer();
   }, [refetchExplorer]);
 
-  const currentSortLabel = SORT_OPTIONS.find((opt) => opt.value === sortOption)?.label ?? "Name";
+  const currentSortLabel = resolveCurrentSortLabel(sortOption);
 
-  const treeRows = useMemo(() => {
-    const rootDirectory = directories.get(".");
-    if (!rootDirectory) {
-      return [];
-    }
-    return buildTreeRows({
-      directories,
-      expandedPaths,
-      sortOption,
-      path: ".",
-      depth: 0,
-    });
-  }, [directories, expandedPaths, sortOption]);
+  const treeRows = useMemo(
+    () => resolveTreeRows({ directories, expandedPaths, sortOption }),
+    [directories, expandedPaths, sortOption],
+  );
 
-  const showInitialLoading =
-    !directories.has(".") &&
-    Boolean(isExplorerLoading && pendingRequest?.mode === "list" && pendingRequest?.path === ".");
+  const showInitialLoading = resolveShowInitialLoading({
+    directories,
+    isExplorerLoading,
+    pendingRequest,
+  });
   const showBackFromError = Boolean(error && selectedEntryPath);
   const errorRecoveryPath = useMemo(() => getErrorRecoveryPath(explorerState), [explorerState]);
 
   const renderTreeRow = useCallback(
-    ({ item }: ListRenderItemInfo<TreeRow>) => {
-      const entry = item.entry;
-      const depth = item.depth;
-      const isDirectory = entry.kind === "directory";
-      const isExpanded = isDirectory && expandedPaths.has(entry.path);
-      const isSelected = selectedEntryPath === entry.path;
-      const loading = isDirectory && isDirectoryLoading(entry.path);
-
-      return (
-        <TreeRowItem
-          entry={entry}
-          depth={depth}
-          isExpanded={isExpanded}
-          isSelected={isSelected}
-          loading={loading}
-          onEntryPress={handleEntryPress}
-          onCopyPath={handleCopyPath}
-          onDownloadEntry={handleDownloadEntry}
-        />
-      );
-    },
+    (info: ListRenderItemInfo<TreeRow>) => (
+      <TreeRowDispatcher
+        info={info}
+        expandedPaths={expandedPaths}
+        selectedEntryPath={selectedEntryPath}
+        isDirectoryLoading={isDirectoryLoading}
+        onEntryPress={handleEntryPress}
+        onCopyPath={handleCopyPath}
+        onDownloadEntry={handleDownloadEntry}
+      />
+    ),
     [
       expandedPaths,
       handleEntryPress,
@@ -534,9 +459,72 @@ export function FileExplorerPane({
     );
   }
 
-  let paneContent: ReactNode;
+  return (
+    <View style={styles.container}>
+      <FileExplorerPaneContent
+        error={error}
+        showInitialLoading={showInitialLoading}
+        showBackFromError={showBackFromError}
+        treeRows={treeRows}
+        currentSortLabel={currentSortLabel}
+        isRefreshFetching={isRefreshFetching}
+        showDesktopWebScrollbar={showDesktopWebScrollbar}
+        treeListRef={treeListRef}
+        scrollbar={scrollbar}
+        renderTreeRow={renderTreeRow}
+        handleSortCycle={handleSortCycle}
+        handleRefresh={handleRefresh}
+        handleBackFromError={handleBackFromError}
+        handleRetry={handleRetry}
+        sortTriggerStyle={sortTriggerStyle}
+        iconButtonStyle={iconButtonStyle}
+      />
+    </View>
+  );
+}
+
+interface FileExplorerPaneContentProps {
+  error: string | null;
+  showInitialLoading: boolean;
+  showBackFromError: boolean;
+  treeRows: TreeRow[];
+  currentSortLabel: string;
+  isRefreshFetching: boolean;
+  showDesktopWebScrollbar: boolean;
+  treeListRef: RefObject<FlatList<TreeRow> | null>;
+  scrollbar: ReturnType<typeof useWebScrollViewScrollbar>;
+  renderTreeRow: (info: ListRenderItemInfo<TreeRow>) => ReactElement;
+  handleSortCycle: () => void;
+  handleRefresh: () => void;
+  handleBackFromError: () => void;
+  handleRetry: () => void;
+  sortTriggerStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  iconButtonStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+}
+
+function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
+  const { theme } = useUnistyles();
+  const {
+    error,
+    showInitialLoading,
+    showBackFromError,
+    treeRows,
+    currentSortLabel,
+    isRefreshFetching,
+    showDesktopWebScrollbar,
+    treeListRef,
+    scrollbar,
+    renderTreeRow,
+    handleSortCycle,
+    handleRefresh,
+    handleBackFromError,
+    handleRetry,
+    sortTriggerStyle: sortTriggerStyleProp,
+    iconButtonStyle: iconButtonStyleProp,
+  } = props;
+
   if (error) {
-    paneContent = (
+    return (
       <View style={styles.centerState}>
         <Text style={styles.errorText}>{error}</Text>
         <View style={styles.errorActions}>
@@ -551,67 +539,69 @@ export function FileExplorerPane({
         </View>
       </View>
     );
-  } else if (showInitialLoading) {
-    paneContent = (
+  }
+
+  if (showInitialLoading) {
+    return (
       <View style={styles.centerState}>
         <ActivityIndicator size="small" />
         <Text style={styles.loadingText}>Loading files…</Text>
       </View>
     );
-  } else if (treeRows.length === 0) {
-    paneContent = (
+  }
+
+  if (treeRows.length === 0) {
+    return (
       <View style={styles.centerState}>
         <Text style={styles.emptyText}>No files</Text>
       </View>
     );
-  } else {
-    paneContent = (
-      <View style={TREE_PANE_CONTAINER_STYLE}>
-        <View style={styles.paneHeader} testID="files-pane-header">
-          <Pressable onPress={handleSortCycle} style={sortTriggerStyle}>
-            <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
-            <ChevronDown size={12} color={theme.colors.foregroundMuted} />
-          </Pressable>
-          <Pressable
-            onPress={handleRefresh}
-            disabled={isRefreshFetching}
-            hitSlop={8}
-            style={iconButtonStyle}
-            accessibilityRole="button"
-            accessibilityLabel={isRefreshFetching ? "Refreshing files" : "Refresh files"}
-          >
-            <View style={styles.refreshIcon}>
-              {isRefreshFetching ? (
-                <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              ) : (
-                <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              )}
-            </View>
-          </Pressable>
-        </View>
-        <FlatList
-          ref={treeListRef}
-          style={styles.treeList}
-          data={treeRows}
-          renderItem={renderTreeRow}
-          keyExtractor={treeRowKeyExtractor}
-          testID="file-explorer-tree-scroll"
-          contentContainerStyle={styles.entriesContent}
-          onLayout={scrollbar.onLayout}
-          onScroll={scrollbar.onScroll}
-          onContentSizeChange={scrollbar.onContentSizeChange}
-          scrollEventThrottle={16}
-          showsVerticalScrollIndicator={!showDesktopWebScrollbar}
-          initialNumToRender={24}
-          maxToRenderPerBatch={40}
-          windowSize={12}
-        />
-        {scrollbar.overlay}
-      </View>
-    );
   }
 
-  return <View style={styles.container}>{paneContent}</View>;
+  return (
+    <View style={TREE_PANE_CONTAINER_STYLE}>
+      <View style={styles.paneHeader} testID="files-pane-header">
+        <Pressable onPress={handleSortCycle} style={sortTriggerStyleProp}>
+          <Text style={styles.sortTriggerText}>{currentSortLabel}</Text>
+          <ChevronDown size={12} color={theme.colors.foregroundMuted} />
+        </Pressable>
+        <Pressable
+          onPress={handleRefresh}
+          disabled={isRefreshFetching}
+          hitSlop={8}
+          style={iconButtonStyleProp}
+          accessibilityRole="button"
+          accessibilityLabel={isRefreshFetching ? "Refreshing files" : "Refresh files"}
+        >
+          <View style={styles.refreshIcon}>
+            {isRefreshFetching ? (
+              <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            ) : (
+              <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            )}
+          </View>
+        </Pressable>
+      </View>
+      <FlatList
+        ref={treeListRef}
+        style={styles.treeList}
+        data={treeRows}
+        renderItem={renderTreeRow}
+        keyExtractor={treeRowKeyExtractor}
+        testID="file-explorer-tree-scroll"
+        contentContainerStyle={styles.entriesContent}
+        onLayout={scrollbar.onLayout}
+        onScroll={scrollbar.onScroll}
+        onContentSizeChange={scrollbar.onContentSizeChange}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+        initialNumToRender={24}
+        maxToRenderPerBatch={40}
+        windowSize={12}
+      />
+      {scrollbar.overlay}
+    </View>
+  );
 }
 
 function sortEntries(entries: ExplorerEntry[], sortOption: SortOption): ExplorerEntry[] {
@@ -671,6 +661,259 @@ function buildTreeRows({
   }
 
   return rows;
+}
+
+function deriveExplorerFields(state: AgentFileExplorerState | undefined) {
+  return {
+    directories:
+      state?.directories ?? new Map<string, { path: string; entries: ExplorerEntry[] }>(),
+    pendingRequest: state?.pendingRequest ?? null,
+    isExplorerLoading: state?.isLoading ?? false,
+    error: state?.lastError ?? null,
+    selectedEntryPath: state?.selectedEntryPath ?? null,
+  };
+}
+
+function isPendingListForPath({
+  isExplorerLoading,
+  pendingRequest,
+  path,
+}: {
+  isExplorerLoading: boolean;
+  pendingRequest: AgentFileExplorerState["pendingRequest"] | null;
+  path: string;
+}): boolean {
+  return Boolean(
+    isExplorerLoading && pendingRequest?.mode === "list" && pendingRequest?.path === path,
+  );
+}
+
+function resolveShowInitialLoading({
+  directories,
+  isExplorerLoading,
+  pendingRequest,
+}: {
+  directories: Map<string, unknown>;
+  isExplorerLoading: boolean;
+  pendingRequest: AgentFileExplorerState["pendingRequest"] | null;
+}): boolean {
+  if (directories.has(".")) {
+    return false;
+  }
+  return Boolean(
+    isExplorerLoading && pendingRequest?.mode === "list" && pendingRequest?.path === ".",
+  );
+}
+
+function resolveCurrentSortLabel(sortOption: SortOption): string {
+  return SORT_OPTIONS.find((opt) => opt.value === sortOption)?.label ?? "Name";
+}
+
+function resolveTreeRows({
+  directories,
+  expandedPaths,
+  sortOption,
+}: {
+  directories: Map<string, { path: string; entries: ExplorerEntry[] }>;
+  expandedPaths: Set<string>;
+  sortOption: SortOption;
+}): TreeRow[] {
+  if (!directories.get(".")) {
+    return [];
+  }
+  return buildTreeRows({ directories, expandedPaths, sortOption, path: ".", depth: 0 });
+}
+
+type StartDownloadFn = ReturnType<typeof useDownloadStore.getState>["startDownload"];
+type StartDownloadParams = Parameters<StartDownloadFn>[0];
+
+function downloadExplorerEntry({
+  entry,
+  workspaceScopeId,
+  serverId,
+  daemonProfile,
+  startDownload,
+  requestFileDownloadToken,
+}: {
+  entry: ExplorerEntry;
+  workspaceScopeId: string | undefined;
+  serverId: string;
+  daemonProfile: StartDownloadParams["daemonProfile"];
+  startDownload: StartDownloadFn;
+  requestFileDownloadToken: (
+    targetPath: string,
+  ) => ReturnType<StartDownloadParams["requestFileDownloadToken"]>;
+}): void {
+  if (!workspaceScopeId || entry.kind !== "file") {
+    return;
+  }
+  startDownload({
+    serverId,
+    scopeId: workspaceScopeId,
+    fileName: entry.name,
+    path: entry.path,
+    daemonProfile,
+    requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath),
+  });
+}
+
+function toggleDirectory({
+  entry,
+  workspaceStateKey,
+  expandedPaths,
+  directories,
+  requestDirectoryListing,
+  setExpandedPathsForWorkspace,
+}: {
+  entry: ExplorerEntry;
+  workspaceStateKey: string | null;
+  expandedPaths: Set<string>;
+  directories: Map<string, { path: string; entries: ExplorerEntry[] }>;
+  requestDirectoryListing: (
+    path: string,
+    opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
+  ) => Promise<boolean>;
+  setExpandedPathsForWorkspace: (workspaceStateKey: string, paths: string[]) => void;
+}): void {
+  if (!workspaceStateKey) {
+    return;
+  }
+  const isExpanded = expandedPaths.has(entry.path);
+  if (isExpanded) {
+    setExpandedPathsForWorkspace(
+      workspaceStateKey,
+      Array.from(expandedPaths).filter((path) => path !== entry.path),
+    );
+    return;
+  }
+  setExpandedPathsForWorkspace(workspaceStateKey, [...Array.from(expandedPaths), entry.path]);
+  if (!directories.has(entry.path)) {
+    void requestDirectoryListing(entry.path, {
+      recordHistory: false,
+      setCurrentPath: false,
+    });
+  }
+}
+
+function TreeRowDispatcher({
+  info,
+  expandedPaths,
+  selectedEntryPath,
+  isDirectoryLoading,
+  onEntryPress,
+  onCopyPath,
+  onDownloadEntry,
+}: {
+  info: ListRenderItemInfo<TreeRow>;
+  expandedPaths: Set<string>;
+  selectedEntryPath: string | null;
+  isDirectoryLoading: (path: string) => boolean;
+  onEntryPress: (entry: ExplorerEntry) => void;
+  onCopyPath: (path: string) => void | Promise<void>;
+  onDownloadEntry: (entry: ExplorerEntry) => void;
+}) {
+  const entry = info.item.entry;
+  const depth = info.item.depth;
+  const isDirectory = entry.kind === "directory";
+  const isExpanded = isDirectory && expandedPaths.has(entry.path);
+  const isSelected = selectedEntryPath === entry.path;
+  const loading = isDirectory && isDirectoryLoading(entry.path);
+
+  return (
+    <TreeRowItem
+      entry={entry}
+      depth={depth}
+      isExpanded={isExpanded}
+      isSelected={isSelected}
+      loading={loading}
+      onEntryPress={onEntryPress}
+      onCopyPath={onCopyPath}
+      onDownloadEntry={onDownloadEntry}
+    />
+  );
+}
+
+async function initializeExplorer({
+  hasWorkspaceScope,
+  hasInitializedRef,
+  workspaceStateKey,
+  requestDirectoryListing,
+}: {
+  hasWorkspaceScope: boolean;
+  hasInitializedRef: RefObject<boolean>;
+  workspaceStateKey: string | null;
+  requestDirectoryListing: (
+    path: string,
+    opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
+  ) => Promise<boolean>;
+}): Promise<void> {
+  if (!hasWorkspaceScope || hasInitializedRef.current) {
+    return;
+  }
+  hasInitializedRef.current = true;
+  const succeeded = await requestDirectoryListing(".", {
+    recordHistory: false,
+    setCurrentPath: false,
+  });
+  if (!succeeded) {
+    hasInitializedRef.current = false;
+    return;
+  }
+  requestPersistedExpandedPaths({ workspaceStateKey, requestDirectoryListing });
+}
+
+function requestPersistedExpandedPaths({
+  workspaceStateKey,
+  requestDirectoryListing,
+}: {
+  workspaceStateKey: string | null;
+  requestDirectoryListing: (
+    path: string,
+    opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
+  ) => Promise<boolean>;
+}): void {
+  const persistedPaths = usePanelStore.getState().expandedPathsByWorkspace[workspaceStateKey ?? ""];
+  if (!persistedPaths) {
+    return;
+  }
+  for (const path of persistedPaths) {
+    if (path !== ".") {
+      void requestDirectoryListing(path, {
+        recordHistory: false,
+        setCurrentPath: false,
+      });
+    }
+  }
+}
+
+async function refreshExplorerDirectories({
+  hasWorkspaceScope,
+  expandedPaths,
+  requestDirectoryListing,
+}: {
+  hasWorkspaceScope: boolean;
+  expandedPaths: Set<string>;
+  requestDirectoryListing: (
+    path: string,
+    opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
+  ) => Promise<boolean>;
+}): Promise<null> {
+  if (!hasWorkspaceScope) {
+    return null;
+  }
+  const directoryPaths = Array.from(expandedPaths);
+  if (!directoryPaths.includes(".")) {
+    directoryPaths.unshift(".");
+  }
+  await Promise.all(
+    directoryPaths.map((path) =>
+      requestDirectoryListing(path, {
+        recordHistory: false,
+        setCurrentPath: false,
+      }),
+    ),
+  );
+  return null;
 }
 
 function getErrorRecoveryPath(state: AgentFileExplorerState | undefined): string {

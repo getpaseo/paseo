@@ -1,5 +1,21 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
-import { View, Text, Pressable, Keyboard, type PressableStateCallbackType } from "react-native";
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type RefObject,
+} from "react";
+import {
+  View,
+  Text,
+  Pressable,
+  Keyboard,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
@@ -170,6 +186,259 @@ function alwaysTrue() {
   return true;
 }
 
+function resolveDisplayModel(
+  isModelLoading: boolean,
+  modelOptions: StatusOption[] | undefined,
+  selectedModelId: string | undefined,
+) {
+  if (isModelLoading && (!modelOptions || modelOptions.length === 0)) {
+    return "Loading models...";
+  }
+  return findOptionLabel(modelOptions, selectedModelId, "Select model");
+}
+
+function resolveHasAnyControl({
+  providerOptions,
+  modeOptions,
+  canSelectModel,
+  thinkingOptions,
+  features,
+}: {
+  providerOptions: StatusOption[] | undefined;
+  modeOptions: StatusOption[] | undefined;
+  canSelectModel: boolean;
+  thinkingOptions: StatusOption[] | undefined;
+  features: AgentFeature[] | undefined;
+}) {
+  return (
+    Boolean(providerOptions?.length) ||
+    Boolean(modeOptions?.length) ||
+    canSelectModel ||
+    Boolean(thinkingOptions?.length) ||
+    Boolean(features?.length)
+  );
+}
+
+function toComboboxOptions(options: StatusOption[] | undefined): ComboboxOption[] {
+  return (options ?? []).map((o) => ({ id: o.id, label: o.label }));
+}
+
+function buildFallbackAllProviderModels(
+  provider: string,
+  modelOptions: StatusOption[] | undefined,
+): Map<string, AgentModelDefinition[]> {
+  const map = new Map<string, AgentModelDefinition[]>();
+  if (!modelOptions || modelOptions.length === 0) {
+    return map;
+  }
+  map.set(
+    provider,
+    modelOptions.map((option) => ({
+      provider: provider as AgentProvider,
+      id: option.id,
+      label: option.label,
+    })),
+  );
+  return map;
+}
+
+function makeBadgePressableStyle(
+  baseStyle: StyleProp<ViewStyle>,
+  disabledStyle: StyleProp<ViewStyle>,
+  disabled: boolean,
+  isOpen: boolean,
+) {
+  return ({ pressed, hovered }: PressableStateCallbackType) => [
+    baseStyle,
+    hovered && styles.modeBadgeHovered,
+    (pressed || isOpen) && styles.modeBadgePressed,
+    disabled && disabledStyle,
+  ];
+}
+
+function makeSheetPressableStyle(isDisabled: boolean) {
+  return ({ pressed }: PressableStateCallbackType) => [
+    styles.sheetSelect,
+    pressed && styles.sheetSelectPressed,
+    isDisabled && styles.disabledSheetSelect,
+  ];
+}
+
+function makePrefsButtonStyle({ pressed }: PressableStateCallbackType) {
+  return [styles.prefsButton, pressed && styles.prefsButtonPressed];
+}
+
+function pickSheetModel({
+  nextProviderId,
+  modelId,
+  currentProvider,
+  onSelectProviderAndModel,
+  onSelectProvider,
+  onSelectModel,
+}: {
+  nextProviderId: string;
+  modelId: string;
+  currentProvider: string;
+  onSelectProviderAndModel?: (provider: string, modelId: string) => void;
+  onSelectProvider?: (providerId: string) => void;
+  onSelectModel?: (modelId: string) => void;
+}) {
+  if (onSelectProviderAndModel) {
+    onSelectProviderAndModel(nextProviderId, modelId);
+    return;
+  }
+  if (nextProviderId !== currentProvider) {
+    onSelectProvider?.(nextProviderId);
+  }
+  onSelectModel?.(modelId);
+}
+
+function pickDesktopModel({
+  nextProviderId,
+  modelId,
+  currentProvider,
+  onSelectModel,
+}: {
+  nextProviderId: string;
+  modelId: string;
+  currentProvider: string;
+  onSelectModel?: (modelId: string) => void;
+}) {
+  if (nextProviderId === currentProvider) {
+    onSelectModel?.(modelId);
+  }
+}
+
+function resolveModeVisualsForProvider(
+  provider: string,
+  selectedModeId: string | undefined,
+  providerDefinitions: AgentProviderDefinition[],
+  palette: Parameters<typeof getModeIconColor>[1],
+) {
+  const modeVisuals = selectedModeId
+    ? getModeVisuals(provider, selectedModeId, providerDefinitions)
+    : undefined;
+  const icon = modeVisuals?.icon ? MODE_ICONS[modeVisuals.icon] : null;
+  const color = getModeIconColor(modeVisuals?.colorTier, palette);
+  return { icon, color };
+}
+
+function resolveProviderIcon(provider: string) {
+  if (provider.trim().length === 0) {
+    return null;
+  }
+  return getProviderIcon(provider);
+}
+
+type AgentStatusBarSlice = {
+  provider: string;
+  cwd: string | null;
+  currentModeId: string | null | undefined;
+  runtimeModelId: string | null;
+  model: string | null | undefined;
+  features: AgentFeature[] | undefined;
+  thinkingOptionId: string | null | undefined;
+  lastUsage: unknown;
+} | null;
+
+function selectAgentStatusBarSlice(
+  state: ReturnType<typeof useSessionStore.getState>,
+  serverId: string,
+  agentId: string,
+): AgentStatusBarSlice {
+  const currentAgent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+  if (!currentAgent) {
+    return null;
+  }
+  return {
+    provider: currentAgent.provider,
+    cwd: currentAgent.cwd,
+    currentModeId: currentAgent.currentModeId,
+    runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
+    model: currentAgent.model,
+    features: currentAgent.features,
+    thinkingOptionId: currentAgent.thinkingOptionId,
+    lastUsage: currentAgent.lastUsage,
+  };
+}
+
+function resolveSnapshotSelectedEntry(
+  snapshotEntries: ReturnType<typeof useProvidersSnapshot>["entries"],
+  agentProvider: string | undefined,
+) {
+  if (!snapshotEntries || !agentProvider) {
+    return null;
+  }
+  return snapshotEntries.find((e) => e.provider === agentProvider) ?? null;
+}
+
+function buildAgentProviderDefinitions(
+  agentProvider: string | undefined,
+  snapshotEntries: ReturnType<typeof useProvidersSnapshot>["entries"],
+): AgentProviderDefinition[] {
+  const definition = agentProvider
+    ? resolveProviderDefinition(agentProvider, snapshotEntries)
+    : undefined;
+  return definition ? [definition] : [];
+}
+
+function buildAgentProviderModels(
+  agentProvider: string | undefined,
+  models: AgentModelDefinition[] | null,
+): Map<string, AgentModelDefinition[]> {
+  const map = new Map<string, AgentModelDefinition[]>();
+  if (agentProvider && models) {
+    map.set(agentProvider, models);
+  }
+  return map;
+}
+
+function compareAvailableModes(a: AgentMode[], b: AgentMode[]): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
+
+function resolveAgentDisplayMode(
+  availableModes: AgentMode[],
+  currentModeId: string | null | undefined,
+): string {
+  const found = availableModes.find((mode) => mode.id === currentModeId);
+  return found?.label || currentModeId || "default";
+}
+
+function buildOpenChangeHandler(
+  selector: StatusSelector,
+  setOpenSelector: (next: StatusSelector | null) => void,
+  onDropdownClose?: () => void,
+) {
+  return (nextOpen: boolean) => {
+    setOpenSelector(nextOpen ? selector : null);
+    if (!nextOpen) {
+      onDropdownClose?.();
+    }
+  };
+}
+
+function SheetModelTriggerView({
+  selectedModelLabel,
+  style,
+  ProviderIcon,
+}: {
+  selectedModelLabel: string;
+  style: StyleProp<ViewStyle>;
+  ProviderIcon: ReturnType<typeof getProviderIcon> | null;
+}) {
+  const { theme } = useUnistyles();
+  return (
+    <View style={style} pointerEvents="none" testID="agent-preferences-model">
+      {ProviderIcon ? (
+        <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+      ) : null}
+      <Text style={styles.sheetSelectText}>{selectedModelLabel}</Text>
+      <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+    </View>
+  );
+}
+
 function getModeIconColor(
   colorTier: AgentModeColorTier | undefined,
   palette: {
@@ -240,88 +509,58 @@ function ControlledStatusBar({
 
   const displayProvider = findOptionLabel(providerOptions, selectedProviderId, "Provider");
   const displayMode = findOptionLabel(modeOptions, selectedModeId, "Default");
-  const displayModel =
-    isModelLoading && (!modelOptions || modelOptions.length === 0)
-      ? "Loading models..."
-      : findOptionLabel(modelOptions, selectedModelId, "Select model");
+  const displayModel = resolveDisplayModel(isModelLoading, modelOptions, selectedModelId);
   const displayThinking = findOptionLabel(
     thinkingOptions,
     selectedThinkingOptionId,
     thinkingOptions?.[0]?.label ?? "Unknown",
   );
 
-  const modeVisuals = selectedModeId
-    ? getModeVisuals(provider, selectedModeId, providerDefinitions)
-    : undefined;
-  const ModeIconComponent = modeVisuals?.icon ? MODE_ICONS[modeVisuals.icon] : null;
-  const modeIconColor = getModeIconColor(modeVisuals?.colorTier, theme.colors.palette);
-  const hasSelectedProvider = provider.trim().length > 0;
-  const ProviderIcon = hasSelectedProvider ? getProviderIcon(provider) : null;
+  const { icon: ModeIconComponent, color: modeIconColor } = resolveModeVisualsForProvider(
+    provider,
+    selectedModeId,
+    providerDefinitions,
+    theme.colors.palette,
+  );
+  const ProviderIcon = resolveProviderIcon(provider);
 
-  const hasAnyControl =
-    Boolean(providerOptions?.length) ||
-    Boolean(modeOptions?.length) ||
-    canSelectModel ||
-    Boolean(thinkingOptions?.length) ||
-    Boolean(features?.length);
+  const hasAnyControl = resolveHasAnyControl({
+    providerOptions,
+    modeOptions,
+    canSelectModel,
+    thinkingOptions,
+    features,
+  });
 
   const modelDisabled = disabled;
 
-  const SEARCH_THRESHOLD = 6;
-
   const comboboxProviderOptions = useMemo<ComboboxOption[]>(
-    () => (providerOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
+    () => toComboboxOptions(providerOptions),
     [providerOptions],
   );
   const comboboxModeOptions = useMemo<ComboboxOption[]>(
-    () => (modeOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
+    () => toComboboxOptions(modeOptions),
     [modeOptions],
   );
-  const _comboboxModelOptions = useMemo<ComboboxOption[]>(
-    () => (modelOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
-    [modelOptions],
+  const fallbackAllProviderModels = useMemo(
+    () => buildFallbackAllProviderModels(provider, modelOptions),
+    [modelOptions, provider],
   );
-  const fallbackAllProviderModels = useMemo(() => {
-    const map = new Map<string, AgentModelDefinition[]>();
-    if (!modelOptions || modelOptions.length === 0) {
-      return map;
-    }
-
-    map.set(
-      provider,
-      modelOptions.map((option) => ({
-        provider: provider as AgentProvider,
-        id: option.id,
-        label: option.label,
-      })),
-    );
-    return map;
-  }, [modelOptions, provider]);
   const effectiveProviderDefinitions = providerDefinitions;
   const effectiveAllProviderModels = allProviderModels ?? fallbackAllProviderModels;
   const canSelectProviderInModelMenu = canSelectModelProvider ?? alwaysTrue;
   const comboboxThinkingOptions = useMemo<ComboboxOption[]>(
-    () => (thinkingOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
+    () => toComboboxOptions(thinkingOptions),
     [thinkingOptions],
   );
 
   const renderModeOption = useCallback(
-    ({
-      option,
-      selected,
-      active,
-      onPress,
-    }: {
-      option: ComboboxOption;
-      selected: boolean;
-      active: boolean;
-      onPress: () => void;
-    }) => (
+    (args: { option: ComboboxOption; selected: boolean; active: boolean; onPress: () => void }) => (
       <ModeComboboxOption
-        option={option}
-        selected={selected}
-        active={active}
-        onPress={onPress}
+        option={args.option}
+        selected={args.selected}
+        active={args.active}
+        onPress={args.onPress}
         provider={provider}
         providerDefinitions={providerDefinitions}
         iconColor={theme.colors.foreground}
@@ -331,12 +570,8 @@ function ControlledStatusBar({
   );
 
   const handleOpenChange = useCallback(
-    (selector: StatusSelector) => (nextOpen: boolean) => {
-      setOpenSelector(nextOpen ? selector : null);
-      if (!nextOpen) {
-        onDropdownClose?.();
-      }
-    },
+    (selector: StatusSelector) =>
+      buildOpenChangeHandler(selector, setOpenSelector, onDropdownClose),
     [onDropdownClose],
   );
 
@@ -368,40 +603,41 @@ function ControlledStatusBar({
 
   const handleDesktopModelSelect = useCallback(
     (nextProviderId: string, modelId: string) => {
-      if (nextProviderId === provider) {
-        onSelectModel?.(modelId);
-      }
+      pickDesktopModel({ nextProviderId, modelId, currentProvider: provider, onSelectModel });
     },
     [onSelectModel, provider],
   );
 
-  const providerPressableStyle = useCallback(
-    ({ pressed, hovered }: PressableStateCallbackType) => [
-      styles.modeBadge,
-      hovered && styles.modeBadgeHovered,
-      (pressed || openSelector === "provider") && styles.modeBadgePressed,
-      (disabled || !canSelectProvider) && styles.disabledBadge,
-    ],
+  const providerPressableStyle = useMemo(
+    () =>
+      makeBadgePressableStyle(
+        styles.modeBadge,
+        styles.disabledBadge,
+        disabled || !canSelectProvider,
+        openSelector === "provider",
+      ),
     [canSelectProvider, disabled, openSelector],
   );
 
-  const thinkingPressableStyle = useCallback(
-    ({ pressed, hovered }: PressableStateCallbackType) => [
-      styles.modeBadge,
-      hovered && styles.modeBadgeHovered,
-      (pressed || openSelector === "thinking") && styles.modeBadgePressed,
-      (disabled || !canSelectThinking) && styles.disabledBadge,
-    ],
+  const thinkingPressableStyle = useMemo(
+    () =>
+      makeBadgePressableStyle(
+        styles.modeBadge,
+        styles.disabledBadge,
+        disabled || !canSelectThinking,
+        openSelector === "thinking",
+      ),
     [canSelectThinking, disabled, openSelector],
   );
 
-  const modePressableStyle = useCallback(
-    ({ pressed, hovered }: PressableStateCallbackType) => [
-      styles.modeIconBadge,
-      hovered && styles.modeBadgeHovered,
-      (pressed || openSelector === "mode") && styles.modeBadgePressed,
-      (disabled || !canSelectMode) && styles.disabledBadge,
-    ],
+  const modePressableStyle = useMemo(
+    () =>
+      makeBadgePressableStyle(
+        styles.modeIconBadge,
+        styles.disabledBadge,
+        disabled || !canSelectMode,
+        openSelector === "mode",
+      ),
     [canSelectMode, disabled, openSelector],
   );
 
@@ -414,43 +650,29 @@ function ControlledStatusBar({
     setPrefsOpen(false);
   }, []);
 
-  const prefsButtonStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [
-      styles.prefsButton,
-      pressed && styles.prefsButtonPressed,
-    ],
-    [],
-  );
+  const prefsButtonStyle = makePrefsButtonStyle;
 
   const handleSheetModelSelect = useCallback(
     (nextProviderId: string, modelId: string) => {
-      if (onSelectProviderAndModel) {
-        onSelectProviderAndModel(nextProviderId, modelId);
-        return;
-      }
-      if (nextProviderId !== provider) {
-        onSelectProvider?.(nextProviderId);
-      }
-      onSelectModel?.(modelId);
+      pickSheetModel({
+        nextProviderId,
+        modelId,
+        currentProvider: provider,
+        onSelectProviderAndModel,
+        onSelectProvider,
+        onSelectModel,
+      });
     },
     [onSelectModel, onSelectProvider, onSelectProviderAndModel, provider],
   );
 
-  const sheetThinkingPressableStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [
-      styles.sheetSelect,
-      pressed && styles.sheetSelectPressed,
-      (disabled || !canSelectThinking) && styles.disabledSheetSelect,
-    ],
+  const sheetThinkingPressableStyle = useMemo(
+    () => makeSheetPressableStyle(disabled || !canSelectThinking),
     [canSelectThinking, disabled],
   );
 
-  const sheetModePressableStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [
-      styles.sheetSelect,
-      pressed && styles.sheetSelectPressed,
-      (disabled || !canSelectMode) && styles.disabledSheetSelect,
-    ],
+  const sheetModePressableStyle = useMemo(
+    () => makeSheetPressableStyle(disabled || !canSelectMode),
     [canSelectMode, disabled],
   );
 
@@ -460,15 +682,13 @@ function ControlledStatusBar({
   );
   const renderSheetModelTrigger = useCallback(
     ({ selectedModelLabel }: { selectedModelLabel: string }) => (
-      <View style={sheetSelectStyle} pointerEvents="none" testID="agent-preferences-model">
-        {ProviderIcon ? (
-          <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-        ) : null}
-        <Text style={styles.sheetSelectText}>{selectedModelLabel}</Text>
-        <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-      </View>
+      <SheetModelTriggerView
+        selectedModelLabel={selectedModelLabel}
+        style={sheetSelectStyle}
+        ProviderIcon={ProviderIcon}
+      />
     ),
-    [ProviderIcon, sheetSelectStyle, theme.colors.foregroundMuted, theme.iconSize.md],
+    [ProviderIcon, sheetSelectStyle],
   );
 
   if (!hasAnyControl) {
@@ -478,272 +698,590 @@ function ControlledStatusBar({
   return (
     <View style={styles.container}>
       {platformIsWeb ? (
-        <>
-          {providerOptions && providerOptions.length > 0 ? (
-            <>
-              <Pressable
-                ref={providerAnchorRef}
-                collapsable={false}
-                disabled={disabled || !canSelectProvider}
-                onPress={handleProviderPress}
-                style={providerPressableStyle}
-                accessibilityRole="button"
-                accessibilityLabel="Select agent provider"
-                testID="agent-provider-selector"
-              >
-                <Text style={styles.modeBadgeText}>{displayProvider}</Text>
-                <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </Pressable>
-              <Combobox
-                options={comboboxProviderOptions}
-                value={selectedProviderId ?? ""}
-                onSelect={handleProviderSelect}
-                searchable={comboboxProviderOptions.length > SEARCH_THRESHOLD}
-                open={openSelector === "provider"}
-                onOpenChange={handleProviderOpenChange}
-                anchorRef={providerAnchorRef}
-                desktopPlacement="top-start"
-              />
-            </>
-          ) : null}
-
-          {canSelectModel ? (
-            <Tooltip
-              key={`model-${displayModel}`}
-              delayDuration={0}
-              enabledOnDesktop
-              enabledOnMobile={false}
-            >
-              <TooltipTrigger asChild triggerRefProp="ref">
-                <View>
-                  <CombinedModelSelector
-                    providerDefinitions={effectiveProviderDefinitions}
-                    allProviderModels={effectiveAllProviderModels}
-                    selectedProvider={provider}
-                    selectedModel={selectedModelId ?? ""}
-                    canSelectProvider={canSelectProviderInModelMenu}
-                    onSelect={handleDesktopModelSelect}
-                    favoriteKeys={favoriteKeys}
-                    onToggleFavorite={onToggleFavoriteModel}
-                    isLoading={isModelLoading}
-                    disabled={modelDisabled}
-                    onOpen={onModelSelectorOpen}
-                    onClose={onDropdownClose}
-                  />
-                </View>
-              </TooltipTrigger>
-              <TooltipContent side="top" align="center" offset={8}>
-                <Text style={styles.tooltipText}>{getStatusSelectorHint("model")}</Text>
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-
-          {thinkingOptions && thinkingOptions.length > 0 ? (
-            <>
-              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-                <TooltipTrigger asChild triggerRefProp="ref">
-                  <Pressable
-                    ref={thinkingAnchorRef}
-                    collapsable={false}
-                    disabled={disabled || !canSelectThinking}
-                    onPress={handleThinkingPress}
-                    style={thinkingPressableStyle}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Select thinking option (${displayThinking})`}
-                    testID="agent-thinking-selector"
-                  >
-                    <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                    <Text style={styles.modeBadgeText}>{displayThinking}</Text>
-                    <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-                  </Pressable>
-                </TooltipTrigger>
-                <TooltipContent side="top" align="center" offset={8}>
-                  <Text style={styles.tooltipText}>{getStatusSelectorHint("thinking")}</Text>
-                </TooltipContent>
-              </Tooltip>
-              <Combobox
-                options={comboboxThinkingOptions}
-                value={selectedThinkingOptionId ?? ""}
-                onSelect={handleThinkingSelect}
-                searchable={comboboxThinkingOptions.length > SEARCH_THRESHOLD}
-                open={openSelector === "thinking"}
-                onOpenChange={handleThinkingOpenChange}
-                anchorRef={thinkingAnchorRef}
-                desktopPlacement="top-start"
-              />
-            </>
-          ) : null}
-
-          {modeOptions && modeOptions.length > 0 ? (
-            <>
-              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-                <TooltipTrigger asChild triggerRefProp="ref">
-                  <Pressable
-                    ref={modeAnchorRef}
-                    collapsable={false}
-                    disabled={disabled || !canSelectMode}
-                    onPress={handleModePress}
-                    style={modePressableStyle}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Select agent mode (${displayMode})`}
-                    testID="agent-mode-selector"
-                  >
-                    {ModeIconComponent ? (
-                      <ModeIconComponent size={theme.iconSize.md} color={modeIconColor} />
-                    ) : (
-                      <ShieldCheck size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                    )}
-                  </Pressable>
-                </TooltipTrigger>
-                <TooltipContent side="top" align="center" offset={8}>
-                  <Text style={styles.tooltipText}>{getStatusSelectorHint("mode")}</Text>
-                </TooltipContent>
-              </Tooltip>
-              <Combobox
-                options={comboboxModeOptions}
-                value={selectedModeId ?? ""}
-                onSelect={handleModeSelect}
-                searchable={comboboxModeOptions.length > SEARCH_THRESHOLD}
-                open={openSelector === "mode"}
-                onOpenChange={handleModeOpenChange}
-                anchorRef={modeAnchorRef}
-                desktopPlacement="top-start"
-                renderOption={renderModeOption}
-              />
-            </>
-          ) : null}
-
-          {features?.map((feature) => (
-            <DesktopFeatureItem
-              key={`feature-${feature.id}`}
-              feature={feature}
-              disabled={disabled}
-              openSelector={openSelector}
-              handleOpenChange={handleOpenChange}
-              onSetFeature={onSetFeature}
-            />
-          ))}
-        </>
+        <DesktopStatusBarContent
+          provider={provider}
+          providerOptions={providerOptions}
+          selectedProviderId={selectedProviderId}
+          modeOptions={modeOptions}
+          selectedModeId={selectedModeId}
+          modelOptions={modelOptions}
+          selectedModelId={selectedModelId}
+          thinkingOptions={thinkingOptions}
+          selectedThinkingOptionId={selectedThinkingOptionId}
+          features={features}
+          onSetFeature={onSetFeature}
+          onToggleFavoriteModel={onToggleFavoriteModel}
+          onDropdownClose={onDropdownClose}
+          onModelSelectorOpen={onModelSelectorOpen}
+          providerDefinitions={providerDefinitions}
+          favoriteKeys={favoriteKeys}
+          disabled={disabled}
+          isModelLoading={isModelLoading}
+          canSelectProvider={canSelectProvider}
+          canSelectMode={canSelectMode}
+          canSelectModel={canSelectModel}
+          canSelectThinking={canSelectThinking}
+          canSelectProviderInModelMenu={canSelectProviderInModelMenu}
+          modelDisabled={modelDisabled}
+          effectiveProviderDefinitions={effectiveProviderDefinitions}
+          effectiveAllProviderModels={effectiveAllProviderModels}
+          comboboxProviderOptions={comboboxProviderOptions}
+          comboboxModeOptions={comboboxModeOptions}
+          comboboxThinkingOptions={comboboxThinkingOptions}
+          displayProvider={displayProvider}
+          displayModel={displayModel}
+          displayThinking={displayThinking}
+          ModeIconComponent={ModeIconComponent}
+          modeIconColor={modeIconColor}
+          openSelector={openSelector}
+          providerAnchorRef={providerAnchorRef}
+          thinkingAnchorRef={thinkingAnchorRef}
+          modeAnchorRef={modeAnchorRef}
+          providerPressableStyle={providerPressableStyle}
+          thinkingPressableStyle={thinkingPressableStyle}
+          modePressableStyle={modePressableStyle}
+          handleProviderPress={handleProviderPress}
+          handleThinkingPress={handleThinkingPress}
+          handleModePress={handleModePress}
+          handleProviderSelect={handleProviderSelect}
+          handleThinkingSelect={handleThinkingSelect}
+          handleModeSelect={handleModeSelect}
+          handleDesktopModelSelect={handleDesktopModelSelect}
+          handleProviderOpenChange={handleProviderOpenChange}
+          handleThinkingOpenChange={handleThinkingOpenChange}
+          handleModeOpenChange={handleModeOpenChange}
+          handleOpenChange={handleOpenChange}
+          renderModeOption={renderModeOption}
+        />
       ) : (
-        <>
-          <Pressable
-            onPress={handleOpenPrefs}
-            style={prefsButtonStyle}
-            accessibilityRole="button"
-            accessibilityLabel="Agent preferences"
-            testID="agent-preferences-button"
-          >
-            {ProviderIcon ? (
-              <ProviderIcon size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
-            ) : null}
-            <Text style={styles.prefsButtonText} numberOfLines={1}>
-              {displayModel}
-            </Text>
-          </Pressable>
-
-          <AdaptiveModalSheet
-            title="Preferences"
-            visible={prefsOpen}
-            onClose={handleClosePrefs}
-            testID="agent-preferences-sheet"
-          >
-            {canSelectModel ? (
-              <View style={styles.sheetSection}>
-                <CombinedModelSelector
-                  providerDefinitions={effectiveProviderDefinitions}
-                  allProviderModels={effectiveAllProviderModels}
-                  selectedProvider={provider}
-                  selectedModel={selectedModelId ?? ""}
-                  canSelectProvider={canSelectProviderInModelMenu}
-                  onSelect={handleSheetModelSelect}
-                  favoriteKeys={favoriteKeys}
-                  onToggleFavorite={onToggleFavoriteModel}
-                  isLoading={isModelLoading}
-                  disabled={modelDisabled}
-                  onOpen={onModelSelectorOpen}
-                  onClose={onDropdownClose}
-                  renderTrigger={renderSheetModelTrigger}
-                />
-              </View>
-            ) : null}
-
-            {thinkingOptions && thinkingOptions.length > 0 ? (
-              <View style={styles.sheetSection}>
-                <DropdownMenu
-                  open={openSelector === "thinking"}
-                  onOpenChange={handleThinkingOpenChange}
-                >
-                  <DropdownMenuTrigger
-                    disabled={disabled || !canSelectThinking}
-                    style={sheetThinkingPressableStyle}
-                    accessibilityRole="button"
-                    accessibilityLabel="Select thinking option"
-                    testID="agent-preferences-thinking"
-                  >
-                    <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                    <Text style={styles.sheetSelectText}>{displayThinking}</Text>
-                    <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent side="top" align="start">
-                    {thinkingOptions.map((thinking) => (
-                      <ThinkingMenuItem
-                        key={thinking.id}
-                        thinking={thinking}
-                        selected={thinking.id === selectedThinkingOptionId}
-                        onSelectThinkingOption={onSelectThinkingOption}
-                      />
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </View>
-            ) : null}
-
-            {modeOptions && modeOptions.length > 0 ? (
-              <View style={styles.sheetSection}>
-                <DropdownMenu open={openSelector === "mode"} onOpenChange={handleModeOpenChange}>
-                  <DropdownMenuTrigger
-                    disabled={disabled || !canSelectMode}
-                    style={sheetModePressableStyle}
-                    accessibilityRole="button"
-                    accessibilityLabel="Select agent mode"
-                    testID="agent-preferences-mode"
-                  >
-                    {ModeIconComponent ? (
-                      <ModeIconComponent size={theme.iconSize.md} color={modeIconColor} />
-                    ) : null}
-                    <Text style={styles.sheetSelectText}>{displayMode}</Text>
-                    <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent side="top" align="start">
-                    {modeOptions.map((mode) => (
-                      <ModeMenuItem
-                        key={mode.id}
-                        mode={mode}
-                        provider={provider}
-                        providerDefinitions={providerDefinitions}
-                        selected={mode.id === selectedModeId}
-                        onSelectMode={onSelectMode}
-                      />
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </View>
-            ) : null}
-
-            {features?.map((feature) => (
-              <SheetFeatureItem
-                key={`feature-${feature.id}`}
-                feature={feature}
-                disabled={disabled}
-                openSelector={openSelector}
-                handleOpenChange={handleOpenChange}
-                onSetFeature={onSetFeature}
-              />
-            ))}
-          </AdaptiveModalSheet>
-        </>
+        <SheetStatusBarContent
+          provider={provider}
+          modeOptions={modeOptions}
+          selectedModeId={selectedModeId}
+          selectedModelId={selectedModelId}
+          thinkingOptions={thinkingOptions}
+          selectedThinkingOptionId={selectedThinkingOptionId}
+          features={features}
+          onSetFeature={onSetFeature}
+          onSelectMode={onSelectMode}
+          onSelectThinkingOption={onSelectThinkingOption}
+          onToggleFavoriteModel={onToggleFavoriteModel}
+          onDropdownClose={onDropdownClose}
+          onModelSelectorOpen={onModelSelectorOpen}
+          providerDefinitions={providerDefinitions}
+          favoriteKeys={favoriteKeys}
+          disabled={disabled}
+          isModelLoading={isModelLoading}
+          canSelectMode={canSelectMode}
+          canSelectModel={canSelectModel}
+          canSelectThinking={canSelectThinking}
+          canSelectProviderInModelMenu={canSelectProviderInModelMenu}
+          modelDisabled={modelDisabled}
+          effectiveProviderDefinitions={effectiveProviderDefinitions}
+          effectiveAllProviderModels={effectiveAllProviderModels}
+          displayMode={displayMode}
+          displayModel={displayModel}
+          displayThinking={displayThinking}
+          ModeIconComponent={ModeIconComponent}
+          modeIconColor={modeIconColor}
+          openSelector={openSelector}
+          ProviderIcon={ProviderIcon}
+          prefsOpen={prefsOpen}
+          handleOpenPrefs={handleOpenPrefs}
+          handleClosePrefs={handleClosePrefs}
+          prefsButtonStyle={prefsButtonStyle}
+          sheetThinkingPressableStyle={sheetThinkingPressableStyle}
+          sheetModePressableStyle={sheetModePressableStyle}
+          handleSheetModelSelect={handleSheetModelSelect}
+          handleThinkingOpenChange={handleThinkingOpenChange}
+          handleModeOpenChange={handleModeOpenChange}
+          handleOpenChange={handleOpenChange}
+          renderSheetModelTrigger={renderSheetModelTrigger}
+        />
       )}
     </View>
+  );
+}
+
+interface DesktopStatusBarContentProps {
+  provider: string;
+  providerOptions?: StatusOption[];
+  selectedProviderId?: string;
+  modeOptions?: StatusOption[];
+  selectedModeId?: string;
+  modelOptions?: StatusOption[];
+  selectedModelId?: string;
+  thinkingOptions?: StatusOption[];
+  selectedThinkingOptionId?: string;
+  features?: AgentFeature[];
+  onSetFeature?: (featureId: string, value: unknown) => void;
+  onToggleFavoriteModel?: (provider: string, modelId: string) => void;
+  onDropdownClose?: () => void;
+  onModelSelectorOpen?: () => void;
+  providerDefinitions: AgentProviderDefinition[];
+  favoriteKeys: Set<string>;
+  disabled: boolean;
+  isModelLoading: boolean;
+  canSelectProvider: boolean;
+  canSelectMode: boolean;
+  canSelectModel: boolean;
+  canSelectThinking: boolean;
+  canSelectProviderInModelMenu: (providerId: string) => boolean;
+  modelDisabled: boolean;
+  effectiveProviderDefinitions: AgentProviderDefinition[];
+  effectiveAllProviderModels: Map<string, AgentModelDefinition[]>;
+  comboboxProviderOptions: ComboboxOption[];
+  comboboxModeOptions: ComboboxOption[];
+  comboboxThinkingOptions: ComboboxOption[];
+  displayProvider: string;
+  displayModel: string;
+  displayThinking: string;
+  ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
+  modeIconColor: string;
+  openSelector: StatusSelector | null;
+  providerAnchorRef: RefObject<View | null>;
+  thinkingAnchorRef: RefObject<View | null>;
+  modeAnchorRef: RefObject<View | null>;
+  providerPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  thinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  modePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  handleProviderPress: () => void;
+  handleThinkingPress: () => void;
+  handleModePress: () => void;
+  handleProviderSelect: (id: string) => void;
+  handleThinkingSelect: (id: string) => void;
+  handleModeSelect: (id: string) => void;
+  handleDesktopModelSelect: (providerId: string, modelId: string) => void;
+  handleProviderOpenChange: (open: boolean) => void;
+  handleThinkingOpenChange: (open: boolean) => void;
+  handleModeOpenChange: (open: boolean) => void;
+  handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
+  renderModeOption: (args: {
+    option: ComboboxOption;
+    selected: boolean;
+    active: boolean;
+    onPress: () => void;
+  }) => ReactElement;
+}
+
+const DESKTOP_SEARCH_THRESHOLD = 6;
+
+function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
+  const { theme } = useUnistyles();
+  const {
+    provider,
+    providerOptions,
+    selectedProviderId,
+    modeOptions,
+    selectedModeId,
+    selectedModelId,
+    thinkingOptions,
+    selectedThinkingOptionId,
+    features,
+    onSetFeature,
+    onToggleFavoriteModel,
+    onDropdownClose,
+    onModelSelectorOpen,
+    favoriteKeys,
+    disabled,
+    isModelLoading,
+    canSelectProvider,
+    canSelectMode,
+    canSelectModel,
+    canSelectThinking,
+    canSelectProviderInModelMenu,
+    modelDisabled,
+    effectiveProviderDefinitions,
+    effectiveAllProviderModels,
+    comboboxProviderOptions,
+    comboboxModeOptions,
+    comboboxThinkingOptions,
+    displayProvider,
+    displayModel,
+    displayThinking,
+    ModeIconComponent,
+    modeIconColor,
+    openSelector,
+    providerAnchorRef,
+    thinkingAnchorRef,
+    modeAnchorRef,
+    providerPressableStyle,
+    thinkingPressableStyle,
+    modePressableStyle,
+    handleProviderPress,
+    handleThinkingPress,
+    handleModePress,
+    handleProviderSelect,
+    handleThinkingSelect,
+    handleModeSelect,
+    handleDesktopModelSelect,
+    handleProviderOpenChange,
+    handleThinkingOpenChange,
+    handleModeOpenChange,
+    handleOpenChange,
+    renderModeOption,
+  } = props;
+
+  return (
+    <>
+      {providerOptions && providerOptions.length > 0 ? (
+        <>
+          <Pressable
+            ref={providerAnchorRef}
+            collapsable={false}
+            disabled={disabled || !canSelectProvider}
+            onPress={handleProviderPress}
+            style={providerPressableStyle}
+            accessibilityRole="button"
+            accessibilityLabel="Select agent provider"
+            testID="agent-provider-selector"
+          >
+            <Text style={styles.modeBadgeText}>{displayProvider}</Text>
+            <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </Pressable>
+          <Combobox
+            options={comboboxProviderOptions}
+            value={selectedProviderId ?? ""}
+            onSelect={handleProviderSelect}
+            searchable={comboboxProviderOptions.length > DESKTOP_SEARCH_THRESHOLD}
+            open={openSelector === "provider"}
+            onOpenChange={handleProviderOpenChange}
+            anchorRef={providerAnchorRef}
+            desktopPlacement="top-start"
+          />
+        </>
+      ) : null}
+
+      {canSelectModel ? (
+        <Tooltip
+          key={`model-${displayModel}`}
+          delayDuration={0}
+          enabledOnDesktop
+          enabledOnMobile={false}
+        >
+          <TooltipTrigger asChild triggerRefProp="ref">
+            <View>
+              <CombinedModelSelector
+                providerDefinitions={effectiveProviderDefinitions}
+                allProviderModels={effectiveAllProviderModels}
+                selectedProvider={provider}
+                selectedModel={selectedModelId ?? ""}
+                canSelectProvider={canSelectProviderInModelMenu}
+                onSelect={handleDesktopModelSelect}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={onToggleFavoriteModel}
+                isLoading={isModelLoading}
+                disabled={modelDisabled}
+                onOpen={onModelSelectorOpen}
+                onClose={onDropdownClose}
+              />
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="top" align="center" offset={8}>
+            <Text style={styles.tooltipText}>{getStatusSelectorHint("model")}</Text>
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+
+      {thinkingOptions && thinkingOptions.length > 0 ? (
+        <>
+          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+            <TooltipTrigger asChild triggerRefProp="ref">
+              <Pressable
+                ref={thinkingAnchorRef}
+                collapsable={false}
+                disabled={disabled || !canSelectThinking}
+                onPress={handleThinkingPress}
+                style={thinkingPressableStyle}
+                accessibilityRole="button"
+                accessibilityLabel={`Select thinking option (${displayThinking})`}
+                testID="agent-thinking-selector"
+              >
+                <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+                <Text style={styles.modeBadgeText}>{displayThinking}</Text>
+                <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              </Pressable>
+            </TooltipTrigger>
+            <TooltipContent side="top" align="center" offset={8}>
+              <Text style={styles.tooltipText}>{getStatusSelectorHint("thinking")}</Text>
+            </TooltipContent>
+          </Tooltip>
+          <Combobox
+            options={comboboxThinkingOptions}
+            value={selectedThinkingOptionId ?? ""}
+            onSelect={handleThinkingSelect}
+            searchable={comboboxThinkingOptions.length > DESKTOP_SEARCH_THRESHOLD}
+            open={openSelector === "thinking"}
+            onOpenChange={handleThinkingOpenChange}
+            anchorRef={thinkingAnchorRef}
+            desktopPlacement="top-start"
+          />
+        </>
+      ) : null}
+
+      {modeOptions && modeOptions.length > 0 ? (
+        <>
+          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+            <TooltipTrigger asChild triggerRefProp="ref">
+              <Pressable
+                ref={modeAnchorRef}
+                collapsable={false}
+                disabled={disabled || !canSelectMode}
+                onPress={handleModePress}
+                style={modePressableStyle}
+                accessibilityRole="button"
+                accessibilityLabel={`Select agent mode (${selectedModeId ?? ""})`}
+                testID="agent-mode-selector"
+              >
+                {ModeIconComponent ? (
+                  <ModeIconComponent size={theme.iconSize.md} color={modeIconColor} />
+                ) : (
+                  <ShieldCheck size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+                )}
+              </Pressable>
+            </TooltipTrigger>
+            <TooltipContent side="top" align="center" offset={8}>
+              <Text style={styles.tooltipText}>{getStatusSelectorHint("mode")}</Text>
+            </TooltipContent>
+          </Tooltip>
+          <Combobox
+            options={comboboxModeOptions}
+            value={selectedModeId ?? ""}
+            onSelect={handleModeSelect}
+            searchable={comboboxModeOptions.length > DESKTOP_SEARCH_THRESHOLD}
+            open={openSelector === "mode"}
+            onOpenChange={handleModeOpenChange}
+            anchorRef={modeAnchorRef}
+            desktopPlacement="top-start"
+            renderOption={renderModeOption}
+          />
+        </>
+      ) : null}
+
+      {features?.map((feature) => (
+        <DesktopFeatureItem
+          key={`feature-${feature.id}`}
+          feature={feature}
+          disabled={disabled}
+          openSelector={openSelector}
+          handleOpenChange={handleOpenChange}
+          onSetFeature={onSetFeature}
+        />
+      ))}
+    </>
+  );
+}
+
+interface SheetStatusBarContentProps {
+  provider: string;
+  modeOptions?: StatusOption[];
+  selectedModeId?: string;
+  selectedModelId?: string;
+  thinkingOptions?: StatusOption[];
+  selectedThinkingOptionId?: string;
+  features?: AgentFeature[];
+  onSetFeature?: (featureId: string, value: unknown) => void;
+  onSelectMode?: (modeId: string) => void;
+  onSelectThinkingOption?: (thinkingOptionId: string) => void;
+  onToggleFavoriteModel?: (provider: string, modelId: string) => void;
+  onDropdownClose?: () => void;
+  onModelSelectorOpen?: () => void;
+  providerDefinitions: AgentProviderDefinition[];
+  favoriteKeys: Set<string>;
+  disabled: boolean;
+  isModelLoading: boolean;
+  canSelectMode: boolean;
+  canSelectModel: boolean;
+  canSelectThinking: boolean;
+  canSelectProviderInModelMenu: (providerId: string) => boolean;
+  modelDisabled: boolean;
+  effectiveProviderDefinitions: AgentProviderDefinition[];
+  effectiveAllProviderModels: Map<string, AgentModelDefinition[]>;
+  displayMode: string;
+  displayModel: string;
+  displayThinking: string;
+  ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
+  modeIconColor: string;
+  openSelector: StatusSelector | null;
+  ProviderIcon: ReturnType<typeof getProviderIcon> | null;
+  prefsOpen: boolean;
+  handleOpenPrefs: () => void;
+  handleClosePrefs: () => void;
+  prefsButtonStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  sheetThinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  sheetModePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  handleSheetModelSelect: (providerId: string, modelId: string) => void;
+  handleThinkingOpenChange: (open: boolean) => void;
+  handleModeOpenChange: (open: boolean) => void;
+  handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
+  renderSheetModelTrigger: (args: { selectedModelLabel: string }) => ReactElement;
+}
+
+function SheetStatusBarContent(props: SheetStatusBarContentProps) {
+  const { theme } = useUnistyles();
+  const {
+    provider,
+    modeOptions,
+    selectedModeId,
+    selectedModelId,
+    thinkingOptions,
+    selectedThinkingOptionId,
+    features,
+    onSetFeature,
+    onSelectMode,
+    onSelectThinkingOption,
+    onToggleFavoriteModel,
+    onDropdownClose,
+    onModelSelectorOpen,
+    providerDefinitions,
+    favoriteKeys,
+    disabled,
+    isModelLoading,
+    canSelectMode,
+    canSelectModel,
+    canSelectThinking,
+    canSelectProviderInModelMenu,
+    modelDisabled,
+    effectiveProviderDefinitions,
+    effectiveAllProviderModels,
+    displayMode,
+    displayModel,
+    displayThinking,
+    ModeIconComponent,
+    modeIconColor,
+    openSelector,
+    ProviderIcon,
+    prefsOpen,
+    handleOpenPrefs,
+    handleClosePrefs,
+    prefsButtonStyle,
+    sheetThinkingPressableStyle,
+    sheetModePressableStyle,
+    handleSheetModelSelect,
+    handleThinkingOpenChange,
+    handleModeOpenChange,
+    handleOpenChange,
+    renderSheetModelTrigger,
+  } = props;
+
+  return (
+    <>
+      <Pressable
+        onPress={handleOpenPrefs}
+        style={prefsButtonStyle}
+        accessibilityRole="button"
+        accessibilityLabel="Agent preferences"
+        testID="agent-preferences-button"
+      >
+        {ProviderIcon ? (
+          <ProviderIcon size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
+        ) : null}
+        <Text style={styles.prefsButtonText} numberOfLines={1}>
+          {displayModel}
+        </Text>
+      </Pressable>
+
+      <AdaptiveModalSheet
+        title="Preferences"
+        visible={prefsOpen}
+        onClose={handleClosePrefs}
+        testID="agent-preferences-sheet"
+      >
+        {canSelectModel ? (
+          <View style={styles.sheetSection}>
+            <CombinedModelSelector
+              providerDefinitions={effectiveProviderDefinitions}
+              allProviderModels={effectiveAllProviderModels}
+              selectedProvider={provider}
+              selectedModel={selectedModelId ?? ""}
+              canSelectProvider={canSelectProviderInModelMenu}
+              onSelect={handleSheetModelSelect}
+              favoriteKeys={favoriteKeys}
+              onToggleFavorite={onToggleFavoriteModel}
+              isLoading={isModelLoading}
+              disabled={modelDisabled}
+              onOpen={onModelSelectorOpen}
+              onClose={onDropdownClose}
+              renderTrigger={renderSheetModelTrigger}
+            />
+          </View>
+        ) : null}
+
+        {thinkingOptions && thinkingOptions.length > 0 ? (
+          <View style={styles.sheetSection}>
+            <DropdownMenu
+              open={openSelector === "thinking"}
+              onOpenChange={handleThinkingOpenChange}
+            >
+              <DropdownMenuTrigger
+                disabled={disabled || !canSelectThinking}
+                style={sheetThinkingPressableStyle}
+                accessibilityRole="button"
+                accessibilityLabel="Select thinking option"
+                testID="agent-preferences-thinking"
+              >
+                <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+                <Text style={styles.sheetSelectText}>{displayThinking}</Text>
+                <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start">
+                {thinkingOptions.map((thinking) => (
+                  <ThinkingMenuItem
+                    key={thinking.id}
+                    thinking={thinking}
+                    selected={thinking.id === selectedThinkingOptionId}
+                    onSelectThinkingOption={onSelectThinkingOption}
+                  />
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </View>
+        ) : null}
+
+        {modeOptions && modeOptions.length > 0 ? (
+          <View style={styles.sheetSection}>
+            <DropdownMenu open={openSelector === "mode"} onOpenChange={handleModeOpenChange}>
+              <DropdownMenuTrigger
+                disabled={disabled || !canSelectMode}
+                style={sheetModePressableStyle}
+                accessibilityRole="button"
+                accessibilityLabel="Select agent mode"
+                testID="agent-preferences-mode"
+              >
+                {ModeIconComponent ? (
+                  <ModeIconComponent size={theme.iconSize.md} color={modeIconColor} />
+                ) : null}
+                <Text style={styles.sheetSelectText}>{displayMode}</Text>
+                <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start">
+                {modeOptions.map((mode) => (
+                  <ModeMenuItem
+                    key={mode.id}
+                    mode={mode}
+                    provider={provider}
+                    providerDefinitions={providerDefinitions}
+                    selected={mode.id === selectedModeId}
+                    onSelectMode={onSelectMode}
+                  />
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </View>
+        ) : null}
+
+        {features?.map((feature) => (
+          <SheetFeatureItem
+            key={`feature-${feature.id}`}
+            feature={feature}
+            disabled={disabled}
+            openSelector={openSelector}
+            handleOpenChange={handleOpenChange}
+            onSetFeature={onSetFeature}
+          />
+        ))}
+      </AdaptiveModalSheet>
+    </>
   );
 }
 
@@ -1095,26 +1633,12 @@ export const AgentStatusBar = memo(function AgentStatusBar({
 }: AgentStatusBarProps) {
   const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
-    useShallow((state) => {
-      const currentAgent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
-      return currentAgent
-        ? {
-            provider: currentAgent.provider,
-            cwd: currentAgent.cwd,
-            currentModeId: currentAgent.currentModeId,
-            runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
-            model: currentAgent.model,
-            features: currentAgent.features,
-            thinkingOptionId: currentAgent.thinkingOptionId,
-            lastUsage: currentAgent.lastUsage,
-          }
-        : null;
-    }),
+    useShallow((state) => selectAgentStatusBarSlice(state, serverId, agentId)),
   );
   const availableModes = useStoreWithEqualityFn(
     useSessionStore,
     (state) => state.sessions[serverId]?.agents?.get(agentId)?.availableModes ?? EMPTY_MODES,
-    (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
+    compareAvailableModes,
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const toast = useToast();
@@ -1125,35 +1649,25 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(serverId);
 
-  const snapshotSelectedEntry = useMemo(() => {
-    if (!snapshotEntries || !agent?.provider) {
-      return null;
-    }
-    return snapshotEntries.find((e) => e.provider === agent.provider) ?? null;
-  }, [snapshotEntries, agent?.provider]);
+  const snapshotSelectedEntry = useMemo(
+    () => resolveSnapshotSelectedEntry(snapshotEntries, agent?.provider),
+    [snapshotEntries, agent?.provider],
+  );
 
   const models = snapshotSelectedEntry?.models ?? null;
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
 
-  const agentProviderDefinitions = useMemo(() => {
-    const definition = agent?.provider
-      ? resolveProviderDefinition(agent.provider, snapshotEntries)
-      : undefined;
-    return definition ? [definition] : [];
-  }, [agent?.provider, snapshotEntries]);
+  const agentProviderDefinitions = useMemo(
+    () => buildAgentProviderDefinitions(agent?.provider, snapshotEntries),
+    [agent?.provider, snapshotEntries],
+  );
 
-  const agentProviderModels = useMemo(() => {
-    const map = new Map<string, AgentModelDefinition[]>();
-    if (agent?.provider && models) {
-      map.set(agent.provider, models);
-    }
-    return map;
-  }, [agent?.provider, models]);
+  const agentProviderModels = useMemo(
+    () => buildAgentProviderModels(agent?.provider, models),
+    [agent?.provider, models],
+  );
 
-  const displayMode =
-    availableModes.find((mode) => mode.id === agent?.currentModeId)?.label ||
-    agent?.currentModeId ||
-    "default";
+  const displayMode = resolveAgentDisplayMode(availableModes, agent?.currentModeId);
 
   const modelSelection = resolveAgentModelSelection({
     models,

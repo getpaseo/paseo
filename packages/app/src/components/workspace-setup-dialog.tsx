@@ -14,6 +14,11 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { encodeImages } from "@/utils/encode-images";
 import { toErrorMessage } from "@/utils/error-messages";
 import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
+import type {
+  CreateAgentRequestOptions,
+  CreatePaseoWorktreeInput,
+  DaemonClient,
+} from "@server/client/daemon-client";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { requireWorkspaceExecutionAuthority } from "@/utils/workspace-execution";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
@@ -27,6 +32,112 @@ function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): 
 }
 
 const SNAP_POINTS: string[] = ["82%", "94%"];
+
+function resolveWorkspaceTitle({
+  workspace,
+  displayName,
+  sourceDirectory,
+}: {
+  workspace: { name?: string | null; projectDisplayName?: string | null } | null;
+  displayName: string;
+  sourceDirectory: string;
+}): string {
+  return (
+    workspace?.name ||
+    workspace?.projectDisplayName ||
+    displayName ||
+    sourceDirectory.split(/[\\/]/).findLast(Boolean) ||
+    sourceDirectory
+  );
+}
+
+function buildChatDraftComposerArgs({
+  serverId,
+  isConnected,
+  workspaceDirectory,
+  sourceDirectory,
+  pendingWorkspaceSetup,
+}: {
+  serverId: string;
+  isConnected: boolean;
+  workspaceDirectory: string | undefined;
+  sourceDirectory: string;
+  pendingWorkspaceSetup: { creationMethod: string } | null;
+}) {
+  return {
+    initialServerId: serverId || null,
+    initialValues: workspaceDirectory ? { workingDir: workspaceDirectory } : undefined,
+    isVisible: pendingWorkspaceSetup !== null,
+    onlineServerIds: isConnected && serverId ? [serverId] : [],
+    lockedWorkingDir: workspaceDirectory || sourceDirectory || undefined,
+  };
+}
+
+type WorkspaceCreationAttachments = NonNullable<CreatePaseoWorktreeInput["attachments"]>;
+
+async function callWorkspaceCreation({
+  creationMethod,
+  connectedClient,
+  input,
+  wirePayload,
+}: {
+  creationMethod: "create_worktree" | "open_project";
+  connectedClient: DaemonClient;
+  input: { cwd: string };
+  wirePayload: { attachments: WorkspaceCreationAttachments };
+}) {
+  if (creationMethod === "create_worktree") {
+    return connectedClient.createPaseoWorktree({
+      cwd: input.cwd,
+      worktreeSlug: createNameId(),
+      ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
+    });
+  }
+  return connectedClient.openProject(input.cwd);
+}
+
+function failureMessageForCreationMethod(method: "create_worktree" | "open_project") {
+  return method === "create_worktree" ? "Failed to create worktree" : "Failed to open project";
+}
+
+function buildCreateAgentOptions({
+  composerState,
+  text,
+  attachments,
+  encodedImages,
+  workspaceDirectory,
+  workspaceId,
+  provider,
+}: {
+  composerState: {
+    modeOptions: { id: string }[];
+    selectedMode: string;
+    effectiveModelId: string | null;
+    effectiveThinkingOptionId: string | null;
+  };
+  text: string;
+  attachments: NonNullable<CreateAgentRequestOptions["attachments"]>;
+  encodedImages: NonNullable<CreateAgentRequestOptions["images"]> | null;
+  workspaceDirectory: string;
+  workspaceId: string;
+  provider: CreateAgentRequestOptions["provider"];
+}): CreateAgentRequestOptions {
+  return {
+    provider,
+    cwd: workspaceDirectory,
+    workspaceId,
+    ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
+      ? { modeId: composerState.selectedMode }
+      : {}),
+    ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
+    ...(composerState.effectiveThinkingOptionId
+      ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
+      : {}),
+    ...(text.trim() ? { initialPrompt: text.trim() } : {}),
+    ...(encodedImages && encodedImages.length > 0 ? { images: encodedImages } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
+}
 
 export function WorkspaceSetupDialog() {
   const { theme } = useUnistyles();
@@ -51,15 +162,13 @@ export function WorkspaceSetupDialog() {
   const chatDraft = useAgentInputDraft({
     draftKey: `workspace-setup:${serverId}:${sourceDirectory}`,
     initialCwd: sourceDirectory,
-    composer: {
-      initialServerId: serverId || null,
-      initialValues: workspace?.workspaceDirectory
-        ? { workingDir: workspace.workspaceDirectory }
-        : undefined,
-      isVisible: pendingWorkspaceSetup !== null,
-      onlineServerIds: isConnected && serverId ? [serverId] : [],
-      lockedWorkingDir: workspace?.workspaceDirectory || sourceDirectory || undefined,
-    },
+    composer: buildChatDraftComposerArgs({
+      serverId,
+      isConnected,
+      workspaceDirectory: workspace?.workspaceDirectory,
+      sourceDirectory,
+      pendingWorkspaceSetup,
+    }),
   });
   const composerState = chatDraft.composerState;
   if (!composerState && pendingWorkspaceSetup) {
@@ -121,23 +230,16 @@ export function WorkspaceSetupDialog() {
 
       const connectedClient = withConnectedClient();
       const wirePayload = splitComposerAttachmentsForSubmit(input.attachments);
-      const payload =
-        pendingWorkspaceSetup.creationMethod === "create_worktree"
-          ? await connectedClient.createPaseoWorktree({
-              cwd: input.cwd,
-              worktreeSlug: createNameId(),
-              ...(wirePayload.attachments.length > 0
-                ? { attachments: wirePayload.attachments }
-                : {}),
-            })
-          : await connectedClient.openProject(input.cwd);
+      const payload = await callWorkspaceCreation({
+        creationMethod: pendingWorkspaceSetup.creationMethod,
+        connectedClient,
+        input,
+        wirePayload,
+      });
 
       if (payload.error || !payload.workspace) {
         throw new Error(
-          payload.error ??
-            (pendingWorkspaceSetup.creationMethod === "create_worktree"
-              ? "Failed to create worktree"
-              : "Failed to open project"),
+          payload.error ?? failureMessageForCreationMethod(pendingWorkspaceSetup.creationMethod),
         );
       }
 
@@ -190,21 +292,17 @@ export function WorkspaceSetupDialog() {
         const workspaceDirectory = requireWorkspaceExecutionAuthority({
           workspace: ensuredWorkspace,
         }).workspaceDirectory;
-        const agent = await connectedClient.createAgent({
-          provider: composerState.selectedProvider,
-          cwd: workspaceDirectory,
-          workspaceId: ensuredWorkspace.id,
-          ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
-            ? { modeId: composerState.selectedMode }
-            : {}),
-          ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
-          ...(composerState.effectiveThinkingOptionId
-            ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
-            : {}),
-          ...(text.trim() ? { initialPrompt: text.trim() } : {}),
-          ...(encodedImages && encodedImages.length > 0 ? { images: encodedImages } : {}),
-          ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
-        });
+        const agent = await connectedClient.createAgent(
+          buildCreateAgentOptions({
+            composerState,
+            text,
+            attachments: wirePayload.attachments,
+            encodedImages: encodedImages ?? null,
+            workspaceDirectory,
+            workspaceId: ensuredWorkspace.id,
+            provider: composerState.selectedProvider,
+          }),
+        );
 
         if (!getIsStillActive()) {
           return;
@@ -238,12 +336,7 @@ export function WorkspaceSetupDialog() {
     ],
   );
 
-  const workspaceTitle =
-    workspace?.name ||
-    workspace?.projectDisplayName ||
-    displayName ||
-    sourceDirectory.split(/[\\/]/).findLast(Boolean) ||
-    sourceDirectory;
+  const workspaceTitle = resolveWorkspaceTitle({ workspace, displayName, sourceDirectory });
 
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(workspaceTitle);
   const placeholderInitial = placeholderLabel.charAt(0).toUpperCase();
