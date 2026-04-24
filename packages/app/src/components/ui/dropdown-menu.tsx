@@ -45,6 +45,8 @@ interface Rect {
 type DropdownMenuContextValue = {
   open: boolean;
   setOpen: (open: boolean) => void;
+  selectItem: (onSelect: (() => void) | undefined, closeOnSelect: boolean) => void;
+  flushPendingSelect: () => void;
   triggerRef: React.RefObject<View | null>;
 };
 
@@ -166,19 +168,54 @@ export function DropdownMenu({
   onOpenChange?: (open: boolean) => void;
 }>): ReactElement {
   const triggerRef = useRef<View>(null);
+  const pendingSelectRef = useRef<(() => void) | null>(null);
   const [isOpen, setIsOpen] = useControllableOpenState({
     open,
     defaultOpen,
     onOpenChange,
   });
 
+  const flushPendingSelect = useCallback(() => {
+    const pendingSelect = pendingSelectRef.current;
+    pendingSelectRef.current = null;
+    if (!pendingSelect) return;
+
+    if (Platform.OS === "ios") {
+      // Native presenters like PHPicker hang if launched while an RN Modal
+      // is still completing dismissal on UIKit's side. Give UIKit a moment
+      // to finish before firing the select handler. (Paseo commit 9a8b01a.)
+      setTimeout(pendingSelect, 250);
+      return;
+    }
+    pendingSelect();
+  }, []);
+
+  const selectItem = useCallback(
+    (onSelect: (() => void) | undefined, closeOnSelect: boolean) => {
+      if (!closeOnSelect) {
+        onSelect?.();
+        return;
+      }
+      if (Platform.OS === "ios") {
+        pendingSelectRef.current = onSelect ?? null;
+        setIsOpen(false);
+        return;
+      }
+      setIsOpen(false);
+      onSelect?.();
+    },
+    [setIsOpen],
+  );
+
   const value = useMemo<DropdownMenuContextValue>(
     () => ({
       open: isOpen,
       setOpen: setIsOpen,
+      selectItem,
+      flushPendingSelect,
       triggerRef,
     }),
-    [isOpen, setIsOpen],
+    [flushPendingSelect, isOpen, selectItem, setIsOpen],
   );
 
   return <DropdownMenuContext.Provider value={value}>{children}</DropdownMenuContext.Provider>;
@@ -265,7 +302,8 @@ export function DropdownMenuContent({
   horizontalPadding?: number;
   testID?: string;
 }>): ReactElement | null {
-  const { open, setOpen, triggerRef } = useDropdownMenuContext("DropdownMenuContent");
+  const { open, setOpen, triggerRef, flushPendingSelect } =
+    useDropdownMenuContext("DropdownMenuContent");
   const [modalVisible, setModalVisible] = useState(false);
   const [closing, setClosing] = useState(false);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
@@ -285,6 +323,14 @@ export function DropdownMenuContent({
       setModalVisible(false);
     }
   }, [open, modalVisible]);
+
+  // Flush pending iOS select once the modal is fully unmounted — this is
+  // the point where PHPicker can safely present without fighting our Modal.
+  useEffect(() => {
+    if (!open && !modalVisible) {
+      flushPendingSelect();
+    }
+  }, [flushPendingSelect, modalVisible, open]);
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -375,6 +421,7 @@ export function DropdownMenuContent({
       transparent
       animationType="none"
       statusBarTranslucent={Platform.OS === "android"}
+      onDismiss={flushPendingSelect}
       onRequestClose={handleClose}
     >
       <View style={styles.overlay}>
@@ -498,7 +545,7 @@ export function DropdownMenuItem({
   tooltip?: string;
 }>): ReactElement {
   const { theme } = useUnistyles();
-  const { setOpen } = useDropdownMenuContext("DropdownMenuItem");
+  const { selectItem } = useDropdownMenuContext("DropdownMenuItem");
 
   // Derive state from status prop (preferred) or legacy loading prop
   const isPending = status === "pending" || loading;
@@ -536,10 +583,7 @@ export function DropdownMenuItem({
       disabled={isDisabled}
       onPress={() => {
         if (isDisabled) return;
-        if (closeOnSelect) {
-          setOpen(false);
-        }
-        onSelect?.();
+        selectItem(onSelect, closeOnSelect);
       }}
       style={({ pressed, hovered }) => [
         styles.item,
