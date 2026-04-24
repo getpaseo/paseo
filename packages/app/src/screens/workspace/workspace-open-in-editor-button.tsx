@@ -90,7 +90,8 @@ export function WorkspaceOpenInEditorButton({
     },
   });
 
-  const availableEditors = availableEditorsQuery.data ?? [];
+  const availableEditorsRaw = availableEditorsQuery.data;
+  const availableEditors = useMemo(() => availableEditorsRaw ?? [], [availableEditorsRaw]);
   const availableEditorIds = useMemo(
     () => availableEditors.map((editor: EditorTargetDescriptorPayload) => editor.id),
     [availableEditors],

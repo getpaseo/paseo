@@ -785,7 +785,8 @@ function WorkspaceScreenContent({
     },
     staleTime: TERMINALS_QUERY_STALE_TIME,
   });
-  const terminals = terminalsQuery.data?.terminals ?? [];
+  const terminalsRaw = terminalsQuery.data?.terminals;
+  const terminals = useMemo(() => terminalsRaw ?? [], [terminalsRaw]);
   const liveTerminalIds = useMemo(() => terminals.map((terminal) => terminal.id), [terminals]);
   const [pendingScriptTerminalIds, setPendingScriptTerminalIds] = useState<Map<string, number>>(
     () => new Map(),
@@ -1268,6 +1269,8 @@ function WorkspaceScreenContent({
     hasHydratedAgents,
     hasHydratedWorkspaceLayoutStore,
     isRouteFocused,
+    normalizedServerId,
+    normalizedWorkspaceId,
     pendingByDraftId,
     persistenceKey,
     reconcileWorkspaceTabs,
@@ -2483,6 +2486,7 @@ function WorkspaceScreenContent({
       handleToggleExplorer,
       isExplorerOpen,
       explorerToggleAccessibilityState,
+      explorerToggleStyle,
       theme.colors.foreground,
       theme.colors.foregroundMuted,
       theme.iconSize.md,
