@@ -1,4 +1,13 @@
-import { useState, useCallback, useEffect, useMemo, useRef, memo, type ReactElement } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  memo,
+  type ReactElement,
+  type RefObject,
+} from "react";
 import { useRouter } from "expo-router";
 import { DiffStat } from "@/components/diff-stat";
 import {
@@ -34,7 +43,10 @@ import {
   Upload,
   WrapText,
 } from "lucide-react-native";
-import { useCheckoutGitActionsStore } from "@/stores/checkout-git-actions-store";
+import {
+  useCheckoutGitActionsStore,
+  type CheckoutGitActionStatus,
+} from "@/stores/checkout-git-actions-store";
 import {
   useCheckoutDiffQuery,
   type ParsedDiffFile,
@@ -888,6 +900,563 @@ type DiffFlatItem =
   | { type: "header"; file: ParsedDiffFile; fileIndex: number; isExpanded: boolean }
   | { type: "body"; file: ParsedDiffFile; fileIndex: number };
 
+function computeBranchLabel(currentBranch: string | null | undefined, notGit: boolean): string {
+  if (currentBranch && currentBranch !== "HEAD") {
+    return currentBranch;
+  }
+  if (notGit) {
+    return "Not a git repository";
+  }
+  return "Unknown";
+}
+
+function computeEmptyMessage(
+  hideWhitespace: boolean,
+  diffMode: "uncommitted" | "base",
+  baseRefLabel: string,
+): string {
+  if (hideWhitespace) {
+    return "No visible changes after hiding whitespace";
+  }
+  if (diffMode === "uncommitted") {
+    return "No uncommitted changes";
+  }
+  return `No changes vs ${baseRefLabel}`;
+}
+
+interface DiffBodyContentProps {
+  isStatusLoading: boolean;
+  statusErrorMessage: string | null;
+  notGit: boolean;
+  isDiffLoading: boolean;
+  diffErrorMessage: string | null;
+  hasChanges: boolean;
+  emptyMessage: string;
+  flatItems: DiffFlatItem[];
+  stickyHeaderIndices: number[];
+  renderFlatItem: ({ item }: { item: DiffFlatItem }) => ReactElement;
+  flatKeyExtractor: (item: DiffFlatItem) => string;
+  flatExtraData: unknown;
+  diffListRef: RefObject<FlatList<DiffFlatItem> | null>;
+  handleDiffListLayout: (event: LayoutChangeEvent) => void;
+  handleDiffListScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onContentSizeChange: (width: number, height: number) => void;
+  showDesktopWebScrollbar: boolean;
+  foregroundMutedColor: string;
+}
+
+function DiffBodyContent({
+  isStatusLoading,
+  statusErrorMessage,
+  notGit,
+  isDiffLoading,
+  diffErrorMessage,
+  hasChanges,
+  emptyMessage,
+  flatItems,
+  stickyHeaderIndices,
+  renderFlatItem,
+  flatKeyExtractor,
+  flatExtraData,
+  diffListRef,
+  handleDiffListLayout,
+  handleDiffListScroll,
+  onContentSizeChange,
+  showDesktopWebScrollbar,
+  foregroundMutedColor,
+}: DiffBodyContentProps) {
+  if (isStatusLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={foregroundMutedColor} />
+        <Text style={styles.loadingText}>Checking repository...</Text>
+      </View>
+    );
+  }
+  if (statusErrorMessage) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{statusErrorMessage}</Text>
+      </View>
+    );
+  }
+  if (notGit) {
+    return (
+      <View style={styles.emptyContainer} testID="changes-not-git">
+        <Text style={styles.emptyText}>Not a git repository</Text>
+      </View>
+    );
+  }
+  if (isDiffLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={foregroundMutedColor} />
+      </View>
+    );
+  }
+  if (diffErrorMessage) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{diffErrorMessage}</Text>
+      </View>
+    );
+  }
+  if (!hasChanges) {
+    return (
+      <View style={styles.emptyContainer}>
+        <Text style={styles.emptyText}>{emptyMessage}</Text>
+      </View>
+    );
+  }
+  return (
+    <FlatList
+      ref={diffListRef}
+      data={flatItems}
+      renderItem={renderFlatItem}
+      keyExtractor={flatKeyExtractor}
+      stickyHeaderIndices={stickyHeaderIndices}
+      extraData={flatExtraData}
+      style={styles.scrollView}
+      contentContainerStyle={styles.contentContainer}
+      testID="git-diff-scroll"
+      onLayout={handleDiffListLayout}
+      onScroll={handleDiffListScroll}
+      onContentSizeChange={onContentSizeChange}
+      scrollEventThrottle={16}
+      showsVerticalScrollIndicator={!showDesktopWebScrollbar}
+      // Mixed-height rows (header + potentially very large body) are prone to clipping artifacts.
+      // Keep a larger render window and disable clipping to avoid bodies disappearing mid-scroll.
+      removeClippedSubviews={false}
+      initialNumToRender={12}
+      maxToRenderPerBatch={12}
+      windowSize={10}
+    />
+  );
+}
+
+interface GitActionRunners {
+  runCommit: (args: { serverId: string; cwd: string }) => Promise<void>;
+  runPull: (args: { serverId: string; cwd: string }) => Promise<void>;
+  runPush: (args: { serverId: string; cwd: string }) => Promise<void>;
+  runCreatePr: (args: { serverId: string; cwd: string }) => Promise<void>;
+  runMergeBranch: (args: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
+  runMergeFromBase: (args: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
+  runArchiveWorktree: (args: {
+    serverId: string;
+    cwd: string;
+    worktreePath: string;
+  }) => Promise<void>;
+}
+
+interface GitActionHandlersDeps {
+  serverId: string;
+  cwd: string;
+  baseRef: string | undefined;
+  status: ReturnType<typeof useCheckoutStatusQuery>["status"];
+  runners: GitActionRunners;
+  persistShipDefault: (next: "merge" | "pr") => Promise<void>;
+  toastError: (message: string) => void;
+  toastActionError: (error: unknown, fallback: string) => void;
+  toastActionSuccess: (message: string) => void;
+  onMergeBranchSuccess: () => void;
+  onArchiveSuccess: (targetWorkingDir: string) => void;
+}
+
+interface GitActionHandlers {
+  handleCommit: () => void;
+  handlePull: () => void;
+  handlePush: () => void;
+  handleCreatePr: () => void;
+  handleMergeBranch: () => void;
+  handleMergeFromBase: () => void;
+  handleArchiveWorktree: () => void;
+}
+
+function useGitActionHandlers({
+  serverId,
+  cwd,
+  baseRef,
+  status,
+  runners,
+  persistShipDefault,
+  toastError,
+  toastActionError,
+  toastActionSuccess,
+  onMergeBranchSuccess,
+  onArchiveSuccess,
+}: GitActionHandlersDeps): GitActionHandlers {
+  const handleCommit = useCallback(() => {
+    void runners
+      .runCommit({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("Committed");
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to commit");
+      });
+  }, [cwd, runners, serverId, toastActionError, toastActionSuccess]);
+
+  const handlePull = useCallback(() => {
+    void runners
+      .runPull({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("Pulled");
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to pull");
+      });
+  }, [cwd, runners, serverId, toastActionError, toastActionSuccess]);
+
+  const handlePush = useCallback(() => {
+    void runners
+      .runPush({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("Pushed");
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to push");
+      });
+  }, [cwd, runners, serverId, toastActionError, toastActionSuccess]);
+
+  const handleCreatePr = useCallback(() => {
+    void persistShipDefault("pr");
+    void runners
+      .runCreatePr({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("PR created");
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to create PR");
+      });
+  }, [cwd, persistShipDefault, runners, serverId, toastActionError, toastActionSuccess]);
+
+  const handleMergeBranch = useCallback(() => {
+    if (!baseRef) {
+      toastError("Base ref unavailable");
+      return;
+    }
+    void persistShipDefault("merge");
+    void runners
+      .runMergeBranch({ serverId, cwd, baseRef })
+      .then(() => {
+        onMergeBranchSuccess();
+        toastActionSuccess("Merged");
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to merge");
+      });
+  }, [
+    baseRef,
+    cwd,
+    onMergeBranchSuccess,
+    persistShipDefault,
+    runners,
+    serverId,
+    toastActionError,
+    toastActionSuccess,
+    toastError,
+  ]);
+
+  const handleMergeFromBase = useCallback(() => {
+    if (!baseRef) {
+      toastError("Base ref unavailable");
+      return;
+    }
+    void runners
+      .runMergeFromBase({ serverId, cwd, baseRef })
+      .then(() => {
+        toastActionSuccess("Updated");
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to merge from base");
+      });
+  }, [baseRef, cwd, runners, serverId, toastActionError, toastActionSuccess, toastError]);
+
+  const handleArchiveWorktree = useCallback(() => {
+    const worktreePath = status?.cwd;
+    if (!worktreePath) {
+      toastError("Worktree path unavailable");
+      return;
+    }
+    const targetWorkingDir = resolveNewAgentWorkingDir(cwd, status ?? null);
+    void runners
+      .runArchiveWorktree({ serverId, cwd, worktreePath })
+      .then(() => {
+        onArchiveSuccess(targetWorkingDir);
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to archive worktree");
+      });
+  }, [cwd, onArchiveSuccess, runners, serverId, status, toastActionError, toastError]);
+
+  return {
+    handleCommit,
+    handlePull,
+    handlePush,
+    handleCreatePr,
+    handleMergeBranch,
+    handleMergeFromBase,
+    handleArchiveWorktree,
+  };
+}
+
+interface DeriveStatusStateInputs {
+  status: ReturnType<typeof useCheckoutStatusQuery>["status"];
+  isStatusLoading: boolean;
+  isStatusError: boolean;
+  statusError: unknown;
+}
+
+interface DerivedStatusState {
+  gitStatus: NonNullable<ReturnType<typeof useCheckoutStatusQuery>["status"]> | null;
+  isGit: boolean;
+  notGit: boolean;
+  statusErrorMessage: string | null;
+  baseRef: string | undefined;
+  hasUncommittedChanges: boolean;
+  actionsDisabled: boolean;
+}
+
+function deriveStatusState({
+  status,
+  isStatusLoading,
+  isStatusError,
+  statusError,
+}: DeriveStatusStateInputs): DerivedStatusState {
+  const gitStatus = status && status.isGit ? status : null;
+  const isGit = Boolean(gitStatus);
+  const notGit = status !== null && !status.isGit && !status.error;
+  const statusErrorMessage =
+    status?.error?.message ??
+    (isStatusError && statusError instanceof Error ? statusError.message : null);
+  const baseRef = gitStatus?.baseRef ?? undefined;
+  const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
+  const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
+  return {
+    gitStatus,
+    isGit,
+    notGit,
+    statusErrorMessage,
+    baseRef,
+    hasUncommittedChanges,
+    actionsDisabled,
+  };
+}
+
+interface DerivedBranchState {
+  aheadCount: number;
+  behindBaseCount: number;
+  aheadOfOrigin: number;
+  behindOfOrigin: number;
+  hasPullRequest: boolean;
+  hasRemote: boolean;
+  isPaseoOwnedWorktree: boolean;
+  isMergedPullRequest: boolean;
+  currentBranch: string | null | undefined;
+}
+
+function deriveBranchState(
+  gitStatus: DerivedStatusState["gitStatus"],
+  prStatus: { url?: string | null; isMerged?: boolean | null } | null | undefined,
+): DerivedBranchState {
+  return {
+    aheadCount: gitStatus?.aheadBehind?.ahead ?? 0,
+    behindBaseCount: gitStatus?.aheadBehind?.behind ?? 0,
+    aheadOfOrigin: gitStatus?.aheadOfOrigin ?? 0,
+    behindOfOrigin: gitStatus?.behindOfOrigin ?? 0,
+    hasPullRequest: Boolean(prStatus?.url),
+    hasRemote: gitStatus?.hasRemote ?? false,
+    isPaseoOwnedWorktree: gitStatus?.isPaseoOwnedWorktree ?? false,
+    isMergedPullRequest: Boolean(prStatus?.isMerged),
+    currentBranch: gitStatus?.currentBranch,
+  };
+}
+
+function computeBaseRefLabel(baseRef: string | undefined): string {
+  if (!baseRef) return "base";
+  const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
+  return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
+}
+
+function computeCommittedDiffDescription(
+  branchLabel: string,
+  baseRefLabel: string,
+): string | undefined {
+  if (!branchLabel || !baseRefLabel) {
+    return undefined;
+  }
+  return branchLabel === baseRefLabel ? undefined : `${branchLabel} -> ${baseRefLabel}`;
+}
+
+function computeShouldPromoteArchive(
+  isPaseoOwnedWorktree: boolean,
+  hasUncommittedChanges: boolean,
+  postShipArchiveSuggested: boolean,
+  isMergedPullRequest: boolean,
+): boolean {
+  return (
+    isPaseoOwnedWorktree &&
+    !hasUncommittedChanges &&
+    (postShipArchiveSuggested || isMergedPullRequest)
+  );
+}
+
+function computeDisabledStates(
+  actionsDisabled: boolean,
+  statuses: GitActionsStatusInputs,
+): GitActionsDisabledInputs {
+  const pending = "pending";
+  return {
+    commitDisabled: actionsDisabled || statuses.commitStatus === pending,
+    pullDisabled: actionsDisabled || statuses.pullStatus === pending,
+    pushDisabled: actionsDisabled || statuses.pushStatus === pending,
+    prDisabled: actionsDisabled || statuses.prCreateStatus === pending,
+    mergeDisabled: actionsDisabled || statuses.mergeStatus === pending,
+    mergeFromBaseDisabled: actionsDisabled || statuses.mergeFromBaseStatus === pending,
+    archiveDisabled: actionsDisabled || statuses.archiveStatus === pending,
+  };
+}
+
+function computePrErrorMessage(
+  githubFeaturesEnabled: boolean,
+  prPayloadError: { message?: string } | null | undefined,
+): string | null {
+  if (!githubFeaturesEnabled) return null;
+  return prPayloadError?.message ?? null;
+}
+
+function buildToggleButtonStyle(
+  selected: boolean,
+  baseStyles: StyleProp<ViewStyle> | StyleProp<ViewStyle>[],
+): PressableStyleFn {
+  return ({ hovered, pressed }) => [
+    baseStyles,
+    selected && styles.toggleButtonSelected,
+    (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
+  ];
+}
+
+function createPrHandler(
+  prStatus: { url?: string | null } | null | undefined,
+  handleCreatePr: () => void,
+): () => void {
+  return () => {
+    if (prStatus?.url) {
+      openURLInNewTab(prStatus.url);
+      return;
+    }
+    handleCreatePr();
+  };
+}
+
+interface GitActionsStatusInputs {
+  commitStatus: CheckoutGitActionStatus;
+  pullStatus: CheckoutGitActionStatus;
+  pushStatus: CheckoutGitActionStatus;
+  prCreateStatus: CheckoutGitActionStatus;
+  mergeStatus: CheckoutGitActionStatus;
+  mergeFromBaseStatus: CheckoutGitActionStatus;
+  archiveStatus: CheckoutGitActionStatus;
+}
+
+interface GitActionsDisabledInputs {
+  commitDisabled: boolean;
+  pullDisabled: boolean;
+  pushDisabled: boolean;
+  prDisabled: boolean;
+  mergeDisabled: boolean;
+  mergeFromBaseDisabled: boolean;
+  archiveDisabled: boolean;
+}
+
+interface BuildGitActionsParams {
+  policy: {
+    isGit: boolean;
+    githubFeaturesEnabled: boolean;
+    hasPullRequest: boolean;
+    pullRequestUrl: string | null;
+    hasRemote: boolean;
+    isPaseoOwnedWorktree: boolean;
+    isOnBaseBranch: boolean;
+    hasUncommittedChanges: boolean;
+    baseRefAvailable: boolean;
+    baseRefLabel: string;
+    aheadCount: number;
+    behindBaseCount: number;
+    aheadOfOrigin: number;
+    behindOfOrigin: number;
+    shouldPromoteArchive: boolean;
+    shipDefault: "merge" | "pr";
+  };
+  statuses: GitActionsStatusInputs;
+  disabled: GitActionsDisabledInputs;
+  handlers: GitActionHandlers & { handlePr: () => void };
+  iconColor: string;
+}
+
+function buildGitActionsForPane({
+  policy,
+  statuses,
+  disabled,
+  handlers,
+  iconColor,
+}: BuildGitActionsParams): GitActions {
+  return buildGitActions({
+    ...policy,
+    runtime: {
+      commit: {
+        disabled: disabled.commitDisabled,
+        status: statuses.commitStatus,
+        icon: <GitCommitHorizontal size={16} color={iconColor} />,
+        handler: handlers.handleCommit,
+      },
+      pull: {
+        disabled: disabled.pullDisabled,
+        status: statuses.pullStatus,
+        icon: <Download size={16} color={iconColor} />,
+        handler: handlers.handlePull,
+      },
+      push: {
+        disabled: disabled.pushDisabled,
+        status: statuses.pushStatus,
+        icon: <Upload size={16} color={iconColor} />,
+        handler: handlers.handlePush,
+      },
+      pr: {
+        disabled: disabled.prDisabled,
+        status: policy.hasPullRequest ? "idle" : statuses.prCreateStatus,
+        icon: <GitHubIcon size={16} color={iconColor} />,
+        handler: handlers.handlePr,
+      },
+      "merge-branch": {
+        disabled: disabled.mergeDisabled,
+        status: statuses.mergeStatus,
+        icon: <GitMerge size={16} color={iconColor} />,
+        handler: handlers.handleMergeBranch,
+      },
+      "merge-from-base": {
+        disabled: disabled.mergeFromBaseDisabled,
+        status: statuses.mergeFromBaseStatus,
+        icon: <RefreshCcw size={16} color={iconColor} />,
+        handler: handlers.handleMergeFromBase,
+      },
+      "archive-worktree": {
+        disabled: disabled.archiveDisabled,
+        status: statuses.archiveStatus,
+        icon: <Archive size={16} color={iconColor} />,
+        handler: handlers.handleArchiveWorktree,
+      },
+    },
+  });
+}
+
 export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
   const toast = useToast();
@@ -934,41 +1503,31 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     handleLayoutChange("split");
   }, [handleLayoutChange]);
 
-  const unifiedToggleStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.toggleButton,
-      styles.toggleButtonGroupStart,
-      changesPreferences.layout === "unified" && styles.toggleButtonSelected,
-      (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
-    ],
+  const unifiedToggleStyle = useMemo(
+    () =>
+      buildToggleButtonStyle(changesPreferences.layout === "unified", [
+        styles.toggleButton,
+        styles.toggleButtonGroupStart,
+      ]),
     [changesPreferences.layout],
   );
 
-  const splitToggleStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.toggleButton,
-      styles.toggleButtonGroupEnd,
-      changesPreferences.layout === "split" && styles.toggleButtonSelected,
-      (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
-    ],
+  const splitToggleStyle = useMemo(
+    () =>
+      buildToggleButtonStyle(changesPreferences.layout === "split", [
+        styles.toggleButton,
+        styles.toggleButtonGroupEnd,
+      ]),
     [changesPreferences.layout],
   );
 
-  const hideWhitespaceToggleStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.expandAllButton,
-      changesPreferences.hideWhitespace && styles.toggleButtonSelected,
-      (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
-    ],
+  const hideWhitespaceToggleStyle = useMemo(
+    () => buildToggleButtonStyle(changesPreferences.hideWhitespace, styles.expandAllButton),
     [changesPreferences.hideWhitespace],
   );
 
-  const wrapLinesToggleStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.expandAllButton,
-      wrapLines && styles.toggleButtonSelected,
-      (Boolean(hovered) || pressed) && styles.diffStatusRowHovered,
-    ],
+  const wrapLinesToggleStyle = useMemo(
+    () => buildToggleButtonStyle(wrapLines, styles.expandAllButton),
     [wrapLines],
   );
 
@@ -978,16 +1537,18 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     isError: isStatusError,
     error: statusError,
   } = useCheckoutStatusQuery({ serverId, cwd });
-  const gitStatus = status && status.isGit ? status : null;
-  const isGit = Boolean(gitStatus);
-  const notGit = status !== null && !status.isGit && !status.error;
-  const statusErrorMessage =
-    status?.error?.message ??
-    (isStatusError && statusError instanceof Error ? statusError.message : null);
-  const baseRef = gitStatus?.baseRef ?? undefined;
+  const statusState = deriveStatusState({ status, isStatusLoading, isStatusError, statusError });
+  const {
+    gitStatus,
+    isGit,
+    notGit,
+    statusErrorMessage,
+    baseRef,
+    hasUncommittedChanges,
+    actionsDisabled,
+  } = statusState;
 
   // Auto-select diff mode based on state: uncommitted when dirty, base when clean
-  const hasUncommittedChanges = Boolean(gitStatus?.isDirty);
   const autoDiffMode = hasUncommittedChanges ? "uncommitted" : "base";
   const diffMode = diffModeOverride ?? autoDiffMode;
 
@@ -1250,108 +1811,66 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     [toast],
   );
 
-  const handleCommit = useCallback(() => {
-    void runCommit({ serverId, cwd })
-      .then(() => {
-        toastActionSuccess("Committed");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to commit");
-      });
-  }, [cwd, runCommit, serverId, toastActionError, toastActionSuccess]);
+  const handleMergeBranchSuccess = useCallback(() => {
+    setPostShipArchiveSuggested(true);
+  }, []);
 
-  const handlePull = useCallback(() => {
-    void runPull({ serverId, cwd })
-      .then(() => {
-        toastActionSuccess("Pulled");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to pull");
-      });
-  }, [cwd, runPull, serverId, toastActionError, toastActionSuccess]);
+  const handleArchiveSuccess = useCallback(
+    (targetWorkingDir: string) => {
+      router.replace(buildNewAgentRoute(serverId, targetWorkingDir));
+    },
+    [router, serverId],
+  );
 
-  const handlePush = useCallback(() => {
-    void runPush({ serverId, cwd })
-      .then(() => {
-        toastActionSuccess("Pushed");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to push");
-      });
-  }, [cwd, runPush, serverId, toastActionError, toastActionSuccess]);
+  const toastError = useCallback(
+    (message: string) => {
+      toast.error(message);
+    },
+    [toast],
+  );
 
-  const handleCreatePr = useCallback(() => {
-    void persistShipDefault("pr");
-    void runCreatePr({ serverId, cwd })
-      .then(() => {
-        toastActionSuccess("PR created");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to create PR");
-      });
-  }, [cwd, persistShipDefault, runCreatePr, serverId, toastActionError, toastActionSuccess]);
+  const runners = useMemo<GitActionRunners>(
+    () => ({
+      runCommit,
+      runPull,
+      runPush,
+      runCreatePr,
+      runMergeBranch,
+      runMergeFromBase,
+      runArchiveWorktree,
+    }),
+    [
+      runArchiveWorktree,
+      runCommit,
+      runCreatePr,
+      runMergeBranch,
+      runMergeFromBase,
+      runPull,
+      runPush,
+    ],
+  );
 
-  const handleMergeBranch = useCallback(() => {
-    if (!baseRef) {
-      toast.error("Base ref unavailable");
-      return;
-    }
-    void persistShipDefault("merge");
-    void runMergeBranch({ serverId, cwd, baseRef })
-      .then(() => {
-        setPostShipArchiveSuggested(true);
-        toastActionSuccess("Merged");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to merge");
-      });
-  }, [
-    baseRef,
-    cwd,
-    persistShipDefault,
-    runMergeBranch,
+  const {
+    handleCommit,
+    handlePull,
+    handlePush,
+    handleCreatePr,
+    handleMergeBranch,
+    handleMergeFromBase,
+    handleArchiveWorktree,
+  } = useGitActionHandlers({
     serverId,
-    toast,
+    cwd,
+    baseRef,
+    status,
+    runners,
+    persistShipDefault,
+    toastError,
     toastActionError,
     toastActionSuccess,
-  ]);
-
-  const handleMergeFromBase = useCallback(() => {
-    if (!baseRef) {
-      toast.error("Base ref unavailable");
-      return;
-    }
-    void runMergeFromBase({ serverId, cwd, baseRef })
-      .then(() => {
-        toastActionSuccess("Updated");
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to merge from base");
-      });
-  }, [baseRef, cwd, runMergeFromBase, serverId, toast, toastActionError, toastActionSuccess]);
-
-  const handleArchiveWorktree = useCallback(() => {
-    const worktreePath = status?.cwd;
-    if (!worktreePath) {
-      toast.error("Worktree path unavailable");
-      return;
-    }
-    const targetWorkingDir = resolveNewAgentWorkingDir(cwd, status ?? null);
-    void runArchiveWorktree({ serverId, cwd, worktreePath })
-      .then(() => {
-        router.replace(buildNewAgentRoute(serverId, targetWorkingDir));
-        return;
-      })
-      .catch((err) => {
-        toastActionError(err, "Failed to archive worktree");
-      });
-  }, [cwd, router, runArchiveWorktree, serverId, status, toast, toastActionError]);
+    onMergeBranchSuccess: handleMergeBranchSuccess,
+    onArchiveSuccess: handleArchiveSuccess,
+  });
 
   const renderFlatItem = useCallback(
     ({ item }: { item: DiffFlatItem }) => {
@@ -1397,123 +1916,87 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
 
   const hasChanges = files.length > 0;
   const diffErrorMessage = diffPayloadError?.message ?? null;
-  const prErrorMessage = githubFeaturesEnabled ? (prPayloadError?.message ?? null) : null;
-  let branchLabel: string;
-  if (gitStatus?.currentBranch && gitStatus.currentBranch !== "HEAD") {
-    branchLabel = gitStatus.currentBranch;
-  } else if (notGit) {
-    branchLabel = "Not a git repository";
-  } else {
-    branchLabel = "Unknown";
-  }
-  const actionsDisabled = !isGit || Boolean(status?.error) || isStatusLoading;
-  const aheadCount = gitStatus?.aheadBehind?.ahead ?? 0;
-  const behindBaseCount = gitStatus?.aheadBehind?.behind ?? 0;
-  const aheadOfOrigin = gitStatus?.aheadOfOrigin ?? 0;
-  const behindOfOrigin = gitStatus?.behindOfOrigin ?? 0;
-  const baseRefLabel = useMemo(() => {
-    if (!baseRef) return "base";
-    const trimmed = baseRef.replace(/^refs\/(heads|remotes)\//, "").trim();
-    return trimmed.startsWith("origin/") ? trimmed.slice("origin/".length) : trimmed;
-  }, [baseRef]);
-  const committedDiffDescription = useMemo(() => {
-    if (!branchLabel || !baseRefLabel) {
-      return undefined;
-    }
-    return branchLabel === baseRefLabel ? undefined : `${branchLabel} -> ${baseRefLabel}`;
-  }, [baseRefLabel, branchLabel]);
-  const hasPullRequest = Boolean(prStatus?.url);
-  const hasRemote = gitStatus?.hasRemote ?? false;
-  const isPaseoOwnedWorktree = gitStatus?.isPaseoOwnedWorktree ?? false;
-  const isMergedPullRequest = Boolean(prStatus?.isMerged);
-  const currentBranch = gitStatus?.currentBranch;
+  const prErrorMessage = computePrErrorMessage(githubFeaturesEnabled, prPayloadError);
+  const branchLabel = computeBranchLabel(gitStatus?.currentBranch, notGit);
+  const branchState = useMemo(() => deriveBranchState(gitStatus, prStatus), [gitStatus, prStatus]);
+  const {
+    aheadCount,
+    behindBaseCount,
+    aheadOfOrigin,
+    behindOfOrigin,
+    hasPullRequest,
+    hasRemote,
+    isPaseoOwnedWorktree,
+    isMergedPullRequest,
+    currentBranch,
+  } = branchState;
+  const baseRefLabel = useMemo(() => computeBaseRefLabel(baseRef), [baseRef]);
+  const committedDiffDescription = useMemo(
+    () => computeCommittedDiffDescription(branchLabel, baseRefLabel),
+    [baseRefLabel, branchLabel],
+  );
   const isOnBaseBranch = currentBranch === baseRefLabel;
-  const shouldPromoteArchive =
-    isPaseoOwnedWorktree &&
-    !hasUncommittedChanges &&
-    (postShipArchiveSuggested || isMergedPullRequest);
+  const shouldPromoteArchive = computeShouldPromoteArchive(
+    isPaseoOwnedWorktree,
+    hasUncommittedChanges,
+    postShipArchiveSuggested,
+    isMergedPullRequest,
+  );
 
-  const commitDisabled = actionsDisabled || commitStatus === "pending";
-  const pullDisabled = actionsDisabled || pullStatus === "pending";
-  const prDisabled = actionsDisabled || prCreateStatus === "pending";
-  const mergeDisabled = actionsDisabled || mergeStatus === "pending";
-  const mergeFromBaseDisabled = actionsDisabled || mergeFromBaseStatus === "pending";
-  const pushDisabled = actionsDisabled || pushStatus === "pending";
-  const archiveDisabled = actionsDisabled || archiveStatus === "pending";
+  const gitActionsStatuses = useMemo<GitActionsStatusInputs>(
+    () => ({
+      commitStatus,
+      pullStatus,
+      pushStatus,
+      prCreateStatus,
+      mergeStatus,
+      mergeFromBaseStatus,
+      archiveStatus,
+    }),
+    [
+      archiveStatus,
+      commitStatus,
+      mergeFromBaseStatus,
+      mergeStatus,
+      prCreateStatus,
+      pullStatus,
+      pushStatus,
+    ],
+  );
 
-  let bodyContent: ReactElement;
+  const gitActionsDisabled = useMemo<GitActionsDisabledInputs>(
+    () => computeDisabledStates(actionsDisabled, gitActionsStatuses),
+    [actionsDisabled, gitActionsStatuses],
+  );
 
-  if (isStatusLoading) {
-    bodyContent = (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
-        <Text style={styles.loadingText}>Checking repository...</Text>
-      </View>
-    );
-  } else if (statusErrorMessage) {
-    bodyContent = (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>{statusErrorMessage}</Text>
-      </View>
-    );
-  } else if (notGit) {
-    bodyContent = (
-      <View style={styles.emptyContainer} testID="changes-not-git">
-        <Text style={styles.emptyText}>Not a git repository</Text>
-      </View>
-    );
-  } else if (isDiffLoading) {
-    bodyContent = (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
-      </View>
-    );
-  } else if (diffErrorMessage) {
-    bodyContent = (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>{diffErrorMessage}</Text>
-      </View>
-    );
-  } else if (!hasChanges) {
-    let emptyMessage: string;
-    if (changesPreferences.hideWhitespace) {
-      emptyMessage = "No visible changes after hiding whitespace";
-    } else if (diffMode === "uncommitted") {
-      emptyMessage = "No uncommitted changes";
-    } else {
-      emptyMessage = `No changes vs ${baseRefLabel}`;
-    }
-    bodyContent = (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>{emptyMessage}</Text>
-      </View>
-    );
-  } else {
-    bodyContent = (
-      <FlatList
-        ref={diffListRef}
-        data={flatItems}
-        renderItem={renderFlatItem}
-        keyExtractor={flatKeyExtractor}
-        stickyHeaderIndices={stickyHeaderIndices}
-        extraData={flatExtraData}
-        style={styles.scrollView}
-        contentContainerStyle={styles.contentContainer}
-        testID="git-diff-scroll"
-        onLayout={handleDiffListLayout}
-        onScroll={handleDiffListScroll}
-        onContentSizeChange={scrollbar.onContentSizeChange}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={!showDesktopWebScrollbar}
-        // Mixed-height rows (header + potentially very large body) are prone to clipping artifacts.
-        // Keep a larger render window and disable clipping to avoid bodies disappearing mid-scroll.
-        removeClippedSubviews={false}
-        initialNumToRender={12}
-        maxToRenderPerBatch={12}
-        windowSize={10}
-      />
-    );
-  }
+  const emptyMessage = computeEmptyMessage(
+    changesPreferences.hideWhitespace,
+    diffMode,
+    baseRefLabel,
+  );
+
+  const bodyContent: ReactElement = (
+    <DiffBodyContent
+      isStatusLoading={isStatusLoading}
+      statusErrorMessage={statusErrorMessage}
+      notGit={notGit}
+      isDiffLoading={isDiffLoading}
+      diffErrorMessage={diffErrorMessage}
+      hasChanges={hasChanges}
+      emptyMessage={emptyMessage}
+      flatItems={flatItems}
+      stickyHeaderIndices={stickyHeaderIndices}
+      renderFlatItem={renderFlatItem}
+      flatKeyExtractor={flatKeyExtractor}
+      flatExtraData={flatExtraData}
+      diffListRef={diffListRef}
+      handleDiffListLayout={handleDiffListLayout}
+      handleDiffListScroll={handleDiffListScroll}
+      onContentSizeChange={scrollbar.onContentSizeChange}
+      showDesktopWebScrollbar={showDesktopWebScrollbar}
+      foregroundMutedColor={theme.colors.foregroundMuted}
+    />
+  );
 
   useEffect(() => {
     setPostShipArchiveSuggested(false);
@@ -1528,115 +2011,83 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   // - menu: Kebab overflow menu
   // ==========================================================================
 
-  const gitActions: GitActions = useMemo(() => {
-    return buildGitActions({
-      isGit,
+  const handlePr = useMemo(
+    () => createPrHandler(prStatus, handleCreatePr),
+    [handleCreatePr, prStatus],
+  );
+
+  const gitActionsHandlers = useMemo(
+    () => ({
+      handleCommit,
+      handlePull,
+      handlePush,
+      handleCreatePr,
+      handleMergeBranch,
+      handleMergeFromBase,
+      handleArchiveWorktree,
+      handlePr,
+    }),
+    [
+      handleArchiveWorktree,
+      handleCommit,
+      handleCreatePr,
+      handleMergeBranch,
+      handleMergeFromBase,
+      handlePr,
+      handlePull,
+      handlePush,
+    ],
+  );
+
+  const gitActions: GitActions = useMemo(
+    () =>
+      buildGitActionsForPane({
+        policy: {
+          isGit,
+          githubFeaturesEnabled,
+          hasPullRequest,
+          pullRequestUrl: prStatus?.url ?? null,
+          hasRemote,
+          isPaseoOwnedWorktree,
+          isOnBaseBranch,
+          hasUncommittedChanges,
+          baseRefAvailable: Boolean(baseRef),
+          baseRefLabel,
+          aheadCount,
+          behindBaseCount,
+          aheadOfOrigin,
+          behindOfOrigin,
+          shouldPromoteArchive,
+          shipDefault,
+        },
+        statuses: gitActionsStatuses,
+        disabled: gitActionsDisabled,
+        handlers: gitActionsHandlers,
+        iconColor: theme.colors.foregroundMuted,
+      }),
+    [
+      aheadCount,
+      aheadOfOrigin,
+      baseRef,
+      baseRefLabel,
+      behindBaseCount,
+      behindOfOrigin,
+      gitActionsDisabled,
+      gitActionsHandlers,
+      gitActionsStatuses,
       githubFeaturesEnabled,
       hasPullRequest,
-      pullRequestUrl: prStatus?.url ?? null,
       hasRemote,
-      isPaseoOwnedWorktree,
-      isOnBaseBranch,
       hasUncommittedChanges,
-      baseRefAvailable: Boolean(baseRef),
-      baseRefLabel,
-      aheadCount,
-      behindBaseCount,
-      aheadOfOrigin,
-      behindOfOrigin,
-      shouldPromoteArchive,
+      isGit,
+      isOnBaseBranch,
+      isPaseoOwnedWorktree,
+      prStatus?.url,
       shipDefault,
-      runtime: {
-        commit: {
-          disabled: commitDisabled,
-          status: commitStatus,
-          icon: <GitCommitHorizontal size={16} color={theme.colors.foregroundMuted} />,
-          handler: handleCommit,
-        },
-        pull: {
-          disabled: pullDisabled,
-          status: pullStatus,
-          icon: <Download size={16} color={theme.colors.foregroundMuted} />,
-          handler: handlePull,
-        },
-        push: {
-          disabled: pushDisabled,
-          status: pushStatus,
-          icon: <Upload size={16} color={theme.colors.foregroundMuted} />,
-          handler: handlePush,
-        },
-        pr: {
-          disabled: prDisabled,
-          status: hasPullRequest ? "idle" : prCreateStatus,
-          icon: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
-          handler: () => {
-            if (prStatus?.url) {
-              openURLInNewTab(prStatus.url);
-              return;
-            }
-            handleCreatePr();
-          },
-        },
-        "merge-branch": {
-          disabled: mergeDisabled,
-          status: mergeStatus,
-          icon: <GitMerge size={16} color={theme.colors.foregroundMuted} />,
-          handler: handleMergeBranch,
-        },
-        "merge-from-base": {
-          disabled: mergeFromBaseDisabled,
-          status: mergeFromBaseStatus,
-          icon: <RefreshCcw size={16} color={theme.colors.foregroundMuted} />,
-          handler: handleMergeFromBase,
-        },
-        "archive-worktree": {
-          disabled: archiveDisabled,
-          status: archiveStatus,
-          icon: <Archive size={16} color={theme.colors.foregroundMuted} />,
-          handler: handleArchiveWorktree,
-        },
-      },
-    });
-  }, [
-    isGit,
-    hasRemote,
-    hasPullRequest,
-    prStatus?.url,
-    aheadCount,
-    baseRef,
-    behindBaseCount,
-    isPaseoOwnedWorktree,
-    isOnBaseBranch,
-    githubFeaturesEnabled,
-    hasUncommittedChanges,
-    aheadOfOrigin,
-    behindOfOrigin,
-    shipDefault,
-    baseRefLabel,
-    shouldPromoteArchive,
-    commitDisabled,
-    pullDisabled,
-    pushDisabled,
-    prDisabled,
-    mergeDisabled,
-    mergeFromBaseDisabled,
-    archiveDisabled,
-    commitStatus,
-    pullStatus,
-    pushStatus,
-    prCreateStatus,
-    mergeStatus,
-    mergeFromBaseStatus,
-    archiveStatus,
-    handleCommit,
-    handlePull,
-    handlePush,
-    handleCreatePr,
-    handleMergeBranch,
-    handleMergeFromBase,
-    handleArchiveWorktree,
-    theme.colors.foregroundMuted,
-  ]);
+      shouldPromoteArchive,
+      theme.colors.foregroundMuted,
+    ],
+  );
 
   // Helper to get display label based on status
 
