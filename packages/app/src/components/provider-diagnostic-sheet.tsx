@@ -43,6 +43,41 @@ function ModelRow({ model, isFirst }: { model: AgentModelDefinition; isFirst: bo
   );
 }
 
+function DiagnosticCodeBlock(props: {
+  loading: boolean;
+  diagnostic: string | null;
+  foregroundMutedColor: string;
+}) {
+  if (props.loading && !props.diagnostic) {
+    return (
+      <View style={sheetStyles.codeBlockLoading}>
+        <ActivityIndicator size="small" color={props.foregroundMutedColor} />
+        <Text style={sheetStyles.mutedText}>Running diagnostic…</Text>
+      </View>
+    );
+  }
+  if (props.diagnostic) {
+    return (
+      <ScrollView
+        style={sheetStyles.codeScroll}
+        contentContainerStyle={sheetStyles.codeContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <Text style={sheetStyles.codeText} selectable>
+            {props.diagnostic}
+          </Text>
+        </ScrollView>
+      </ScrollView>
+    );
+  }
+  return (
+    <View style={sheetStyles.codeBlockLoading}>
+      <Text style={sheetStyles.mutedText}>No diagnostic available.</Text>
+    </View>
+  );
+}
+
 export function ProviderDiagnosticSheet({
   provider,
   visible,
@@ -211,30 +246,11 @@ export function ProviderDiagnosticSheet({
       <View style={sheetStyles.section}>
         <Text style={sheetStyles.sectionTitle}>Diagnostic</Text>
         <View style={sheetStyles.codeBlock}>
-          {loading && !diagnostic ? (
-            <View style={sheetStyles.codeBlockLoading}>
-              <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
-              <Text style={sheetStyles.mutedText}>Running diagnostic…</Text>
-            </View>
-          ) : null}
-          {!(loading && !diagnostic) && diagnostic ? (
-            <ScrollView
-              style={sheetStyles.codeScroll}
-              contentContainerStyle={sheetStyles.codeContent}
-              showsVerticalScrollIndicator={false}
-            >
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <Text style={sheetStyles.codeText} selectable>
-                  {diagnostic}
-                </Text>
-              </ScrollView>
-            </ScrollView>
-          ) : null}
-          {!(loading && !diagnostic) && !diagnostic ? (
-            <View style={sheetStyles.codeBlockLoading}>
-              <Text style={sheetStyles.mutedText}>No diagnostic available.</Text>
-            </View>
-          ) : null}
+          <DiagnosticCodeBlock
+            loading={loading}
+            diagnostic={diagnostic}
+            foregroundMutedColor={theme.colors.foregroundMuted}
+          />
         </View>
       </View>
 
