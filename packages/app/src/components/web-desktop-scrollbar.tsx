@@ -341,10 +341,6 @@ export function WebDesktopScrollbarOverlay({
     };
   }, [applyDragDelta, isDragging]);
 
-  if (!enabled || !geometry.isVisible) {
-    return null;
-  }
-
   const handleVisible = isDragging || isScrollVisible || isHandleHovered;
   let handleOpacity: number;
   if (isDragging) handleOpacity = HANDLE_OPACITY_DRAGGING;
@@ -403,6 +399,10 @@ export function WebDesktopScrollbarOverlay({
     ],
     [handleInsetTop, geometry.handleSize, handleWidth, handleColor, handleOpacity],
   );
+
+  if (!enabled || !geometry.isVisible) {
+    return null;
+  }
 
   return (
     <View style={styles.overlay} pointerEvents="box-none">
