@@ -64,7 +64,9 @@ vi.mock("react-native-unistyles", () => ({
 }));
 
 vi.mock("@xterm/addon-ligatures", () => ({
-  LigaturesAddon: class LigaturesAddon {},
+  LigaturesAddon: class LigaturesAddon {
+    dispose(): void {}
+  },
 }));
 
 vi.mock("react-native-svg", () => {
