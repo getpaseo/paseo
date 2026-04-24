@@ -21,6 +21,7 @@ import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import {
   type AgentScreenAgent,
   type AgentScreenMissingState,
+  type AgentScreenViewState,
   useAgentScreenStateMachine,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
@@ -58,6 +59,52 @@ interface ChatAgentStateShape {
   lastError?: Agent["lastError"] | null;
 }
 
+interface ChatAgentSelectedState extends ChatAgentStateShape {
+  archivedAt: Date | null;
+  requiresAttention: boolean;
+  attentionReason: Agent["attentionReason"] | null;
+}
+
+function resolveChatAgentFromSession(
+  state: ReturnType<typeof useSessionStore.getState>,
+  serverId: string,
+  agentId: string | undefined,
+): Agent | null {
+  if (!agentId) return null;
+  const session = state.sessions[serverId];
+  return session?.agents?.get(agentId) ?? session?.agentDetails?.get(agentId) ?? null;
+}
+
+const EMPTY_CHAT_AGENT_STATE: ChatAgentSelectedState = {
+  serverId: null,
+  id: null,
+  status: null,
+  cwd: null,
+  lastError: null,
+  archivedAt: null,
+  requiresAttention: false,
+  attentionReason: null,
+};
+
+function selectChatAgentState(
+  state: ReturnType<typeof useSessionStore.getState>,
+  serverId: string,
+  agentId: string | undefined,
+): ChatAgentSelectedState {
+  const agent = resolveChatAgentFromSession(state, serverId, agentId);
+  if (!agent) return EMPTY_CHAT_AGENT_STATE;
+  return {
+    serverId: agent.serverId,
+    id: agent.id,
+    status: agent.status,
+    cwd: agent.cwd,
+    lastError: agent.lastError ?? null,
+    archivedAt: agent.archivedAt ?? null,
+    requiresAttention: agent.requiresAttention ?? false,
+    attentionReason: agent.attentionReason ?? null,
+  };
+}
+
 function buildChatAgentFromState(
   state: ChatAgentStateShape,
   projectPlacement: Agent["projectPlacement"] | null,
@@ -73,6 +120,43 @@ function buildChatAgentFromState(
     lastError: state.lastError ?? null,
     projectPlacement,
   };
+}
+
+function renderChatAgentNonReadyView(args: {
+  viewState: AgentScreenViewState;
+  effectiveAgent: AgentScreenAgent | null;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+}): React.ReactElement | null {
+  const { viewState, effectiveAgent, theme } = args;
+  if (viewState.tag === "not_found") {
+    return (
+      <View style={styles.container} testID="agent-not-found">
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Agent not found</Text>
+        </View>
+      </View>
+    );
+  }
+  if (viewState.tag === "error") {
+    return (
+      <View style={styles.container} testID="agent-load-error">
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Failed to load agent</Text>
+          <Text style={styles.statusText}>{viewState.message}</Text>
+        </View>
+      </View>
+    );
+  }
+  if (viewState.tag === "boot" || !effectiveAgent) {
+    return (
+      <View style={styles.container} testID="agent-loading">
+        <View style={styles.errorContainer}>
+          <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
+        </View>
+      </View>
+    );
+  }
+  return null;
 }
 
 function formatProviderLabel(provider: Agent["provider"]): string {
@@ -523,22 +607,7 @@ function ChatAgentContent({
   }, []);
 
   const agentState = useSessionStore(
-    useShallow((state) => {
-      const session = state.sessions[serverId];
-      const agent = agentId
-        ? (session?.agents?.get(agentId) ?? session?.agentDetails?.get(agentId) ?? null)
-        : null;
-      return {
-        serverId: agent?.serverId ?? null,
-        id: agent?.id ?? null,
-        status: agent?.status ?? null,
-        cwd: agent?.cwd ?? null,
-        lastError: agent?.lastError ?? null,
-        archivedAt: agent?.archivedAt ?? null,
-        requiresAttention: agent?.requiresAttention ?? false,
-        attentionReason: agent?.attentionReason ?? null,
-      };
-    }),
+    useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
   const projectPlacement = useStoreWithEqualityFn(
     useSessionStore,
@@ -880,36 +949,13 @@ function ChatAgentContent({
     [animatedKeyboardStyle],
   );
 
-  if (viewState.tag === "not_found") {
-    return (
-      <View style={styles.container} testID="agent-not-found">
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Agent not found</Text>
-        </View>
-      </View>
-    );
-  }
-
-  if (viewState.tag === "error") {
-    return (
-      <View style={styles.container} testID="agent-load-error">
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Failed to load agent</Text>
-          <Text style={styles.statusText}>{viewState.message}</Text>
-        </View>
-      </View>
-    );
-  }
-
-  if (viewState.tag === "boot" || !effectiveAgent) {
-    return (
-      <View style={styles.container} testID="agent-loading">
-        <View style={styles.errorContainer}>
-          <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
-        </View>
-      </View>
-    );
-  }
+  const nonReadyView = renderChatAgentNonReadyView({
+    viewState,
+    effectiveAgent,
+    theme,
+  });
+  if (nonReadyView) return nonReadyView;
+  invariant(effectiveAgent, "effectiveAgent is defined when the non-ready view is absent");
 
   return (
     <View style={styles.root}>
