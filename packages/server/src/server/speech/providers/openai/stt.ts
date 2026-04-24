@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type pino from "pino";
-import OpenAI from "openai";
+import { OpenAI } from "openai";
 import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";

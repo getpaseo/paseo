@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import pino from "pino";
 import { Writable } from "node:stream";
 import net from "node:net";

@@ -2,7 +2,7 @@ import { it, expect, afterEach } from "vitest";
 import http from "node:http";
 import net from "node:net";
 import express from "express";
-import WebSocket, { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import pino from "pino";
 import {
   ScriptRouteStore,

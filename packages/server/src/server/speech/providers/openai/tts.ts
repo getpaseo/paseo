@@ -1,5 +1,5 @@
 import type pino from "pino";
-import OpenAI from "openai";
+import { OpenAI } from "openai";
 import { Readable } from "node:stream";
 import type { SpeechStreamResult, TextToSpeechProvider } from "../../speech-provider.js";
 

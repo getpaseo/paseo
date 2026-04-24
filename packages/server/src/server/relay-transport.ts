@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 import { EventEmitter } from "node:events";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import type pino from "pino";
 import {
   createDaemonChannel,

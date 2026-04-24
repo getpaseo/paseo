@@ -1,5 +1,5 @@
 import type pino from "pino";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import { EventEmitter } from "node:events";
 import type { StreamingTranscriptionSession } from "../../speech-provider.js";
 

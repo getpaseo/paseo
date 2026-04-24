@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import { DaemonClient } from "../../client/daemon-client.js";
 import {
   WSOutboundMessageSchema,

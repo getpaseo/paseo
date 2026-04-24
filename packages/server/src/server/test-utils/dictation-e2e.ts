@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import OpenAI from "openai";
+import { OpenAI } from "openai";
 
 export function requireEnv(name: string): string {
   const value = process.env[name];
