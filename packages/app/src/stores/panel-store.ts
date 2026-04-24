@@ -178,6 +178,104 @@ export function selectIsFileExplorerOpen(state: PanelState, input: PanelLayoutIn
   return selectPanelVisibility(state, input).isFileExplorerOpen;
 }
 
+type MigratablePanelState = Partial<PanelState> & Record<string, unknown>;
+
+function migratePanelV2Explorer(state: MigratablePanelState): void {
+  if (isWeb && typeof state.explorerWidth === "number" && state.explorerWidth === 400) {
+    state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
+  }
+  if (typeof state.explorerFilesSplitRatio !== "number") {
+    state.explorerFilesSplitRatio = DEFAULT_EXPLORER_FILES_SPLIT_RATIO;
+  } else {
+    state.explorerFilesSplitRatio = clampExplorerFilesSplitRatio(state.explorerFilesSplitRatio);
+  }
+}
+
+function migratePanelV3Explorer(state: MigratablePanelState): void {
+  if (
+    isWeb &&
+    typeof state.explorerWidth === "number" &&
+    (state.explorerWidth === 400 || state.explorerWidth === 520)
+  ) {
+    state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
+  }
+}
+
+function migratePanelExplorerTabByCheckout(state: MigratablePanelState, version: number): void {
+  if (
+    version < 4 ||
+    typeof state.explorerTabByCheckout !== "object" ||
+    !state.explorerTabByCheckout
+  ) {
+    state.explorerTabByCheckout = {};
+    return;
+  }
+  const entries = Object.entries(state.explorerTabByCheckout as Record<string, unknown>);
+  const next: Record<string, ExplorerTab> = {};
+  for (const [key, value] of entries) {
+    if (!isExplorerTab(value)) {
+      continue;
+    }
+    next[key] = value;
+  }
+  state.explorerTabByCheckout = next;
+}
+
+function migratePanelDesktopFocusMode(state: MigratablePanelState): void {
+  const desktop = state.desktop as Record<string, unknown> | undefined;
+  if (!desktop) {
+    return;
+  }
+  if ("zoomed" in desktop) {
+    desktop.focusModeEnabled = desktop.zoomed;
+    delete desktop.zoomed;
+  }
+  if ("focused" in desktop) {
+    desktop.focusModeEnabled = desktop.focused;
+    delete desktop.focused;
+  }
+  if (typeof desktop.focusModeEnabled !== "boolean") {
+    desktop.focusModeEnabled = false;
+  }
+}
+
+function migratePanelState(persistedState: unknown, version: number): PanelState {
+  const state = persistedState as MigratablePanelState;
+
+  if (version < 2) {
+    migratePanelV2Explorer(state);
+  }
+  if (version < 3) {
+    migratePanelV3Explorer(state);
+  }
+  if (!isExplorerTab(state.explorerTab)) {
+    state.explorerTab = "changes";
+  }
+  migratePanelExplorerTabByCheckout(state, version);
+  if (version < 8) {
+    migratePanelDesktopFocusMode(state);
+  }
+  if (version < 6 || typeof state.sidebarWidth !== "number") {
+    state.sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
+  }
+  if (
+    version < 9 ||
+    typeof state.expandedPathsByWorkspace !== "object" ||
+    !state.expandedPathsByWorkspace
+  ) {
+    state.expandedPathsByWorkspace = {};
+  }
+  if (
+    version < 10 ||
+    typeof state.diffExpandedPathsByWorkspace !== "object" ||
+    !state.diffExpandedPathsByWorkspace
+  ) {
+    state.diffExpandedPathsByWorkspace = {};
+  }
+
+  return state as PanelState;
+}
+
 const DEFAULT_DESKTOP_OPEN = isWeb;
 
 export const usePanelStore = create<PanelState>()(
@@ -356,94 +454,7 @@ export const usePanelStore = create<PanelState>()(
       name: "panel-state",
       version: 10,
       storage: createJSONStorage(() => AsyncStorage),
-      migrate: (persistedState, version) => {
-        const state = persistedState as Partial<PanelState> & Record<string, unknown>;
-
-        if (version < 2) {
-          if (isWeb && typeof state.explorerWidth === "number" && state.explorerWidth === 400) {
-            state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
-          }
-
-          if (typeof state.explorerFilesSplitRatio !== "number") {
-            state.explorerFilesSplitRatio = DEFAULT_EXPLORER_FILES_SPLIT_RATIO;
-          } else {
-            state.explorerFilesSplitRatio = clampExplorerFilesSplitRatio(
-              state.explorerFilesSplitRatio,
-            );
-          }
-        }
-
-        if (version < 3) {
-          if (
-            isWeb &&
-            typeof state.explorerWidth === "number" &&
-            (state.explorerWidth === 400 || state.explorerWidth === 520)
-          ) {
-            state.explorerWidth = DEFAULT_EXPLORER_SIDEBAR_WIDTH;
-          }
-        }
-
-        if (!isExplorerTab(state.explorerTab)) {
-          state.explorerTab = "changes";
-        }
-
-        if (
-          version < 4 ||
-          typeof state.explorerTabByCheckout !== "object" ||
-          !state.explorerTabByCheckout
-        ) {
-          state.explorerTabByCheckout = {};
-        } else {
-          const entries = Object.entries(state.explorerTabByCheckout as Record<string, unknown>);
-          const next: Record<string, ExplorerTab> = {};
-          for (const [key, value] of entries) {
-            if (!isExplorerTab(value)) {
-              continue;
-            }
-            next[key] = value;
-          }
-          state.explorerTabByCheckout = next;
-        }
-
-        if (version < 8) {
-          const desktop = state.desktop as Record<string, unknown> | undefined;
-          if (desktop) {
-            if ("zoomed" in desktop) {
-              desktop.focusModeEnabled = desktop.zoomed;
-              delete desktop.zoomed;
-            }
-            if ("focused" in desktop) {
-              desktop.focusModeEnabled = desktop.focused;
-              delete desktop.focused;
-            }
-            if (typeof desktop.focusModeEnabled !== "boolean") {
-              desktop.focusModeEnabled = false;
-            }
-          }
-        }
-
-        if (version < 6 || typeof state.sidebarWidth !== "number") {
-          state.sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
-        }
-
-        if (
-          version < 9 ||
-          typeof state.expandedPathsByWorkspace !== "object" ||
-          !state.expandedPathsByWorkspace
-        ) {
-          state.expandedPathsByWorkspace = {};
-        }
-
-        if (
-          version < 10 ||
-          typeof state.diffExpandedPathsByWorkspace !== "object" ||
-          !state.diffExpandedPathsByWorkspace
-        ) {
-          state.diffExpandedPathsByWorkspace = {};
-        }
-
-        return state as PanelState;
-      },
+      migrate: (persistedState, version) => migratePanelState(persistedState, version),
       partialize: (state) => ({
         mobileView: state.mobileView,
         desktop: state.desktop,
