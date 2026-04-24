@@ -258,8 +258,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       },
       [
         agent.cwd,
+        agent.projectPlacement?.checkout?.isGit,
         isMobile,
         openFileExplorerForCheckout,
+        onOpenWorkspaceFile,
         requestDirectoryListing,
         resolvedServerId,
         router,
@@ -508,7 +510,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return null;
         }
       },
-      [handleInlinePathPress, agent.cwd, streamRenderStrategy, setInlineDetailsExpanded],
+      [
+        handleInlinePathPress,
+        agent.cwd,
+        streamRenderStrategy,
+        setInlineDetailsExpanded,
+        workspaceRoot,
+        serverId,
+        client,
+      ],
     );
 
     const renderStreamItem = useCallback(
@@ -1023,16 +1033,6 @@ function PermissionRequestCard({
     [handleResponse],
   );
 
-  if (request.kind === "question") {
-    return (
-      <QuestionFormCard
-        permission={permission}
-        onRespond={handleResponse}
-        isResponding={isResponding}
-      />
-    );
-  }
-
   const questionTextStyle = useMemo(
     () => [permissionStyles.question, { color: theme.colors.foregroundMuted }],
     [theme.colors.foregroundMuted],
@@ -1062,6 +1062,16 @@ function PermissionRequestCard({
     () => [permissionStyles.description, { color: theme.colors.foregroundMuted }],
     [theme.colors.foregroundMuted],
   );
+
+  if (request.kind === "question") {
+    return (
+      <QuestionFormCard
+        permission={permission}
+        onRespond={handleResponse}
+        isResponding={isResponding}
+      />
+    );
+  }
 
   const footer = (
     <>
