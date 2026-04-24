@@ -218,7 +218,7 @@ function createService(options?: CreateServiceTestOptions) {
   return new WorkspaceGitServiceImpl({
     logger: createLogger() as unknown as pino.Logger,
     paseoHome: "/tmp/paseo-test",
-    deps: { ...buildDefaultTestServiceDeps(), ...(options ?? {}) },
+    deps: { ...buildDefaultTestServiceDeps(), ...options },
   });
 }
 

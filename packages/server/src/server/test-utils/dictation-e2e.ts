@@ -118,8 +118,8 @@ function levenshteinDistanceWords(a: string[], b: string[]): number {
   if (m === 0) return n;
   if (n === 0) return m;
 
-  const prev = new Array<number>(n + 1);
-  const cur = new Array<number>(n + 1);
+  const prev: number[] = Array.from({ length: n + 1 });
+  const cur: number[] = Array.from({ length: n + 1 });
   for (let j = 0; j <= n; j += 1) prev[j] = j;
 
   for (let i = 1; i <= m; i += 1) {

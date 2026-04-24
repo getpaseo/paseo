@@ -56,7 +56,21 @@
     "typescript/no-this-alias": "warn",
     "typescript/consistent-type-definitions": ["warn", "interface"],
 
-    "import/no-unassigned-import": ["warn", { "allow": ["**/*.css"] }],
+    "import/no-unassigned-import": [
+      "warn",
+      {
+        "allow": [
+          "**/*.css",
+          "**/expo-router/entry",
+          "**/event-target-polyfill",
+          "**/dotenv/config",
+          "**/react-native",
+          "**/@/styles/unistyles",
+          "**/src/styles/unistyles",
+          "**/@/test/window-local-storage"
+        ]
+      }
+    ],
 
     "no-nested-ternary": "warn",
     "no-unneeded-ternary": "warn",

@@ -341,7 +341,10 @@ export async function createPaseoDaemon(
       });
     });
 
-    app.get("/api/files/download", async (req, res) => {
+    const handleFileDownload = async (
+      req: express.Request,
+      res: express.Response,
+    ): Promise<void> => {
       const token =
         typeof req.query.token === "string" && req.query.token.trim().length > 0
           ? req.query.token.trim()
@@ -386,6 +389,10 @@ export async function createPaseoDaemon(
           res.status(404).json({ error: "File not found" });
         }
       }
+    };
+
+    app.get("/api/files/download", (req, res) => {
+      void handleFileDownload(req, res);
     });
 
     const httpServer = createHTTPServer(app);
@@ -596,7 +603,10 @@ export async function createPaseoDaemon(
         return transport;
       };
 
-      const handleAgentMcpRequest: express.RequestHandler = async (req, res) => {
+      const runAgentMcpRequest = async (
+        req: express.Request,
+        res: express.Response,
+      ): Promise<void> => {
         if (config.mcpDebug) {
           logger.debug(
             {
@@ -664,6 +674,10 @@ export async function createPaseoDaemon(
             });
           }
         }
+      };
+
+      const handleAgentMcpRequest: express.RequestHandler = (req, res) => {
+        void runAgentMcpRequest(req, res);
       };
 
       app.post(agentMcpRoute, handleAgentMcpRequest);

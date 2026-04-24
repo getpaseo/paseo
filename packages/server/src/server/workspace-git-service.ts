@@ -303,7 +303,7 @@ function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies 
 function resolveWorkspaceGitServiceDeps(
   deps: Partial<WorkspaceGitServiceDependencies> | undefined,
 ): WorkspaceGitServiceDependencies {
-  return { ...buildDefaultWorkspaceGitServiceDeps(), ...(deps ?? {}) };
+  return { ...buildDefaultWorkspaceGitServiceDeps(), ...deps };
 }
 
 export class WorkspaceGitServiceImpl implements WorkspaceGitService {

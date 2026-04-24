@@ -80,7 +80,7 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
     return transport;
   };
 
-  const handleAgentMcpRequest: express.RequestHandler = async (req, res) => {
+  const runAgentMcpRequest = async (req: express.Request, res: express.Response): Promise<void> => {
     try {
       const sessionId = req.header("mcp-session-id");
       let transport = sessionId ? agentMcpTransports.get(sessionId) : undefined;
@@ -118,6 +118,10 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
         });
       }
     }
+  };
+
+  const handleAgentMcpRequest: express.RequestHandler = (req, res) => {
+    void runAgentMcpRequest(req, res);
   };
 
   app.post("/mcp/agents", handleAgentMcpRequest);

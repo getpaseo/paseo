@@ -240,7 +240,7 @@ function buildDefaultServiceDeps() {
 }
 
 function buildServiceDeps(options?: CreateServiceOptions) {
-  return { ...buildDefaultServiceDeps(), ...(options ?? {}) };
+  return { ...buildDefaultServiceDeps(), ...options };
 }
 
 function createService(options?: CreateServiceOptions) {

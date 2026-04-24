@@ -636,8 +636,9 @@ export function LocalDaemonSection() {
           {daemonVersionMismatch ? (
             <View style={styles.warningCard}>
               <Text style={styles.warningText}>
-                App and daemon versions don't match. Update both to the same version for the best
-                experience.
+                {
+                  "App and daemon versions don't match. Update both to the same version for the best experience."
+                }
               </Text>
             </View>
           ) : null}

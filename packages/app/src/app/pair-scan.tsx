@@ -220,7 +220,7 @@ export default function PairScanScreen() {
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>Not available on web</Text>
             <Text style={styles.permissionBody}>
-              QR scanning isn't supported in the web build. Use "Paste link" instead.
+              {`QR scanning isn't supported in the web build. Use "Paste link" instead.`}
             </Text>
             <Pressable style={styles.permissionButton} onPress={closeToSource}>
               <Text style={styles.permissionButtonText}>Back to Settings</Text>
