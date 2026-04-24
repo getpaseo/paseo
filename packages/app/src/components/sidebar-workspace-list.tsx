@@ -2147,6 +2147,7 @@ function ProjectBlock({
 
       setIsRemovingProject(true);
 
+      const isRejected = (r: PromiseSettledResult<unknown>) => r.status === "rejected";
       void Promise.allSettled(
         project.workspaces.map(async (ws) => {
           const payload = await client.archiveWorkspace(ws.workspaceId);
@@ -2155,7 +2156,7 @@ function ProjectBlock({
           }
         }),
       ).then((results) => {
-        const failed = results.filter((r) => r.status === "rejected");
+        const failed = results.filter(isRejected);
         if (failed.length > 0) {
           toast.error("Failed to remove some workspaces");
         }

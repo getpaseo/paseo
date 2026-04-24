@@ -255,8 +255,10 @@ process.exit(1);
   return binDir;
 }
 
+const ANSI_PATTERN = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "g");
+
 function stripAnsi(input: string): string {
-  return input.replace(/\u001b\[[0-9;]*m/g, "");
+  return input.replace(ANSI_PATTERN, "");
 }
 
 function ensureRelayBuildArtifact(repoRoot: string): void {
@@ -497,10 +499,7 @@ export default async function globalSetup() {
           if (Date.now() >= readyDeadline) return false;
           return true;
         }
-        for (;;) {
-          if (!isRelayReadyCheckPending()) break;
-          await sleep(100);
-        }
+        while (isRelayReadyCheckPending()) await sleep(100);
 
         if (relayStartupFailureLine) {
           throw new Error(`Relay startup failed: ${relayStartupFailureLine}`);

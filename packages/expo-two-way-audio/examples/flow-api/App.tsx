@@ -24,6 +24,23 @@ import { useSharedValue } from "react-native-reanimated";
 import { getFlowAPIJwt } from "./auth";
 import VolumeDisplay from "./volume-display";
 
+function resolveFlowStatusText({
+  isConnectedToFlow,
+  isRecording,
+  isConnectingToFlow,
+}: {
+  isConnectedToFlow: boolean;
+  isRecording: boolean;
+  isConnectingToFlow: boolean;
+}): string {
+  if (isConnectedToFlow) {
+    return isRecording
+      ? "I'm ready to listen. Try saying something!"
+      : "Muted. Unmute to start a conversation";
+  }
+  return isConnectingToFlow ? "Connecting..." : "Disconnected";
+}
+
 export default function App() {
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
   console.log(micPermission);
@@ -203,15 +220,7 @@ export function FlowTest() {
         </View>
       </View>
       <View>
-        <Text>
-          {isConnectedToFlow
-            ? isRecording
-              ? "I'm ready to listen. Try saying something!"
-              : "Muted. Unmute to start a conversation"
-            : isConnectingToFlow
-              ? "Connecting..."
-              : "Disconnected"}
-        </Text>
+        <Text>{resolveFlowStatusText({ isConnectedToFlow, isRecording, isConnectingToFlow })}</Text>
       </View>
       <View style={styles.bottomBar}>
         <View style={styles.buttonContainer}>
