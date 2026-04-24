@@ -132,6 +132,37 @@ function measureElement(element: View): Promise<Rect> {
   });
 }
 
+function resolveActualSide(args: {
+  triggerRect: Rect;
+  contentSize: { width: number; height: number };
+  displayArea: Rect;
+  side: Side;
+}): Side {
+  const { triggerRect, contentSize, displayArea, side } = args;
+  const spaceTop = triggerRect.y - displayArea.y;
+  const spaceBottom = displayArea.y + displayArea.height - (triggerRect.y + triggerRect.height);
+  const spaceLeft = triggerRect.x - displayArea.x;
+  const spaceRight = displayArea.x + displayArea.width - (triggerRect.x + triggerRect.width);
+
+  if (side === "bottom" && spaceBottom < contentSize.height && spaceTop > spaceBottom) return "top";
+  if (side === "top" && spaceTop < contentSize.height && spaceBottom > spaceTop) return "bottom";
+  if (side === "left" && spaceLeft < contentSize.width && spaceRight > spaceLeft) return "right";
+  if (side === "right" && spaceRight < contentSize.width && spaceLeft > spaceRight) return "left";
+  return side;
+}
+
+function resolveAlignedCoordinate(args: {
+  align: Align;
+  start: number;
+  size: number;
+  contentSize: number;
+}): number {
+  const { align, start, size, contentSize } = args;
+  if (align === "start") return start;
+  if (align === "end") return start + size - contentSize;
+  return start + (size - contentSize) / 2;
+}
+
 function computePosition({
   triggerRect,
   contentSize,
@@ -148,62 +179,43 @@ function computePosition({
   offset: number;
 }): { x: number; y: number; actualSide: Side } {
   const { width: contentWidth, height: contentHeight } = contentSize;
-
-  const spaceTop = triggerRect.y - displayArea.y;
-  const spaceBottom = displayArea.y + displayArea.height - (triggerRect.y + triggerRect.height);
-  const spaceLeft = triggerRect.x - displayArea.x;
-  const spaceRight = displayArea.x + displayArea.width - (triggerRect.x + triggerRect.width);
-
-  let actualSide = side;
-  if (side === "bottom" && spaceBottom < contentHeight && spaceTop > spaceBottom) {
-    actualSide = "top";
-  } else if (side === "top" && spaceTop < contentHeight && spaceBottom > spaceTop) {
-    actualSide = "bottom";
-  } else if (side === "left" && spaceLeft < contentWidth && spaceRight > spaceLeft) {
-    actualSide = "right";
-  } else if (side === "right" && spaceRight < contentWidth && spaceLeft > spaceRight) {
-    actualSide = "left";
-  }
+  const actualSide = resolveActualSide({ triggerRect, contentSize, displayArea, side });
 
   let x = 0;
   let y = 0;
 
   if (actualSide === "bottom") {
     y = triggerRect.y + triggerRect.height + offset;
-    if (align === "start") {
-      x = triggerRect.x;
-    } else if (align === "end") {
-      x = triggerRect.x + triggerRect.width - contentWidth;
-    } else {
-      x = triggerRect.x + (triggerRect.width - contentWidth) / 2;
-    }
+    x = resolveAlignedCoordinate({
+      align,
+      start: triggerRect.x,
+      size: triggerRect.width,
+      contentSize: contentWidth,
+    });
   } else if (actualSide === "top") {
     y = triggerRect.y - contentHeight - offset;
-    if (align === "start") {
-      x = triggerRect.x;
-    } else if (align === "end") {
-      x = triggerRect.x + triggerRect.width - contentWidth;
-    } else {
-      x = triggerRect.x + (triggerRect.width - contentWidth) / 2;
-    }
+    x = resolveAlignedCoordinate({
+      align,
+      start: triggerRect.x,
+      size: triggerRect.width,
+      contentSize: contentWidth,
+    });
   } else if (actualSide === "left") {
     x = triggerRect.x - contentWidth - offset;
-    if (align === "start") {
-      y = triggerRect.y;
-    } else if (align === "end") {
-      y = triggerRect.y + triggerRect.height - contentHeight;
-    } else {
-      y = triggerRect.y + (triggerRect.height - contentHeight) / 2;
-    }
+    y = resolveAlignedCoordinate({
+      align,
+      start: triggerRect.y,
+      size: triggerRect.height,
+      contentSize: contentHeight,
+    });
   } else {
     x = triggerRect.x + triggerRect.width + offset;
-    if (align === "start") {
-      y = triggerRect.y;
-    } else if (align === "end") {
-      y = triggerRect.y + triggerRect.height - contentHeight;
-    } else {
-      y = triggerRect.y + (triggerRect.height - contentHeight) / 2;
-    }
+    y = resolveAlignedCoordinate({
+      align,
+      start: triggerRect.y,
+      size: triggerRect.height,
+      contentSize: contentHeight,
+    });
   }
 
   const padding = 8;

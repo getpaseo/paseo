@@ -211,6 +211,23 @@ interface ScriptRowProps {
   onViewTerminal?: (terminalId: string) => void;
 }
 
+function resolveScriptIconColor(args: {
+  theme: ReturnType<typeof useUnistyles>["theme"];
+  script: WorkspaceDescriptor["scripts"][number];
+  isService: boolean;
+  isRunning: boolean;
+}): string {
+  const { theme, script, isService, isRunning } = args;
+  if (isService) {
+    if (isRunning && script.health === "healthy") return theme.colors.palette.green[500];
+    if (isRunning && script.health === "unhealthy") return theme.colors.palette.red[500];
+    if (isRunning) return theme.colors.palette.blue[500];
+    return theme.colors.foregroundMuted;
+  }
+  if (isRunning) return theme.colors.palette.blue[500];
+  return theme.colors.foregroundMuted;
+}
+
 function ScriptRow({
   script,
   liveTerminalIdSet,
@@ -251,18 +268,7 @@ function ScriptRow({
     }
   }
 
-  let iconColor = theme.colors.foregroundMuted;
-  if (isService) {
-    if (isRunning && script.health === "healthy") {
-      iconColor = theme.colors.palette.green[500];
-    } else if (isRunning && script.health === "unhealthy") {
-      iconColor = theme.colors.palette.red[500];
-    } else if (isRunning) {
-      iconColor = theme.colors.palette.blue[500];
-    }
-  } else if (isRunning) {
-    iconColor = theme.colors.palette.blue[500];
-  }
+  const iconColor = resolveScriptIconColor({ theme, script, isService, isRunning });
 
   const ScriptIcon = isService ? Globe : SquareTerminal;
   const showExitBadge = !isRunning && exitCode !== null;
