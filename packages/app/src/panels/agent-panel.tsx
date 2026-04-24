@@ -769,14 +769,7 @@ function ChatAgentContent({
 
   const agent = useMemo<AgentScreenAgent | null>(
     () => buildChatAgentFromState(agentState, projectPlacement),
-    [
-      agentState.serverId,
-      agentState.id,
-      agentState.status,
-      agentState.cwd,
-      agentState.lastError,
-      projectPlacement,
-    ],
+    [agentState, projectPlacement],
   );
 
   const placeholderAgent: AgentScreenAgent | null = useMemo(() => {
