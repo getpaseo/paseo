@@ -1076,21 +1076,17 @@ export class Session {
       "interruptAgentIfRunning: interrupting",
     );
 
-    try {
-      const t0 = Date.now();
-      const cancelled = await this.agentManager.cancelAgentRun(agentId);
-      this.sessionLogger.debug(
-        { agentId, cancelled, durationMs: Date.now() - t0 },
-        "interruptAgentIfRunning: cancelAgentRun completed",
+    const t0 = Date.now();
+    const cancelled = await this.agentManager.cancelAgentRun(agentId);
+    this.sessionLogger.debug(
+      { agentId, cancelled, durationMs: Date.now() - t0 },
+      "interruptAgentIfRunning: cancelAgentRun completed",
+    );
+    if (!cancelled) {
+      this.sessionLogger.warn(
+        { agentId },
+        "interruptAgentIfRunning: reported running but no active run was cancelled",
       );
-      if (!cancelled) {
-        this.sessionLogger.warn(
-          { agentId },
-          "interruptAgentIfRunning: reported running but no active run was cancelled",
-        );
-      }
-    } catch (error) {
-      throw error;
     }
   }
 
@@ -8331,7 +8327,7 @@ export class Session {
   ): Promise<void> {
     try {
       const authorAgentId = request.authorAgentId?.trim() || this.clientId;
-      const message = await this.chatService.postMessage({
+      const message = await this.chatService.dispatchMessage({
         room: request.room,
         authorAgentId,
         body: request.body,

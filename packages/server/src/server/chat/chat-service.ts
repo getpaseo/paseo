@@ -176,7 +176,7 @@ export class FileBackedChatService {
     return { room: detail };
   }
 
-  async postMessage(input: PostChatMessageInput): Promise<ChatMessage> {
+  async dispatchMessage(input: PostChatMessageInput): Promise<ChatMessage> {
     await this.load();
     const room = this.resolveRoom(input.room);
     const body = input.body.trim();
