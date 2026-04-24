@@ -89,6 +89,153 @@ export interface ProcessTimelineResponseOutput {
   sideEffects: TimelineReducerSideEffect[];
 }
 
+interface TimelineUnit {
+  seq: number;
+  seqEnd: number;
+  event: AgentStreamEventPayload;
+  timestamp: Date;
+}
+
+interface TimelinePathResult {
+  tail: StreamItem[];
+  head: StreamItem[];
+  cursor: TimelineCursor | null | undefined;
+  cursorChanged: boolean;
+  sideEffects: TimelineReducerSideEffect[];
+}
+
+function applyTimelineReplacePath(args: {
+  timelineUnits: TimelineUnit[];
+  payload: ProcessTimelineResponseInput["payload"];
+  bootstrapPolicy: ReturnType<typeof deriveBootstrapTailTimelinePolicy>;
+  toHydratedEvents: (
+    units: TimelineUnit[],
+  ) => Array<{ event: AgentStreamEventPayload; timestamp: Date }>;
+}): TimelinePathResult {
+  const { timelineUnits, payload, bootstrapPolicy, toHydratedEvents } = args;
+  const tail = hydrateStreamState(toHydratedEvents(timelineUnits), { source: "canonical" });
+  const cursor: TimelineCursor | null =
+    payload.startCursor && payload.endCursor
+      ? {
+          epoch: payload.epoch,
+          startSeq: payload.startCursor.seq,
+          endSeq: payload.endCursor.seq,
+        }
+      : null;
+  const sideEffects: TimelineReducerSideEffect[] = [];
+  if (bootstrapPolicy.catchUpCursor) {
+    sideEffects.push({ type: "catch_up", cursor: bootstrapPolicy.catchUpCursor });
+  }
+  return { tail, head: [], cursor, cursorChanged: true, sideEffects };
+}
+
+interface IncrementalAcceptResult {
+  acceptedUnits: TimelineUnit[];
+  cursor: TimelineCursor | undefined;
+  gapCursor: { epoch: string; endSeq: number } | null;
+}
+
+function acceptIncrementalTimelineUnits(args: {
+  timelineUnits: TimelineUnit[];
+  payload: ProcessTimelineResponseInput["payload"];
+  currentCursor: TimelineCursor | undefined;
+}): IncrementalAcceptResult {
+  const { timelineUnits, payload, currentCursor } = args;
+  const acceptedUnits: TimelineUnit[] = [];
+  let cursor: TimelineCursor | undefined = currentCursor;
+  let gapCursor: { epoch: string; endSeq: number } | null = null;
+
+  for (const unit of timelineUnits) {
+    const decision: SessionTimelineSeqDecision = classifySessionTimelineSeq({
+      cursor: cursor ? { epoch: cursor.epoch, endSeq: cursor.endSeq } : null,
+      epoch: payload.epoch,
+      seq: unit.seq,
+    });
+
+    if (decision === "gap") {
+      gapCursor = cursor ? { epoch: cursor.epoch, endSeq: cursor.endSeq } : null;
+      break;
+    }
+    if (decision === "drop_stale") {
+      if (cursor && unit.seqEnd > cursor.endSeq) {
+        gapCursor = { epoch: cursor.epoch, endSeq: cursor.endSeq };
+        break;
+      }
+      continue;
+    }
+    if (decision === "drop_epoch") {
+      continue;
+    }
+
+    acceptedUnits.push(unit);
+    if (decision === "init") {
+      cursor = { epoch: payload.epoch, startSeq: unit.seq, endSeq: unit.seqEnd };
+      continue;
+    }
+    if (!cursor) {
+      continue;
+    }
+    cursor = { ...cursor, endSeq: unit.seqEnd };
+  }
+
+  return { acceptedUnits, cursor, gapCursor };
+}
+
+function applyTimelineIncrementalPath(args: {
+  timelineUnits: TimelineUnit[];
+  payload: ProcessTimelineResponseInput["payload"];
+  currentTail: StreamItem[];
+  currentHead: StreamItem[];
+  currentCursor: TimelineCursor | undefined;
+}): TimelinePathResult {
+  const { timelineUnits, payload, currentTail, currentHead, currentCursor } = args;
+  let nextTail = currentTail;
+  let nextHead = currentHead;
+  let nextCursor: TimelineCursor | null | undefined = currentCursor;
+  let cursorChanged = false;
+  const sideEffects: TimelineReducerSideEffect[] = [];
+
+  if (timelineUnits.length === 0) {
+    return { tail: nextTail, head: nextHead, cursor: nextCursor, cursorChanged, sideEffects };
+  }
+
+  const { acceptedUnits, cursor, gapCursor } = acceptIncrementalTimelineUnits({
+    timelineUnits,
+    payload,
+    currentCursor,
+  });
+
+  if (acceptedUnits.length > 0) {
+    const baseTail =
+      currentHead.length > 0 ? flushHeadToTail(currentTail, currentHead) : currentTail;
+    if (currentHead.length > 0) {
+      nextHead = [];
+    }
+    nextTail = acceptedUnits.reduce<StreamItem[]>(
+      (state, { event, timestamp }) =>
+        reduceStreamUpdate(state, event, timestamp, { source: "canonical" }),
+      baseTail,
+    );
+  }
+
+  if (
+    cursor &&
+    (!currentCursor ||
+      currentCursor.epoch !== cursor.epoch ||
+      currentCursor.startSeq !== cursor.startSeq ||
+      currentCursor.endSeq !== cursor.endSeq)
+  ) {
+    nextCursor = cursor;
+    cursorChanged = true;
+  }
+
+  if (gapCursor) {
+    sideEffects.push({ type: "catch_up", cursor: gapCursor });
+  }
+
+  return { tail: nextTail, head: nextHead, cursor: nextCursor, cursorChanged, sideEffects };
+}
+
 export function processTimelineResponse(
   input: ProcessTimelineResponseInput,
 ): ProcessTimelineResponseOutput {
@@ -150,124 +297,27 @@ export function processTimelineResponse(
   });
   const replace = bootstrapPolicy.replace;
 
-  let nextTail = currentTail;
-  let nextHead = currentHead;
-  let nextCursor: TimelineCursor | null | undefined = currentCursor;
-  let cursorChanged = false;
   const sideEffects: TimelineReducerSideEffect[] = [];
-
-  if (replace) {
-    // ----------------------------------------------------------------
-    // Replace path: full hydration from scratch
-    // ----------------------------------------------------------------
-    nextTail = hydrateStreamState(toHydratedEvents(timelineUnits), {
-      source: "canonical",
-    });
-    nextHead = [];
-
-    if (payload.startCursor && payload.endCursor) {
-      nextCursor = {
-        epoch: payload.epoch,
-        startSeq: payload.startCursor.seq,
-        endSeq: payload.endCursor.seq,
-      };
-      cursorChanged = true;
-    } else {
-      nextCursor = null;
-      cursorChanged = true;
-    }
-
-    if (bootstrapPolicy.catchUpCursor) {
-      sideEffects.push({
-        type: "catch_up",
-        cursor: bootstrapPolicy.catchUpCursor,
-      });
-    }
-  } else if (timelineUnits.length > 0) {
-    // ----------------------------------------------------------------
-    // Incremental append path
-    // ----------------------------------------------------------------
-    const acceptedUnits: typeof timelineUnits = [];
-    let cursor = currentCursor;
-    let gapCursor: { epoch: string; endSeq: number } | null = null;
-
-    for (const unit of timelineUnits) {
-      const decision: SessionTimelineSeqDecision = classifySessionTimelineSeq({
-        cursor: cursor ? { epoch: cursor.epoch, endSeq: cursor.endSeq } : null,
-        epoch: payload.epoch,
-        seq: unit.seq,
+  const timelineResult = replace
+    ? applyTimelineReplacePath({
+        timelineUnits,
+        payload,
+        bootstrapPolicy,
+        toHydratedEvents,
+      })
+    : applyTimelineIncrementalPath({
+        timelineUnits,
+        payload,
+        currentTail,
+        currentHead,
+        currentCursor,
       });
 
-      if (decision === "gap") {
-        gapCursor = cursor ? { epoch: cursor.epoch, endSeq: cursor.endSeq } : null;
-        break;
-      }
-      if (decision === "drop_stale") {
-        if (cursor && unit.seqEnd > cursor.endSeq) {
-          gapCursor = { epoch: cursor.epoch, endSeq: cursor.endSeq };
-          break;
-        }
-        continue;
-      }
-      if (decision === "drop_epoch") {
-        continue;
-      }
-
-      acceptedUnits.push(unit);
-      if (decision === "init") {
-        cursor = {
-          epoch: payload.epoch,
-          startSeq: unit.seq,
-          endSeq: unit.seqEnd,
-        };
-        continue;
-      }
-      if (!cursor) {
-        continue;
-      }
-      cursor = {
-        ...cursor,
-        endSeq: unit.seqEnd,
-      };
-    }
-
-    if (acceptedUnits.length > 0) {
-      // Flush head to tail before appending canonical entries so that
-      // chronological ordering is preserved.  This matters on mobile where
-      // the server drops live events for backgrounded/unfocused agents:
-      // when the client catches up, the head may still hold stale live
-      // items from before the gap that must be committed ahead of the
-      // canonical gap-fill entries.
-      const baseTail =
-        currentHead.length > 0 ? flushHeadToTail(currentTail, currentHead) : currentTail;
-      if (currentHead.length > 0) {
-        nextHead = [];
-      }
-
-      nextTail = acceptedUnits.reduce<StreamItem[]>(
-        (state, { event, timestamp }) =>
-          reduceStreamUpdate(state, event, timestamp, {
-            source: "canonical",
-          }),
-        baseTail,
-      );
-    }
-
-    if (
-      cursor &&
-      (!currentCursor ||
-        currentCursor.epoch !== cursor.epoch ||
-        currentCursor.startSeq !== cursor.startSeq ||
-        currentCursor.endSeq !== cursor.endSeq)
-    ) {
-      nextCursor = cursor;
-      cursorChanged = true;
-    }
-
-    if (gapCursor) {
-      sideEffects.push({ type: "catch_up", cursor: gapCursor });
-    }
-  }
+  const nextTail = timelineResult.tail;
+  const nextHead = timelineResult.head;
+  const nextCursor = timelineResult.cursor;
+  const cursorChanged = timelineResult.cursorChanged;
+  sideEffects.push(...timelineResult.sideEffects);
 
   // ------------------------------------------------------------------
   // Flush pending agent updates side effect
