@@ -13,8 +13,6 @@ vi.mock("./sherpa-onnx-node-loader.js", () => ({
     OfflineTts: class {
       public readonly sampleRate = 24000;
 
-      constructor(_config: unknown) {}
-
       generate = generate;
       free = free;
     },

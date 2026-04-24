@@ -466,8 +466,15 @@ function extractLastOutputLines(terminal: TerminalType, limit: number): string[]
   return mergedLines.slice(-limit);
 }
 
+const ESC = String.fromCharCode(0x1b);
+const BEL = String.fromCharCode(0x07);
+const ANSI_SEQUENCE_PATTERN = new RegExp(
+  `${ESC}(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~]|\\].*?(?:${BEL}|${ESC}\\\\))`,
+  "g",
+);
+
 function stripAnsiSequences(input: string): string {
-  return input.replace(/\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\].*?(?:\x07|\x1b\\))/g, "");
+  return input.replace(ANSI_SEQUENCE_PATTERN, "");
 }
 
 function extractLastOutputLinesFromText(text: string, limit: number): string[] {

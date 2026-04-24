@@ -515,7 +515,7 @@ export class ACPAgentClient implements AgentClient {
 
       const sessions: PersistedAgentDescriptor[] = [];
       let cursor: string | null | undefined;
-      do {
+      for (;;) {
         const page: ListSessionsResponse = await probe.connection.listSessions(
           cursor ? { cursor } : {},
         );
@@ -540,7 +540,9 @@ export class ACPAgentClient implements AgentClient {
           });
         }
         cursor = page.nextCursor ?? null;
-      } while (cursor && (!options?.limit || sessions.length < options.limit));
+        if (!cursor) break;
+        if (options?.limit && sessions.length >= options.limit) break;
+      }
 
       return typeof options?.limit === "number" ? sessions.slice(0, options.limit) : sessions;
     } finally {

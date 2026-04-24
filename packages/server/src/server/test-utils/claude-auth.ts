@@ -34,7 +34,7 @@ export function seedClaudeAuth(targetDir: string): void {
     credentials.apiKey = apiKeyEnv;
   }
 
-  const credsFilename = ".credentials" + ".json"; // Avoid literal pattern match
+  const credsFilename = ".credentials.json";
   const credentialsPath = path.join(targetDir, credsFilename);
   writeFileSync(credentialsPath, JSON.stringify(credentials, null, 2), "utf8");
 }

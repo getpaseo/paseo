@@ -81,7 +81,7 @@ const wsMock = vi.hoisted(() => {
 
     private emit(event: string, ...args: unknown[]) {
       const handlers = this.listeners.get(event) ?? [];
-      for (const handler of [...handlers]) {
+      for (const handler of handlers.slice()) {
         handler(...args);
       }
     }

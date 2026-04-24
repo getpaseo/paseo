@@ -21,13 +21,14 @@ import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 describe("GenericACPAgentClient", () => {
   test("passes the custom command only as defaultCommand", () => {
-    new GenericACPAgentClient({
+    const _client = new GenericACPAgentClient({
       logger: createTestLogger(),
       command: ["hermes", "acp"],
       env: {
         HERMES_LOG: "info",
       },
     });
+    void _client;
 
     expect(mockState.superConstructorOptions).toEqual([
       {

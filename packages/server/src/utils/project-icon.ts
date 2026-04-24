@@ -336,12 +336,12 @@ export async function findProjectIcon(
       const packageResults = await Promise.all(
         packagePaths.map(async (packagePath, idx): Promise<string | null> => {
           if (!isDirResults[idx]) return null;
-          const priorityResult = await searchPriorityDirs(
+          const packagePriorityResult = await searchPriorityDirs(
             packagePath,
             ignoredDirsSet,
             maxDepth - 1,
           );
-          if (priorityResult) return priorityResult;
+          if (packagePriorityResult) return packagePriorityResult;
           return await findIconInDir(packagePath, ICON_PATTERNS);
         }),
       );

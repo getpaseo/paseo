@@ -928,21 +928,23 @@ test("reconnects after relay close with replaced-by-new-connection reason", asyn
 
 test("requires non-empty clientId", () => {
   expect(() => {
-    new DaemonClient({
+    const _client = new DaemonClient({
       url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
       clientId: "",
       reconnect: { enabled: false },
     });
+    void _client;
   }).toThrow("Daemon client requires a non-empty clientId");
 });
 
 test("requires non-empty clientId for direct connections", () => {
   expect(() => {
-    new DaemonClient({
+    const _client = new DaemonClient({
       url: "ws://127.0.0.1:6767/ws",
       clientId: "   ",
       reconnect: { enabled: false },
     });
+    void _client;
   }).toThrow("Daemon client requires a non-empty clientId");
 });
 

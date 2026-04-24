@@ -381,7 +381,7 @@ describe("ClaudeAgentSession context window usage", () => {
       const queuedMessages: Array<Record<string, unknown>> = [];
       const waiters: Array<() => void> = [];
       let turnIndex = 0;
-      let closed = false;
+      const closedRef = { value: false };
 
       function wakeNextWaiter() {
         const waiter = waiters.shift();
@@ -401,13 +401,13 @@ describe("ClaudeAgentSession context window usage", () => {
             enqueue(message);
           }
         }
-        closed = true;
+        closedRef.value = true;
         wakeNextWaiter();
       })();
 
       return {
         next: vi.fn(async () => {
-          while (queuedMessages.length === 0 && !closed) {
+          while (queuedMessages.length === 0 && !closedRef.value) {
             await new Promise<void>((resolve) => {
               waiters.push(resolve);
             });
@@ -419,12 +419,12 @@ describe("ClaudeAgentSession context window usage", () => {
         }),
         interrupt: vi.fn(async () => undefined),
         return: vi.fn(async () => {
-          closed = true;
+          closedRef.value = true;
           wakeNextWaiter();
           return undefined;
         }),
         close: vi.fn(() => {
-          closed = true;
+          closedRef.value = true;
           wakeNextWaiter();
         }),
         setPermissionMode: vi.fn(async () => undefined),

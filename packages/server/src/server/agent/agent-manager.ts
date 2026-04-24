@@ -1272,11 +1272,10 @@ export class AgentManager {
     agent.pendingReplacement = false;
     agent.lastError = undefined;
 
-    const self = this;
-    const pendingRun = self.createPendingForegroundRun();
-    self.pendingForegroundRuns.set(agentId, pendingRun);
+    const pendingRun = this.createPendingForegroundRun();
+    this.pendingForegroundRuns.set(agentId, pendingRun);
 
-    const streamForwarder = (async function* streamForwarder() {
+    const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string;
       let waiter: ForegroundTurnWaiter | null = null;
       try {
@@ -1284,21 +1283,21 @@ export class AgentManager {
         turnId = result.turnId;
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
-        self.handleStreamEvent(agent, {
+        this.handleStreamEvent(agent, {
           type: "turn_failed",
           provider: agent.provider,
           error: errorMsg,
         });
-        self.finalizeForegroundTurn(agent);
+        this.finalizeForegroundTurn(agent);
         throw error;
       }
 
       pendingRun.started = true;
       agent.activeForegroundTurnId = turnId;
       agent.lifecycle = "running";
-      self.touchUpdatedAt(agent);
-      self.emitState(agent);
-      self.logger.trace(
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+      this.logger.trace(
         {
           agentId,
           lifecycle: agent.lifecycle,
@@ -1353,14 +1352,14 @@ export class AgentManager {
       } finally {
         if (waiter) {
           agent.foregroundTurnWaiters.delete(waiter);
-          self.settleForegroundTurnWaiter(waiter);
+          this.settleForegroundTurnWaiter(waiter);
         }
-        self.settlePendingForegroundRun(agentId, pendingRun.token);
+        this.settlePendingForegroundRun(agentId, pendingRun.token);
         if (!agent.activeForegroundTurnId) {
-          await self.refreshRuntimeInfo(agent);
+          await this.refreshRuntimeInfo(agent);
         }
       }
-    })();
+    }.call(this);
 
     return streamForwarder;
   }
@@ -1425,28 +1424,27 @@ export class AgentManager {
     this.touchUpdatedAt(agent);
     this.emitState(agent);
 
-    const self = this;
-    return (async function* replaceRunForwarder() {
+    return async function* replaceRunForwarder(this: AgentManager) {
       try {
-        await self.cancelAgentRun(agentId);
-        const nextRun = self.streamAgent(agentId, prompt, options);
+        await this.cancelAgentRun(agentId);
+        const nextRun = this.streamAgent(agentId, prompt, options);
         for await (const event of nextRun) {
           yield event;
         }
       } catch (error) {
-        const latest = self.agents.get(agentId);
+        const latest = this.agents.get(agentId);
         if (latest) {
           const latestActive = latest as ActiveManagedAgent;
           latestActive.pendingReplacement = false;
           if (!latestActive.activeForegroundTurnId && latestActive.lifecycle === "running") {
             (latestActive as ActiveManagedAgent).lifecycle = "idle";
-            self.touchUpdatedAt(latestActive);
-            self.emitState(latestActive);
+            this.touchUpdatedAt(latestActive);
+            this.emitState(latestActive);
           }
         }
         throw error;
       }
-    })();
+    }.call(this);
   }
 
   async waitForAgentRunStart(agentId: string, options?: WaitForAgentStartOptions): Promise<void> {

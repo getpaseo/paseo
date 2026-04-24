@@ -133,7 +133,7 @@ class NonPersistentReloadSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    return;
+    yield* [];
   }
 
   async getRuntimeInfo() {

@@ -14,8 +14,6 @@ const wsModuleMock = vi.hoisted(() => {
   class MockWebSocketServer {
     readonly handlers = new Map<string, (...args: unknown[]) => void>();
 
-    constructor(_options: unknown) {}
-
     on(event: string, handler: (...args: unknown[]) => void) {
       this.handlers.set(event, handler);
       return this;

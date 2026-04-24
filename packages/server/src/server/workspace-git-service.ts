@@ -755,28 +755,24 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private async setupWorkspaceObservation(target: WorkspaceGitTarget): Promise<void> {
-    try {
-      const gitDir = await this.deps.resolveAbsoluteGitDir(target.cwd);
-      if (!this.isActiveObservedWorkspaceTarget(target)) {
-        return;
-      }
-      if (!gitDir) {
-        target.observationSetupComplete = true;
-        return;
-      }
+    const gitDir = await this.deps.resolveAbsoluteGitDir(target.cwd);
+    if (!this.isActiveObservedWorkspaceTarget(target)) {
+      return;
+    }
+    if (!gitDir) {
+      target.observationSetupComplete = true;
+      return;
+    }
 
-      const repoGitRoot = await this.resolveWorkspaceGitRefsRoot(gitDir);
-      if (!this.isActiveObservedWorkspaceTarget(target)) {
-        return;
-      }
-      target.repoGitRoot = repoGitRoot;
-      this.startWorkspaceWatchers(target, gitDir, repoGitRoot);
-      await this.ensureRepoTarget(target);
-      if (this.isActiveObservedWorkspaceTarget(target)) {
-        target.observationSetupComplete = true;
-      }
-    } catch (error) {
-      throw error;
+    const repoGitRoot = await this.resolveWorkspaceGitRefsRoot(gitDir);
+    if (!this.isActiveObservedWorkspaceTarget(target)) {
+      return;
+    }
+    target.repoGitRoot = repoGitRoot;
+    this.startWorkspaceWatchers(target, gitDir, repoGitRoot);
+    await this.ensureRepoTarget(target);
+    if (this.isActiveObservedWorkspaceTarget(target)) {
+      target.observationSetupComplete = true;
     }
   }
 
