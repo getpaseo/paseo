@@ -24,6 +24,10 @@ interface SessionTestAccess {
     get(id: string): Promise<unknown>;
     upsert(record: unknown): Promise<unknown>;
   };
+  agentStorage: {
+    list(...args: unknown[]): Promise<unknown[]>;
+    get(agentId: string): Promise<unknown>;
+  };
   workspaceRegistry: {
     list(...args: unknown[]): Promise<unknown[]>;
     archive(workspaceId: string, archivedAt: string): Promise<void>;
@@ -289,6 +293,9 @@ function createSessionForWorkspaceTests(
         archive: async () => {},
         remove: async () => {},
       } as unknown as SessionOptions["workspaceRegistry"],
+      chatService: {} as unknown as SessionOptions["chatService"],
+      scheduleService: {} as unknown as SessionOptions["scheduleService"],
+      loopService: {} as unknown as SessionOptions["loopService"],
       checkoutDiffManager: {
         subscribe: async () => ({
           initial: { cwd: "/tmp", files: [], error: null },
@@ -304,6 +311,10 @@ function createSessionForWorkspaceTests(
         dispose: () => {},
       } as unknown as SessionOptions["checkoutDiffManager"],
       workspaceGitService: options.workspaceGitService ?? createNoopWorkspaceGitService(),
+      daemonConfigStore: {
+        get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+        onChange: () => () => {},
+      } as unknown as SessionOptions["daemonConfigStore"],
       mcpBaseUrl: null,
       stt: null,
       tts: null,
@@ -312,6 +323,63 @@ function createSessionForWorkspaceTests(
   );
   return session;
 }
+
+test("unsupported persisted agents are excluded from active lists but preserved in history payloads", async () => {
+  const session = createSessionForWorkspaceTests({ appVersion: "0.1.45" });
+  const storedRecord = {
+    id: "agent-unsupported",
+    provider: "gemini",
+    cwd: "/tmp/history",
+    createdAt: "2026-04-13T10:13:11.457Z",
+    updatedAt: "2026-04-13T10:16:06.556Z",
+    lastActivityAt: "2026-04-13T10:16:06.556Z",
+    lastUserMessageAt: "2026-04-13T10:13:11.911Z",
+    title: "Interactive Session",
+    labels: {},
+    lastStatus: "closed",
+    lastModeId: "default",
+    config: {
+      title: "hello",
+      modeId: "default",
+      model: "gemini-2.5-flash",
+    },
+    runtimeInfo: {
+      provider: "gemini",
+      sessionId: "61c738df-7ba4-49c2-a8fd-07c1395ad1c7",
+      model: "gemini-2.5-flash",
+      modeId: "default",
+    },
+    persistence: {
+      provider: "gemini",
+      sessionId: "61c738df-7ba4-49c2-a8fd-07c1395ad1c7",
+    },
+    archivedAt: "2026-04-13T10:16:06.514Z",
+  };
+
+  session.agentStorage.list = async () => [storedRecord];
+  session.agentStorage.get = async (agentId: string) =>
+    agentId === storedRecord.id ? storedRecord : null;
+
+  await expect(session.listAgentPayloads()).resolves.toEqual([]);
+
+  await expect(session.listAgentPayloads({ includeUnavailablePersisted: true })).resolves.toEqual([
+    expect.objectContaining({
+      id: "agent-unsupported",
+      provider: "gemini",
+      providerUnavailable: true,
+      persistence: null,
+    }),
+  ]);
+
+  await expect(session.getAgentPayloadById("agent-unsupported")).resolves.toEqual(
+    expect.objectContaining({
+      id: "agent-unsupported",
+      provider: "gemini",
+      providerUnavailable: true,
+      persistence: null,
+    }),
+  );
+});
 
 test("workspace reconciliation reports archived workspaces to subscribed clients", async () => {
   const missingCwd = path.join(tmpdir(), `paseo-missing-workspace-${Date.now()}`);
@@ -601,6 +669,10 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
         dispose: () => {},
       } as unknown as SessionOptions["checkoutDiffManager"],
       workspaceGitService: createNoopWorkspaceGitService(),
+      daemonConfigStore: {
+        get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+        onChange: () => () => {},
+      } as unknown as SessionOptions["daemonConfigStore"],
       mcpBaseUrl: null,
       stt: null,
       tts: null,
@@ -755,6 +827,10 @@ test("close_items_request archives agents and kills terminals in one batch", asy
         dispose: () => {},
       } as unknown as SessionOptions["checkoutDiffManager"],
       workspaceGitService: createNoopWorkspaceGitService(),
+      daemonConfigStore: {
+        get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+        onChange: () => () => {},
+      } as unknown as SessionOptions["daemonConfigStore"],
       mcpBaseUrl: null,
       stt: null,
       tts: null,
@@ -936,6 +1012,10 @@ test("close_items_request archives stored agents that are not currently loaded",
         dispose: () => {},
       } as unknown as SessionOptions["checkoutDiffManager"],
       workspaceGitService: createNoopWorkspaceGitService(),
+      daemonConfigStore: {
+        get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+        onChange: () => () => {},
+      } as unknown as SessionOptions["daemonConfigStore"],
       mcpBaseUrl: null,
       stt: null,
       tts: null,
