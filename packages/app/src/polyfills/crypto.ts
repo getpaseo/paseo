@@ -29,9 +29,6 @@ export function polyfillCrypto(): void {
 
   if (typeof g.TextDecoder !== "function") {
     class BufferTextDecoder {
-      constructor(_label?: string, _options?: unknown) {
-        // no-op
-      }
       decode(input?: ArrayBuffer | ArrayBufferView): string {
         if (input == null) return "";
         if (input instanceof ArrayBuffer) {

@@ -188,6 +188,36 @@ function useMiddleClickClose(onClose: () => void) {
   return ref;
 }
 
+function TabHandleContent({
+  presentation,
+  isHighlighted,
+  showLabel,
+  tabLabelSkeletonStyle,
+  tabLabelStyle,
+}: {
+  presentation: WorkspaceTabPresentation;
+  isHighlighted: boolean;
+  showLabel: boolean;
+  tabLabelSkeletonStyle: React.ComponentProps<typeof View>["style"];
+  tabLabelStyle: React.ComponentProps<typeof Text>["style"];
+}) {
+  return (
+    <View style={styles.tabHandle}>
+      <View style={styles.tabIcon}>
+        <WorkspaceTabIcon presentation={presentation} active={isHighlighted} />
+      </View>
+      {showLabel && presentation.titleState === "loading" ? (
+        <View style={tabLabelSkeletonStyle} />
+      ) : null}
+      {showLabel && presentation.titleState !== "loading" ? (
+        <Text style={tabLabelStyle} selectable={false} numberOfLines={1} ellipsizeMode="tail">
+          {presentation.label}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function TabChip({
   tab,
   isActive,
@@ -341,24 +371,13 @@ function TabChip({
               aria-selected={isActive}
             >
               {isActive && <View style={tabFocusIndicatorStyle} />}
-              <View style={styles.tabHandle}>
-                <View style={styles.tabIcon}>
-                  <WorkspaceTabIcon presentation={presentation} active={isHighlighted} />
-                </View>
-                {showLabel && presentation.titleState === "loading" ? (
-                  <View style={tabLabelSkeletonStyle} />
-                ) : null}
-                {showLabel && presentation.titleState !== "loading" ? (
-                  <Text
-                    style={tabLabelStyle}
-                    selectable={false}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    {presentation.label}
-                  </Text>
-                ) : null}
-              </View>
+              <TabHandleContent
+                presentation={presentation}
+                isHighlighted={isHighlighted}
+                showLabel={showLabel}
+                tabLabelSkeletonStyle={tabLabelSkeletonStyle}
+                tabLabelStyle={tabLabelStyle}
+              />
 
               {showCloseButton ? (
                 <Pressable

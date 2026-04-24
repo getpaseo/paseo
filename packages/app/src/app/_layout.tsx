@@ -104,22 +104,6 @@ export interface HostRuntimeBootstrapState {
   retry: () => void;
 }
 
-function getRouteParamValue(value: string | string[] | undefined): string | undefined {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-  if (Array.isArray(value)) {
-    const firstValue = value[0];
-    if (typeof firstValue !== "string") {
-      return undefined;
-    }
-    const trimmed = firstValue.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-  return undefined;
-}
-
 const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   phase: "starting-daemon",
   error: null,
@@ -903,6 +887,44 @@ function NavigationActiveWorkspaceObserver() {
   return null;
 }
 
+function AppShell() {
+  return (
+    <SidebarAnimationProvider>
+      <HorizontalScrollProvider>
+        <OpenProjectListener />
+        <AppWithSidebar>
+          <RootStack />
+        </AppWithSidebar>
+      </HorizontalScrollProvider>
+    </SidebarAnimationProvider>
+  );
+}
+
+function RuntimeProviders({ children }: { children: ReactNode }) {
+  return (
+    <HostRuntimeBootstrapProvider>
+      <PushNotificationRouter />
+      <SidebarCalloutProvider>
+        <ToastProvider>
+          <ProvidersWrapper>{children}</ProvidersWrapper>
+        </ToastProvider>
+      </SidebarCalloutProvider>
+    </HostRuntimeBootstrapProvider>
+  );
+}
+
+function RootProviders({ children }: { children: ReactNode }) {
+  return (
+    <PortalProvider>
+      <SafeAreaProvider>
+        <KeyboardProvider>
+          <QueryProvider>{children}</QueryProvider>
+        </KeyboardProvider>
+      </SafeAreaProvider>
+    </PortalProvider>
+  );
+}
+
 export default function RootLayout() {
   const { theme } = useUnistyles();
   const gestureRootStyle = useMemo(
@@ -913,31 +935,11 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={gestureRootStyle}>
       <NavigationActiveWorkspaceObserver />
-      <PortalProvider>
-        <SafeAreaProvider>
-          <KeyboardProvider>
-            <QueryProvider>
-              <HostRuntimeBootstrapProvider>
-                <PushNotificationRouter />
-                <SidebarCalloutProvider>
-                  <ToastProvider>
-                    <ProvidersWrapper>
-                      <SidebarAnimationProvider>
-                        <HorizontalScrollProvider>
-                          <OpenProjectListener />
-                          <AppWithSidebar>
-                            <RootStack />
-                          </AppWithSidebar>
-                        </HorizontalScrollProvider>
-                      </SidebarAnimationProvider>
-                    </ProvidersWrapper>
-                  </ToastProvider>
-                </SidebarCalloutProvider>
-              </HostRuntimeBootstrapProvider>
-            </QueryProvider>
-          </KeyboardProvider>
-        </SafeAreaProvider>
-      </PortalProvider>
+      <RootProviders>
+        <RuntimeProviders>
+          <AppShell />
+        </RuntimeProviders>
+      </RootProviders>
     </GestureHandlerRootView>
   );
 }

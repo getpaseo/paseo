@@ -100,6 +100,8 @@ function processCarriageReturns(text: string): string {
 
 type SetupCommand = WorkspaceSetupSnapshot["detail"]["commands"][number];
 
+const EMPTY_COMMANDS: SetupCommand[] = [];
+
 function resolveAutoExpandIndex(commands: { index: number; status: string }[]): number | null {
   const running = commands.find((c) => c.status === "running");
   if (running) return running.index;
@@ -182,7 +184,7 @@ function SetupPanel() {
       });
   }, [client, snapshot, serverId, target.workspaceId, upsertProgress]);
 
-  const commands = snapshot?.detail.commands ?? [];
+  const commands = snapshot?.detail.commands ?? EMPTY_COMMANDS;
   const log = snapshot?.detail.log ?? "";
   const hasNoSetupCommands =
     snapshot?.status === "completed" && commands.length === 0 && log.trim().length === 0;

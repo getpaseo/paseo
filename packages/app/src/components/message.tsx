@@ -1162,22 +1162,28 @@ const NativeExpandableBadgeShimmer = memo(function NativeExpandableBadgeShimmer(
       <MaskedView pointerEvents="none" style={nativeShimmerTrackStyle} maskElement={maskElement}>
         <View pointerEvents="none" style={nativeShimmerTrackStyle}>
           <Animated.View pointerEvents="none" style={nativeShimmerPeakCombinedStyle}>
-            <Svg width="100%" height="100%" preserveAspectRatio="none">
-              <Defs>
-                <SvgLinearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
-                  <Stop offset="0%" stopColor="#ffffff" stopOpacity={0} />
-                  <Stop offset="50%" stopColor="#ffffff" stopOpacity={1} />
-                  <Stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
-                </SvgLinearGradient>
-              </Defs>
-              <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${gradientId})`} />
-            </Svg>
+            <NativeShimmerPeakSvg gradientId={gradientId} />
           </Animated.View>
         </View>
       </MaskedView>
     </View>
   );
 });
+
+function NativeShimmerPeakSvg({ gradientId }: { gradientId: string }) {
+  return (
+    <Svg width="100%" height="100%" preserveAspectRatio="none">
+      <Defs>
+        <SvgLinearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
+          <Stop offset="0%" stopColor="#ffffff" stopOpacity={0} />
+          <Stop offset="50%" stopColor="#ffffff" stopOpacity={1} />
+          <Stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+        </SvgLinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${gradientId})`} />
+    </Svg>
+  );
+}
 
 interface AssistantMessageBlockContainerProps {
   marginBottom: number;
@@ -1220,6 +1226,73 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
     </MarkdownWithStableRenderer>
   );
 });
+
+interface MarkdownInheritedTextProps {
+  inheritedStyles: TextStyle;
+  textStyle: TextStyle;
+  children: ReactNode;
+}
+
+function MarkdownInheritedText({
+  inheritedStyles,
+  textStyle,
+  children,
+}: MarkdownInheritedTextProps) {
+  const style = useMemo(() => [inheritedStyles, textStyle], [inheritedStyles, textStyle]);
+  return <Text style={style}>{children}</Text>;
+}
+
+interface MarkdownInheritedCodeLinkProps {
+  href: string;
+  inheritedStyles: TextStyle;
+  codeInlineStyle: TextStyle;
+  linkStyle: TextStyle;
+  onPress: (url: string) => boolean;
+  children: ReactNode;
+}
+
+function MarkdownInheritedCodeLink({
+  href,
+  inheritedStyles,
+  codeInlineStyle,
+  linkStyle,
+  onPress,
+  children,
+}: MarkdownInheritedCodeLinkProps) {
+  const style = useMemo(
+    () => [inheritedStyles, codeInlineStyle, linkStyle],
+    [inheritedStyles, codeInlineStyle, linkStyle],
+  );
+  return (
+    <MarkdownLink href={href} style={style} onPress={onPress}>
+      {children}
+    </MarkdownLink>
+  );
+}
+
+interface MarkdownListItemContentProps {
+  contentStyle: ViewStyle;
+  children: ReactNode;
+}
+
+const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, minWidth: 0 };
+
+function MarkdownListItemContent({ contentStyle, children }: MarkdownListItemContentProps) {
+  const style = useMemo(() => [contentStyle, MARKDOWN_LIST_ITEM_CONTENT_FLEX], [contentStyle]);
+  return <View style={style}>{children}</View>;
+}
+
+interface MarkdownParagraphViewProps {
+  paragraphStyle: ViewStyle;
+  children: ReactNode;
+}
+
+const MARKDOWN_PARAGRAPH_RESET: ViewStyle = { marginBottom: 0 };
+
+function MarkdownParagraphView({ paragraphStyle, children }: MarkdownParagraphViewProps) {
+  const style = useMemo(() => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET], [paragraphStyle]);
+  return <View style={style}>{children}</View>;
+}
 
 export const AssistantMessage = memo(function AssistantMessage({
   message,
@@ -1276,9 +1349,13 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.text]}>
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.text}
+        >
           {node.content}
-        </Text>
+        </MarkdownInheritedText>
       ),
       textgroup: (
         node: ASTNode,
@@ -1287,9 +1364,13 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.textgroup]}>
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.textgroup}
+        >
           {children}
-        </Text>
+        </MarkdownInheritedText>
       ),
       code_block: (
         node: ASTNode,
@@ -1298,9 +1379,13 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.code_block]}>
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.code_block}
+        >
           {node.content}
-        </Text>
+        </MarkdownInheritedText>
       ),
       fence: (
         node: ASTNode,
@@ -1309,9 +1394,13 @@ export const AssistantMessage = memo(function AssistantMessage({
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
       ) => (
-        <Text key={node.key} style={[inheritedStyles, styles.fence]}>
+        <MarkdownInheritedText
+          key={node.key}
+          inheritedStyles={inheritedStyles}
+          textStyle={styles.fence}
+        >
           {node.content}
-        </Text>
+        </MarkdownInheritedText>
       ),
       code_inline: (
         node: ASTNode,
@@ -1339,21 +1428,27 @@ export const AssistantMessage = memo(function AssistantMessage({
         const inlineCodeLinkUrl = getInlineCodeAutoLinkUrl(markdownParser, content);
         if (inlineCodeLinkUrl) {
           return (
-            <MarkdownLink
+            <MarkdownInheritedCodeLink
               key={node.key}
               href={inlineCodeLinkUrl}
-              style={[inheritedStyles, styles.code_inline, styles.link]}
+              inheritedStyles={inheritedStyles}
+              codeInlineStyle={styles.code_inline}
+              linkStyle={styles.link}
               onPress={handleLinkPress}
             >
               {content}
-            </MarkdownLink>
+            </MarkdownInheritedCodeLink>
           );
         }
 
         return (
-          <Text key={node.key} style={[inheritedStyles, styles.code_inline]}>
+          <MarkdownInheritedText
+            key={node.key}
+            inheritedStyles={inheritedStyles}
+            textStyle={styles.code_inline}
+          >
             {content}
-          </Text>
+          </MarkdownInheritedText>
         );
       },
       bullet_list: (
@@ -1389,7 +1484,9 @@ export const AssistantMessage = memo(function AssistantMessage({
         return (
           <View key={node.key} style={styles.list_item}>
             <Text style={iconStyle}>{marker}</Text>
-            <View style={[contentStyle, { flex: 1, flexShrink: 1, minWidth: 0 }]}>{children}</View>
+            <MarkdownListItemContent contentStyle={contentStyle}>
+              {children}
+            </MarkdownListItemContent>
           </View>
         );
       },
@@ -1399,9 +1496,9 @@ export const AssistantMessage = memo(function AssistantMessage({
         _parent: ASTNode[],
         styles: MarkdownStyles,
       ) => (
-        <View key={node.key} style={[styles.paragraph, { marginBottom: 0 }]}>
+        <MarkdownParagraphView key={node.key} paragraphStyle={styles.paragraph}>
           {children}
-        </View>
+        </MarkdownParagraphView>
       ),
       link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <MarkdownLink
@@ -1923,6 +2020,279 @@ interface ExpandableBadgeProps {
   testID?: string;
 }
 
+interface ExpandableBadgeSecondaryLabelProps {
+  secondaryLabel?: string;
+  secondaryLabelStyle: StyleProp<TextStyle>;
+  shouldMeasureWebShimmer: boolean;
+  onSecondaryLayout: (event: LayoutChangeEvent) => void;
+}
+
+function ExpandableBadgeSecondaryLabel({
+  secondaryLabel,
+  secondaryLabelStyle,
+  shouldMeasureWebShimmer,
+  onSecondaryLayout,
+}: ExpandableBadgeSecondaryLabelProps) {
+  if (!secondaryLabel) {
+    return <View style={expandableBadgeStylesheet.spacer} />;
+  }
+  return (
+    <Text
+      style={secondaryLabelStyle}
+      numberOfLines={1}
+      onLayout={shouldMeasureWebShimmer ? onSecondaryLayout : undefined}
+    >
+      {secondaryLabel}
+    </Text>
+  );
+}
+
+interface ExpandableBadgeWebShimmerOverlayProps {
+  label: string;
+  secondaryLabel?: string;
+  shimmerLabelTextStyle: StyleProp<TextStyle>;
+  shimmerSecondaryTextStyle: StyleProp<TextStyle>;
+}
+
+function ExpandableBadgeWebShimmerOverlay({
+  label,
+  secondaryLabel,
+  shimmerLabelTextStyle,
+  shimmerSecondaryTextStyle,
+}: ExpandableBadgeWebShimmerOverlayProps) {
+  return (
+    <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none">
+      <Text style={shimmerLabelTextStyle} numberOfLines={1}>
+        {label}
+      </Text>
+      {secondaryLabel ? (
+        <Text style={shimmerSecondaryTextStyle} numberOfLines={1}>
+          {secondaryLabel}
+        </Text>
+      ) : (
+        <View style={expandableBadgeStylesheet.spacer} />
+      )}
+    </View>
+  );
+}
+
+interface ExpandableBadgeLabelRowProps {
+  label: string;
+  labelStyle: StyleProp<TextStyle>;
+  secondaryLabel?: string;
+  secondaryLabelStyle: StyleProp<TextStyle>;
+  shouldMeasureWebShimmer: boolean;
+  shouldMeasureNativeShimmer: boolean;
+  isWebShimmer: boolean;
+  isNativeShimmer: boolean;
+  shimmerLabelTextStyle: StyleProp<TextStyle>;
+  shimmerSecondaryTextStyle: StyleProp<TextStyle>;
+  labelRowWidth: number;
+  labelRowHeight: number;
+  nativeShimmerPeakWidth: number;
+  shimmerDuration: number;
+  nativeGradientId: string;
+  onLabelRowLayout: (event: LayoutChangeEvent) => void;
+  onLabelLayout: (event: LayoutChangeEvent) => void;
+  onSecondaryLayout: (event: LayoutChangeEvent) => void;
+}
+
+function ExpandableBadgeLabelRow({
+  label,
+  labelStyle,
+  secondaryLabel,
+  secondaryLabelStyle,
+  shouldMeasureWebShimmer,
+  shouldMeasureNativeShimmer,
+  isWebShimmer,
+  isNativeShimmer,
+  shimmerLabelTextStyle,
+  shimmerSecondaryTextStyle,
+  labelRowWidth,
+  labelRowHeight,
+  nativeShimmerPeakWidth,
+  shimmerDuration,
+  nativeGradientId,
+  onLabelRowLayout,
+  onLabelLayout,
+  onSecondaryLayout,
+}: ExpandableBadgeLabelRowProps) {
+  return (
+    <View
+      style={expandableBadgeStylesheet.labelRow}
+      onLayout={shouldMeasureNativeShimmer ? onLabelRowLayout : undefined}
+    >
+      <Text
+        style={labelStyle}
+        numberOfLines={1}
+        onLayout={shouldMeasureWebShimmer ? onLabelLayout : undefined}
+      >
+        {label}
+      </Text>
+      <ExpandableBadgeSecondaryLabel
+        secondaryLabel={secondaryLabel}
+        secondaryLabelStyle={secondaryLabelStyle}
+        shouldMeasureWebShimmer={shouldMeasureWebShimmer}
+        onSecondaryLayout={onSecondaryLayout}
+      />
+      {isWebShimmer ? (
+        <ExpandableBadgeWebShimmerOverlay
+          label={label}
+          secondaryLabel={secondaryLabel}
+          shimmerLabelTextStyle={shimmerLabelTextStyle}
+          shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
+        />
+      ) : null}
+      {isNativeShimmer ? (
+        <NativeExpandableBadgeShimmer
+          label={label}
+          secondaryLabel={secondaryLabel}
+          rowWidth={labelRowWidth}
+          rowHeight={labelRowHeight}
+          peakWidth={nativeShimmerPeakWidth}
+          durationSeconds={shimmerDuration}
+          gradientId={nativeGradientId}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function resolveExpandableBadgeIconColor({
+  isError,
+  isActive,
+  theme,
+}: {
+  isError: boolean;
+  isActive: boolean;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+}): string {
+  if (isError) return theme.colors.destructive;
+  if (isActive) return theme.colors.foreground;
+  return theme.colors.mutedForeground;
+}
+
+function renderExpandableBadgeIcon({
+  isError,
+  iconColor,
+  icon,
+}: {
+  isError: boolean;
+  iconColor: string;
+  icon?: ComponentType<{ size?: number; color?: string }>;
+}): ReactNode {
+  if (isError) {
+    return <TriangleAlertIcon size={12} color={iconColor} opacity={0.8} />;
+  }
+  if (icon) {
+    const IconComponent = icon;
+    return <IconComponent size={12} color={iconColor} />;
+  }
+  return null;
+}
+
+function computeShimmerMetrics(input: {
+  label: string;
+  secondaryLabel: string | undefined;
+  isLoading: boolean;
+  labelRowWidth: number;
+  labelRowHeight: number;
+  labelOffsetX: number;
+  labelWidth: number;
+  secondaryOffsetX: number;
+  secondaryWidth: number;
+}) {
+  const totalShimmerChars = input.label.trim().length + (input.secondaryLabel?.trim().length ?? 0);
+  const shortTextDurationAdjustment = totalShimmerChars <= 12 ? 0.25 : 0;
+  const shimmerDuration = Math.max(
+    1,
+    Math.min(2.3, 1.25 + totalShimmerChars * 0.008 - shortTextDurationAdjustment),
+  );
+  const nativeShimmerPeakWidth = Math.max(
+    32,
+    Math.min(120, input.labelRowWidth > 0 ? input.labelRowWidth * 0.28 : 0),
+  );
+  const isWebShimmer = input.isLoading && isWeb;
+  const shouldMeasureWebShimmer = isWebShimmer;
+  const shouldMeasureNativeShimmer = input.isLoading && isNative;
+  const isNativeShimmer =
+    shouldMeasureNativeShimmer && input.labelRowWidth > 0 && input.labelRowHeight > 0;
+  const webShimmerSpanStartX = input.labelOffsetX;
+  const webShimmerSpanEndX = input.secondaryLabel
+    ? input.secondaryOffsetX + input.secondaryWidth
+    : input.labelOffsetX + input.labelWidth;
+  const webShimmerSpanWidth = Math.max(1, webShimmerSpanEndX - webShimmerSpanStartX);
+  const webShimmerPeakWidth = Math.max(42, Math.min(120, webShimmerSpanWidth * 0.22));
+  const webShimmerTrackStart = webShimmerSpanStartX - webShimmerPeakWidth;
+  const webShimmerTrackEnd = webShimmerSpanEndX;
+  return {
+    shimmerDuration,
+    nativeShimmerPeakWidth,
+    isWebShimmer,
+    shouldMeasureWebShimmer,
+    shouldMeasureNativeShimmer,
+    isNativeShimmer,
+    webShimmerPeakWidth,
+    webShimmerTrackStart,
+    webShimmerTrackEnd,
+  };
+}
+
+function useDetailWheelPropagationBlocker(input: {
+  detailWrapperRef: React.RefObject<View | null>;
+  enabled: boolean;
+  wheelInvestigationComponentId: string;
+}): void {
+  const { detailWrapperRef, enabled, wheelInvestigationComponentId } = input;
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    const node = detailWrapperRef.current as unknown as HTMLElement | null;
+    if (!node || typeof node.addEventListener !== "function") {
+      return;
+    }
+    const stopWheelPropagation = (event: WheelEvent) => {
+      if (shouldStopDetailWheelPropagation(node, event)) {
+        event.stopPropagation();
+      }
+    };
+    markScrollInvestigationEvent(wheelInvestigationComponentId, "wheelAttach");
+    node.addEventListener("wheel", stopWheelPropagation, { passive: true });
+    return () => {
+      markScrollInvestigationEvent(wheelInvestigationComponentId, "wheelDetach");
+      node.removeEventListener("wheel", stopWheelPropagation);
+    };
+  }, [detailWrapperRef, enabled, wheelInvestigationComponentId]);
+}
+
+const SHIMMER_GRADIENT =
+  "linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.45) 24%, #ffffff 40%, #ffffff 60%, rgba(255, 255, 255, 0.45) 76%, rgba(255, 255, 255, 0) 100%)";
+
+function buildShimmerTextStyle(input: {
+  isWebShimmer: boolean;
+  webShimmerPeakWidth: number;
+  shimmerDuration: number;
+  webShimmerTrackStart: number;
+  webShimmerTrackEnd: number;
+  offsetX: number;
+}): object | null {
+  if (!input.isWebShimmer) return null;
+  return {
+    opacity: 1,
+    color: "transparent",
+    backgroundImage: SHIMMER_GRADIENT,
+    backgroundSize: `${input.webShimmerPeakWidth}px 100%`,
+    backgroundRepeat: "no-repeat",
+    backgroundClip: "text",
+    WebkitBackgroundClip: "text",
+    WebkitTextFillColor: "transparent",
+    animation: `${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} ${input.shimmerDuration}s linear infinite`,
+    "--paseo-shimmer-start": `${input.webShimmerTrackStart - input.offsetX}px`,
+    "--paseo-shimmer-end": `${input.webShimmerTrackEnd - input.offsetX}px`,
+  };
+}
+
 const ExpandableBadge = memo(function ExpandableBadge({
   label,
   style,
@@ -1971,28 +2341,27 @@ const ExpandableBadge = memo(function ExpandableBadge({
   const [secondaryOffsetX, setSecondaryOffsetX] = useState(0);
   const [secondaryWidth, setSecondaryWidth] = useState(0);
 
-  const totalShimmerChars = label.trim().length + (secondaryLabel?.trim().length ?? 0);
-  const shortTextDurationAdjustment = totalShimmerChars <= 12 ? 0.25 : 0;
-  const shimmerDuration = Math.max(
-    1,
-    Math.min(2.3, 1.25 + totalShimmerChars * 0.008 - shortTextDurationAdjustment),
-  );
-  const nativeShimmerPeakWidth = Math.max(
-    32,
-    Math.min(120, labelRowWidth > 0 ? labelRowWidth * 0.28 : 0),
-  );
-  const isWebShimmer = isLoading && isWeb;
-  const shouldMeasureWebShimmer = isWebShimmer;
-  const shouldMeasureNativeShimmer = isLoading && isNative;
-  const isNativeShimmer = shouldMeasureNativeShimmer && labelRowWidth > 0 && labelRowHeight > 0;
-  const webShimmerSpanStartX = labelOffsetX;
-  const webShimmerSpanEndX = secondaryLabel
-    ? secondaryOffsetX + secondaryWidth
-    : labelOffsetX + labelWidth;
-  const webShimmerSpanWidth = Math.max(1, webShimmerSpanEndX - webShimmerSpanStartX);
-  const webShimmerPeakWidth = Math.max(42, Math.min(120, webShimmerSpanWidth * 0.22));
-  const webShimmerTrackStart = webShimmerSpanStartX - webShimmerPeakWidth;
-  const webShimmerTrackEnd = webShimmerSpanEndX;
+  const {
+    shimmerDuration,
+    nativeShimmerPeakWidth,
+    isWebShimmer,
+    shouldMeasureWebShimmer,
+    shouldMeasureNativeShimmer,
+    isNativeShimmer,
+    webShimmerPeakWidth,
+    webShimmerTrackStart,
+    webShimmerTrackEnd,
+  } = computeShimmerMetrics({
+    label,
+    secondaryLabel,
+    isLoading,
+    labelRowWidth,
+    labelRowHeight,
+    labelOffsetX,
+    labelWidth,
+    secondaryOffsetX,
+    secondaryWidth,
+  });
 
   const handleLabelRowLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -2037,50 +2406,22 @@ const ExpandableBadge = memo(function ExpandableBadge({
     ensureWebToolCallShimmerKeyframes();
   }, [isWebShimmer]);
 
-  useEffect(() => {
-    if (isNative || !isExpanded || !hasDetailContent) {
-      return;
-    }
-
-    const node = detailWrapperRef.current as unknown as HTMLElement | null;
-    if (!node || typeof node.addEventListener !== "function") {
-      return;
-    }
-
-    const stopWheelPropagation = (event: WheelEvent) => {
-      if (shouldStopDetailWheelPropagation(node, event)) {
-        event.stopPropagation();
-      }
-    };
-
-    markScrollInvestigationEvent(wheelInvestigationComponentId, "wheelAttach");
-    node.addEventListener("wheel", stopWheelPropagation, { passive: true });
-    return () => {
-      markScrollInvestigationEvent(wheelInvestigationComponentId, "wheelDetach");
-      node.removeEventListener("wheel", stopWheelPropagation);
-    };
-  }, [hasDetailContent, isExpanded, wheelInvestigationComponentId]);
-
-  const shimmerGradient =
-    "linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.45) 24%, #ffffff 40%, #ffffff 60%, rgba(255, 255, 255, 0.45) 76%, rgba(255, 255, 255, 0) 100%)";
+  useDetailWheelPropagationBlocker({
+    detailWrapperRef,
+    enabled: !isNative && isExpanded && hasDetailContent,
+    wheelInvestigationComponentId,
+  });
 
   const shimmerLabelStyle = useMemo(
     () =>
-      isWebShimmer
-        ? ({
-            opacity: 1,
-            color: "transparent",
-            backgroundImage: shimmerGradient,
-            backgroundSize: `${webShimmerPeakWidth}px 100%`,
-            backgroundRepeat: "no-repeat",
-            backgroundClip: "text",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            animation: `${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} ${shimmerDuration}s linear infinite`,
-            "--paseo-shimmer-start": `${webShimmerTrackStart - labelOffsetX}px`,
-            "--paseo-shimmer-end": `${webShimmerTrackEnd - labelOffsetX}px`,
-          } as never)
-        : null,
+      buildShimmerTextStyle({
+        isWebShimmer,
+        webShimmerPeakWidth,
+        shimmerDuration,
+        webShimmerTrackStart,
+        webShimmerTrackEnd,
+        offsetX: labelOffsetX,
+      }) as never,
     [
       isWebShimmer,
       webShimmerPeakWidth,
@@ -2093,21 +2434,14 @@ const ExpandableBadge = memo(function ExpandableBadge({
 
   const shimmerSecondaryStyle = useMemo(
     () =>
-      isWebShimmer
-        ? ({
-            opacity: 1,
-            color: "transparent",
-            backgroundImage: shimmerGradient,
-            backgroundSize: `${webShimmerPeakWidth}px 100%`,
-            backgroundRepeat: "no-repeat",
-            backgroundClip: "text",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            animation: `${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} ${shimmerDuration}s linear infinite`,
-            "--paseo-shimmer-start": `${webShimmerTrackStart - secondaryOffsetX}px`,
-            "--paseo-shimmer-end": `${webShimmerTrackEnd - secondaryOffsetX}px`,
-          } as never)
-        : null,
+      buildShimmerTextStyle({
+        isWebShimmer,
+        webShimmerPeakWidth,
+        shimmerDuration,
+        webShimmerTrackStart,
+        webShimmerTrackEnd,
+        offsetX: secondaryOffsetX,
+      }) as never,
     [
       isWebShimmer,
       webShimmerPeakWidth,
@@ -2190,82 +2524,50 @@ const ExpandableBadge = memo(function ExpandableBadge({
     [isExpanded],
   );
 
-  const IconComponent = icon;
-  let iconColor: string;
-  if (isError) iconColor = theme.colors.destructive;
-  else if (isActive) iconColor = theme.colors.foreground;
-  else iconColor = theme.colors.mutedForeground;
+  const iconColor = resolveExpandableBadgeIconColor({ isError, isActive, theme });
+  const iconNode = renderExpandableBadgeIcon({ isError, iconColor, icon });
 
-  let iconNode: ReactNode = null;
-  if (isError) {
-    iconNode = <TriangleAlertIcon size={12} color={iconColor} opacity={0.8} />;
-  } else if (IconComponent) {
-    iconNode = <IconComponent size={12} color={iconColor} />;
-  }
+  const pressHandlers = isInteractive
+    ? {
+        onPress: onToggle,
+        onHoverIn: handleHoverIn,
+        onHoverOut: handleHoverOut,
+        onPressIn: handlePressIn,
+        onPressOut: handlePressOut,
+        accessibilityRole: "button" as const,
+      }
+    : {};
 
   return (
     <View style={containerStyle} testID={testID}>
       <Pressable
-        onPress={isInteractive ? onToggle : undefined}
-        onHoverIn={isInteractive ? handleHoverIn : undefined}
-        onHoverOut={isInteractive ? handleHoverOut : undefined}
-        onPressIn={isInteractive ? handlePressIn : undefined}
-        onPressOut={isInteractive ? handlePressOut : undefined}
+        {...pressHandlers}
         disabled={!isInteractive}
-        accessibilityRole={isInteractive ? "button" : undefined}
         accessibilityState={accessibilityState}
         style={pressableStyle}
       >
         <View style={expandableBadgeStylesheet.headerRow}>
           <View style={expandableBadgeStylesheet.iconBadge}>{iconNode}</View>
-          <View
-            style={expandableBadgeStylesheet.labelRow}
-            onLayout={shouldMeasureNativeShimmer ? handleLabelRowLayout : undefined}
-          >
-            <Text
-              style={labelStyle}
-              numberOfLines={1}
-              onLayout={shouldMeasureWebShimmer ? handleLabelLayout : undefined}
-            >
-              {label}
-            </Text>
-            {secondaryLabel ? (
-              <Text
-                style={secondaryLabelStyle}
-                numberOfLines={1}
-                onLayout={shouldMeasureWebShimmer ? handleSecondaryLayout : undefined}
-              >
-                {secondaryLabel}
-              </Text>
-            ) : (
-              <View style={expandableBadgeStylesheet.spacer} />
-            )}
-            {isWebShimmer ? (
-              <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none">
-                <Text style={shimmerLabelTextStyle} numberOfLines={1}>
-                  {label}
-                </Text>
-                {secondaryLabel ? (
-                  <Text style={shimmerSecondaryTextStyle} numberOfLines={1}>
-                    {secondaryLabel}
-                  </Text>
-                ) : (
-                  <View style={expandableBadgeStylesheet.spacer} />
-                )}
-              </View>
-            ) : null}
-            {isNativeShimmer ? (
-              <NativeExpandableBadgeShimmer
-                label={label}
-                secondaryLabel={secondaryLabel}
-                rowWidth={labelRowWidth}
-                rowHeight={labelRowHeight}
-                peakWidth={nativeShimmerPeakWidth}
-                durationSeconds={shimmerDuration}
-                gradientId={nativeGradientIdRef.current}
-              />
-            ) : null}
-          </View>
+          <ExpandableBadgeLabelRow
+            label={label}
+            labelStyle={labelStyle}
+            secondaryLabel={secondaryLabel}
+            secondaryLabelStyle={secondaryLabelStyle}
+            shouldMeasureWebShimmer={shouldMeasureWebShimmer}
+            shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
+            isWebShimmer={isWebShimmer}
+            isNativeShimmer={isNativeShimmer}
+            shimmerLabelTextStyle={shimmerLabelTextStyle}
+            shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
+            labelRowWidth={labelRowWidth}
+            labelRowHeight={labelRowHeight}
+            nativeShimmerPeakWidth={nativeShimmerPeakWidth}
+            shimmerDuration={shimmerDuration}
+            nativeGradientId={nativeGradientIdRef.current}
+            onLabelRowLayout={handleLabelRowLayout}
+            onLabelLayout={handleLabelLayout}
+            onSecondaryLayout={handleSecondaryLayout}
+          />
           {isInteractive && isHovered ? (
             <ChevronRight size={14} color={theme.colors.foreground} style={chevronStyle} />
           ) : null}

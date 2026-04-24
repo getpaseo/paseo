@@ -33,7 +33,7 @@ interface AutocompleteProps {
   maxHeight?: number;
 }
 
-const BOLT_GLYPH_PATTERN = /[\u26A1\uFE0F]/g;
+const BOLT_GLYPH_PATTERN = /\u26A1|\uFE0F/gu;
 
 function removeBoltGlyphs(value?: string): string | undefined {
   if (!value) {

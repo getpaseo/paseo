@@ -6,11 +6,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import {
-  ScrollView,
-  type ScrollView as ScrollViewType,
-  type GestureType,
-} from "react-native-gesture-handler";
+import { ScrollView, type ScrollView as ScrollViewType } from "react-native-gesture-handler";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
 import { useExplorerSidebarAnimationOptional } from "@/contexts/explorer-sidebar-animation-context";
 

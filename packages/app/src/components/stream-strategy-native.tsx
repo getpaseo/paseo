@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   FlatList,
   Keyboard,
@@ -271,10 +279,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     });
   });
 
-  const renderItem = useStableEvent(({ item, index }: ListRenderItemInfo<StreamItem>) => {
-    const rendered = renderHistoryMountedRow(item, index, historyRows);
-    return rendered ? <Fragment>{rendered}</Fragment> : null;
-  });
+  const renderItem = useStableEvent(
+    ({ item, index }: ListRenderItemInfo<StreamItem>): ReactElement | null => {
+      const rendered = renderHistoryMountedRow(item, index, historyRows);
+      return (rendered ?? null) as ReactElement | null;
+    },
+  );
 
   const liveHeaderContent = useMemo(() => {
     const liveHeadRows = segments.liveHead.map((item, index) => (
@@ -287,7 +297,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       !boundary.hasMountedHistory &&
       !boundary.hasVirtualizedHistory
     ) {
-      return listEmptyComponent ? <Fragment>{listEmptyComponent}</Fragment> : null;
+      return (listEmptyComponent ?? null) as ReactElement | null;
     }
     return (
       <Fragment>

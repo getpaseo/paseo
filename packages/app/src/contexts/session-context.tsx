@@ -35,6 +35,7 @@ import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
 import {
   useSessionStore,
   type Agent,
+  type MessageEntry,
   type SessionState,
   type WorkspaceDescriptor,
   normalizeWorkspaceDescriptor,
@@ -380,6 +381,30 @@ function finalizeTimelineApplication(input: {
   if (result.clearInitializing) {
     markAgentHistorySynchronized(serverId, agentId);
   }
+}
+
+function applyToolResultToMessages(
+  toolCallId: string,
+  result: unknown,
+): (prev: MessageEntry[]) => MessageEntry[] {
+  return (prev) =>
+    prev.map((msg) =>
+      msg.type === "tool_call" && msg.id === toolCallId
+        ? { ...msg, result, status: "completed" as const }
+        : msg,
+    );
+}
+
+function applyToolErrorToMessages(
+  toolCallId: string,
+  error: unknown,
+): (prev: MessageEntry[]) => MessageEntry[] {
+  return (prev) =>
+    prev.map((msg) =>
+      msg.type === "tool_call" && msg.id === toolCallId
+        ? { ...msg, error, status: "failed" as const }
+        : msg,
+    );
 }
 
 interface SessionProviderSharedProps {
@@ -1317,13 +1342,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const shouldPlay =
         !payload.isVoiceMode || (voiceRuntime?.shouldPlayVoiceAudio(serverId) ?? false);
       const audioBlob = buildAudioPlaybackSource(bufferedChunks);
+      function logAudioPlayedError(error: unknown): void {
+        console.warn("[Session] Failed to confirm audio playback:", error);
+      }
       const confirmAudioPlayed = async () => {
         await Promise.all(
-          chunkIds.map((chunkId) =>
-            client.audioPlayed(chunkId).catch((error) => {
-              console.warn("[Session] Failed to confirm audio playback:", error);
-            }),
-          ),
+          chunkIds.map((chunkId) => client.audioPlayed(chunkId).catch(logAudioPlayedError)),
         );
       };
 
@@ -1389,13 +1413,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           result: unknown;
         };
 
-        setMessages(serverId, (prev) =>
-          prev.map((msg) =>
-            msg.type === "tool_call" && msg.id === toolCallId
-              ? { ...msg, result, status: "completed" as const }
-              : msg,
-          ),
-        );
+        const applyToolResult = applyToolResultToMessages(toolCallId, result);
+        setMessages(serverId, applyToolResult);
         return;
       }
 
@@ -1405,13 +1424,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           error: unknown;
         };
 
-        setMessages(serverId, (prev) =>
-          prev.map((msg) =>
-            msg.type === "tool_call" && msg.id === toolCallId
-              ? { ...msg, error, status: "failed" as const }
-              : msg,
-          ),
-        );
+        const applyToolError = applyToolErrorToMessages(toolCallId, error);
+        setMessages(serverId, applyToolError);
       }
 
       let activityType: "system" | "info" | "success" | "error" = "info";

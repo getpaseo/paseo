@@ -397,13 +397,14 @@ describe("sidebar workspace render isolation", () => {
     };
     ({ root, container } = await renderProbe(counts));
 
+    const applyRunningScript = (current: Parameters<typeof patchWorkspaceScripts>[0]) =>
+      patchWorkspaceScripts(current, {
+        workspaceId: "a-main",
+        scripts: [{ ...runningScript }],
+      });
+
     act(() => {
-      useSessionStore.getState().setWorkspaces(SERVER_ID, (current) =>
-        patchWorkspaceScripts(current, {
-          workspaceId: "a-main",
-          scripts: [{ ...runningScript }],
-        }),
-      );
+      useSessionStore.getState().setWorkspaces(SERVER_ID, applyRunningScript);
     });
 
     expect(counts).toEqual({

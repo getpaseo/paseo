@@ -29,6 +29,7 @@ import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { ImageAttachment, MessagePayload } from "@/components/message-input";
 import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
+import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
 
 interface NewWorkspaceScreenProps {
@@ -223,6 +224,186 @@ function syncPickerPrAttachment(input: {
   return { attachments: nextAttachments, attachedPrNumber };
 }
 
+function computePickerOptionData(
+  branchDetails: ReadonlyArray<{ name: string; committerDate: number }>,
+  prItems: ReadonlyArray<GitHubSearchItem>,
+): PickerOptionData {
+  const idMap = new Map<string, PickerItem>();
+
+  interface TimedOption {
+    option: ComboboxOptionType;
+    timestamp: number;
+  }
+  const timedOptions: TimedOption[] = [];
+
+  for (const branch of branchDetails) {
+    const id = branchOptionId(branch.name);
+    const option = { id, label: branch.name };
+    idMap.set(id, { kind: "branch", name: branch.name });
+    timedOptions.push({ option, timestamp: branch.committerDate });
+  }
+
+  for (const pr of prItems) {
+    if (!pr.headRefName) continue;
+    const id = prOptionId(pr.number);
+    const option = { id, label: formatPrLabel(pr) };
+    idMap.set(id, { kind: "github-pr", item: pr });
+    const updatedAtMs = pr.updatedAt ? Date.parse(pr.updatedAt) : 0;
+    const timestamp = Number.isNaN(updatedAtMs) ? 0 : Math.floor(updatedAtMs / 1000);
+    timedOptions.push({ option, timestamp });
+  }
+
+  timedOptions.sort((a, b) => b.timestamp - a.timestamp);
+  return { options: timedOptions.map((t) => t.option), itemById: idMap };
+}
+
+interface SubmitDraftInput {
+  serverId: string;
+  draftKey: string;
+  workspaceId: string;
+  workspaceDirectory: string;
+  text: string;
+  attachments: ComposerAttachment[];
+  provider: AgentProvider;
+  composerState: NonNullable<ReturnType<typeof useAgentInputDraft>["composerState"]>;
+}
+
+async function createAndMergeWorkspace(input: {
+  client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
+  createInput: Parameters<
+    NonNullable<ReturnType<typeof useHostRuntimeClient>>["createPaseoWorktree"]
+  >[0];
+  mergeWorkspaces: (
+    serverId: string,
+    workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
+  ) => void;
+  serverId: string;
+}): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
+  const payload = await input.client.createPaseoWorktree(input.createInput);
+  if (payload.error || !payload.workspace) {
+    throw new Error(payload.error ?? "Failed to create worktree");
+  }
+  const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
+  input.mergeWorkspaces(input.serverId, [normalizedWorkspace]);
+  return normalizedWorkspace;
+}
+
+interface CreateChatAgentInput {
+  payload: MessagePayload;
+  composerState: ReturnType<typeof useAgentInputDraft>["composerState"];
+  ensureWorkspace: (input: {
+    cwd: string;
+    attachments: AgentAttachment[];
+  }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
+  serverId: string;
+  draftKey: string;
+}
+
+async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
+  const { payload, composerState, ensureWorkspace, serverId, draftKey } = input;
+  const { text, attachments, cwd } = payload;
+  if (!composerState) {
+    throw new Error("Composer state is required");
+  }
+  const provider = composerState.selectedProvider;
+  if (!provider) {
+    throw new Error("Select a model");
+  }
+  const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments);
+  const ensuredWorkspace = await ensureWorkspace({ cwd, attachments: reviewAttachments });
+  submitWorkspaceDraft({
+    serverId,
+    draftKey,
+    workspaceId: ensuredWorkspace.id,
+    workspaceDirectory: ensuredWorkspace.workspaceDirectory,
+    text,
+    attachments,
+    provider,
+    composerState,
+  });
+}
+
+function buildComposerConfig(input: {
+  serverId: string;
+  isConnected: boolean;
+  workspaceDirectory: string | null;
+  sourceDirectory: string;
+}): Parameters<typeof useAgentInputDraft>[0]["composer"] {
+  const { serverId, isConnected, workspaceDirectory, sourceDirectory } = input;
+  return {
+    initialServerId: serverId || null,
+    initialValues: workspaceDirectory ? { workingDir: workspaceDirectory } : undefined,
+    isVisible: true,
+    onlineServerIds: isConnected && serverId ? [serverId] : [],
+    lockedWorkingDir: workspaceDirectory || sourceDirectory || undefined,
+  };
+}
+
+function computeWorkspaceTitle(
+  workspace: ReturnType<typeof normalizeWorkspaceDescriptor> | null,
+  displayName: string,
+  sourceDirectory: string,
+): string {
+  return (
+    workspace?.name ||
+    workspace?.projectDisplayName ||
+    displayName ||
+    sourceDirectory.split(/[\\/]/).findLast(Boolean) ||
+    sourceDirectory
+  );
+}
+
+function submitWorkspaceDraft(input: SubmitDraftInput): void {
+  const {
+    serverId,
+    draftKey,
+    workspaceId,
+    workspaceDirectory,
+    text,
+    attachments,
+    provider,
+    composerState,
+  } = input;
+  const draftId = generateDraftId();
+  useDraftStore.getState().saveDraftInput({
+    draftKey: buildDraftStoreKey({
+      serverId,
+      agentId: draftId,
+      draftId,
+    }),
+    draft: {
+      text,
+      attachments,
+      cwd: workspaceDirectory,
+    },
+  });
+  useWorkspaceDraftSubmissionStore.getState().setPending({
+    serverId,
+    workspaceId,
+    draftId,
+    text,
+    attachments,
+    cwd: workspaceDirectory,
+    provider,
+    ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
+      ? { modeId: composerState.selectedMode }
+      : {}),
+    ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
+    ...(composerState.effectiveThinkingOptionId
+      ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
+      : {}),
+    ...(composerState.featureValues ? { featureValues: composerState.featureValues } : {}),
+    allowEmptyText: true,
+  });
+  navigateToPreparedWorkspaceTab({
+    serverId,
+    workspaceId,
+    target: { kind: "draft", draftId },
+    navigationMethod: "replace",
+  });
+  useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "sent" });
+}
+
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory,
@@ -263,15 +444,12 @@ export function NewWorkspaceScreen({
   const chatDraft = useAgentInputDraft({
     draftKey,
     initialCwd: sourceDirectory,
-    composer: {
-      initialServerId: serverId || null,
-      initialValues: workspace?.workspaceDirectory
-        ? { workingDir: workspace.workspaceDirectory }
-        : undefined,
-      isVisible: true,
-      onlineServerIds: isConnected && serverId ? [serverId] : [],
-      lockedWorkingDir: workspace?.workspaceDirectory || sourceDirectory || undefined,
-    },
+    composer: buildComposerConfig({
+      serverId,
+      isConnected,
+      workspaceDirectory: workspace?.workspaceDirectory ?? null,
+      sourceDirectory,
+    }),
   });
   const composerState = chatDraft.composerState;
 
@@ -282,13 +460,16 @@ export function NewWorkspaceScreen({
     return client;
   }, [client, isConnected]);
 
+  const clientReady = isConnected && Boolean(client);
+  const pickerQueryEnabled = pickerOpen && clientReady;
+
   const checkoutStatusQuery = useQuery({
     queryKey: ["checkout-status", serverId, sourceDirectory],
     queryFn: async () => {
       const connectedClient = withConnectedClient();
       return connectedClient.getCheckoutStatus(sourceDirectory);
     },
-    enabled: isConnected && !!client,
+    enabled: clientReady,
     staleTime: Infinity,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -307,7 +488,7 @@ export function NewWorkspaceScreen({
         limit: 20,
       });
     },
-    enabled: pickerOpen && isConnected && !!client,
+    enabled: pickerQueryEnabled,
     staleTime: 15_000,
   });
 
@@ -322,7 +503,7 @@ export function NewWorkspaceScreen({
         kinds: ["github-pr"],
       });
     },
-    enabled: pickerOpen && isConnected && !!client,
+    enabled: pickerQueryEnabled,
     staleTime: 30_000,
   });
 
@@ -339,35 +520,10 @@ export function NewWorkspaceScreen({
     return items.filter((item): item is GitHubSearchItem => item.kind === "pr");
   }, [githubFeaturesEnabled, githubPrSearchQuery.data?.items]);
 
-  const { options, itemById }: PickerOptionData = useMemo(() => {
-    const idMap = new Map<string, PickerItem>();
-
-    interface TimedOption {
-      option: ComboboxOptionType;
-      timestamp: number;
-    }
-    const timedOptions: TimedOption[] = [];
-
-    for (const branch of branchDetails) {
-      const id = branchOptionId(branch.name);
-      const option = { id, label: branch.name };
-      idMap.set(id, { kind: "branch", name: branch.name });
-      timedOptions.push({ option, timestamp: branch.committerDate });
-    }
-
-    for (const pr of prItems) {
-      if (!pr.headRefName) continue;
-      const id = prOptionId(pr.number);
-      const option = { id, label: formatPrLabel(pr) };
-      idMap.set(id, { kind: "github-pr", item: pr });
-      const updatedAtMs = pr.updatedAt ? Date.parse(pr.updatedAt) : 0;
-      const timestamp = Number.isNaN(updatedAtMs) ? 0 : Math.floor(updatedAtMs / 1000);
-      timedOptions.push({ option, timestamp });
-    }
-
-    timedOptions.sort((a, b) => b.timestamp - a.timestamp);
-    return { options: timedOptions.map((t) => t.option), itemById: idMap };
-  }, [branchDetails, prItems]);
+  const { options, itemById }: PickerOptionData = useMemo(
+    () => computePickerOptionData(branchDetails, prItems),
+    [branchDetails, prItems],
+  );
 
   const triggerLabel = useMemo(() => {
     if (selectedItem) return pickerItemTriggerLabel(selectedItem);
@@ -448,16 +604,12 @@ export function NewWorkspaceScreen({
       if (createdWorkspace) {
         return createdWorkspace;
       }
-
-      const connectedClient = withConnectedClient();
-      const payload = await connectedClient.createPaseoWorktree(buildCreateWorktreeInput(input));
-
-      if (payload.error || !payload.workspace) {
-        throw new Error(payload.error ?? "Failed to create worktree");
-      }
-
-      const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
-      mergeWorkspaces(serverId, [normalizedWorkspace]);
+      const normalizedWorkspace = await createAndMergeWorkspace({
+        client: withConnectedClient(),
+        createInput: buildCreateWorktreeInput(input),
+        mergeWorkspaces,
+        serverId,
+      });
       setCreatedWorkspace(normalizedWorkspace);
       return normalizedWorkspace;
     },
@@ -465,58 +617,17 @@ export function NewWorkspaceScreen({
   );
 
   const handleCreateChatAgent = useCallback(
-    async ({ text, attachments, cwd }: MessagePayload) => {
+    async (payload: MessagePayload) => {
       try {
         setPendingAction("chat");
         setErrorMessage(null);
-        if (!composerState) {
-          throw new Error("Composer state is required");
-        }
-        if (!composerState.selectedProvider) {
-          throw new Error("Select a model");
-        }
-
-        const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments);
-        const ensuredWorkspace = await ensureWorkspace({ cwd, attachments: reviewAttachments });
-        const draftId = generateDraftId();
-        const workspaceDirectory = ensuredWorkspace.workspaceDirectory;
-        useDraftStore.getState().saveDraftInput({
-          draftKey: buildDraftStoreKey({
-            serverId,
-            agentId: draftId,
-            draftId,
-          }),
-          draft: {
-            text,
-            attachments,
-            cwd: workspaceDirectory,
-          },
-        });
-        useWorkspaceDraftSubmissionStore.getState().setPending({
+        await runCreateChatAgent({
+          payload,
+          composerState,
+          ensureWorkspace,
           serverId,
-          workspaceId: ensuredWorkspace.id,
-          draftId,
-          text,
-          attachments,
-          cwd: workspaceDirectory,
-          provider: composerState.selectedProvider,
-          ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
-            ? { modeId: composerState.selectedMode }
-            : {}),
-          ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
-          ...(composerState.effectiveThinkingOptionId
-            ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
-            : {}),
-          ...(composerState.featureValues ? { featureValues: composerState.featureValues } : {}),
-          allowEmptyText: true,
+          draftKey,
         });
-        navigateToPreparedWorkspaceTab({
-          serverId,
-          workspaceId: ensuredWorkspace.id,
-          target: { kind: "draft", draftId },
-          navigationMethod: "replace",
-        });
-        useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "sent" });
       } catch (error) {
         const message = toErrorMessage(error);
         setPendingAction(null);
@@ -527,12 +638,7 @@ export function NewWorkspaceScreen({
     [composerState, draftKey, ensureWorkspace, serverId, toast],
   );
 
-  const workspaceTitle =
-    workspace?.name ||
-    workspace?.projectDisplayName ||
-    displayName ||
-    sourceDirectory.split(/[\\/]/).findLast(Boolean) ||
-    sourceDirectory;
+  const workspaceTitle = computeWorkspaceTitle(workspace, displayName, sourceDirectory);
 
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);
   const handleAddImagesCallback = useCallback((addImages: (images: ImageAttachment[]) => void) => {
@@ -606,6 +712,11 @@ export function NewWorkspaceScreen({
     [composerState, isPending],
   );
 
+  const pickerEmptyText =
+    branchSuggestionsQuery.isFetching || githubPrSearchQuery.isFetching
+      ? "Searching..."
+      : "No matching refs.";
+
   return (
     <View style={styles.container}>
       <ScreenHeader
@@ -674,11 +785,7 @@ export function NewWorkspaceScreen({
                 onSearchQueryChange={setPickerSearchQuery}
                 desktopPlacement="bottom-start"
                 anchorRef={pickerAnchorRef}
-                emptyText={
-                  branchSuggestionsQuery.isFetching || githubPrSearchQuery.isFetching
-                    ? "Searching..."
-                    : "No matching refs."
-                }
+                emptyText={pickerEmptyText}
                 renderOption={renderPickerOption}
               />
             </View>

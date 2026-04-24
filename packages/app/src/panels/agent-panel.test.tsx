@@ -395,6 +395,16 @@ async function updateCurrentAgentCwd(cwd: string) {
   });
 }
 
+function archiveSeededAgent(previous: Map<string, Agent>): Map<string, Agent> {
+  const current = previous.get("agent");
+  if (!current) {
+    throw new Error("Expected seeded agent");
+  }
+  const next = new Map(previous);
+  next.set("agent", { ...current, archivedAt: new Date("2026-04-20T00:00:02.000Z") });
+  return next;
+}
+
 describe("AgentPanel render isolation", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
@@ -473,15 +483,7 @@ describe("AgentPanel render isolation", () => {
     expect(composerRenderCount.mock.calls.length).toBeGreaterThan(composerBaseline);
 
     await act(async () => {
-      useSessionStore.getState().setAgents("server", (previous) => {
-        const current = previous.get("agent");
-        if (!current) {
-          throw new Error("Expected seeded agent");
-        }
-        const next = new Map(previous);
-        next.set("agent", { ...current, archivedAt: new Date("2026-04-20T00:00:02.000Z") });
-        return next;
-      });
+      useSessionStore.getState().setAgents("server", archiveSeededAgent);
       await Promise.resolve();
     });
 

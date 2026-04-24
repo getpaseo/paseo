@@ -19,7 +19,6 @@ import {
   useEffect,
   useRef,
   type ReactElement,
-  type ReactNode,
   type MutableRefObject,
   type Ref,
 } from "react";
@@ -396,24 +395,47 @@ function WorkspaceStatusIndicator({
       ? EMPHASIZED_STATUS_DOT_OFFSET
       : DEFAULT_STATUS_DOT_OFFSET;
 
-  const statusDotOverlayStyle = [
-    styles.statusDotOverlay,
-    {
-      backgroundColor: dotColor ?? undefined,
-      borderColor: theme.colors.surface0,
-      width: statusDotSize,
-      height: statusDotSize,
-      right: statusDotOffset,
-      bottom: statusDotOffset,
-    },
-  ];
-
   return (
     <View style={styles.workspaceStatusDot}>
       <KindIcon size={14} color={theme.colors.foregroundMuted} />
-      {dotColor ? <View style={statusDotOverlayStyle} /> : null}
+      {dotColor ? (
+        <StatusDotOverlay
+          dotColor={dotColor}
+          borderColor={theme.colors.surface0}
+          size={statusDotSize}
+          offset={statusDotOffset}
+        />
+      ) : null}
     </View>
   );
+}
+
+function StatusDotOverlay({
+  dotColor,
+  borderColor,
+  size,
+  offset,
+}: {
+  dotColor: string;
+  borderColor: string;
+  size: number;
+  offset: number;
+}) {
+  const overlayStyle = useMemo(
+    () => [
+      styles.statusDotOverlay,
+      {
+        backgroundColor: dotColor,
+        borderColor,
+        width: size,
+        height: size,
+        right: offset,
+        bottom: offset,
+      },
+    ],
+    [dotColor, borderColor, size, offset],
+  );
+  return <View style={overlayStyle} />;
 }
 
 function ProjectLeadingVisual({
@@ -449,22 +471,18 @@ function ProjectLeadingVisual({
     );
   }
 
-  const iconSource = { uri: iconDataUri ?? "" };
-  const projectIcon = iconDataUri ? (
-    <Image source={iconSource} style={styles.projectIcon} />
-  ) : (
-    <View style={styles.projectIconFallback}>
-      <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
-    </View>
-  );
-
   if (!shouldShowWorkspaceStatus || !activeWorkspace) {
-    return <View style={styles.projectLeadingVisualSlot}>{projectIcon}</View>;
+    return (
+      <View style={styles.projectLeadingVisualSlot}>
+        <ProjectIcon iconDataUri={iconDataUri} placeholderInitial={placeholderInitial} />
+      </View>
+    );
   }
 
   return (
     <ProjectLeadingVisualStatus
-      projectIcon={projectIcon}
+      iconDataUri={iconDataUri}
+      placeholderInitial={placeholderInitial}
       isArchiving={isArchiving}
       shouldShowSyncedLoader={shouldShowSyncedLoader}
       activeWorkspace={activeWorkspace}
@@ -751,14 +769,34 @@ function WorkspaceKebabMenu({
   );
 }
 
+function ProjectIcon({
+  iconDataUri,
+  placeholderInitial,
+}: {
+  iconDataUri: string | null;
+  placeholderInitial: string;
+}) {
+  const imageSource = useMemo(() => ({ uri: iconDataUri ?? "" }), [iconDataUri]);
+  if (iconDataUri) {
+    return <Image source={imageSource} style={styles.projectIcon} />;
+  }
+  return (
+    <View style={styles.projectIconFallback}>
+      <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
+    </View>
+  );
+}
+
 function ProjectLeadingVisualStatus({
-  projectIcon,
+  iconDataUri,
+  placeholderInitial,
   isArchiving,
   shouldShowSyncedLoader,
   activeWorkspace,
   theme,
 }: {
-  projectIcon: ReactNode;
+  iconDataUri: string | null;
+  placeholderInitial: string;
   isArchiving: boolean;
   shouldShowSyncedLoader: boolean;
   activeWorkspace: SidebarWorkspaceEntry;
@@ -808,22 +846,17 @@ function ProjectLeadingVisualStatus({
       ? EMPHASIZED_STATUS_DOT_OFFSET
       : DEFAULT_STATUS_DOT_OFFSET;
 
-  const projectStatusDotOverlayStyle = [
-    styles.statusDotOverlay,
-    {
-      backgroundColor: dotColor ?? "transparent",
-      borderColor: theme.colors.surface0,
-      width: statusDotSize,
-      height: statusDotSize,
-      right: statusDotOffset,
-      bottom: statusDotOffset,
-    },
-  ];
-
   return (
     <View style={styles.projectLeadingVisualSlot}>
-      {projectIcon}
-      {dotColor ? <View style={projectStatusDotOverlayStyle} /> : null}
+      <ProjectIcon iconDataUri={iconDataUri} placeholderInitial={placeholderInitial} />
+      {dotColor ? (
+        <StatusDotOverlay
+          dotColor={dotColor}
+          borderColor={theme.colors.surface0}
+          size={statusDotSize}
+          offset={statusDotOffset}
+        />
+      ) : null}
     </View>
   );
 }

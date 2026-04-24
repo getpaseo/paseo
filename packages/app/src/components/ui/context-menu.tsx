@@ -9,6 +9,7 @@ import {
   useState,
   type PropsWithChildren,
   type ReactElement,
+  type ReactNode,
   type Ref,
   type MutableRefObject,
 } from "react";
@@ -628,6 +629,34 @@ export function ContextMenuHint({
   );
 }
 
+function resolveLeadingContent(input: {
+  isPending: boolean;
+  isSuccess: boolean;
+  leading: ReactElement | null | undefined;
+  pendingColor: string;
+  successColor: string;
+}): ReactElement | null {
+  if (input.isPending) {
+    return <ActivityIndicator size={16} color={input.pendingColor} />;
+  }
+  if (input.isSuccess) {
+    return <CheckCircle size={16} color={input.successColor} />;
+  }
+  return input.leading ?? null;
+}
+
+function resolveItemLabel(input: {
+  children: ReactNode;
+  isPending: boolean;
+  isSuccess: boolean;
+  pendingLabel: string | undefined;
+  successLabel: string | undefined;
+}): ReactNode {
+  if (input.isPending && input.pendingLabel) return input.pendingLabel;
+  if (input.isSuccess && input.successLabel) return input.successLabel;
+  return input.children;
+}
+
 export function ContextMenuItem({
   children,
   description,
@@ -668,25 +697,19 @@ export function ContextMenuItem({
   const { theme } = useUnistyles();
   const { setOpen } = useContextMenuContext("ContextMenuItem");
 
-  const isPending = status === "pending" || loading;
+  const isPending = status === "pending" || Boolean(loading);
   const isSuccess = status === "success";
-  const isDisabled = disabled || isPending || isSuccess;
+  const isDisabled = Boolean(disabled) || isPending || isSuccess;
 
-  let leadingContent: ReactElement | null = null;
-  if (isPending) {
-    leadingContent = <ActivityIndicator size={16} color={theme.colors.foregroundMuted} />;
-  } else if (isSuccess) {
-    leadingContent = <CheckCircle size={16} color={theme.colors.palette.green[500]} />;
-  } else if (leading) {
-    leadingContent = leading;
-  }
+  const leadingContent = resolveLeadingContent({
+    isPending,
+    isSuccess,
+    leading,
+    pendingColor: theme.colors.foregroundMuted,
+    successColor: theme.colors.palette.green[500],
+  });
 
-  let label = children;
-  if (isPending && pendingLabel) {
-    label = pendingLabel;
-  } else if (isSuccess && successLabel) {
-    label = successLabel;
-  }
+  const label = resolveItemLabel({ children, isPending, isSuccess, pendingLabel, successLabel });
 
   const trailingContent =
     trailing ??

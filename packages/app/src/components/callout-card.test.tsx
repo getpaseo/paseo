@@ -70,6 +70,8 @@ function buildTwoActions(onWhatsNew: () => void, onInstall: () => void): Callout
   ];
 }
 
+const calloutTitleIcon = <span data-testid="callout-title-icon" />;
+
 describe("CalloutCard", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
@@ -104,9 +106,7 @@ describe("CalloutCard", () => {
 
   it("renders an icon next to the title", () => {
     act(() => {
-      root?.render(
-        <CalloutCard title="Update available" icon={<span data-testid="callout-title-icon" />} />,
-      );
+      root?.render(<CalloutCard title="Update available" icon={calloutTitleIcon} />);
     });
 
     expect(container?.querySelector('[data-testid="callout-title-icon"]')).not.toBeNull();

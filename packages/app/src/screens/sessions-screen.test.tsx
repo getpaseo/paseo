@@ -61,7 +61,7 @@ vi.mock("@/components/headers/menu-header", () => ({
 
 vi.mock("@/components/ui/button", () => ({
   Button: ({ children, onPress }: React.PropsWithChildren<{ onPress?: () => void }>) =>
-    React.createElement("button", { onClick: onPress }, children),
+    React.createElement("button", { type: "button", onClick: onPress }, children),
 }));
 
 vi.mock("@/components/ui/loading-spinner", () => ({
