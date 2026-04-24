@@ -75,8 +75,9 @@ export function ProviderDiagnosticSheet({
   }, [visible]);
   const fetchedAtLabel = useMemo(() => {
     if (!providerEntry?.fetchedAt) return null;
+    // clockTick is referenced so the label recomputes each timer tick.
+    void clockTick;
     return formatTimeAgo(new Date(providerEntry.fetchedAt));
-    // clockTick triggers re-computation on timer
   }, [providerEntry?.fetchedAt, clockTick]);
 
   const q = query.trim().toLowerCase();

@@ -196,6 +196,24 @@ export default function TerminalEmulator({
   const scrollActiveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastObservedOffsetRef = useRef<number | null>(null);
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
+  const xtermThemeRef = useRef(xtermTheme);
+  xtermThemeRef.current = xtermTheme;
+  const mountCallbacksRef = useRef({
+    onInput,
+    onResize,
+    onTerminalKey,
+    onPendingModifiersConsumed,
+  });
+  mountCallbacksRef.current = {
+    onInput,
+    onResize,
+    onTerminalKey,
+    onPendingModifiersConsumed,
+  };
+  const initialSnapshotRef = useRef(initialSnapshot);
+  initialSnapshotRef.current = initialSnapshot;
+  const pendingModifiersRef = useRef(pendingModifiers);
+  pendingModifiersRef.current = pendingModifiers;
   const [viewportMetrics, setViewportMetrics] = useState<ViewportMetrics>({
     offset: 0,
     viewportSize: 0,
@@ -224,8 +242,9 @@ export default function TerminalEmulator({
   );
 
   useEffect(() => {
-    mountedThemeRef.current = xtermTheme;
-    runtimeRef.current?.setTheme({ theme: xtermTheme });
+    const nextTheme = xtermThemeRef.current;
+    mountedThemeRef.current = nextTheme;
+    runtimeRef.current?.setTheme({ theme: nextTheme });
   }, [themeKey]);
 
   useEffect(() => {
@@ -359,18 +378,15 @@ export default function TerminalEmulator({
     runtimeRef.current = runtime;
     runtime.setCallbacks({
       callbacks: {
-        onInput,
-        onResize,
-        onTerminalKey,
-        onPendingModifiersConsumed,
+        ...mountCallbacksRef.current,
         onOpenExternalUrl: openExternalUrl,
       },
     });
-    runtime.setPendingModifiers({ pendingModifiers });
+    runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
     runtime.mount({
       root,
       host,
-      initialSnapshot,
+      initialSnapshot: initialSnapshotRef.current,
       theme: mountedThemeRef.current,
     });
 

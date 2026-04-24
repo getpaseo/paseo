@@ -184,7 +184,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     return () => {
       rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
     };
-  }, [rowVirtualizer]);
+  }, [rowVirtualizer, props.agentId]);
   const virtualRows = rowVirtualizer.getVirtualItems();
   const virtualTotalSize = rowVirtualizer.getTotalSize();
 
@@ -367,7 +367,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
           : null,
     });
     updateScrollMetrics();
-  }, [cancelPendingStickToBottom, updateScrollMetrics]);
+  }, [cancelPendingStickToBottom, updateScrollMetrics, props.agentId]);
 
   useLayoutEffect(() => {
     if (!isActivationReady) {

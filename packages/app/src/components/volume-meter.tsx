@@ -92,7 +92,7 @@ export function VolumeMeter({
       -1,
       false,
     );
-  }, [isMuted]);
+  }, [isMuted, line1Pulse, line2Pulse, line3Pulse]);
 
   // Drive a single animated volume value and derive the individual bar heights
   // on the UI thread instead of scheduling three independent springs per sample.

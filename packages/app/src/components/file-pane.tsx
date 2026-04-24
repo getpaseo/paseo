@@ -189,7 +189,7 @@ function FilePreviewBody({
     }
 
     return highlightCode(preview.content ?? "", filePath);
-  }, [isMarkdownFile, preview?.kind, preview?.content, filePath]);
+  }, [isMarkdownFile, preview, filePath]);
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;

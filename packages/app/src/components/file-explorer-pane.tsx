@@ -274,7 +274,8 @@ export function FileExplorerPane({
     [expandedPathsArray],
   );
 
-  const directories = explorerState?.directories ?? new Map();
+  const directoriesRaw = explorerState?.directories;
+  const directories = useMemo(() => directoriesRaw ?? new Map(), [directoriesRaw]);
   const pendingRequest = explorerState?.pendingRequest ?? null;
   const isExplorerLoading = explorerState?.isLoading ?? false;
   const error = explorerState?.lastError ?? null;

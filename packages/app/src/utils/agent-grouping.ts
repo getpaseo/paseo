@@ -264,9 +264,7 @@ const MAX_INACTIVE_PER_PROJECT = 5;
  */
 function isAgentTrulyActive(agent: AggregatedAgent): boolean {
   return (
-    agent.status === "running" ||
-    agent.requiresAttention ||
-    (agent.pendingPermissionCount ?? 0) > 0
+    agent.status === "running" || agent.requiresAttention || (agent.pendingPermissionCount ?? 0) > 0
   );
 }
 
@@ -324,9 +322,7 @@ function byLastActivityDescending(a: AggregatedAgent, b: AggregatedAgent): numbe
   return b.lastActivityAt.getTime() - a.lastActivityAt.getTime();
 }
 
-function buildActiveProjectGroups(
-  projectMap: Map<string, ProjectActivityBucket>,
-): ProjectGroup[] {
+function buildActiveProjectGroups(projectMap: Map<string, ProjectActivityBucket>): ProjectGroup[] {
   const activeGroups: ProjectGroup[] = [];
   for (const [projectKey, { trulyActive, recentlyActive }] of projectMap) {
     trulyActive.sort(byLastActivityDescending);

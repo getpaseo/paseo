@@ -2061,37 +2061,59 @@ const ExpandableBadge = memo(function ExpandableBadge({
   const shimmerGradient =
     "linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.45) 24%, #ffffff 40%, #ffffff 60%, rgba(255, 255, 255, 0.45) 76%, rgba(255, 255, 255, 0) 100%)";
 
-  const shimmerLabelStyle = isWebShimmer
-    ? ({
-        opacity: 1,
-        color: "transparent",
-        backgroundImage: shimmerGradient,
-        backgroundSize: `${webShimmerPeakWidth}px 100%`,
-        backgroundRepeat: "no-repeat",
-        backgroundClip: "text",
-        WebkitBackgroundClip: "text",
-        WebkitTextFillColor: "transparent",
-        animation: `${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} ${shimmerDuration}s linear infinite`,
-        "--paseo-shimmer-start": `${webShimmerTrackStart - labelOffsetX}px`,
-        "--paseo-shimmer-end": `${webShimmerTrackEnd - labelOffsetX}px`,
-      } as never)
-    : null;
+  const shimmerLabelStyle = useMemo(
+    () =>
+      isWebShimmer
+        ? ({
+            opacity: 1,
+            color: "transparent",
+            backgroundImage: shimmerGradient,
+            backgroundSize: `${webShimmerPeakWidth}px 100%`,
+            backgroundRepeat: "no-repeat",
+            backgroundClip: "text",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            animation: `${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} ${shimmerDuration}s linear infinite`,
+            "--paseo-shimmer-start": `${webShimmerTrackStart - labelOffsetX}px`,
+            "--paseo-shimmer-end": `${webShimmerTrackEnd - labelOffsetX}px`,
+          } as never)
+        : null,
+    [
+      isWebShimmer,
+      webShimmerPeakWidth,
+      shimmerDuration,
+      webShimmerTrackStart,
+      webShimmerTrackEnd,
+      labelOffsetX,
+    ],
+  );
 
-  const shimmerSecondaryStyle = isWebShimmer
-    ? ({
-        opacity: 1,
-        color: "transparent",
-        backgroundImage: shimmerGradient,
-        backgroundSize: `${webShimmerPeakWidth}px 100%`,
-        backgroundRepeat: "no-repeat",
-        backgroundClip: "text",
-        WebkitBackgroundClip: "text",
-        WebkitTextFillColor: "transparent",
-        animation: `${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} ${shimmerDuration}s linear infinite`,
-        "--paseo-shimmer-start": `${webShimmerTrackStart - secondaryOffsetX}px`,
-        "--paseo-shimmer-end": `${webShimmerTrackEnd - secondaryOffsetX}px`,
-      } as never)
-    : null;
+  const shimmerSecondaryStyle = useMemo(
+    () =>
+      isWebShimmer
+        ? ({
+            opacity: 1,
+            color: "transparent",
+            backgroundImage: shimmerGradient,
+            backgroundSize: `${webShimmerPeakWidth}px 100%`,
+            backgroundRepeat: "no-repeat",
+            backgroundClip: "text",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            animation: `${WEB_TOOLCALL_SHIMMER_ANIMATION_NAME} ${shimmerDuration}s linear infinite`,
+            "--paseo-shimmer-start": `${webShimmerTrackStart - secondaryOffsetX}px`,
+            "--paseo-shimmer-end": `${webShimmerTrackEnd - secondaryOffsetX}px`,
+          } as never)
+        : null,
+    [
+      isWebShimmer,
+      webShimmerPeakWidth,
+      shimmerDuration,
+      webShimmerTrackStart,
+      webShimmerTrackEnd,
+      secondaryOffsetX,
+    ],
+  );
 
   const containerStyle = useMemo(
     () => [
@@ -2326,11 +2348,15 @@ export const ToolCall = memo(function ToolCall({
     return undefined;
   }, [detail, args, result]);
 
-  const displayDetail = effectiveDetail ?? {
-    type: "unknown",
-    input: null,
-    output: null,
-  };
+  const displayDetail = useMemo<ToolCallDetail>(
+    () =>
+      effectiveDetail ?? {
+        type: "unknown",
+        input: null,
+        output: null,
+      },
+    [effectiveDetail],
+  );
 
   const displayModel = useMemo(
     () =>

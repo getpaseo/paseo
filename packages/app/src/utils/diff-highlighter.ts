@@ -24,13 +24,7 @@ export interface ParsedDiffFile {
   hunks: DiffHunk[];
 }
 
-const DIFF_METADATA_PREFIXES = [
-  "index ",
-  "--- ",
-  "+++ ",
-  "new file mode",
-  "deleted file mode",
-];
+const DIFF_METADATA_PREFIXES = ["index ", "--- ", "+++ ", "new file mode", "deleted file mode"];
 
 function isDiffMetadataLine(line: string): boolean {
   return DIFF_METADATA_PREFIXES.some((prefix) => line.startsWith(prefix));
@@ -48,10 +42,7 @@ function extractDiffPath(firstLine: string): string {
   return "unknown";
 }
 
-function pushContentLine(
-  hunk: DiffHunk,
-  line: string,
-): { addition: number; deletion: number } {
+function pushContentLine(hunk: DiffHunk, line: string): { addition: number; deletion: number } {
   if (line.startsWith("+")) {
     hunk.lines.push({ type: "add", content: line.slice(1) });
     return { addition: 1, deletion: 0 };

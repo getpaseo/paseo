@@ -613,9 +613,7 @@ function reduceTimelineCompaction(
   timestamp: Date,
 ): StreamItem[] {
   if (item.status === "completed") {
-    const loadingIdx = state.findIndex(
-      (s) => s.kind === "compaction" && s.status === "loading",
-    );
+    const loadingIdx = state.findIndex((s) => s.kind === "compaction" && s.status === "loading");
     const existing = loadingIdx >= 0 ? state[loadingIdx] : undefined;
     if (loadingIdx >= 0 && existing && existing.kind === "compaction") {
       const updated: CompactionItem = {
@@ -650,9 +648,7 @@ function reduceTimelineEvent(
   const item = event.item;
   switch (item.type) {
     case "user_message":
-      return finalizeActiveThoughts(
-        appendUserMessage(state, item.text, timestamp, item.messageId),
-      );
+      return finalizeActiveThoughts(appendUserMessage(state, item.text, timestamp, item.messageId));
     case "assistant_message":
       return finalizeActiveThoughts(appendAssistantMessage(state, item.text, timestamp, source));
     case "reasoning":

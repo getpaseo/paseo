@@ -953,7 +953,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       diffListScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
       scrollbar.onScroll(event);
     },
-    [scrollbar.onScroll],
+    [scrollbar],
   );
 
   const handleDiffListLayout = useCallback(
@@ -965,7 +965,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       diffListViewportHeightRef.current = height;
       scrollbar.onLayout(event);
     },
-    [scrollbar.onLayout],
+    [scrollbar],
   );
 
   const computeHeaderOffset = useCallback(
@@ -1443,6 +1443,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     hasPullRequest,
     prStatus?.url,
     aheadCount,
+    baseRef,
     behindBaseCount,
     isPaseoOwnedWorktree,
     isOnBaseBranch,
