@@ -177,6 +177,125 @@ function toMergedToolCall(toolCall: ToolCallAccumulator): MergedToolCall {
   };
 }
 
+interface ApplyToolCallUpdateArgs {
+  update: ToolCall | ToolCallUpdate;
+  timestamp: Date;
+  result: Array<GroupedActivity | null>;
+  toolCallsById: Map<string, ToolCallAccumulator>;
+}
+
+function applyToolCallUpdate({
+  update,
+  timestamp,
+  result,
+  toolCallsById,
+}: ApplyToolCallUpdateArgs): void {
+  const toolCallId = update.toolCallId;
+  const existing = toolCallsById.get(toolCallId);
+
+  if (update.kind === "tool_call") {
+    if (existing) {
+      mergeInitialToolCall(existing, update, timestamp);
+      return;
+    }
+    insertNewToolCall({
+      result,
+      toolCallsById,
+      accumulator: createAccumulatorFromToolCall(update, timestamp, result.length),
+    });
+    return;
+  }
+
+  if (existing) {
+    mergeToolCallUpdate(existing, update, timestamp);
+    return;
+  }
+  insertNewToolCall({
+    result,
+    toolCallsById,
+    accumulator: createAccumulatorFromToolCallUpdate(update, timestamp, result.length),
+  });
+}
+
+function mergeInitialToolCall(
+  existing: ToolCallAccumulator,
+  update: ToolCall,
+  timestamp: Date,
+): void {
+  existing.title = update.title;
+  if (update.status) existing.status = update.status;
+  if (update.toolKind) existing.toolKind = update.toolKind;
+  if (update.input) existing.input = update.input;
+  if (update.output) existing.output = update.output;
+  if (update.content) existing.content = update.content;
+  if (update.locations) existing.locations = update.locations;
+  existing.endTimestamp = timestamp;
+}
+
+function mergeToolCallUpdate(
+  existing: ToolCallAccumulator,
+  update: ToolCallUpdate,
+  timestamp: Date,
+): void {
+  if (update.title) existing.title = update.title;
+  if (update.status) existing.status = update.status;
+  if (update.toolKind) existing.toolKind = update.toolKind;
+  if (update.input) existing.input = { ...existing.input, ...update.input };
+  if (update.output) existing.output = { ...existing.output, ...update.output };
+  if (update.content) existing.content = update.content;
+  if (update.locations) existing.locations = update.locations;
+  existing.endTimestamp = timestamp;
+}
+
+function createAccumulatorFromToolCall(
+  update: ToolCall,
+  timestamp: Date,
+  insertIndex: number,
+): ToolCallAccumulator {
+  return {
+    toolCallId: update.toolCallId,
+    title: update.title,
+    status: update.status || "pending",
+    toolKind: update.toolKind,
+    input: update.input,
+    output: update.output,
+    content: update.content,
+    locations: update.locations,
+    startTimestamp: timestamp,
+    endTimestamp: timestamp,
+    insertIndex,
+  };
+}
+
+function createAccumulatorFromToolCallUpdate(
+  update: ToolCallUpdate,
+  timestamp: Date,
+  insertIndex: number,
+): ToolCallAccumulator {
+  return {
+    toolCallId: update.toolCallId,
+    title: update.title || "Tool Call",
+    status: update.status || "pending",
+    toolKind: update.toolKind || undefined,
+    input: update.input,
+    output: update.output,
+    content: update.content || undefined,
+    locations: update.locations || undefined,
+    startTimestamp: timestamp,
+    endTimestamp: timestamp,
+    insertIndex,
+  };
+}
+
+function insertNewToolCall(args: {
+  result: Array<GroupedActivity | null>;
+  toolCallsById: Map<string, ToolCallAccumulator>;
+  accumulator: ToolCallAccumulator;
+}): void {
+  args.result.push(null);
+  args.toolCallsById.set(args.accumulator.toolCallId, args.accumulator);
+}
+
 export function groupActivities(activities: AgentActivity[]): GroupedActivity[] {
   const result: Array<GroupedActivity | null> = [];
   const toolCallsById = new Map<string, ToolCallAccumulator>();
@@ -219,67 +338,12 @@ export function groupActivities(activities: AgentActivity[]): GroupedActivity[] 
       }
     } else if (update.kind === "tool_call" || update.kind === "tool_call_update") {
       flushTextGroup();
-
-      const toolCallId = update.toolCallId;
-      const existing = toolCallsById.get(toolCallId);
-
-      if (update.kind === "tool_call") {
-        if (!existing) {
-          const insertIndex = result.length;
-          result.push(null);
-
-          toolCallsById.set(toolCallId, {
-            toolCallId,
-            title: update.title,
-            status: update.status || "pending",
-            toolKind: update.toolKind,
-            input: update.input,
-            output: update.output,
-            content: update.content,
-            locations: update.locations,
-            startTimestamp: activity.timestamp,
-            endTimestamp: activity.timestamp,
-            insertIndex,
-          });
-        } else {
-          existing.title = update.title;
-          if (update.status) existing.status = update.status;
-          if (update.toolKind) existing.toolKind = update.toolKind;
-          if (update.input) existing.input = update.input;
-          if (update.output) existing.output = update.output;
-          if (update.content) existing.content = update.content;
-          if (update.locations) existing.locations = update.locations;
-          existing.endTimestamp = activity.timestamp;
-        }
-      } else {
-        if (existing) {
-          if (update.title) existing.title = update.title;
-          if (update.status) existing.status = update.status;
-          if (update.toolKind) existing.toolKind = update.toolKind;
-          if (update.input) existing.input = { ...existing.input, ...update.input };
-          if (update.output) existing.output = { ...existing.output, ...update.output };
-          if (update.content) existing.content = update.content;
-          if (update.locations) existing.locations = update.locations;
-          existing.endTimestamp = activity.timestamp;
-        } else {
-          const insertIndex = result.length;
-          result.push(null);
-
-          toolCallsById.set(toolCallId, {
-            toolCallId,
-            title: update.title || "Tool Call",
-            status: update.status || "pending",
-            toolKind: update.toolKind || undefined,
-            input: update.input,
-            output: update.output,
-            content: update.content || undefined,
-            locations: update.locations || undefined,
-            startTimestamp: activity.timestamp,
-            endTimestamp: activity.timestamp,
-            insertIndex,
-          });
-        }
-      }
+      applyToolCallUpdate({
+        update,
+        timestamp: activity.timestamp,
+        result,
+        toolCallsById,
+      });
     } else {
       flushTextGroup();
       result.push(activity);
