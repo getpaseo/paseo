@@ -504,6 +504,26 @@ export function ContextMenuContent({
     [],
   );
 
+  const animatedContentStyle = useMemo(() => {
+    const { width: screenWidth } = Dimensions.get("window");
+    const resolvedWidthStyle: ViewStyle = fullWidth
+      ? { width: screenWidth - horizontalPadding * 2 }
+      : {
+          ...(typeof width === "number" ? { width } : null),
+          ...(typeof minWidth === "number" ? { minWidth } : null),
+          ...(typeof maxWidth === "number" ? { maxWidth } : null),
+        };
+    return [
+      styles.content,
+      resolvedWidthStyle,
+      {
+        position: "absolute" as const,
+        top: position?.y ?? -9999,
+        left: position?.x ?? -9999,
+      },
+    ];
+  }, [fullWidth, horizontalPadding, width, minWidth, maxWidth, position?.y, position?.x]);
+
   if (useMobileSheet) {
     return (
       <ContextMenuContext.Provider value={context}>
@@ -532,28 +552,6 @@ export function ContextMenuContent({
       </ContextMenuContext.Provider>
     );
   }
-
-  const { width: screenWidth } = Dimensions.get("window");
-  const resolvedWidthStyle: ViewStyle = fullWidth
-    ? { width: screenWidth - horizontalPadding * 2 }
-    : {
-        ...(typeof width === "number" ? { width } : null),
-        ...(typeof minWidth === "number" ? { minWidth } : null),
-        ...(typeof maxWidth === "number" ? { maxWidth } : null),
-      };
-
-  const animatedContentStyle = useMemo(
-    () => [
-      styles.content,
-      resolvedWidthStyle,
-      {
-        position: "absolute" as const,
-        top: position?.y ?? -9999,
-        left: position?.x ?? -9999,
-      },
-    ],
-    [resolvedWidthStyle, position?.y, position?.x],
-  );
 
   if (!open) return null;
 

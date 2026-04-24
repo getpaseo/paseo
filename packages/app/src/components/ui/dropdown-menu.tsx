@@ -430,19 +430,16 @@ export function DropdownMenuContent({
     [],
   );
 
-  if (!modalVisible) return null;
-
-  const { width: screenWidth } = Dimensions.get("window");
-  const resolvedWidthStyle: ViewStyle = fullWidth
-    ? { width: screenWidth - horizontalPadding * 2 }
-    : {
-        ...(typeof width === "number" ? { width } : null),
-        ...(typeof minWidth === "number" ? { minWidth } : null),
-        ...(typeof maxWidth === "number" ? { maxWidth } : null),
-      };
-
-  const contentStyle = useMemo(
-    () => [
+  const contentStyle = useMemo(() => {
+    const { width: screenWidth } = Dimensions.get("window");
+    const resolvedWidthStyle: ViewStyle = fullWidth
+      ? { width: screenWidth - horizontalPadding * 2 }
+      : {
+          ...(typeof width === "number" ? { width } : null),
+          ...(typeof minWidth === "number" ? { minWidth } : null),
+          ...(typeof maxWidth === "number" ? { maxWidth } : null),
+        };
+    return [
       styles.content,
       resolvedWidthStyle,
       {
@@ -451,9 +448,20 @@ export function DropdownMenuContent({
         left: position?.x ?? -9999,
         transformOrigin: getTransformOrigin(actualPlacement, align),
       },
-    ],
-    [resolvedWidthStyle, position?.x, position?.y, actualPlacement, align],
-  );
+    ];
+  }, [
+    fullWidth,
+    horizontalPadding,
+    width,
+    minWidth,
+    maxWidth,
+    position?.x,
+    position?.y,
+    actualPlacement,
+    align,
+  ]);
+
+  if (!modalVisible) return null;
 
   return (
     <Modal
