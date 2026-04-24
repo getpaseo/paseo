@@ -347,6 +347,164 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [streamRenderStrategy],
     );
 
+    const renderUserMessageItem = useCallback(
+      (
+        item: Extract<StreamItem, { kind: "user_message" }>,
+        index: number,
+        items: StreamItem[],
+        seamAboveItem: StreamItem | null,
+      ) => {
+        const aboveItem =
+          getStreamNeighborItem({
+            strategy: streamRenderStrategy,
+            items,
+            index,
+            relation: "above",
+          }) ??
+          seamAboveItem ??
+          undefined;
+        const belowItem = getStreamNeighborItem({
+          strategy: streamRenderStrategy,
+          items,
+          index,
+          relation: "below",
+        });
+        const isFirstInGroup = aboveItem?.kind !== "user_message";
+        const isLastInGroup = belowItem?.kind !== "user_message";
+        return (
+          <UserMessage
+            message={item.text}
+            images={item.images}
+            timestamp={item.timestamp.getTime()}
+            isFirstInGroup={isFirstInGroup}
+            isLastInGroup={isLastInGroup}
+          />
+        );
+      },
+      [streamRenderStrategy],
+    );
+
+    const renderAssistantMessageItem = useCallback(
+      (
+        item: Extract<StreamItem, { kind: "assistant_message" }>,
+        index: number,
+        items: StreamItem[],
+        seamAboveItem: StreamItem | null,
+      ) => {
+        const aboveItem =
+          getStreamNeighborItem({
+            strategy: streamRenderStrategy,
+            items,
+            index,
+            relation: "above",
+          }) ??
+          seamAboveItem ??
+          undefined;
+        const belowItem = getStreamNeighborItem({
+          strategy: streamRenderStrategy,
+          items,
+          index,
+          relation: "below",
+        });
+        const spacing = getAssistantBlockSpacing({
+          item,
+          aboveItem,
+          belowItem,
+        });
+        return (
+          <AssistantMessage
+            message={item.text}
+            timestamp={item.timestamp.getTime()}
+            onInlinePathPress={handleInlinePathPress}
+            workspaceRoot={workspaceRoot}
+            serverId={serverId}
+            client={client}
+            spacing={spacing}
+          />
+        );
+      },
+      [handleInlinePathPress, streamRenderStrategy, workspaceRoot, serverId, client],
+    );
+
+    const renderThoughtItem = useCallback(
+      (item: Extract<StreamItem, { kind: "thought" }>, index: number, items: StreamItem[]) => {
+        const nextItem = getStreamNeighborItem({
+          strategy: streamRenderStrategy,
+          items,
+          index,
+          relation: "below",
+        });
+        const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
+        return (
+          <ToolCallSlot
+            itemId={item.id}
+            onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+            toolName="thinking"
+            args={item.text}
+            status={item.status === "ready" ? "completed" : "executing"}
+            isLastInSequence={isLastInSequence}
+          />
+        );
+      },
+      [streamRenderStrategy, setInlineDetailsExpanded],
+    );
+
+    const renderToolCallItem = useCallback(
+      (item: Extract<StreamItem, { kind: "tool_call" }>, index: number, items: StreamItem[]) => {
+        const { payload } = item;
+        const nextItem = getStreamNeighborItem({
+          strategy: streamRenderStrategy,
+          items,
+          index,
+          relation: "below",
+        });
+        const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
+
+        if (payload.source === "agent") {
+          const data = payload.data;
+
+          if (
+            data.name === "speak" &&
+            data.detail.type === "unknown" &&
+            typeof data.detail.input === "string" &&
+            data.detail.input.trim()
+          ) {
+            return (
+              <SpeakMessage message={data.detail.input} timestamp={item.timestamp.getTime()} />
+            );
+          }
+
+          return (
+            <ToolCallSlot
+              itemId={item.id}
+              onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+              toolName={data.name}
+              error={data.error}
+              status={data.status}
+              detail={data.detail}
+              cwd={agent.cwd}
+              metadata={data.metadata}
+              isLastInSequence={isLastInSequence}
+            />
+          );
+        }
+
+        const data = payload.data;
+        return (
+          <ToolCallSlot
+            itemId={item.id}
+            onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+            toolName={data.toolName}
+            args={data.arguments}
+            result={data.result}
+            status={data.status}
+            isLastInSequence={isLastInSequence}
+          />
+        );
+      },
+      [agent.cwd, streamRenderStrategy, setInlineDetailsExpanded],
+    );
+
     const renderStreamItemContent = useCallback(
       (
         item: StreamItem,
@@ -355,140 +513,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         seamAboveItem: StreamItem | null = null,
       ) => {
         switch (item.kind) {
-          case "user_message": {
-            const aboveItem =
-              getStreamNeighborItem({
-                strategy: streamRenderStrategy,
-                items,
-                index,
-                relation: "above",
-              }) ??
-              seamAboveItem ??
-              undefined;
-            const belowItem = getStreamNeighborItem({
-              strategy: streamRenderStrategy,
-              items,
-              index,
-              relation: "below",
-            });
-            const isFirstInGroup = aboveItem?.kind !== "user_message";
-            const isLastInGroup = belowItem?.kind !== "user_message";
-            return (
-              <UserMessage
-                message={item.text}
-                images={item.images}
-                timestamp={item.timestamp.getTime()}
-                isFirstInGroup={isFirstInGroup}
-                isLastInGroup={isLastInGroup}
-              />
-            );
-          }
+          case "user_message":
+            return renderUserMessageItem(item, index, items, seamAboveItem);
 
-          case "assistant_message": {
-            const aboveItem =
-              getStreamNeighborItem({
-                strategy: streamRenderStrategy,
-                items,
-                index,
-                relation: "above",
-              }) ??
-              seamAboveItem ??
-              undefined;
-            const belowItem = getStreamNeighborItem({
-              strategy: streamRenderStrategy,
-              items,
-              index,
-              relation: "below",
-            });
-            const spacing = getAssistantBlockSpacing({
-              item,
-              aboveItem,
-              belowItem,
-            });
-            return (
-              <AssistantMessage
-                message={item.text}
-                timestamp={item.timestamp.getTime()}
-                onInlinePathPress={handleInlinePathPress}
-                workspaceRoot={workspaceRoot}
-                serverId={serverId}
-                client={client}
-                spacing={spacing}
-              />
-            );
-          }
-          case "thought": {
-            const nextItem = getStreamNeighborItem({
-              strategy: streamRenderStrategy,
-              items,
-              index,
-              relation: "below",
-            });
-            const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
-            return (
-              <ToolCallSlot
-                itemId={item.id}
-                onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
-                toolName="thinking"
-                args={item.text}
-                status={item.status === "ready" ? "completed" : "executing"}
-                isLastInSequence={isLastInSequence}
-              />
-            );
-          }
+          case "assistant_message":
+            return renderAssistantMessageItem(item, index, items, seamAboveItem);
 
-          case "tool_call": {
-            const { payload } = item;
-            const nextItem = getStreamNeighborItem({
-              strategy: streamRenderStrategy,
-              items,
-              index,
-              relation: "below",
-            });
-            const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
+          case "thought":
+            return renderThoughtItem(item, index, items);
 
-            if (payload.source === "agent") {
-              const data = payload.data;
-
-              if (
-                data.name === "speak" &&
-                data.detail.type === "unknown" &&
-                typeof data.detail.input === "string" &&
-                data.detail.input.trim()
-              ) {
-                return (
-                  <SpeakMessage message={data.detail.input} timestamp={item.timestamp.getTime()} />
-                );
-              }
-
-              return (
-                <ToolCallSlot
-                  itemId={item.id}
-                  onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
-                  toolName={data.name}
-                  error={data.error}
-                  status={data.status}
-                  detail={data.detail}
-                  cwd={agent.cwd}
-                  metadata={data.metadata}
-                  isLastInSequence={isLastInSequence}
-                />
-              );
-            }
-
-            const data = payload.data;
-            return (
-              <ToolCallSlot
-                itemId={item.id}
-                onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
-                toolName={data.toolName}
-                args={data.arguments}
-                result={data.result}
-                status={data.status}
-                isLastInSequence={isLastInSequence}
-              />
-            );
-          }
+          case "tool_call":
+            return renderToolCallItem(item, index, items);
 
           case "activity_log":
             return (
@@ -510,15 +545,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return null;
         }
       },
-      [
-        handleInlinePathPress,
-        agent.cwd,
-        streamRenderStrategy,
-        setInlineDetailsExpanded,
-        workspaceRoot,
-        serverId,
-        client,
-      ],
+      [renderUserMessageItem, renderAssistantMessageItem, renderThoughtItem, renderToolCallItem],
     );
 
     const renderStreamItem = useCallback(
