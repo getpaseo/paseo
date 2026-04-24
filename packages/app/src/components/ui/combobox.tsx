@@ -90,6 +90,14 @@ export interface ComboboxProps {
   children?: ReactNode;
 }
 
+function resolveControlledOpen(
+  open: boolean | undefined,
+  internalOpen: boolean,
+): { isControlled: boolean; isOpen: boolean } {
+  const isControlled = typeof open === "boolean";
+  return { isControlled, isOpen: isControlled ? open : internalOpen };
+}
+
 function toNumericStyleValue(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -294,6 +302,873 @@ function OptionRow({ option, selected, active, onSelect, renderOption }: OptionR
   );
 }
 
+interface OptionsListProps {
+  options: ComboboxOption[];
+  value: string;
+  activeIndex: number;
+  emptyText: string;
+  onSelect: (id: string) => void;
+  renderOption: RenderOptionFn | undefined;
+}
+
+function OptionsList({
+  options,
+  value,
+  activeIndex,
+  emptyText,
+  onSelect,
+  renderOption,
+}: OptionsListProps): ReactElement {
+  if (options.length === 0) {
+    return <ComboboxEmpty>{emptyText}</ComboboxEmpty>;
+  }
+  return (
+    <>
+      {options.map((opt, index) => (
+        <OptionRow
+          key={opt.id}
+          option={opt}
+          selected={opt.id === value}
+          active={index === activeIndex}
+          onSelect={onSelect}
+          renderOption={renderOption}
+        />
+      ))}
+    </>
+  );
+}
+
+interface DesktopPositionInput {
+  isDesktopAboveSearch: boolean;
+  isMobile: boolean;
+  desktopPlacement: "top-start" | "bottom-start";
+  referenceTop: number | null;
+  referenceLeft: number | null;
+  referenceAtOrigin: boolean;
+  desktopContentWidth: number | null;
+  windowWidth: number;
+  windowHeight: number;
+  collisionPadding: number;
+  floatingTop: number | null;
+  floatingLeft: number | null;
+  floatingStyles: ReturnType<typeof useFloating>["floatingStyles"];
+  desktopPreventInitialFlash: boolean;
+  referenceWidth: number | null;
+}
+
+interface DesktopPositionResult {
+  desktopPositionStyle:
+    | { left: number; bottom: number }
+    | ReturnType<typeof useFloating>["floatingStyles"];
+  hasResolvedDesktopPosition: boolean;
+  shouldHideDesktopContent: boolean;
+  shouldUseDesktopFade: boolean;
+  useMeasuredTopStartPosition: boolean;
+}
+
+function shouldUseMeasuredTopStart(input: DesktopPositionInput): boolean {
+  return (
+    !input.isDesktopAboveSearch &&
+    IS_WEB &&
+    !input.isMobile &&
+    input.desktopPlacement === "top-start" &&
+    input.referenceTop !== null &&
+    input.referenceLeft !== null &&
+    input.desktopContentWidth !== null
+  );
+}
+
+function resolvePositionReady(
+  input: DesktopPositionInput,
+  useMeasured: boolean,
+  measuredLeft: number | null,
+  measuredBottom: number | null,
+  aboveSearchBottom: number | null,
+): boolean {
+  const { isDesktopAboveSearch, floatingLeft, floatingTop, referenceAtOrigin } = input;
+  const hasNonZeroFloating = (floatingTop ?? 0) !== 0 || floatingLeft !== 0;
+  if (isDesktopAboveSearch) {
+    return floatingLeft !== null && aboveSearchBottom !== null;
+  }
+  if (useMeasured) {
+    return measuredLeft !== null && measuredBottom !== null;
+  }
+  return floatingLeft !== null && floatingTop !== null && (hasNonZeroFloating || referenceAtOrigin);
+}
+
+function computeDesktopPosition(input: DesktopPositionInput): DesktopPositionResult {
+  const {
+    isDesktopAboveSearch,
+    referenceTop,
+    referenceLeft,
+    desktopContentWidth,
+    windowWidth,
+    windowHeight,
+    collisionPadding,
+    floatingLeft,
+    floatingStyles,
+    desktopPreventInitialFlash,
+    referenceWidth,
+  } = input;
+
+  const desktopAboveSearchBottom =
+    isDesktopAboveSearch && referenceTop !== null
+      ? Math.max(windowHeight - referenceTop, collisionPadding)
+      : null;
+  const useMeasuredTopStartPosition = shouldUseMeasuredTopStart(input);
+  const clampedMeasuredTopStartLeft =
+    useMeasuredTopStartPosition && referenceLeft !== null && desktopContentWidth !== null
+      ? Math.max(
+          collisionPadding,
+          Math.min(windowWidth - desktopContentWidth - collisionPadding, referenceLeft),
+        )
+      : null;
+  const measuredTopStartBottom =
+    useMeasuredTopStartPosition && referenceTop !== null
+      ? Math.max(windowHeight - referenceTop + 5, collisionPadding)
+      : null;
+
+  const resolvedPositionReady = resolvePositionReady(
+    input,
+    useMeasuredTopStartPosition,
+    clampedMeasuredTopStartLeft,
+    measuredTopStartBottom,
+    desktopAboveSearchBottom,
+  );
+  const hasResolvedDesktopPosition =
+    referenceWidth !== null && referenceWidth > 0 && resolvedPositionReady;
+  const shouldHideDesktopContent = desktopPreventInitialFlash && !hasResolvedDesktopPosition;
+  const shouldUseDesktopFade = !desktopPreventInitialFlash;
+
+  let desktopPositionStyle: DesktopPositionResult["desktopPositionStyle"];
+  if (isDesktopAboveSearch) {
+    desktopPositionStyle = {
+      left: floatingLeft ?? 0,
+      bottom: desktopAboveSearchBottom ?? 0,
+    };
+  } else if (useMeasuredTopStartPosition) {
+    desktopPositionStyle = {
+      left: clampedMeasuredTopStartLeft ?? 0,
+      bottom: measuredTopStartBottom ?? 0,
+    };
+  } else {
+    desktopPositionStyle = floatingStyles;
+  }
+
+  return {
+    desktopPositionStyle,
+    hasResolvedDesktopPosition,
+    shouldHideDesktopContent,
+    shouldUseDesktopFade,
+    useMeasuredTopStartPosition,
+  };
+}
+
+function advanceActiveIndex(itemCount: number, key: "ArrowDown" | "ArrowUp") {
+  return (currentIndex: number) => getNextActiveIndex({ currentIndex, itemCount, key });
+}
+
+type DesktopKey = "ArrowDown" | "ArrowUp" | "Enter" | "Escape";
+
+interface DesktopKeyHandlerInput {
+  isOpen: boolean;
+  isMobile: boolean;
+  orderedVisibleOptions: ComboboxOption[];
+  activeIndex: number;
+  setActiveIndex: React.Dispatch<React.SetStateAction<number>>;
+  handleSelect: (id: string) => void;
+  handleClose: () => void;
+}
+
+function handleDesktopArrowKey(input: DesktopKeyHandlerInput, key: "ArrowDown" | "ArrowUp") {
+  input.setActiveIndex(advanceActiveIndex(input.orderedVisibleOptions.length, key));
+}
+
+function handleDesktopEnterKey(input: DesktopKeyHandlerInput) {
+  if (input.orderedVisibleOptions.length === 0) return;
+  const { activeIndex, orderedVisibleOptions } = input;
+  const index = activeIndex >= 0 && activeIndex < orderedVisibleOptions.length ? activeIndex : 0;
+  input.handleSelect(orderedVisibleOptions[index]!.id);
+}
+
+interface FloatingSizeSetters {
+  setAvailableSize: React.Dispatch<
+    React.SetStateAction<{ width?: number; height?: number } | null>
+  >;
+  setReferenceWidth: React.Dispatch<React.SetStateAction<number | null>>;
+}
+
+function updateAvailableSize(
+  setAvailableSize: FloatingSizeSetters["setAvailableSize"],
+  availableWidth: number,
+  availableHeight: number,
+) {
+  setAvailableSize((prev) => {
+    const next = { width: availableWidth, height: availableHeight };
+    if (!prev) return next;
+    if (prev.width === next.width && prev.height === next.height) return prev;
+    return next;
+  });
+}
+
+function updateReferenceWidth(
+  setReferenceWidth: FloatingSizeSetters["setReferenceWidth"],
+  width: number,
+) {
+  setReferenceWidth((prev) => {
+    if (!(width > 0)) return prev;
+    if (prev === width) return prev;
+    return width;
+  });
+}
+
+interface MeasuredAnchorSetters {
+  setReferenceLeft: React.Dispatch<React.SetStateAction<number | null>>;
+  setReferenceTop: React.Dispatch<React.SetStateAction<number | null>>;
+  setReferenceWidth: React.Dispatch<React.SetStateAction<number | null>>;
+  setReferenceAtOrigin: React.Dispatch<React.SetStateAction<boolean>>;
+}
+
+function applyMeasuredAnchor(setters: MeasuredAnchorSetters, x: number, y: number, width: number) {
+  setters.setReferenceLeft((prev) => (prev === x ? prev : x));
+  setters.setReferenceAtOrigin(Math.abs(x) <= 1 && Math.abs(y) <= 1);
+  setters.setReferenceTop((prev) => (prev === y ? prev : y));
+  updateReferenceWidth(setters.setReferenceWidth, width);
+}
+
+function useActiveIndexSync(
+  isOpen: boolean,
+  isMobile: boolean,
+  orderedVisibleOptions: ComboboxOption[],
+  effectiveOptionsPosition: "below-search" | "above-search",
+  normalizedSearch: string,
+  value: string,
+  setActiveIndex: React.Dispatch<React.SetStateAction<number>>,
+) {
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!IS_WEB && isMobile) return;
+    setActiveIndex(
+      resolveInitialActiveIndex(
+        orderedVisibleOptions,
+        effectiveOptionsPosition,
+        normalizedSearch,
+        value,
+      ),
+    );
+  }, [
+    effectiveOptionsPosition,
+    isMobile,
+    isOpen,
+    normalizedSearch,
+    value,
+    orderedVisibleOptions,
+    setActiveIndex,
+  ]);
+}
+
+function useDesktopOptionsPinToBottom(
+  isOpen: boolean,
+  orderedVisibleOptions: ComboboxOption[],
+  pinDesktopOptionsToBottom: () => void,
+) {
+  useEffect(() => {
+    if (!isOpen) return;
+    pinDesktopOptionsToBottom();
+  }, [isOpen, orderedVisibleOptions, pinDesktopOptionsToBottom]);
+}
+
+function useDesktopFloatingUpdate(
+  isOpen: boolean,
+  isMobile: boolean,
+  orderedVisibleOptionsLength: number,
+  searchQuery: string,
+  update: () => unknown,
+) {
+  useLayoutEffect(() => {
+    if (!isOpen || isMobile) return;
+    void update();
+  }, [isOpen, isMobile, orderedVisibleOptionsLength, searchQuery, update]);
+}
+
+function useResetSearchOnOpen(
+  isOpen: boolean,
+  setSearchQueryWithCallback: (query: string) => void,
+) {
+  useEffect(() => {
+    if (isOpen) {
+      setSearchQueryWithCallback("");
+    }
+  }, [isOpen, setSearchQueryWithCallback]);
+}
+
+interface DesktopResetSetters {
+  setAvailableSize: React.Dispatch<
+    React.SetStateAction<{ width?: number; height?: number } | null>
+  >;
+  setDesktopContentWidth: React.Dispatch<React.SetStateAction<number | null>>;
+  setReferenceLeft: React.Dispatch<React.SetStateAction<number | null>>;
+  setReferenceWidth: React.Dispatch<React.SetStateAction<number | null>>;
+}
+
+function useDesktopPositionReset(
+  isOpen: boolean,
+  isMobile: boolean,
+  desktopPlacement: "top-start" | "bottom-start",
+  update: () => unknown,
+  setters: DesktopResetSetters,
+) {
+  const { setAvailableSize, setDesktopContentWidth, setReferenceLeft, setReferenceWidth } = setters;
+  useEffect(() => {
+    if (!isOpen || isMobile) {
+      setAvailableSize(null);
+      setDesktopContentWidth(null);
+      setReferenceLeft(null);
+      setReferenceWidth(null);
+      return;
+    }
+    const raf = requestAnimationFrame(() => void update());
+    return () => cancelAnimationFrame(raf);
+  }, [
+    desktopPlacement,
+    isMobile,
+    isOpen,
+    update,
+    setAvailableSize,
+    setDesktopContentWidth,
+    setReferenceLeft,
+    setReferenceWidth,
+  ]);
+}
+
+function useAnchorMeasure(
+  isOpen: boolean,
+  isMobile: boolean,
+  anchorRef: React.RefObject<View | null>,
+  searchQuery: string,
+  windowHeight: number,
+  setters: MeasuredAnchorSetters,
+) {
+  const { setReferenceLeft, setReferenceTop, setReferenceWidth, setReferenceAtOrigin } = setters;
+  useEffect(() => {
+    if (!isOpen || isMobile) {
+      setReferenceLeft(null);
+      setReferenceAtOrigin(false);
+      setReferenceTop(null);
+      return;
+    }
+
+    const referenceEl = anchorRef.current;
+    if (!referenceEl) {
+      setReferenceAtOrigin(false);
+      setReferenceTop(null);
+      return;
+    }
+
+    const measure = () => {
+      referenceEl.measureInWindow((x, y, width) => {
+        applyMeasuredAnchor(
+          { setReferenceLeft, setReferenceTop, setReferenceWidth, setReferenceAtOrigin },
+          x,
+          y,
+          width,
+        );
+      });
+    };
+
+    measure();
+    const raf = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(raf);
+  }, [
+    anchorRef,
+    isMobile,
+    isOpen,
+    searchQuery,
+    windowHeight,
+    setReferenceLeft,
+    setReferenceTop,
+    setReferenceWidth,
+    setReferenceAtOrigin,
+  ]);
+}
+
+function applySetOpen(
+  isControlled: boolean,
+  setInternalOpen: React.Dispatch<React.SetStateAction<boolean>>,
+  onOpenChange: ((open: boolean) => void) | undefined,
+  nextOpen: boolean,
+) {
+  if (!isControlled) {
+    setInternalOpen(nextOpen);
+  }
+  onOpenChange?.(nextOpen);
+}
+
+function applySetSearchQuery(
+  setSearchQuery: React.Dispatch<React.SetStateAction<string>>,
+  onSearchQueryChange: ((query: string) => void) | undefined,
+  nextQuery: string,
+) {
+  setSearchQuery(nextQuery);
+  onSearchQueryChange?.(nextQuery);
+}
+
+function applyDesktopContentLayout(
+  event: LayoutChangeEvent,
+  setDesktopContentWidth: React.Dispatch<React.SetStateAction<number | null>>,
+  useMeasuredTopStartPosition: boolean,
+  hasResolvedDesktopPosition: boolean,
+  update: () => unknown,
+) {
+  const { width } = event.nativeEvent.layout;
+  setDesktopContentWidth((prev) => (prev === width ? prev : width));
+  if (!useMeasuredTopStartPosition || !hasResolvedDesktopPosition) {
+    void update();
+  }
+}
+
+function runIfSelected(keepOpenOnSelect: boolean, handleClose: () => void) {
+  if (!keepOpenOnSelect) {
+    handleClose();
+  }
+}
+
+function runIfPinOpen(isOpen: boolean, pin: () => void) {
+  if (!isOpen) return;
+  pin();
+}
+
+function runIfSubmitSearch(
+  showCustomOption: boolean,
+  handleSelect: (id: string) => void,
+  sanitizedSearchValue: string,
+) {
+  if (showCustomOption) {
+    handleSelect(sanitizedSearchValue);
+  }
+}
+
+function computeCollisionPadding(): number {
+  const basePadding = 16;
+  if (Platform.OS !== "android") return basePadding;
+  const statusBarHeight = StatusBar.currentHeight ?? 0;
+  return Math.max(basePadding, statusBarHeight + basePadding);
+}
+
+function scrollDesktopOptionsToEnd(scrollRef: React.RefObject<ScrollView | null>) {
+  scrollRef.current?.scrollToEnd({ animated: false });
+  requestAnimationFrame(() => {
+    scrollRef.current?.scrollToEnd({ animated: false });
+  });
+}
+
+function resolveEffectiveOptionsPosition(
+  isMobile: boolean,
+  optionsPosition: "below-search" | "above-search",
+): "below-search" | "above-search" {
+  return isMobile ? "below-search" : optionsPosition;
+}
+
+function resolveIsDesktopAboveSearch(
+  isMobile: boolean,
+  effectiveOptionsPosition: "below-search" | "above-search",
+): boolean {
+  return !isMobile && isWeb && effectiveOptionsPosition === "above-search";
+}
+
+function maybePinDesktopOptionsToBottom(
+  isMobile: boolean,
+  effectiveOptionsPosition: "below-search" | "above-search",
+  scrollRef: React.RefObject<ScrollView | null>,
+) {
+  if (isMobile || effectiveOptionsPosition !== "above-search") return;
+  scrollDesktopOptionsToEnd(scrollRef);
+}
+
+interface FloatingMiddlewareInput {
+  collisionPadding: number;
+  isDesktopAboveSearch: boolean;
+  setAvailableSize: FloatingSizeSetters["setAvailableSize"];
+  setReferenceWidth: FloatingSizeSetters["setReferenceWidth"];
+}
+
+function buildFloatingMiddleware(input: FloatingMiddlewareInput) {
+  const { collisionPadding, isDesktopAboveSearch, setAvailableSize, setReferenceWidth } = input;
+  return [
+    floatingOffset(isWeb ? 5 : 4),
+    ...(isWeb ? [] : [flip({ padding: collisionPadding })]),
+    ...(isDesktopAboveSearch ? [] : [shift({ padding: collisionPadding })]),
+    floatingSize({
+      padding: collisionPadding,
+      apply({ availableWidth, availableHeight, rects }) {
+        updateAvailableSize(setAvailableSize, availableWidth, availableHeight);
+        updateReferenceWidth(setReferenceWidth, rects.reference.width);
+      },
+    }),
+  ];
+}
+
+interface DesktopContainerStyleInput {
+  desktopMinWidth: number | undefined;
+  referenceWidth: number | null;
+  desktopFixedHeight: number | undefined;
+  desktopPositionStyle: DesktopPositionResult["desktopPositionStyle"];
+  shouldHideDesktopContent: boolean;
+  availableHeight: number | undefined;
+}
+
+function buildDesktopContainerStyle(input: DesktopContainerStyleInput) {
+  const {
+    desktopMinWidth,
+    referenceWidth,
+    desktopFixedHeight,
+    desktopPositionStyle,
+    shouldHideDesktopContent,
+    availableHeight,
+  } = input;
+  const fixedHeightStyle =
+    desktopFixedHeight != null
+      ? { minHeight: desktopFixedHeight, maxHeight: desktopFixedHeight }
+      : null;
+  const hiddenStyle = shouldHideDesktopContent ? { opacity: 0 } : null;
+  const availableHeightStyle =
+    typeof availableHeight === "number"
+      ? { maxHeight: Math.min(availableHeight, desktopFixedHeight ?? 400) }
+      : null;
+  return [
+    styles.desktopContainer,
+    {
+      position: "absolute" as const,
+      minWidth: desktopMinWidth ?? referenceWidth ?? 200,
+      maxWidth: Math.max(400, desktopMinWidth ?? 0),
+    },
+    fixedHeightStyle,
+    desktopPositionStyle,
+    hiddenStyle,
+    availableHeightStyle,
+  ];
+}
+
+function isDesktopKey(key: string): key is DesktopKey {
+  return key === "ArrowDown" || key === "ArrowUp" || key === "Enter" || key === "Escape";
+}
+
+function useWebKeyboardListener(
+  isOpen: boolean,
+  handleDesktopKey: (key: DesktopKey, event?: KeyboardEvent) => void,
+) {
+  useEffect(() => {
+    if (!IS_WEB || !isOpen) return;
+
+    const handler = (event: KeyboardEvent) => {
+      if (!isDesktopKey(event.key)) return;
+      handleDesktopKey(event.key, event);
+    };
+
+    // react-native-web's TextInput can stop propagation on key events, so listen in capture phase.
+    window.addEventListener("keydown", handler, true);
+    return () => {
+      window.removeEventListener("keydown", handler, true);
+    };
+  }, [handleDesktopKey, isOpen]);
+}
+
+function dispatchDesktopKey(input: DesktopKeyHandlerInput, key: DesktopKey, event?: KeyboardEvent) {
+  if (!input.isOpen) return;
+  if (!IS_WEB && input.isMobile) return;
+
+  if (key === "ArrowDown" || key === "ArrowUp") {
+    event?.preventDefault();
+    handleDesktopArrowKey(input, key);
+    return;
+  }
+  if (key === "Enter") {
+    if (input.orderedVisibleOptions.length === 0) return;
+    event?.preventDefault();
+    handleDesktopEnterKey(input);
+    return;
+  }
+  if (key === "Escape") {
+    event?.preventDefault();
+    input.handleClose();
+  }
+}
+
+function resolveInitialActiveIndex(
+  orderedVisibleOptions: ComboboxOption[],
+  effectiveOptionsPosition: "below-search" | "above-search",
+  normalizedSearch: string,
+  value: string,
+): number {
+  if (orderedVisibleOptions.length === 0) return -1;
+  const fallbackIndex = getComboboxFallbackIndex(
+    orderedVisibleOptions.length,
+    effectiveOptionsPosition,
+  );
+  if (normalizedSearch) return fallbackIndex;
+  const selectedIndex = orderedVisibleOptions.findIndex((opt) => opt.id === value);
+  return selectedIndex >= 0 ? selectedIndex : fallbackIndex;
+}
+
+interface MobileBodyProps {
+  bottomSheetRef: ReturnType<typeof useIsolatedBottomSheetVisibility>["sheetRef"];
+  snapPoints: string[];
+  handleSheetChange: ReturnType<typeof useIsolatedBottomSheetVisibility>["handleSheetChange"];
+  handleIndicatorStyle: { backgroundColor: string };
+  titleColor: string;
+  title: string;
+  stickyHeader: ReactNode;
+  searchable: boolean;
+  hasChildren: boolean;
+  searchPlaceholder: string;
+  searchQuery: string;
+  setSearchQueryWithCallback: (query: string) => void;
+  handleSubmitSearch: () => void;
+  orderedVisibleOptions: ComboboxOption[];
+  value: string;
+  activeIndex: number;
+  emptyText: string;
+  handleSelect: (id: string) => void;
+  renderOption: RenderOptionFn | undefined;
+  children: ReactNode;
+}
+
+function MobileComboboxBody(props: MobileBodyProps): ReactElement {
+  const renderBackdrop = useCallback(
+    (backdropProps: React.ComponentProps<typeof BottomSheetBackdrop>) => (
+      <BottomSheetBackdrop
+        {...backdropProps}
+        disappearsOnIndex={-1}
+        appearsOnIndex={0}
+        opacity={0.45}
+      />
+    ),
+    [],
+  );
+
+  const comboboxTitleStyle = useMemo(
+    () => [styles.comboboxTitle, { color: props.titleColor }],
+    [props.titleColor],
+  );
+
+  const body = props.hasChildren ? (
+    props.children
+  ) : (
+    <OptionsList
+      options={props.orderedVisibleOptions}
+      value={props.value}
+      activeIndex={props.activeIndex}
+      emptyText={props.emptyText}
+      onSelect={props.handleSelect}
+      renderOption={props.renderOption}
+    />
+  );
+
+  return (
+    <IsolatedBottomSheetModal
+      ref={props.bottomSheetRef}
+      snapPoints={props.snapPoints}
+      index={0}
+      enableDynamicSizing={false}
+      onChange={props.handleSheetChange}
+      backdropComponent={renderBackdrop}
+      enablePanDownToClose
+      backgroundComponent={ComboboxSheetBackground}
+      handleIndicatorStyle={props.handleIndicatorStyle}
+      keyboardBehavior="extend"
+      keyboardBlurBehavior="restore"
+    >
+      <View style={styles.bottomSheetHeader}>
+        <Text key={props.titleColor} style={comboboxTitleStyle}>
+          {props.title}
+        </Text>
+      </View>
+      {props.stickyHeader}
+      {!props.hasChildren && props.searchable ? (
+        <SearchInput
+          placeholder={props.searchPlaceholder}
+          value={props.searchQuery}
+          onChangeText={props.setSearchQueryWithCallback}
+          onSubmitEditing={props.handleSubmitSearch}
+          autoFocus={false}
+          useBottomSheetInput
+        />
+      ) : null}
+      <BottomSheetScrollView
+        contentContainerStyle={styles.comboboxScrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {body}
+      </BottomSheetScrollView>
+    </IsolatedBottomSheetModal>
+  );
+}
+
+interface DesktopBodyProps {
+  isOpen: boolean;
+  handleClose: () => void;
+  refs: ReturnType<typeof useFloating>["refs"];
+  shouldUseDesktopFade: boolean;
+  desktopContainerStyle: unknown;
+  handleDesktopContentLayout: (event: LayoutChangeEvent) => void;
+  stickyHeader: ReactNode;
+  searchable: boolean;
+  searchPlaceholder: string;
+  searchQuery: string;
+  setSearchQueryWithCallback: (query: string) => void;
+  handleSubmitSearch: () => void;
+  effectiveOptionsPosition: "below-search" | "above-search";
+  desktopOptionsScrollRef: React.RefObject<ScrollView | null>;
+  desktopAboveSearchContentContainerStyle: unknown;
+  handleDesktopOptionsContentSizeChange: () => void;
+  orderedVisibleOptions: ComboboxOption[];
+  value: string;
+  activeIndex: number;
+  emptyText: string;
+  handleSelect: (id: string) => void;
+  renderOption: RenderOptionFn | undefined;
+  hasChildren: boolean;
+  children: ReactNode;
+}
+
+function DesktopComboboxChildrenBody(props: {
+  stickyHeader: ReactNode;
+  children: ReactNode;
+}): ReactElement {
+  return (
+    <>
+      {props.stickyHeader}
+      <ScrollView
+        contentContainerStyle={styles.desktopChildrenScrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        style={styles.desktopScroll}
+      >
+        {props.children}
+      </ScrollView>
+    </>
+  );
+}
+
+function DesktopComboboxOptionsBody(props: {
+  stickyHeader: ReactNode;
+  searchable: boolean;
+  searchPlaceholder: string;
+  searchQuery: string;
+  setSearchQueryWithCallback: (query: string) => void;
+  handleSubmitSearch: () => void;
+  effectiveOptionsPosition: "below-search" | "above-search";
+  desktopOptionsScrollRef: React.RefObject<ScrollView | null>;
+  desktopAboveSearchContentContainerStyle: unknown;
+  handleDesktopOptionsContentSizeChange: () => void;
+  orderedVisibleOptions: ComboboxOption[];
+  value: string;
+  activeIndex: number;
+  emptyText: string;
+  handleSelect: (id: string) => void;
+  renderOption: RenderOptionFn | undefined;
+}): ReactElement {
+  const list = (
+    <OptionsList
+      options={props.orderedVisibleOptions}
+      value={props.value}
+      activeIndex={props.activeIndex}
+      emptyText={props.emptyText}
+      onSelect={props.handleSelect}
+      renderOption={props.renderOption}
+    />
+  );
+
+  return (
+    <>
+      {props.stickyHeader}
+      {props.searchable ? (
+        <SearchInput
+          placeholder={props.searchPlaceholder}
+          value={props.searchQuery}
+          onChangeText={props.setSearchQueryWithCallback}
+          onSubmitEditing={props.handleSubmitSearch}
+          autoFocus
+          useBottomSheetInput={false}
+        />
+      ) : null}
+      {props.effectiveOptionsPosition === "above-search" ? (
+        <ScrollView
+          ref={props.desktopOptionsScrollRef}
+          contentContainerStyle={props.desktopAboveSearchContentContainerStyle as never}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          style={styles.desktopScroll}
+          onContentSizeChange={props.handleDesktopOptionsContentSizeChange}
+        >
+          {list}
+        </ScrollView>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.desktopScrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          style={styles.desktopScroll}
+        >
+          {list}
+        </ScrollView>
+      )}
+    </>
+  );
+}
+
+function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
+  return (
+    <Modal
+      transparent
+      animationType="none"
+      visible={props.isOpen}
+      onRequestClose={props.handleClose}
+    >
+      <View ref={props.refs.setOffsetParent} collapsable={false} style={styles.desktopOverlay}>
+        <Pressable style={styles.desktopBackdrop} onPress={props.handleClose} />
+        <Animated.View
+          testID="combobox-desktop-container"
+          entering={props.shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
+          exiting={props.shouldUseDesktopFade ? FadeOut.duration(100) : undefined}
+          style={props.desktopContainerStyle as never}
+          ref={props.refs.setFloating}
+          collapsable={false}
+          onLayout={props.handleDesktopContentLayout}
+        >
+          {props.hasChildren ? (
+            <DesktopComboboxChildrenBody stickyHeader={props.stickyHeader}>
+              {props.children}
+            </DesktopComboboxChildrenBody>
+          ) : (
+            <DesktopComboboxOptionsBody
+              stickyHeader={props.stickyHeader}
+              searchable={props.searchable}
+              searchPlaceholder={props.searchPlaceholder}
+              searchQuery={props.searchQuery}
+              setSearchQueryWithCallback={props.setSearchQueryWithCallback}
+              handleSubmitSearch={props.handleSubmitSearch}
+              effectiveOptionsPosition={props.effectiveOptionsPosition}
+              desktopOptionsScrollRef={props.desktopOptionsScrollRef}
+              desktopAboveSearchContentContainerStyle={
+                props.desktopAboveSearchContentContainerStyle
+              }
+              handleDesktopOptionsContentSizeChange={props.handleDesktopOptionsContentSizeChange}
+              orderedVisibleOptions={props.orderedVisibleOptions}
+              value={props.value}
+              activeIndex={props.activeIndex}
+              emptyText={props.emptyText}
+              handleSelect={props.handleSelect}
+              renderOption={props.renderOption}
+            />
+          )}
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
 export function Combobox({
   options,
   value,
@@ -324,8 +1199,8 @@ export function Combobox({
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
   const titleColor = theme.colors.foreground;
-  const effectiveOptionsPosition = isMobile ? "below-search" : optionsPosition;
-  const isDesktopAboveSearch = !isMobile && isWeb && effectiveOptionsPosition === "above-search";
+  const effectiveOptionsPosition = resolveEffectiveOptionsPosition(isMobile, optionsPosition);
+  const isDesktopAboveSearch = resolveIsDesktopAboveSearch(isMobile, effectiveOptionsPosition);
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const snapPoints = useMemo(() => ["60%", "90%"], []);
   const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(
@@ -340,25 +1215,16 @@ export function Combobox({
   const desktopOptionsScrollRef = useRef<ScrollView>(null);
   const [desktopContentWidth, setDesktopContentWidth] = useState<number | null>(null);
 
-  const isControlled = typeof open === "boolean";
   const [internalOpen, setInternalOpen] = useState(false);
-  const isOpen = isControlled ? open : internalOpen;
+  const { isControlled, isOpen } = resolveControlledOpen(open, internalOpen);
 
   const setOpen = useCallback(
-    (nextOpen: boolean) => {
-      if (!isControlled) {
-        setInternalOpen(nextOpen);
-      }
-      onOpenChange?.(nextOpen);
-    },
+    (nextOpen: boolean) => applySetOpen(isControlled, setInternalOpen, onOpenChange, nextOpen),
     [isControlled, onOpenChange],
   );
 
   const setSearchQueryWithCallback = useCallback(
-    (nextQuery: string) => {
-      setSearchQuery(nextQuery);
-      onSearchQueryChange?.(nextQuery);
-    },
+    (nextQuery: string) => applySetSearchQuery(setSearchQuery, onSearchQueryChange, nextQuery),
     [onSearchQueryChange],
   );
 
@@ -367,44 +1233,18 @@ export function Combobox({
     setSearchQueryWithCallback("");
   }, [setOpen, setSearchQueryWithCallback]);
 
-  useEffect(() => {
-    if (isOpen) {
-      setSearchQueryWithCallback("");
-    }
-  }, [isOpen, setSearchQueryWithCallback]);
+  useResetSearchOnOpen(isOpen, setSearchQueryWithCallback);
 
-  const collisionPadding = useMemo(() => {
-    const basePadding = 16;
-    if (Platform.OS !== "android") return basePadding;
-    const statusBarHeight = StatusBar.currentHeight ?? 0;
-    return Math.max(basePadding, statusBarHeight + basePadding);
-  }, []);
+  const collisionPadding = useMemo(computeCollisionPadding, []);
 
   const middleware = useMemo(
-    () => [
-      floatingOffset(isWeb ? 5 : 4),
-      ...(isWeb ? [] : [flip({ padding: collisionPadding })]),
-      ...(isDesktopAboveSearch ? [] : [shift({ padding: collisionPadding })]),
-      floatingSize({
-        padding: collisionPadding,
-        apply({ availableWidth, availableHeight, rects }) {
-          setAvailableSize((prev) => {
-            const next = { width: availableWidth, height: availableHeight };
-            if (!prev) return next;
-            if (prev.width === next.width && prev.height === next.height) return prev;
-            return next;
-          });
-          setReferenceWidth((prev) => {
-            const next = rects.reference.width;
-            if (!(next > 0)) {
-              return prev;
-            }
-            if (prev === next) return prev;
-            return next;
-          });
-        },
+    () =>
+      buildFloatingMiddleware({
+        collisionPadding,
+        isDesktopAboveSearch,
+        setAvailableSize,
+        setReferenceWidth,
       }),
-    ],
     [collisionPadding, isDesktopAboveSearch],
   );
 
@@ -417,119 +1257,52 @@ export function Combobox({
     },
   });
 
-  useEffect(() => {
-    if (!isOpen || isMobile) {
-      setAvailableSize(null);
-      setDesktopContentWidth(null);
-      setReferenceLeft(null);
-      setReferenceWidth(null);
-      return;
-    }
-    const raf = requestAnimationFrame(() => void update());
-    return () => cancelAnimationFrame(raf);
-  }, [desktopPlacement, isMobile, isOpen, update]);
+  useDesktopPositionReset(isOpen, isMobile, desktopPlacement, update, {
+    setAvailableSize,
+    setDesktopContentWidth,
+    setReferenceLeft,
+    setReferenceWidth,
+  });
 
-  useEffect(() => {
-    if (!isOpen || isMobile) {
-      setReferenceLeft(null);
-      setReferenceAtOrigin(false);
-      setReferenceTop(null);
-      return;
-    }
-
-    const referenceEl = anchorRef.current;
-    if (!referenceEl) {
-      setReferenceAtOrigin(false);
-      setReferenceTop(null);
-      return;
-    }
-
-    const measure = () => {
-      referenceEl.measureInWindow((x, y, width, _height) => {
-        setReferenceLeft((prev) => (prev === x ? prev : x));
-        setReferenceAtOrigin(Math.abs(x) <= 1 && Math.abs(y) <= 1);
-        setReferenceTop((prev) => (prev === y ? prev : y));
-        setReferenceWidth((prev) => {
-          if (!(width > 0)) {
-            return prev;
-          }
-          return prev === width ? prev : width;
-        });
-      });
-    };
-
-    measure();
-    const raf = requestAnimationFrame(measure);
-    return () => cancelAnimationFrame(raf);
-  }, [anchorRef, isMobile, isOpen, searchQuery, windowHeight]);
+  useAnchorMeasure(isOpen, isMobile, anchorRef, searchQuery, windowHeight, {
+    setReferenceLeft,
+    setReferenceTop,
+    setReferenceWidth,
+    setReferenceAtOrigin,
+  });
 
   const floatingTop = toNumericStyleValue(floatingStyles.top);
   const floatingLeft = toNumericStyleValue(floatingStyles.left);
-  const desktopAboveSearchBottom =
-    isDesktopAboveSearch && referenceTop !== null
-      ? Math.max(windowHeight - referenceTop, collisionPadding)
-      : null;
-  const hasNonZeroFloatingPosition = (floatingTop ?? 0) !== 0 || floatingLeft !== 0;
-  const useMeasuredTopStartPosition =
-    !isDesktopAboveSearch &&
-    IS_WEB &&
-    !isMobile &&
-    desktopPlacement === "top-start" &&
-    referenceTop !== null &&
-    referenceLeft !== null &&
-    desktopContentWidth !== null;
-  const clampedMeasuredTopStartLeft = useMeasuredTopStartPosition
-    ? Math.max(
-        collisionPadding,
-        Math.min(windowWidth - desktopContentWidth - collisionPadding, referenceLeft),
-      )
-    : null;
-  const measuredTopStartBottom = useMeasuredTopStartPosition
-    ? Math.max(windowHeight - referenceTop + 5, collisionPadding)
-    : null;
-  let resolvedPositionReady: boolean;
-  if (isDesktopAboveSearch) {
-    resolvedPositionReady = floatingLeft !== null && desktopAboveSearchBottom !== null;
-  } else if (useMeasuredTopStartPosition) {
-    resolvedPositionReady = clampedMeasuredTopStartLeft !== null && measuredTopStartBottom !== null;
-  } else {
-    resolvedPositionReady =
-      floatingLeft !== null &&
-      floatingTop !== null &&
-      (hasNonZeroFloatingPosition || referenceAtOrigin);
-  }
-  const hasResolvedDesktopPosition =
-    referenceWidth !== null && referenceWidth > 0 && resolvedPositionReady;
-  const shouldHideDesktopContent = desktopPreventInitialFlash && !hasResolvedDesktopPosition;
-  const shouldUseDesktopFade = !desktopPreventInitialFlash;
 
-  let desktopPositionStyle: { left: number; bottom: number } | typeof floatingStyles;
-  if (isDesktopAboveSearch) {
-    desktopPositionStyle = {
-      left: floatingLeft ?? 0,
-      bottom: desktopAboveSearchBottom ?? 0,
-    };
-  } else if (useMeasuredTopStartPosition) {
-    desktopPositionStyle = {
-      left: clampedMeasuredTopStartLeft ?? 0,
-      bottom: measuredTopStartBottom ?? 0,
-    };
-  } else {
-    desktopPositionStyle = floatingStyles;
-  }
+  const {
+    desktopPositionStyle,
+    hasResolvedDesktopPosition,
+    shouldHideDesktopContent,
+    shouldUseDesktopFade,
+    useMeasuredTopStartPosition,
+  } = computeDesktopPosition({
+    isDesktopAboveSearch,
+    isMobile,
+    desktopPlacement,
+    referenceTop,
+    referenceLeft,
+    referenceAtOrigin,
+    desktopContentWidth,
+    windowWidth,
+    windowHeight,
+    collisionPadding,
+    floatingTop,
+    floatingLeft,
+    floatingStyles,
+    desktopPreventInitialFlash,
+    referenceWidth,
+  });
 
   const { sheetRef: bottomSheetRef, handleSheetChange } = useIsolatedBottomSheetVisibility({
     visible: isOpen,
     isEnabled: isMobile,
     onClose: handleClose,
   });
-
-  const renderBackdrop = useCallback(
-    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.45} />
-    ),
-    [],
-  );
 
   const normalizedSearch = searchable ? searchQuery.trim().toLowerCase() : "";
   const sanitizedSearchValue = searchQuery.trim();
@@ -572,196 +1345,91 @@ export function Combobox({
   );
 
   const handleDesktopContentLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      const { width } = event.nativeEvent.layout;
-      setDesktopContentWidth((prev) => (prev === width ? prev : width));
-      if (!useMeasuredTopStartPosition || !hasResolvedDesktopPosition) {
-        void update();
-      }
-    },
+    (event: LayoutChangeEvent) =>
+      applyDesktopContentLayout(
+        event,
+        setDesktopContentWidth,
+        useMeasuredTopStartPosition,
+        hasResolvedDesktopPosition,
+        update,
+      ),
     [useMeasuredTopStartPosition, hasResolvedDesktopPosition, update],
   );
 
-  const pinDesktopOptionsToBottom = useCallback(() => {
-    if (isMobile || effectiveOptionsPosition !== "above-search") {
-      return;
-    }
-    desktopOptionsScrollRef.current?.scrollToEnd({ animated: false });
-    requestAnimationFrame(() => {
-      desktopOptionsScrollRef.current?.scrollToEnd({ animated: false });
-    });
-  }, [effectiveOptionsPosition, isMobile]);
+  const pinDesktopOptionsToBottom = useCallback(
+    () =>
+      maybePinDesktopOptionsToBottom(isMobile, effectiveOptionsPosition, desktopOptionsScrollRef),
+    [effectiveOptionsPosition, isMobile],
+  );
 
-  const handleDesktopOptionsContentSizeChange = useCallback(() => {
-    if (!isOpen) {
-      return;
-    }
-    pinDesktopOptionsToBottom();
-  }, [isOpen, pinDesktopOptionsToBottom]);
+  const handleDesktopOptionsContentSizeChange = useCallback(
+    () => runIfPinOpen(isOpen, pinDesktopOptionsToBottom),
+    [isOpen, pinDesktopOptionsToBottom],
+  );
 
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-    pinDesktopOptionsToBottom();
-  }, [isOpen, orderedVisibleOptions, pinDesktopOptionsToBottom]);
+  useDesktopOptionsPinToBottom(isOpen, orderedVisibleOptions, pinDesktopOptionsToBottom);
 
-  useLayoutEffect(() => {
-    if (!isOpen || isMobile) {
-      return;
-    }
-    void update();
-  }, [isOpen, isMobile, orderedVisibleOptions.length, searchQuery, update]);
+  useDesktopFloatingUpdate(isOpen, isMobile, orderedVisibleOptions.length, searchQuery, update);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    if (!IS_WEB && isMobile) return;
-
-    if (orderedVisibleOptions.length === 0) {
-      setActiveIndex(-1);
-      return;
-    }
-
-    const fallbackIndex = getComboboxFallbackIndex(
-      orderedVisibleOptions.length,
-      effectiveOptionsPosition,
-    );
-
-    if (normalizedSearch) {
-      setActiveIndex(fallbackIndex);
-      return;
-    }
-
-    const selectedIndex = orderedVisibleOptions.findIndex((opt) => opt.id === value);
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : fallbackIndex);
-  }, [effectiveOptionsPosition, isMobile, isOpen, normalizedSearch, value, orderedVisibleOptions]);
+  useActiveIndexSync(
+    isOpen,
+    isMobile,
+    orderedVisibleOptions,
+    effectiveOptionsPosition,
+    normalizedSearch,
+    value,
+    setActiveIndex,
+  );
 
   const handleSelect = useCallback(
     (id: string) => {
       onSelect(id);
-      if (!keepOpenOnSelect) {
-        handleClose();
-      }
+      runIfSelected(keepOpenOnSelect, handleClose);
     },
     [handleClose, keepOpenOnSelect, onSelect],
   );
 
-  const handleSubmitSearch = useCallback(() => {
-    if (showCustomOption) {
-      handleSelect(sanitizedSearchValue);
-    }
-  }, [handleSelect, sanitizedSearchValue, showCustomOption]);
+  const handleSubmitSearch = useCallback(
+    () => runIfSubmitSearch(showCustomOption, handleSelect, sanitizedSearchValue),
+    [handleSelect, sanitizedSearchValue, showCustomOption],
+  );
 
   const handleDesktopKey = useCallback(
-    (key: "ArrowDown" | "ArrowUp" | "Enter" | "Escape", event?: KeyboardEvent) => {
-      if (!isOpen) return;
-      if (!IS_WEB && isMobile) return;
-
-      if (key === "ArrowDown" || key === "ArrowUp") {
-        event?.preventDefault();
-        setActiveIndex((currentIndex) =>
-          getNextActiveIndex({
-            currentIndex,
-            itemCount: orderedVisibleOptions.length,
-            key,
-          }),
-        );
-        return;
-      }
-
-      if (key === "Enter") {
-        if (orderedVisibleOptions.length === 0) return;
-        event?.preventDefault();
-        const index =
-          activeIndex >= 0 && activeIndex < orderedVisibleOptions.length ? activeIndex : 0;
-        handleSelect(orderedVisibleOptions[index]!.id);
-        return;
-      }
-
-      if (key === "Escape") {
-        event?.preventDefault();
-        handleClose();
-      }
+    (key: DesktopKey, event?: KeyboardEvent) => {
+      dispatchDesktopKey(
+        {
+          isOpen,
+          isMobile,
+          orderedVisibleOptions,
+          activeIndex,
+          setActiveIndex,
+          handleSelect,
+          handleClose,
+        },
+        key,
+        event,
+      );
     },
     [activeIndex, handleClose, handleSelect, isMobile, isOpen, orderedVisibleOptions],
   );
 
-  useEffect(() => {
-    if (!IS_WEB || !isOpen) return;
-
-    const handler = (event: KeyboardEvent) => {
-      const key = event.key;
-      if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Enter" && key !== "Escape") {
-        return;
-      }
-      handleDesktopKey(key, event);
-    };
-
-    // react-native-web's TextInput can stop propagation on key events, so listen in capture phase.
-    window.addEventListener("keydown", handler, true);
-    return () => {
-      window.removeEventListener("keydown", handler, true);
-    };
-  }, [handleDesktopKey, isOpen]);
-
-  const searchInput = (
-    <SearchInput
-      placeholder={searchPlaceholder ?? placeholder}
-      value={searchQuery}
-      onChangeText={setSearchQueryWithCallback}
-      onSubmitEditing={handleSubmitSearch}
-      autoFocus={!isMobile}
-      useBottomSheetInput={isMobile}
-    />
-  );
-
-  const optionsList =
-    orderedVisibleOptions.length > 0 ? (
-      orderedVisibleOptions.map((opt, index) => (
-        <OptionRow
-          key={opt.id}
-          option={opt}
-          selected={opt.id === value}
-          active={index === activeIndex}
-          onSelect={handleSelect}
-          renderOption={renderOption}
-        />
-      ))
-    ) : (
-      <ComboboxEmpty>{emptyText}</ComboboxEmpty>
-    );
-
-  const defaultContent = optionsList;
-
-  const content = children ?? defaultContent;
+  useWebKeyboardListener(isOpen, handleDesktopKey);
 
   const handleIndicatorStyle = useMemo(
     () => ({ backgroundColor: theme.colors.palette.zinc[600] }),
     [theme.colors.palette.zinc],
   );
 
-  const comboboxTitleStyle = useMemo(
-    () => [styles.comboboxTitle, { color: titleColor }],
-    [titleColor],
-  );
-
   const desktopContainerStyle = useMemo(
-    () => [
-      styles.desktopContainer,
-      {
-        position: "absolute" as const,
-        minWidth: desktopMinWidth ?? referenceWidth ?? 200,
-        maxWidth: Math.max(400, desktopMinWidth ?? 0),
-      },
-      desktopFixedHeight != null
-        ? { minHeight: desktopFixedHeight, maxHeight: desktopFixedHeight }
-        : null,
-      desktopPositionStyle,
-      shouldHideDesktopContent ? { opacity: 0 } : null,
-      typeof availableSize?.height === "number"
-        ? { maxHeight: Math.min(availableSize.height, desktopFixedHeight ?? 400) }
-        : null,
-    ],
+    () =>
+      buildDesktopContainerStyle({
+        desktopMinWidth,
+        referenceWidth,
+        desktopFixedHeight,
+        desktopPositionStyle,
+        shouldHideDesktopContent,
+        availableHeight: availableSize?.height,
+      }),
     [
       desktopMinWidth,
       referenceWidth,
@@ -777,96 +1445,67 @@ export function Combobox({
     [],
   );
 
+  const effectiveSearchPlaceholder = searchPlaceholder ?? placeholder;
+  const hasChildren = Boolean(children);
+
   if (isMobile) {
     return (
-      <IsolatedBottomSheetModal
-        ref={bottomSheetRef}
+      <MobileComboboxBody
+        bottomSheetRef={bottomSheetRef}
         snapPoints={snapPoints}
-        index={0}
-        enableDynamicSizing={false}
-        onChange={handleSheetChange}
-        backdropComponent={renderBackdrop}
-        enablePanDownToClose
-        backgroundComponent={ComboboxSheetBackground}
+        handleSheetChange={handleSheetChange}
         handleIndicatorStyle={handleIndicatorStyle}
-        keyboardBehavior="extend"
-        keyboardBlurBehavior="restore"
+        titleColor={titleColor}
+        title={title}
+        stickyHeader={stickyHeader}
+        searchable={searchable}
+        hasChildren={hasChildren}
+        searchPlaceholder={effectiveSearchPlaceholder}
+        searchQuery={searchQuery}
+        setSearchQueryWithCallback={setSearchQueryWithCallback}
+        handleSubmitSearch={handleSubmitSearch}
+        orderedVisibleOptions={orderedVisibleOptions}
+        value={value}
+        activeIndex={activeIndex}
+        emptyText={emptyText}
+        handleSelect={handleSelect}
+        renderOption={renderOption}
       >
-        <View style={styles.bottomSheetHeader}>
-          <Text key={titleColor} style={comboboxTitleStyle}>
-            {title}
-          </Text>
-        </View>
-        {stickyHeader}
-        {!children && searchable ? searchInput : null}
-        <BottomSheetScrollView
-          contentContainerStyle={styles.comboboxScrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {content}
-        </BottomSheetScrollView>
-      </IsolatedBottomSheetModal>
+        {children}
+      </MobileComboboxBody>
     );
   }
 
   if (!isOpen) return null;
 
   return (
-    <Modal transparent animationType="none" visible={isOpen} onRequestClose={handleClose}>
-      <View ref={refs.setOffsetParent} collapsable={false} style={styles.desktopOverlay}>
-        <Pressable style={styles.desktopBackdrop} onPress={handleClose} />
-        <Animated.View
-          testID="combobox-desktop-container"
-          entering={shouldUseDesktopFade ? FadeIn.duration(100) : undefined}
-          exiting={shouldUseDesktopFade ? FadeOut.duration(100) : undefined}
-          style={desktopContainerStyle}
-          ref={refs.setFloating}
-          collapsable={false}
-          onLayout={handleDesktopContentLayout}
-        >
-          {children ? (
-            <>
-              {stickyHeader}
-              <ScrollView
-                contentContainerStyle={styles.desktopChildrenScrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                style={styles.desktopScroll}
-              >
-                {content}
-              </ScrollView>
-            </>
-          ) : (
-            <>
-              {stickyHeader}
-              {searchable ? searchInput : null}
-              {effectiveOptionsPosition === "above-search" ? (
-                <ScrollView
-                  ref={desktopOptionsScrollRef}
-                  contentContainerStyle={desktopAboveSearchContentContainerStyle}
-                  keyboardShouldPersistTaps="handled"
-                  showsVerticalScrollIndicator={false}
-                  style={styles.desktopScroll}
-                  onContentSizeChange={handleDesktopOptionsContentSizeChange}
-                >
-                  {optionsList}
-                </ScrollView>
-              ) : (
-                <ScrollView
-                  contentContainerStyle={styles.desktopScrollContent}
-                  keyboardShouldPersistTaps="handled"
-                  showsVerticalScrollIndicator={false}
-                  style={styles.desktopScroll}
-                >
-                  {optionsList}
-                </ScrollView>
-              )}
-            </>
-          )}
-        </Animated.View>
-      </View>
-    </Modal>
+    <DesktopComboboxBody
+      isOpen={isOpen}
+      handleClose={handleClose}
+      refs={refs}
+      shouldUseDesktopFade={shouldUseDesktopFade}
+      desktopContainerStyle={desktopContainerStyle}
+      handleDesktopContentLayout={handleDesktopContentLayout}
+      stickyHeader={stickyHeader}
+      searchable={searchable}
+      searchPlaceholder={effectiveSearchPlaceholder}
+      searchQuery={searchQuery}
+      setSearchQueryWithCallback={setSearchQueryWithCallback}
+      handleSubmitSearch={handleSubmitSearch}
+      effectiveOptionsPosition={effectiveOptionsPosition}
+      desktopOptionsScrollRef={desktopOptionsScrollRef}
+      desktopAboveSearchContentContainerStyle={desktopAboveSearchContentContainerStyle}
+      handleDesktopOptionsContentSizeChange={handleDesktopOptionsContentSizeChange}
+      orderedVisibleOptions={orderedVisibleOptions}
+      value={value}
+      activeIndex={activeIndex}
+      emptyText={emptyText}
+      handleSelect={handleSelect}
+      renderOption={renderOption}
+      hasChildren={hasChildren}
+    >
+      {children}
+    </DesktopComboboxBody>
   );
 }
 
