@@ -25,7 +25,7 @@
     "test": "expo-module test",
     "format": "oxfmt --check .",
     "format:fix": "oxfmt .",
-    "typecheck": "tsc",
+    "typecheck": "tsgo --noEmit",
     "expo-module": "expo-module",
     "open:ios": "xed examples/basic-usage/ios",
     "open:android": "open -a \"Android Studio\" examples/basic-usage/android"

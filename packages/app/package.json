@@ -17,7 +17,7 @@
     "ios:release": "expo run:ios --configuration Release",
     "web": "expo start --web",
     "lint": "expo lint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "test": "vitest run",
     "test:browser": "vitest run --project browser",
     "test:e2e": "playwright test",
