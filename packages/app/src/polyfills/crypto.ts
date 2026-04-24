@@ -7,19 +7,27 @@ declare global {
   }
 }
 
+interface MutableGlobal {
+  TextEncoder?: typeof TextEncoder;
+  TextDecoder?: typeof TextDecoder;
+  crypto?: Crypto;
+}
+
 export function polyfillCrypto(): void {
+  const g = globalThis as unknown as MutableGlobal;
+
   // Ensure TextEncoder/TextDecoder exist for shared E2EE code (tweetnacl + relay transport).
   // Hermes may not provide them in all configurations.
-  if (typeof (globalThis as any).TextEncoder !== "function") {
+  if (typeof g.TextEncoder !== "function") {
     class BufferTextEncoder {
       encode(input = ""): Uint8Array {
         return Uint8Array.from(Buffer.from(String(input), "utf8"));
       }
     }
-    (globalThis as any).TextEncoder = BufferTextEncoder as any;
+    g.TextEncoder = BufferTextEncoder as unknown as typeof TextEncoder;
   }
 
-  if (typeof (globalThis as any).TextDecoder !== "function") {
+  if (typeof g.TextDecoder !== "function") {
     class BufferTextDecoder {
       constructor(_label?: string, _options?: unknown) {
         // no-op
@@ -35,30 +43,24 @@ export function polyfillCrypto(): void {
         return Buffer.from(String(input), "utf8").toString("utf8");
       }
     }
-    (globalThis as any).TextDecoder = BufferTextDecoder as any;
+    g.TextDecoder = BufferTextDecoder as unknown as typeof TextDecoder;
   }
 
-  const existing = (globalThis as any).crypto as Crypto | null | undefined;
-  let target = existing;
-  if (!target) {
-    target = {} as Crypto;
-    (globalThis as any).crypto = target;
+  if (!g.crypto) {
+    g.crypto = {} as Crypto;
   }
 
-  if (typeof (globalThis as any).crypto?.randomUUID !== "function") {
-    if (!globalThis.crypto) {
-      (globalThis as any).crypto = {} as Crypto;
-    }
-    globalThis.crypto.randomUUID = () =>
+  if (typeof g.crypto.randomUUID !== "function") {
+    g.crypto.randomUUID = () =>
       ExpoCrypto.randomUUID() as `${string}-${string}-${string}-${string}-${string}`;
   }
 
-  if (typeof (globalThis as any).crypto?.getRandomValues !== "function") {
-    if (!globalThis.crypto) {
-      (globalThis as any).crypto = {} as Crypto;
-    }
-    globalThis.crypto.getRandomValues = <T extends ArrayBufferView>(array: T): T => {
-      return ExpoCrypto.getRandomValues(array as any) as T;
+  if (typeof g.crypto.getRandomValues !== "function") {
+    g.crypto.getRandomValues = <T extends ArrayBufferView | null>(array: T): T => {
+      if (array === null) return array;
+      return ExpoCrypto.getRandomValues(
+        array as unknown as Parameters<typeof ExpoCrypto.getRandomValues>[0],
+      ) as unknown as T;
     };
   }
 }
