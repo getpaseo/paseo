@@ -42,6 +42,14 @@ type LocalSpeechAvailability = {
   modelsDir: string | null;
 };
 
+function isTruthyEnvFlag(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 export type InitializedLocalSpeech = {
   turnDetectionService: TurnDetectionProvider | null;
   sttService: SpeechToTextProvider | null;
@@ -189,6 +197,27 @@ export async function initializeLocalSpeechServices(params: {
   logger: Logger;
 }): Promise<InitializedLocalSpeech> {
   const { providers, logger, speechConfig } = params;
+
+  if (process.platform === "win32" && !isTruthyEnvFlag(process.env.PASEO_ENABLE_UNSAFE_WINDOWS_LOCAL_SPEECH)) {
+    logger.warn(
+      {
+        envFlag: "PASEO_ENABLE_UNSAFE_WINDOWS_LOCAL_SPEECH",
+      },
+      "Skipping local speech provider initialization on Windows to avoid native runtime crashes",
+    );
+
+    return {
+      turnDetectionService: null,
+      sttService: null,
+      ttsService: null,
+      dictationSttService: null,
+      localVoiceTtsProvider: null,
+      localModelConfig: null,
+      availability: getLocalSpeechAvailability(speechConfig),
+      cleanup: () => {},
+    };
+  }
+
   const localConfig = speechConfig?.local ?? null;
   const localModels = resolveConfiguredLocalModels(speechConfig);
 
