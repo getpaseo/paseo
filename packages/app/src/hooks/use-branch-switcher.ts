@@ -77,6 +77,35 @@ export function useBranchSwitcher({
     ]);
   }, [queryClient, stashListQueryKey, normalizedServerId, normalizedWorkspaceId]);
 
+  const maybeRestoreStashForBranch = useCallback(
+    async (branchId: string) => {
+      if (!client) return;
+      try {
+        const stashPayload = await client.stashList(normalizedWorkspaceId, { paseoOnly: true });
+        const targetStash = stashPayload.entries.find((e) => e.branch === branchId);
+        if (!targetStash) return;
+        const shouldRestore = await confirmDialog({
+          title: "Restore stashed changes?",
+          message:
+            "This branch has stashed changes from a previous session. Would you like to restore them?",
+          confirmLabel: "Restore",
+          cancelLabel: "Later",
+        });
+        if (!shouldRestore) return;
+        const popPayload = await client.stashPop(normalizedWorkspaceId, targetStash.index);
+        if (popPayload.error) {
+          toast.error(popPayload.error.message);
+        } else {
+          toast.show("Stashed changes restored");
+        }
+        await invalidateStashAndCheckout();
+      } catch {
+        // Non-critical — user can still restore on next branch switch
+      }
+    },
+    [client, invalidateStashAndCheckout, normalizedWorkspaceId, toast],
+  );
+
   const stashAndSwitch = useCallback(
     async (branchId: string) => {
       if (!client) return;
@@ -129,30 +158,7 @@ export function useBranchSwitcher({
           }
           // Success — refresh and check for stashes on the target branch
           await invalidateStashAndCheckout();
-          try {
-            const stashPayload = await client.stashList(normalizedWorkspaceId, { paseoOnly: true });
-            const targetStash = stashPayload.entries.find((e) => e.branch === branchId);
-            if (targetStash) {
-              const shouldRestore = await confirmDialog({
-                title: "Restore stashed changes?",
-                message:
-                  "This branch has stashed changes from a previous session. Would you like to restore them?",
-                confirmLabel: "Restore",
-                cancelLabel: "Later",
-              });
-              if (shouldRestore) {
-                const popPayload = await client.stashPop(normalizedWorkspaceId, targetStash.index);
-                if (popPayload.error) {
-                  toast.error(popPayload.error.message);
-                } else {
-                  toast.show("Stashed changes restored");
-                }
-                await invalidateStashAndCheckout();
-              }
-            }
-          } catch {
-            // Non-critical — user can still restore on next branch switch
-          }
+          await maybeRestoreStashForBranch(branchId);
         } catch (err) {
           toast.error(err instanceof Error ? err.message : "Failed to switch branch");
         }
@@ -162,6 +168,7 @@ export function useBranchSwitcher({
       client,
       currentBranchName,
       invalidateStashAndCheckout,
+      maybeRestoreStashForBranch,
       normalizedWorkspaceId,
       stashAndSwitch,
       toast,
