@@ -65,14 +65,16 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
       ...(mcpAllowedHosts ? { allowedHosts: mcpAllowedHosts } : {}),
     });
 
-    transport.onclose = () => {
-      if (transport.sessionId) {
-        agentMcpTransports.delete(transport.sessionId);
-      }
-    };
-    transport.onerror = () => {
-      // Ignore errors in test
-    };
+    Object.assign(transport, {
+      onclose: () => {
+        if (transport.sessionId) {
+          agentMcpTransports.delete(transport.sessionId);
+        }
+      },
+      onerror: () => {
+        // Ignore errors in test
+      },
+    });
 
     await mcpServer.connect(transport);
     return transport;

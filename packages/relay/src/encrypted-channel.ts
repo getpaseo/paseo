@@ -167,7 +167,7 @@ export async function createDaemonChannel(
       }
     };
 
-    transport.onmessage = async (data) => {
+    const handleHello = async (data: string | ArrayBuffer): Promise<void> => {
       try {
         const helloText = typeof data === "string" ? data : new TextDecoder().decode(data);
 
@@ -187,9 +187,10 @@ export async function createDaemonChannel(
         // WebCrypto work to derive the shared key. Without this, it's possible
         // for the next message (already encrypted) to be misinterpreted as a
         // second hello, causing the handshake to fail.
-        transport.onmessage = (next) => {
+        const bufferNext = (next: string | ArrayBuffer): void => {
           bufferedMessages.push(next);
         };
+        Object.assign(transport, { onmessage: bufferNext });
 
         const clientPublicKey = importPublicKey(msg.key);
         const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPublicKey);
@@ -211,13 +212,15 @@ export async function createDaemonChannel(
       }
     };
 
-    transport.onerror = (error) => {
-      reject(error);
-    };
-
-    transport.onclose = (code, reason) => {
-      reject(new Error(`Connection closed during handshake: ${code} ${reason}`));
-    };
+    Object.assign(transport, {
+      onmessage: handleHello,
+      onerror: (error: Error) => {
+        reject(error);
+      },
+      onclose: (code: number, reason: string) => {
+        reject(new Error(`Connection closed during handshake: ${code} ${reason}`));
+      },
+    });
   });
 }
 
@@ -245,15 +248,17 @@ export class EncryptedChannel {
     this.events = events;
     this.options = options;
 
-    transport.onmessage = (data) => this.handleMessage(data);
-    transport.onclose = (code, reason) => {
-      this.state = "closed";
-      this.events.onclose?.(code, reason);
-      for (const cb of this.onCloseCallbacks) cb();
-    };
-    transport.onerror = (error) => {
-      this.events.onerror?.(error);
-    };
+    Object.assign(transport, {
+      onmessage: (data: string | ArrayBuffer) => this.handleMessage(data),
+      onclose: (code: number, reason: string) => {
+        this.state = "closed";
+        this.events.onclose?.(code, reason);
+        for (const cb of this.onCloseCallbacks) cb();
+      },
+      onerror: (error: Error) => {
+        this.events.onerror?.(error);
+      },
+    });
   }
 
   setState(state: ChannelState): void {

@@ -581,14 +581,16 @@ export async function createPaseoDaemon(
           enableDnsRebindingProtection: false,
         });
 
-        transport.onclose = () => {
-          if (transport.sessionId) {
-            agentMcpTransports.delete(transport.sessionId);
-          }
-        };
-        transport.onerror = (err) => {
-          logger.error({ err }, "Agent MCP transport error");
-        };
+        Object.assign(transport, {
+          onclose: () => {
+            if (transport.sessionId) {
+              agentMcpTransports.delete(transport.sessionId);
+            }
+          },
+          onerror: (err: Error) => {
+            logger.error({ err }, "Agent MCP transport error");
+          },
+        });
 
         await agentMcpServer.connect(transport);
         return transport;
