@@ -172,13 +172,17 @@ async function closeWebSocket(ws: WebSocket, timeout = 5000): Promise<void> {
     return;
   }
   await new Promise<void>((resolve) => {
+    let pendingResolve: (() => void) | null = resolve;
     const timeoutHandle = setTimeout(() => {
       ws.terminate();
     }, timeout);
     const cleanup = () => {
+      if (!pendingResolve) return;
+      const fn = pendingResolve;
+      pendingResolve = null;
       clearTimeout(timeoutHandle);
       ws.off("close", onClose);
-      resolve();
+      fn();
     };
     const onClose = () => {
       cleanup();

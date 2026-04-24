@@ -469,10 +469,7 @@ function DaemonSection({ host, isLocalDaemon }: { host: HostProfile; isLocalDaem
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => {
-      clearTimeout(timeout);
-      resolve();
-    }, ms);
+    setTimeout(resolve, ms);
   });
 
 function RestartDaemonCard({ host }: { host: HostProfile }) {

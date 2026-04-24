@@ -125,16 +125,21 @@ async function stopProcess(child: ChildProcess | null): Promise<void> {
   }
   child.kill("SIGTERM");
   await new Promise<void>((resolve) => {
+    let pendingResolve: (() => void) | null = resolve;
+    const settle = () => {
+      if (!pendingResolve) return;
+      const fn = pendingResolve;
+      pendingResolve = null;
+      clearTimeout(timeout);
+      fn();
+    };
     const timeout = setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }
-      resolve();
+      settle();
     }, 5000);
-    child.once("exit", () => {
-      clearTimeout(timeout);
-      resolve();
-    });
+    child.once("exit", settle);
   });
 }
 

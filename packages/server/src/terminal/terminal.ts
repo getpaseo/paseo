@@ -900,13 +900,20 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       return Promise.resolve(true);
     }
     return new Promise((resolve) => {
+      let pendingResolve: ((value: boolean) => void) | null = resolve;
+      const settle = (value: boolean) => {
+        if (!pendingResolve) return;
+        const fn = pendingResolve;
+        pendingResolve = null;
+        fn(value);
+      };
       const waiter = (): void => {
         clearTimeout(timer);
-        resolve(true);
+        settle(true);
       };
       const timer = setTimeout(() => {
         processExitWaiters.delete(waiter);
-        resolve(false);
+        settle(false);
       }, timeoutMs);
       processExitWaiters.add(waiter);
     });

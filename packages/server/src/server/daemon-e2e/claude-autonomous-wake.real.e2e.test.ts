@@ -284,6 +284,14 @@ async function runPreHelloNoise(params: { wsUrl: string; durationMs: number }): 
   const deadline = Date.now() + params.durationMs;
   while (Date.now() < deadline) {
     await new Promise<void>((resolve) => {
+      let pendingResolve: (() => void) | null = resolve;
+      const settle = () => {
+        if (!pendingResolve) return;
+        const fn = pendingResolve;
+        pendingResolve = null;
+        clearTimeout(fallback);
+        fn();
+      };
       const ws = new WebSocket(params.wsUrl);
       const fallback = setTimeout(() => {
         try {
@@ -291,7 +299,7 @@ async function runPreHelloNoise(params: { wsUrl: string; durationMs: number }): 
         } catch {
           // ignore
         }
-        resolve();
+        settle();
       }, 250);
 
       ws.once("open", () => {
@@ -319,14 +327,8 @@ async function runPreHelloNoise(params: { wsUrl: string; durationMs: number }): 
         }, 5);
       });
 
-      ws.once("close", () => {
-        clearTimeout(fallback);
-        resolve();
-      });
-      ws.once("error", () => {
-        clearTimeout(fallback);
-        resolve();
-      });
+      ws.once("close", settle);
+      ws.once("error", settle);
     });
   }
 }

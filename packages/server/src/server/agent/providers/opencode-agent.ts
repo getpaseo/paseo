@@ -944,13 +944,20 @@ export class OpenCodeServerManager {
       return;
     }
     await new Promise<void>((resolve) => {
+      let pendingResolve: (() => void) | null = resolve;
+      const settle = () => {
+        if (!pendingResolve) return;
+        const fn = pendingResolve;
+        pendingResolve = null;
+        fn();
+      };
       const timeout = setTimeout(() => {
         server.process.kill("SIGKILL");
-        resolve();
+        settle();
       }, 5000);
       server.process.on("exit", () => {
         clearTimeout(timeout);
-        resolve();
+        settle();
       });
       server.process.kill("SIGTERM");
     });

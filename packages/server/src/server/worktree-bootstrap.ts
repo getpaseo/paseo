@@ -447,15 +447,16 @@ async function waitForTerminalBootstrapReadiness(
   }
 
   await new Promise<void>((resolve) => {
-    let settled = false;
+    let pendingResolve: (() => void) | null = resolve;
     let timeout: ReturnType<typeof setTimeout> | null = null;
     let unsubscribe: (() => void) | null = null;
 
     const finish = () => {
-      if (settled) {
+      if (!pendingResolve) {
         return;
       }
-      settled = true;
+      const fn = pendingResolve;
+      pendingResolve = null;
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;
@@ -464,7 +465,7 @@ async function waitForTerminalBootstrapReadiness(
         unsubscribe();
         unsubscribe = null;
       }
-      resolve();
+      fn();
     };
 
     unsubscribe = terminal.subscribe((message) => {

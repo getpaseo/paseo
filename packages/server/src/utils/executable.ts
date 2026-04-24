@@ -42,19 +42,20 @@ export function isWindowsCommandScript(executablePath: string): boolean {
 
 async function probeExecutable(executablePath: string): Promise<boolean> {
   return await new Promise((resolve) => {
-    let settled = false;
+    let pendingResolve: ((result: boolean) => void) | null = resolve;
     let started = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const settle = (result: boolean) => {
-      if (settled) {
+      if (!pendingResolve) {
         return;
       }
-      settled = true;
+      const fn = pendingResolve;
+      pendingResolve = null;
       if (timer) {
         clearTimeout(timer);
       }
-      resolve(result);
+      fn(result);
     };
 
     let child: ChildProcess;
