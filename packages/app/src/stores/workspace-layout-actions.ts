@@ -563,65 +563,69 @@ function normalizePaneAfterTabChange(pane: SplitPaneInternal): SplitPaneInternal
   };
 }
 
+function normalizePaneNode(rawPane: SplitPaneInternal | undefined): SplitNodeInternal | null {
+  const paneId = trimNonEmpty(rawPane?.id);
+  if (!paneId) {
+    return null;
+  }
+  const tabs = normalizeWorkspaceTabs(rawPane?.tabs);
+  const tabIds = normalizeTabIds(rawPane?.tabIds);
+  const mergedTabs =
+    tabs.length > 0
+      ? tabs
+      : tabIds.map((tabId) => ({
+          tabId,
+          target: { kind: "draft", draftId: tabId } as WorkspaceTabTarget,
+          createdAt: Date.now(),
+        }));
+  return createPaneNode({
+    id: paneId,
+    tabs: mergedTabs,
+    focusedTabId: trimNonEmpty(rawPane?.focusedTabId) ?? null,
+  });
+}
+
+function normalizeGroupNode(rawGroup: SplitGroupInternal | undefined): SplitNodeInternal | null {
+  if (!rawGroup) {
+    return null;
+  }
+  const groupId = trimNonEmpty(rawGroup?.id);
+  const direction = rawGroup?.direction;
+  if (!groupId || (direction !== "horizontal" && direction !== "vertical")) {
+    return null;
+  }
+
+  const children = Array.isArray(rawGroup.children)
+    ? rawGroup.children
+        .map((child) => normalizeNode(child))
+        .filter((child): child is SplitNodeInternal => child !== null)
+    : [];
+  if (children.length === 0) {
+    return null;
+  }
+  if (children.length === 1) {
+    return children[0] ?? null;
+  }
+
+  return createGroupNode({
+    id: groupId,
+    direction,
+    children,
+    sizes: Array.isArray(rawGroup.sizes) ? rawGroup.sizes : [],
+  });
+}
+
 function normalizeNode(node: unknown): SplitNodeInternal | null {
   if (!node || typeof node !== "object") {
     return null;
   }
 
   if ((node as SplitNode).kind === "pane") {
-    const rawPane = (node as { pane?: SplitPaneInternal }).pane;
-    const paneId = trimNonEmpty(rawPane?.id);
-    if (!paneId) {
-      return null;
-    }
-    const tabs = normalizeWorkspaceTabs(rawPane?.tabs);
-    const tabIds = normalizeTabIds(rawPane?.tabIds);
-    const mergedTabs = (() => {
-      if (tabs.length > 0) {
-        return tabs;
-      }
-      return tabIds.map((tabId) => ({
-        tabId,
-        target: { kind: "draft", draftId: tabId } as WorkspaceTabTarget,
-        createdAt: Date.now(),
-      }));
-    })();
-    return createPaneNode({
-      id: paneId,
-      tabs: mergedTabs,
-      focusedTabId: trimNonEmpty(rawPane?.focusedTabId) ?? null,
-    });
+    return normalizePaneNode((node as { pane?: SplitPaneInternal }).pane);
   }
 
   if ((node as SplitNode).kind === "group") {
-    const rawGroup = (node as { group?: SplitGroupInternal }).group;
-    if (!rawGroup) {
-      return null;
-    }
-    const groupId = trimNonEmpty(rawGroup?.id);
-    const direction = rawGroup?.direction;
-    if (!groupId || (direction !== "horizontal" && direction !== "vertical")) {
-      return null;
-    }
-
-    const children = Array.isArray(rawGroup.children)
-      ? rawGroup.children
-          .map((child) => normalizeNode(child))
-          .filter((child): child is SplitNodeInternal => child !== null)
-      : [];
-    if (children.length === 0) {
-      return null;
-    }
-    if (children.length === 1) {
-      return children[0] ?? null;
-    }
-
-    return createGroupNode({
-      id: groupId,
-      direction,
-      children,
-      sizes: Array.isArray(rawGroup.sizes) ? rawGroup.sizes : [],
-    });
+    return normalizeGroupNode((node as { group?: SplitGroupInternal }).group);
   }
 
   return null;
@@ -1420,22 +1424,18 @@ function openEntityTabWithoutFocusing(
   };
 }
 
-export function reconcileWorkspaceTabs(
-  state: WorkspaceTabReconcileState,
-  snapshot: WorkspaceTabSnapshot,
-): WorkspaceTabReconcileState {
-  let nextLayout = state.layout;
-  const originalFocusedTabId =
-    findPaneById(nextLayout.root, nextLayout.focusedPaneId)?.focusedTabId ?? null;
-  let reconciledFocusedTabId = originalFocusedTabId;
-  const pinnedAgentIds = new Set(state.pinnedAgentIds ?? []);
-  const hiddenAgentIds = new Set(state.hiddenAgentIds ?? []);
-  const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
-  const knownAgentIds = normalizeStringSet(snapshot.knownAgentIds);
-  const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
-  const knownTerminalIds = snapshot.knownTerminalIds
-    ? normalizeStringSet(snapshot.knownTerminalIds)
-    : standaloneTerminalIds;
+interface EntityTabGroup {
+  target: WorkspaceTabTarget;
+  tabs: WorkspaceTab[];
+}
+
+function buildVisibleAgentIds(input: {
+  activeAgentIds: Set<string>;
+  pinnedAgentIds: Set<string>;
+  hiddenAgentIds: Set<string>;
+  knownAgentIds: Set<string>;
+}): Set<string> {
+  const { activeAgentIds, pinnedAgentIds, hiddenAgentIds, knownAgentIds } = input;
   const visibleAgentIds = new Set(activeAgentIds);
   for (const agentId of pinnedAgentIds) {
     if (knownAgentIds.has(agentId)) {
@@ -1445,19 +1445,11 @@ export function reconcileWorkspaceTabs(
   for (const agentId of hiddenAgentIds) {
     visibleAgentIds.delete(agentId);
   }
+  return visibleAgentIds;
+}
 
-  const initialTabs = collectAllTabs(nextLayout.root);
-  const representedAgentIds = new Set(
-    initialTabs.filter(isAgentTab).map((tab) => tab.target.agentId),
-  );
-
-  const entityGroups = new Map<
-    string,
-    {
-      target: WorkspaceTabTarget;
-      tabs: WorkspaceTab[];
-    }
-  >();
+function buildEntityTabGroups(initialTabs: WorkspaceTab[]): Map<string, EntityTabGroup> {
+  const entityGroups = new Map<string, EntityTabGroup>();
   for (const tab of initialTabs) {
     if (!isEntityTarget(tab.target)) {
       continue;
@@ -1477,6 +1469,120 @@ export function reconcileWorkspaceTabs(
       tabs: [tab],
     });
   }
+  return entityGroups;
+}
+
+function collapseStaleEntityTabs(input: {
+  layout: WorkspaceLayout;
+  snapshot: WorkspaceTabSnapshot;
+  visibleAgentIds: Set<string>;
+  knownTerminalIds: Set<string>;
+}): WorkspaceLayout {
+  const { snapshot, visibleAgentIds, knownTerminalIds } = input;
+  let nextLayout = input.layout;
+  for (const tab of collectAllTabs(nextLayout.root)) {
+    if (isAgentTab(tab) && snapshot.agentsHydrated && !visibleAgentIds.has(tab.target.agentId)) {
+      nextLayout =
+        closeTabInLayout({
+          layout: nextLayout,
+          tabId: tab.tabId,
+        }) ?? nextLayout;
+    }
+    if (
+      isTerminalTab(tab) &&
+      snapshot.terminalsHydrated &&
+      !knownTerminalIds.has(tab.target.terminalId)
+    ) {
+      nextLayout =
+        closeTabInLayout({
+          layout: nextLayout,
+          tabId: tab.tabId,
+        }) ?? nextLayout;
+    }
+  }
+  return nextLayout;
+}
+
+function addMissingEntityTabs(input: {
+  layout: WorkspaceLayout;
+  visibleAgentIds: Set<string>;
+  representedAgentIds: Set<string>;
+  standaloneTerminalIds: Set<string>;
+  hasActivePendingDraftCreate: boolean;
+}): WorkspaceLayout {
+  const {
+    visibleAgentIds,
+    representedAgentIds,
+    standaloneTerminalIds,
+    hasActivePendingDraftCreate,
+  } = input;
+  let nextLayout = input.layout;
+  const currentEntityTabs = collectAllTabs(nextLayout.root);
+  const currentAgentIds = new Set(
+    currentEntityTabs.filter(isAgentTab).map((tab) => tab.target.agentId),
+  );
+  const currentTerminalIds = new Set(
+    currentEntityTabs.filter(isTerminalTab).map((tab) => tab.target.terminalId),
+  );
+
+  const sortedVisibleAgentIds = [...visibleAgentIds].sort();
+  for (const agentId of sortedVisibleAgentIds) {
+    if (currentAgentIds.has(agentId)) {
+      continue;
+    }
+    if (hasActivePendingDraftCreate && !representedAgentIds.has(agentId)) {
+      continue;
+    }
+    nextLayout = openEntityTabWithoutFocusing(nextLayout, {
+      kind: "agent",
+      agentId,
+    });
+    currentAgentIds.add(agentId);
+  }
+
+  const sortedTerminalIds = [...standaloneTerminalIds].sort();
+  for (const terminalId of sortedTerminalIds) {
+    if (currentTerminalIds.has(terminalId)) {
+      continue;
+    }
+    nextLayout = openEntityTabWithoutFocusing(nextLayout, {
+      kind: "terminal",
+      terminalId,
+    });
+    currentTerminalIds.add(terminalId);
+  }
+  return nextLayout;
+}
+
+export function reconcileWorkspaceTabs(
+  state: WorkspaceTabReconcileState,
+  snapshot: WorkspaceTabSnapshot,
+): WorkspaceTabReconcileState {
+  let nextLayout = state.layout;
+  const originalFocusedTabId =
+    findPaneById(nextLayout.root, nextLayout.focusedPaneId)?.focusedTabId ?? null;
+  let reconciledFocusedTabId = originalFocusedTabId;
+  const pinnedAgentIds = new Set(state.pinnedAgentIds ?? []);
+  const hiddenAgentIds = new Set(state.hiddenAgentIds ?? []);
+  const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
+  const knownAgentIds = normalizeStringSet(snapshot.knownAgentIds);
+  const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
+  const knownTerminalIds = snapshot.knownTerminalIds
+    ? normalizeStringSet(snapshot.knownTerminalIds)
+    : standaloneTerminalIds;
+  const visibleAgentIds = buildVisibleAgentIds({
+    activeAgentIds,
+    pinnedAgentIds,
+    hiddenAgentIds,
+    knownAgentIds,
+  });
+
+  const initialTabs = collectAllTabs(nextLayout.root);
+  const representedAgentIds = new Set(
+    initialTabs.filter(isAgentTab).map((tab) => tab.target.agentId),
+  );
+
+  const entityGroups = buildEntityTabGroups(initialTabs);
 
   for (const [canonicalTabId, group] of entityGroups) {
     const keeper = group.tabs.find((tab) => tab.tabId === canonicalTabId) ?? group.tabs[0] ?? null;
@@ -1508,61 +1614,20 @@ export function reconcileWorkspaceTabs(
     }
   }
 
-  for (const tab of collectAllTabs(nextLayout.root)) {
-    if (isAgentTab(tab) && snapshot.agentsHydrated && !visibleAgentIds.has(tab.target.agentId)) {
-      nextLayout =
-        closeTabInLayout({
-          layout: nextLayout,
-          tabId: tab.tabId,
-        }) ?? nextLayout;
-    }
-    if (
-      isTerminalTab(tab) &&
-      snapshot.terminalsHydrated &&
-      !knownTerminalIds.has(tab.target.terminalId)
-    ) {
-      nextLayout =
-        closeTabInLayout({
-          layout: nextLayout,
-          tabId: tab.tabId,
-        }) ?? nextLayout;
-    }
-  }
+  nextLayout = collapseStaleEntityTabs({
+    layout: nextLayout,
+    snapshot,
+    visibleAgentIds,
+    knownTerminalIds,
+  });
 
-  const currentEntityTabs = collectAllTabs(nextLayout.root);
-  const currentAgentIds = new Set(
-    currentEntityTabs.filter(isAgentTab).map((tab) => tab.target.agentId),
-  );
-  const currentTerminalIds = new Set(
-    currentEntityTabs.filter(isTerminalTab).map((tab) => tab.target.terminalId),
-  );
-
-  const sortedVisibleAgentIds = [...visibleAgentIds].sort();
-  for (const agentId of sortedVisibleAgentIds) {
-    if (currentAgentIds.has(agentId)) {
-      continue;
-    }
-    if (snapshot.hasActivePendingDraftCreate && !representedAgentIds.has(agentId)) {
-      continue;
-    }
-    nextLayout = openEntityTabWithoutFocusing(nextLayout, {
-      kind: "agent",
-      agentId,
-    });
-    currentAgentIds.add(agentId);
-  }
-
-  const sortedTerminalIds = [...standaloneTerminalIds].sort();
-  for (const terminalId of sortedTerminalIds) {
-    if (currentTerminalIds.has(terminalId)) {
-      continue;
-    }
-    nextLayout = openEntityTabWithoutFocusing(nextLayout, {
-      kind: "terminal",
-      terminalId,
-    });
-    currentTerminalIds.add(terminalId);
-  }
+  nextLayout = addMissingEntityTabs({
+    layout: nextLayout,
+    visibleAgentIds,
+    representedAgentIds,
+    standaloneTerminalIds,
+    hasActivePendingDraftCreate: snapshot.hasActivePendingDraftCreate ?? false,
+  });
 
   if (reconciledFocusedTabId) {
     nextLayout =

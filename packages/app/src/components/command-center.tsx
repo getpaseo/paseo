@@ -202,6 +202,49 @@ function CommandCenterAgentRowContent({ agent }: CommandCenterAgentRowContentPro
   );
 }
 
+interface AgentItemsSectionProps {
+  agentItems: Extract<ReturnType<typeof useCommandCenter>["items"][number], { kind: "agent" }>[];
+  actionItemsLength: number;
+  activeIndex: number;
+  rowRefs: React.MutableRefObject<Map<number, View>>;
+  onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
+  sectionDividerStyle: React.ComponentProps<typeof View>["style"];
+  sectionLabelStyle: React.ComponentProps<typeof Text>["style"];
+}
+
+function AgentItemsSection({
+  agentItems,
+  actionItemsLength,
+  activeIndex,
+  rowRefs,
+  onSelect,
+  sectionDividerStyle,
+  sectionLabelStyle,
+}: AgentItemsSectionProps) {
+  return (
+    <>
+      {actionItemsLength > 0 ? <View style={sectionDividerStyle} /> : null}
+      <Text style={sectionLabelStyle}>Agents</Text>
+      {agentItems.map((item, index) => {
+        const rowIndex = actionItemsLength + index;
+        const agent = item.agent;
+        return (
+          <CommandCenterAgentRow
+            key={agentKey(agent)}
+            item={item}
+            rowIndex={rowIndex}
+            active={rowIndex === activeIndex}
+            rowRefs={rowRefs}
+            onSelect={onSelect}
+          >
+            <CommandCenterAgentRowContent agent={agent} />
+          </CommandCenterAgentRow>
+        );
+      })}
+    </>
+  );
+}
+
 export function CommandCenter() {
   const { theme } = useUnistyles();
   const { open, inputRef, query, setQuery, activeIndex, items, handleClose, handleSelectItem } =
@@ -248,8 +291,8 @@ export function CommandCenter() {
     }
   }, [activeIndex, open]);
 
-  const actionItems = items.filter((item) => item.kind === "action");
-  const agentItems = items.filter((item) => item.kind === "agent");
+  const actionItems = useMemo(() => items.filter((item) => item.kind === "action"), [items]);
+  const agentItems = useMemo(() => items.filter((item) => item.kind === "agent"), [items]);
 
   const panelStyle = useMemo(
     () => [
@@ -330,26 +373,15 @@ export function CommandCenter() {
                 ) : null}
 
                 {agentItems.length > 0 ? (
-                  <>
-                    {actionItems.length > 0 ? <View style={sectionDividerStyle} /> : null}
-                    <Text style={sectionLabelStyle}>Agents</Text>
-                    {agentItems.map((item, index) => {
-                      const rowIndex = actionItems.length + index;
-                      const agent = item.agent;
-                      return (
-                        <CommandCenterAgentRow
-                          key={agentKey(agent)}
-                          item={item}
-                          rowIndex={rowIndex}
-                          active={rowIndex === activeIndex}
-                          rowRefs={rowRefs}
-                          onSelect={handleSelectItem}
-                        >
-                          <CommandCenterAgentRowContent agent={agent} />
-                        </CommandCenterAgentRow>
-                      );
-                    })}
-                  </>
+                  <AgentItemsSection
+                    agentItems={agentItems}
+                    actionItemsLength={actionItems.length}
+                    activeIndex={activeIndex}
+                    rowRefs={rowRefs}
+                    onSelect={handleSelectItem}
+                    sectionDividerStyle={sectionDividerStyle}
+                    sectionLabelStyle={sectionLabelStyle}
+                  />
                 ) : null}
               </>
             )}

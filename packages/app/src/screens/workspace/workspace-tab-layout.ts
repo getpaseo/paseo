@@ -63,11 +63,10 @@ export function computeWorkspaceTabLayout(
     input.metrics.closeButtonWidth;
   const iconOnlyTotalTabsWidth = iconOnlyTabWidth * tabCount;
   const requiresHorizontalScrollFallback = availableTabsWidth < iconOnlyTotalTabsWidth;
-  const resolvedWidths = new Array(tabCount).fill(
-    requiresHorizontalScrollFallback
-      ? iconOnlyTabWidth
-      : clamp(availableTabsWidth / tabCount, iconOnlyTabWidth, input.metrics.maxTabWidth),
-  );
+  const resolvedWidth = requiresHorizontalScrollFallback
+    ? iconOnlyTabWidth
+    : clamp(availableTabsWidth / tabCount, iconOnlyTabWidth, input.metrics.maxTabWidth);
+  const resolvedWidths = Array.from({ length: tabCount }, () => resolvedWidth);
 
   const roundedWidths = resolvedWidths.map((width) =>
     Math.round(clamp(width, iconOnlyTabWidth, input.metrics.maxTabWidth)),

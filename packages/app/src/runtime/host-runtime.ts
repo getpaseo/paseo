@@ -239,6 +239,82 @@ type HostRuntimeConnectionMachineEvent =
   | { type: "no_connections" }
   | { type: "stopped" };
 
+function extractPreviousConnectionRef(state: HostRuntimeConnectionMachineState): {
+  id: string | null;
+  connection: ActiveConnection | null;
+} {
+  if (
+    state.tag === "connecting" ||
+    state.tag === "online" ||
+    state.tag === "offline" ||
+    state.tag === "error"
+  ) {
+    return { id: state.activeConnectionId, connection: state.activeConnection };
+  }
+  return { id: null, connection: null };
+}
+
+function buildConnectionStateFromStatus(
+  previousActiveConnectionId: string,
+  previousActiveConnection: ActiveConnection,
+  event: Extract<HostRuntimeConnectionMachineEvent, { type: "client_state" }>,
+): HostRuntimeConnectionMachineState | null {
+  const status = event.state.status;
+  if (status === "connected") {
+    return {
+      tag: "online",
+      activeConnectionId: previousActiveConnectionId,
+      activeConnection: previousActiveConnection,
+      lastOnlineAt: new Date().toISOString(),
+    };
+  }
+  if (status === "connecting" || status === "idle") {
+    return {
+      tag: "connecting",
+      activeConnectionId: previousActiveConnectionId,
+      activeConnection: previousActiveConnection,
+    };
+  }
+  if (status === "disposed") {
+    return {
+      tag: "offline",
+      activeConnectionId: previousActiveConnectionId,
+      activeConnection: previousActiveConnection,
+    };
+  }
+  return null;
+}
+
+function resolveConnectionStateResult(
+  previousActiveConnectionId: string,
+  previousActiveConnection: ActiveConnection,
+  event: Extract<HostRuntimeConnectionMachineEvent, { type: "client_state" }>,
+): HostRuntimeConnectionMachineState {
+  const statusResult = buildConnectionStateFromStatus(
+    previousActiveConnectionId,
+    previousActiveConnection,
+    event,
+  );
+  if (statusResult) return statusResult;
+
+  const disconnectedReason =
+    event.state.status === "disconnected" ? (event.state.reason ?? null) : null;
+  const reason = disconnectedReason ?? event.lastError ?? null;
+  if (!reason || reason === "client_closed") {
+    return {
+      tag: "offline",
+      activeConnectionId: previousActiveConnectionId,
+      activeConnection: previousActiveConnection,
+    };
+  }
+  return {
+    tag: "error",
+    activeConnectionId: previousActiveConnectionId,
+    activeConnection: previousActiveConnection,
+    message: reason,
+  };
+}
+
 function nextConnectionMachineState(input: {
   state: HostRuntimeConnectionMachineState;
   event: HostRuntimeConnectionMachineEvent;
@@ -254,26 +330,11 @@ function nextConnectionMachineState(input: {
   }
 
   if (event.type === "connect_failed") {
-    let failedConnectionId: string | null;
-    if (state.tag === "connecting" || state.tag === "online") {
-      failedConnectionId = state.activeConnectionId;
-    } else if (state.tag === "offline" || state.tag === "error") {
-      failedConnectionId = state.activeConnectionId;
-    } else {
-      failedConnectionId = null;
-    }
-    let failedConnection: ActiveConnection | null;
-    if (state.tag === "connecting" || state.tag === "online") {
-      failedConnection = state.activeConnection;
-    } else if (state.tag === "offline" || state.tag === "error") {
-      failedConnection = state.activeConnection;
-    } else {
-      failedConnection = null;
-    }
+    const failed = extractPreviousConnectionRef(state);
     return {
       tag: "error",
-      activeConnectionId: failedConnectionId,
-      activeConnection: failedConnection,
+      activeConnectionId: failed.id,
+      activeConnection: failed.connection,
       message: event.message,
     };
   }
@@ -286,24 +347,8 @@ function nextConnectionMachineState(input: {
     };
   }
 
-  let previousActiveConnectionId: string | null;
-  if (state.tag === "connecting" || state.tag === "online") {
-    previousActiveConnectionId = state.activeConnectionId;
-  } else if (state.tag === "offline" || state.tag === "error") {
-    previousActiveConnectionId = state.activeConnectionId;
-  } else {
-    previousActiveConnectionId = null;
-  }
-  let previousActiveConnection: ActiveConnection | null;
-  if (state.tag === "connecting" || state.tag === "online") {
-    previousActiveConnection = state.activeConnection;
-  } else if (state.tag === "offline" || state.tag === "error") {
-    previousActiveConnection = state.activeConnection;
-  } else {
-    previousActiveConnection = null;
-  }
-
-  if (!previousActiveConnectionId || !previousActiveConnection) {
+  const previous = extractPreviousConnectionRef(state);
+  if (!previous.id || !previous.connection) {
     return state.tag === "booting"
       ? state
       : {
@@ -313,46 +358,7 @@ function nextConnectionMachineState(input: {
         };
   }
 
-  if (event.state.status === "connected") {
-    return {
-      tag: "online",
-      activeConnectionId: previousActiveConnectionId,
-      activeConnection: previousActiveConnection,
-      lastOnlineAt: new Date().toISOString(),
-    };
-  }
-
-  if (event.state.status === "connecting" || event.state.status === "idle") {
-    return {
-      tag: "connecting",
-      activeConnectionId: previousActiveConnectionId,
-      activeConnection: previousActiveConnection,
-    };
-  }
-
-  if (event.state.status === "disposed") {
-    return {
-      tag: "offline",
-      activeConnectionId: previousActiveConnectionId,
-      activeConnection: previousActiveConnection,
-    };
-  }
-
-  const reason = event.state.reason ?? event.lastError ?? null;
-  if (!reason || reason === "client_closed") {
-    return {
-      tag: "offline",
-      activeConnectionId: previousActiveConnectionId,
-      activeConnection: previousActiveConnection,
-    };
-  }
-
-  return {
-    tag: "error",
-    activeConnectionId: previousActiveConnectionId,
-    activeConnection: previousActiveConnection,
-    message: reason,
-  };
+  return resolveConnectionStateResult(previous.id, previous.connection, event);
 }
 
 function toSnapshotConnectionPatch(
@@ -966,36 +972,28 @@ export class HostRuntimeController {
     return this.isCurrentProbeRequest(expectedProbeVersion);
   }
 
-  private async switchToConnection(input: {
-    connectionId: string;
-    expectedProbeVersion?: number;
-    existingClient?: DaemonClient;
-  }): Promise<void> {
-    if (!this.canProceedForProbe(input.expectedProbeVersion)) {
-      if (input.existingClient) {
-        await input.existingClient.close().catch(() => undefined);
-      }
-      return;
+  private async abortSwitchWithClient(client: DaemonClient | undefined): Promise<void> {
+    if (client) {
+      await client.close().catch(() => undefined);
     }
-    const { connectionId, expectedProbeVersion, existingClient } = input;
-    const connection = findConnectionById(this.host, connectionId);
-    if (!connection) {
-      if (existingClient) {
-        await existingClient.close().catch(() => undefined);
-      }
-      return;
-    }
-    const requestVersion = ++this.switchRequestVersion;
+  }
 
-    let clientId: string;
+  private isSwitchStillValid(requestVersion: number, expectedProbeVersion?: number): boolean {
+    return (
+      this.isCurrentSwitchRequest(requestVersion) && this.canProceedForProbe(expectedProbeVersion)
+    );
+  }
+
+  private async resolveClientIdForSwitch(args: {
+    existingClient: DaemonClient | undefined;
+    requestVersion: number;
+  }): Promise<string | null> {
     try {
-      clientId = await this.resolveClientId();
+      return await this.resolveClientId();
     } catch (error) {
-      if (existingClient) {
-        await existingClient.close().catch(() => undefined);
-      }
-      if (!this.isCurrentSwitchRequest(requestVersion)) {
-        return;
+      await this.abortSwitchWithClient(args.existingClient);
+      if (!this.isCurrentSwitchRequest(args.requestVersion)) {
+        return null;
       }
       const message = toErrorMessage(error);
       this.applyConnectionEvent({
@@ -1005,22 +1003,11 @@ export class HostRuntimeController {
       this.updateSnapshot({
         ...toSnapshotConnectionPatch(this.connectionMachineState),
       });
-      return;
+      return null;
     }
+  }
 
-    if (!this.isCurrentSwitchRequest(requestVersion)) {
-      if (existingClient) {
-        await existingClient.close().catch(() => undefined);
-      }
-      return;
-    }
-    if (!this.canProceedForProbe(expectedProbeVersion)) {
-      if (existingClient) {
-        await existingClient.close().catch(() => undefined);
-      }
-      return;
-    }
-
+  private async disposePreviousActiveClient(): Promise<void> {
     if (this.unsubscribeClientStatus) {
       this.unsubscribeClientStatus();
       this.unsubscribeClientStatus = null;
@@ -1030,16 +1017,52 @@ export class HostRuntimeController {
       this.activeClient = null;
       await previousClient.close().catch(() => undefined);
     }
-    if (!this.isCurrentSwitchRequest(requestVersion)) {
-      if (existingClient) {
-        await existingClient.close().catch(() => undefined);
-      }
+  }
+
+  private buildAgentDirectoryStatusPatch(): Partial<HostRuntimeSnapshotPatch> {
+    if (this.snapshot.hasEverLoadedAgentDirectory) return {};
+    const tag = this.connectionMachineState.tag;
+    if (tag === "connecting" || tag === "online") {
+      return { agentDirectoryStatus: "initial_loading", agentDirectoryError: null };
+    }
+    if (tag === "error") {
+      return {
+        agentDirectoryStatus: "error_before_first_success",
+        agentDirectoryError: this.connectionMachineState.message,
+      };
+    }
+    return { agentDirectoryStatus: "idle", agentDirectoryError: null };
+  }
+
+  private async switchToConnection(input: {
+    connectionId: string;
+    expectedProbeVersion?: number;
+    existingClient?: DaemonClient;
+  }): Promise<void> {
+    const { connectionId, expectedProbeVersion, existingClient } = input;
+    if (!this.canProceedForProbe(expectedProbeVersion)) {
+      await this.abortSwitchWithClient(existingClient);
       return;
     }
-    if (!this.canProceedForProbe(expectedProbeVersion)) {
-      if (existingClient) {
-        await existingClient.close().catch(() => undefined);
-      }
+    const connection = findConnectionById(this.host, connectionId);
+    if (!connection) {
+      await this.abortSwitchWithClient(existingClient);
+      return;
+    }
+    const requestVersion = ++this.switchRequestVersion;
+
+    const clientId = await this.resolveClientIdForSwitch({ existingClient, requestVersion });
+    if (clientId === null) return;
+
+    if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
+      await this.abortSwitchWithClient(existingClient);
+      return;
+    }
+
+    await this.disposePreviousActiveClient();
+
+    if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
+      await this.abortSwitchWithClient(existingClient);
       return;
     }
 
@@ -1055,14 +1078,12 @@ export class HostRuntimeController {
         clientId,
         runtimeGeneration: nextGeneration,
       });
-    if (!this.isCurrentSwitchRequest(requestVersion)) {
+
+    if (!this.isSwitchStillValid(requestVersion, expectedProbeVersion)) {
       await client.close().catch(() => undefined);
       return;
     }
-    if (!this.canProceedForProbe(expectedProbeVersion)) {
-      await client.close().catch(() => undefined);
-      return;
-    }
+
     this.activeClient = client;
     this.applyConnectionEvent({
       type: "select_connection",
@@ -1091,24 +1112,8 @@ export class HostRuntimeController {
       });
       const patch: HostRuntimeSnapshotPatch = {
         ...toSnapshotConnectionPatch(this.connectionMachineState),
+        ...this.buildAgentDirectoryStatusPatch(),
       };
-
-      if (!this.snapshot.hasEverLoadedAgentDirectory) {
-        if (
-          this.connectionMachineState.tag === "connecting" ||
-          this.connectionMachineState.tag === "online"
-        ) {
-          patch.agentDirectoryStatus = "initial_loading";
-          patch.agentDirectoryError = null;
-        } else if (this.connectionMachineState.tag === "error") {
-          patch.agentDirectoryStatus = "error_before_first_success";
-          patch.agentDirectoryError = this.connectionMachineState.message;
-        } else {
-          patch.agentDirectoryStatus = "idle";
-          patch.agentDirectoryError = null;
-        }
-      }
-
       this.updateSnapshot(patch);
     });
 

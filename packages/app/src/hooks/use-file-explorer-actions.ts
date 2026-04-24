@@ -91,7 +91,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       const normalizedPath = path && path.length > 0 ? path : ".";
       const shouldSetCurrentPath = options?.setCurrentPath ?? true;
-      const shouldRecordHistory = options?.recordHistory ?? (shouldSetCurrentPath ? true : false);
+      const shouldRecordHistory = options?.recordHistory ?? shouldSetCurrentPath;
 
       updateExplorerState((state) => ({
         ...state,

@@ -6,7 +6,7 @@ import {
   Image,
   type PressableStateCallbackType,
 } from "react-native";
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo, type ReactElement } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
@@ -31,6 +31,7 @@ import {
 } from "./agent-status-bar";
 import { ContextWindowMeter } from "./context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
+import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
 import {
   MessageInput,
@@ -65,6 +66,7 @@ import { markScrollInvestigationRender } from "@/utils/scroll-jank";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
+import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/components/agent-input-submit";
 import { useAppSettings } from "@/hooks/use-settings";
 import { isWeb, isNative } from "@/constants/platform";
@@ -89,6 +91,492 @@ type AttachmentListUpdater =
   | ((prev: ComposerAttachment[]) => ComposerAttachment[]);
 
 function noop() {}
+
+function resolveComposerButtonIconSize(theme: Theme): number {
+  return isWeb ? theme.iconSize.md : theme.iconSize.lg;
+}
+
+function resolveIsComposerLocked(
+  submitBehavior: "clear" | "preserve-and-lock",
+  isSubmitLoading: boolean,
+): boolean {
+  return submitBehavior === "preserve-and-lock" && isSubmitLoading;
+}
+
+function resolveIsVoiceModeForAgent(
+  voice: ReturnType<typeof useVoiceOptional>,
+  serverId: string,
+  agentId: string,
+): boolean {
+  return voice?.isVoiceModeForAgent(serverId, agentId) ?? false;
+}
+
+function resolveKeyboardPriority(isMessageInputFocused: boolean): number {
+  return isMessageInputFocused ? 200 : 100;
+}
+
+function resolveIsDesktopWebBreakpoint(isMobile: boolean): boolean {
+  return isWeb && !isMobile;
+}
+
+function resolveMessagePlaceholder(isDesktopWebBreakpoint: boolean): string {
+  return isDesktopWebBreakpoint ? DESKTOP_MESSAGE_PLACEHOLDER : MOBILE_MESSAGE_PLACEHOLDER;
+}
+
+async function pickAndPersistImages(
+  pickImages: () => Promise<PickedImageAttachmentInput[] | null>,
+): Promise<ImageAttachment[]> {
+  const result = await pickImages();
+  if (!result?.length) return [];
+  return await Promise.all(
+    result.map(async (pickedImage) => {
+      if (pickedImage.source.kind === "blob") {
+        return await persistAttachmentFromBlob({
+          blob: pickedImage.source.blob,
+          mimeType: pickedImage.mimeType || "image/jpeg",
+          fileName: pickedImage.fileName ?? null,
+        });
+      }
+      return await persistAttachmentFromFileUri({
+        uri: pickedImage.source.uri,
+        mimeType: pickedImage.mimeType || "image/jpeg",
+        fileName: pickedImage.fileName ?? null,
+      });
+    }),
+  );
+}
+
+function removeAttachmentAtIndex(prev: ComposerAttachment[], index: number): ComposerAttachment[] {
+  const removed = prev[index];
+  if (removed?.kind === "image") {
+    void deleteAttachments([removed.metadata]);
+  }
+  return prev.filter((_, i) => i !== index);
+}
+
+function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean): object[] {
+  const disabled =
+    !isConnected || isCancellingAgent ? (styles.buttonDisabled as object) : undefined;
+  return [styles.cancelButton as object, disabled].filter((value): value is object =>
+    Boolean(value),
+  );
+}
+
+function buildRealtimeVoiceButtonStyle(
+  hovered: boolean | undefined,
+  voiceButtonDisabled: boolean,
+): object[] {
+  const hoveredStyle = hovered ? (styles.iconButtonHovered as object) : undefined;
+  const disabledStyle = voiceButtonDisabled ? (styles.buttonDisabled as object) : undefined;
+  return [styles.realtimeVoiceButton as object, hoveredStyle, disabledStyle].filter(
+    (value): value is object => Boolean(value),
+  );
+}
+
+function buildAgentStateSelector(serverId: string, agentId: string) {
+  return (state: ReturnType<typeof useSessionStore.getState>) => {
+    const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    return {
+      status: agent?.status ?? null,
+      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
+    };
+  };
+}
+
+interface BuildGithubSearchQueryOptionsArgs {
+  serverId: string;
+  cwd: string;
+  githubSearchQueryTrimmed: string;
+  isGithubPickerOpen: boolean;
+  isConnected: boolean;
+  client: ReturnType<typeof useHostRuntimeClient>;
+}
+
+function buildGithubSearchQueryOptions(args: BuildGithubSearchQueryOptionsArgs) {
+  const { serverId, cwd, githubSearchQueryTrimmed, isGithubPickerOpen, isConnected, client } = args;
+  const hasClient = Boolean(client);
+  const cwdIsSet = cwd.trim().length > 0;
+  const enabled = isGithubPickerOpen && isConnected && hasClient && cwdIsSet;
+  return {
+    queryKey: ["composer-github-search", serverId, cwd, githubSearchQueryTrimmed],
+    queryFn: async () => {
+      if (!client) throw new Error("Host is not connected");
+      return client.searchGitHub({ cwd, query: githubSearchQueryTrimmed, limit: 20 });
+    },
+    enabled,
+    staleTime: 30_000,
+  };
+}
+
+function renderContextWindowMeterSlot(
+  contextWindowMaxTokens: number | null,
+  contextWindowUsedTokens: number | null,
+): ReactElement {
+  const meter =
+    contextWindowMaxTokens !== null && contextWindowUsedTokens !== null ? (
+      <ContextWindowMeter maxTokens={contextWindowMaxTokens} usedTokens={contextWindowUsedTokens} />
+    ) : null;
+  return <View style={styles.contextWindowMeterSlot}>{meter}</View>;
+}
+
+interface RenderLeftContentArgs {
+  statusControls: DraftAgentStatusBarProps | undefined;
+  agentId: string;
+  serverId: string;
+  focusInput: () => void;
+}
+
+function renderLeftContent(args: RenderLeftContentArgs): ReactElement {
+  const { statusControls, agentId, serverId, focusInput } = args;
+  if (resolveStatusControlMode(statusControls) === "draft" && statusControls) {
+    return <DraftAgentStatusBar {...statusControls} />;
+  }
+  return <AgentStatusBar agentId={agentId} serverId={serverId} onDropdownClose={focusInput} />;
+}
+
+function findGithubItemByOption(
+  items: readonly GitHubSearchItem[],
+  optionId: string,
+): GitHubSearchItem | undefined {
+  return items.find((candidate) => `${candidate.kind}:${candidate.number}` === optionId);
+}
+
+function isAttachmentSelectedForGithubItem(
+  attachments: readonly ComposerAttachment[],
+  item: GitHubSearchItem,
+): boolean {
+  return attachments.some(
+    (attachment) =>
+      attachment.kind !== "image" &&
+      attachment.item.kind === item.kind &&
+      attachment.item.number === item.number,
+  );
+}
+
+function buildGithubAttachment(item: GitHubSearchItem): ComposerAttachment {
+  return item.kind === "pr" ? { kind: "github_pr", item } : { kind: "github_issue", item };
+}
+
+function toggleGithubAttachment(
+  current: ComposerAttachment[],
+  item: GitHubSearchItem,
+): ComposerAttachment[] {
+  const matches = (attachment: ComposerAttachment) =>
+    attachment.kind !== "image" &&
+    attachment.item.kind === item.kind &&
+    attachment.item.number === item.number;
+  if (current.some(matches)) {
+    return current.filter((attachment) => !matches(attachment));
+  }
+  return [...current, buildGithubAttachment(item)];
+}
+
+interface RenderAttachmentPreviewListArgs {
+  selectedAttachments: ComposerAttachment[];
+  isComposerLocked: boolean;
+  handleOpenAttachment: (attachment: ComposerAttachment) => void;
+  handleRemoveAttachment: (index: number) => void;
+}
+
+function renderAttachmentPreviewList(args: RenderAttachmentPreviewListArgs): ReactElement | null {
+  const { selectedAttachments, isComposerLocked, handleOpenAttachment, handleRemoveAttachment } =
+    args;
+  if (selectedAttachments.length === 0) return null;
+  return (
+    <View style={styles.attachmentPreviewContainer} testID="composer-attachment-pills">
+      {selectedAttachments.map((attachment, index) =>
+        renderComposerAttachmentPill({
+          attachment,
+          index,
+          disabled: isComposerLocked,
+          onOpen: handleOpenAttachment,
+          onRemove: handleRemoveAttachment,
+        }),
+      )}
+    </View>
+  );
+}
+
+interface RenderQueueListArgs {
+  queuedMessages: readonly QueuedMessage[];
+  handleEditQueuedMessage: (id: string) => void;
+  handleSendQueuedNow: (id: string) => Promise<void>;
+}
+
+function renderQueueList(args: RenderQueueListArgs): ReactElement | null {
+  const { queuedMessages, handleEditQueuedMessage, handleSendQueuedNow } = args;
+  if (queuedMessages.length === 0) return null;
+  return (
+    <View style={styles.queueContainer}>
+      {queuedMessages.map((item) => (
+        <QueuedMessageRow
+          key={item.id}
+          item={item}
+          onEdit={handleEditQueuedMessage}
+          onSendNow={handleSendQueuedNow}
+        />
+      ))}
+    </View>
+  );
+}
+
+function renderAutocompletePopover(
+  autocomplete: ReturnType<typeof useAgentAutocomplete>,
+): ReactElement | null {
+  if (!autocomplete.isVisible) return null;
+  return (
+    <View style={styles.autocompletePopover} pointerEvents="box-none">
+      <Autocomplete
+        options={autocomplete.options}
+        selectedIndex={autocomplete.selectedIndex}
+        isLoading={autocomplete.isLoading}
+        errorMessage={autocomplete.errorMessage}
+        loadingText={autocomplete.loadingText}
+        emptyText={autocomplete.emptyText}
+        onSelect={autocomplete.onSelectOption}
+      />
+    </View>
+  );
+}
+
+interface RenderComposerAttachmentPillArgs {
+  attachment: ComposerAttachment;
+  index: number;
+  disabled: boolean;
+  onOpen: (attachment: ComposerAttachment) => void;
+  onRemove: (index: number) => void;
+}
+
+function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): ReactElement {
+  const { attachment, index, disabled, onOpen, onRemove } = args;
+  if (attachment.kind === "image") {
+    return (
+      <ImageAttachmentPill
+        key={attachment.metadata.id}
+        attachment={attachment}
+        index={index}
+        disabled={disabled}
+        onOpen={onOpen}
+        onRemove={onRemove}
+      />
+    );
+  }
+  return (
+    <GithubAttachmentPill
+      key={`${attachment.item.kind}:${attachment.item.number}`}
+      attachment={attachment}
+      index={index}
+      disabled={disabled}
+      onOpen={onOpen}
+      onRemove={onRemove}
+    />
+  );
+}
+
+function resolveVoiceStartErrorMessage(error: unknown): string | null {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return null;
+}
+
+interface AttemptStartRealtimeVoiceArgs {
+  voice: ReturnType<typeof useVoiceOptional>;
+  isConnected: boolean;
+  hasAgent: boolean;
+  serverId: string;
+  agentId: string;
+  toastErrorRef: { current: (message: string) => void };
+}
+
+function attemptStartRealtimeVoice(args: AttemptStartRealtimeVoiceArgs): void {
+  const { voice, isConnected, hasAgent, serverId, agentId, toastErrorRef } = args;
+  if (!voice || !isConnected || !hasAgent) return;
+  if (voice.isVoiceSwitching) return;
+  if (voice.isVoiceModeForAgent(serverId, agentId)) return;
+  void voice.startVoice(serverId, agentId).catch((error) => {
+    console.error("[Composer] Failed to start voice mode", error);
+    const message = resolveVoiceStartErrorMessage(error);
+    if (message && message.trim().length > 0) {
+      toastErrorRef.current(message);
+    }
+  });
+}
+
+interface DispatchAgentMessageSendArgs {
+  client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
+  serverId: string;
+  targetAgentId: string;
+  text: string;
+  sendAttachments: ComposerAttachment[];
+  setAgentStreamHead: ReturnType<typeof useSessionStore.getState>["setAgentStreamHead"];
+  setAgentStreamTail: ReturnType<typeof useSessionStore.getState>["setAgentStreamTail"];
+}
+
+function appendUserMessageToStream(
+  args: DispatchAgentMessageSendArgs & { userMessage: StreamItem },
+): void {
+  const { serverId, targetAgentId, userMessage, setAgentStreamHead, setAgentStreamTail } = args;
+  const currentHead = useSessionStore
+    .getState()
+    .sessions[serverId]?.agentStreamHead?.get(targetAgentId);
+  if (currentHead && currentHead.length > 0) {
+    setAgentStreamHead(serverId, (prev) => {
+      const head = prev.get(targetAgentId) || [];
+      const updated = new Map(prev);
+      updated.set(targetAgentId, [...head, userMessage]);
+      return updated;
+    });
+    return;
+  }
+  setAgentStreamTail(serverId, (prev) => {
+    const currentStream = prev.get(targetAgentId) || [];
+    const updated = new Map(prev);
+    updated.set(targetAgentId, [...currentStream, userMessage]);
+    return updated;
+  });
+}
+
+async function dispatchAgentMessageSend(args: DispatchAgentMessageSendArgs): Promise<void> {
+  const { client, targetAgentId, text, sendAttachments } = args;
+  const wirePayload = splitComposerAttachmentsForSubmit(sendAttachments);
+  const clientMessageId = generateMessageId();
+  const userMessage: StreamItem = {
+    kind: "user_message",
+    id: clientMessageId,
+    text,
+    timestamp: new Date(),
+    ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
+  };
+  appendUserMessageToStream({ ...args, userMessage });
+  const imagesData = await encodeImages(wirePayload.images);
+  await client.sendAgentMessage(targetAgentId, text, {
+    messageId: clientMessageId,
+    images: imagesData ?? [],
+    attachments: wirePayload.attachments,
+  });
+}
+
+function openComposerAttachment(
+  attachment: ComposerAttachment,
+  setLightboxMetadata: (metadata: AttachmentMetadata) => void,
+): void {
+  if (attachment.kind === "image") {
+    setLightboxMetadata(attachment.metadata);
+    return;
+  }
+  void openExternalUrl(attachment.item.url);
+}
+
+interface CancelRunningAgentArgs {
+  isAgentRunning: boolean;
+  isCancellingAgent: boolean;
+  isConnected: boolean;
+  client: ReturnType<typeof useHostRuntimeClient>;
+  agentIdRef: { current: string };
+  setIsCancellingAgent: (value: boolean) => void;
+  messageInputRef: { current: MessageInputRef | null };
+}
+
+function cancelRunningAgent(args: CancelRunningAgentArgs): void {
+  const {
+    isAgentRunning,
+    isCancellingAgent,
+    isConnected,
+    client,
+    agentIdRef,
+    setIsCancellingAgent,
+    messageInputRef,
+  } = args;
+  if (!isAgentRunning || isCancellingAgent) return;
+  if (!isConnected || !client) return;
+  setIsCancellingAgent(true);
+  void client.cancelAgent(agentIdRef.current);
+  messageInputRef.current?.focus();
+}
+
+function focusMessageInputWithPlatformStrategy(messageInputRef: {
+  current: MessageInputRef | null;
+}): void {
+  if (isNative) {
+    messageInputRef.current?.focus();
+    return;
+  }
+  focusWithRetries({
+    focus: () => messageInputRef.current?.focus(),
+    isFocused: () => {
+      const el = messageInputRef.current?.getNativeElement?.() ?? null;
+      const active = typeof document !== "undefined" ? document.activeElement : null;
+      return Boolean(el) && active === el;
+    },
+  });
+}
+
+interface DispatchComposerKeyboardActionArgs {
+  action: KeyboardActionDefinition;
+  isPaneFocused: boolean;
+  messageInputRef: { current: MessageInputRef | null };
+  isAgentRunning: boolean;
+  isCancellingAgent: boolean;
+  isConnected: boolean;
+  handleCancelAgent: () => void;
+  focusMessageInputForKeyboardAction: () => void;
+}
+
+function dispatchComposerKeyboardAction(args: DispatchComposerKeyboardActionArgs): boolean {
+  const {
+    action,
+    isPaneFocused,
+    messageInputRef,
+    isAgentRunning,
+    isCancellingAgent,
+    isConnected,
+    handleCancelAgent,
+    focusMessageInputForKeyboardAction,
+  } = args;
+  if (!isPaneFocused) return false;
+
+  if (action.id === "agent.interrupt") {
+    if (messageInputRef.current?.runKeyboardAction("dictation-cancel")) return true;
+    if (!isAgentRunning || isCancellingAgent || !isConnected) return false;
+    handleCancelAgent();
+    return true;
+  }
+
+  if (action.id === "message-input.focus") {
+    focusMessageInputForKeyboardAction();
+    return true;
+  }
+
+  const passthroughAction = resolveMessageInputPassthroughAction(action.id);
+  if (!passthroughAction) return false;
+  const result = messageInputRef.current?.runKeyboardAction(passthroughAction);
+  if (passthroughAction === "send" || passthroughAction === "dictation-confirm") {
+    return result ?? false;
+  }
+  return true;
+}
+
+function resolveMessageInputPassthroughAction(
+  actionId: string,
+): MessageInputKeyboardActionKind | null {
+  switch (actionId) {
+    case "message-input.send":
+      return "send";
+    case "message-input.dictation-confirm":
+      return "dictation-confirm";
+    case "message-input.dictation-toggle":
+      return "dictation-toggle";
+    case "message-input.dictation-cancel":
+      return "dictation-cancel";
+    case "message-input.voice-toggle":
+      return "voice-toggle";
+    case "message-input.voice-mute-toggle":
+      return "voice-mute-toggle";
+    default:
+      return null;
+  }
+}
 
 interface QueuedMessageRowProps {
   item: QueuedMessage;
@@ -303,6 +791,163 @@ const DESKTOP_MESSAGE_PLACEHOLDER = "Message the agent, tag @files, or use /comm
 const MOBILE_MESSAGE_PLACEHOLDER = "Message, @files, /commands";
 const StableMessageInput = memo(MessageInput);
 
+function resolveContextWindowValues(
+  rawMax: number | null,
+  rawUsed: number | null,
+): { contextWindowMaxTokens: number | null; contextWindowUsedTokens: number | null } {
+  if (typeof rawMax === "number" && typeof rawUsed === "number") {
+    return { contextWindowMaxTokens: rawMax, contextWindowUsedTokens: rawUsed };
+  }
+  return { contextWindowMaxTokens: null, contextWindowUsedTokens: null };
+}
+
+interface ComposerCancelButtonProps {
+  buttonIconSize: number;
+  cancelButtonStyle: (object | undefined)[];
+  handleCancelAgent: () => void;
+  isConnected: boolean;
+  isCancellingAgent: boolean;
+  agentInterruptKeys: ReturnType<typeof useShortcutKeys>;
+}
+
+function ComposerCancelButton({
+  buttonIconSize,
+  cancelButtonStyle,
+  handleCancelAgent,
+  isConnected,
+  isCancellingAgent,
+  agentInterruptKeys,
+}: ComposerCancelButtonProps) {
+  const accessibilityLabel = isCancellingAgent ? "Canceling agent" : "Stop agent";
+  const icon = isCancellingAgent ? (
+    <ActivityIndicator size="small" color="white" />
+  ) : (
+    <Square size={buttonIconSize} color="white" fill="white" />
+  );
+  const shortcutNode = agentInterruptKeys ? (
+    <Shortcut chord={agentInterruptKeys} style={styles.tooltipShortcut} />
+  ) : null;
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger
+        onPress={handleCancelAgent}
+        disabled={!isConnected || isCancellingAgent}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityRole="button"
+        style={cancelButtonStyle}
+      >
+        {icon}
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <View style={styles.tooltipRow}>
+          <Text style={styles.tooltipText}>Interrupt</Text>
+          {shortcutNode}
+        </View>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+interface ComposerCancelButtonSlotProps extends ComposerCancelButtonProps {
+  isAgentRunning: boolean;
+  hasSendableContent: boolean;
+  isProcessing: boolean;
+}
+
+function ComposerCancelButtonSlot({
+  isAgentRunning,
+  hasSendableContent,
+  isProcessing,
+  ...rest
+}: ComposerCancelButtonSlotProps) {
+  if (!isAgentRunning || hasSendableContent || isProcessing) return null;
+  return <ComposerCancelButton {...rest} />;
+}
+
+interface ComposerVoiceModeButtonProps {
+  buttonIconSize: number;
+  handleToggleRealtimeVoice: () => void;
+  isConnected: boolean;
+  isVoiceSwitching: boolean;
+  realtimeVoiceButtonStyle: (
+    state: PressableStateCallbackType & { hovered?: boolean },
+  ) => (object | undefined)[];
+  theme: Theme;
+  voiceToggleKeys: ReturnType<typeof useShortcutKeys>;
+}
+
+interface ComposerRightControlsSlotProps extends ComposerVoiceModeButtonProps {
+  isVoiceModeForAgent: boolean;
+  hasAgent: boolean;
+  isAgentRunning: boolean;
+  hasSendableContent: boolean;
+  isProcessing: boolean;
+  cancelButton: ReactElement;
+}
+
+function ComposerRightControlsSlot({
+  isVoiceModeForAgent,
+  hasAgent,
+  isAgentRunning,
+  hasSendableContent,
+  isProcessing,
+  cancelButton,
+  ...voiceProps
+}: ComposerRightControlsSlotProps) {
+  const showVoiceModeButton = !isVoiceModeForAgent && hasAgent;
+  const shouldShowCancelButton = isAgentRunning && !hasSendableContent && !isProcessing;
+  if (!showVoiceModeButton && !shouldShowCancelButton) return null;
+  return (
+    <View style={styles.rightControls}>
+      {showVoiceModeButton ? <ComposerVoiceModeButton {...voiceProps} /> : null}
+      {cancelButton}
+    </View>
+  );
+}
+
+function ComposerVoiceModeButton({
+  buttonIconSize,
+  handleToggleRealtimeVoice,
+  isConnected,
+  isVoiceSwitching,
+  realtimeVoiceButtonStyle,
+  theme,
+  voiceToggleKeys,
+}: ComposerVoiceModeButtonProps) {
+  const shortcutNode = voiceToggleKeys ? (
+    <Shortcut chord={voiceToggleKeys} style={styles.tooltipShortcut} />
+  ) : null;
+  const renderTriggerContent = useCallback(
+    ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
+      if (isVoiceSwitching) {
+        return <ActivityIndicator size="small" color="white" />;
+      }
+      const color = hovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+      return <AudioLines size={buttonIconSize} color={color} />;
+    },
+    [buttonIconSize, isVoiceSwitching, theme.colors.foreground, theme.colors.foregroundMuted],
+  );
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger
+        onPress={handleToggleRealtimeVoice}
+        disabled={!isConnected || isVoiceSwitching}
+        accessibilityLabel="Enable Voice mode"
+        accessibilityRole="button"
+        style={realtimeVoiceButtonStyle}
+      >
+        {renderTriggerContent}
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <View style={styles.tooltipRow}>
+          <Text style={styles.tooltipText}>Voice mode</Text>
+          {shortcutNode}
+        </View>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function Composer({
   agentId,
   serverId,
@@ -334,7 +979,7 @@ export function Composer({
 }: ComposerProps) {
   markScrollInvestigationRender(`Composer:${serverId}:${agentId}`);
   const { theme } = useUnistyles();
-  const buttonIconSize = isWeb ? theme.iconSize.md : theme.iconSize.lg;
+  const buttonIconSize = resolveComposerButtonIconSize(theme);
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
@@ -352,16 +997,7 @@ export function Composer({
 
   const { settings: appSettings } = useAppSettings();
 
-  const agentState = useSessionStore(
-    useShallow((state) => {
-      const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
-      return {
-        status: agent?.status ?? null,
-        contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-        contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      };
-    }),
-  );
+  const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
@@ -373,10 +1009,8 @@ export function Composer({
   const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
 
   const isMobile = useIsCompactFormFactor();
-  const isDesktopWebBreakpoint = isWeb && !isMobile;
-  const messagePlaceholder = isDesktopWebBreakpoint
-    ? DESKTOP_MESSAGE_PLACEHOLDER
-    : MOBILE_MESSAGE_PLACEHOLDER;
+  const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isMobile);
+  const messagePlaceholder = resolveMessagePlaceholder(isDesktopWebBreakpoint);
   const userInput = value;
   const setUserInput = onChangeText;
   const selectedAttachments = attachments;
@@ -391,7 +1025,7 @@ export function Composer({
   const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
   const attachButtonRef = useRef<View | null>(null);
   const messageInputRef = useRef<MessageInputRef>(null);
-  const isComposerLocked = submitBehavior === "preserve-and-lock" && isSubmitLoading;
+  const isComposerLocked = resolveIsComposerLocked(submitBehavior, isSubmitLoading);
   const keyboardHandlerIdRef = useRef(
     `message-input:${serverId}:${agentId}:${Math.random().toString(36).slice(2)}`,
   );
@@ -486,43 +1120,14 @@ export function Composer({
       if (!client) {
         throw new Error("Host is not connected");
       }
-
-      const wirePayload = splitComposerAttachmentsForSubmit(sendAttachments);
-      const clientMessageId = generateMessageId();
-      const userMessage: StreamItem = {
-        kind: "user_message",
-        id: clientMessageId,
+      await dispatchAgentMessageSend({
+        client,
+        serverId,
+        targetAgentId,
         text,
-        timestamp: new Date(),
-        ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
-      };
-
-      // Append to head if streaming (keeps the user message with the current
-      // turn so late text_deltas still find the existing assistant_message).
-      // Otherwise append to tail.
-      const currentHead = useSessionStore
-        .getState()
-        .sessions[serverId]?.agentStreamHead?.get(targetAgentId);
-      if (currentHead && currentHead.length > 0) {
-        setAgentStreamHead(serverId, (prev) => {
-          const head = prev.get(targetAgentId) || [];
-          const updated = new Map(prev);
-          updated.set(targetAgentId, [...head, userMessage]);
-          return updated;
-        });
-      } else {
-        setAgentStreamTail(serverId, (prev) => {
-          const currentStream = prev.get(targetAgentId) || [];
-          const updated = new Map(prev);
-          updated.set(targetAgentId, [...currentStream, userMessage]);
-          return updated;
-        });
-      }
-      const imagesData = await encodeImages(wirePayload.images);
-      await client.sendAgentMessage(targetAgentId, text, {
-        messageId: clientMessageId,
-        images: imagesData ?? [],
-        attachments: wirePayload.attachments,
+        sendAttachments,
+        setAgentStreamHead,
+        setAgentStreamTail,
       });
       onAttentionPromptSend?.();
     };
@@ -628,50 +1233,20 @@ export function Composer({
   );
 
   const handlePickImage = useCallback(async () => {
-    const result = await pickImages();
-    if (!result?.length) {
-      return;
-    }
-
-    const newImages = await Promise.all(
-      result.map(async (pickedImage) => {
-        if (pickedImage.source.kind === "blob") {
-          return await persistAttachmentFromBlob({
-            blob: pickedImage.source.blob,
-            mimeType: pickedImage.mimeType || "image/jpeg",
-            fileName: pickedImage.fileName ?? null,
-          });
-        }
-
-        return await persistAttachmentFromFileUri({
-          uri: pickedImage.source.uri,
-          mimeType: pickedImage.mimeType || "image/jpeg",
-          fileName: pickedImage.fileName ?? null,
-        });
-      }),
-    );
+    const newImages = await pickAndPersistImages(pickImages);
+    if (newImages.length === 0) return;
     addImages(newImages);
   }, [addImages, pickImages]);
 
   const handleRemoveAttachment = useCallback(
     (index: number) => {
-      setSelectedAttachments((prev) => {
-        const removed = prev[index];
-        if (removed?.kind === "image") {
-          void deleteAttachments([removed.metadata]);
-        }
-        return prev.filter((_, i) => i !== index);
-      });
+      setSelectedAttachments((prev) => removeAttachmentAtIndex(prev, index));
     },
     [setSelectedAttachments],
   );
 
   const handleOpenAttachment = useCallback((attachment: ComposerAttachment) => {
-    if (attachment.kind === "image") {
-      setLightboxMetadata(attachment.metadata);
-      return;
-    }
-    void openExternalUrl(attachment.item.url);
+    openComposerAttachment(attachment, setLightboxMetadata);
   }, []);
 
   useEffect(() => {
@@ -681,69 +1256,41 @@ export function Composer({
   }, [isAgentRunning, isConnected]);
 
   const handleCancelAgent = useCallback(() => {
-    if (!isAgentRunning || isCancellingAgent) {
-      return;
-    }
-    if (!isConnected || !client) {
-      return;
-    }
-    setIsCancellingAgent(true);
-    void client.cancelAgent(agentIdRef.current);
-    messageInputRef.current?.focus();
+    cancelRunningAgent({
+      isAgentRunning,
+      isCancellingAgent,
+      isConnected,
+      client,
+      agentIdRef,
+      setIsCancellingAgent,
+      messageInputRef,
+    });
   }, [client, isAgentRunning, isCancellingAgent, isConnected]);
 
+  const focusMessageInputForKeyboardAction = useCallback(() => {
+    focusMessageInputWithPlatformStrategy(messageInputRef);
+  }, []);
+
   const handleKeyboardAction = useCallback(
-    (action: KeyboardActionDefinition): boolean => {
-      if (!isPaneFocused) {
-        return false;
-      }
-
-      switch (action.id) {
-        case "agent.interrupt":
-          if (messageInputRef.current?.runKeyboardAction("dictation-cancel")) {
-            return true;
-          }
-          if (!isAgentRunning || isCancellingAgent || !isConnected) {
-            return false;
-          }
-          handleCancelAgent();
-          return true;
-        case "message-input.send":
-          return messageInputRef.current?.runKeyboardAction("send") ?? false;
-        case "message-input.dictation-confirm":
-          return messageInputRef.current?.runKeyboardAction("dictation-confirm") ?? false;
-        case "message-input.focus":
-          if (isNative) {
-            messageInputRef.current?.focus();
-            return true;
-          }
-
-          focusWithRetries({
-            focus: () => messageInputRef.current?.focus(),
-            isFocused: () => {
-              const el = messageInputRef.current?.getNativeElement?.() ?? null;
-              const active = typeof document !== "undefined" ? document.activeElement : null;
-              return Boolean(el) && active === el;
-            },
-          });
-          return true;
-        case "message-input.dictation-toggle":
-          messageInputRef.current?.runKeyboardAction("dictation-toggle");
-          return true;
-        case "message-input.dictation-cancel":
-          messageInputRef.current?.runKeyboardAction("dictation-cancel");
-          return true;
-        case "message-input.voice-toggle":
-          messageInputRef.current?.runKeyboardAction("voice-toggle");
-          return true;
-        case "message-input.voice-mute-toggle":
-          messageInputRef.current?.runKeyboardAction("voice-mute-toggle");
-          return true;
-        default:
-          return false;
-      }
-    },
-    [handleCancelAgent, isAgentRunning, isCancellingAgent, isConnected, isPaneFocused],
+    (action: KeyboardActionDefinition): boolean =>
+      dispatchComposerKeyboardAction({
+        action,
+        isPaneFocused,
+        messageInputRef,
+        isAgentRunning,
+        isCancellingAgent,
+        isConnected,
+        handleCancelAgent,
+        focusMessageInputForKeyboardAction,
+      }),
+    [
+      focusMessageInputForKeyboardAction,
+      handleCancelAgent,
+      isAgentRunning,
+      isCancellingAgent,
+      isConnected,
+      isPaneFocused,
+    ],
   );
 
   useKeyboardActionHandler({
@@ -759,7 +1306,7 @@ export function Composer({
       "message-input.voice-mute-toggle",
     ],
     enabled: isPaneFocused,
-    priority: isMessageInputFocused ? 200 : 100,
+    priority: resolveKeyboardPriority(isMessageInputFocused),
     isActive: () => isPaneFocused,
     handle: handleKeyboardAction,
   });
@@ -768,27 +1315,16 @@ export function Composer({
     mode: "translate",
   });
 
-  const isVoiceModeForAgent = voice?.isVoiceModeForAgent(serverId, agentId) ?? false;
+  const isVoiceModeForAgent = resolveIsVoiceModeForAgent(voice, serverId, agentId);
 
   const handleToggleRealtimeVoice = useCallback(() => {
-    if (!voice || !isConnected || !hasAgent) {
-      return;
-    }
-    if (voice.isVoiceSwitching) {
-      return;
-    }
-    if (voice.isVoiceModeForAgent(serverId, agentId)) {
-      return;
-    }
-    void voice.startVoice(serverId, agentId).catch((error) => {
-      console.error("[Composer] Failed to start voice mode", error);
-      let message: string | null;
-      if (error instanceof Error) message = error.message;
-      else if (typeof error === "string") message = error;
-      else message = null;
-      if (message && message.trim().length > 0) {
-        toastErrorRef.current(message);
-      }
+    attemptStartRealtimeVoice({
+      voice,
+      isConnected,
+      hasAgent,
+      serverId,
+      agentId,
+      toastErrorRef,
     });
   }, [agentId, hasAgent, isConnected, serverId, voice]);
 
@@ -841,51 +1377,32 @@ export function Composer({
   );
 
   const cancelButtonStyle = useMemo(
-    () => [
-      styles.cancelButton as object,
-      (!isConnected || isCancellingAgent ? styles.buttonDisabled : undefined) as object | undefined,
-    ],
+    () => buildCancelButtonStyle(isConnected, isCancellingAgent),
     [isConnected, isCancellingAgent],
   );
 
   const isVoiceSwitching = voice?.isVoiceSwitching ?? false;
   const voiceButtonDisabled = !isConnected || isVoiceSwitching;
   const realtimeVoiceButtonStyle = useCallback(
-    ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.realtimeVoiceButton as object,
-      (Boolean(hovered) ? styles.iconButtonHovered : undefined) as object | undefined,
-      (voiceButtonDisabled ? styles.buttonDisabled : undefined) as object | undefined,
-    ],
+    (state: PressableStateCallbackType & { hovered?: boolean }) =>
+      buildRealtimeVoiceButtonStyle(state.hovered, voiceButtonDisabled),
     [voiceButtonDisabled],
   );
 
   const cancelButton = useMemo(
-    () =>
-      isAgentRunning && !hasSendableContent && !isProcessing ? (
-        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger
-            onPress={handleCancelAgent}
-            disabled={!isConnected || isCancellingAgent}
-            accessibilityLabel={isCancellingAgent ? "Canceling agent" : "Stop agent"}
-            accessibilityRole="button"
-            style={cancelButtonStyle}
-          >
-            {isCancellingAgent ? (
-              <ActivityIndicator size="small" color="white" />
-            ) : (
-              <Square size={buttonIconSize} color="white" fill="white" />
-            )}
-          </TooltipTrigger>
-          <TooltipContent side="top" align="center" offset={8}>
-            <View style={styles.tooltipRow}>
-              <Text style={styles.tooltipText}>Interrupt</Text>
-              {agentInterruptKeys ? (
-                <Shortcut chord={agentInterruptKeys} style={styles.tooltipShortcut} />
-              ) : null}
-            </View>
-          </TooltipContent>
-        </Tooltip>
-      ) : null,
+    () => (
+      <ComposerCancelButtonSlot
+        isAgentRunning={isAgentRunning}
+        hasSendableContent={hasSendableContent}
+        isProcessing={isProcessing}
+        buttonIconSize={buttonIconSize}
+        cancelButtonStyle={cancelButtonStyle}
+        handleCancelAgent={handleCancelAgent}
+        isConnected={isConnected}
+        isCancellingAgent={isCancellingAgent}
+        agentInterruptKeys={agentInterruptKeys}
+      />
+    ),
     [
       agentInterruptKeys,
       buttonIconSize,
@@ -899,94 +1416,63 @@ export function Composer({
     ],
   );
 
-  const showVoiceModeButton = !isVoiceModeForAgent && hasAgent;
+  const isVoiceSwitchingValue = voice?.isVoiceSwitching ?? false;
   const rightContent = useMemo(
-    () =>
-      showVoiceModeButton || cancelButton ? (
-        <View style={styles.rightControls}>
-          {showVoiceModeButton ? (
-            <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-              <TooltipTrigger
-                onPress={handleToggleRealtimeVoice}
-                disabled={!isConnected || voice?.isVoiceSwitching}
-                accessibilityLabel="Enable Voice mode"
-                accessibilityRole="button"
-                style={realtimeVoiceButtonStyle}
-              >
-                {({ hovered }) =>
-                  voice?.isVoiceSwitching ? (
-                    <ActivityIndicator size="small" color="white" />
-                  ) : (
-                    <AudioLines
-                      size={buttonIconSize}
-                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                    />
-                  )
-                }
-              </TooltipTrigger>
-              <TooltipContent side="top" align="center" offset={8}>
-                <View style={styles.tooltipRow}>
-                  <Text style={styles.tooltipText}>Voice mode</Text>
-                  {voiceToggleKeys ? (
-                    <Shortcut chord={voiceToggleKeys} style={styles.tooltipShortcut} />
-                  ) : null}
-                </View>
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-          {cancelButton}
-        </View>
-      ) : null,
+    () => (
+      <ComposerRightControlsSlot
+        isVoiceModeForAgent={isVoiceModeForAgent}
+        hasAgent={hasAgent}
+        isAgentRunning={isAgentRunning}
+        hasSendableContent={hasSendableContent}
+        isProcessing={isProcessing}
+        buttonIconSize={buttonIconSize}
+        handleToggleRealtimeVoice={handleToggleRealtimeVoice}
+        isConnected={isConnected}
+        isVoiceSwitching={isVoiceSwitchingValue}
+        realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
+        theme={theme}
+        voiceToggleKeys={voiceToggleKeys}
+        cancelButton={cancelButton}
+      />
+    ),
     [
       buttonIconSize,
       cancelButton,
       handleToggleRealtimeVoice,
+      hasAgent,
+      hasSendableContent,
+      isAgentRunning,
       isConnected,
+      isProcessing,
+      isVoiceModeForAgent,
+      isVoiceSwitchingValue,
       realtimeVoiceButtonStyle,
-      showVoiceModeButton,
-      theme.colors.foreground,
-      theme.colors.foregroundMuted,
-      voice,
+      theme,
       voiceToggleKeys,
     ],
   );
 
-  const hasContextWindowMeter =
-    typeof agentState.contextWindowMaxTokens === "number" &&
-    typeof agentState.contextWindowUsedTokens === "number";
-  const contextWindowMaxTokens = hasContextWindowMeter ? agentState.contextWindowMaxTokens : null;
-  const contextWindowUsedTokens = hasContextWindowMeter ? agentState.contextWindowUsedTokens : null;
+  const { contextWindowMaxTokens, contextWindowUsedTokens } = resolveContextWindowValues(
+    agentState.contextWindowMaxTokens,
+    agentState.contextWindowUsedTokens,
+  );
 
   const beforeVoiceContent = useMemo(
-    () => (
-      <View style={styles.contextWindowMeterSlot}>
-        {contextWindowMaxTokens !== null && contextWindowUsedTokens !== null ? (
-          <ContextWindowMeter
-            maxTokens={contextWindowMaxTokens}
-            usedTokens={contextWindowUsedTokens}
-          />
-        ) : null}
-      </View>
-    ),
+    () => renderContextWindowMeterSlot(contextWindowMaxTokens, contextWindowUsedTokens),
     [contextWindowMaxTokens, contextWindowUsedTokens],
   );
 
   const githubSearchQueryTrimmed = githubSearchQuery.trim();
-  const githubSearchResultsQuery = useQuery({
-    queryKey: ["composer-github-search", serverId, cwd, githubSearchQueryTrimmed],
-    queryFn: async () => {
-      if (!client) {
-        throw new Error("Host is not connected");
-      }
-      return client.searchGitHub({
-        cwd,
-        query: githubSearchQueryTrimmed,
-        limit: 20,
-      });
-    },
-    enabled: isGithubPickerOpen && isConnected && !!client && cwd.trim().length > 0,
-    staleTime: 30_000,
-  });
+  const githubSearchResultsQuery = useQuery(
+    buildGithubSearchQueryOptions({
+      serverId,
+      cwd,
+      githubSearchQueryTrimmed,
+      isGithubPickerOpen,
+      isConnected,
+      client,
+    }),
+  );
 
   const githubSearchItemsRaw = githubSearchResultsQuery.data?.items;
   const githubSearchItems = useMemo(() => githubSearchItemsRaw ?? [], [githubSearchItemsRaw]);
@@ -1024,20 +1510,7 @@ export function Composer({
 
   const handleToggleGithubItem = useCallback(
     (item: GitHubSearchItem) => {
-      setSelectedAttachments((current) => {
-        const matches = (attachment: ComposerAttachment) =>
-          attachment.kind !== "image" &&
-          attachment.item.kind === item.kind &&
-          attachment.item.number === item.number;
-
-        if (current.some(matches)) {
-          return current.filter((attachment) => !matches(attachment));
-        }
-
-        const nextAttachment: ComposerAttachment =
-          item.kind === "pr" ? { kind: "github_pr", item } : { kind: "github_issue", item };
-        return [...current, nextAttachment];
-      });
+      setSelectedAttachments((current) => toggleGithubAttachment(current, item));
       setIsGithubPickerOpen(false);
       setGithubSearchQuery("");
     },
@@ -1045,12 +1518,7 @@ export function Composer({
   );
 
   const leftContent = useMemo(
-    () =>
-      resolveStatusControlMode(statusControls) === "draft" && statusControls ? (
-        <DraftAgentStatusBar {...statusControls} />
-      ) : (
-        <AgentStatusBar agentId={agentId} serverId={serverId} onDropdownClose={focusInput} />
-      ),
+    () => renderLeftContent({ statusControls, agentId, serverId, focusInput }),
     [agentId, focusInput, serverId, statusControls],
   );
 
@@ -1088,18 +1556,11 @@ export function Composer({
 
   const renderGithubPickerOption = useCallback(
     ({ option, active }: { option: ComboboxOption; selected: boolean; active: boolean }) => {
-      const item = githubSearchItems.find((candidate) => {
-        return `${candidate.kind}:${candidate.number}` === option.id;
-      });
+      const item = findGithubItemByOption(githubSearchItems, option.id);
       if (!item) {
         return <View key={option.id} />;
       }
-      const selected = selectedAttachments.some(
-        (attachment) =>
-          attachment.kind !== "image" &&
-          attachment.item.kind === item.kind &&
-          attachment.item.number === item.number,
-      );
+      const selected = isAttachmentSelectedForGithubItem(selectedAttachments, item);
       return (
         <GithubPickerOption
           key={option.id}
@@ -1124,72 +1585,50 @@ export function Composer({
     [isComposerLocked],
   );
 
+  const attachmentPreviewList = useMemo(
+    () =>
+      renderAttachmentPreviewList({
+        selectedAttachments,
+        isComposerLocked,
+        handleOpenAttachment,
+        handleRemoveAttachment,
+      }),
+    [handleOpenAttachment, handleRemoveAttachment, isComposerLocked, selectedAttachments],
+  );
+
+  const queueList = useMemo(
+    () => renderQueueList({ queuedMessages, handleEditQueuedMessage, handleSendQueuedNow }),
+    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages],
+  );
+
+  const autocompletePopover = useMemo(
+    () => renderAutocompletePopover(autocomplete),
+    [autocomplete],
+  );
+
+  const isSubmitBusy = isProcessing || isSubmitLoading;
+  const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
+  const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
+  const sendErrorNode = useMemo(
+    () => (sendError ? <Text style={styles.sendErrorText}>{sendError}</Text> : null),
+    [sendError],
+  );
+  const githubEmptyText = githubSearchResultsQuery.isFetching
+    ? "Searching..."
+    : "No results found.";
+
   return (
     <Animated.View style={composerContainerStyle}>
       <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
       {/* Input area */}
       <View style={inputAreaContainerStyle}>
         <View style={styles.inputAreaContent}>
-          {/* Queue list */}
-          {queuedMessages.length > 0 && (
-            <View style={styles.queueContainer}>
-              {queuedMessages.map((item) => (
-                <QueuedMessageRow
-                  key={item.id}
-                  item={item}
-                  onEdit={handleEditQueuedMessage}
-                  onSendNow={handleSendQueuedNow}
-                />
-              ))}
-            </View>
-          )}
-
-          {sendError && <Text style={styles.sendErrorText}>{sendError}</Text>}
+          {queueList}
+          {sendErrorNode}
 
           <View style={styles.messageInputContainer}>
-            {/* Command + file mention autocomplete rendered as a true popover */}
-            {autocomplete.isVisible && (
-              <View style={styles.autocompletePopover} pointerEvents="box-none">
-                <Autocomplete
-                  options={autocomplete.options}
-                  selectedIndex={autocomplete.selectedIndex}
-                  isLoading={autocomplete.isLoading}
-                  errorMessage={autocomplete.errorMessage}
-                  loadingText={autocomplete.loadingText}
-                  emptyText={autocomplete.emptyText}
-                  onSelect={autocomplete.onSelectOption}
-                />
-              </View>
-            )}
-
-            {selectedAttachments.length > 0 ? (
-              <View style={styles.attachmentPreviewContainer} testID="composer-attachment-pills">
-                {selectedAttachments.map((attachment, index) => {
-                  if (attachment.kind === "image") {
-                    return (
-                      <ImageAttachmentPill
-                        key={attachment.metadata.id}
-                        attachment={attachment}
-                        index={index}
-                        disabled={isComposerLocked}
-                        onOpen={handleOpenAttachment}
-                        onRemove={handleRemoveAttachment}
-                      />
-                    );
-                  }
-                  return (
-                    <GithubAttachmentPill
-                      key={`${attachment.item.kind}:${attachment.item.number}`}
-                      attachment={attachment}
-                      index={index}
-                      disabled={isComposerLocked}
-                      onOpen={handleOpenAttachment}
-                      onRemove={handleRemoveAttachment}
-                    />
-                  );
-                })}
-              </View>
-            ) : null}
+            {autocompletePopover}
+            {attachmentPreviewList}
 
             {/* MessageInput handles everything: text, dictation, attachments, all buttons */}
             <StableMessageInput
@@ -1201,8 +1640,8 @@ export function Composer({
               allowEmptySubmit={allowEmptySubmit}
               submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
               submitIcon={submitIcon}
-              isSubmitDisabled={isProcessing || isSubmitLoading}
-              isSubmitLoading={isProcessing || isSubmitLoading}
+              isSubmitDisabled={isSubmitBusy}
+              isSubmitLoading={isSubmitBusy}
               attachments={selectedAttachments}
               cwd={cwd}
               attachmentMenuItems={attachmentMenuItems}
@@ -1211,7 +1650,7 @@ export function Composer({
               client={client}
               isReadyForDictation={isDictationReady}
               placeholder={messagePlaceholder}
-              autoFocus={autoFocus && isDesktopWebBreakpoint}
+              autoFocus={messageInputAutoFocus}
               autoFocusKey={`${serverId}:${agentId}`}
               disabled={isSubmitLoading}
               isPaneFocused={isPaneFocused}
@@ -1223,7 +1662,7 @@ export function Composer({
               isAgentRunning={isAgentRunning}
               defaultSendBehavior={appSettings.sendBehavior}
               onQueue={handleQueue}
-              onSubmitLoadingPress={isAgentRunning ? handleCancelAgent : undefined}
+              onSubmitLoadingPress={submitLoadingPressHandler}
               onKeyPress={handleCommandKeyPress}
               onSelectionChange={handleSelectionChange}
               onFocusChange={handleFocusChange}
@@ -1243,7 +1682,7 @@ export function Composer({
               onSearchQueryChange={setGithubSearchQuery}
               desktopPlacement="top-start"
               anchorRef={attachButtonRef}
-              emptyText={githubSearchResultsQuery.isFetching ? "Searching..." : "No results found."}
+              emptyText={githubEmptyText}
               renderOption={renderGithubPickerOption}
             />
           </View>

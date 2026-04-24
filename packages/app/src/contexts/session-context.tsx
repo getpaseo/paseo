@@ -10,6 +10,8 @@ import { generateMessageId, type StreamItem } from "@/types/stream";
 import {
   createSessionAgentStreamReducerQueue,
   processTimelineResponse,
+  type ProcessTimelineResponseOutput,
+  type TimelineReducerSideEffect,
 } from "@/contexts/session-stream-reducers";
 import type {
   AgentAttachment,
@@ -207,10 +209,176 @@ export function deletePendingAgentUpdate(serverId: string, agentId: string): voi
 }
 
 export function clearPendingAgentUpdates(serverId: string): void {
-  for (const key of [...pendingAgentUpdates.keys()]) {
+  for (const key of Array.from(pendingAgentUpdates.keys())) {
     if (key.startsWith(`${serverId}:`)) {
       pendingAgentUpdates.delete(key);
     }
+  }
+}
+
+type SessionStoreActions = ReturnType<typeof useSessionStore.getState>;
+type SetInitializingAgents = SessionStoreActions["setInitializingAgents"];
+type SetAgentStreamTail = SessionStoreActions["setAgentStreamTail"];
+type SetAgentStreamHead = SessionStoreActions["setAgentStreamHead"];
+type ClearAgentStreamHead = SessionStoreActions["clearAgentStreamHead"];
+type SetAgentTimelineCursor = SessionStoreActions["setAgentTimelineCursor"];
+type MarkAgentHistorySynchronized = SessionStoreActions["markAgentHistorySynchronized"];
+type SetAgentAuthoritativeHistoryApplied =
+  SessionStoreActions["setAgentAuthoritativeHistoryApplied"];
+
+function clearAgentInitializingFlag(
+  setInitializingAgents: SetInitializingAgents,
+  serverId: string,
+  agentId: string,
+): void {
+  setInitializingAgents(serverId, (prev) => {
+    if (prev.get(agentId) !== true) {
+      return prev;
+    }
+    const next = new Map(prev);
+    next.set(agentId, false);
+    return next;
+  });
+}
+
+function handleTimelineError(input: {
+  result: ProcessTimelineResponseOutput;
+  agentId: string;
+  initKey: string;
+  serverId: string;
+  setInitializingAgents: SetInitializingAgents;
+}): void {
+  const { result, agentId, initKey, serverId, setInitializingAgents } = input;
+  if (result.clearInitializing) {
+    clearAgentInitializingFlag(setInitializingAgents, serverId, agentId);
+  }
+  if (result.initResolution === "reject" && result.error) {
+    rejectInitDeferred(initKey, new Error(result.error));
+  }
+}
+
+function applyTimelineStreamPatches(input: {
+  result: ProcessTimelineResponseOutput;
+  agentId: string;
+  serverId: string;
+  currentTail: StreamItem[];
+  currentHead: StreamItem[];
+  setAgentStreamTail: SetAgentStreamTail;
+  setAgentStreamHead: SetAgentStreamHead;
+  clearAgentStreamHead: ClearAgentStreamHead;
+  setAgentTimelineCursor: SetAgentTimelineCursor;
+}): void {
+  const {
+    result,
+    agentId,
+    serverId,
+    currentTail,
+    currentHead,
+    setAgentStreamTail,
+    setAgentStreamHead,
+    clearAgentStreamHead,
+    setAgentTimelineCursor,
+  } = input;
+
+  if (result.tail !== currentTail) {
+    setAgentStreamTail(serverId, (prev) => {
+      const next = new Map(prev);
+      next.set(agentId, result.tail);
+      return next;
+    });
+  }
+
+  if (result.head !== currentHead) {
+    if (result.head.length === 0) {
+      clearAgentStreamHead(serverId, agentId);
+    } else {
+      setAgentStreamHead(serverId, (prev) => {
+        const next = new Map(prev);
+        next.set(agentId, result.head);
+        return next;
+      });
+    }
+  }
+
+  if (result.cursorChanged) {
+    setAgentTimelineCursor(serverId, (prev) => {
+      const current = prev.get(agentId);
+      if (!result.cursor) {
+        if (!current) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      }
+      if (
+        current &&
+        current.epoch === result.cursor.epoch &&
+        current.startSeq === result.cursor.startSeq &&
+        current.endSeq === result.cursor.endSeq
+      ) {
+        return prev;
+      }
+      const next = new Map(prev);
+      next.set(agentId, result.cursor);
+      return next;
+    });
+  }
+}
+
+function executeTimelineSideEffects(input: {
+  sideEffects: TimelineReducerSideEffect[];
+  agentId: string;
+  serverId: string;
+  requestCanonicalCatchUp: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
+  applyAgentUpdatePayload: (payload: AgentUpdatePayload) => void;
+}): void {
+  const { sideEffects, agentId, serverId, requestCanonicalCatchUp, applyAgentUpdatePayload } =
+    input;
+  for (const effect of sideEffects) {
+    if (effect.type === "catch_up") {
+      requestCanonicalCatchUp(agentId, effect.cursor);
+    } else if (effect.type === "flush_pending_updates") {
+      const deferredUpdate = flushPendingAgentUpdate(serverId, agentId);
+      if (deferredUpdate) {
+        applyAgentUpdatePayload(deferredUpdate);
+      }
+    }
+  }
+}
+
+function finalizeTimelineApplication(input: {
+  result: ProcessTimelineResponseOutput;
+  agentId: string;
+  initKey: string;
+  serverId: string;
+  shouldMarkAuthoritativeHistoryApplied: boolean;
+  setInitializingAgents: SetInitializingAgents;
+  setAgentAuthoritativeHistoryApplied: SetAgentAuthoritativeHistoryApplied;
+  markAgentHistorySynchronized: MarkAgentHistorySynchronized;
+}): void {
+  const {
+    result,
+    agentId,
+    initKey,
+    serverId,
+    shouldMarkAuthoritativeHistoryApplied,
+    setInitializingAgents,
+    setAgentAuthoritativeHistoryApplied,
+    markAgentHistorySynchronized,
+  } = input;
+
+  if (result.clearInitializing) {
+    clearAgentInitializingFlag(setInitializingAgents, serverId, agentId);
+  }
+  if (shouldMarkAuthoritativeHistoryApplied) {
+    setAgentAuthoritativeHistoryApplied(serverId, agentId, true);
+  }
+  if (result.initResolution === "resolve") {
+    resolveInitDeferred(initKey);
+  }
+  if (result.clearInitializing) {
+    markAgentHistorySynchronized(serverId, agentId);
   }
 }
 
@@ -879,105 +1047,47 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
       });
 
-      // Apply error path
       if (result.error) {
-        if (result.clearInitializing) {
-          setInitializingAgents(serverId, (prev) => {
-            if (prev.get(agentId) !== true) {
-              return prev;
-            }
-            const next = new Map(prev);
-            next.set(agentId, false);
-            return next;
-          });
-        }
-        if (result.initResolution === "reject") {
-          rejectInitDeferred(initKey, new Error(result.error));
-        }
+        handleTimelineError({
+          result,
+          agentId,
+          initKey,
+          serverId,
+          setInitializingAgents,
+        });
         return;
       }
 
-      // Apply tail patch
-      if (result.tail !== currentTail) {
-        setAgentStreamTail(serverId, (prev) => {
-          const next = new Map(prev);
-          next.set(agentId, result.tail);
-          return next;
-        });
-      }
+      applyTimelineStreamPatches({
+        result,
+        agentId,
+        serverId,
+        currentTail,
+        currentHead,
+        setAgentStreamTail,
+        setAgentStreamHead,
+        clearAgentStreamHead,
+        setAgentTimelineCursor,
+      });
 
-      // Apply head patch
-      if (result.head !== currentHead) {
-        if (result.head.length === 0) {
-          clearAgentStreamHead(serverId, agentId);
-        } else {
-          setAgentStreamHead(serverId, (prev) => {
-            const next = new Map(prev);
-            next.set(agentId, result.head);
-            return next;
-          });
-        }
-      }
+      executeTimelineSideEffects({
+        sideEffects: result.sideEffects,
+        agentId,
+        serverId,
+        requestCanonicalCatchUp,
+        applyAgentUpdatePayload,
+      });
 
-      // Apply cursor patch
-      if (result.cursorChanged) {
-        setAgentTimelineCursor(serverId, (prev) => {
-          const current = prev.get(agentId);
-          if (!result.cursor) {
-            if (!current) {
-              return prev;
-            }
-            const next = new Map(prev);
-            next.delete(agentId);
-            return next;
-          }
-          if (
-            current &&
-            current.epoch === result.cursor.epoch &&
-            current.startSeq === result.cursor.startSeq &&
-            current.endSeq === result.cursor.endSeq
-          ) {
-            return prev;
-          }
-          const next = new Map(prev);
-          next.set(agentId, result.cursor);
-          return next;
-        });
-      }
-
-      // Execute side effects
-      for (const effect of result.sideEffects) {
-        if (effect.type === "catch_up") {
-          requestCanonicalCatchUp(agentId, effect.cursor);
-        } else if (effect.type === "flush_pending_updates") {
-          const deferredUpdate = flushPendingAgentUpdate(serverId, agentId);
-          if (deferredUpdate) {
-            applyAgentUpdatePayload(deferredUpdate);
-          }
-        }
-      }
-
-      // Apply init resolution
-      if (result.clearInitializing) {
-        setInitializingAgents(serverId, (prev) => {
-          if (prev.get(agentId) !== true) {
-            return prev;
-          }
-          const next = new Map(prev);
-          next.set(agentId, false);
-          return next;
-        });
-      }
-
-      if (shouldMarkAuthoritativeHistoryApplied) {
-        setAgentAuthoritativeHistoryApplied(serverId, agentId, true);
-      }
-      if (result.initResolution === "resolve") {
-        resolveInitDeferred(initKey);
-      }
-      if (result.clearInitializing) {
-        markAgentHistorySynchronized(serverId, agentId);
-      }
+      finalizeTimelineApplication({
+        result,
+        agentId,
+        initKey,
+        serverId,
+        shouldMarkAuthoritativeHistoryApplied,
+        setInitializingAgents,
+        setAgentAuthoritativeHistoryApplied,
+        markAgentHistorySynchronized,
+      });
     },
     [
       applyAuthoritativeAgentSnapshot,

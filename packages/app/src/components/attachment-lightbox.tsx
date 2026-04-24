@@ -70,7 +70,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
         <View style={styles.contentLayer}>
           <View style={styles.imageArea}>
             {hasError ? (
-              <Text style={styles.errorText}>Couldn't load image</Text>
+              <Text style={styles.errorText}>Couldn&apos;t load image</Text>
             ) : (
               <Pressable onPress={noopPress} style={styles.imagePressable}>
                 <ExpoImage

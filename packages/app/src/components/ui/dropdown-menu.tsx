@@ -544,6 +544,35 @@ export function DropdownMenuHint({
   );
 }
 
+function resolveDropdownItemLeadingContent(input: {
+  isPending: boolean | undefined;
+  isSuccess: boolean;
+  leading: ReactElement | null;
+  theme: { colors: { foregroundMuted: string; palette: { green: Record<number, string> } } };
+}): ReactElement | null {
+  const { isPending, isSuccess, leading, theme } = input;
+  if (isPending) {
+    return <ActivityIndicator size={16} color={theme.colors.foregroundMuted} />;
+  }
+  if (isSuccess) {
+    return <CheckCircle size={16} color={theme.colors.palette.green[500]} />;
+  }
+  return leading;
+}
+
+function resolveDropdownItemLabel(input: {
+  children: ReactNode;
+  isPending: boolean | undefined;
+  isSuccess: boolean;
+  pendingLabel?: string;
+  successLabel?: string;
+}): ReactNode {
+  const { children, isPending, isSuccess, pendingLabel, successLabel } = input;
+  if (isPending && pendingLabel) return pendingLabel;
+  if (isSuccess && successLabel) return successLabel;
+  return children;
+}
+
 export function DropdownMenuItem({
   children,
   description,
@@ -594,23 +623,20 @@ export function DropdownMenuItem({
   const isSuccess = status === "success";
   const isDisabled = disabled || isPending || isSuccess;
 
-  // Determine leading icon based on status
-  let leadingContent: ReactElement | null = null;
-  if (isPending) {
-    leadingContent = <ActivityIndicator size={16} color={theme.colors.foregroundMuted} />;
-  } else if (isSuccess) {
-    leadingContent = <CheckCircle size={16} color={theme.colors.palette.green[500]} />;
-  } else if (leading) {
-    leadingContent = leading;
-  }
+  const leadingContent = resolveDropdownItemLeadingContent({
+    isPending,
+    isSuccess,
+    leading: leading ?? null,
+    theme,
+  });
 
-  // Determine label based on status
-  let label = children;
-  if (isPending && pendingLabel) {
-    label = pendingLabel;
-  } else if (isSuccess && successLabel) {
-    label = successLabel;
-  }
+  const label = resolveDropdownItemLabel({
+    children,
+    isPending,
+    isSuccess,
+    pendingLabel,
+    successLabel,
+  });
 
   const trailingContent =
     trailing ??
@@ -625,10 +651,13 @@ export function DropdownMenuItem({
 
   const itemPressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
-      let selectedStyle: typeof styles.itemSelectedAccent | typeof styles.itemSelected | null;
-      if (!selected) selectedStyle = null;
-      else if (selectedVariant === "accent") selectedStyle = styles.itemSelectedAccent;
-      else selectedStyle = styles.itemSelected;
+      let selectedStyle: typeof styles.itemSelectedAccent | typeof styles.itemSelected | null =
+        null;
+      if (selected && selectedVariant === "accent") {
+        selectedStyle = styles.itemSelectedAccent;
+      } else if (selected) {
+        selectedStyle = styles.itemSelected;
+      }
       return [
         styles.item,
         selectedStyle,
