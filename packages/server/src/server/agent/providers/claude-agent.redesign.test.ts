@@ -317,6 +317,114 @@ describe("ClaudeAgentSession redesign invariants", () => {
     }
   });
 
+  test("marks Claude settings reload as pending when settings snapshot changes", async () => {
+    const session = await createSession();
+    const internal = session as unknown as {
+      claudeSettingsReloadPending: boolean;
+      readClaudeSettingsSnapshot: () => Promise<unknown>;
+      refreshClaudeSettingsReloadState: () => Promise<void>;
+    };
+    const readSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce({
+        settings: { exists: true, mtimeMs: 1000, size: 128 },
+        legacy: { exists: false, mtimeMs: null, size: null },
+      })
+      .mockResolvedValueOnce({
+        settings: { exists: true, mtimeMs: 2000, size: 128 },
+        legacy: { exists: false, mtimeMs: null, size: null },
+      });
+    internal.readClaudeSettingsSnapshot = readSnapshot;
+
+    try {
+      await internal.refreshClaudeSettingsReloadState();
+      expect(internal.claudeSettingsReloadPending).toBe(false);
+
+      await internal.refreshClaudeSettingsReloadState();
+      expect(internal.claudeSettingsReloadPending).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("schedules query restart when Claude settings changed and no turn is active", async () => {
+    const session = await createSession();
+    const internal = session as unknown as {
+      query: QueryMock | null;
+      queryRestartNeeded: boolean;
+      claudeSessionId: string | null;
+      claudeSettingsSnapshot: unknown;
+      claudeSettingsReloadPending: boolean;
+      activeForegroundTurnId: string | null;
+      autonomousTurn: unknown;
+      turnState: "idle" | "foreground" | "autonomous";
+      readClaudeSettingsSnapshot: () => Promise<unknown>;
+      maybeReloadForClaudeSettingsChange: () => Promise<void>;
+    };
+    internal.query = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+    internal.queryRestartNeeded = false;
+    internal.claudeSessionId = "session-old";
+    internal.claudeSettingsSnapshot = {
+      settings: { exists: true, mtimeMs: 1000, size: 128 },
+      legacy: { exists: false, mtimeMs: null, size: null },
+    };
+    internal.claudeSettingsReloadPending = false;
+    internal.activeForegroundTurnId = null;
+    internal.autonomousTurn = null;
+    internal.turnState = "idle";
+    internal.readClaudeSettingsSnapshot = vi.fn().mockResolvedValue({
+      settings: { exists: true, mtimeMs: 2000, size: 128 },
+      legacy: { exists: false, mtimeMs: null, size: null },
+    });
+
+    try {
+      await internal.maybeReloadForClaudeSettingsChange();
+      expect(internal.claudeSettingsReloadPending).toBe(false);
+      expect(internal.queryRestartNeeded).toBe(true);
+      expect(internal.claudeSessionId).toBeNull();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("defers Claude query restart while a foreground turn is active", async () => {
+    const session = await createSession();
+    const internal = session as unknown as {
+      queryRestartNeeded: boolean;
+      claudeSessionId: string | null;
+      claudeSettingsSnapshot: unknown;
+      claudeSettingsReloadPending: boolean;
+      activeForegroundTurnId: string | null;
+      autonomousTurn: unknown;
+      turnState: "idle" | "foreground" | "autonomous";
+      readClaudeSettingsSnapshot: () => Promise<unknown>;
+      maybeReloadForClaudeSettingsChange: () => Promise<void>;
+    };
+    internal.queryRestartNeeded = false;
+    internal.claudeSessionId = "session-old";
+    internal.claudeSettingsSnapshot = {
+      settings: { exists: true, mtimeMs: 1000, size: 128 },
+      legacy: { exists: false, mtimeMs: null, size: null },
+    };
+    internal.claudeSettingsReloadPending = false;
+    internal.activeForegroundTurnId = "active-turn";
+    internal.autonomousTurn = null;
+    internal.turnState = "foreground";
+    internal.readClaudeSettingsSnapshot = vi.fn().mockResolvedValue({
+      settings: { exists: true, mtimeMs: 2000, size: 128 },
+      legacy: { exists: false, mtimeMs: null, size: null },
+    });
+
+    try {
+      await internal.maybeReloadForClaudeSettingsChange();
+      expect(internal.claudeSettingsReloadPending).toBe(true);
+      expect(internal.queryRestartNeeded).toBe(false);
+      expect(internal.claudeSessionId).toBe("session-old");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("extracts identifiers from fixture-driven protocol shape variants", () => {
     const fixtures = [
       {

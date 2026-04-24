@@ -27,7 +27,6 @@ import type {
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
 import type { Logger } from "pino";
-import { homedir } from "node:os";
 
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -63,9 +62,6 @@ import type { WorkspaceGitService } from "../../workspace-git-service.js";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const TURN_START_TIMEOUT_MS = 90 * 1000;
-const INTERRUPT_TIMEOUT_MS = 2_000;
-const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
-const APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
@@ -251,6 +247,68 @@ async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSetting
 
 function resolveCodexHomeDir(): string {
   return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+}
+
+type CodexConfigFileSnapshot = {
+  exists: boolean;
+  mtimeMs: number | null;
+  size: number | null;
+};
+
+type CodexAuthConfigSnapshot = {
+  auth: CodexConfigFileSnapshot;
+  config: CodexConfigFileSnapshot;
+};
+
+async function readCodexConfigFileSnapshot(filePath: string): Promise<CodexConfigFileSnapshot> {
+  try {
+    const stats = await fs.stat(filePath);
+    return {
+      exists: true,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {
+        exists: false,
+        mtimeMs: null,
+        size: null,
+      };
+    }
+    return {
+      exists: false,
+      mtimeMs: null,
+      size: null,
+    };
+  }
+}
+
+async function readCodexAuthConfigSnapshot(
+  codexHomeDir = resolveCodexHomeDir(),
+): Promise<CodexAuthConfigSnapshot> {
+  const [auth, config] = await Promise.all([
+    readCodexConfigFileSnapshot(path.join(codexHomeDir, "auth.json")),
+    readCodexConfigFileSnapshot(path.join(codexHomeDir, "config.toml")),
+  ]);
+  return { auth, config };
+}
+
+function codexConfigFileSnapshotEquals(
+  left: CodexConfigFileSnapshot,
+  right: CodexConfigFileSnapshot,
+): boolean {
+  return left.exists === right.exists && left.mtimeMs === right.mtimeMs && left.size === right.size;
+}
+
+function codexAuthConfigSnapshotEquals(
+  left: CodexAuthConfigSnapshot,
+  right: CodexAuthConfigSnapshot,
+): boolean {
+  return (
+    codexConfigFileSnapshotEquals(left.auth, right.auth) &&
+    codexConfigFileSnapshotEquals(left.config, right.config)
+  );
 }
 
 function tokenizeCommandArgs(args: string): string[] {
@@ -667,40 +725,8 @@ class CodexAppServerClient {
     } catch {
       // ignore
     }
-    signalChildProcessTree(this.child, "SIGTERM");
-    if (await this.waitForExit(APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS)) {
-      return;
-    }
-
-    this.logger.warn(
-      { timeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS },
-      "Codex app-server did not exit after SIGTERM; sending SIGKILL",
-    );
-    signalChildProcessTree(this.child, "SIGKILL");
-    if (await this.waitForExit(APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS)) {
-      return;
-    }
-
-    this.logger.warn(
-      { timeoutMs: APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS },
-      "Codex app-server did not report exit after SIGKILL",
-    );
-  }
-
-  private async waitForExit(timeoutMs: number): Promise<boolean> {
-    let timer: NodeJS.Timeout | null = null;
-    try {
-      return await Promise.race([
-        this.exitPromise.then(() => true),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(false), timeoutMs);
-        }),
-      ]);
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
-      }
-    }
+    terminateChildProcessTree(this.child);
+    await this.exitPromise;
   }
 
   private async handleLine(line: string): Promise<void> {
@@ -752,17 +778,14 @@ class CodexAppServerClient {
   }
 }
 
-function signalChildProcessTree(
-  child: ChildProcessWithoutNullStreams,
-  signal: NodeJS.Signals,
-): void {
-  if (child.exitCode !== null || child.signalCode !== null) {
+function terminateChildProcessTree(child: ChildProcessWithoutNullStreams): void {
+  if (child.killed) {
     return;
   }
 
   if (process.platform !== "win32" && typeof child.pid === "number" && child.pid > 0) {
     try {
-      process.kill(-child.pid, signal);
+      process.kill(-child.pid, "SIGTERM");
       return;
     } catch {
       // Fall back to the direct child when no separate process group exists.
@@ -770,7 +793,7 @@ function signalChildProcessTree(
   }
 
   try {
-    child.kill(signal);
+    child.kill("SIGTERM");
   } catch {
     // ignore
   }
@@ -2499,6 +2522,8 @@ class CodexAppServerAgentSession implements AgentSession {
     name: string;
   } | null = null;
   private cachedSkills: Array<{ name: string; description: string; path: string }> = [];
+  private codexAuthConfigSnapshot: CodexAuthConfigSnapshot | null = null;
+  private codexAuthReloadPending = false;
 
   constructor(
     config: AgentSessionConfig,
@@ -2542,6 +2567,7 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   async connect(): Promise<void> {
+    await this.maybeReloadForCodexAuthChange();
     if (this.connected) return;
     const child = await this.spawnAppServer();
     this.client = new CodexAppServerClient(child, this.logger);
@@ -2560,6 +2586,48 @@ class CodexAppServerAgentSession implements AgentSession {
     }
 
     this.connected = true;
+  }
+
+  private async readCodexAuthConfigSnapshot(): Promise<CodexAuthConfigSnapshot> {
+    return await readCodexAuthConfigSnapshot(resolveCodexHomeDir());
+  }
+
+  private async refreshCodexAuthReloadState(): Promise<void> {
+    const latestSnapshot = await this.readCodexAuthConfigSnapshot();
+    const previousSnapshot = this.codexAuthConfigSnapshot;
+    this.codexAuthConfigSnapshot = latestSnapshot;
+    if (!previousSnapshot) {
+      return;
+    }
+    if (!codexAuthConfigSnapshotEquals(previousSnapshot, latestSnapshot)) {
+      this.codexAuthReloadPending = true;
+    }
+  }
+
+  private async disposeConnectionForCodexAuthChange(): Promise<void> {
+    if (this.client) {
+      await this.client.dispose();
+    }
+    this.client = null;
+    this.connected = false;
+    this.currentThreadId = null;
+    this.currentTurnId = null;
+    this.historyPending = false;
+    this.persistedHistory = [];
+    this.cachedRuntimeInfo = null;
+    this.codexAuthReloadPending = false;
+  }
+
+  private async maybeReloadForCodexAuthChange(): Promise<void> {
+    await this.refreshCodexAuthReloadState();
+    if (!this.codexAuthReloadPending) {
+      return;
+    }
+    if (this.activeForegroundTurnId) {
+      this.logger.info("Codex auth/config changed during an active turn; reconnect deferred");
+      return;
+    }
+    await this.disposeConnectionForCodexAuthChange();
   }
 
   private async loadCollaborationModes(): Promise<void> {
@@ -2723,7 +2791,7 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   /**
-   * Prepare the session for plan implementation by disabling plan mode
+   * Prepare the session for plan implementation by disabling plan/fast mode
    * and returning the implementation prompt. The caller is responsible for
    * starting the turn through the normal streamAgent path.
    */
@@ -2732,6 +2800,7 @@ class CodexAppServerAgentSession implements AgentSession {
       typeof params.planText === "string" ? normalizePlanMarkdown(params.planText) : "";
 
     this.applyFeatureValue("plan_mode", false);
+    this.applyFeatureValue("fast_mode", false);
 
     return buildCodexPlanImplementationPrompt(planText);
   }
@@ -3313,14 +3382,10 @@ class CodexAppServerAgentSession implements AgentSession {
   async interrupt(): Promise<void> {
     if (!this.client || !this.currentThreadId || !this.currentTurnId) return;
     try {
-      await this.client.request(
-        "turn/interrupt",
-        {
-          threadId: this.currentThreadId,
-          turnId: this.currentTurnId,
-        },
-        INTERRUPT_TIMEOUT_MS,
-      );
+      await this.client.request("turn/interrupt", {
+        threadId: this.currentThreadId,
+        turnId: this.currentTurnId,
+      });
     } catch (error) {
       this.logger.warn({ error }, "Failed to interrupt Codex turn");
     }
@@ -3342,6 +3407,7 @@ class CodexAppServerAgentSession implements AgentSession {
     this.connected = false;
     this.currentThreadId = null;
     this.currentTurnId = null;
+    this.codexAuthReloadPending = false;
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
@@ -4181,8 +4247,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
+  async listModels(_options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
     const child = await this.spawnAppServer();
     const client = new CodexAppServerClient(child, this.logger);
 
@@ -4292,7 +4357,7 @@ export class CodexAppServerAgentClient implements AgentClient {
         entries.push({ label: "Models", value: "Not checked" });
       } else {
         try {
-          const models = await this.listModels({ cwd: homedir(), force: false });
+          const models = await this.listModels();
           entries.push({ label: "Models", value: String(models.length) });
         } catch (error) {
           entries.push({
@@ -4321,7 +4386,7 @@ export class CodexAppServerAgentClient implements AgentClient {
 
 export const __codexAppServerInternals = {
   buildCodexAppServerEnv,
-  CodexAppServerClient,
+  codexAuthConfigSnapshotEquals,
   codexModelSupportsFastMode,
   CodexAppServerAgentSession,
   formatCodexQuestionPrompts,

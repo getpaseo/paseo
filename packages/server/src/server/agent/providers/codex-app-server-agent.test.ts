@@ -1,11 +1,8 @@
 import { describe, expect, test, vi } from "vitest";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PassThrough } from "node:stream";
 
 import type {
   AgentLaunchContext,
@@ -49,31 +46,6 @@ function createSession(configOverrides: Partial<AgentSessionConfig> = {}) {
 }
 
 describe("Codex app-server provider", () => {
-  test("disposes an unresponsive app-server child with SIGKILL", async () => {
-    vi.useFakeTimers();
-    const child = new EventEmitter() as ChildProcessWithoutNullStreams;
-    child.stdin = new PassThrough() as ChildProcessWithoutNullStreams["stdin"];
-    child.stdout = new PassThrough() as ChildProcessWithoutNullStreams["stdout"];
-    child.stderr = new PassThrough() as ChildProcessWithoutNullStreams["stderr"];
-    child.exitCode = null;
-    child.signalCode = null;
-    child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
-    const client = new __codexAppServerInternals.CodexAppServerClient(child, createTestLogger());
-
-    try {
-      const disposePromise = client.dispose();
-      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-
-      await vi.advanceTimersByTimeAsync(2_000);
-      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
-
-      await vi.advanceTimersByTimeAsync(1_000);
-      await expect(disposePromise).resolves.toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), "codex-skills-"));
     const cwd = path.join(tempDir, "repo", "packages", "app");
@@ -700,7 +672,65 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("approving a synthetic Codex plan permission disables plan mode, preserves fast mode, and returns follow-up prompt", async () => {
+  test("marks Codex auth reload as pending when auth/config snapshot changes", async () => {
+    const session = createSession();
+    const readSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce({
+        auth: { exists: true, mtimeMs: 1000, size: 128 },
+        config: { exists: true, mtimeMs: 1000, size: 256 },
+      })
+      .mockResolvedValueOnce({
+        auth: { exists: true, mtimeMs: 2000, size: 128 },
+        config: { exists: true, mtimeMs: 1000, size: 256 },
+      });
+    (session as any).readCodexAuthConfigSnapshot = readSnapshot;
+
+    await (session as any).refreshCodexAuthReloadState();
+    expect((session as any).codexAuthReloadPending).toBe(false);
+
+    await (session as any).refreshCodexAuthReloadState();
+    expect((session as any).codexAuthReloadPending).toBe(true);
+  });
+
+  test("reloads Codex connection immediately when auth/config changed and no turn is active", async () => {
+    const session = createSession();
+    const dispose = vi.fn().mockResolvedValue(undefined);
+    session.client = { dispose } as any;
+    session.connected = true;
+    session.currentThreadId = "thread-123";
+    session.currentTurnId = "turn-123";
+    session.activeForegroundTurnId = null;
+    session.codexAuthReloadPending = true;
+    (session as any).refreshCodexAuthReloadState = vi.fn().mockResolvedValue(undefined);
+
+    await (session as any).maybeReloadForCodexAuthChange();
+
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(session.client).toBeNull();
+    expect(session.connected).toBe(false);
+    expect(session.currentThreadId).toBeNull();
+    expect(session.currentTurnId).toBeNull();
+    expect((session as any).codexAuthReloadPending).toBe(false);
+  });
+
+  test("defers Codex reconnect while a foreground turn is active", async () => {
+    const session = createSession();
+    const dispose = vi.fn().mockResolvedValue(undefined);
+    session.client = { dispose } as any;
+    session.connected = true;
+    session.codexAuthReloadPending = true;
+    session.activeForegroundTurnId = "active-turn";
+    (session as any).refreshCodexAuthReloadState = vi.fn().mockResolvedValue(undefined);
+
+    await (session as any).maybeReloadForCodexAuthChange();
+
+    expect(dispose).not.toHaveBeenCalled();
+    expect(session.connected).toBe(true);
+    expect((session as any).codexAuthReloadPending).toBe(true);
+  });
+
+  test("approving a synthetic Codex plan permission disables plan and fast mode and returns follow-up prompt", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },
     });
@@ -731,11 +761,11 @@ describe("Codex app-server provider", () => {
       selectedActionId: "implement",
     });
 
-    expect((session as any).serviceTier).toBe("fast");
+    expect((session as any).serviceTier).toBeNull();
     expect((session as any).planModeEnabled).toBe(false);
     expect((session as any).config.featureValues).toEqual({
       plan_mode: false,
-      fast_mode: true,
+      fast_mode: false,
     });
     // The session returns the follow-up prompt instead of calling startTurn directly.
     // The caller (session/agent-manager) is responsible for sending it through streamAgent.
@@ -752,118 +782,5 @@ describe("Codex app-server provider", () => {
         selectedActionId: "implement",
       },
     });
-  });
-
-  test("approving a synthetic Codex plan permission keeps fast mode disabled when it started disabled", async () => {
-    const session = createSession({
-      featureValues: { plan_mode: true, fast_mode: false },
-    });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-
-    (session as any).handleNotification("turn/started", {
-      turn: { id: "turn-plan-3" },
-    });
-    (session as any).handleNotification("turn/plan/updated", {
-      plan: [{ step: "Implement the safe flow", status: "pending" }],
-    });
-    (session as any).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
-    });
-
-    const request = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
-        event.type === "permission_requested" && event.request.kind === "plan",
-    );
-    expect(request).toBeDefined();
-    if (!request) {
-      throw new Error("Expected synthetic plan approval permission");
-    }
-
-    const result = await session.respondToPermission(request.request.id, {
-      behavior: "allow",
-      selectedActionId: "implement",
-    });
-
-    expect((session as any).serviceTier).toBeNull();
-    expect((session as any).planModeEnabled).toBe(false);
-    expect((session as any).config.featureValues).toEqual({
-      plan_mode: false,
-      fast_mode: false,
-    });
-    expect(result?.followUpPrompt).toEqual(
-      expect.stringContaining("The user approved the plan. Implement it now."),
-    );
-  });
-
-  test("follow-up implementation turn keeps fast service tier and switches back to code collaboration mode", async () => {
-    const session = createSession({
-      featureValues: { plan_mode: true, fast_mode: true },
-    });
-    (session as any).collaborationModes = [
-      {
-        name: "Code",
-        mode: "code",
-        developer_instructions: "Built-in code mode",
-      },
-      {
-        name: "Plan",
-        mode: "plan",
-        developer_instructions: "Built-in plan mode",
-      },
-    ];
-    (session as any).refreshResolvedCollaborationMode();
-    const request = vi.fn(async (method: string) => {
-      if (method === "thread/loaded/list") {
-        return { data: ["test-thread"] };
-      }
-      if (method === "turn/start") {
-        return {};
-      }
-      throw new Error(`Unexpected request: ${method}`);
-    });
-
-    session.activeForegroundTurnId = null;
-    session.client = { request } as any;
-
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-
-    (session as any).handleNotification("turn/started", {
-      turn: { id: "turn-plan-4" },
-    });
-    (session as any).handleNotification("turn/plan/updated", {
-      plan: [{ step: "Implement the fast flow", status: "pending" }],
-    });
-    (session as any).handleNotification("turn/completed", {
-      turn: { status: "completed", error: null },
-    });
-
-    const permissionRequest = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
-        event.type === "permission_requested" && event.request.kind === "plan",
-    );
-    expect(permissionRequest).toBeDefined();
-    if (!permissionRequest) {
-      throw new Error("Expected synthetic plan approval permission");
-    }
-
-    const result = await session.respondToPermission(permissionRequest.request.id, {
-      behavior: "allow",
-      selectedActionId: "implement",
-    });
-    expect(result?.followUpPrompt).toEqual(expect.any(String));
-
-    await session.startTurn(result!.followUpPrompt!);
-
-    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
-    expect(turnStartCall?.[1]).toEqual(
-      expect.objectContaining({
-        serviceTier: "fast",
-        collaborationMode: expect.objectContaining({
-          mode: "code",
-        }),
-      }),
-    );
   });
 });
