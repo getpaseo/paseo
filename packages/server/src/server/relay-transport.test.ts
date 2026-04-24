@@ -90,7 +90,10 @@ const wsMock = vi.hoisted(() => {
   return { MockWebSocket };
 });
 
-vi.mock("ws", () => ({ default: wsMock.MockWebSocket }));
+vi.mock("ws", () => ({
+  default: wsMock.MockWebSocket,
+  WebSocket: wsMock.MockWebSocket,
+}));
 
 import type pino from "pino";
 import { startRelayTransport } from "./relay-transport";
