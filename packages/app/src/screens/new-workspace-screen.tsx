@@ -50,6 +50,80 @@ interface PickerSelection {
 const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
 
+function RefPickerBadgeContent({
+  selectedItem,
+  triggerLabel,
+  iconColor,
+  iconSize,
+}: {
+  selectedItem: PickerItem | null;
+  triggerLabel: string;
+  iconColor: string;
+  iconSize: number;
+}) {
+  return (
+    <>
+      <View style={styles.badgeIconBox}>
+        {selectedItem?.kind === "github-pr" ? (
+          <GitPullRequest size={iconSize} color={iconColor} />
+        ) : (
+          <GitBranch size={iconSize} color={iconColor} />
+        )}
+      </View>
+      <Text style={styles.badgeText} numberOfLines={1}>
+        {triggerLabel}
+      </Text>
+      <ChevronDown size={iconSize} color={iconColor} />
+    </>
+  );
+}
+
+function RefPickerTrigger({
+  pickerAnchorRef,
+  onPress,
+  disabled,
+  badgePressableStyle,
+  selectedItem,
+  triggerLabel,
+  iconColor,
+  iconSize,
+}: {
+  pickerAnchorRef: React.RefObject<View | null>;
+  onPress: () => void;
+  disabled: boolean;
+  badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
+  selectedItem: PickerItem | null;
+  triggerLabel: string;
+  iconColor: string;
+  iconSize: number;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild triggerRefProp="ref">
+        <Pressable
+          ref={pickerAnchorRef}
+          testID="new-workspace-ref-picker-trigger"
+          onPress={onPress}
+          disabled={disabled}
+          style={badgePressableStyle}
+          accessibilityRole="button"
+          accessibilityLabel="Starting ref"
+        >
+          <RefPickerBadgeContent
+            selectedItem={selectedItem}
+            triggerLabel={triggerLabel}
+            iconColor={iconColor}
+            iconSize={iconSize}
+          />
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <Text style={styles.tooltipText}>Choose where to start from</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function PickerOptionItem({
   testID,
   label,
@@ -578,37 +652,16 @@ export function NewWorkspaceScreen({
           />
           <Animated.View testID="new-workspace-ref-picker-row" style={optionsRowStyle}>
             <View>
-              <Tooltip>
-                <TooltipTrigger asChild triggerRefProp="ref">
-                  <Pressable
-                    ref={pickerAnchorRef}
-                    testID="new-workspace-ref-picker-trigger"
-                    onPress={openPicker}
-                    disabled={isPending}
-                    style={badgePressableStyle}
-                    accessibilityRole="button"
-                    accessibilityLabel="Starting ref"
-                  >
-                    <View style={styles.badgeIconBox}>
-                      {selectedItem?.kind === "github-pr" ? (
-                        <GitPullRequest
-                          size={theme.iconSize.sm}
-                          color={theme.colors.foregroundMuted}
-                        />
-                      ) : (
-                        <GitBranch size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-                      )}
-                    </View>
-                    <Text style={styles.badgeText} numberOfLines={1}>
-                      {triggerLabel}
-                    </Text>
-                    <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-                  </Pressable>
-                </TooltipTrigger>
-                <TooltipContent side="top" align="center" offset={8}>
-                  <Text style={styles.tooltipText}>Choose where to start from</Text>
-                </TooltipContent>
-              </Tooltip>
+              <RefPickerTrigger
+                pickerAnchorRef={pickerAnchorRef}
+                onPress={openPicker}
+                disabled={isPending}
+                badgePressableStyle={badgePressableStyle}
+                selectedItem={selectedItem}
+                triggerLabel={triggerLabel}
+                iconColor={theme.colors.foregroundMuted}
+                iconSize={theme.iconSize.sm}
+              />
               <Combobox
                 options={options}
                 value={selectedOptionId}

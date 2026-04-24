@@ -11,6 +11,8 @@ import {
   type NativeSyntheticEvent,
   type NativeScrollEvent,
   type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
   TextStyle,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -722,6 +724,164 @@ interface GitDiffPaneProps {
   workspaceId?: string | null;
   cwd: string;
   hideHeaderRow?: boolean;
+}
+
+type PressableStyleFn = (
+  state: PressableStateCallbackType & { hovered?: boolean },
+) => StyleProp<ViewStyle>;
+
+interface DiffLayoutToggleGroupProps {
+  layout: "unified" | "split";
+  unifiedToggleStyle: PressableStyleFn;
+  splitToggleStyle: PressableStyleFn;
+  onUnified: () => void;
+  onSplit: () => void;
+}
+
+function DiffLayoutToggleGroup({
+  layout,
+  unifiedToggleStyle,
+  splitToggleStyle,
+  onUnified,
+  onSplit,
+}: DiffLayoutToggleGroupProps) {
+  const { theme } = useUnistyles();
+  return (
+    <View style={styles.toggleButtonGroup}>
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Unified diff"
+            testID="changes-layout-unified"
+            onPress={onUnified}
+            style={unifiedToggleStyle}
+          >
+            <AlignJustify
+              size={14}
+              color={layout === "unified" ? theme.colors.foreground : theme.colors.foregroundMuted}
+            />
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          <Text style={styles.tooltipText}>Unified diff</Text>
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Side-by-side diff"
+            testID="changes-layout-split"
+            onPress={onSplit}
+            style={splitToggleStyle}
+          >
+            <Columns2
+              size={14}
+              color={layout === "split" ? theme.colors.foreground : theme.colors.foregroundMuted}
+            />
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          <Text style={styles.tooltipText}>Side-by-side diff</Text>
+        </TooltipContent>
+      </Tooltip>
+    </View>
+  );
+}
+
+interface DiffWhitespaceToggleProps {
+  hideWhitespace: boolean;
+  isMobile: boolean;
+  toggleStyle: PressableStyleFn;
+  onToggle: () => void;
+}
+
+function DiffWhitespaceToggle({
+  hideWhitespace,
+  isMobile,
+  toggleStyle,
+  onToggle,
+}: DiffWhitespaceToggleProps) {
+  const { theme } = useUnistyles();
+  return (
+    <Tooltip delayDuration={300}>
+      <TooltipTrigger asChild>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Hide whitespace"
+          testID="changes-toggle-whitespace"
+          style={toggleStyle}
+          onPress={onToggle}
+        >
+          <Pilcrow
+            size={isMobile ? 18 : 14}
+            color={hideWhitespace ? theme.colors.foreground : theme.colors.foregroundMuted}
+          />
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        <Text style={styles.tooltipText}>Hide whitespace</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+interface DiffFilesToolbarProps {
+  wrapLines: boolean;
+  allExpanded: boolean;
+  isMobile: boolean;
+  wrapLinesToggleStyle: PressableStyleFn;
+  expandAllToggleStyle: PressableStyleFn;
+  onToggleWrapLines: () => void;
+  onToggleExpandAll: () => void;
+}
+
+function DiffFilesToolbar({
+  wrapLines,
+  allExpanded,
+  isMobile,
+  wrapLinesToggleStyle,
+  expandAllToggleStyle,
+  onToggleWrapLines,
+  onToggleExpandAll,
+}: DiffFilesToolbarProps) {
+  const { theme } = useUnistyles();
+  return (
+    <View style={styles.diffStatusButtons}>
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <Pressable style={wrapLinesToggleStyle} onPress={onToggleWrapLines}>
+            <WrapText
+              size={isMobile ? 18 : 14}
+              color={wrapLines ? theme.colors.foreground : theme.colors.foregroundMuted}
+            />
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          <Text style={styles.tooltipText}>
+            {wrapLines ? "Scroll long lines" : "Wrap long lines"}
+          </Text>
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <Pressable style={expandAllToggleStyle} onPress={onToggleExpandAll}>
+            {allExpanded ? (
+              <ListChevronsDownUp size={isMobile ? 18 : 14} color={theme.colors.foregroundMuted} />
+            ) : (
+              <ListChevronsUpDown size={isMobile ? 18 : 14} color={theme.colors.foregroundMuted} />
+            )}
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          <Text style={styles.tooltipText}>
+            {allExpanded ? "Collapse all files" : "Expand all files"}
+          </Text>
+        </TooltipContent>
+      </Tooltip>
+    </View>
+  );
 }
 
 type DiffFlatItem =
@@ -1530,118 +1690,30 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
             </DropdownMenu>
             <View style={styles.diffStatusButtons}>
               {canUseSplitLayout ? (
-                <View style={styles.toggleButtonGroup}>
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Unified diff"
-                        testID="changes-layout-unified"
-                        onPress={handleLayoutUnified}
-                        style={unifiedToggleStyle}
-                      >
-                        <AlignJustify
-                          size={14}
-                          color={
-                            changesPreferences.layout === "unified"
-                              ? theme.colors.foreground
-                              : theme.colors.foregroundMuted
-                          }
-                        />
-                      </Pressable>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <Text style={styles.tooltipText}>Unified diff</Text>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Side-by-side diff"
-                        testID="changes-layout-split"
-                        onPress={handleLayoutSplit}
-                        style={splitToggleStyle}
-                      >
-                        <Columns2
-                          size={14}
-                          color={
-                            changesPreferences.layout === "split"
-                              ? theme.colors.foreground
-                              : theme.colors.foregroundMuted
-                          }
-                        />
-                      </Pressable>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <Text style={styles.tooltipText}>Side-by-side diff</Text>
-                    </TooltipContent>
-                  </Tooltip>
-                </View>
+                <DiffLayoutToggleGroup
+                  layout={changesPreferences.layout}
+                  unifiedToggleStyle={unifiedToggleStyle}
+                  splitToggleStyle={splitToggleStyle}
+                  onUnified={handleLayoutUnified}
+                  onSplit={handleLayoutSplit}
+                />
               ) : null}
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Hide whitespace"
-                    testID="changes-toggle-whitespace"
-                    style={hideWhitespaceToggleStyle}
-                    onPress={handleToggleHideWhitespace}
-                  >
-                    <Pilcrow
-                      size={isMobile ? 18 : 14}
-                      color={
-                        changesPreferences.hideWhitespace
-                          ? theme.colors.foreground
-                          : theme.colors.foregroundMuted
-                      }
-                    />
-                  </Pressable>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <Text style={styles.tooltipText}>Hide whitespace</Text>
-                </TooltipContent>
-              </Tooltip>
+              <DiffWhitespaceToggle
+                hideWhitespace={changesPreferences.hideWhitespace}
+                isMobile={isMobile}
+                toggleStyle={hideWhitespaceToggleStyle}
+                onToggle={handleToggleHideWhitespace}
+              />
               {files.length > 0 ? (
-                <View style={styles.diffStatusButtons}>
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <Pressable style={wrapLinesToggleStyle} onPress={handleToggleWrapLines}>
-                        <WrapText
-                          size={isMobile ? 18 : 14}
-                          color={wrapLines ? theme.colors.foreground : theme.colors.foregroundMuted}
-                        />
-                      </Pressable>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <Text style={styles.tooltipText}>
-                        {wrapLines ? "Scroll long lines" : "Wrap long lines"}
-                      </Text>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <Pressable style={expandAllButtonStyle} onPress={handleToggleExpandAll}>
-                        {allExpanded ? (
-                          <ListChevronsDownUp
-                            size={isMobile ? 18 : 14}
-                            color={theme.colors.foregroundMuted}
-                          />
-                        ) : (
-                          <ListChevronsUpDown
-                            size={isMobile ? 18 : 14}
-                            color={theme.colors.foregroundMuted}
-                          />
-                        )}
-                      </Pressable>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <Text style={styles.tooltipText}>
-                        {allExpanded ? "Collapse all files" : "Expand all files"}
-                      </Text>
-                    </TooltipContent>
-                  </Tooltip>
-                </View>
+                <DiffFilesToolbar
+                  wrapLines={wrapLines}
+                  allExpanded={allExpanded}
+                  isMobile={isMobile}
+                  wrapLinesToggleStyle={wrapLinesToggleStyle}
+                  expandAllToggleStyle={expandAllButtonStyle}
+                  onToggleWrapLines={handleToggleWrapLines}
+                  onToggleExpandAll={handleToggleExpandAll}
+                />
               ) : null}
             </View>
           </View>

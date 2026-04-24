@@ -191,6 +191,162 @@ function getElementDescriptor(element: HTMLElement | null): string | null {
   return `${tag}${id}${suffix}`;
 }
 
+function AttachButtonIcon({
+  hovered,
+  onAttachButtonRef,
+  buttonIconSize,
+  foreground,
+  foregroundMuted,
+}: {
+  hovered: boolean;
+  onAttachButtonRef: ((node: View | null) => void) | undefined;
+  buttonIconSize: number;
+  foreground: string;
+  foregroundMuted: string;
+}) {
+  return (
+    <View ref={onAttachButtonRef} collapsable={false} style={styles.attachButtonAnchor}>
+      <Plus size={buttonIconSize} color={hovered ? foreground : foregroundMuted} />
+    </View>
+  );
+}
+
+function AttachmentMenuList({ items }: { items: AttachmentMenuItem[] }) {
+  return (
+    <>
+      {items.map((item) => (
+        <DropdownMenuItem
+          key={item.id}
+          testID={`message-input-attachment-menu-item-${item.id}`}
+          disabled={item.disabled}
+          onSelect={item.onSelect}
+          leading={item.icon ?? null}
+        >
+          {item.label}
+        </DropdownMenuItem>
+      ))}
+    </>
+  );
+}
+
+function AttachmentDropdown({
+  isConnected,
+  disabled,
+  attachButtonStyle,
+  renderAttachButtonIcon,
+  attachmentMenuItems,
+}: {
+  isConnected: boolean;
+  disabled: boolean;
+  attachButtonStyle: React.ComponentProps<typeof DropdownMenuTrigger>["style"];
+  renderAttachButtonIcon: (input: { hovered?: boolean }) => React.ReactElement;
+  attachmentMenuItems: AttachmentMenuItem[];
+}) {
+  return (
+    <DropdownMenu>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger
+            disabled={!isConnected || disabled}
+            accessibilityLabel="Add attachment"
+            accessibilityRole="button"
+            testID="message-input-attach-button"
+            style={attachButtonStyle}
+          >
+            {renderAttachButtonIcon}
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="center" offset={8}>
+          <Text style={styles.tooltipText}>Add attachment</Text>
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent
+        side="top"
+        align="start"
+        offset={8}
+        minWidth={220}
+        testID="message-input-attachment-menu"
+      >
+        <AttachmentMenuList items={attachmentMenuItems} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function VoiceButtonIcon({
+  hovered,
+  isDictating,
+  isMutedRealtime,
+  buttonIconSize,
+  foreground,
+  foregroundMuted,
+}: {
+  hovered: boolean;
+  isDictating: boolean;
+  isMutedRealtime: boolean;
+  buttonIconSize: number;
+  foreground: string;
+  foregroundMuted: string;
+}) {
+  if (isDictating) {
+    return <Square size={buttonIconSize} color="white" fill="white" />;
+  }
+  if (isMutedRealtime) {
+    return <MicOff size={buttonIconSize} color={hovered ? foreground : foregroundMuted} />;
+  }
+  return <Mic size={buttonIconSize} color={hovered ? foreground : foregroundMuted} />;
+}
+
+type ShortcutChord = NonNullable<React.ComponentProps<typeof Shortcut>["chord"]>;
+
+function VoiceTooltipBody({
+  voiceTooltipText,
+  shortcut,
+}: {
+  voiceTooltipText: string;
+  shortcut: ShortcutChord | null | undefined;
+}) {
+  return (
+    <View style={styles.tooltipRow}>
+      <Text style={styles.tooltipText}>{voiceTooltipText}</Text>
+      {shortcut ? <Shortcut chord={shortcut} style={styles.tooltipShortcut} /> : null}
+    </View>
+  );
+}
+
+function SendTooltipBody({
+  label,
+  sendKeys,
+}: {
+  label: string;
+  sendKeys: ShortcutChord | null | undefined;
+}) {
+  return (
+    <View style={styles.tooltipRow}>
+      <Text style={styles.tooltipText}>{label}</Text>
+      {sendKeys ? <Shortcut chord={sendKeys} style={styles.tooltipShortcut} /> : null}
+    </View>
+  );
+}
+
+function SendButtonContent({
+  isSubmitLoading,
+  submitIcon,
+  buttonIconSize,
+}: {
+  isSubmitLoading: boolean;
+  submitIcon: "arrow" | "return";
+  buttonIconSize: number;
+}) {
+  if (isSubmitLoading) {
+    return <ActivityIndicator size="small" color="white" />;
+  }
+  if (submitIcon === "return") {
+    return <CornerDownLeft size={buttonIconSize} color="white" />;
+  }
+  return <ArrowUp size={buttonIconSize} color="white" />;
+}
+
 function getScrollableAncestorChain(element: HTMLElement | null): string[] {
   if (!element || typeof window === "undefined") {
     return [];
@@ -1038,6 +1194,40 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     [overlayAnimatedStyle],
   );
 
+  const renderAttachButtonIcon = useCallback(
+    ({ hovered }: { hovered?: boolean }) => (
+      <AttachButtonIcon
+        hovered={Boolean(hovered)}
+        onAttachButtonRef={onAttachButtonRef}
+        buttonIconSize={buttonIconSize}
+        foreground={theme.colors.foreground}
+        foregroundMuted={theme.colors.foregroundMuted}
+      />
+    ),
+    [onAttachButtonRef, buttonIconSize, theme.colors.foreground, theme.colors.foregroundMuted],
+  );
+
+  const renderVoiceButtonIcon = useCallback(
+    ({ hovered }: { hovered?: boolean }) => (
+      <VoiceButtonIcon
+        hovered={Boolean(hovered)}
+        isDictating={isDictating}
+        isMutedRealtime={Boolean(isRealtimeVoiceForCurrentAgent && voice?.isMuted)}
+        buttonIconSize={buttonIconSize}
+        foreground={theme.colors.foreground}
+        foregroundMuted={theme.colors.foregroundMuted}
+      />
+    ),
+    [
+      isDictating,
+      isRealtimeVoiceForCurrentAgent,
+      voice?.isMuted,
+      buttonIconSize,
+      theme.colors.foreground,
+      theme.colors.foregroundMuted,
+    ],
+  );
+
   return (
     <View ref={rootRef} style={styles.container} testID="message-input-root">
       {/* Regular input */}
@@ -1074,54 +1264,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         <View style={styles.buttonRow}>
           {/* Left: attachment button + leftContent slot */}
           <View style={styles.leftButtonGroup}>
-            <DropdownMenu>
-              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger
-                    disabled={!isConnected || disabled}
-                    accessibilityLabel="Add attachment"
-                    accessibilityRole="button"
-                    testID="message-input-attach-button"
-                    style={attachButtonStyle}
-                  >
-                    {({ hovered }) => (
-                      <View
-                        ref={onAttachButtonRef}
-                        collapsable={false}
-                        style={styles.attachButtonAnchor}
-                      >
-                        <Plus
-                          size={buttonIconSize}
-                          color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                        />
-                      </View>
-                    )}
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="top" align="center" offset={8}>
-                  <Text style={styles.tooltipText}>Add attachment</Text>
-                </TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent
-                side="top"
-                align="start"
-                offset={8}
-                minWidth={220}
-                testID="message-input-attachment-menu"
-              >
-                {attachmentMenuItems.map((item) => (
-                  <DropdownMenuItem
-                    key={item.id}
-                    testID={`message-input-attachment-menu-item-${item.id}`}
-                    disabled={item.disabled}
-                    onSelect={item.onSelect}
-                    leading={item.icon ?? null}
-                  >
-                    {item.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <AttachmentDropdown
+              isConnected={isConnected}
+              disabled={disabled}
+              attachButtonStyle={attachButtonStyle}
+              renderAttachButtonIcon={renderAttachButtonIcon}
+              attachmentMenuItems={attachmentMenuItems}
+            />
             {leftContent}
           </View>
 
@@ -1136,40 +1285,15 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                 accessibilityLabel={voiceButtonAccessibilityLabel}
                 style={voiceButtonStyle}
               >
-                {({ hovered }) => {
-                  if (isDictating) {
-                    return <Square size={buttonIconSize} color="white" fill="white" />;
-                  }
-                  if (isRealtimeVoiceForCurrentAgent && voice?.isMuted) {
-                    return (
-                      <MicOff
-                        size={buttonIconSize}
-                        color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                      />
-                    );
-                  }
-                  return (
-                    <Mic
-                      size={buttonIconSize}
-                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                    />
-                  );
-                }}
+                {renderVoiceButtonIcon}
               </TooltipTrigger>
               <TooltipContent side="top" align="center" offset={8}>
-                <View style={styles.tooltipRow}>
-                  <Text style={styles.tooltipText}>{voiceTooltipText}</Text>
-                  {(isRealtimeVoiceForCurrentAgent ? voiceMuteToggleKeys : dictationToggleKeys) ? (
-                    <Shortcut
-                      chord={
-                        (isRealtimeVoiceForCurrentAgent
-                          ? voiceMuteToggleKeys
-                          : dictationToggleKeys)!
-                      }
-                      style={styles.tooltipShortcut}
-                    />
-                  ) : null}
-                </View>
+                <VoiceTooltipBody
+                  voiceTooltipText={voiceTooltipText}
+                  shortcut={
+                    isRealtimeVoiceForCurrentAgent ? voiceMuteToggleKeys : dictationToggleKeys
+                  }
+                />
               </TooltipContent>
             </Tooltip>
             {rightContent}
@@ -1182,21 +1306,19 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                   accessibilityRole="button"
                   style={sendButtonCombinedStyle}
                 >
-                  {isSubmitLoading ? <ActivityIndicator size="small" color="white" /> : null}
-                  {!isSubmitLoading && submitIcon === "return" ? (
-                    <CornerDownLeft size={buttonIconSize} color="white" />
-                  ) : null}
-                  {!isSubmitLoading && submitIcon !== "return" ? (
-                    <ArrowUp size={buttonIconSize} color="white" />
-                  ) : null}
+                  <SendButtonContent
+                    isSubmitLoading={isSubmitLoading}
+                    submitIcon={submitIcon}
+                    buttonIconSize={buttonIconSize}
+                  />
                 </TooltipTrigger>
                 <TooltipContent side="top" align="center" offset={8}>
-                  <View style={styles.tooltipRow}>
-                    <Text style={styles.tooltipText}>
-                      {submitButtonAccessibilityLabel ?? (defaultActionQueues ? "Queue" : "Send")}
-                    </Text>
-                    {sendKeys ? <Shortcut chord={sendKeys} style={styles.tooltipShortcut} /> : null}
-                  </View>
+                  <SendTooltipBody
+                    label={
+                      submitButtonAccessibilityLabel ?? (defaultActionQueues ? "Queue" : "Send")
+                    }
+                    sendKeys={sendKeys}
+                  />
                 </TooltipContent>
               </Tooltip>
             )}

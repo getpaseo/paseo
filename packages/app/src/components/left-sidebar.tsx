@@ -355,6 +355,131 @@ function HostSwitchOption({
   );
 }
 
+function FooterIconButton({
+  onPress,
+  testID,
+  accessibilityLabel,
+  icon: Icon,
+  theme,
+}: {
+  onPress: () => void;
+  testID: string;
+  accessibilityLabel: string;
+  icon: typeof Plus;
+  theme: SidebarTheme;
+}) {
+  return (
+    <Pressable
+      style={styles.footerIconButton}
+      testID={testID}
+      nativeID={testID}
+      collapsable={false}
+      accessible
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      onPress={onPress}
+    >
+      {({ hovered }) => (
+        <Icon
+          size={theme.iconSize.md}
+          color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+        />
+      )}
+    </Pressable>
+  );
+}
+
+function AddProjectTooltipContent({
+  newAgentKeys,
+}: {
+  newAgentKeys: ReturnType<typeof useShortcutKeys>;
+}) {
+  return (
+    <View style={styles.tooltipRow}>
+      <Text style={styles.tooltipText}>Add project</Text>
+      {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
+    </View>
+  );
+}
+
+function SidebarFooter({
+  theme,
+  activeServerId,
+  activeHostLabel,
+  hostStatusDotStyle,
+  hostOptions,
+  hostTriggerRef,
+  isHostPickerOpen,
+  setIsHostPickerOpen,
+  handleHostSelect,
+  renderHostOption,
+  handleOpenProject,
+  handleSettings,
+}: {
+  theme: SidebarTheme;
+  activeServerId: string | null;
+  activeHostLabel: string;
+  hostStatusDotStyle: StyleProp<ViewStyle>;
+  hostOptions: ComboboxOption[];
+  hostTriggerRef: RefObject<View | null>;
+  isHostPickerOpen: boolean;
+  setIsHostPickerOpen: Dispatch<SetStateAction<boolean>>;
+  handleHostSelect: (nextServerId: string) => void;
+  renderHostOption: SidebarSharedProps["renderHostOption"];
+  handleOpenProject: () => void;
+  handleSettings: () => void;
+}) {
+  const newAgentKeys = useShortcutKeys("new-agent");
+  return (
+    <View style={styles.sidebarFooter}>
+      <View style={styles.footerHostSlot}>
+        <HostPickerTrigger
+          triggerRef={hostTriggerRef}
+          setIsHostPickerOpen={setIsHostPickerOpen}
+          hostOptionsEmpty={hostOptions.length === 0}
+          hostStatusDotStyle={hostStatusDotStyle}
+          activeHostLabel={activeHostLabel}
+        />
+      </View>
+      <View style={styles.footerIconRow}>
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <FooterIconButton
+              onPress={handleOpenProject}
+              testID="sidebar-add-project"
+              accessibilityLabel="Add project"
+              icon={Plus}
+              theme={theme}
+            />
+          </TooltipTrigger>
+          <TooltipContent side="top" align="center" offset={8}>
+            <AddProjectTooltipContent newAgentKeys={newAgentKeys} />
+          </TooltipContent>
+        </Tooltip>
+        <FooterIconButton
+          onPress={handleSettings}
+          testID="sidebar-settings"
+          accessibilityLabel="Settings"
+          icon={Settings}
+          theme={theme}
+        />
+      </View>
+      <Combobox
+        options={hostOptions}
+        value={activeServerId ?? ""}
+        onSelect={handleHostSelect}
+        renderOption={renderHostOption}
+        searchable={false}
+        title="Switch host"
+        searchPlaceholder="Search hosts..."
+        open={isHostPickerOpen}
+        onOpenChange={setIsHostPickerOpen}
+        anchorRef={hostTriggerRef}
+      />
+    </View>
+  );
+}
+
 function MobileSidebar({
   theme,
   activeServerId,
@@ -382,7 +507,6 @@ function MobileSidebar({
   closeToAgent,
   handleViewMoreNavigate,
 }: MobileSidebarProps) {
-  const newAgentKeys = useShortcutKeys("new-agent");
   const pathname = usePathname();
   const isSessionsActive = pathname.includes("/sessions");
   const {
@@ -573,75 +697,20 @@ function MobileSidebar({
               />
             )}
 
-            <View style={styles.sidebarFooter}>
-              <View style={styles.footerHostSlot}>
-                <HostPickerTrigger
-                  triggerRef={hostTriggerRef}
-                  setIsHostPickerOpen={setIsHostPickerOpen}
-                  hostOptionsEmpty={hostOptions.length === 0}
-                  hostStatusDotStyle={hostStatusDotStyle}
-                  activeHostLabel={activeHostLabel}
-                />
-              </View>
-              <View style={styles.footerIconRow}>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Pressable
-                      style={styles.footerIconButton}
-                      testID="sidebar-add-project"
-                      nativeID="sidebar-add-project"
-                      collapsable={false}
-                      accessible
-                      accessibilityLabel="Add project"
-                      accessibilityRole="button"
-                      onPress={handleOpenProject}
-                    >
-                      {({ hovered }) => (
-                        <Plus
-                          size={theme.iconSize.md}
-                          color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                        />
-                      )}
-                    </Pressable>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" align="center" offset={8}>
-                    <View style={styles.tooltipRow}>
-                      <Text style={styles.tooltipText}>Add project</Text>
-                      {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
-                    </View>
-                  </TooltipContent>
-                </Tooltip>
-                <Pressable
-                  style={styles.footerIconButton}
-                  testID="sidebar-settings"
-                  nativeID="sidebar-settings"
-                  collapsable={false}
-                  accessible
-                  accessibilityLabel="Settings"
-                  accessibilityRole="button"
-                  onPress={handleSettings}
-                >
-                  {({ hovered }) => (
-                    <Settings
-                      size={theme.iconSize.md}
-                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                    />
-                  )}
-                </Pressable>
-              </View>
-              <Combobox
-                options={hostOptions}
-                value={activeServerId ?? ""}
-                onSelect={handleHostSelect}
-                renderOption={renderHostOption}
-                searchable={false}
-                title="Switch host"
-                searchPlaceholder="Search hosts..."
-                open={isHostPickerOpen}
-                onOpenChange={setIsHostPickerOpen}
-                anchorRef={hostTriggerRef}
-              />
-            </View>
+            <SidebarFooter
+              theme={theme}
+              activeServerId={activeServerId}
+              activeHostLabel={activeHostLabel}
+              hostStatusDotStyle={hostStatusDotStyle}
+              hostOptions={hostOptions}
+              hostTriggerRef={hostTriggerRef}
+              isHostPickerOpen={isHostPickerOpen}
+              setIsHostPickerOpen={setIsHostPickerOpen}
+              handleHostSelect={handleHostSelect}
+              renderHostOption={renderHostOption}
+              handleOpenProject={handleOpenProject}
+              handleSettings={handleSettings}
+            />
           </View>
         </Animated.View>
       </GestureDetector>
@@ -674,7 +743,6 @@ function DesktopSidebar({
   isOpen,
   handleViewMore,
 }: DesktopSidebarProps) {
-  const newAgentKeys = useShortcutKeys("new-agent");
   const pathname = usePathname();
   const isSessionsActive = pathname.includes("/sessions");
   const padding = useWindowControlsPadding("sidebar");
@@ -768,75 +836,20 @@ function DesktopSidebar({
 
         <SidebarCalloutSlot />
 
-        <View style={styles.sidebarFooter}>
-          <View style={styles.footerHostSlot}>
-            <HostPickerTrigger
-              triggerRef={hostTriggerRef}
-              setIsHostPickerOpen={setIsHostPickerOpen}
-              hostOptionsEmpty={hostOptions.length === 0}
-              hostStatusDotStyle={hostStatusDotStyle}
-              activeHostLabel={activeHostLabel}
-            />
-          </View>
-          <View style={styles.footerIconRow}>
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <Pressable
-                  style={styles.footerIconButton}
-                  testID="sidebar-add-project"
-                  nativeID="sidebar-add-project"
-                  collapsable={false}
-                  accessible
-                  accessibilityLabel="Add project"
-                  accessibilityRole="button"
-                  onPress={handleOpenProject}
-                >
-                  {({ hovered }) => (
-                    <Plus
-                      size={theme.iconSize.md}
-                      color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                    />
-                  )}
-                </Pressable>
-              </TooltipTrigger>
-              <TooltipContent side="top" align="center" offset={8}>
-                <View style={styles.tooltipRow}>
-                  <Text style={styles.tooltipText}>Add project</Text>
-                  {newAgentKeys ? <Shortcut chord={newAgentKeys} /> : null}
-                </View>
-              </TooltipContent>
-            </Tooltip>
-            <Pressable
-              style={styles.footerIconButton}
-              testID="sidebar-settings"
-              nativeID="sidebar-settings"
-              collapsable={false}
-              accessible
-              accessibilityLabel="Settings"
-              accessibilityRole="button"
-              onPress={handleSettings}
-            >
-              {({ hovered }) => (
-                <Settings
-                  size={theme.iconSize.md}
-                  color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                />
-              )}
-            </Pressable>
-          </View>
-          <Combobox
-            options={hostOptions}
-            value={activeServerId ?? ""}
-            onSelect={handleHostSelect}
-            renderOption={renderHostOption}
-            searchable={false}
-            title="Switch host"
-            searchPlaceholder="Search hosts..."
-            open={isHostPickerOpen}
-            onOpenChange={setIsHostPickerOpen}
-            anchorRef={hostTriggerRef}
-          />
-        </View>
+        <SidebarFooter
+          theme={theme}
+          activeServerId={activeServerId}
+          activeHostLabel={activeHostLabel}
+          hostStatusDotStyle={hostStatusDotStyle}
+          hostOptions={hostOptions}
+          hostTriggerRef={hostTriggerRef}
+          isHostPickerOpen={isHostPickerOpen}
+          setIsHostPickerOpen={setIsHostPickerOpen}
+          handleHostSelect={handleHostSelect}
+          renderHostOption={renderHostOption}
+          handleOpenProject={handleOpenProject}
+          handleSettings={handleSettings}
+        />
 
         {/* Resize handle - absolutely positioned over right border */}
         <GestureDetector gesture={resizeGesture}>

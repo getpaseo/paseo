@@ -473,6 +473,284 @@ function ProjectLeadingVisual({
   );
 }
 
+function ProjectRowTrailingActions({
+  project,
+  displayName,
+  canCreateWorktree,
+  isHovered,
+  isMobileBreakpoint,
+  isProjectActive,
+  onBeginWorkspaceSetup,
+  onRemoveProject,
+  removeProjectStatus,
+  theme,
+}: {
+  project: SidebarProjectEntry;
+  displayName: string;
+  canCreateWorktree: boolean;
+  isHovered: boolean;
+  isMobileBreakpoint: boolean;
+  isProjectActive: boolean;
+  onBeginWorkspaceSetup: () => void;
+  onRemoveProject?: () => void;
+  removeProjectStatus: "idle" | "pending" | "success";
+  theme: ReturnType<typeof useUnistyles>["theme"];
+}) {
+  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  return (
+    <View style={styles.projectTrailingActions}>
+      {canCreateWorktree ? (
+        <NewWorktreeButton
+          displayName={displayName}
+          onPress={onBeginWorkspaceSetup}
+          visible={actionsVisible}
+          showShortcutHint={isProjectActive}
+          testID={`sidebar-project-new-worktree-${project.projectKey}`}
+        />
+      ) : null}
+      {onRemoveProject ? (
+        <View
+          style={!actionsVisible && styles.projectKebabButtonHidden}
+          pointerEvents={actionsVisible ? "auto" : "none"}
+        >
+          <ProjectKebabMenu
+            projectKey={project.projectKey}
+            theme={theme}
+            onRemoveProject={onRemoveProject}
+            removeProjectStatus={removeProjectStatus}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function ProjectKebabMenu({
+  projectKey,
+  theme,
+  onRemoveProject,
+  removeProjectStatus,
+}: {
+  projectKey: string;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+  onRemoveProject: () => void;
+  removeProjectStatus: "idle" | "pending" | "success";
+}) {
+  const removeProjectLeadingIcon = useMemo(
+    () => <Trash2 size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const renderTriggerIcon = useCallback(
+    ({ hovered }: { hovered?: boolean }) => (
+      <MoreVertical
+        size={14}
+        color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+      />
+    ),
+    [theme.colors.foreground, theme.colors.foregroundMuted],
+  );
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        hitSlop={8}
+        style={projectKebabStyle}
+        accessibilityRole="button"
+        accessibilityLabel="Project actions"
+        testID={`sidebar-project-kebab-${projectKey}`}
+      >
+        {renderTriggerIcon}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" width={220}>
+        <DropdownMenuItem
+          testID={`sidebar-project-menu-remove-${projectKey}`}
+          leading={removeProjectLeadingIcon}
+          status={removeProjectStatus}
+          pendingLabel="Removing..."
+          onSelect={onRemoveProject}
+        >
+          Remove project
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function WorkspaceRowRightGroup({
+  workspace,
+  isHovered,
+  isTouchPlatform,
+  showScriptsIcon,
+  hasRunningService,
+  isCreating,
+  showShortcutBadge,
+  shortcutNumber,
+  theme,
+  archiveLabel,
+  archiveStatus,
+  archivePendingLabel,
+  archiveShortcutKeys,
+  onArchive,
+  onCopyBranchName,
+  onCopyPath,
+}: {
+  workspace: SidebarWorkspaceEntry;
+  isHovered: boolean;
+  isTouchPlatform: boolean;
+  showScriptsIcon: boolean;
+  hasRunningService: boolean;
+  isCreating: boolean;
+  showShortcutBadge: boolean;
+  shortcutNumber: number | null;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+  archiveLabel?: string;
+  archiveStatus?: "idle" | "pending" | "success";
+  archivePendingLabel?: string;
+  archiveShortcutKeys?: ShortcutKey[][] | null;
+  onArchive?: () => void;
+  onCopyBranchName?: () => void;
+  onCopyPath?: () => void;
+}) {
+  const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
+  return (
+    <View style={styles.workspaceRowRight}>
+      {showScriptsIcon ? (
+        <View testID="workspace-globe-icon" accessibilityLabel="Scripts available">
+          {hasRunningService ? (
+            <Globe size={12} color={theme.colors.palette.blue[500]} />
+          ) : (
+            <SquareTerminal size={12} color={theme.colors.palette.blue[500]} />
+          )}
+        </View>
+      ) : null}
+      {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
+      {showKebab && onArchive ? (
+        <WorkspaceKebabMenu
+          workspaceKey={workspace.workspaceKey}
+          theme={theme}
+          onCopyPath={onCopyPath}
+          onCopyBranchName={onCopyBranchName}
+          onArchive={onArchive}
+          archiveLabel={archiveLabel}
+          archiveStatus={archiveStatus}
+          archivePendingLabel={archivePendingLabel}
+          archiveShortcutKeys={archiveShortcutKeys}
+        />
+      ) : null}
+      {!showKebab && workspace.diffStat ? (
+        <DiffStat
+          additions={workspace.diffStat.additions}
+          deletions={workspace.diffStat.deletions}
+        />
+      ) : null}
+      {showShortcutBadge && shortcutNumber !== null ? (
+        <View style={styles.shortcutBadge}>
+          <Text style={styles.shortcutBadgeText}>{shortcutNumber}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function WorkspaceKebabTriggerIcon({
+  hovered,
+  foreground,
+  foregroundMuted,
+}: {
+  hovered: boolean;
+  foreground: string;
+  foregroundMuted: string;
+}) {
+  return <MoreVertical size={14} color={hovered ? foreground : foregroundMuted} />;
+}
+
+function WorkspaceKebabMenu({
+  workspaceKey,
+  theme,
+  onCopyPath,
+  onCopyBranchName,
+  onArchive,
+  archiveLabel,
+  archiveStatus,
+  archivePendingLabel,
+  archiveShortcutKeys,
+}: {
+  workspaceKey: string;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+  onCopyPath?: () => void;
+  onCopyBranchName?: () => void;
+  onArchive: () => void;
+  archiveLabel?: string;
+  archiveStatus?: "idle" | "pending" | "success";
+  archivePendingLabel?: string;
+  archiveShortcutKeys?: ShortcutKey[][] | null;
+}) {
+  const copyLeadingIcon = useMemo(
+    () => <Copy size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const archiveLeadingIcon = useMemo(
+    () => <Archive size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+  const archiveTrailing = useMemo(
+    () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
+    [archiveShortcutKeys],
+  );
+  const renderTriggerIcon = useCallback(
+    ({ hovered }: { hovered?: boolean }) => (
+      <WorkspaceKebabTriggerIcon
+        hovered={Boolean(hovered)}
+        foreground={theme.colors.foreground}
+        foregroundMuted={theme.colors.foregroundMuted}
+      />
+    ),
+    [theme.colors.foreground, theme.colors.foregroundMuted],
+  );
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        hitSlop={8}
+        style={workspaceKebabStyle}
+        accessibilityRole="button"
+        accessibilityLabel="Workspace actions"
+        testID={`sidebar-workspace-kebab-${workspaceKey}`}
+      >
+        {renderTriggerIcon}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" width={260}>
+        {onCopyPath ? (
+          <DropdownMenuItem
+            testID={`sidebar-workspace-menu-copy-path-${workspaceKey}`}
+            leading={copyLeadingIcon}
+            onSelect={onCopyPath}
+          >
+            Copy path
+          </DropdownMenuItem>
+        ) : null}
+        {onCopyBranchName ? (
+          <DropdownMenuItem
+            testID={`sidebar-workspace-menu-copy-branch-name-${workspaceKey}`}
+            leading={copyLeadingIcon}
+            onSelect={onCopyBranchName}
+          >
+            Copy branch name
+          </DropdownMenuItem>
+        ) : null}
+        <DropdownMenuItem
+          testID={`sidebar-workspace-menu-archive-${workspaceKey}`}
+          leading={archiveLeadingIcon}
+          trailing={archiveTrailing}
+          status={archiveStatus}
+          pendingLabel={archivePendingLabel}
+          onSelect={onArchive}
+        >
+          {archiveLabel ?? "Archive"}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function ProjectLeadingVisualStatus({
   projectIcon,
   isArchiving,
@@ -916,11 +1194,6 @@ function ProjectHeaderRow({
     [isDragging, selected, isHovered],
   );
 
-  const removeProjectLeadingIcon = useMemo(
-    () => <Trash2 size={14} color={theme.colors.foregroundMuted} />,
-    [theme.colors.foregroundMuted],
-  );
-
   const rowChildren = (
     <>
       <View style={styles.projectRowLeft}>
@@ -939,54 +1212,18 @@ function ProjectHeaderRow({
           </Text>
         </View>
       </View>
-      <View style={styles.projectTrailingActions}>
-        {canCreateWorktree ? (
-          <NewWorktreeButton
-            displayName={displayName}
-            onPress={handleBeginWorkspaceSetup}
-            visible={isHovered || platformIsNative || isMobileBreakpoint}
-            showShortcutHint={isProjectActive}
-            testID={`sidebar-project-new-worktree-${project.projectKey}`}
-          />
-        ) : null}
-        {onRemoveProject ? (
-          <View
-            style={
-              !(isHovered || platformIsNative || isMobileBreakpoint) &&
-              styles.projectKebabButtonHidden
-            }
-            pointerEvents={isHovered || platformIsNative || isMobileBreakpoint ? "auto" : "none"}
-          >
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                hitSlop={8}
-                style={projectKebabStyle}
-                accessibilityRole="button"
-                accessibilityLabel="Project actions"
-                testID={`sidebar-project-kebab-${project.projectKey}`}
-              >
-                {({ hovered }) => (
-                  <MoreVertical
-                    size={14}
-                    color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                  />
-                )}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" width={220}>
-                <DropdownMenuItem
-                  testID={`sidebar-project-menu-remove-${project.projectKey}`}
-                  leading={removeProjectLeadingIcon}
-                  status={removeProjectStatus}
-                  pendingLabel="Removing..."
-                  onSelect={onRemoveProject}
-                >
-                  Remove project
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </View>
-        ) : null}
-      </View>
+      <ProjectRowTrailingActions
+        project={project}
+        displayName={displayName}
+        canCreateWorktree={canCreateWorktree}
+        isHovered={isHovered}
+        isMobileBreakpoint={isMobileBreakpoint}
+        isProjectActive={isProjectActive}
+        onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
+        onRemoveProject={onRemoveProject}
+        removeProjectStatus={removeProjectStatus}
+        theme={theme}
+      />
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.shortcutBadge}>
           <Text style={styles.shortcutBadgeText}>{shortcutNumber}</Text>
@@ -1115,19 +1352,6 @@ function WorkspaceRowInner({
     ],
     [isHovered, isCreating],
   );
-  const copyLeadingIcon = useMemo(
-    () => <Copy size={14} color={theme.colors.foregroundMuted} />,
-    [theme.colors.foregroundMuted],
-  );
-  const archiveLeadingIcon = useMemo(
-    () => <Archive size={14} color={theme.colors.foregroundMuted} />,
-    [theme.colors.foregroundMuted],
-  );
-  const archiveTrailing = useMemo(
-    () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
-    [archiveShortcutKeys],
-  );
-
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
       <View
@@ -1161,77 +1385,24 @@ function WorkspaceRowInner({
                 {workspace.name}
               </Text>
             </View>
-            <View style={styles.workspaceRowRight}>
-              {showScriptsIcon ? (
-                <View testID="workspace-globe-icon" accessibilityLabel="Scripts available">
-                  {hasRunningService ? (
-                    <Globe size={12} color={theme.colors.palette.blue[500]} />
-                  ) : (
-                    <SquareTerminal size={12} color={theme.colors.palette.blue[500]} />
-                  )}
-                </View>
-              ) : null}
-              {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}
-              {onArchive && (isHovered || isTouchPlatform) ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    hitSlop={8}
-                    style={workspaceKebabStyle}
-                    accessibilityRole="button"
-                    accessibilityLabel="Workspace actions"
-                    testID={`sidebar-workspace-kebab-${workspace.workspaceKey}`}
-                  >
-                    {({ hovered }) => (
-                      <MoreVertical
-                        size={14}
-                        color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                      />
-                    )}
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" width={260}>
-                    {onCopyPath ? (
-                      <DropdownMenuItem
-                        testID={`sidebar-workspace-menu-copy-path-${workspace.workspaceKey}`}
-                        leading={copyLeadingIcon}
-                        onSelect={onCopyPath}
-                      >
-                        Copy path
-                      </DropdownMenuItem>
-                    ) : null}
-                    {onCopyBranchName ? (
-                      <DropdownMenuItem
-                        testID={`sidebar-workspace-menu-copy-branch-name-${workspace.workspaceKey}`}
-                        leading={copyLeadingIcon}
-                        onSelect={onCopyBranchName}
-                      >
-                        Copy branch name
-                      </DropdownMenuItem>
-                    ) : null}
-                    <DropdownMenuItem
-                      testID={`sidebar-workspace-menu-archive-${workspace.workspaceKey}`}
-                      leading={archiveLeadingIcon}
-                      trailing={archiveTrailing}
-                      status={archiveStatus}
-                      pendingLabel={archivePendingLabel}
-                      onSelect={onArchive}
-                    >
-                      {archiveLabel ?? "Archive"}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
-              {!(onArchive && (isHovered || isTouchPlatform)) && workspace.diffStat ? (
-                <DiffStat
-                  additions={workspace.diffStat.additions}
-                  deletions={workspace.diffStat.deletions}
-                />
-              ) : null}
-              {showShortcutBadge && shortcutNumber !== null ? (
-                <View style={styles.shortcutBadge}>
-                  <Text style={styles.shortcutBadgeText}>{shortcutNumber}</Text>
-                </View>
-              ) : null}
-            </View>
+            <WorkspaceRowRightGroup
+              workspace={workspace}
+              isHovered={isHovered}
+              isTouchPlatform={isTouchPlatform}
+              showScriptsIcon={showScriptsIcon}
+              hasRunningService={hasRunningService}
+              isCreating={isCreating}
+              showShortcutBadge={showShortcutBadge}
+              shortcutNumber={shortcutNumber}
+              theme={theme}
+              archiveLabel={archiveLabel}
+              archiveStatus={archiveStatus}
+              archivePendingLabel={archivePendingLabel}
+              archiveShortcutKeys={archiveShortcutKeys}
+              onArchive={onArchive}
+              onCopyBranchName={onCopyBranchName}
+              onCopyPath={onCopyPath}
+            />
           </View>
           {prHint ? (
             <View style={styles.workspacePrBadgeRow}>
