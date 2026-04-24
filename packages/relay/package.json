@@ -25,6 +25,12 @@
       "node": "./dist/cloudflare-adapter.js",
       "import": "./src/cloudflare-adapter.ts",
       "default": "./src/cloudflare-adapter.ts"
+    },
+    "./node": {
+      "types": "./dist/node-adapter.d.ts",
+      "node": "./dist/node-adapter.js",
+      "import": "./src/node-adapter.ts",
+      "default": "./src/node-adapter.ts"
     }
   },
   "publishConfig": {
@@ -33,6 +39,7 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && tsc -p tsconfig.json --incremental false",
     "prepack": "npm run build",
+    "start:node": "node dist/node-cli.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
