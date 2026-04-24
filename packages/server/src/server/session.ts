@@ -191,6 +191,7 @@ import { notifyChatMentions } from "./chat/chat-mentions.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import type { IndexingService } from "./indexing/service.js";
+import type { HookService } from "./hooks/service.js";
 import { execCommand } from "../utils/spawn.js";
 import {
   assertSafeGitRef as assertWorktreeSafeGitRef,
@@ -414,6 +415,8 @@ export type SessionOptions = {
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
   indexingService?: IndexingService | null;
+  hookService?: HookService | null;
+  guiMcpRegistry?: import("./library/gui-mcp-registry.js").GuiMcpRegistry | null;
   loopService: LoopService;
   checkoutDiffManager: CheckoutDiffManager;
   workspaceGitService: WorkspaceGitService;
@@ -628,6 +631,10 @@ export class Session {
   private readonly chatService: FileBackedChatService;
   private readonly scheduleService: ScheduleService;
   private readonly indexingService: IndexingService | null;
+  private readonly hookService: HookService | null;
+  private readonly guiMcpRegistry: import("./library/gui-mcp-registry.js").GuiMcpRegistry | null;
+  private unsubscribeHooksChanged: (() => void) | null = null;
+  private unsubscribeHooksTelemetry: (() => void) | null = null;
   private unsubscribeIndexingStatus: (() => void) | null = null;
   private unsubscribeIndexingProcessState: (() => void) | null = null;
   private unsubscribeIndexingToolsChanged: (() => void) | null = null;
@@ -704,6 +711,8 @@ export class Session {
       chatService,
       scheduleService,
       indexingService,
+      hookService,
+      guiMcpRegistry,
       loopService,
       checkoutDiffManager,
       workspaceGitService,
@@ -736,6 +745,8 @@ export class Session {
     this.chatService = chatService;
     this.scheduleService = scheduleService;
     this.indexingService = indexingService ?? null;
+    this.hookService = hookService ?? null;
+    this.guiMcpRegistry = guiMcpRegistry ?? null;
     this.loopService = loopService;
     this.checkoutDiffManager = checkoutDiffManager;
     this.workspaceGitService = workspaceGitService;
@@ -883,6 +894,23 @@ export class Session {
           this.emit({ type: "indexing/fs-trigger", payload: event });
         } catch (err) {
           this.sessionLogger.warn({ err }, "Failed to emit indexing/fs-trigger");
+        }
+      });
+    }
+
+    if (this.hookService) {
+      this.unsubscribeHooksChanged = this.hookService.onChange((event) => {
+        try {
+          this.emit({ type: "hooks/changed", payload: { hookId: event.id } });
+        } catch (err) {
+          this.sessionLogger.warn({ err }, "Failed to emit hooks/changed");
+        }
+      });
+      this.unsubscribeHooksTelemetry = this.hookService.onTelemetry((event) => {
+        try {
+          this.emit({ type: "hooks/changed", payload: { hookId: event.id } });
+        } catch (err) {
+          this.sessionLogger.warn({ err }, "Failed to emit hooks/changed (telemetry)");
         }
       });
     }
@@ -2476,6 +2504,26 @@ export class Session {
             break;
           case "indexing/stderr-tail":
             await this.handleIndexingStderrTailRequest(msg);
+            break;
+
+          // Hooks RPC
+          case "hooks/list":
+            await this.handleHooksListRequest(msg);
+            break;
+          case "hooks/toggle":
+            await this.handleHooksToggleRequest(msg);
+            break;
+          case "hooks/upsert":
+            await this.handleHooksUpsertRequest(msg);
+            break;
+          case "hooks/delete":
+            await this.handleHooksDeleteRequest(msg);
+            break;
+          case "library/mcp/test":
+            await this.handleLibraryMcpTestRequest(msg);
+            break;
+          case "library/mcp/gui-sync":
+            await this.handleLibraryGuiSyncRequest(msg);
             break;
 
           // Integration RPC
@@ -8119,6 +8167,14 @@ export class Session {
       this.unsubscribeIndexingFsTrigger();
       this.unsubscribeIndexingFsTrigger = null;
     }
+    if (this.unsubscribeHooksTelemetry) {
+      this.unsubscribeHooksTelemetry();
+      this.unsubscribeHooksTelemetry = null;
+    }
+    if (this.unsubscribeHooksChanged) {
+      this.unsubscribeHooksChanged();
+      this.unsubscribeHooksChanged = null;
+    }
 
     for (const unsubscribe of this.checkoutDiffSubscriptions.values()) {
       unsubscribe();
@@ -10027,6 +10083,189 @@ export class Session {
       type: "indexing/stderr-tail/response",
       payload: { requestId: request.requestId, error: null, text: svc.getStderrTail() },
     });
+  }
+
+  private async handleHooksListRequest(
+    request: Extract<SessionInboundMessage, { type: "hooks/list" }>,
+  ): Promise<void> {
+    if (!this.hookService) {
+      this.emit({
+        type: "hooks/list/response",
+        payload: { requestId: request.requestId, error: "Hook service unavailable", hooks: [] },
+      });
+      return;
+    }
+    this.emit({
+      type: "hooks/list/response",
+      payload: {
+        requestId: request.requestId,
+        error: null,
+        hooks: this.hookService.list(),
+      },
+    });
+  }
+
+  private async handleHooksToggleRequest(
+    request: Extract<SessionInboundMessage, { type: "hooks/toggle" }>,
+  ): Promise<void> {
+    if (!this.hookService) {
+      this.emit({
+        type: "hooks/toggle/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Hook service unavailable",
+          hookId: request.hookId,
+          enabled: request.enabled,
+        },
+      });
+      return;
+    }
+    try {
+      await this.hookService.setEnabled(request.hookId, request.enabled);
+      this.emit({
+        type: "hooks/toggle/response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+          hookId: request.hookId,
+          enabled: request.enabled,
+        },
+      });
+    } catch (err) {
+      this.emit({
+        type: "hooks/toggle/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          hookId: request.hookId,
+          enabled: request.enabled,
+        },
+      });
+    }
+  }
+
+  private async handleHooksUpsertRequest(
+    request: Extract<SessionInboundMessage, { type: "hooks/upsert" }>,
+  ): Promise<void> {
+    if (!this.hookService) {
+      this.emit({
+        type: "hooks/upsert/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Hook service unavailable",
+          hookId: null,
+        },
+      });
+      return;
+    }
+    try {
+      await this.hookService.upsertUserHook(request.hook);
+      this.emit({
+        type: "hooks/upsert/response",
+        payload: { requestId: request.requestId, error: null, hookId: request.hook.id },
+      });
+    } catch (err) {
+      this.emit({
+        type: "hooks/upsert/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          hookId: null,
+        },
+      });
+    }
+  }
+
+  private async handleHooksDeleteRequest(
+    request: Extract<SessionInboundMessage, { type: "hooks/delete" }>,
+  ): Promise<void> {
+    if (!this.hookService) {
+      this.emit({
+        type: "hooks/delete/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Hook service unavailable",
+          hookId: request.hookId,
+        },
+      });
+      return;
+    }
+    try {
+      await this.hookService.deleteUserHook(request.hookId);
+      this.emit({
+        type: "hooks/delete/response",
+        payload: { requestId: request.requestId, error: null, hookId: request.hookId },
+      });
+    } catch (err) {
+      this.emit({
+        type: "hooks/delete/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          hookId: request.hookId,
+        },
+      });
+    }
+  }
+
+  private async handleLibraryMcpTestRequest(
+    request: Extract<SessionInboundMessage, { type: "library/mcp/test" }>,
+  ): Promise<void> {
+    const { runMcpTest } = await import("./library/mcp-test.js");
+    try {
+      const result = await runMcpTest(request.payload, this.sessionLogger);
+      this.emit({
+        type: "library/mcp/test/response",
+        payload: {
+          requestId: request.requestId,
+          error: result.ok ? null : (result.error ?? "MCP test failed"),
+          ok: result.ok,
+          durationMs: result.durationMs,
+          tools: result.tools,
+          toolCount: result.toolCount,
+          serverInfo: result.serverInfo,
+        },
+      });
+    } catch (err) {
+      this.emit({
+        type: "library/mcp/test/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          ok: false,
+          durationMs: 0,
+          tools: [],
+          toolCount: 0,
+        },
+      });
+    }
+  }
+
+  private async handleLibraryGuiSyncRequest(
+    request: Extract<SessionInboundMessage, { type: "library/mcp/gui-sync" }>,
+  ): Promise<void> {
+    try {
+      if (this.guiMcpRegistry) {
+        this.guiMcpRegistry.replaceAll(request.entries);
+      }
+      this.emit({
+        type: "library/mcp/gui-sync/response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+          count: request.entries.length,
+        },
+      });
+    } catch (err) {
+      this.emit({
+        type: "library/mcp/gui-sync/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          count: 0,
+        },
+      });
+    }
   }
 
   private async handleIndexingInstallRequest(

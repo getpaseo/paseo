@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import {
+  type LibraryEntry,
   type LibraryScope,
   type LibrarySyncTarget,
   type LibraryVisibility,
@@ -38,6 +39,12 @@ export interface AddSkillModalProps {
   activeOrgId: string | null;
   activeProjectId: string | null;
   submitting?: boolean;
+  /**
+   * When set, the modal runs in edit mode: pre-populates from the entry's
+   * current payload, disables the immutable Name field, and the parent's
+   * `onSubmit` should route to PATCH instead of POST.
+   */
+  editingEntry?: LibraryEntry | null;
 }
 
 const ALL_TARGETS: LibrarySyncTarget[] = ["claude-code", "codex", "opencode"];
@@ -57,6 +64,7 @@ export function AddSkillModal({
   activeOrgId,
   activeProjectId,
   submitting,
+  editingEntry,
 }: AddSkillModalProps) {
   const { session } = useAuthSession();
   const sessionToken = session?.sessionToken ?? null;
@@ -75,6 +83,23 @@ export function AddSkillModal({
 
   useEffect(() => {
     if (!visible) return;
+    // Edit mode takes precedence — we restore from the live entry state so
+    // the user sees what's currently installed, not the catalog defaults.
+    if (editingEntry) {
+      const p = editingEntry.payload as SkillPayload;
+      setName(editingEntry.name);
+      setDisplayName(editingEntry.displayName ?? "");
+      setDescription(editingEntry.description ?? "");
+      setInstructions(p?.instructionsInline ?? "");
+      setExamplePrompt(p?.examplePrompt ?? "");
+      setScope(editingEntry.scope);
+      setScopeId(editingEntry.scopeId);
+      setVisibility(editingEntry.visibility);
+      setSyncTargets(editingEntry.activation?.syncTargets ?? ALL_TARGETS);
+      setBodyError(null);
+      return;
+    }
+
     const c = initial?.fromCatalog;
     setName(c ? slugify(c.name) : (initial?.suggestedName ?? ""));
     setDisplayName(c?.name ?? "");
@@ -94,7 +119,7 @@ export function AddSkillModal({
         .catch((err: unknown) => setBodyError(err instanceof Error ? err.message : String(err)))
         .finally(() => setLoadingBody(false));
     }
-  }, [visible, initial, sessionToken]);
+  }, [visible, initial, sessionToken, editingEntry]);
 
   const isValid = name.trim().length > 0 && instructions.trim().length > 0;
 
@@ -122,7 +147,11 @@ export function AddSkillModal({
     });
   };
 
-  const title = initial?.fromCatalog ? `Add ${initial.fromCatalog.name}` : "New Skill";
+  const title = editingEntry
+    ? `Edit ${editingEntry.displayName || editingEntry.name}`
+    : initial?.fromCatalog
+      ? `Add ${initial.fromCatalog.name}`
+      : "New Skill";
 
   return (
     <AdaptiveModalSheet title={title} visible={visible} onClose={onClose}>
@@ -134,7 +163,8 @@ export function AddSkillModal({
             placeholder="my-skill"
             autoCapitalize="none"
             autoCorrect={false}
-            style={styles.input}
+            editable={!editingEntry}
+            style={[styles.input, editingEntry && styles.inputDisabled]}
           />
         </Field>
 
@@ -263,6 +293,9 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+  },
+  inputDisabled: {
+    opacity: 0.6,
   },
   multiline: {
     minHeight: 200,

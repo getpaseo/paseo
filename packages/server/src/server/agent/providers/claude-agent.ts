@@ -160,6 +160,8 @@ type ClaudeAgentClientOptions = {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   queryFactory?: typeof query;
+  hookService?: HookServiceForAgent | null;
+  guiMcpRegistry?: GuiMcpRegistryForAgent | null;
 };
 
 type ClaudeAgentSessionOptions = {
@@ -169,7 +171,34 @@ type ClaudeAgentSessionOptions = {
   launchEnv?: Record<string, string>;
   logger: Logger;
   queryFactory?: typeof query;
+  hookService?: HookServiceForAgent | null;
+  guiMcpRegistry?: GuiMcpRegistryForAgent | null;
 };
+
+/** Minimal slice the agent needs from the GUI MCP registry. */
+export interface GuiMcpRegistryForAgent {
+  list(): Array<{
+    name: string;
+    payload:
+      | { transport: "stdio"; command: string; args?: string[]; env?: Record<string, string> }
+      | { transport: "http" | "sse"; url: string; headers?: Record<string, string> };
+  }>;
+}
+
+/**
+ * Minimal slice of HookService the agent needs. Keeps this module's
+ * imports shallow and lets tests inject a stub.
+ */
+export interface HookServiceForAgent {
+  runPostToolUse(input: {
+    toolName: string;
+    toolInput: unknown;
+    toolResponse: unknown;
+    cwd?: string | null;
+    sessionId?: string | null;
+    agentId?: "claude-code" | "codex" | "opencode" | "hubcode-gui";
+  }): Promise<string[]>;
+}
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "max";
 
@@ -1056,12 +1085,16 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly queryFactory: typeof query;
+  private readonly hookService: HookServiceForAgent | null;
+  private readonly guiMcpRegistry: GuiMcpRegistryForAgent | null;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
     this.logger = options.logger.child({ module: "agent", provider: "claude" });
     this.runtimeSettings = options.runtimeSettings;
     this.queryFactory = options.queryFactory ?? query;
+    this.hookService = options.hookService ?? null;
+    this.guiMcpRegistry = options.guiMcpRegistry ?? null;
   }
 
   async createSession(
@@ -1075,6 +1108,8 @@ export class ClaudeAgentClient implements AgentClient {
       launchEnv: launchContext?.env,
       logger: this.logger,
       queryFactory: this.queryFactory,
+      hookService: this.hookService,
+      guiMcpRegistry: this.guiMcpRegistry,
     });
   }
 
@@ -1097,6 +1132,8 @@ export class ClaudeAgentClient implements AgentClient {
       launchEnv: launchContext?.env,
       logger: this.logger,
       queryFactory: this.queryFactory,
+      hookService: this.hookService,
+      guiMcpRegistry: this.guiMcpRegistry,
     });
   }
 
@@ -1301,6 +1338,8 @@ class ClaudeAgentSession implements AgentSession {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly logger: Logger;
   private readonly queryFactory: typeof query;
+  private readonly hookService: HookServiceForAgent | null;
+  private readonly guiMcpRegistry: GuiMcpRegistryForAgent | null;
   private query: Query | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
   private claudeSessionId: string | null;
@@ -1340,6 +1379,13 @@ class ClaudeAgentSession implements AgentSession {
   private userMessageIds: string[] = [];
   private recentStderr = "";
   private closed = false;
+  /**
+   * Hints produced by post-tool-use hooks during the current/last turn.
+   * Drained on the next foreground turn and prepended as a <system-reminder>
+   * block so the model picks them up without the user seeing them as a
+   * separate message.
+   */
+  private pendingHookHints: string[] = [];
 
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
     this.config = config;
@@ -1348,6 +1394,8 @@ class ClaudeAgentSession implements AgentSession {
     this.runtimeSettings = options.runtimeSettings;
     this.logger = options.logger;
     this.queryFactory = options.queryFactory ?? query;
+    this.hookService = options.hookService ?? null;
+    this.guiMcpRegistry = options.guiMcpRegistry ?? null;
     const handle = options.handle;
 
     if (handle) {
@@ -2137,6 +2185,33 @@ class ClaudeAgentSession implements AgentSession {
     if (this.config.mcpServers) {
       base.mcpServers = this.normalizeMcpServers(this.config.mcpServers);
     }
+    // Merge library MCPs flagged for `hubcode-gui`. Runs after the session's
+    // own mcpServers so a user-configured server always wins over a library
+    // one with the same name.
+    if (this.guiMcpRegistry) {
+      const libraryEntries = this.guiMcpRegistry.list();
+      if (libraryEntries.length > 0) {
+        const merged = { ...(base.mcpServers ?? {}) } as Record<string, ClaudeSdkMcpServerConfig>;
+        for (const entry of libraryEntries) {
+          if (merged[entry.name]) continue; // respect existing names
+          if (entry.payload.transport === "stdio") {
+            merged[entry.name] = {
+              type: "stdio",
+              command: entry.payload.command,
+              args: entry.payload.args ?? [],
+              env: entry.payload.env ?? {},
+            } as ClaudeSdkMcpServerConfig;
+          } else {
+            merged[entry.name] = {
+              type: entry.payload.transport === "sse" ? "sse" : "http",
+              url: entry.payload.url,
+              headers: entry.payload.headers ?? {},
+            } as ClaudeSdkMcpServerConfig;
+          }
+        }
+        base.mcpServers = merged;
+      }
+    }
 
     if (this.config.model) {
       base.model = this.config.model;
@@ -2167,6 +2242,13 @@ class ClaudeAgentSession implements AgentSession {
       | { type: "text"; text: string }
       | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
     > = [];
+    // Drain any hook-produced hints from the previous turn and prepend them
+    // as a <system-reminder> block. The model reads these as instructions
+    // from the harness, not as something the user typed.
+    const hintBlock = this.drainPendingHookHints();
+    if (hintBlock) {
+      content.push({ type: "text", text: hintBlock });
+    }
     if (Array.isArray(prompt)) {
       for (const chunk of prompt) {
         if (chunk.type === "text") {
@@ -2199,6 +2281,12 @@ class ClaudeAgentSession implements AgentSession {
       uuid: messageId,
       session_id: this.claudeSessionId ?? "",
     };
+  }
+
+  private drainPendingHookHints(): string | null {
+    if (this.pendingHookHints.length === 0) return null;
+    const hints = this.pendingHookHints.splice(0, this.pendingHookHints.length);
+    return hints.map((h) => `<system-reminder>\n${h}\n</system-reminder>`).join("\n");
   }
 
   private transitionTurnState(next: TurnState, reason: string): void {
@@ -3428,6 +3516,47 @@ class ClaudeAgentSession implements AgentSession {
         }),
         items,
       );
+    }
+
+    // Fire registered post-tool-use hooks so the Indexing Hint (and any
+    // user-authored hook) sees Hubcode-GUI tool calls the same way it sees
+    // Claude Code CLI calls. Execution is fire-and-forget from the agent's
+    // perspective — hint injection into the model context lands in PR 2b.
+    if (this.hookService) {
+      const toolInput = entry?.input ?? null;
+      // On error, `output` is `undefined` by design (the UI shows the error
+      // badge separately). But hook scripts need to see the failure text —
+      // "file too large" is the single strongest signal to suggest crg_*.
+      const toolResponseForHook = block.is_error
+        ? coerceToolResultContentToString(block.content)
+        : output;
+      this.logger.debug(
+        { toolName, isError: Boolean(block.is_error) },
+        "dispatching post-tool-use hooks",
+      );
+      void this.hookService
+        .runPostToolUse({
+          toolName,
+          toolInput,
+          toolResponse: toolResponseForHook,
+          cwd: this.config.cwd ?? null,
+          sessionId: this.claudeSessionId,
+          agentId: "hubcode-gui",
+        })
+        .then((hints) => {
+          for (const hint of hints) {
+            if (typeof hint === "string" && hint.trim().length > 0) {
+              this.pendingHookHints.push(hint.trim());
+              this.logger.info(
+                { toolName, hintPreview: hint.slice(0, 80) },
+                "hook produced hint (queued for next turn)",
+              );
+            }
+          }
+        })
+        .catch((err) => this.logger.debug({ err }, "hook runPostToolUse failed"));
+    } else if (!this.hookService) {
+      this.logger.debug({ toolName }, "post-tool-use: no hookService on session");
     }
 
     if (typeof block.tool_use_id === "string") {

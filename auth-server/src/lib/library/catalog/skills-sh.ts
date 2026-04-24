@@ -25,6 +25,10 @@ const SKILL_PATH_TEMPLATES = [
   ".skills/{id}/SKILL.md",
   ".agents/skills/{id}/SKILL.md",
   "{id}/SKILL.md",
+  // Root-level SKILL.md — dedicated single-skill repos (e.g. temporalio/skill-*).
+  "SKILL.md",
+  // A few repos collapse to a top-level README-as-skill.
+  "README.md",
 ];
 
 /**

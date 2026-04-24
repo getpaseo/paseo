@@ -76,6 +76,23 @@ import {
   IndexingToolsChangedEventSchema,
   IndexingFsTriggerEventSchema,
 } from "../server/indexing/rpc-schemas.js";
+import {
+  HooksListRequestSchema,
+  HooksListResponseSchema,
+  HooksToggleRequestSchema,
+  HooksToggleResponseSchema,
+  HooksUpsertRequestSchema,
+  HooksUpsertResponseSchema,
+  HooksDeleteRequestSchema,
+  HooksDeleteResponseSchema,
+  HooksChangedEventSchema,
+} from "../server/hooks/rpc-schemas.js";
+import {
+  LibraryMcpTestRequestSchema,
+  LibraryMcpTestResponseSchema,
+  LibraryGuiSyncRequestSchema,
+  LibraryGuiSyncResponseSchema,
+} from "../server/library/rpc-schemas.js";
 // ---------------------------------------------------------------------------
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
@@ -1901,6 +1918,7 @@ export const BrowserInputSchema = z.object({
 // old client/daemon pair keeps parsing across both directions.
 
 const LibrarySyncTargetSchema = z.enum([
+  "hubcode-gui",
   "claude-code",
   "codex",
   "opencode",
@@ -2196,6 +2214,12 @@ const _sessionInboundRaw: any = z.union([
   IndexingCancelReindexRequestSchema,
   IndexingRestartSubprocessRequestSchema,
   IndexingStderrTailRequestSchema,
+  HooksListRequestSchema,
+  HooksToggleRequestSchema,
+  HooksUpsertRequestSchema,
+  HooksDeleteRequestSchema,
+  LibraryMcpTestRequestSchema,
+  LibraryGuiSyncRequestSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 115-member union
 export type SessionInboundMessage =
@@ -2335,7 +2359,13 @@ export type SessionInboundMessage =
   | IndexingReindexRequest
   | IndexingCancelReindexRequest
   | IndexingRestartSubprocessRequest
-  | IndexingStderrTailRequest;
+  | IndexingStderrTailRequest
+  | HooksListRequest
+  | HooksToggleRequest
+  | HooksUpsertRequest
+  | HooksDeleteRequest
+  | LibraryMcpTestRequest
+  | LibraryGuiSyncRequest;
 export const SessionInboundMessageSchema: z.ZodType<SessionInboundMessage> =
   _sessionInboundRaw as z.ZodType<SessionInboundMessage>;
 
@@ -3854,6 +3884,13 @@ const _sessionOutboundRaw: any = z.union([
   IndexingCancelReindexResponseSchema,
   IndexingRestartSubprocessResponseSchema,
   IndexingStderrTailResponseSchema,
+  HooksListResponseSchema,
+  HooksToggleResponseSchema,
+  HooksUpsertResponseSchema,
+  HooksDeleteResponseSchema,
+  HooksChangedEventSchema,
+  LibraryMcpTestResponseSchema,
+  LibraryGuiSyncResponseSchema,
 ]);
 // Manually written union avoids TypeScript recursion crash from z.infer on 118-member union
 export type SessionOutboundMessage =
@@ -3997,6 +4034,13 @@ export type SessionOutboundMessage =
   | IndexingCancelReindexResponse
   | IndexingRestartSubprocessResponse
   | IndexingStderrTailResponse
+  | HooksListResponse
+  | HooksToggleResponse
+  | HooksUpsertResponse
+  | HooksDeleteResponse
+  | HooksChangedEvent
+  | LibraryMcpTestResponse
+  | LibraryGuiSyncResponse
   | IndexingToolsListResponse;
 export const SessionOutboundMessageSchema: z.ZodType<SessionOutboundMessage> =
   _sessionOutboundRaw as z.ZodType<SessionOutboundMessage>;
@@ -4173,6 +4217,19 @@ export type IndexingRestartSubprocessResponse = z.infer<
 >;
 export type IndexingStderrTailRequest = z.infer<typeof IndexingStderrTailRequestSchema>;
 export type IndexingStderrTailResponse = z.infer<typeof IndexingStderrTailResponseSchema>;
+export type HooksListRequest = z.infer<typeof HooksListRequestSchema>;
+export type HooksListResponse = z.infer<typeof HooksListResponseSchema>;
+export type HooksToggleRequest = z.infer<typeof HooksToggleRequestSchema>;
+export type HooksToggleResponse = z.infer<typeof HooksToggleResponseSchema>;
+export type HooksUpsertRequest = z.infer<typeof HooksUpsertRequestSchema>;
+export type HooksUpsertResponse = z.infer<typeof HooksUpsertResponseSchema>;
+export type HooksDeleteRequest = z.infer<typeof HooksDeleteRequestSchema>;
+export type HooksDeleteResponse = z.infer<typeof HooksDeleteResponseSchema>;
+export type HooksChangedEvent = z.infer<typeof HooksChangedEventSchema>;
+export type LibraryMcpTestRequest = z.infer<typeof LibraryMcpTestRequestSchema>;
+export type LibraryMcpTestResponse = z.infer<typeof LibraryMcpTestResponseSchema>;
+export type LibraryGuiSyncRequest = z.infer<typeof LibraryGuiSyncRequestSchema>;
+export type LibraryGuiSyncResponse = z.infer<typeof LibraryGuiSyncResponseSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;

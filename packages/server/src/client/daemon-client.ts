@@ -3110,6 +3110,96 @@ export class DaemonClient {
     return { text: payload.text, error: payload.error };
   }
 
+  async hooksList(requestId?: string): Promise<{ hooks: Array<unknown>; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "hooks/list" },
+      responseType: "hooks/list/response",
+      timeout: 5_000,
+    });
+    return { hooks: payload.hooks, error: payload.error };
+  }
+
+  async hooksToggle(
+    hookId: string,
+    enabled: boolean,
+    requestId?: string,
+  ): Promise<{ hookId: string; enabled: boolean; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "hooks/toggle", hookId, enabled },
+      responseType: "hooks/toggle/response",
+      timeout: 5_000,
+    });
+    return { hookId: payload.hookId, enabled: payload.enabled, error: payload.error };
+  }
+
+  async hooksUpsert(
+    hook: unknown,
+    requestId?: string,
+  ): Promise<{ hookId: string | null; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "hooks/upsert", hook: hook as never },
+      responseType: "hooks/upsert/response",
+      timeout: 5_000,
+    });
+    return { hookId: payload.hookId, error: payload.error };
+  }
+
+  async libraryMcpGuiSync(
+    entries: Array<{ name: string; payload: unknown }>,
+    requestId?: string,
+  ): Promise<{ count: number; error: string | null }> {
+    const result = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "library/mcp/gui-sync", entries: entries as never },
+      responseType: "library/mcp/gui-sync/response",
+      timeout: 5_000,
+    });
+    return { count: result.count, error: result.error };
+  }
+
+  async libraryMcpTest(
+    payload: unknown,
+    requestId?: string,
+  ): Promise<{
+    ok: boolean;
+    tools: string[];
+    toolCount: number;
+    durationMs: number;
+    serverInfo?: { name?: string; version?: string };
+    error: string | null;
+  }> {
+    const result = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "library/mcp/test", payload: payload as never },
+      responseType: "library/mcp/test/response",
+      timeout: 15_000,
+    });
+    return {
+      ok: result.ok,
+      tools: result.tools,
+      toolCount: result.toolCount,
+      durationMs: result.durationMs,
+      serverInfo: result.serverInfo,
+      error: result.error,
+    };
+  }
+
+  async hooksDelete(
+    hookId: string,
+    requestId?: string,
+  ): Promise<{ hookId: string; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "hooks/delete", hookId },
+      responseType: "hooks/delete/response",
+      timeout: 5_000,
+    });
+    return { hookId: payload.hookId, error: payload.error };
+  }
+
   async indexingDetect(options?: {
     force?: boolean;
     requestId?: string;

@@ -5,12 +5,15 @@ import { Plus, RefreshCw, Search, FolderSync } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { useActiveOrgId } from "@/stores/active-org-store";
+import { useDefaultProjectId } from "@/hooks/use-default-project-id";
 import {
   libraryKeys,
   useCreateLibraryEntry,
   useDeleteLibraryEntry,
   useLibraryEntries,
+  useSetLibraryActivation,
   useSkillsCatalog,
+  useUpdateLibraryEntry,
 } from "@/hooks/library/use-library-queries";
 import { SkillCard } from "@/components/library/skill-card";
 import { AddSkillModal, type AddSkillInitial } from "@/components/library/add-skill-modal";
@@ -27,17 +30,21 @@ export function SkillsLibraryScreen() {
   const { session } = useAuthSession();
   const sessionToken = session?.sessionToken ?? null;
   const activeOrgId = useActiveOrgId();
+  const activeProjectId = useDefaultProjectId();
   const qc = useQueryClient();
   const isCompact = useIsCompactFormFactor();
 
   const [query, setQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modalInitial, setModalInitial] = useState<AddSkillInitial | undefined>();
+  const [editingEntry, setEditingEntry] = useState<LibraryEntry | null>(null);
 
   const installedQuery = useLibraryEntries(sessionToken, "skill");
   const catalogQuery = useSkillsCatalog(sessionToken, query);
   const createMutation = useCreateLibraryEntry(sessionToken);
+  const updateMutation = useUpdateLibraryEntry(sessionToken);
   const deleteMutation = useDeleteLibraryEntry(sessionToken);
+  const activationMutation = useSetLibraryActivation(sessionToken);
   const syncLibrary = useSyncLibrary(sessionToken);
   const [detailEntry, setDetailEntry] = useState<LibraryEntry | null>(null);
 
@@ -171,26 +178,61 @@ export function SkillsLibraryScreen() {
 
       <AddSkillModal
         visible={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSubmit={async (input) => {
-          await createMutation.mutateAsync({
-            kind: "skill",
-            ...input,
-          });
+        onClose={() => {
           setModalOpen(false);
+          setEditingEntry(null);
+        }}
+        onSubmit={async (input) => {
+          let entryId: string;
+          if (editingEntry) {
+            const updated = await updateMutation.mutateAsync({
+              entryId: editingEntry.id,
+              displayName: input.displayName,
+              description: input.description,
+              payload: input.payload,
+              visibility: input.visibility,
+            });
+            entryId = updated.id;
+          } else {
+            const created = await createMutation.mutateAsync({
+              kind: "skill",
+              ...input,
+            });
+            entryId = created.id;
+          }
+          await activationMutation.mutateAsync({
+            entryId,
+            active: true,
+            syncTargets: input.syncTargets,
+          });
+          if (input.syncTargets.length > 0) {
+            await qc.refetchQueries({ queryKey: libraryKeys.all });
+            await syncLibrary.sync();
+          }
+          setModalOpen(false);
+          setEditingEntry(null);
         }}
         initial={modalInitial}
+        editingEntry={editingEntry}
         activeOrgId={activeOrgId}
-        activeProjectId={null}
-        submitting={createMutation.isPending}
+        activeProjectId={activeProjectId}
+        submitting={createMutation.isPending || updateMutation.isPending}
       />
 
       <SkillDetailModal
         visible={detailEntry !== null}
         onClose={() => setDetailEntry(null)}
         entry={detailEntry}
+        onEdit={(entry) => {
+          setDetailEntry(null);
+          setEditingEntry(entry);
+          setModalInitial(undefined);
+          setModalOpen(true);
+        }}
         onUninstall={async (entry) => {
           await deleteMutation.mutateAsync(entry.id);
+          await qc.refetchQueries({ queryKey: libraryKeys.all });
+          await syncLibrary.sync();
           setDetailEntry(null);
         }}
         uninstallPending={deleteMutation.isPending}

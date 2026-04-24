@@ -30,7 +30,10 @@ export async function detectInstalledAgents(): Promise<string[]> {
       return found ? agent.id : null;
     }),
   );
-  const ids = results.filter((id): id is string => id !== null);
+  // hubcode-gui is always "installed" — it's the daemon itself, no binary
+  // to probe. Library entries targeting this id are injected directly into
+  // the SDK sessions via GuiMcpRegistry.
+  const ids = ["hubcode-gui", ...results.filter((id): id is string => id !== null)];
   cache = { at: Date.now(), ids };
   return ids;
 }
@@ -62,12 +65,25 @@ export function agentMetaForClient(): Array<{
   supportsMcp: boolean;
   supportsSkills: boolean;
 }> {
-  return AGENT_INTEGRATIONS.map((a: AgentIntegration) => ({
-    id: a.id,
-    label: a.label,
-    bin: a.bin,
-    installHint: a.installHint,
-    supportsMcp: !!a.mcp,
-    supportsSkills: !!a.skills,
-  }));
+  // Virtual "hubcode-gui" target — lets library entries be injected directly
+  // into Hubcode's in-process agent sessions without touching any CLI config
+  // file. Sync writers skip this id; the daemon's GuiMcpRegistry handles it.
+  const virtual = {
+    id: "hubcode-gui",
+    label: "Hubcode GUI",
+    bin: "hubcode",
+    supportsMcp: true,
+    supportsSkills: false,
+  };
+  return [
+    virtual,
+    ...AGENT_INTEGRATIONS.map((a: AgentIntegration) => ({
+      id: a.id,
+      label: a.label,
+      bin: a.bin,
+      installHint: a.installHint,
+      supportsMcp: !!a.mcp,
+      supportsSkills: !!a.skills,
+    })),
+  ];
 }

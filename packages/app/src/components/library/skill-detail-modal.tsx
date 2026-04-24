@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { FolderOpen, Terminal, Trash2 } from "lucide-react-native";
+import { FolderOpen, Pencil, Terminal, Trash2 } from "lucide-react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import type { LibraryEntry } from "@/api/library";
 import { getDesktopHost } from "@/desktop/host";
@@ -12,6 +12,7 @@ export interface SkillDetailModalProps {
   entry: LibraryEntry | null;
   /** Called after the user confirms uninstall — caller wires the mutation. */
   onUninstall: (entry: LibraryEntry) => Promise<void> | void;
+  onEdit: (entry: LibraryEntry) => void;
   uninstallPending?: boolean;
 }
 
@@ -28,6 +29,7 @@ export function SkillDetailModal({
   onClose,
   entry,
   onUninstall,
+  onEdit,
   uninstallPending,
 }: SkillDetailModalProps) {
   const host = getDesktopHost();
@@ -102,6 +104,14 @@ export function SkillDetailModal({
               </Pressable>
             </>
           ) : null}
+          <Pressable
+            onPress={() => onEdit(entry)}
+            style={({ hovered }) => [styles.btn, hovered && styles.btnHovered]}
+            accessibilityRole="button"
+          >
+            <Pencil size={14} color="currentColor" />
+            <Text style={styles.btnLabel}>Edit</Text>
+          </Pressable>
           <Pressable
             onPress={handleUninstall}
             disabled={uninstallPending}

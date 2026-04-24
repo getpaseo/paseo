@@ -20,7 +20,11 @@ import type {
   ProviderProfileModel,
   ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
-import { ClaudeAgentClient } from "./providers/claude-agent.js";
+import {
+  ClaudeAgentClient,
+  type GuiMcpRegistryForAgent,
+  type HookServiceForAgent,
+} from "./providers/claude-agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
@@ -46,11 +50,17 @@ export interface ProviderDefinition extends AgentProviderDefinition {
 export type BuildProviderRegistryOptions = {
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
+  /** Wired into Claude-based clients so SDK tool calls fire Hubcode hooks. */
+  hookService?: HookServiceForAgent | null;
+  /** Library MCPs flagged for hubcode-gui injection. */
+  guiMcpRegistry?: GuiMcpRegistryForAgent | null;
 };
 
 type ProviderClientFactory = (
   logger: Logger,
   runtimeSettings?: ProviderRuntimeSettings,
+  hookService?: HookServiceForAgent | null,
+  guiMcpRegistry?: GuiMcpRegistryForAgent | null,
 ) => AgentClient;
 
 type ResolvedProvider = {
@@ -62,10 +72,12 @@ type ResolvedProvider = {
 };
 
 const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
-  claude: (logger, runtimeSettings) =>
+  claude: (logger, runtimeSettings, hookService, guiMcpRegistry) =>
     new ClaudeAgentClient({
       logger,
       runtimeSettings,
+      hookService,
+      guiMcpRegistry,
     }),
   codex: (logger, runtimeSettings) => new CodexAppServerAgentClient(logger, runtimeSettings),
   copilot: (logger, runtimeSettings) =>
@@ -337,6 +349,8 @@ function createRegistryEntry(
 function buildResolvedBuiltinProviders(
   providerOverrides: Record<string, ProviderOverride>,
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
+  hookService: HookServiceForAgent | null | undefined,
+  guiMcpRegistry: GuiMcpRegistryForAgent | null | undefined,
 ): Map<string, ResolvedProvider> {
   const resolvedProviders = new Map<string, ResolvedProvider>();
 
@@ -353,7 +367,8 @@ function buildResolvedBuiltinProviders(
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override?.models ?? [],
       enabled: override?.enabled !== false,
-      createBaseClient: (logger) => factory(logger, mergedRuntimeSettings),
+      createBaseClient: (logger) =>
+        factory(logger, mergedRuntimeSettings, hookService, guiMcpRegistry),
     });
   }
 
@@ -363,6 +378,8 @@ function buildResolvedBuiltinProviders(
 function addDerivedProviders(
   resolvedProviders: Map<string, ResolvedProvider>,
   providerOverrides: Record<string, ProviderOverride>,
+  hookService: HookServiceForAgent | null | undefined,
+  guiMcpRegistry: GuiMcpRegistryForAgent | null | undefined,
 ): void {
   for (const [providerId, override] of Object.entries(providerOverrides)) {
     if (BUILTIN_PROVIDER_IDS.includes(providerId)) {
@@ -422,7 +439,8 @@ function addDerivedProviders(
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override.models ?? [],
       enabled: override.enabled !== false,
-      createBaseClient: (logger) => baseFactory(logger, mergedRuntimeSettings),
+      createBaseClient: (logger) =>
+        baseFactory(logger, mergedRuntimeSettings, hookService, guiMcpRegistry),
     });
   }
 }
@@ -433,8 +451,15 @@ export function buildProviderRegistry(
 ): Record<AgentProvider, ProviderDefinition> {
   const runtimeSettings = options?.runtimeSettings;
   const providerOverrides = options?.providerOverrides ?? {};
-  const resolvedProviders = buildResolvedBuiltinProviders(providerOverrides, runtimeSettings);
-  addDerivedProviders(resolvedProviders, providerOverrides);
+  const hookService = options?.hookService;
+  const guiMcpRegistry = options?.guiMcpRegistry;
+  const resolvedProviders = buildResolvedBuiltinProviders(
+    providerOverrides,
+    runtimeSettings,
+    hookService,
+    guiMcpRegistry,
+  );
+  addDerivedProviders(resolvedProviders, providerOverrides, hookService, guiMcpRegistry);
 
   return Object.fromEntries(
     [...resolvedProviders.entries()]

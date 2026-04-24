@@ -13,6 +13,7 @@ import type { FileBackedChatService } from "./chat/chat-service.js";
 import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { IndexingService } from "./indexing/service.js";
+import type { HookService } from "./hooks/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
@@ -297,6 +298,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
   private readonly indexingService: IndexingService | null;
+  private readonly hookService: HookService | null;
+  private readonly guiMcpRegistry: import("./library/gui-mcp-registry.js").GuiMcpRegistry | null;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly workspaceGitService: WorkspaceGitServiceImpl;
   private readonly downloadTokenStore: DownloadTokenStore;
@@ -373,6 +376,8 @@ export class VoiceAssistantWebSocketServer {
     browserManager?: BrowserManager | null,
     clientBrowserManager?: any,
     indexingService?: IndexingService,
+    hookService?: HookService | null,
+    guiMcpRegistry?: import("./library/gui-mcp-registry.js").GuiMcpRegistry | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -401,6 +406,8 @@ export class VoiceAssistantWebSocketServer {
     }
     this.checkoutDiffManager = checkoutDiffManager;
     this.indexingService = indexingService ?? null;
+    this.hookService = hookService ?? null;
+    this.guiMcpRegistry = guiMcpRegistry ?? null;
     this.workspaceGitService = new WorkspaceGitServiceImpl({
       logger: this.logger,
       hubcodeHome,
@@ -717,6 +724,8 @@ export class VoiceAssistantWebSocketServer {
       loopService: this.loopService,
       scheduleService: this.scheduleService,
       indexingService: this.indexingService,
+      hookService: this.hookService,
+      guiMcpRegistry: this.guiMcpRegistry,
       checkoutDiffManager: this.checkoutDiffManager,
       workspaceGitService: this.workspaceGitService,
       daemonConfigStore: this.daemonConfigStore,

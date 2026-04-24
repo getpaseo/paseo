@@ -5,14 +5,20 @@ import { Plus, RefreshCw, Search, FolderSync } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { useActiveOrgId } from "@/stores/active-org-store";
+import { useDefaultProjectId } from "@/hooks/use-default-project-id";
 import {
   libraryKeys,
   useCreateLibraryEntry,
+  useDeleteLibraryEntry,
   useLibraryEntries,
   useMcpCatalog,
+  useSetLibraryActivation,
+  useUpdateLibraryEntry,
 } from "@/hooks/library/use-library-queries";
 import { McpCard } from "@/components/library/mcp-card";
 import { AddMcpModal, type AddMcpInitial } from "@/components/library/add-mcp-modal";
+import { McpDetailModal } from "@/components/library/mcp-detail-modal";
+import type { LibraryEntry } from "@/api/library";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import type { CatalogItem } from "@/api/catalog";
 import { useSyncLibrary } from "@/hooks/library/use-sync-library";
@@ -24,16 +30,22 @@ export function McpLibraryScreen() {
   const { session } = useAuthSession();
   const sessionToken = session?.sessionToken ?? null;
   const activeOrgId = useActiveOrgId();
+  const activeProjectId = useDefaultProjectId();
   const qc = useQueryClient();
   const isCompact = useIsCompactFormFactor();
 
   const [query, setQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modalInitial, setModalInitial] = useState<AddMcpInitial | undefined>();
+  const [detailEntry, setDetailEntry] = useState<LibraryEntry | null>(null);
+  const [editingEntry, setEditingEntry] = useState<LibraryEntry | null>(null);
 
   const installedQuery = useLibraryEntries(sessionToken, "mcp");
   const catalogQuery = useMcpCatalog(sessionToken, query);
   const createMutation = useCreateLibraryEntry(sessionToken);
+  const updateMutation = useUpdateLibraryEntry(sessionToken);
+  const deleteMutation = useDeleteLibraryEntry(sessionToken);
+  const activationMutation = useSetLibraryActivation(sessionToken);
   const syncLibrary = useSyncLibrary(sessionToken);
 
   const installed = installedQuery.data ?? [];
@@ -121,9 +133,7 @@ export function McpLibraryScreen() {
                   iconUrl={e.iconUrl}
                   transport={(e.payload as { transport?: "stdio" | "http" | "sse" }).transport}
                   installed
-                  onPress={() => {
-                    /* PR7: open detail/configure modal */
-                  }}
+                  onPress={() => setDetailEntry(e)}
                 />
               ))}
             </Grid>
@@ -171,18 +181,70 @@ export function McpLibraryScreen() {
 
       <AddMcpModal
         visible={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSubmit={async (input) => {
-          await createMutation.mutateAsync({
-            kind: "mcp",
-            ...input,
-          });
+        onClose={() => {
           setModalOpen(false);
+          setEditingEntry(null);
+        }}
+        onSubmit={async (input) => {
+          let entryId: string;
+          if (editingEntry) {
+            const updated = await updateMutation.mutateAsync({
+              entryId: editingEntry.id,
+              displayName: input.displayName,
+              description: input.description,
+              payload: input.payload,
+              visibility: input.visibility,
+            });
+            entryId = updated.id;
+          } else {
+            const created = await createMutation.mutateAsync({
+              kind: "mcp",
+              ...input,
+            });
+            entryId = created.id;
+          }
+          // Persist the sync target selection on the entry's activation row,
+          // then auto-fan-out to every selected CLI/GUI target. Skipping the
+          // activation call means `syncLibrary` would use whatever was saved
+          // before — the user's picker changes would silently not apply.
+          await activationMutation.mutateAsync({
+            entryId,
+            active: true,
+            syncTargets: input.syncTargets,
+          });
+          if (input.syncTargets.length > 0) {
+            await qc.refetchQueries({ queryKey: libraryKeys.all });
+            await syncLibrary.sync();
+          }
+          setModalOpen(false);
+          setEditingEntry(null);
         }}
         initial={modalInitial}
+        editingEntry={editingEntry}
         activeOrgId={activeOrgId}
-        activeProjectId={null /* wired in PR5 alongside workspace context */}
-        submitting={createMutation.isPending}
+        activeProjectId={activeProjectId}
+        submitting={createMutation.isPending || updateMutation.isPending}
+      />
+
+      <McpDetailModal
+        visible={detailEntry !== null}
+        onClose={() => setDetailEntry(null)}
+        entry={detailEntry}
+        onEdit={(entry) => {
+          setDetailEntry(null);
+          setEditingEntry(entry);
+          setModalInitial(undefined);
+          setModalOpen(true);
+        }}
+        onUninstall={async (entry) => {
+          await deleteMutation.mutateAsync(entry.id);
+          // Re-sync so every agent that held this entry drops it. The sync
+          // writer diffs against the manifest and removes stale keys.
+          await qc.refetchQueries({ queryKey: libraryKeys.all });
+          await syncLibrary.sync();
+          setDetailEntry(null);
+        }}
+        uninstallPending={deleteMutation.isPending}
       />
     </View>
   );

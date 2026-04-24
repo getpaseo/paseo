@@ -108,6 +108,7 @@ import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { IndexingService } from "./indexing/service.js";
+import { HookService } from "./hooks/service.js";
 import { createWorkspaceIndexingAdapter } from "./indexing/workspace-adapter.js";
 import { createHubcodeLocalInference } from "./indexing/hubcode-local-inference.js";
 import { CrgProcessManager } from "./indexing/process-manager.js";
@@ -384,20 +385,40 @@ export async function createHubcodeDaemon(
       hubcodeHome: config.hubcodeHome,
       logger,
     });
+    // GUI MCP registry — library entries flagged with the "hubcode-gui"
+    // sync target get replayed into every new Claude SDK session. Populated
+    // by the app via `library/mcp/gui-sync` RPC.
+    const { GuiMcpRegistry } = await import("./library/gui-mcp-registry.js");
+    const guiMcpRegistry = new GuiMcpRegistry({ logger });
+
+    // Hook service must exist before any provider/client construction so
+    // Claude-based clients (used by AgentManager AND the provider registry)
+    // capture a reference for in-process PostToolUse execution.
+    const hookService = new HookService({ logger, hubcodeHome: config.hubcodeHome });
+    await hookService
+      .init()
+      .catch((err) => logger.warn({ err }, "Hook service init failed; hooks will be inactive"));
+    logger.info({ elapsed: elapsed() }, "Hook service initialized");
+
     const agentManager = new AgentManager({
       clients: {
         ...createAllClients(logger, {
           runtimeSettings: config.agentProviderSettings,
           providerOverrides: config.providerOverrides,
+          hookService,
+          guiMcpRegistry,
         }),
         ...config.agentClients,
       },
       registry: agentStorage,
       logger,
     });
+
     const providerRegistry = buildProviderRegistry(logger, {
       runtimeSettings: config.agentProviderSettings,
       providerOverrides: config.providerOverrides,
+      hookService,
+      guiMcpRegistry,
     });
 
     const terminalManager = createTerminalManager();
@@ -944,6 +965,7 @@ export async function createHubcodeDaemon(
       logger.info("code-review-graph not installed; subprocess deferred until install completes");
     }
     logger.info({ elapsed: elapsed() }, "Indexing service initialized");
+
     logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
     const persistedRecords = await agentStorage.list();
     logger.info(
@@ -1186,6 +1208,8 @@ export async function createHubcodeDaemon(
               browserManager,
               clientBrowserManager,
               indexingService,
+              hookService,
+              guiMcpRegistry,
             );
 
             if (typeof process.send === "function" && process.env.HUBCODE_SUPERVISED === "1") {

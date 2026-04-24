@@ -36,6 +36,7 @@ interface AgentDisplay {
 // Keep in sync with `server/library/agent-integrations.ts`. Display-only —
 // the daemon decides which ids are actually installed.
 const AGENT_DISPLAY: AgentDisplay[] = [
+  { id: "hubcode-gui", label: "Hubcode GUI", icon: <Cpu size={14} color="currentColor" /> },
   { id: "claude-code", label: "Claude Code", icon: <Sparkles size={14} color="currentColor" /> },
   { id: "codex", label: "Codex", icon: <Bot size={14} color="currentColor" /> },
   { id: "opencode", label: "OpenCode", icon: <SquareTerminal size={14} color="currentColor" /> },

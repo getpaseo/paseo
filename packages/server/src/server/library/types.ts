@@ -5,6 +5,7 @@
 
 export type LibraryKind = "mcp" | "skill";
 export type LibrarySyncTarget =
+  | "hubcode-gui"
   | "claude-code"
   | "codex"
   | "opencode"
@@ -72,6 +73,7 @@ export interface MaterializedSkillEntry {
 // Targets without an MCP adapter yet get an empty list — UI will grey the
 // transport toggle for them. Skills still sync (folder + symlink only).
 export const TRANSPORT_BY_TARGET: Record<LibrarySyncTarget, McpTransport[]> = {
+  "hubcode-gui": ["stdio", "http", "sse"],
   "claude-code": ["stdio", "http", "sse"],
   codex: ["stdio"],
   opencode: ["stdio", "http", "sse"],

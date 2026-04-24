@@ -130,6 +130,8 @@ import {
 } from "@/stores/shared-session-store";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { useActiveOrgId } from "@/stores/active-org-store";
+import { useLibraryEntries } from "@/hooks/library/use-library-queries";
+import { useGuiMcpSync } from "@/hooks/library/use-gui-mcp-sync";
 import { useOrgChatRoom } from "@/hooks/chat/use-org-chat-room";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { queryClient } from "@/query/query-client";
@@ -543,6 +545,7 @@ function AppContainer({
       <SharedSelectionOverlay />
       <ProjectRegistrySyncMount />
       <GlobalPresenceMount />
+      <GlobalGuiMcpSyncMount />
       <View style={rowStyle}>
         {!isCompactLayout && chromeEnabled && !isFocusModeEnabled && (
           <>
@@ -962,6 +965,18 @@ function GlobalPresenceMount() {
   const currentUserId = user?.userId ?? null;
   const sessionToken = isAuthenticated ? (session?.sessionToken ?? "") : null;
   useOrgChatRoom(activeOrgId, sessionToken, currentUserId);
+  return null;
+}
+
+/**
+ * Mirrors the library's `hubcode-gui`-flagged MCPs to the connected daemon's
+ * GUI registry so every new Claude SDK session picks them up.
+ */
+function GlobalGuiMcpSyncMount() {
+  const { isAuthenticated, session } = useAuthSession();
+  const sessionToken = isAuthenticated ? (session?.sessionToken ?? null) : null;
+  const installed = useLibraryEntries(sessionToken, "mcp");
+  useGuiMcpSync(installed.data);
   return null;
 }
 

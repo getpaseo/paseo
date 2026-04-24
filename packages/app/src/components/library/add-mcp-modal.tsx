@@ -5,6 +5,7 @@ import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { openExternalUrl } from "@/utils/open-external-url";
 import {
   TRANSPORT_BY_TARGET,
+  type LibraryEntry,
   type LibraryScope,
   type LibrarySyncTarget,
   type LibraryVisibility,
@@ -46,6 +47,11 @@ export interface AddMcpModalProps {
   submitting?: boolean;
   /** Hide transport switcher when coming from a catalog that pinned it. */
   lockTransport?: boolean;
+  /**
+   * Edit mode — pre-populate from the entry, disable Name, and let the
+   * parent's `onSubmit` route to PATCH.
+   */
+  editingEntry?: LibraryEntry | null;
 }
 
 const ALL_TARGETS: LibrarySyncTarget[] = ["claude-code", "codex", "opencode"];
@@ -96,6 +102,7 @@ export function AddMcpModal({
   activeProjectId,
   submitting,
   lockTransport,
+  editingEntry,
 }: AddMcpModalProps) {
   const [name, setName] = useState("");
   const [transport, setTransport] = useState<McpTransport>("stdio");
@@ -140,6 +147,28 @@ export function AddMcpModal({
   // Add/Cancel cycle leaking into the next catalog card click.
   useEffect(() => {
     if (!visible) return;
+    if (editingEntry) {
+      const p = editingEntry.payload as McpPayload;
+      setName(editingEntry.name);
+      setTransport(p.transport);
+      if (p.transport === "stdio") {
+        setCommand(p.command);
+        setArgsText((p.args ?? []).join("\n"));
+        setUrl("");
+        setHeaders({});
+      } else {
+        setCommand("");
+        setArgsText("");
+        setUrl(p.url);
+        setHeaders(p.headers ?? {});
+      }
+      setEnv(p.transport === "stdio" ? (p.env ?? {}) : {});
+      setScope(editingEntry.scope);
+      setScopeId(editingEntry.scopeId);
+      setVisibility(editingEntry.visibility);
+      setSyncTargets(editingEntry.activation?.syncTargets ?? []);
+      return;
+    }
     applyCatalog(initial?.fromCatalog);
 
     // Smithery list items are intentionally lean; hit the detail endpoint to
@@ -156,7 +185,7 @@ export function AddMcpModal({
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, initial]);
+  }, [visible, initial, editingEntry]);
 
   const displayName = useMemo(() => initial?.fromCatalog?.name ?? name ?? "", [initial, name]);
 
@@ -212,7 +241,11 @@ export function AddMcpModal({
     setSyncTargets((current) => current.filter((t) => TRANSPORT_BY_TARGET[t].includes(transport)));
   }, [transport]);
 
-  const title = initial?.fromCatalog ? `Add ${initial.fromCatalog.name}` : "Add Custom MCP Server";
+  const title = editingEntry
+    ? `Edit ${editingEntry.displayName || editingEntry.name}`
+    : initial?.fromCatalog
+      ? `Add ${initial.fromCatalog.name}`
+      : "Add Custom MCP Server";
 
   return (
     <AdaptiveModalSheet title={title} visible={visible} onClose={onClose}>
@@ -229,7 +262,8 @@ export function AddMcpModal({
             placeholderTextColor={mutedPlaceholder}
             autoCapitalize="none"
             autoCorrect={false}
-            style={styles.input}
+            editable={!editingEntry}
+            style={[styles.input, editingEntry && { opacity: 0.6 }]}
           />
         </Field>
 

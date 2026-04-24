@@ -9,6 +9,7 @@ export type LibraryScope = "user" | "org" | "project";
 export type LibraryVisibility = "private" | "shared";
 export type LibrarySource = "custom" | "catalog";
 export type LibrarySyncTarget =
+  | "hubcode-gui"
   | "claude-code"
   | "codex"
   | "opencode"
@@ -103,6 +104,7 @@ export interface LibraryListFilter {
  * toggles that don't apply).
  */
 export const TRANSPORT_BY_TARGET: Record<LibrarySyncTarget, McpTransport[]> = {
+  "hubcode-gui": ["stdio", "http", "sse"],
   "claude-code": ["stdio", "http", "sse"],
   codex: ["stdio"],
   opencode: ["stdio", "http", "sse"],
