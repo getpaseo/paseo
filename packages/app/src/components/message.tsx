@@ -730,16 +730,19 @@ function AssistantMarkdownImage({
     );
   }
 
-  let errorText: string;
-  if (query.error instanceof Error) errorText = query.error.message;
-  else if (dataImageQuery.error instanceof Error) errorText = dataImageQuery.error.message;
-  else errorText = "Unable to load image preview.";
+  const errorText = resolveAssistantImageErrorText(query.error, dataImageQuery.error);
 
   return (
     <View style={stateFrameStyle}>
       <Text style={assistantMessageStylesheet.imageErrorText}>{errorText}</Text>
     </View>
   );
+}
+
+function resolveAssistantImageErrorText(fileError: unknown, dataError: unknown): string {
+  if (fileError instanceof Error) return fileError.message;
+  if (dataError instanceof Error) return dataError.message;
+  return "Unable to load image preview.";
 }
 
 interface InlinePathChipProps {
