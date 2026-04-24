@@ -1,9 +1,11 @@
 import { useMemo, type ReactNode } from "react";
-import { Text, View } from "react-native";
-import Markdown from "react-native-markdown-display";
+import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
+import Markdown, { type ASTNode } from "react-native-markdown-display";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
+
+type MarkdownRuleStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
 function MarkdownInlineText({
   textKey,
@@ -12,8 +14,8 @@ function MarkdownInlineText({
   children,
 }: {
   textKey: string;
-  inheritedStyle: any;
-  ruleStyle: any;
+  inheritedStyle: StyleProp<TextStyle>;
+  ruleStyle: StyleProp<TextStyle>;
   children: ReactNode;
 }) {
   const style = useMemo(() => [inheritedStyle, ruleStyle], [inheritedStyle, ruleStyle]);
@@ -28,7 +30,7 @@ function MarkdownListItemContent({
   contentStyle,
   children,
 }: {
-  contentStyle: any;
+  contentStyle: StyleProp<ViewStyle>;
   children: ReactNode;
 }) {
   const style = useMemo(() => [contentStyle, LIST_ITEM_CONTENT_INNER], [contentStyle]);
@@ -42,12 +44,12 @@ function MarkdownParagraph({
   children,
 }: {
   textKey: string;
-  paragraphStyle: any;
+  paragraphStyle: StyleProp<ViewStyle>;
   isLastChild: boolean;
   children: ReactNode;
 }) {
-  const style = useMemo(
-    () => [paragraphStyle, isLastChild ? PARAGRAPH_LAST_CHILD : false],
+  const style = useMemo<StyleProp<ViewStyle>>(
+    () => [paragraphStyle, isLastChild ? PARAGRAPH_LAST_CHILD : null],
     [paragraphStyle, isLastChild],
   );
   return (
@@ -60,11 +62,11 @@ function MarkdownParagraph({
 function createPlanMarkdownRules() {
   return {
     text: (
-      node: any,
+      node: ASTNode,
       _children: ReactNode[],
-      _parent: any,
-      styles: any,
-      inheritedStyles: any = {},
+      _parent: ASTNode[],
+      styles: MarkdownRuleStyles,
+      inheritedStyles: TextStyle = {},
     ) => (
       <MarkdownInlineText
         textKey={node.key}
@@ -75,11 +77,11 @@ function createPlanMarkdownRules() {
       </MarkdownInlineText>
     ),
     textgroup: (
-      node: any,
+      node: ASTNode,
       children: ReactNode[],
-      _parent: any,
-      styles: any,
-      inheritedStyles: any = {},
+      _parent: ASTNode[],
+      styles: MarkdownRuleStyles,
+      inheritedStyles: TextStyle = {},
     ) => (
       <MarkdownInlineText
         textKey={node.key}
@@ -90,11 +92,11 @@ function createPlanMarkdownRules() {
       </MarkdownInlineText>
     ),
     code_block: (
-      node: any,
+      node: ASTNode,
       _children: ReactNode[],
-      _parent: any,
-      styles: any,
-      inheritedStyles: any = {},
+      _parent: ASTNode[],
+      styles: MarkdownRuleStyles,
+      inheritedStyles: TextStyle = {},
     ) => (
       <MarkdownInlineText
         textKey={node.key}
@@ -105,11 +107,11 @@ function createPlanMarkdownRules() {
       </MarkdownInlineText>
     ),
     fence: (
-      node: any,
+      node: ASTNode,
       _children: ReactNode[],
-      _parent: any,
-      styles: any,
-      inheritedStyles: any = {},
+      _parent: ASTNode[],
+      styles: MarkdownRuleStyles,
+      inheritedStyles: TextStyle = {},
     ) => (
       <MarkdownInlineText
         textKey={node.key}
@@ -120,11 +122,11 @@ function createPlanMarkdownRules() {
       </MarkdownInlineText>
     ),
     code_inline: (
-      node: any,
+      node: ASTNode,
       _children: ReactNode[],
-      _parent: any,
-      styles: any,
-      inheritedStyles: any = {},
+      _parent: ASTNode[],
+      styles: MarkdownRuleStyles,
+      inheritedStyles: TextStyle = {},
     ) => (
       <MarkdownInlineText
         textKey={node.key}
@@ -134,17 +136,32 @@ function createPlanMarkdownRules() {
         {node.content}
       </MarkdownInlineText>
     ),
-    bullet_list: (node: any, children: ReactNode[], _parent: any, styles: any) => (
+    bullet_list: (
+      node: ASTNode,
+      children: ReactNode[],
+      _parent: ASTNode[],
+      styles: MarkdownRuleStyles,
+    ) => (
       <View key={node.key} style={styles.bullet_list}>
         {children}
       </View>
     ),
-    ordered_list: (node: any, children: ReactNode[], _parent: any, styles: any) => (
+    ordered_list: (
+      node: ASTNode,
+      children: ReactNode[],
+      _parent: ASTNode[],
+      styles: MarkdownRuleStyles,
+    ) => (
       <View key={node.key} style={styles.ordered_list}>
         {children}
       </View>
     ),
-    list_item: (node: any, children: ReactNode[], parent: any, styles: any) => {
+    list_item: (
+      node: ASTNode,
+      children: ReactNode[],
+      parent: ASTNode[],
+      styles: MarkdownRuleStyles,
+    ) => {
       const { isOrdered, marker } = getMarkdownListMarker(node, parent);
       const iconStyle = isOrdered ? styles.ordered_list_icon : styles.bullet_list_icon;
       const contentStyle = isOrdered ? styles.ordered_list_content : styles.bullet_list_content;
@@ -156,7 +173,12 @@ function createPlanMarkdownRules() {
         </View>
       );
     },
-    paragraph: (node: any, children: ReactNode[], parent: any, styles: any) => {
+    paragraph: (
+      node: ASTNode,
+      children: ReactNode[],
+      parent: ASTNode[],
+      styles: MarkdownRuleStyles,
+    ) => {
       const isLastChild = parent[0]?.children?.at(-1)?.key === node.key;
       return (
         <MarkdownParagraph
