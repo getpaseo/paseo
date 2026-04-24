@@ -28,6 +28,53 @@ export interface UsePrPaneDataResult {
   githubFeaturesEnabled: boolean;
 }
 
+interface PrRepoIdentity {
+  prNumber: number | null;
+  repoOwner: string | null;
+  repoName: string | null;
+}
+
+function extractPrRepoIdentity(status: CheckoutPrStatusLike): PrRepoIdentity {
+  const prNumber = status?.number ?? null;
+  const repoOwner = status?.repoOwner && status.repoOwner.length > 0 ? status.repoOwner : null;
+  const repoName = status?.repoName && status.repoName.length > 0 ? status.repoName : null;
+  return { prNumber, repoOwner, repoName };
+}
+
+type CheckoutPrStatusLike = ReturnType<typeof useCheckoutPrStatusQuery>["status"];
+
+interface ShouldFetchTimelineArgs {
+  daemonClient: unknown;
+  isConnected: boolean;
+  timelineEnabled: boolean;
+  githubFeaturesEnabled: boolean;
+  cwd: string;
+  identity: PrRepoIdentity;
+  timelineUnsupported: boolean;
+}
+
+function shouldFetchTimelineFrom({
+  daemonClient,
+  isConnected,
+  timelineEnabled,
+  githubFeaturesEnabled,
+  cwd,
+  identity,
+  timelineUnsupported,
+}: ShouldFetchTimelineArgs): boolean {
+  return (
+    !!daemonClient &&
+    isConnected &&
+    timelineEnabled &&
+    githubFeaturesEnabled &&
+    !!cwd &&
+    identity.prNumber !== null &&
+    identity.repoOwner !== null &&
+    identity.repoName !== null &&
+    !timelineUnsupported
+  );
+}
+
 export function usePrPaneData({
   serverId,
   cwd,
@@ -38,23 +85,20 @@ export function usePrPaneData({
   const isConnected = useHostRuntimeIsConnected(serverId);
   const checkoutPrStatus = useCheckoutPrStatusQuery({ serverId, cwd, enabled });
   const status = checkoutPrStatus.status;
-  const prNumber = status?.number ?? null;
-  const repoOwner = status?.repoOwner && status.repoOwner.length > 0 ? status.repoOwner : null;
-  const repoName = status?.repoName && status.repoName.length > 0 ? status.repoName : null;
+  const { prNumber, repoOwner, repoName } = extractPrRepoIdentity(status);
   const githubFeaturesEnabled = checkoutPrStatus.githubFeaturesEnabled !== false;
   const unsupportedKey =
     prNumber === null ? null : timelineUnsupportedKey({ serverId, cwd, prNumber });
   const timelineUnsupported = unsupportedKey ? unsupportedTimelineKeys.has(unsupportedKey) : false;
-  const shouldFetchTimeline =
-    !!daemonClient &&
-    isConnected &&
-    timelineEnabled &&
-    githubFeaturesEnabled &&
-    !!cwd &&
-    prNumber !== null &&
-    repoOwner !== null &&
-    repoName !== null &&
-    !timelineUnsupported;
+  const shouldFetchTimeline = shouldFetchTimelineFrom({
+    daemonClient,
+    isConnected,
+    timelineEnabled,
+    githubFeaturesEnabled,
+    cwd,
+    identity: { prNumber, repoOwner, repoName },
+    timelineUnsupported,
+  });
 
   const timelineQuery = useQuery<PullRequestTimeline, Error>({
     queryKey: prPaneTimelineQueryKey({ serverId, cwd, prNumber }),
