@@ -2893,6 +2893,7 @@ export class Session {
           initialPrompt: trimmedPrompt,
         },
       );
+      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
       await this.forwardAgentUpdate(snapshot);
 
       if (trimmedPrompt || (images?.length ?? 0) > 0 || (attachments?.length ?? 0) > 0) {

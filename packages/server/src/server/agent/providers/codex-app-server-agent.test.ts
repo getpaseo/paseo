@@ -521,6 +521,54 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("surfaces invalid SKILL.md entries from skills/list in stream history", async () => {
+    const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+      createConfig(),
+      null,
+      createTestLogger(),
+      () => {
+        throw new Error("Test session cannot spawn Codex app-server");
+      },
+    ) as unknown as AgentSession & { [key: string]: unknown };
+
+    session.client = {
+      request: vi.fn().mockResolvedValue({
+        data: [
+          {
+            cwd: "/tmp/codex-question-test",
+            skills: [],
+            errors: [
+              {
+                path: "/tmp/codex-question-test/.codex/skills/bad-skill/SKILL.md",
+                message: "missing YAML frontmatter delimited by ---",
+              },
+            ],
+          },
+        ],
+      }),
+    };
+
+    await (session as any).loadSkills();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "error",
+          message:
+            "Skipped loading 1 skill due to invalid SKILL.md file.\n" +
+            "/tmp/codex-question-test/.codex/skills/bad-skill/SKILL.md: missing YAML frontmatter delimited by ---",
+        },
+      },
+    ]);
+  });
+
   test("maps question responses from headers back to question ids and completes the tool call", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
