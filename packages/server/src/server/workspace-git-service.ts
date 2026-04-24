@@ -1,6 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import pLimit from "p-limit";
 import type pino from "pino";
 import type { CheckoutContext } from "../utils/checkout-git.js";
 import {
@@ -37,6 +38,10 @@ const WORKING_TREE_WATCH_FALLBACK_REFRESH_MS = 5_000;
 const WORKSPACE_GIT_CONSUMER_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
 const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
+
+const linuxWatchReaddirConcurrency =
+  parseInt(process.env.PASEO_LINUX_WATCH_READDIR_CONCURRENCY ?? "16", 10) || 16;
+const linuxWatchReaddirLimit = pLimit(linuxWatchReaddirConcurrency);
 
 export interface WorkspaceGitRuntimeSnapshot {
   cwd: string;
@@ -1163,13 +1168,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     while (currentLevel.length > 0) {
       directories.push(...currentLevel);
       const readResults = await Promise.all(
-        currentLevel.map(async (directory) => {
-          try {
-            return await this.deps.readdir(directory, { withFileTypes: true });
-          } catch {
-            return null;
-          }
-        }),
+        currentLevel.map((directory) =>
+          linuxWatchReaddirLimit(async () => {
+            try {
+              return await this.deps.readdir(directory, { withFileTypes: true });
+            } catch {
+              return null;
+            }
+          }),
+        ),
       );
       const nextLevel: string[] = [];
       for (let i = 0; i < currentLevel.length; i += 1) {
