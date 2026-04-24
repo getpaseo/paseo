@@ -19,6 +19,7 @@ import {
   stopDesktopDaemon,
 } from "@/desktop/daemon/desktop-daemon";
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
+import type { DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
 import { resolveAppVersion } from "@/utils/app-version";
 
 function getDaemonManagementButtonLabel(isUpdating: boolean, isPaused: boolean): string {
@@ -35,34 +36,16 @@ function getDaemonRestartButtonLabel(
   return daemonStatus === "running" ? "Restarting..." : "Starting...";
 }
 
-export function LocalDaemonSection() {
-  const { theme } = useUnistyles();
-  const showSection = shouldUseDesktopDaemon();
-  const appVersion = resolveAppVersion();
-  const { settings, updateSettings } = useAppSettings();
-  const { data, isLoading, error: statusError, setStatus, refetch } = useDaemonStatus();
+function useDaemonRestartAction(args: {
+  showSection: boolean;
+  daemonStatus: DesktopDaemonStatus | null;
+  daemonActionLabel: string;
+  setStatus: (status: DesktopDaemonStatus) => void;
+  refetch: () => void;
+}) {
+  const { showSection, daemonStatus, daemonActionLabel, setStatus, refetch } = args;
   const [isRestartingDaemon, setIsRestartingDaemon] = useState(false);
-  const [isUpdatingDaemonManagement, setIsUpdatingDaemonManagement] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
-  const [cliStatusOutput, setCliStatusOutput] = useState<string | null>(null);
-  const [isCliStatusModalOpen, setIsCliStatusModalOpen] = useState(false);
-  const [isLoadingCliStatus, setIsLoadingCliStatus] = useState(false);
-
-  const daemonStatus = data?.status ?? null;
-  const daemonLogs = data?.logs ?? null;
-  const daemonVersion = daemonStatus?.version ?? null;
-
-  const daemonVersionMismatch = isVersionMismatch(appVersion, daemonVersion);
-  const daemonStatusStateText =
-    statusError ?? (daemonStatus?.status === "running" ? daemonStatus.status : "not running");
-  const daemonStatusDetailText = `PID ${daemonStatus?.pid ? daemonStatus.pid : "—"}`;
-  const isDaemonManagementPaused = !settings.manageBuiltInDaemon;
-  const daemonActionLabel = daemonStatus?.status === "running" ? "Restart daemon" : "Start daemon";
-  const daemonActionMessage =
-    daemonStatus?.status === "running"
-      ? "Restarts the built-in daemon."
-      : "Starts the built-in daemon.";
 
   const handleUpdateLocalDaemon = useCallback(() => {
     if (!showSection || isRestartingDaemon) {
@@ -120,6 +103,20 @@ export function LocalDaemonSection() {
     setStatus,
     showSection,
   ]);
+
+  return { isRestartingDaemon, statusMessage, setStatusMessage, handleUpdateLocalDaemon };
+}
+
+function useDaemonManagementToggle(args: {
+  daemonStatus: DesktopDaemonStatus | null;
+  settings: { manageBuiltInDaemon: boolean };
+  updateSettings: (next: { manageBuiltInDaemon: boolean }) => Promise<unknown>;
+  setStatus: (status: DesktopDaemonStatus) => void;
+  setStatusMessage: (message: string | null) => void;
+  refetch: () => void;
+}) {
+  const { daemonStatus, settings, updateSettings, setStatus, setStatusMessage, refetch } = args;
+  const [isUpdatingDaemonManagement, setIsUpdatingDaemonManagement] = useState(false);
 
   const handleToggleDaemonManagement = useCallback(() => {
     if (isUpdatingDaemonManagement) {
@@ -195,33 +192,18 @@ export function LocalDaemonSection() {
     isUpdatingDaemonManagement,
     refetch,
     setStatus,
+    setStatusMessage,
     settings.manageBuiltInDaemon,
     updateSettings,
   ]);
 
-  const handleCopyLogPath = useCallback(() => {
-    const logPath = daemonLogs?.logPath;
-    if (!logPath) {
-      return;
-    }
+  return { isUpdatingDaemonManagement, handleToggleDaemonManagement };
+}
 
-    void Clipboard.setStringAsync(logPath)
-      .then(() => {
-        Alert.alert("Copied", "Log path copied.");
-        return;
-      })
-      .catch((error) => {
-        console.error("[Settings] Failed to copy log path", error);
-        Alert.alert("Error", "Unable to copy log path.");
-      });
-  }, [daemonLogs?.logPath]);
-
-  const handleOpenLogs = useCallback(() => {
-    if (!daemonLogs) {
-      return;
-    }
-    setIsLogsModalOpen(true);
-  }, [daemonLogs]);
+function useDaemonCliStatusModal() {
+  const [cliStatusOutput, setCliStatusOutput] = useState<string | null>(null);
+  const [isCliStatusModalOpen, setIsCliStatusModalOpen] = useState(false);
+  const [isLoadingCliStatus, setIsLoadingCliStatus] = useState(false);
 
   const handleOpenCliStatus = useCallback(async () => {
     setIsLoadingCliStatus(true);
@@ -251,15 +233,318 @@ export function LocalDaemonSection() {
       });
   }, [cliStatusOutput]);
 
+  const handleRunCliStatus = useCallback(() => {
+    void handleOpenCliStatus();
+  }, [handleOpenCliStatus]);
+
+  const handleCloseCliStatusModal = useCallback(() => setIsCliStatusModalOpen(false), []);
+
+  return {
+    cliStatusOutput,
+    isCliStatusModalOpen,
+    isLoadingCliStatus,
+    handleCopyCliStatus,
+    handleRunCliStatus,
+    handleCloseCliStatusModal,
+  };
+}
+
+function useDaemonLogsModal(daemonLogs: { logPath?: string } | null) {
+  const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
+
+  const handleCopyLogPath = useCallback(() => {
+    const logPath = daemonLogs?.logPath;
+    if (!logPath) {
+      return;
+    }
+
+    void Clipboard.setStringAsync(logPath)
+      .then(() => {
+        Alert.alert("Copied", "Log path copied.");
+        return;
+      })
+      .catch((error) => {
+        console.error("[Settings] Failed to copy log path", error);
+        Alert.alert("Error", "Unable to copy log path.");
+      });
+  }, [daemonLogs?.logPath]);
+
+  const handleOpenLogs = useCallback(() => {
+    if (!daemonLogs) {
+      return;
+    }
+    setIsLogsModalOpen(true);
+  }, [daemonLogs]);
+
+  const handleCloseLogsModal = useCallback(() => setIsLogsModalOpen(false), []);
+
+  return { isLogsModalOpen, handleCopyLogPath, handleOpenLogs, handleCloseLogsModal };
+}
+
+interface DaemonLogsModalProps {
+  visible: boolean;
+  onClose: () => void;
+  daemonLogs: { logPath?: string; contents?: string } | null;
+}
+
+function DaemonLogsModal({ visible, onClose, daemonLogs }: DaemonLogsModalProps) {
+  return (
+    <AdaptiveModalSheet
+      visible={visible}
+      onClose={onClose}
+      title="Daemon logs"
+      testID="managed-daemon-logs-dialog"
+      snapPoints={LOGS_MODAL_SNAP_POINTS}
+    >
+      <View style={styles.modalBody}>
+        <Text style={settingsStyles.rowHint}>{daemonLogs?.logPath ?? "Log path unavailable."}</Text>
+        <Text style={styles.logOutput} selectable>
+          {daemonLogs?.contents?.length ? daemonLogs.contents : "(log file is empty)"}
+        </Text>
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
+interface DaemonCliStatusModalProps {
+  visible: boolean;
+  onClose: () => void;
+  cliStatusOutput: string | null;
+  onCopy: () => void;
+}
+
+function DaemonCliStatusModal({
+  visible,
+  onClose,
+  cliStatusOutput,
+  onCopy,
+}: DaemonCliStatusModalProps) {
+  return (
+    <AdaptiveModalSheet
+      visible={visible}
+      onClose={onClose}
+      title="Daemon status"
+      testID="daemon-cli-status-dialog"
+      snapPoints={CLI_STATUS_MODAL_SNAP_POINTS}
+    >
+      <View style={styles.modalBody}>
+        <Text style={styles.logOutput} selectable>
+          {cliStatusOutput ?? ""}
+        </Text>
+        <View style={styles.modalActions}>
+          <Button variant="outline" size="sm" onPress={onClose}>
+            Close
+          </Button>
+          <Button size="sm" onPress={onCopy}>
+            Copy
+          </Button>
+        </View>
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
+interface DaemonInfoCardProps {
+  daemonStatusStateText: string;
+  daemonStatusDetailText: string;
+  isDaemonManagementPaused: boolean;
+  playIcon: React.ReactElement;
+  pauseIcon: React.ReactElement;
+  rotateIcon: React.ReactElement;
+  copyIcon: React.ReactElement;
+  fileTextIcon: React.ReactElement;
+  activityIcon: React.ReactElement;
+  handleToggleDaemonManagement: () => void;
+  isUpdatingDaemonManagement: boolean;
+  daemonActionLabel: string;
+  daemonActionMessage: string;
+  statusMessage: string | null;
+  handleUpdateLocalDaemon: () => void;
+  isRestartingDaemon: boolean;
+  daemonStatus: DesktopDaemonStatus | null;
+  daemonLogs: { logPath?: string } | null;
+  handleCopyLogPath: () => void;
+  handleOpenLogs: () => void;
+  handleRunCliStatus: () => void;
+  isLoadingCliStatus: boolean;
+}
+
+function DaemonInfoCard(props: DaemonInfoCardProps) {
+  const {
+    daemonStatusStateText,
+    daemonStatusDetailText,
+    isDaemonManagementPaused,
+    playIcon,
+    pauseIcon,
+    rotateIcon,
+    copyIcon,
+    fileTextIcon,
+    activityIcon,
+    handleToggleDaemonManagement,
+    isUpdatingDaemonManagement,
+    daemonActionLabel,
+    daemonActionMessage,
+    statusMessage,
+    handleUpdateLocalDaemon,
+    isRestartingDaemon,
+    daemonStatus,
+    daemonLogs,
+    handleCopyLogPath,
+    handleOpenLogs,
+    handleRunCliStatus,
+    isLoadingCliStatus,
+  } = props;
+
+  return (
+    <View style={settingsStyles.card}>
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Status</Text>
+          <Text style={settingsStyles.rowHint}>
+            Only the built-in desktop daemon is shown here.
+          </Text>
+        </View>
+        <View style={styles.statusValueGroup}>
+          <Text style={styles.valueText}>{daemonStatusStateText}</Text>
+          <Text style={styles.valueSubtext}>{daemonStatusDetailText}</Text>
+        </View>
+      </View>
+      <View style={ROW_WITH_BORDER_STYLE}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Daemon management</Text>
+          <Text style={settingsStyles.rowHint}>
+            {isDaemonManagementPaused
+              ? "Paused. The built-in daemon stays stopped until you start it again."
+              : "Enabled. Paseo can manage the built-in daemon from the desktop app."}
+          </Text>
+        </View>
+        <Button
+          variant="outline"
+          size="sm"
+          leftIcon={isDaemonManagementPaused ? playIcon : pauseIcon}
+          onPress={handleToggleDaemonManagement}
+          disabled={isUpdatingDaemonManagement}
+        >
+          {getDaemonManagementButtonLabel(isUpdatingDaemonManagement, isDaemonManagementPaused)}
+        </Button>
+      </View>
+      <View style={ROW_WITH_BORDER_STYLE}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{daemonActionLabel}</Text>
+          <Text style={settingsStyles.rowHint}>{daemonActionMessage}</Text>
+          {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
+        </View>
+        <Button
+          variant="outline"
+          size="sm"
+          leftIcon={rotateIcon}
+          onPress={handleUpdateLocalDaemon}
+          disabled={isRestartingDaemon}
+        >
+          {getDaemonRestartButtonLabel(isRestartingDaemon, daemonStatus?.status, daemonActionLabel)}
+        </Button>
+      </View>
+      <View style={ROW_WITH_BORDER_STYLE}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Log file</Text>
+          <Text style={settingsStyles.rowHint}>
+            {daemonLogs?.logPath ?? "Log path unavailable."}
+          </Text>
+        </View>
+        <View style={styles.actionGroup}>
+          {daemonLogs?.logPath ? (
+            <Button variant="outline" size="sm" leftIcon={copyIcon} onPress={handleCopyLogPath}>
+              Copy path
+            </Button>
+          ) : null}
+          <Button
+            variant="outline"
+            size="sm"
+            leftIcon={fileTextIcon}
+            onPress={handleOpenLogs}
+            disabled={!daemonLogs}
+          >
+            Open logs
+          </Button>
+        </View>
+      </View>
+      <View style={ROW_WITH_BORDER_STYLE}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Full status</Text>
+          <Text style={settingsStyles.rowHint}>
+            Runs `paseo daemon status` and shows the output.
+          </Text>
+        </View>
+        <Button
+          variant="outline"
+          size="sm"
+          leftIcon={activityIcon}
+          onPress={handleRunCliStatus}
+          disabled={isLoadingCliStatus}
+        >
+          {isLoadingCliStatus ? "Loading..." : "View status"}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+export function LocalDaemonSection() {
+  const { theme } = useUnistyles();
+  const showSection = shouldUseDesktopDaemon();
+  const appVersion = resolveAppVersion();
+  const { settings, updateSettings } = useAppSettings();
+  const { data, isLoading, error: statusError, setStatus, refetch } = useDaemonStatus();
+
+  const daemonStatus = data?.status ?? null;
+  const daemonLogs = data?.logs ?? null;
+  const daemonVersion = daemonStatus?.version ?? null;
+
+  const daemonVersionMismatch = isVersionMismatch(appVersion, daemonVersion);
+  const daemonStatusStateText =
+    statusError ?? (daemonStatus?.status === "running" ? daemonStatus.status : "not running");
+  const daemonStatusDetailText = `PID ${daemonStatus?.pid ? daemonStatus.pid : "—"}`;
+  const isDaemonManagementPaused = !settings.manageBuiltInDaemon;
+  const daemonActionLabel = daemonStatus?.status === "running" ? "Restart daemon" : "Start daemon";
+  const daemonActionMessage =
+    daemonStatus?.status === "running"
+      ? "Restarts the built-in daemon."
+      : "Starts the built-in daemon.";
+
+  const { isRestartingDaemon, statusMessage, setStatusMessage, handleUpdateLocalDaemon } =
+    useDaemonRestartAction({
+      showSection,
+      daemonStatus,
+      daemonActionLabel,
+      setStatus,
+      refetch,
+    });
+
+  const { isUpdatingDaemonManagement, handleToggleDaemonManagement } = useDaemonManagementToggle({
+    daemonStatus,
+    settings,
+    updateSettings,
+    setStatus,
+    setStatusMessage,
+    refetch,
+  });
+
+  const { isLogsModalOpen, handleCopyLogPath, handleOpenLogs, handleCloseLogsModal } =
+    useDaemonLogsModal(daemonLogs);
+
+  const {
+    cliStatusOutput,
+    isCliStatusModalOpen,
+    isLoadingCliStatus,
+    handleCopyCliStatus,
+    handleRunCliStatus,
+    handleCloseCliStatusModal,
+  } = useDaemonCliStatusModal();
+
   const handleOpenAdvancedSettings = useCallback(
     () => void openExternalUrl(ADVANCED_DAEMON_SETTINGS_URL),
     [],
   );
-  const handleRunCliStatus = useCallback(() => {
-    void handleOpenCliStatus();
-  }, [handleOpenCliStatus]);
-  const handleCloseLogsModal = useCallback(() => setIsLogsModalOpen(false), []);
-  const handleCloseCliStatusModal = useCallback(() => setIsCliStatusModalOpen(false), []);
 
   const advancedSettingsIcon = useMemo(
     () => <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
@@ -323,108 +608,30 @@ export function LocalDaemonSection() {
         </View>
       ) : (
         <>
-          <View style={settingsStyles.card}>
-            <View style={settingsStyles.row}>
-              <View style={settingsStyles.rowContent}>
-                <Text style={settingsStyles.rowTitle}>Status</Text>
-                <Text style={settingsStyles.rowHint}>
-                  Only the built-in desktop daemon is shown here.
-                </Text>
-              </View>
-              <View style={styles.statusValueGroup}>
-                <Text style={styles.valueText}>{daemonStatusStateText}</Text>
-                <Text style={styles.valueSubtext}>{daemonStatusDetailText}</Text>
-              </View>
-            </View>
-            <View style={ROW_WITH_BORDER_STYLE}>
-              <View style={settingsStyles.rowContent}>
-                <Text style={settingsStyles.rowTitle}>Daemon management</Text>
-                <Text style={settingsStyles.rowHint}>
-                  {isDaemonManagementPaused
-                    ? "Paused. The built-in daemon stays stopped until you start it again."
-                    : "Enabled. Paseo can manage the built-in daemon from the desktop app."}
-                </Text>
-              </View>
-              <Button
-                variant="outline"
-                size="sm"
-                leftIcon={isDaemonManagementPaused ? playIcon : pauseIcon}
-                onPress={handleToggleDaemonManagement}
-                disabled={isUpdatingDaemonManagement}
-              >
-                {getDaemonManagementButtonLabel(
-                  isUpdatingDaemonManagement,
-                  isDaemonManagementPaused,
-                )}
-              </Button>
-            </View>
-            <View style={ROW_WITH_BORDER_STYLE}>
-              <View style={settingsStyles.rowContent}>
-                <Text style={settingsStyles.rowTitle}>{daemonActionLabel}</Text>
-                <Text style={settingsStyles.rowHint}>{daemonActionMessage}</Text>
-                {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
-              </View>
-              <Button
-                variant="outline"
-                size="sm"
-                leftIcon={rotateIcon}
-                onPress={handleUpdateLocalDaemon}
-                disabled={isRestartingDaemon}
-              >
-                {getDaemonRestartButtonLabel(
-                  isRestartingDaemon,
-                  daemonStatus?.status,
-                  daemonActionLabel,
-                )}
-              </Button>
-            </View>
-            <View style={ROW_WITH_BORDER_STYLE}>
-              <View style={settingsStyles.rowContent}>
-                <Text style={settingsStyles.rowTitle}>Log file</Text>
-                <Text style={settingsStyles.rowHint}>
-                  {daemonLogs?.logPath ?? "Log path unavailable."}
-                </Text>
-              </View>
-              <View style={styles.actionGroup}>
-                {daemonLogs?.logPath ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    leftIcon={copyIcon}
-                    onPress={handleCopyLogPath}
-                  >
-                    Copy path
-                  </Button>
-                ) : null}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  leftIcon={fileTextIcon}
-                  onPress={handleOpenLogs}
-                  disabled={!daemonLogs}
-                >
-                  Open logs
-                </Button>
-              </View>
-            </View>
-            <View style={ROW_WITH_BORDER_STYLE}>
-              <View style={settingsStyles.rowContent}>
-                <Text style={settingsStyles.rowTitle}>Full status</Text>
-                <Text style={settingsStyles.rowHint}>
-                  Runs `paseo daemon status` and shows the output.
-                </Text>
-              </View>
-              <Button
-                variant="outline"
-                size="sm"
-                leftIcon={activityIcon}
-                onPress={handleRunCliStatus}
-                disabled={isLoadingCliStatus}
-              >
-                {isLoadingCliStatus ? "Loading..." : "View status"}
-              </Button>
-            </View>
-          </View>
+          <DaemonInfoCard
+            daemonStatusStateText={daemonStatusStateText}
+            daemonStatusDetailText={daemonStatusDetailText}
+            isDaemonManagementPaused={isDaemonManagementPaused}
+            playIcon={playIcon}
+            pauseIcon={pauseIcon}
+            rotateIcon={rotateIcon}
+            copyIcon={copyIcon}
+            fileTextIcon={fileTextIcon}
+            activityIcon={activityIcon}
+            handleToggleDaemonManagement={handleToggleDaemonManagement}
+            isUpdatingDaemonManagement={isUpdatingDaemonManagement}
+            daemonActionLabel={daemonActionLabel}
+            daemonActionMessage={daemonActionMessage}
+            statusMessage={statusMessage}
+            handleUpdateLocalDaemon={handleUpdateLocalDaemon}
+            isRestartingDaemon={isRestartingDaemon}
+            daemonStatus={daemonStatus}
+            daemonLogs={daemonLogs}
+            handleCopyLogPath={handleCopyLogPath}
+            handleOpenLogs={handleOpenLogs}
+            handleRunCliStatus={handleRunCliStatus}
+            isLoadingCliStatus={isLoadingCliStatus}
+          />
 
           {daemonVersionMismatch ? (
             <View style={styles.warningCard}>
@@ -437,44 +644,18 @@ export function LocalDaemonSection() {
         </>
       )}
 
-      <AdaptiveModalSheet
+      <DaemonLogsModal
         visible={isLogsModalOpen}
         onClose={handleCloseLogsModal}
-        title="Daemon logs"
-        testID="managed-daemon-logs-dialog"
-        snapPoints={LOGS_MODAL_SNAP_POINTS}
-      >
-        <View style={styles.modalBody}>
-          <Text style={settingsStyles.rowHint}>
-            {daemonLogs?.logPath ?? "Log path unavailable."}
-          </Text>
-          <Text style={styles.logOutput} selectable>
-            {daemonLogs?.contents.length ? daemonLogs.contents : "(log file is empty)"}
-          </Text>
-        </View>
-      </AdaptiveModalSheet>
+        daemonLogs={daemonLogs}
+      />
 
-      <AdaptiveModalSheet
+      <DaemonCliStatusModal
         visible={isCliStatusModalOpen}
         onClose={handleCloseCliStatusModal}
-        title="Daemon status"
-        testID="daemon-cli-status-dialog"
-        snapPoints={CLI_STATUS_MODAL_SNAP_POINTS}
-      >
-        <View style={styles.modalBody}>
-          <Text style={styles.logOutput} selectable>
-            {cliStatusOutput ?? ""}
-          </Text>
-          <View style={styles.modalActions}>
-            <Button variant="outline" size="sm" onPress={handleCloseCliStatusModal}>
-              Close
-            </Button>
-            <Button size="sm" onPress={handleCopyCliStatus}>
-              Copy
-            </Button>
-          </View>
-        </View>
-      </AdaptiveModalSheet>
+        cliStatusOutput={cliStatusOutput}
+        onCopy={handleCopyCliStatus}
+      />
     </SettingsSection>
   );
 }
