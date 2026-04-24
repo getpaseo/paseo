@@ -9,6 +9,8 @@
   "rules": {
     "react/react-in-jsx-scope": "off",
 
+    "no-await-in-loop": "off",
+
     "no-unused-expressions": "warn",
     "no-useless-catch": "warn",
     "preserve-caught-error": "warn",
