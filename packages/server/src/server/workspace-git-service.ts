@@ -532,9 +532,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<WorkspaceGitMetadata> {
     const snapshot = await this.getSnapshot(cwd, options);
     const directoryName =
-      options?.directoryName ??
-      normalizeWorkspaceId(cwd).split(/[\\/]/).filter(Boolean).at(-1) ??
-      cwd;
+      options?.directoryName ?? normalizeWorkspaceId(cwd).split(/[\\/]/).findLast(Boolean) ?? cwd;
     return buildWorkspaceGitMetadataFromSnapshot({
       cwd: normalizeWorkspaceId(cwd),
       directoryName,

@@ -352,9 +352,7 @@ export async function generateStructuredAgentResponse<T>(
         return result.finalText;
       }
       // Fallback for providers that may not populate finalText consistently.
-      const lastAssistant = result.timeline
-        .filter((item) => item.type === "assistant_message")
-        .at(-1);
+      const lastAssistant = result.timeline.findLast((item) => item.type === "assistant_message");
       return lastAssistant?.text ?? "";
     };
     return await getStructuredAgentResponse({

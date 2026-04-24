@@ -179,8 +179,7 @@ export class WorkspaceReconciliationService {
     siblings: PersistedWorkspaceRecord[],
     changes: ReconciliationChange[],
   ): Promise<void> {
-    const directoryName =
-      project.rootPath.split(/[\\/]/).filter(Boolean).at(-1) ?? project.rootPath;
+    const directoryName = project.rootPath.split(/[\\/]/).findLast(Boolean) ?? project.rootPath;
     const currentGit = await this.readWorkspaceGitMetadata(project.rootPath, directoryName);
 
     const projectUpdates: Partial<
@@ -220,7 +219,7 @@ export class WorkspaceReconciliationService {
     const existingSiblings = siblings.filter((workspace) => existsSync(workspace.cwd));
     await Promise.all(
       existingSiblings.map(async (workspace) => {
-        const wsDirName = workspace.cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? workspace.cwd;
+        const wsDirName = workspace.cwd.split(/[\\/]/).findLast(Boolean) ?? workspace.cwd;
         const wsGit = await this.readWorkspaceGitMetadata(workspace.cwd, wsDirName);
 
         if (wsGit.projectKind === "git" && workspace.displayName !== wsGit.workspaceDisplayName) {

@@ -242,7 +242,7 @@ export function WorkspaceSetupDialog() {
     workspace?.name ||
     workspace?.projectDisplayName ||
     displayName ||
-    sourceDirectory.split(/[\\/]/).filter(Boolean).pop() ||
+    sourceDirectory.split(/[\\/]/).findLast(Boolean) ||
     sourceDirectory;
 
   const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(workspaceTitle);

@@ -314,7 +314,7 @@ export const setWorkingDirectory = async (page: Page, directory: string) => {
   if (trimmedDirectory.startsWith("/private/var/")) {
     directoryCandidates.add(trimmedDirectory.replace(/^\/private/, ""));
   }
-  const basename = trimmedDirectory.split("/").filter(Boolean).pop() ?? trimmedDirectory;
+  const basename = trimmedDirectory.split("/").findLast(Boolean) ?? trimmedDirectory;
 
   await expect
     .poll(

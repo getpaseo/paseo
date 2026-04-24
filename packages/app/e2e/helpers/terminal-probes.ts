@@ -570,8 +570,7 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
           lastXtermCommitAt:
             this.xtermWrites
               .map((write) => write.committedAt)
-              .filter((at): at is number => typeof at === "number")
-              .at(-1) ?? null,
+              .findLast((at): at is number => typeof at === "number") ?? null,
         };
       },
     };

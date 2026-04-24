@@ -14,7 +14,7 @@ const CENTERED_PADDED_STYLE = {
 } as const;
 
 function useFilePanelDescriptor(target: { kind: "file"; path: string }) {
-  const fileName = target.path.split("/").filter(Boolean).pop() ?? target.path;
+  const fileName = target.path.split("/").findLast(Boolean) ?? target.path;
   return {
     label: fileName,
     subtitle: target.path,

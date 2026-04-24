@@ -116,7 +116,7 @@ export async function seedProjectForWorkspaceSetup(
 }
 
 export function projectNameFromPath(repoPath: string): string {
-  return repoPath.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? repoPath;
+  return repoPath.replace(/\/+$/, "").split("/").findLast(Boolean) ?? repoPath;
 }
 
 export async function openHomeWithProject(page: Page, repoPath: string): Promise<void> {

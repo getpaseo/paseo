@@ -457,7 +457,7 @@ export function NewWorkspaceScreen({
     workspace?.name ||
     workspace?.projectDisplayName ||
     displayName ||
-    sourceDirectory.split(/[\\/]/).filter(Boolean).pop() ||
+    sourceDirectory.split(/[\\/]/).findLast(Boolean) ||
     sourceDirectory;
 
   const addImagesRef = useRef<((images: ImageAttachment[]) => void) | null>(null);

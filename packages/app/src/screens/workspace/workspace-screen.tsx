@@ -171,7 +171,7 @@ function getFallbackTabOptionLabel(tab: WorkspaceTabDescriptor): string {
     return "Terminal";
   }
   if (tab.target.kind === "file") {
-    return tab.target.path.split("/").filter(Boolean).pop() ?? tab.target.path;
+    return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
   return "Agent";
 }
