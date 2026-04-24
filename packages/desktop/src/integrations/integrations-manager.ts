@@ -21,7 +21,7 @@ const SKILL_NAMES = [
   "hubcode",
   "hubcode-loop",
   "hubcode-handoff",
-  "hubcode-orchestrator",
+  "hubcode-orchestrate",
   "hubcode-chat",
   "hubcode-committee",
 ];
@@ -75,7 +75,9 @@ function getBundledSkillsDir(): string {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, "skills");
   }
-  return path.join(__dirname, "..", "..", "..", "..", "skills");
+  // dev: __dirname = packages/desktop/dist → walk back to packages/desktop/..
+  // → packages/.. → hubcode. Adding `skills` lands at hubcode/skills.
+  return path.join(__dirname, "..", "..", "..", "skills");
 }
 
 function getAgentsSkillsDir(): string {

@@ -15,6 +15,7 @@ import {
   useSkillsCatalog,
   useUpdateLibraryEntry,
 } from "@/hooks/library/use-library-queries";
+import { BundledSkillsSection } from "@/components/library/bundled-skills-section";
 import { SkillCard } from "@/components/library/skill-card";
 import { AddSkillModal, type AddSkillInitial } from "@/components/library/add-skill-modal";
 import { SkillDetailModal } from "@/components/library/skill-detail-modal";
@@ -121,6 +122,8 @@ export function SkillsLibraryScreen() {
         ) : null}
 
         <SyncResultBanner error={syncLibrary.error} lastResult={syncLibrary.lastResult} />
+
+        <BundledSkillsSection />
 
         {installed.length > 0 ? (
           <Section label="Installed">

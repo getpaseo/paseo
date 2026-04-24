@@ -524,7 +524,7 @@ function VideoThumbnail({ url, aspectRatio }: { url: string; aspectRatio?: numbe
             pointerEvents: "none",
           }}
         />
-        <View style={styles.videoPlayOverlay} pointerEvents="none">
+        <View style={[styles.videoPlayOverlay, { pointerEvents: "none" }]}>
           <View style={styles.videoPlayCircle}>
             <Text style={styles.videoPlayIcon}>▶</Text>
           </View>

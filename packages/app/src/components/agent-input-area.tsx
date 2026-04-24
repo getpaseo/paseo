@@ -9,7 +9,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
-import { ArrowUp, Square, Pencil, AudioLines } from "lucide-react-native";
+import { ArrowUp, Square, Pencil, AudioLines, Zap, Sparkles, X as XIcon } from "lucide-react-native";
 import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -20,6 +20,9 @@ import {
   type DraftAgentStatusBarProps,
 } from "./agent-status-bar";
 import { ContextWindowMeter } from "./context-window-meter";
+import { CommandPalette } from "@/components/command-palette";
+import { ChatModePicker } from "@/components/chat-mode-picker";
+import { CHAT_MODES_BY_ID, applyChatMode, type ChatMode } from "@/components/chat-modes";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -187,6 +190,12 @@ export function AgentInputArea({
   const [isCancellingAgent, setIsCancellingAgent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isModePickerOpen, setIsModePickerOpen] = useState(false);
+  const [selectedModeId, setSelectedModeId] = useState<string | null>(null);
+  const selectedMode: ChatMode | null = selectedModeId
+    ? (CHAT_MODES_BY_ID[selectedModeId] ?? null)
+    : null;
   const messageInputRef = useRef<MessageInputRef>(null);
   const keyboardHandlerIdRef = useRef(
     `message-input:${serverId}:${agentId}:${Math.random().toString(36).slice(2)}`,
@@ -367,8 +376,11 @@ export function AgentInputArea({
     imageAttachments?: ImageAttachment[],
     forceSend?: boolean,
   ) {
+    // When a chat mode is active, prepend its specialist prefix so the
+    // agent answers from that role. Unselected = no-op.
+    const messageWithMode = applyChatMode(message, selectedMode);
     await submitAgentInput({
-      message,
+      message: messageWithMode,
       imageAttachments,
       forceSend,
       isAgentRunning: agentState.status === "running",
@@ -672,14 +684,80 @@ export function AgentInputArea({
   const contextWindowMaxTokens = hasContextWindowMeter ? agentState.contextWindowMaxTokens : null;
   const contextWindowUsedTokens = hasContextWindowMeter ? agentState.contextWindowUsedTokens : null;
 
+  const handleInsertCommand = useCallback(
+    (name: string) => {
+      const insert = `/${name} `;
+      const idx = Math.min(cursorIndex, userInput.length);
+      const next = userInput.slice(0, idx) + insert + userInput.slice(idx);
+      setUserInput(next);
+      setCursorIndex(idx + insert.length);
+      setIsCommandPaletteOpen(false);
+      requestAnimationFrame(() => messageInputRef.current?.focus());
+    },
+    [cursorIndex, userInput, setUserInput],
+  );
+
+  const commandPaletteButton = (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger
+        onPress={() => setIsCommandPaletteOpen(true)}
+        accessibilityLabel="Insert slash command"
+        accessibilityRole="button"
+        style={({ hovered }) => [
+          styles.realtimeVoiceButton as any,
+          (hovered ? styles.iconButtonHovered : undefined) as any,
+        ]}
+      >
+        <Zap size={buttonIconSize} color={theme.colors.foreground} />
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <View style={styles.tooltipRow}>
+          <Text style={styles.tooltipText}>Insert command</Text>
+        </View>
+      </TooltipContent>
+    </Tooltip>
+  );
+
+  const modePickerButton = (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger
+        onPress={() => setIsModePickerOpen(true)}
+        accessibilityLabel="Pick chat mode"
+        accessibilityRole="button"
+        style={({ hovered }) => [
+          styles.realtimeVoiceButton as any,
+          (hovered ? styles.iconButtonHovered : undefined) as any,
+          selectedMode ? ({ backgroundColor: theme.colors.surface2 } as any) : undefined,
+        ]}
+      >
+        {selectedMode ? (
+          <Text style={{ fontSize: 16 }}>{selectedMode.emoji}</Text>
+        ) : (
+          <Sparkles size={buttonIconSize} color={theme.colors.foreground} />
+        )}
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <View style={styles.tooltipRow}>
+          <Text style={styles.tooltipText}>
+            {selectedMode ? `Mode: ${selectedMode.name}` : "Pick chat mode"}
+          </Text>
+        </View>
+      </TooltipContent>
+    </Tooltip>
+  );
+
   const beforeVoiceContent = (
-    <View style={styles.contextWindowMeterSlot}>
+    <View style={styles.beforeVoiceRow}>
       {contextWindowMaxTokens !== null && contextWindowUsedTokens !== null ? (
-        <ContextWindowMeter
-          maxTokens={contextWindowMaxTokens}
-          usedTokens={contextWindowUsedTokens}
-        />
+        <View style={styles.contextWindowMeterSlot}>
+          <ContextWindowMeter
+            maxTokens={contextWindowMaxTokens}
+            usedTokens={contextWindowUsedTokens}
+          />
+        </View>
       ) : null}
+      {modePickerButton}
+      {commandPaletteButton}
     </View>
   );
 
@@ -727,6 +805,44 @@ export function AgentInputArea({
           {sendError && <Text style={styles.sendErrorText}>{sendError}</Text>}
 
           <SharedTypingIndicator />
+
+          {selectedMode ? (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                alignSelf: "flex-start",
+                gap: 6,
+                backgroundColor: theme.colors.surface2,
+                borderRadius: 999,
+                paddingLeft: 10,
+                paddingRight: 4,
+                paddingVertical: 3,
+                marginBottom: 6,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+              }}
+            >
+              <Text style={{ fontSize: 13 }}>{selectedMode.emoji}</Text>
+              <Text style={{ color: theme.colors.foreground, fontSize: 12, fontWeight: "500" }}>
+                {selectedMode.name}
+              </Text>
+              <Pressable
+                onPress={() => setSelectedModeId(null)}
+                hitSlop={6}
+                accessibilityLabel="Clear chat mode"
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <XIcon size={12} color={theme.colors.mutedForeground} />
+              </Pressable>
+            </View>
+          ) : null}
 
           <View style={styles.messageInputContainer}>
             {/* Command + file mention autocomplete rendered as a true popover */}
@@ -787,6 +903,23 @@ export function AgentInputArea({
           </View>
         </View>
       </View>
+
+      <CommandPalette
+        visible={isCommandPaletteOpen}
+        serverId={serverId}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onInsert={handleInsertCommand}
+      />
+
+      <ChatModePicker
+        visible={isModePickerOpen}
+        selectedId={selectedModeId}
+        onClose={() => setIsModePickerOpen(false)}
+        onSelect={(mode) => {
+          setSelectedModeId(mode?.id ?? null);
+          setIsModePickerOpen(false);
+        }}
+      />
     </Animated.View>
   );
 }
@@ -846,6 +979,12 @@ const styles = StyleSheet.create(((theme: Theme) => ({
     height: 28,
     alignItems: "center",
     justifyContent: "center",
+  },
+  beforeVoiceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 0,
   },
   realtimeVoiceButton: {
     width: 28,

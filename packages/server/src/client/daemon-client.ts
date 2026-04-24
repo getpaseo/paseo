@@ -3200,6 +3200,108 @@ export class DaemonClient {
     return { hookId: payload.hookId, error: payload.error };
   }
 
+  async commandsList(
+    requestId?: string,
+  ): Promise<{ commands: Array<unknown>; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "commands/list" },
+      responseType: "commands/list/response",
+      timeout: 5_000,
+    });
+    return { commands: payload.commands, error: payload.error };
+  }
+
+  async commandsToggle(
+    commandId: string,
+    enabled: boolean,
+    requestId?: string,
+  ): Promise<{ commandId: string; enabled: boolean; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "commands/toggle", commandId, enabled },
+      responseType: "commands/toggle/response",
+      timeout: 5_000,
+    });
+    return { commandId: payload.commandId, enabled: payload.enabled, error: payload.error };
+  }
+
+  async commandsUpsert(
+    command: unknown,
+    requestId?: string,
+  ): Promise<{ commandId: string | null; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "commands/upsert", command: command as never },
+      responseType: "commands/upsert/response",
+      timeout: 5_000,
+    });
+    return { commandId: payload.commandId, error: payload.error };
+  }
+
+  async commandsDelete(
+    commandId: string,
+    requestId?: string,
+  ): Promise<{ commandId: string; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "commands/delete", commandId },
+      responseType: "commands/delete/response",
+      timeout: 5_000,
+    });
+    return { commandId: payload.commandId, error: payload.error };
+  }
+
+  async rulesList(requestId?: string): Promise<{ rules: Array<unknown>; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "rules/list" },
+      responseType: "rules/list/response",
+      timeout: 5_000,
+    });
+    return { rules: payload.rules, error: payload.error };
+  }
+
+  async rulesToggle(
+    ruleId: string,
+    enabled: boolean,
+    requestId?: string,
+  ): Promise<{ ruleId: string; enabled: boolean; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "rules/toggle", ruleId, enabled },
+      responseType: "rules/toggle/response",
+      timeout: 5_000,
+    });
+    return { ruleId: payload.ruleId, enabled: payload.enabled, error: payload.error };
+  }
+
+  async rulesUpsert(
+    rule: unknown,
+    requestId?: string,
+  ): Promise<{ ruleId: string | null; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "rules/upsert", rule: rule as never },
+      responseType: "rules/upsert/response",
+      timeout: 5_000,
+    });
+    return { ruleId: payload.ruleId, error: payload.error };
+  }
+
+  async rulesDelete(
+    ruleId: string,
+    requestId?: string,
+  ): Promise<{ ruleId: string; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "rules/delete", ruleId },
+      responseType: "rules/delete/response",
+      timeout: 5_000,
+    });
+    return { ruleId: payload.ruleId, error: payload.error };
+  }
+
   async indexingDetect(options?: {
     force?: boolean;
     requestId?: string;

@@ -540,6 +540,39 @@ export class IndexingService {
     return next;
   }
 
+  /**
+   * Auto-enable indexing + kick off the initial reindex for a freshly-added
+   * workspace. Idempotent: only acts when the workspace has *no* persisted
+   * indexing state yet (so users who explicitly disabled a workspace keep
+   * that preference even if the workspace is later re-added).
+   *
+   * Callers: any code path that creates a new workspace record. The reindex
+   * is fired and forgotten — errors are logged at info level, never thrown,
+   * because failing to index should never block workspace creation.
+   */
+  async autoEnableForNewWorkspace(workspaceId: string): Promise<void> {
+    try {
+      const record = await this.adapter.get(workspaceId);
+      if (!record) return;
+      // Only act on truly fresh workspaces — `indexing === undefined` is
+      // our marker for "never touched", whereas `{ enabled: false }` means
+      // the user deliberately turned it off.
+      if (record.indexing !== undefined) return;
+
+      const initial: IndexingState = { ...defaultIndexingState(), enabled: true };
+      await this.persist(workspaceId, initial);
+      this.logger.info({ workspaceId }, "auto-enabled indexing for new workspace");
+
+      if (this.reindexTrigger) {
+        void this.reindexTrigger(workspaceId).catch((err) =>
+          this.logger.info({ err, workspaceId }, "auto-reindex on workspace add failed"),
+        );
+      }
+    } catch (err) {
+      this.logger.debug({ err, workspaceId }, "autoEnableForNewWorkspace failed (ignored)");
+    }
+  }
+
   async setExposeTo(
     workspaceId: string,
     agentId: string,

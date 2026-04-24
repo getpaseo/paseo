@@ -97,6 +97,8 @@ type RegisterPendingWorktreeWorkspaceDependencies = {
   syncWorkspaceGitWatchTarget: (cwd: string, options: { isGit: boolean }) => Promise<void>;
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
   archiveProjectRecordIfEmpty: (projectId: string, archivedAt: string) => Promise<void>;
+  /** Optional — when present, new workspaces get indexing auto-enabled. */
+  autoEnableIndexing?: (workspaceId: string) => void;
 };
 
 type CreateHubcodeWorktreeInBackgroundDependencies = {
@@ -564,6 +566,9 @@ export async function registerPendingWorktreeWorkspace(
 
   await dependencies.projectRegistry.upsert(nextProjectRecord);
   await dependencies.workspaceRegistry.upsert(nextWorkspaceRecord);
+  if (!existingWorkspace || existingWorkspace.archivedAt) {
+    dependencies.autoEnableIndexing?.(nextWorkspaceRecord.workspaceId);
+  }
   await dependencies.syncWorkspaceGitWatchTarget(workspaceId, {
     isGit: placement.checkout.isGit,
   });

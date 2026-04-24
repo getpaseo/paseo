@@ -87,6 +87,7 @@ import * as Notifications from "expo-notifications";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { DesktopOrgRail, DesktopTitlebarAccent } from "@/components/desktop-org-rail";
 import { DownloadToast } from "@/components/download-toast";
+import { IndexingToast } from "@/components/indexing-toast";
 import { UpdateBanner } from "@/desktop/updates/update-banner";
 import { ToastProvider } from "@/contexts/toast-context";
 import { usePanelStore } from "@/stores/panel-store";
@@ -563,6 +564,7 @@ function AppContainer({
       </View>
       {isCompactLayout && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
+      <IndexingToast />
       <UpdateBanner />
       <CommandCenter />
       <ProjectPickerModal />

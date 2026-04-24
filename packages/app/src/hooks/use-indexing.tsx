@@ -175,6 +175,18 @@ function useIndexingInternal(serverId: string | null): UseIndexingResult {
     });
   }, [client, isConnected, serverId, listKey, queryClient]);
 
+  // Workspace add/remove push — when a workspace is created or deleted we
+  // need to refresh the indexing list so the new entry shows up (or a
+  // removed one goes away) without the user hitting "Refresh". Plain
+  // invalidate: the payload shape doesn't map 1:1 to IndexingWorkspaceEntry
+  // so we don't attempt an optimistic merge.
+  useEffect(() => {
+    if (!client || !isConnected || !serverId) return;
+    return client.on("workspace_update", () => {
+      void queryClient.invalidateQueries({ queryKey: listKey });
+    });
+  }, [client, isConnected, serverId, listKey, queryClient]);
+
   // crg subprocess state push — visible as a small health badge in the UI.
   const [processState, setProcessState] = useState<CrgProcessState | null>(null);
   useEffect(() => {

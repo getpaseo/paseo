@@ -22,7 +22,7 @@ export function SharedTypingIndicator() {
   if (others.length === 0) return null;
 
   return (
-    <View style={styles.row} pointerEvents="none">
+    <View style={[styles.row, { pointerEvents: "none" }]}>
       {others.map((u) => {
         const color = userColor(u.userId);
         return (

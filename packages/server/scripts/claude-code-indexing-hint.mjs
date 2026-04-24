@@ -29,30 +29,59 @@ const MANY_GLOB_ENTRIES = 100;
 
 // ---------------------------------------------------------------------------
 
-let buf = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buf += chunk;
-});
-process.stdin.on("end", () => {
-  try {
-    const payload = JSON.parse(buf || "{}");
-    const hint = suggest(payload);
-    if (hint) {
-      process.stdout.write(
-        JSON.stringify({
-          hookSpecificOutput: {
-            hookEventName: "PostToolUse",
-            additionalContext: hint,
-          },
-        }),
-      );
+// Never propagate failures to Claude Code — better to produce no hint than
+// to surface a "hook error" banner on every Read/Grep/Glob. We silence both
+// unhandled exceptions and unhandled promise rejections, and wrap stdin
+// plumbing in try/catch.
+process.on("uncaughtException", () => process.exit(0));
+process.on("unhandledRejection", () => process.exit(0));
+
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+/**
+ * Gate the whole hook on the CWD actually having a code-review-graph
+ * index. The hook is registered in `~/.claude/settings.json` (user-global),
+ * so Claude Code fires it on every project — not just hubcode-indexed
+ * workspaces. Bail fast when the suggestion would be meaningless.
+ */
+function isIndexedWorkspace(cwd) {
+  if (!cwd || typeof cwd !== "string") return false;
+  return existsSync(join(cwd, ".code-review-graph"));
+}
+
+try {
+  let buf = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buf += chunk;
+  });
+  process.stdin.on("error", () => process.exit(0));
+  process.stdin.on("end", () => {
+    try {
+      const payload = JSON.parse(buf || "{}");
+      if (!isIndexedWorkspace(payload?.cwd)) {
+        process.exit(0);
+      }
+      const hint = suggest(payload);
+      if (hint) {
+        process.stdout.write(
+          JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "PostToolUse",
+              additionalContext: hint,
+            },
+          }),
+        );
+      }
+    } catch {
+      // Silence > noise.
     }
-  } catch {
-    // Never fail Claude Code's tool pipeline because our hint script threw.
-    // Silence > noise.
-  }
-});
+    process.exit(0);
+  });
+} catch {
+  process.exit(0);
+}
 
 // ---------------------------------------------------------------------------
 

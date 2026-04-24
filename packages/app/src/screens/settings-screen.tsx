@@ -82,6 +82,8 @@ import { isWeb } from "@/constants/platform";
 import { CliAgentsSection } from "@/screens/settings/cli-agents-section";
 import { IndexingSection } from "@/screens/settings/indexing-section";
 import { HooksSection } from "@/screens/settings/hooks-section";
+import { CommandsSection } from "@/screens/settings/commands-section";
+import { RulesSection } from "@/screens/settings/rules-section";
 import { AccountSection } from "@/desktop/components/account-section";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { PlanUpgradeSection } from "@/components/plan-upgrade-section";
@@ -102,6 +104,8 @@ type SettingsSectionId =
   | "cli-agents"
   | "indexing"
   | "hooks"
+  | "commands"
+  | "rules"
   | "diagnostics"
   | "about"
   | "permissions"
@@ -143,6 +147,8 @@ function getSettingsSections(context: {
       { id: "cli-agents", label: "CLI Agents", icon: Terminal },
       { id: "indexing", label: "Code Indexing", icon: Network },
       { id: "hooks", label: "Hooks", icon: Sparkles },
+      { id: "commands", label: "Commands", icon: Terminal },
+      { id: "rules", label: "Rules", icon: Info },
     );
   }
 
@@ -768,6 +774,10 @@ function SettingsSectionContent({
       return isDesktopApp ? <IndexingSection routeServerId={routeServerId} /> : null;
     case "hooks":
       return isDesktopApp ? <HooksSection routeServerId={routeServerId} /> : null;
+    case "commands":
+      return isDesktopApp ? <CommandsSection routeServerId={routeServerId} /> : null;
+    case "rules":
+      return isDesktopApp ? <RulesSection routeServerId={routeServerId} /> : null;
     case "diagnostics":
       return <DiagnosticsSection {...diagnosticsProps} />;
     case "about":
@@ -840,40 +850,46 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
   return (
     <View style={desktopStyles.row}>
       <View style={desktopStyles.sidebar}>
-        {sections.map((section) => {
+        <ScrollView
+          style={desktopStyles.sidebarScroll}
+          contentContainerStyle={desktopStyles.sidebarContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {sections.map((section) => {
           const isSelected = section.id === selectedSectionId;
           const IconComponent = section.icon;
           const showSeparator =
             section.id === "account" || section.id === "integrations" || section.id === "providers";
           return (
-            <View key={section.id}>
-              {showSeparator ? <View style={desktopStyles.sidebarSeparator} /> : null}
-              <Pressable
-                style={[
-                  desktopStyles.sidebarItem,
-                  isSelected && { backgroundColor: theme.colors.surface2 },
-                ]}
-                onPress={() => setSelectedSectionId(section.id)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: isSelected }}
-              >
-                <IconComponent
-                  size={theme.iconSize.md}
-                  color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
-                />
-                <Text
+              <View key={section.id}>
+                {showSeparator ? <View style={desktopStyles.sidebarSeparator} /> : null}
+                <Pressable
                   style={[
-                    desktopStyles.sidebarLabel,
-                    isSelected && { color: theme.colors.foreground },
+                    desktopStyles.sidebarItem,
+                    isSelected && { backgroundColor: theme.colors.surface2 },
                   ]}
-                  numberOfLines={1}
+                  onPress={() => setSelectedSectionId(section.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
                 >
-                  {section.label}
-                </Text>
-              </Pressable>
-            </View>
-          );
-        })}
+                  <IconComponent
+                    size={theme.iconSize.md}
+                    color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
+                  />
+                  <Text
+                    style={[
+                      desktopStyles.sidebarLabel,
+                      isSelected && { color: theme.colors.foreground },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {section.label}
+                  </Text>
+                </Pressable>
+              </View>
+            );
+          })}
+        </ScrollView>
       </View>
       <ScrollView
         style={desktopStyles.contentPane}
@@ -2121,6 +2137,11 @@ const desktopStyles = StyleSheet.create((theme) => ({
     width: 200,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
+  },
+  sidebarScroll: {
+    flex: 1,
+  },
+  sidebarContent: {
     paddingVertical: theme.spacing[4],
     paddingHorizontal: theme.spacing[2],
     gap: theme.spacing[1],

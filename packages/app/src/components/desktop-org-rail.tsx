@@ -3,15 +3,23 @@ import { Image, Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   AlertTriangle,
-  Building2,
   ImagePlus,
+  Info,
   Plus,
   Search,
   Settings as SettingsIcon,
   Sparkles,
+  Terminal,
   User,
   X,
+  Zap,
 } from "lucide-react-native";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { resizeImageToDataUrl } from "@/utils/resize-image-to-data-url";
 import { isWeb } from "@/constants/platform";
 import { router } from "expo-router";
@@ -248,8 +256,8 @@ export function DesktopOrgRail() {
       ]}
     >
       <View
-        pointerEvents="none"
         style={{
+          pointerEvents: "none",
           position: "absolute",
           top: backgroundTop,
           left: 0,
@@ -329,14 +337,36 @@ export function DesktopOrgRail() {
 
       <View style={styles.spacer} />
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Account"
-        style={({ hovered = false }) => [styles.bottomTile, hovered && styles.itemHovered]}
-        onPress={() => router.push("/settings?tab=account")}
-      >
-        <Building2 size={14} color="rgba(255,255,255,0.85)" />
-      </Pressable>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          accessibilityRole="button"
+          accessibilityLabel="Agent extensions"
+          style={({ hovered = false }) => [styles.bottomTile, hovered && styles.itemHovered]}
+        >
+          <Zap size={14} color="rgba(255,255,255,0.85)" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="right" align="end" minWidth={180}>
+          <DropdownMenuItem
+            leading={<Sparkles size={14} color={"white"} />}
+            onSelect={() => router.push("/settings?tab=hooks")}
+          >
+            Hooks
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            leading={<Terminal size={14} color={"white"} />}
+            onSelect={() => router.push("/settings?tab=commands")}
+          >
+            Commands
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            leading={<Info size={14} color={"white"} />}
+            onSelect={() => router.push("/settings?tab=rules")}
+          >
+            Rules
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Settings"

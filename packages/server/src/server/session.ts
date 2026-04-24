@@ -192,6 +192,8 @@ import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import type { IndexingService } from "./indexing/service.js";
 import type { HookService } from "./hooks/service.js";
+import type { CommandService } from "./commands/service.js";
+import type { RuleService } from "./rules/service.js";
 import { execCommand } from "../utils/spawn.js";
 import {
   assertSafeGitRef as assertWorktreeSafeGitRef,
@@ -416,6 +418,8 @@ export type SessionOptions = {
   scheduleService: ScheduleService;
   indexingService?: IndexingService | null;
   hookService?: HookService | null;
+  commandService?: CommandService | null;
+  ruleService?: RuleService | null;
   guiMcpRegistry?: import("./library/gui-mcp-registry.js").GuiMcpRegistry | null;
   loopService: LoopService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -632,9 +636,13 @@ export class Session {
   private readonly scheduleService: ScheduleService;
   private readonly indexingService: IndexingService | null;
   private readonly hookService: HookService | null;
+  private readonly commandService: CommandService | null;
+  private readonly ruleService: RuleService | null;
   private readonly guiMcpRegistry: import("./library/gui-mcp-registry.js").GuiMcpRegistry | null;
   private unsubscribeHooksChanged: (() => void) | null = null;
   private unsubscribeHooksTelemetry: (() => void) | null = null;
+  private unsubscribeCommandsChanged: (() => void) | null = null;
+  private unsubscribeRulesChanged: (() => void) | null = null;
   private unsubscribeIndexingStatus: (() => void) | null = null;
   private unsubscribeIndexingProcessState: (() => void) | null = null;
   private unsubscribeIndexingToolsChanged: (() => void) | null = null;
@@ -712,6 +720,8 @@ export class Session {
       scheduleService,
       indexingService,
       hookService,
+      commandService,
+      ruleService,
       guiMcpRegistry,
       loopService,
       checkoutDiffManager,
@@ -746,6 +756,8 @@ export class Session {
     this.scheduleService = scheduleService;
     this.indexingService = indexingService ?? null;
     this.hookService = hookService ?? null;
+    this.commandService = commandService ?? null;
+    this.ruleService = ruleService ?? null;
     this.guiMcpRegistry = guiMcpRegistry ?? null;
     this.loopService = loopService;
     this.checkoutDiffManager = checkoutDiffManager;
@@ -911,6 +923,26 @@ export class Session {
           this.emit({ type: "hooks/changed", payload: { hookId: event.id } });
         } catch (err) {
           this.sessionLogger.warn({ err }, "Failed to emit hooks/changed (telemetry)");
+        }
+      });
+    }
+
+    if (this.commandService) {
+      this.unsubscribeCommandsChanged = this.commandService.onChange((event) => {
+        try {
+          this.emit({ type: "commands/changed", payload: { commandId: event.id } });
+        } catch (err) {
+          this.sessionLogger.warn({ err }, "Failed to emit commands/changed");
+        }
+      });
+    }
+
+    if (this.ruleService) {
+      this.unsubscribeRulesChanged = this.ruleService.onChange((event) => {
+        try {
+          this.emit({ type: "rules/changed", payload: { ruleId: event.id } });
+        } catch (err) {
+          this.sessionLogger.warn({ err }, "Failed to emit rules/changed");
         }
       });
     }
@@ -1866,6 +1898,12 @@ export class Session {
 
     await this.projectRegistry.upsert(nextProjectRecord);
     await this.workspaceRegistry.upsert(nextWorkspaceRecord);
+    // Auto-enable indexing for brand-new workspaces (no existing record or
+    // archived → "new" in practice). Safe: the service noops if any prior
+    // indexing state was persisted for this workspace id.
+    if (this.indexingService && (!existing || existing.archivedAt)) {
+      void this.indexingService.autoEnableForNewWorkspace(nextWorkspaceRecord.workspaceId);
+    }
     if (existing && existing.workspaceId !== resolvedWorkspaceId) {
       await this.workspaceRegistry.archive(existing.workspaceId, now);
       this.removeWorkspaceGitSubscription(existing.workspaceId);
@@ -2518,6 +2556,34 @@ export class Session {
             break;
           case "hooks/delete":
             await this.handleHooksDeleteRequest(msg);
+            break;
+
+          // Commands RPC
+          case "commands/list":
+            await this.handleCommandsListRequest(msg);
+            break;
+          case "commands/toggle":
+            await this.handleCommandsToggleRequest(msg);
+            break;
+          case "commands/upsert":
+            await this.handleCommandsUpsertRequest(msg);
+            break;
+          case "commands/delete":
+            await this.handleCommandsDeleteRequest(msg);
+            break;
+
+          // Rules RPC
+          case "rules/list":
+            await this.handleRulesListRequest(msg);
+            break;
+          case "rules/toggle":
+            await this.handleRulesToggleRequest(msg);
+            break;
+          case "rules/upsert":
+            await this.handleRulesUpsertRequest(msg);
+            break;
+          case "rules/delete":
+            await this.handleRulesDeleteRequest(msg);
             break;
           case "library/mcp/test":
             await this.handleLibraryMcpTestRequest(msg);
@@ -6523,6 +6589,11 @@ export class Session {
         workspaceRegistry: this.workspaceRegistry,
         archiveProjectRecordIfEmpty: (projectId, archivedAt) =>
           this.archiveProjectRecordIfEmpty(projectId, archivedAt),
+        autoEnableIndexing: this.indexingService
+          ? (workspaceId) => {
+              void this.indexingService?.autoEnableForNewWorkspace(workspaceId);
+            }
+          : undefined,
       },
       options,
     );
@@ -8170,6 +8241,14 @@ export class Session {
     if (this.unsubscribeHooksTelemetry) {
       this.unsubscribeHooksTelemetry();
       this.unsubscribeHooksTelemetry = null;
+    }
+    if (this.unsubscribeCommandsChanged) {
+      this.unsubscribeCommandsChanged();
+      this.unsubscribeCommandsChanged = null;
+    }
+    if (this.unsubscribeRulesChanged) {
+      this.unsubscribeRulesChanged();
+      this.unsubscribeRulesChanged = null;
     }
     if (this.unsubscribeHooksChanged) {
       this.unsubscribeHooksChanged();
@@ -10203,6 +10282,268 @@ export class Session {
           requestId: request.requestId,
           error: err instanceof Error ? err.message : String(err),
           hookId: request.hookId,
+        },
+      });
+    }
+  }
+
+  private async handleCommandsListRequest(
+    request: Extract<SessionInboundMessage, { type: "commands/list" }>,
+  ): Promise<void> {
+    if (!this.commandService) {
+      this.emit({
+        type: "commands/list/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Command service unavailable",
+          commands: [],
+        },
+      });
+      return;
+    }
+    try {
+      const commands = await this.commandService.list();
+      this.emit({
+        type: "commands/list/response",
+        payload: { requestId: request.requestId, error: null, commands },
+      });
+    } catch (err) {
+      this.emit({
+        type: "commands/list/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          commands: [],
+        },
+      });
+    }
+  }
+
+  private async handleCommandsToggleRequest(
+    request: Extract<SessionInboundMessage, { type: "commands/toggle" }>,
+  ): Promise<void> {
+    if (!this.commandService) {
+      this.emit({
+        type: "commands/toggle/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Command service unavailable",
+          commandId: request.commandId,
+          enabled: request.enabled,
+        },
+      });
+      return;
+    }
+    try {
+      await this.commandService.setEnabled(request.commandId, request.enabled);
+      this.emit({
+        type: "commands/toggle/response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+          commandId: request.commandId,
+          enabled: request.enabled,
+        },
+      });
+    } catch (err) {
+      this.emit({
+        type: "commands/toggle/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          commandId: request.commandId,
+          enabled: request.enabled,
+        },
+      });
+    }
+  }
+
+  private async handleCommandsUpsertRequest(
+    request: Extract<SessionInboundMessage, { type: "commands/upsert" }>,
+  ): Promise<void> {
+    if (!this.commandService) {
+      this.emit({
+        type: "commands/upsert/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Command service unavailable",
+          commandId: null,
+        },
+      });
+      return;
+    }
+    try {
+      await this.commandService.upsertUserCommand(request.command);
+      this.emit({
+        type: "commands/upsert/response",
+        payload: { requestId: request.requestId, error: null, commandId: request.command.id },
+      });
+    } catch (err) {
+      this.emit({
+        type: "commands/upsert/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          commandId: null,
+        },
+      });
+    }
+  }
+
+  private async handleCommandsDeleteRequest(
+    request: Extract<SessionInboundMessage, { type: "commands/delete" }>,
+  ): Promise<void> {
+    if (!this.commandService) {
+      this.emit({
+        type: "commands/delete/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Command service unavailable",
+          commandId: request.commandId,
+        },
+      });
+      return;
+    }
+    try {
+      await this.commandService.deleteUserCommand(request.commandId);
+      this.emit({
+        type: "commands/delete/response",
+        payload: { requestId: request.requestId, error: null, commandId: request.commandId },
+      });
+    } catch (err) {
+      this.emit({
+        type: "commands/delete/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          commandId: request.commandId,
+        },
+      });
+    }
+  }
+
+  private async handleRulesListRequest(
+    request: Extract<SessionInboundMessage, { type: "rules/list" }>,
+  ): Promise<void> {
+    if (!this.ruleService) {
+      this.emit({
+        type: "rules/list/response",
+        payload: { requestId: request.requestId, error: "Rule service unavailable", rules: [] },
+      });
+      return;
+    }
+    try {
+      const rules = await this.ruleService.list();
+      this.emit({
+        type: "rules/list/response",
+        payload: { requestId: request.requestId, error: null, rules },
+      });
+    } catch (err) {
+      this.emit({
+        type: "rules/list/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          rules: [],
+        },
+      });
+    }
+  }
+
+  private async handleRulesToggleRequest(
+    request: Extract<SessionInboundMessage, { type: "rules/toggle" }>,
+  ): Promise<void> {
+    if (!this.ruleService) {
+      this.emit({
+        type: "rules/toggle/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Rule service unavailable",
+          ruleId: request.ruleId,
+          enabled: request.enabled,
+        },
+      });
+      return;
+    }
+    try {
+      await this.ruleService.setEnabled(request.ruleId, request.enabled);
+      this.emit({
+        type: "rules/toggle/response",
+        payload: {
+          requestId: request.requestId,
+          error: null,
+          ruleId: request.ruleId,
+          enabled: request.enabled,
+        },
+      });
+    } catch (err) {
+      this.emit({
+        type: "rules/toggle/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          ruleId: request.ruleId,
+          enabled: request.enabled,
+        },
+      });
+    }
+  }
+
+  private async handleRulesUpsertRequest(
+    request: Extract<SessionInboundMessage, { type: "rules/upsert" }>,
+  ): Promise<void> {
+    if (!this.ruleService) {
+      this.emit({
+        type: "rules/upsert/response",
+        payload: { requestId: request.requestId, error: "Rule service unavailable", ruleId: null },
+      });
+      return;
+    }
+    try {
+      await this.ruleService.upsertUserRule(request.rule);
+      this.emit({
+        type: "rules/upsert/response",
+        payload: { requestId: request.requestId, error: null, ruleId: request.rule.id },
+      });
+    } catch (err) {
+      this.emit({
+        type: "rules/upsert/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          ruleId: null,
+        },
+      });
+    }
+  }
+
+  private async handleRulesDeleteRequest(
+    request: Extract<SessionInboundMessage, { type: "rules/delete" }>,
+  ): Promise<void> {
+    if (!this.ruleService) {
+      this.emit({
+        type: "rules/delete/response",
+        payload: {
+          requestId: request.requestId,
+          error: "Rule service unavailable",
+          ruleId: request.ruleId,
+        },
+      });
+      return;
+    }
+    try {
+      await this.ruleService.deleteUserRule(request.ruleId);
+      this.emit({
+        type: "rules/delete/response",
+        payload: { requestId: request.requestId, error: null, ruleId: request.ruleId },
+      });
+    } catch (err) {
+      this.emit({
+        type: "rules/delete/response",
+        payload: {
+          requestId: request.requestId,
+          error: err instanceof Error ? err.message : String(err),
+          ruleId: request.ruleId,
         },
       });
     }

@@ -88,6 +88,28 @@ import {
   HooksChangedEventSchema,
 } from "../server/hooks/rpc-schemas.js";
 import {
+  CommandsListRequestSchema,
+  CommandsListResponseSchema,
+  CommandsToggleRequestSchema,
+  CommandsToggleResponseSchema,
+  CommandsUpsertRequestSchema,
+  CommandsUpsertResponseSchema,
+  CommandsDeleteRequestSchema,
+  CommandsDeleteResponseSchema,
+  CommandsChangedEventSchema,
+} from "../server/commands/rpc-schemas.js";
+import {
+  RulesListRequestSchema,
+  RulesListResponseSchema,
+  RulesToggleRequestSchema,
+  RulesToggleResponseSchema,
+  RulesUpsertRequestSchema,
+  RulesUpsertResponseSchema,
+  RulesDeleteRequestSchema,
+  RulesDeleteResponseSchema,
+  RulesChangedEventSchema,
+} from "../server/rules/rpc-schemas.js";
+import {
   LibraryMcpTestRequestSchema,
   LibraryMcpTestResponseSchema,
   LibraryGuiSyncRequestSchema,
@@ -2218,6 +2240,14 @@ const _sessionInboundRaw: any = z.union([
   HooksToggleRequestSchema,
   HooksUpsertRequestSchema,
   HooksDeleteRequestSchema,
+  CommandsListRequestSchema,
+  CommandsToggleRequestSchema,
+  CommandsUpsertRequestSchema,
+  CommandsDeleteRequestSchema,
+  RulesListRequestSchema,
+  RulesToggleRequestSchema,
+  RulesUpsertRequestSchema,
+  RulesDeleteRequestSchema,
   LibraryMcpTestRequestSchema,
   LibraryGuiSyncRequestSchema,
 ]);
@@ -2364,6 +2394,14 @@ export type SessionInboundMessage =
   | HooksToggleRequest
   | HooksUpsertRequest
   | HooksDeleteRequest
+  | CommandsListRequest
+  | CommandsToggleRequest
+  | CommandsUpsertRequest
+  | CommandsDeleteRequest
+  | RulesListRequest
+  | RulesToggleRequest
+  | RulesUpsertRequest
+  | RulesDeleteRequest
   | LibraryMcpTestRequest
   | LibraryGuiSyncRequest;
 export const SessionInboundMessageSchema: z.ZodType<SessionInboundMessage> =
@@ -3889,6 +3927,16 @@ const _sessionOutboundRaw: any = z.union([
   HooksUpsertResponseSchema,
   HooksDeleteResponseSchema,
   HooksChangedEventSchema,
+  CommandsListResponseSchema,
+  CommandsToggleResponseSchema,
+  CommandsUpsertResponseSchema,
+  CommandsDeleteResponseSchema,
+  CommandsChangedEventSchema,
+  RulesListResponseSchema,
+  RulesToggleResponseSchema,
+  RulesUpsertResponseSchema,
+  RulesDeleteResponseSchema,
+  RulesChangedEventSchema,
   LibraryMcpTestResponseSchema,
   LibraryGuiSyncResponseSchema,
 ]);
@@ -4039,6 +4087,16 @@ export type SessionOutboundMessage =
   | HooksUpsertResponse
   | HooksDeleteResponse
   | HooksChangedEvent
+  | CommandsListResponse
+  | CommandsToggleResponse
+  | CommandsUpsertResponse
+  | CommandsDeleteResponse
+  | CommandsChangedEvent
+  | RulesListResponse
+  | RulesToggleResponse
+  | RulesUpsertResponse
+  | RulesDeleteResponse
+  | RulesChangedEvent
   | LibraryMcpTestResponse
   | LibraryGuiSyncResponse
   | IndexingToolsListResponse;
@@ -4226,6 +4284,24 @@ export type HooksUpsertResponse = z.infer<typeof HooksUpsertResponseSchema>;
 export type HooksDeleteRequest = z.infer<typeof HooksDeleteRequestSchema>;
 export type HooksDeleteResponse = z.infer<typeof HooksDeleteResponseSchema>;
 export type HooksChangedEvent = z.infer<typeof HooksChangedEventSchema>;
+export type CommandsListRequest = z.infer<typeof CommandsListRequestSchema>;
+export type CommandsListResponse = z.infer<typeof CommandsListResponseSchema>;
+export type CommandsToggleRequest = z.infer<typeof CommandsToggleRequestSchema>;
+export type CommandsToggleResponse = z.infer<typeof CommandsToggleResponseSchema>;
+export type CommandsUpsertRequest = z.infer<typeof CommandsUpsertRequestSchema>;
+export type CommandsUpsertResponse = z.infer<typeof CommandsUpsertResponseSchema>;
+export type CommandsDeleteRequest = z.infer<typeof CommandsDeleteRequestSchema>;
+export type CommandsDeleteResponse = z.infer<typeof CommandsDeleteResponseSchema>;
+export type CommandsChangedEvent = z.infer<typeof CommandsChangedEventSchema>;
+export type RulesListRequest = z.infer<typeof RulesListRequestSchema>;
+export type RulesListResponse = z.infer<typeof RulesListResponseSchema>;
+export type RulesToggleRequest = z.infer<typeof RulesToggleRequestSchema>;
+export type RulesToggleResponse = z.infer<typeof RulesToggleResponseSchema>;
+export type RulesUpsertRequest = z.infer<typeof RulesUpsertRequestSchema>;
+export type RulesUpsertResponse = z.infer<typeof RulesUpsertResponseSchema>;
+export type RulesDeleteRequest = z.infer<typeof RulesDeleteRequestSchema>;
+export type RulesDeleteResponse = z.infer<typeof RulesDeleteResponseSchema>;
+export type RulesChangedEvent = z.infer<typeof RulesChangedEventSchema>;
 export type LibraryMcpTestRequest = z.infer<typeof LibraryMcpTestRequestSchema>;
 export type LibraryMcpTestResponse = z.infer<typeof LibraryMcpTestResponseSchema>;
 export type LibraryGuiSyncRequest = z.infer<typeof LibraryGuiSyncRequestSchema>;

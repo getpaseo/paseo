@@ -64,7 +64,7 @@ export function ImageLightbox() {
           ) : null}
           {media?.kind === "video" ? <VideoPlayer url={media.url} /> : null}
         </Pressable>
-        <View style={styles.topBar} pointerEvents="box-none">
+        <View style={[styles.topBar, { pointerEvents: "box-none" }]}>
           {media ? (
             <Text style={styles.filename} numberOfLines={1}>
               {media.filename}

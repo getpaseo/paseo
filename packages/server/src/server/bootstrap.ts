@@ -109,6 +109,9 @@ import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { IndexingService } from "./indexing/service.js";
 import { HookService } from "./hooks/service.js";
+import { CommandService } from "./commands/service.js";
+import { RuleService } from "./rules/service.js";
+import { listCliProviders } from "../shared/cli-provider-registry.js";
 import { createWorkspaceIndexingAdapter } from "./indexing/workspace-adapter.js";
 import { createHubcodeLocalInference } from "./indexing/hubcode-local-inference.js";
 import { CrgProcessManager } from "./indexing/process-manager.js";
@@ -399,6 +402,49 @@ export async function createHubcodeDaemon(
       .init()
       .catch((err) => logger.warn({ err }, "Hook service init failed; hooks will be inactive"));
     logger.info({ elapsed: elapsed() }, "Hook service initialized");
+
+    const commandService = new CommandService({
+      logger,
+      hubcodeHome: config.hubcodeHome,
+      resolveActiveAgents: async () => {
+        // Built-in GUI target is always on; CLI providers follow daemon config.
+        const active = new Set<string>(["hubcode-gui"]);
+        try {
+          const overrides = config.cliProviderOverrides;
+          const providers = listCliProviders({ overrides });
+          for (const p of providers) active.add(p.id);
+        } catch (err) {
+          logger.debug({ err }, "Failed to enumerate active CLI providers");
+        }
+        return active;
+      },
+    });
+    await commandService
+      .init()
+      .catch((err) =>
+        logger.warn({ err }, "Command service init failed; commands will be inactive"),
+      );
+    logger.info({ elapsed: elapsed() }, "Command service initialized");
+
+    const ruleService = new RuleService({
+      logger,
+      hubcodeHome: config.hubcodeHome,
+      resolveActiveAgents: async () => {
+        const active = new Set<string>(["hubcode-gui"]);
+        try {
+          const overrides = config.cliProviderOverrides;
+          const providers = listCliProviders({ overrides });
+          for (const p of providers) active.add(p.id);
+        } catch (err) {
+          logger.debug({ err }, "Failed to enumerate active CLI providers for rules");
+        }
+        return active;
+      },
+    });
+    await ruleService
+      .init()
+      .catch((err) => logger.warn({ err }, "Rule service init failed; rules will be inactive"));
+    logger.info({ elapsed: elapsed() }, "Rule service initialized");
 
     const agentManager = new AgentManager({
       clients: {
@@ -1210,6 +1256,8 @@ export async function createHubcodeDaemon(
               indexingService,
               hookService,
               guiMcpRegistry,
+              commandService,
+              ruleService,
             );
 
             if (typeof process.send === "function" && process.env.HUBCODE_SUPERVISED === "1") {

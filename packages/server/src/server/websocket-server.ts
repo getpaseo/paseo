@@ -14,6 +14,8 @@ import type { LoopService } from "./loop-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { IndexingService } from "./indexing/service.js";
 import type { HookService } from "./hooks/service.js";
+import type { CommandService } from "./commands/service.js";
+import type { RuleService } from "./rules/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
 import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
 import {
@@ -299,6 +301,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly scheduleService: ScheduleService;
   private readonly indexingService: IndexingService | null;
   private readonly hookService: HookService | null;
+  private readonly commandService: CommandService | null;
+  private readonly ruleService: RuleService | null;
   private readonly guiMcpRegistry: import("./library/gui-mcp-registry.js").GuiMcpRegistry | null;
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly workspaceGitService: WorkspaceGitServiceImpl;
@@ -378,6 +382,8 @@ export class VoiceAssistantWebSocketServer {
     indexingService?: IndexingService,
     hookService?: HookService | null,
     guiMcpRegistry?: import("./library/gui-mcp-registry.js").GuiMcpRegistry | null,
+    commandService?: CommandService | null,
+    ruleService?: RuleService | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -407,6 +413,8 @@ export class VoiceAssistantWebSocketServer {
     this.checkoutDiffManager = checkoutDiffManager;
     this.indexingService = indexingService ?? null;
     this.hookService = hookService ?? null;
+    this.commandService = commandService ?? null;
+    this.ruleService = ruleService ?? null;
     this.guiMcpRegistry = guiMcpRegistry ?? null;
     this.workspaceGitService = new WorkspaceGitServiceImpl({
       logger: this.logger,
@@ -725,6 +733,8 @@ export class VoiceAssistantWebSocketServer {
       scheduleService: this.scheduleService,
       indexingService: this.indexingService,
       hookService: this.hookService,
+      commandService: this.commandService,
+      ruleService: this.ruleService,
       guiMcpRegistry: this.guiMcpRegistry,
       checkoutDiffManager: this.checkoutDiffManager,
       workspaceGitService: this.workspaceGitService,
