@@ -31,6 +31,21 @@ export async function persistAttachmentFromDataUrl(input: {
   });
 }
 
+export async function persistAttachmentFromBase64(input: {
+  base64: string;
+  mimeType?: string;
+  fileName?: string | null;
+  id?: string;
+}): Promise<AttachmentMetadata> {
+  const store = await getAttachmentStore();
+  return await store.save({
+    id: input.id,
+    mimeType: input.mimeType,
+    fileName: input.fileName,
+    source: { kind: "base64", base64: input.base64 },
+  });
+}
+
 export async function persistAttachmentFromFileUri(input: {
   uri: string;
   mimeType?: string;

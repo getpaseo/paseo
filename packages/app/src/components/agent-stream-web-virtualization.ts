@@ -1,8 +1,13 @@
 import type { StreamItem } from "@/types/stream";
-import { estimateAssistantMessageHeightFromCache } from "@/utils/assistant-image-metadata";
+import { estimateAssistantMessageHeightFromCache } from "@/utils/assistant-message-height-estimate";
 
 export const DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 100;
 export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = 50;
+// Tool calls and thoughts collapse to a single-line summary row by default.
+// A single tight estimate for both prevents virtualization from over-reserving
+// space for rows that are actually tiny — which is what makes the timeline
+// visibly "jump" as real heights arrive. (Paseo commit 0c3d15f.)
+const COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE = 40;
 
 type BottomAnchorE2ETestGlobals = typeof globalThis & {
   __HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
@@ -48,9 +53,9 @@ export function estimateStreamItemHeight(item: StreamItem): number {
     case "assistant_message":
       return estimateAssistantMessageHeightFromCache(item.text) ?? 220;
     case "tool_call":
-      return 136;
+      return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
     case "thought":
-      return 112;
+      return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
     case "todo_list":
       return 144;
     case "activity_log":

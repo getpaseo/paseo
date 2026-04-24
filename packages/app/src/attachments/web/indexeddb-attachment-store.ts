@@ -96,6 +96,18 @@ async function sourceToBlob(input: SaveAttachmentInput): Promise<{ blob: Blob; m
     };
   }
 
+  if (source.kind === "base64") {
+    const mimeType = normalizeMimeType(input.mimeType);
+    // Use a data URL to leverage fetch for base64-to-blob — avoids atob +
+    // manual Uint8Array allocation. (Paseo commit 4140e64.)
+    const response = await fetch(`data:${mimeType};base64,${source.base64}`);
+    const blob = await response.blob();
+    return {
+      blob: blob.type === mimeType ? blob : blob.slice(0, blob.size, mimeType),
+      mimeType,
+    };
+  }
+
   const response = await fetch(source.uri);
   const blob = await response.blob();
   const mimeType = normalizeMimeType(input.mimeType ?? blob.type);

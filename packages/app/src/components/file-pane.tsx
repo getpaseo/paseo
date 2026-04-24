@@ -24,6 +24,10 @@ import { getIsElectron, isWeb } from "@/constants/platform";
 import { MonacoFileEditor } from "@/components/monaco-file-editor";
 import { makeDirtyKey, useFileEditorStore } from "@/stores/file-editor-store";
 import { useToast } from "@/contexts/toast-context";
+import type { AttachmentMetadata } from "@/attachments/types";
+import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import { persistAttachmentFromBase64 } from "@/attachments/service";
+import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -42,6 +46,33 @@ interface FilePreviewBodyProps {
   isElectron: boolean;
   onSave: (content: string) => void;
   onDirtyChange: (isDirty: boolean) => void;
+  imagePreviewUri: string | null;
+}
+
+async function createFilePanePreview(file: ExplorerFile | null): Promise<{
+  file: ExplorerFile | null;
+  imageAttachment: AttachmentMetadata | null;
+}> {
+  if (!file || file.kind !== "image" || !file.content) {
+    return { file, imageAttachment: null };
+  }
+
+  const { content: _content, ...imageFile } = file;
+  const imageAttachment = await persistAttachmentFromBase64({
+    id: createPreviewAttachmentId({
+      base64: file.content,
+      mimeType: file.mimeType ?? "image/png",
+      path: file.path,
+    }),
+    base64: file.content,
+    mimeType: file.mimeType,
+    fileName: getFileNameFromPath(file.path),
+  });
+
+  return {
+    file: imageFile,
+    imageAttachment,
+  };
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -121,6 +152,7 @@ function FilePreviewBody({
   isElectron,
   onSave,
   onDirtyChange,
+  imagePreviewUri,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
   const isDark = theme.colorScheme === "dark";
@@ -222,7 +254,15 @@ function FilePreviewBody({
     );
   }
 
-  if (preview.kind === "image" && preview.content) {
+  if (preview.kind === "image") {
+    if (!imagePreviewUri) {
+      return (
+        <View style={styles.centerState}>
+          <ActivityIndicator size="small" />
+          <Text style={styles.loadingText}>Loading file…</Text>
+        </View>
+      );
+    }
     return (
       <View style={styles.previewScrollContainer}>
         <RNScrollView
@@ -236,9 +276,7 @@ function FilePreviewBody({
           showsVerticalScrollIndicator={!showDesktopWebScrollbar}
         >
           <RNImage
-            source={{
-              uri: `data:${preview.mimeType ?? "image/png"};base64,${preview.content}`,
-            }}
+            source={{ uri: imagePreviewUri }}
             style={styles.previewImage}
             resizeMode="contain"
           />
@@ -293,14 +331,26 @@ export function FilePane({
     enabled: Boolean(client && normalizedWorkspaceRoot && normalizedFilePath),
     queryFn: async () => {
       if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
-        return { file: null as ExplorerFile | null, error: "Host is not connected" };
+        return {
+          file: null as ExplorerFile | null,
+          imageAttachment: null as AttachmentMetadata | null,
+          error: "Host is not connected",
+        };
       }
       const payload = await client.exploreFileSystem(
         normalizedWorkspaceRoot,
         normalizedFilePath,
         "file",
       );
-      return { file: payload.file ?? null, error: payload.error ?? null };
+      // Persist image file previews as attachments so the renderer reads from
+      // a stable URL (object-URL or file://) instead of holding a huge base64
+      // string in memory. (Paseo commit 4140e64.)
+      const preview = await createFilePanePreview(payload.file ?? null);
+      return {
+        file: preview.file,
+        imageAttachment: preview.imageAttachment,
+        error: payload.error ?? null,
+      };
     },
     // Always refetch when the pane mounts with a new file path — cached
     // content from a previous open was showing stale data when the file had
@@ -330,6 +380,8 @@ export function FilePane({
     },
   });
 
+  const imagePreviewUri = useAttachmentPreviewUrl(query.data?.imageAttachment ?? null);
+
   return (
     <View style={styles.container} testID="workspace-file-pane">
       {query.data?.error ? (
@@ -347,6 +399,7 @@ export function FilePane({
         isElectron={isElectron}
         onSave={writeMutation.mutate}
         onDirtyChange={handleDirtyChange}
+        imagePreviewUri={imagePreviewUri}
       />
     </View>
   );

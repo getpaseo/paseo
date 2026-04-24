@@ -76,16 +76,23 @@ import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { markScrollInvestigationEvent } from "@/utils/scroll-jank-investigation";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
 import {
   getAssistantImageMetadata,
   setAssistantImageMetadata,
 } from "@/utils/assistant-image-metadata";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
+import {
+  createPreviewAttachmentId,
+  getFileNameFromPath,
+  parseImageDataUrl,
+} from "@/attachments/utils";
 export type { InlinePathTarget } from "@/utils/inline-path";
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import { persistAttachmentFromBase64, persistAttachmentFromDataUrl } from "@/attachments/service";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 
@@ -634,6 +641,7 @@ function AssistantMarkdownImage({
     () => resolveAssistantImageSource({ source, workspaceRoot }),
     [source, workspaceRoot],
   );
+  const dataImage = useMemo(() => parseImageDataUrl(source), [source]);
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
     () => ({
       marginTop: hasLeadingContent ? theme.spacing[4] : 0,
@@ -660,16 +668,46 @@ function AssistantMarkdownImage({
       if (payload.error) {
         throw new Error(payload.error);
       }
-      if (!payload.file || payload.file.kind !== "image" || !payload.file.content) {
+      const file = payload.file;
+      if (!file || file.kind !== "image" || !file.content) {
         throw new Error("Image preview unavailable.");
       }
 
-      return `data:${payload.file.mimeType ?? "image/png"};base64,${payload.file.content}`;
+      // Persist as a local attachment so the image survives scroll/virt
+      // unmount without re-fetching, and the file pane can open it.
+      // (Paseo commit 4140e64.)
+      return await persistAttachmentFromBase64({
+        id: createPreviewAttachmentId({
+          base64: file.content,
+          mimeType: file.mimeType ?? "image/png",
+          path: file.path || resolution.path,
+        }),
+        base64: file.content,
+        mimeType: file.mimeType,
+        fileName: getFileNameFromPath(file.path || resolution.path),
+      });
+    },
+  });
+  const dataImageQuery = useQuery({
+    queryKey: ["assistantMarkdownDataImage", dataImage?.cacheKey ?? null],
+    enabled: dataImage !== null,
+    staleTime: 30_000,
+    queryFn: async () => {
+      if (!dataImage) {
+        return null;
+      }
+      return await persistAttachmentFromDataUrl({
+        id: createPreviewAttachmentId(dataImage),
+        dataUrl: source,
+        mimeType: dataImage.mimeType,
+      });
     },
   });
 
-  const directUri = resolution?.kind === "direct" ? resolution.uri : null;
-  const resolvedUri = directUri ?? query.data ?? null;
+  const fileAssetUri = useAttachmentPreviewUrl(query.data);
+  const dataImageAssetUri = useAttachmentPreviewUrl(dataImageQuery.data);
+  const directUri = resolution?.kind === "direct" && !dataImage ? resolution.uri : null;
+  const resolvedUri = directUri ?? dataImageAssetUri ?? fileAssetUri ?? null;
 
   if (resolvedUri) {
     return (
@@ -684,7 +722,7 @@ function AssistantMarkdownImage({
     );
   }
 
-  if (query.isLoading) {
+  if (query.isLoading || dataImageQuery.isLoading) {
     return (
       <View
         style={[
@@ -707,7 +745,11 @@ function AssistantMarkdownImage({
       ]}
     >
       <Text style={assistantMessageStylesheet.imageErrorText}>
-        {query.error instanceof Error ? query.error.message : "Unable to load image preview."}
+        {query.error instanceof Error
+          ? query.error.message
+          : dataImageQuery.error instanceof Error
+            ? dataImageQuery.error.message
+            : "Unable to load image preview."}
       </Text>
     </View>
   );
@@ -1235,9 +1277,10 @@ export const AssistantMessage = memo(function AssistantMessage({
       ]}
     >
       {blocks.map((block, index) => (
-        <View
+        <AssistantMessageBlockContainer
           key={index}
-          style={index < blocks.length - 1 ? { marginBottom: theme.spacing[3] } : undefined}
+          block={block}
+          marginBottom={index < blocks.length - 1 ? theme.spacing[3] : 0}
         >
           <MemoizedMarkdownBlock
             text={block}
@@ -1246,11 +1289,41 @@ export const AssistantMessage = memo(function AssistantMessage({
             parser={markdownParser}
             onLinkPress={handleLinkPress}
           />
-        </View>
+        </AssistantMessageBlockContainer>
       ))}
     </View>
   );
 });
+
+interface AssistantMessageBlockContainerProps {
+  block: string;
+  marginBottom: number;
+  children: ReactNode;
+}
+
+// Measures rendered block height on web and feeds it back into the estimate
+// cache so the virtualization can reserve accurate space on re-render. This
+// is what stops the timeline from "jumping" as real heights arrive. (Paseo
+// commit 0c3d15f.)
+function AssistantMessageBlockContainer({
+  block,
+  marginBottom,
+  children,
+}: AssistantMessageBlockContainerProps) {
+  const style = useMemo(() => (marginBottom > 0 ? { marginBottom } : undefined), [marginBottom]);
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const { width, height } = event.nativeEvent.layout;
+      setAssistantMarkdownBlockHeight({ block, width, height });
+    },
+    [block],
+  );
+  return (
+    <View style={style} onLayout={isWeb ? handleLayout : undefined}>
+      {children}
+    </View>
+  );
+}
 
 interface SpeakMessageProps {
   message: string;

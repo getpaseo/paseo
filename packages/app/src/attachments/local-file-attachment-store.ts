@@ -72,6 +72,13 @@ async function writeFromSource(input: {
     return;
   }
 
+  if (input.source.kind === "base64") {
+    await FileSystem.writeAsStringAsync(input.targetUri, input.source.base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return;
+  }
+
   const base64 = await blobToBase64(input.source.blob);
   await FileSystem.writeAsStringAsync(input.targetUri, base64, {
     encoding: FileSystem.EncodingType.Base64,
@@ -112,7 +119,7 @@ export function createLocalFileAttachmentStore(params: {
         ? parseDataUrl(input.source.dataUrl).mimeType
         : input.source.kind === "blob"
           ? input.source.blob.type
-          : undefined;
+          : undefined; // base64 and file_uri: rely on input.mimeType
     const mimeType = normalizeMimeType(input.mimeType ?? mimeTypeFromSource);
     const fileName = input.fileName ?? null;
     const extension = extensionForAttachment({ fileName, mimeType });

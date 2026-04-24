@@ -14,11 +14,17 @@ export function normalizeMimeType(input: string | undefined | null): string {
 }
 
 export function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
-  const match = /^data:([^;,]+)?;base64,(.+)$/i.exec(dataUrl);
+  const match = /^data:([^,]*),([\s\S]+)$/i.exec(dataUrl.trim());
   if (!match) {
     throw new Error("Malformed data URL for attachment.");
   }
-  const [, mimeTypeRaw, base64] = match;
+  const metadata = match[1] ?? "";
+  const base64 = match[2]?.replace(/\s/g, "");
+  const [mimeTypeRaw, ...parameters] = metadata.split(";").map((part) => part.trim());
+  const isBase64 = parameters.some((part) => part.toLowerCase() === "base64");
+  if (!isBase64) {
+    throw new Error("Attachment data URL is not base64 encoded.");
+  }
   if (!base64) {
     throw new Error("Attachment data URL is missing base64 payload.");
   }
@@ -26,6 +32,61 @@ export function parseDataUrl(dataUrl: string): { mimeType: string; base64: strin
     mimeType: normalizeMimeType(mimeTypeRaw),
     base64,
   };
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+export function parseImageDataUrl(
+  uri: string,
+): { mimeType: string; base64: string; cacheKey: string } | null {
+  if (!uri.trim().toLowerCase().startsWith("data:image/")) {
+    return null;
+  }
+
+  try {
+    const parsed = parseDataUrl(uri);
+    if (!parsed.mimeType.toLowerCase().startsWith("image/")) {
+      return null;
+    }
+    return {
+      ...parsed,
+      cacheKey: `data-image:${parsed.mimeType}:${parsed.base64.length}:${hashString(parsed.base64)}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function createImageSourceCacheKey(source: string): string {
+  return parseImageDataUrl(source)?.cacheKey ?? source;
+}
+
+export function getFileNameFromPath(path: string | null | undefined): string | null {
+  const trimmed = path?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+  const fileName = normalized.split("/").pop()?.trim();
+  return fileName || null;
+}
+
+export function createPreviewAttachmentId(input: {
+  base64: string;
+  mimeType: string;
+  path?: string | null;
+}): string {
+  const path = input.path?.trim() ?? "";
+  const hash = hashString(`${input.mimeType}\0${path}\0${input.base64}`);
+  return `preview_${input.base64.length}_${hash}`;
 }
 
 export async function blobToBase64(blob: Blob): Promise<string> {

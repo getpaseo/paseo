@@ -166,6 +166,15 @@ export function createDesktopAttachmentStore(): AttachmentStore {
         });
       }
 
+      if (input.source.kind === "base64") {
+        return await saveDesktopAttachmentFromBase64({
+          id,
+          base64: input.source.base64,
+          mimeType: normalizeMimeType(input.mimeType),
+          fileName,
+        });
+      }
+
       const mimeType = normalizeMimeType(input.mimeType ?? input.source.blob.type);
       const base64 = await blobToBase64(input.source.blob);
       return await saveDesktopAttachmentFromBase64({
