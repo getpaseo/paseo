@@ -456,9 +456,7 @@ function extractRawInput(record: Record<string, unknown>): unknown {
   return record;
 }
 
-async function buildMigratedDraftRecord(
-  parsed: Record<string, unknown>,
-): Promise<DraftRecord> {
+async function buildMigratedDraftRecord(parsed: Record<string, unknown>): Promise<DraftRecord> {
   return {
     input: await migrateDraftInput({ rawInput: extractRawInput(parsed) }),
     lifecycle: resolvePersistedLifecycle(parsed.lifecycle),
