@@ -521,10 +521,7 @@ async function startRelay(): Promise<number> {
   );
 }
 
-function startMetro(
-  metroPort: number,
-  buffer: ReturnType<typeof createLineBuffer>,
-): ChildProcess {
+function startMetro(metroPort: number, buffer: ReturnType<typeof createLineBuffer>): ChildProcess {
   const appDir = path.resolve(__dirname, "..");
   const child = spawn("npx", ["expo", "start", "--web", "--port", String(metroPort)], {
     cwd: appDir,

@@ -78,5 +78,13 @@
     "complexity": ["warn", { "max": 20 }],
     "max-depth": ["warn", { "max": 4 }],
     "max-nested-callbacks": ["warn", { "max": 3 }]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["**/e2e/fixtures.ts"],
+      "rules": {
+        "no-empty-pattern": "off"
+      }
+    }
+  ]
 }

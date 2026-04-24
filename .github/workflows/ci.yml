@@ -24,6 +24,22 @@ jobs:
       - name: Check formatting
         run: npx oxfmt --check .
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Lint
+        run: npm run lint
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
