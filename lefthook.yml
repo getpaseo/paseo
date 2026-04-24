@@ -1,9 +1,13 @@
 pre-commit:
-  parallel: true
-  commands:
-    format:
-      run: npm run format:check
-    lint:
-      run: npm run lint
-    typecheck:
-      run: npm run typecheck
+  jobs:
+    - name: format
+      run: npm run format
+      stage_fixed: true
+    - name: checks
+      group:
+        parallel: true
+        jobs:
+          - name: lint
+            run: npm run lint
+          - name: typecheck
+            run: npm run typecheck
