@@ -20,8 +20,9 @@ import {
   useRef,
   type ReactElement,
   type MutableRefObject,
+  type Ref,
 } from "react";
-import { router, usePathname } from "expo-router";
+import { router, usePathname, type Href } from "expo-router";
 import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { type GestureType } from "react-native-gesture-handler";
@@ -772,7 +773,7 @@ function useLongPressDragInteraction(input: {
   );
 
   const handleTouchMove = useCallback(
-    (event: any) => {
+    (event: GestureResponderEvent) => {
       const start = touchStartRef.current;
       if (!start || didStartDragRef.current || menuOpenedRef.current) {
         return;
@@ -862,7 +863,7 @@ function ProjectHeaderRow({
       return;
     }
     router.navigate(
-      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, { displayName }) as any,
+      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, { displayName }) as Href,
     );
     onWorkspacePress?.();
   }, [displayName, onWorkspacePress, project.iconWorkingDir, serverId]);
@@ -978,9 +979,9 @@ function ProjectHeaderRow({
   if (menuController) {
     return (
       <View
-        {...(dragHandleProps?.attributes as any)}
-        {...(dragHandleProps?.listeners as any)}
-        ref={dragHandleProps?.setActivatorNodeRef as any}
+        {...dragHandleProps?.attributes}
+        {...dragHandleProps?.listeners}
+        ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
@@ -1001,9 +1002,9 @@ function ProjectHeaderRow({
 
   return (
     <View
-      {...(dragHandleProps?.attributes as any)}
-      {...(dragHandleProps?.listeners as any)}
-      ref={dragHandleProps?.setActivatorNodeRef as any}
+      {...dragHandleProps?.attributes}
+      {...dragHandleProps?.listeners}
+      ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
@@ -1111,9 +1112,9 @@ function WorkspaceRowInner({
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
       <View
-        {...(dragHandleProps?.attributes as any)}
-        {...(dragHandleProps?.listeners as any)}
-        ref={dragHandleProps?.setActivatorNodeRef as any}
+        {...dragHandleProps?.attributes}
+        {...dragHandleProps?.listeners}
+        ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
         style={styles.workspaceRowContainer}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
