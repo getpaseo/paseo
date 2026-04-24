@@ -663,7 +663,7 @@ export function Composer({
         return prev.filter((_, i) => i !== index);
       });
     },
-    [deleteAttachments, setSelectedAttachments],
+    [setSelectedAttachments],
   );
 
   const handleOpenAttachment = useCallback((attachment: ComposerAttachment) => {
@@ -848,6 +848,17 @@ export function Composer({
     [isConnected, isCancellingAgent],
   );
 
+  const isVoiceSwitching = voice?.isVoiceSwitching ?? false;
+  const voiceButtonDisabled = !isConnected || isVoiceSwitching;
+  const realtimeVoiceButtonStyle = useCallback(
+    ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.realtimeVoiceButton as object,
+      (Boolean(hovered) ? styles.iconButtonHovered : undefined) as object | undefined,
+      (voiceButtonDisabled ? styles.buttonDisabled : undefined) as object | undefined,
+    ],
+    [voiceButtonDisabled],
+  );
+
   const cancelButton = useMemo(
     () =>
       isAgentRunning && !hasSendableContent && !isProcessing ? (
@@ -878,6 +889,7 @@ export function Composer({
     [
       agentInterruptKeys,
       buttonIconSize,
+      cancelButtonStyle,
       handleCancelAgent,
       hasSendableContent,
       isAgentRunning,
@@ -930,6 +942,7 @@ export function Composer({
       cancelButton,
       handleToggleRealtimeVoice,
       isConnected,
+      realtimeVoiceButtonStyle,
       showVoiceModeButton,
       theme.colors.foreground,
       theme.colors.foregroundMuted,
@@ -975,7 +988,8 @@ export function Composer({
     staleTime: 30_000,
   });
 
-  const githubSearchItems = githubSearchResultsQuery.data?.items ?? [];
+  const githubSearchItemsRaw = githubSearchResultsQuery.data?.items;
+  const githubSearchItems = useMemo(() => githubSearchItemsRaw ?? [], [githubSearchItemsRaw]);
   const githubSearchOptions: ComboboxOption[] = useMemo(
     () =>
       githubSearchItems.map((item) => ({
@@ -1099,17 +1113,6 @@ export function Composer({
       );
     },
     [githubSearchItems, selectedAttachments, handleToggleGithubItem],
-  );
-
-  const isVoiceSwitching = voice?.isVoiceSwitching ?? false;
-  const voiceButtonDisabled = !isConnected || isVoiceSwitching;
-  const realtimeVoiceButtonStyle = useCallback(
-    ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.realtimeVoiceButton as object,
-      (Boolean(hovered) ? styles.iconButtonHovered : undefined) as object | undefined,
-      (voiceButtonDisabled ? styles.buttonDisabled : undefined) as object | undefined,
-    ],
-    [voiceButtonDisabled],
   );
 
   const composerContainerStyle = useMemo(
