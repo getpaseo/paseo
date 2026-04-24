@@ -395,20 +395,17 @@ function WorkspaceStatusIndicator({
       ? EMPHASIZED_STATUS_DOT_OFFSET
       : DEFAULT_STATUS_DOT_OFFSET;
 
-  const statusDotOverlayStyle = useMemo(
-    () => [
-      styles.statusDotOverlay,
-      {
-        backgroundColor: dotColor ?? undefined,
-        borderColor: theme.colors.surface0,
-        width: statusDotSize,
-        height: statusDotSize,
-        right: statusDotOffset,
-        bottom: statusDotOffset,
-      },
-    ],
-    [dotColor, theme.colors.surface0, statusDotSize, statusDotOffset],
-  );
+  const statusDotOverlayStyle = [
+    styles.statusDotOverlay,
+    {
+      backgroundColor: dotColor ?? undefined,
+      borderColor: theme.colors.surface0,
+      width: statusDotSize,
+      height: statusDotSize,
+      right: statusDotOffset,
+      bottom: statusDotOffset,
+    },
+  ];
 
   return (
     <View style={styles.workspaceStatusDot}>
@@ -451,7 +448,7 @@ function ProjectLeadingVisual({
     );
   }
 
-  const iconSource = useMemo(() => ({ uri: iconDataUri ?? "" }), [iconDataUri]);
+  const iconSource = { uri: iconDataUri ?? "" };
   const projectIcon = iconDataUri ? (
     <Image source={iconSource} style={styles.projectIcon} />
   ) : (
@@ -508,20 +505,17 @@ function ProjectLeadingVisual({
       ? EMPHASIZED_STATUS_DOT_OFFSET
       : DEFAULT_STATUS_DOT_OFFSET;
 
-  const projectStatusDotOverlayStyle = useMemo(
-    () => [
-      styles.statusDotOverlay,
-      {
-        backgroundColor: dotColor ?? "transparent",
-        borderColor: theme.colors.surface0,
-        width: statusDotSize,
-        height: statusDotSize,
-        right: statusDotOffset,
-        bottom: statusDotOffset,
-      },
-    ],
-    [dotColor, theme.colors.surface0, statusDotSize, statusDotOffset],
-  );
+  const projectStatusDotOverlayStyle = [
+    styles.statusDotOverlay,
+    {
+      backgroundColor: dotColor ?? "transparent",
+      borderColor: theme.colors.surface0,
+      width: statusDotSize,
+      height: statusDotSize,
+      right: statusDotOffset,
+      bottom: statusDotOffset,
+    },
+  ];
 
   return (
     <View style={styles.projectLeadingVisualSlot}>
@@ -719,7 +713,7 @@ function useLongPressDragInteraction(input: {
       void Haptics.selectionAsync().catch(() => {});
       openContextMenuAtStartPoint();
     }, CONTEXT_MENU_DELAY_MS);
-  }, [clearTimers, input.menuController, openContextMenuAtStartPoint]);
+  }, [clearTimers, input, openContextMenuAtStartPoint]);
 
   const handleDragIntent = useCallback(
     (_details: { dx: number; dy: number; distance: number }) => {
@@ -2122,11 +2116,12 @@ export function SidebarWorkspaceList({
   }, [projectIconQueries, projectIconRequests, projects, serverId]);
 
   useEffect(() => {
+    const timeouts = creatingWorkspaceTimeoutsRef.current;
     return () => {
-      for (const timeout of creatingWorkspaceTimeoutsRef.current.values()) {
+      for (const timeout of timeouts.values()) {
         clearTimeout(timeout);
       }
-      creatingWorkspaceTimeoutsRef.current.clear();
+      timeouts.clear();
     };
   }, []);
 
