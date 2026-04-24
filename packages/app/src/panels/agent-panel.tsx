@@ -50,6 +50,31 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { mergePendingCreateImages } from "@/utils/pending-create-images";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 
+interface ChatAgentStateShape {
+  serverId: string | null;
+  id: string | null;
+  status: Agent["status"] | null;
+  cwd: string | null;
+  lastError?: Agent["lastError"] | null;
+}
+
+function buildChatAgentFromState(
+  state: ChatAgentStateShape,
+  projectPlacement: Agent["projectPlacement"] | null,
+): AgentScreenAgent | null {
+  if (!state.serverId || !state.id || !state.status || !state.cwd) {
+    return null;
+  }
+  return {
+    serverId: state.serverId,
+    id: state.id,
+    status: state.status,
+    cwd: state.cwd,
+    lastError: state.lastError ?? null,
+    projectPlacement,
+  };
+}
+
 function formatProviderLabel(provider: Agent["provider"]): string {
   if (!provider) {
     return "Agent";
@@ -674,17 +699,7 @@ function ChatAgentContent({
   const canFinalizePendingCreate = Boolean(authoritativeStatus) && !isAuthoritativeBootstrapping;
 
   const agent = useMemo<AgentScreenAgent | null>(
-    () =>
-      agentState.serverId && agentState.id && agentState.status && agentState.cwd
-        ? {
-            serverId: agentState.serverId,
-            id: agentState.id,
-            status: agentState.status,
-            cwd: agentState.cwd,
-            lastError: agentState.lastError ?? null,
-            projectPlacement,
-          }
-        : null,
+    () => buildChatAgentFromState(agentState, projectPlacement),
     [
       agentState.serverId,
       agentState.id,
