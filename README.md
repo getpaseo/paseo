@@ -118,7 +118,6 @@ npm run dev
 npm run dev:server
 npm run dev:app
 npm run dev:desktop
-npm run dev:website
 
 # build the daemon
 npm run build:daemon

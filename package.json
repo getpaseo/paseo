@@ -8,7 +8,6 @@
     "packages/server",
     "packages/app",
     "packages/relay",
-    "packages/website",
     "packages/desktop",
     "packages/cli"
   ],
@@ -16,7 +15,6 @@
     "dev": "./scripts/dev.sh",
     "dev:server": "npm run dev --workspace=@hubcode/server",
     "dev:app": "npm run start --workspace=@hubcode/app",
-    "dev:website": "npm run dev --workspace=@hubcode/website",
     "postinstall": "node scripts/postinstall-patches.mjs",
     "build": "npm run build --workspaces --if-present",
     "build:highlight": "npm run build --workspace=@hubcode/highlight",
