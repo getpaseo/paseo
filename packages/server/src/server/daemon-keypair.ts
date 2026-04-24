@@ -10,7 +10,7 @@ import {
   importPublicKey,
   importSecretKey,
   type KeyPair,
-} from "@hubtool/relay/e2ee";
+} from "@hubcode/relay/e2ee";
 
 const KeyPairSchema = z.object({
   v: z.literal(2),

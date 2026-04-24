@@ -1,5 +1,5 @@
 {
-  "name": "@hubtool/expo-two-way-audio",
+  "name": "@hubcode/expo-two-way-audio",
   "version": "2.7.0",
   "description": "Native module for two way audio streaming",
   "main": "build/index.js",

@@ -101,7 +101,7 @@ This ensures the checkout ref matches the actual code on `main` with the fix inc
 
 ## Notes
 
-- `version:all:*` bumps root + syncs workspace versions and `@hubtool/*` dependency versions
+- `version:all:*` bumps root + syncs workspace versions and `@hubcode/*` dependency versions
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale types
 - `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`
 - If `release:publish` partially fails, re-run it — npm skips already-published versions

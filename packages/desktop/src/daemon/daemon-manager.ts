@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain, shell } from "electron";
 import log from "electron-log/main";
-import { resolveHubcodeHome, spawnProcess } from "@hubtool/server";
+import { resolveHubcodeHome, spawnProcess } from "@hubcode/server";
 import {
   copyAttachmentFileToManagedStorage,
   deleteManagedAttachmentFile,

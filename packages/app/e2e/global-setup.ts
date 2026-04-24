@@ -201,8 +201,8 @@ function ensureRelayBuildArtifact(repoRoot: string): void {
     return;
   }
 
-  console.log("[e2e] Building @hubtool/relay for daemon startup");
-  execSync("npm run build --workspace=@hubtool/relay", {
+  console.log("[e2e] Building @hubcode/relay for daemon startup");
+  execSync("npm run build --workspace=@hubcode/relay", {
     cwd: repoRoot,
     stdio: "inherit",
   });

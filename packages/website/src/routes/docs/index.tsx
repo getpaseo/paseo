@@ -105,7 +105,7 @@ function GettingStarted() {
         </p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
           <span className="text-muted-foreground select-none">$ </span>
-          <span>npm install -g @hubtool/cli</span>
+          <span>npm install -g @hubcode/cli</span>
         </div>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
           <span className="text-muted-foreground select-none">$ </span>

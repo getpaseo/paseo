@@ -21,10 +21,10 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install --workspace=@hubtool/relay --include-workspace-root
+        run: npm install --workspace=@hubcode/relay --include-workspace-root
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@hubtool/relay
+        run: npm run typecheck --workspace=@hubcode/relay
 
       - name: Deploy worker
         run: cd packages/relay && npx wrangler deploy

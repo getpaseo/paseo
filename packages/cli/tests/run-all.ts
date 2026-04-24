@@ -70,7 +70,7 @@ async function writeJsonSummary({
     JSON.stringify(
       {
         suite: "cli-local",
-        command: "npm run test:local --workspace=@hubtool/cli",
+        command: "npm run test:local --workspace=@hubcode/cli",
         counts: {
           passed,
           failed,
@@ -111,9 +111,9 @@ let passed = 0;
 let failed = 0;
 const failures: Failure[] = [];
 
-await runCommand("Building relay", "npm run build --workspace=@hubtool/relay");
-await runCommand("Building server", "npm run build --workspace=@hubtool/server");
-await runCommand("Building CLI", "npm run build --workspace=@hubtool/cli");
+await runCommand("Building relay", "npm run build --workspace=@hubcode/relay");
+await runCommand("Building server", "npm run build --workspace=@hubcode/server");
+await runCommand("Building CLI", "npm run build --workspace=@hubcode/cli");
 
 for (const testFile of testFiles) {
   const testPath = join(__dirname, testFile);

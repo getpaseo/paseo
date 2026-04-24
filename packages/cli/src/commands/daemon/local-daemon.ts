@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolveHubcodeHome } from "@hubtool/server";
+import { loadConfig, resolveHubcodeHome } from "@hubcode/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
 export interface DaemonStartOptions {
@@ -120,7 +120,7 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
 }
 
 function resolveDaemonRunnerEntry(): string {
-  const serverExportPath = require.resolve("@hubtool/server");
+  const serverExportPath = require.resolve("@hubcode/server");
   let currentDir = path.dirname(serverExportPath);
 
   while (true) {
@@ -128,7 +128,7 @@ function resolveDaemonRunnerEntry(): string {
     if (existsSync(packageJsonPath)) {
       try {
         const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: string };
-        if (packageJson.name === "@hubtool/server") {
+        if (packageJson.name === "@hubcode/server") {
           const distRunner = path.join(currentDir, "dist", "scripts", "supervisor-entrypoint.js");
           if (existsSync(distRunner)) {
             return distRunner;
@@ -147,7 +147,7 @@ function resolveDaemonRunnerEntry(): string {
     currentDir = parentDir;
   }
 
-  throw new Error("Unable to resolve @hubtool/server package root for daemon runner");
+  throw new Error("Unable to resolve @hubcode/server package root for daemon runner");
 }
 
 function pidFilePath(hubcodeHome: string): string {

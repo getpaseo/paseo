@@ -1,7 +1,25 @@
 {
-  "name": "@hubtool/highlight",
+  "name": "@hubcode/highlight",
   "version": "2.7.0",
+  "description": "Lightweight syntax highlighter used by Hubcode (Lezer-based, multi-language).",
   "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "author": "Hubtool Inc. <ceo@hubtool.ai>",
+  "homepage": "https://hubcode.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hubtool/hubcode.git",
+    "directory": "packages/highlight"
+  },
+  "bugs": {
+    "url": "https://github.com/hubtool/hubcode/issues"
+  },
+  "keywords": [
+    "hubcode",
+    "syntax-highlighting",
+    "lezer",
+    "highlighter"
+  ],
   "publishConfig": {
     "access": "public"
   },

@@ -31,7 +31,7 @@ concurrency:
 
 env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
-  DESKTOP_WORKSPACE: '@hubtool/desktop'
+  DESKTOP_WORKSPACE: '@hubcode/desktop'
   DESKTOP_PACKAGE_PATH: 'packages/desktop'
 
 jobs:
@@ -126,7 +126,7 @@ jobs:
           NODE
 
       - name: Build web app for desktop
-        run: npm run build:web --workspace=@hubtool/app
+        run: npm run build:web --workspace=@hubcode/app
 
       - name: Build desktop release
         shell: bash
@@ -302,7 +302,7 @@ jobs:
           NODE
 
       - name: Build web app for desktop
-        run: npm run build:web --workspace=@hubtool/app
+        run: npm run build:web --workspace=@hubcode/app
 
       - name: Build desktop release
         shell: bash
@@ -369,7 +369,7 @@ jobs:
           NODE
 
       - name: Build workspace dependencies
-        run: npm run build:workspace-deps --workspace=@hubtool/app
+        run: npm run build:workspace-deps --workspace=@hubcode/app
 
       - name: Build web app for desktop
         shell: pwsh

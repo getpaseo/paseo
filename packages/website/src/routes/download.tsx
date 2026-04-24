@@ -205,7 +205,7 @@ function Download() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <code className="text-sm text-muted-foreground font-mono bg-muted px-3 py-1.5 rounded-lg">
-                  npm install -g @hubtool/cli
+                  npm install -g @hubcode/cli
                 </code>
               </div>
             </div>

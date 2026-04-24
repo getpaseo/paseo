@@ -47,7 +47,7 @@ To connect from your phone, scan the QR code shown in Settings.
 Install the CLI and start Hubcode:
 
 ```bash
-npm install -g @hubtool/cli
+npm install -g @hubcode/cli
 hubcode
 ```
 

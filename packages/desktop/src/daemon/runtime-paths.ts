@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { spawnProcess } from "@hubtool/server";
+import { spawnProcess } from "@hubcode/server";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { app } from "electron";
@@ -13,8 +13,8 @@ import {
   type NodeEntrypointSpec,
 } from "./node-entrypoint-launcher.js";
 
-const CLI_PACKAGE_NAME = "@hubtool/cli";
-const SERVER_PACKAGE_NAME = "@hubtool/server";
+const CLI_PACKAGE_NAME = "@hubcode/cli";
+const SERVER_PACKAGE_NAME = "@hubcode/server";
 const CLI_BIN_ENTRY = `${CLI_PACKAGE_NAME}/bin/hubcode`;
 
 type PackageInfo = {
@@ -110,7 +110,7 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
         filePath: path.join(
           resolvePackagedAsarPath(),
           "node_modules",
-          "@hubtool",
+          "@hubcode",
           "server",
           "dist",
           "scripts",
@@ -147,7 +147,7 @@ export function resolveCliEntrypoint(): NodeEntrypointSpec {
         filePath: path.join(
           resolvePackagedAsarPath(),
           "node_modules",
-          "@hubtool",
+          "@hubcode",
           "cli",
           "dist",
           "index.js",

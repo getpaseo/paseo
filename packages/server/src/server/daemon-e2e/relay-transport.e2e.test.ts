@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
 
 import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
-import { createClientChannel, type Transport } from "@hubtool/relay/e2ee";
+import { createClientChannel, type Transport } from "@hubcode/relay/e2ee";
 import { buildRelayWebSocketUrl } from "../../shared/daemon-endpoints.js";
 
 const nodeMajor = Number((process.versions.node ?? "0").split(".")[0] ?? "0");

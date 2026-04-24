@@ -87,9 +87,9 @@ buildNpmPackage rec {
     # Copy node_modules (preserving workspace symlinks)
     cp -a node_modules $out/lib/hubcode/
 
-    # Auto-detect which @hubtool/* packages were built by build:daemon
+    # Auto-detect which @hubcode/* packages were built by build:daemon
     # (they'll have a dist/ directory). Copy those and remove the rest.
-    for link in $out/lib/hubcode/node_modules/@hubtool/*; do
+    for link in $out/lib/hubcode/node_modules/@hubcode/*; do
       name=$(basename "$link")
       if [ -d "packages/$name/dist" ]; then
         mkdir -p "$out/lib/hubcode/packages/$name"

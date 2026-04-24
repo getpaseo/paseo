@@ -12,7 +12,7 @@ import {
 
 const createClientChannelMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@hubtool/relay/e2ee", () => ({
+vi.mock("@hubcode/relay/e2ee", () => ({
   createClientChannel: createClientChannelMock,
 }));
 

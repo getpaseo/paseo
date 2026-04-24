@@ -18,7 +18,7 @@ import {
   lightHighlightColors,
   type HighlightToken,
   type HighlightStyle,
-} from "@hubtool/highlight";
+} from "@hubcode/highlight";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { getIsElectron, isWeb } from "@/constants/platform";
 import { MonacoFileEditor } from "@/components/monaco-file-editor";

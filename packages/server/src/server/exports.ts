@@ -1,4 +1,4 @@
-// CLI exports for @hubtool/server
+// CLI exports for @hubcode/server
 export { createHubcodeDaemon, type HubcodeDaemon, type HubcodeDaemonConfig } from "./bootstrap.js";
 export { loadConfig, type CliConfigOverrides } from "./config.js";
 export { resolveHubcodeHome } from "./hubcode-home.js";

@@ -19,22 +19,8 @@ services:
       timeout: 3s
       retries: 5
 
-  auth-server:
-    build:
-      context: ./auth-server
-      dockerfile: Dockerfile
-    container_name: hubcode-auth
-    restart: unless-stopped
-    ports:
-      - "3002:3002"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    env_file:
-      - ./auth-server/.env
-    environment:
-      DATABASE_URL: postgresql://hubcode:hubcode_secret@postgres:5432/hubcode_auth
-      PORT: 3002
+  # auth-server moved to ../hubtool/auth-server (standalone repo).
+  # Run it independently: `cd ../hubtool/auth-server && npm run dev`.
 
   # LiveKit SFU — replaces coturn + in-house WebRTC signaling. Clients
   # fetch short-lived JWT tokens from auth-server (/api/livekit/token).

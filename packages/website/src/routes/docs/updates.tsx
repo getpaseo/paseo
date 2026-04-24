@@ -34,7 +34,7 @@ function UpdatesDocs() {
         <p className="text-white/60">Install the latest CLI/daemon package globally:</p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
           <span className="text-muted-foreground select-none">$ </span>
-          <span>npm install -g @hubtool/cli@latest</span>
+          <span>npm install -g @hubcode/cli@latest</span>
         </div>
         <p className="text-white/60">Then restart the daemon:</p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">

@@ -1,6 +1,6 @@
 import { PackageVersionResolutionError, resolvePackageVersion } from "./package-version.js";
 
-const SERVER_PACKAGE_NAME = "@hubtool/server";
+const SERVER_PACKAGE_NAME = "@hubcode/server";
 
 export class DaemonVersionResolutionError extends PackageVersionResolutionError {}
 

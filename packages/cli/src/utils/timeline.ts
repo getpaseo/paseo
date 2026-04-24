@@ -1,4 +1,4 @@
-import type { AgentTimelineItem, DaemonClient } from "@hubtool/server";
+import type { AgentTimelineItem, DaemonClient } from "@hubcode/server";
 
 type FetchProjectedTimelineItemsInput = {
   client: DaemonClient;

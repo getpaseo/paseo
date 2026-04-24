@@ -34,19 +34,19 @@ jobs:
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
       - name: Install server dependencies
-        run: npm install --workspace=@hubtool/server --include-workspace-root
+        run: npm install --workspace=@hubcode/server --include-workspace-root
 
       - name: Build highlight dependency
-        run: npm run build --workspace=@hubtool/highlight
+        run: npm run build --workspace=@hubcode/highlight
 
       - name: Build relay dependency
-        run: npm run build --workspace=@hubtool/relay
+        run: npm run build --workspace=@hubcode/relay
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@hubtool/server
+        run: npm run typecheck --workspace=@hubcode/server
 
       - name: Test
-        run: npm run test --workspace=@hubtool/server
+        run: npm run test --workspace=@hubcode/server
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

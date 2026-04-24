@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { loadConfig, resolveHubcodeHome, DaemonClient } from "@hubtool/server";
+import { loadConfig, resolveHubcodeHome, DaemonClient } from "@hubcode/server";
 import path from "node:path";
 import WebSocket from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";

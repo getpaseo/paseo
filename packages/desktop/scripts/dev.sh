@@ -10,7 +10,7 @@ ROOT_DIR="$(cd "$DESKTOP_DIR/../.." && pwd)"
 cd "$DESKTOP_DIR"
 npx esbuild src/main.ts src/preload.ts --outdir=dist --platform=node --format=cjs --bundle \
   --external:electron --external:electron-updater --external:electron-log --external:ws \
-  --external:@hubtool/server --external:@hubtool/cli
+  --external:@hubcode/server --external:@hubcode/cli
 
 # Use fixed port for Metro (so share links work consistently)
 EXPO_PORT="${EXPO_PORT:-8081}"

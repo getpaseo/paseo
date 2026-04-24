@@ -1,8 +1,31 @@
 {
-  "name": "@hubtool/cli",
+  "name": "@hubcode/cli",
   "version": "2.7.0",
-  "description": "Hubcode CLI - control your AI coding agents from the command line",
+  "description": "Control Claude Code, Codex, and OpenCode agents from your terminal — part of Hubcode.",
   "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "author": "Hubtool Inc. <ceo@hubtool.ai>",
+  "homepage": "https://hubcode.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hubtool/hubcode.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/hubtool/hubcode/issues"
+  },
+  "keywords": [
+    "hubcode",
+    "claude-code",
+    "codex",
+    "opencode",
+    "ai",
+    "agents",
+    "cli",
+    "coding-agent",
+    "mcp",
+    "developer-tools"
+  ],
   "files": [
     "bin",
     "dist"
@@ -24,8 +47,8 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",
-    "@hubtool/relay": "*",
-    "@hubtool/server": "*",
+    "@hubcode/relay": "*",
+    "@hubcode/server": "*",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
     "mime-types": "^2.1.35",

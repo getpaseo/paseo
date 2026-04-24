@@ -964,7 +964,7 @@ function ServerInstallButton() {
       }
       title="Run agents on a remote machine"
       description="For headless machines you want to connect to from the Hubcode apps. The desktop app already includes a built-in daemon."
-      command="npm install -g @hubtool/cli && hubcode"
+      command="npm install -g @hubcode/cli && hubcode"
       footnote={
         <>
           Requires Node.js 18+. Run <span className="font-mono text-white/40">hubcode</span> to
@@ -1556,7 +1556,7 @@ function FAQ() {
         <FAQItem question="Do I need the desktop app?">
           No. You can run the daemon headless with{" "}
           <code className="font-mono text-muted-foreground">
-            npm install -g @hubtool/cli && hubcode
+            npm install -g @hubcode/cli && hubcode
           </code>{" "}
           and use the CLI, web app, or mobile app to connect. The desktop app just bundles the
           daemon with a UI.

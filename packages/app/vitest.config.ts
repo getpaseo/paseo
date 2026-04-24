@@ -46,11 +46,11 @@ export default defineConfig({
   resolve: {
     alias: [
       {
-        find: /^@hubtool\/relay\/e2ee$/,
+        find: /^@hubcode\/relay\/e2ee$/,
         replacement: path.resolve(__dirname, "../relay/src/e2ee.ts"),
       },
       {
-        find: /^@hubtool\/relay$/,
+        find: /^@hubcode\/relay$/,
         replacement: path.resolve(__dirname, "../relay/src/index.ts"),
       },
       { find: "@", replacement: path.resolve(__dirname, "src") },

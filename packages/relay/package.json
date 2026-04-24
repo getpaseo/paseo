@@ -1,8 +1,27 @@
 {
-  "name": "@hubtool/relay",
+  "name": "@hubcode/relay",
   "version": "2.7.0",
-  "description": "Hubcode relay for bridging daemon and client connections",
+  "description": "End-to-end encrypted relay for secure remote access to Hubcode daemons.",
   "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "author": "Hubtool Inc. <ceo@hubtool.ai>",
+  "homepage": "https://hubcode.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hubtool/hubcode.git",
+    "directory": "packages/relay"
+  },
+  "bugs": {
+    "url": "https://github.com/hubtool/hubcode/issues"
+  },
+  "keywords": [
+    "hubcode",
+    "relay",
+    "e2ee",
+    "websocket",
+    "cloudflare-workers",
+    "remote-access"
+  ],
   "publishConfig": {
     "access": "public"
   },

@@ -12,7 +12,7 @@ const TASKS_DIR = resolve(process.cwd(), ".tasks");
 const store = new FileTaskStore(TASKS_DIR);
 const TASK_CLI_VERSION = resolvePackageVersion({
   moduleUrl: import.meta.url,
-  packageName: "@hubtool/server",
+  packageName: "@hubcode/server",
 });
 
 async function readStdin(): Promise<string> {

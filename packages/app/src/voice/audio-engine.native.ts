@@ -70,7 +70,7 @@ export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
   _options?: AudioEngineTraceOptions,
 ): AudioEngine {
-  const native = require("@hubtool/expo-two-way-audio");
+  const native = require("@hubcode/expo-two-way-audio");
 
   const refs: {
     initialized: boolean;

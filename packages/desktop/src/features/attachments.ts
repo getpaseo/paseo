@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resolveHubcodeHome } from "@hubtool/server";
+import { resolveHubcodeHome } from "@hubcode/server";
 
 const ATTACHMENTS_DIRNAME = "desktop-attachments";
 const ATTACHMENT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;

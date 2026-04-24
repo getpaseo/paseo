@@ -1,5 +1,5 @@
 import { platform } from "node:os";
-import { execCommand } from "@hubtool/server";
+import { execCommand } from "@hubcode/server";
 
 export interface NodePathFromPidResult {
   nodePath: string | null;

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { highlightCode, isLanguageSupported, type HighlightToken } from "@hubtool/highlight";
+import { highlightCode, isLanguageSupported, type HighlightToken } from "@hubcode/highlight";
 
 export interface DiffLine {
   type: "add" | "remove" | "context" | "header";

@@ -1,8 +1,31 @@
 {
-  "name": "@hubtool/server",
+  "name": "@hubcode/server",
   "version": "2.7.0",
-  "description": "Hubcode backend server",
+  "description": "Hubcode daemon: agent lifecycle, WebSocket API, and MCP server for local AI coding agents.",
   "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "author": "Hubtool Inc. <ceo@hubtool.ai>",
+  "homepage": "https://hubcode.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hubtool/hubcode.git",
+    "directory": "packages/server"
+  },
+  "bugs": {
+    "url": "https://github.com/hubtool/hubcode/issues"
+  },
+  "keywords": [
+    "hubcode",
+    "claude-code",
+    "codex",
+    "opencode",
+    "ai",
+    "agents",
+    "daemon",
+    "mcp",
+    "websocket",
+    "developer-tools"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -64,8 +87,8 @@
     "@ai-sdk/openai": "2.0.52",
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
     "@deepgram/sdk": "^3.4.0",
-    "@hubtool/highlight": "*",
-    "@hubtool/relay": "*",
+    "@hubcode/highlight": "*",
+    "@hubcode/relay": "*",
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.2.6",

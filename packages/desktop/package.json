@@ -1,5 +1,5 @@
 {
-  "name": "@hubtool/desktop",
+  "name": "@hubcode/desktop",
   "version": "2.7.0",
   "private": true,
   "description": "Hubcode desktop app (Electron wrapper)",
@@ -12,8 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@hubtool/cli": "*",
-    "@hubtool/server": "*",
+    "@hubcode/cli": "*",
+    "@hubcode/server": "*",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
     "ws": "^8.14.2"
@@ -34,7 +34,7 @@
   },
   "author": {
     "name": "Gustavo Junior",
-    "email": "ceo@hubtool.ai"
+    "email": "ceo@hubcode.ai"
   },
   "license": "AGPL-3.0-or-later"
 }

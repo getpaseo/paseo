@@ -8,7 +8,7 @@ import {
   type MaterializedSkillEntry,
   type McpPayload,
   type SkillPayload,
-} from "@hubtool/server";
+} from "@hubcode/server";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import { listEntries } from "./api.js";
 

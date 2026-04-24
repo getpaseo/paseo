@@ -8,7 +8,7 @@ import {
   loadPersistedConfig,
   type CliConfigOverrides,
   type PersistedConfig,
-} from "@hubtool/server";
+} from "@hubcode/server";
 import {
   resolveLocalHubcodeHome,
   resolveLocalDaemonState,

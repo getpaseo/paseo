@@ -7,7 +7,7 @@ import {
   type EncryptedChannel,
   type Transport as RelayTransport,
   type KeyPair,
-} from "@hubtool/relay/e2ee";
+} from "@hubcode/relay/e2ee";
 import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 

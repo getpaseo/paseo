@@ -3,7 +3,7 @@ import {
   getStructuredAgentResponse,
   StructuredAgentResponseError,
   type AgentSnapshotPayload,
-} from "@hubtool/server";
+} from "@hubcode/server";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type {
   CommandOptions,
