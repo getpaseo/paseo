@@ -30,6 +30,22 @@ interface CreateAgentWorktreeTestResult {
   shouldBootstrap: boolean;
 }
 
+async function cleanupTerminalManager(terminalManager: TerminalManager): Promise<void> {
+  const terminalsByCwd = await Promise.all(
+    terminalManager.listDirectories().map((cwd) => terminalManager.getTerminals(cwd)),
+  );
+  const terminals = terminalsByCwd.flat();
+  await Promise.all(terminals.map((terminal) => killTerminal(terminalManager, terminal)));
+  terminalManager.killAll();
+}
+
+function killTerminal(terminalManager: TerminalManager, terminal: TerminalSession): Promise<void> {
+  return terminalManager.killTerminalAndWait(terminal.id, {
+    gracefulTimeoutMs: 100,
+    forceTimeoutMs: 100,
+  });
+}
+
 async function createBootstrapWorktreeForTest(
   options: CreateAgentWorktreeTestOptions,
 ): Promise<CreateAgentWorktreeTestResult> {
@@ -80,22 +96,7 @@ describe("runAsyncWorktreeBootstrap", () => {
   });
 
   afterEach(async () => {
-    await Promise.all(
-      realTerminalManagers.map(async (terminalManager) => {
-        const terminalsByCwd = await Promise.all(
-          terminalManager.listDirectories().map((cwd) => terminalManager.getTerminals(cwd)),
-        );
-        await Promise.all(
-          terminalsByCwd.flat().map((terminal) =>
-            terminalManager.killTerminalAndWait(terminal.id, {
-              gracefulTimeoutMs: 100,
-              forceTimeoutMs: 100,
-            }),
-          ),
-        );
-        terminalManager.killAll();
-      }),
-    );
+    await Promise.all(realTerminalManagers.map(cleanupTerminalManager));
     rmSync(tempDir, { recursive: true, force: true });
   });
 

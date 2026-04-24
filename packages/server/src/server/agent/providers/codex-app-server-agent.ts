@@ -4346,67 +4346,13 @@ export class CodexAppServerAgentClient implements AgentClient {
         typeof configuredDefaultModelId === "string"
           ? models.some((model) => model?.id === configuredDefaultModelId)
           : false;
-      return models.map((model) => {
-        const defaultReasoningEffort = normalizeCodexThinkingOptionId(
-          typeof model.defaultReasoningEffort === "string" ? model.defaultReasoningEffort : null,
-        );
-        const resolvedDefaultReasoningEffort =
-          configuredDefaultThinkingOptionId ?? defaultReasoningEffort;
-
-        const thinkingById = new Map<string, { id: string; label: string; description?: string }>();
-        if (Array.isArray(model.supportedReasoningEfforts)) {
-          for (const entry of model.supportedReasoningEfforts) {
-            const id = normalizeCodexThinkingOptionId(
-              typeof entry?.reasoningEffort === "string" ? entry.reasoningEffort : null,
-            );
-            if (!id) continue;
-            const description =
-              typeof entry?.description === "string" && entry.description.trim().length > 0
-                ? entry.description
-                : undefined;
-            thinkingById.set(id, { id, label: id, description });
-          }
-        }
-
-        if (resolvedDefaultReasoningEffort && !thinkingById.has(resolvedDefaultReasoningEffort)) {
-          thinkingById.set(resolvedDefaultReasoningEffort, {
-            id: resolvedDefaultReasoningEffort,
-            label: resolvedDefaultReasoningEffort,
-            description:
-              configuredDefaultThinkingOptionId === resolvedDefaultReasoningEffort
-                ? "Configured default reasoning effort"
-                : "Model default reasoning effort",
-          });
-        }
-
-        const thinkingOptions = Array.from(thinkingById.values()).map((option) =>
-          Object.assign({}, option, {
-            isDefault: option.id === resolvedDefaultReasoningEffort,
-          }),
-        );
-        const defaultThinkingOptionId =
-          resolvedDefaultReasoningEffort ??
-          thinkingOptions.find((option) => option.isDefault)?.id ??
-          thinkingOptions[0]?.id;
-        const isDefaultModel = hasConfiguredDefaultModel
-          ? model.id === configuredDefaultModelId
-          : model.isDefault;
-
-        return {
-          provider: CODEX_PROVIDER,
-          id: model.id,
-          label: normalizeCodexModelLabel(model.displayName ?? ""),
-          description: model.description,
-          isDefault: isDefaultModel,
-          thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
-          defaultThinkingOptionId,
-          metadata: {
-            model: model.model,
-            defaultReasoningEffort: model.defaultReasoningEffort,
-            supportedReasoningEfforts: model.supportedReasoningEfforts,
-          },
-        };
-      });
+      return models.map((model) =>
+        buildCodexModelDefinition(model, {
+          configuredDefaultModelId,
+          configuredDefaultThinkingOptionId,
+          hasConfiguredDefaultModel,
+        }),
+      );
     } finally {
       await client.dispose();
     }
@@ -4465,6 +4411,90 @@ export class CodexAppServerAgentClient implements AgentClient {
       };
     }
   }
+}
+
+interface CodexModelBuildContext {
+  configuredDefaultModelId: string | undefined;
+  configuredDefaultThinkingOptionId: string | undefined;
+  hasConfiguredDefaultModel: boolean;
+}
+
+function buildCodexModelDefinition(
+  model: CodexModel,
+  ctx: CodexModelBuildContext,
+): AgentModelDefinition {
+  const defaultReasoningEffort = normalizeCodexThinkingOptionId(
+    typeof model.defaultReasoningEffort === "string" ? model.defaultReasoningEffort : null,
+  );
+  const resolvedDefaultReasoningEffort =
+    ctx.configuredDefaultThinkingOptionId ?? defaultReasoningEffort;
+
+  const thinkingById = buildCodexThinkingOptionMap(
+    model.supportedReasoningEfforts,
+    resolvedDefaultReasoningEffort,
+    ctx.configuredDefaultThinkingOptionId,
+  );
+
+  const thinkingOptions = Array.from(thinkingById.values()).map((option) =>
+    Object.assign({}, option, {
+      isDefault: option.id === resolvedDefaultReasoningEffort,
+    }),
+  );
+  const defaultThinkingOptionId =
+    resolvedDefaultReasoningEffort ??
+    thinkingOptions.find((option) => option.isDefault)?.id ??
+    thinkingOptions[0]?.id;
+  const isDefaultModel = ctx.hasConfiguredDefaultModel
+    ? model.id === ctx.configuredDefaultModelId
+    : model.isDefault;
+
+  return {
+    provider: CODEX_PROVIDER,
+    id: model.id,
+    label: normalizeCodexModelLabel(model.displayName ?? ""),
+    description: model.description,
+    isDefault: isDefaultModel,
+    thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
+    defaultThinkingOptionId,
+    metadata: {
+      model: model.model,
+      defaultReasoningEffort: model.defaultReasoningEffort,
+      supportedReasoningEfforts: model.supportedReasoningEfforts,
+    },
+  };
+}
+
+function buildCodexThinkingOptionMap(
+  supportedReasoningEfforts: CodexReasoningEffortEntry[] | undefined,
+  resolvedDefaultReasoningEffort: string | undefined,
+  configuredDefaultThinkingOptionId: string | undefined,
+): Map<string, { id: string; label: string; description?: string }> {
+  const thinkingById = new Map<string, { id: string; label: string; description?: string }>();
+  if (Array.isArray(supportedReasoningEfforts)) {
+    for (const entry of supportedReasoningEfforts) {
+      const id = normalizeCodexThinkingOptionId(
+        typeof entry?.reasoningEffort === "string" ? entry.reasoningEffort : null,
+      );
+      if (!id) continue;
+      const description =
+        typeof entry?.description === "string" && entry.description.trim().length > 0
+          ? entry.description
+          : undefined;
+      thinkingById.set(id, { id, label: id, description });
+    }
+  }
+
+  if (resolvedDefaultReasoningEffort && !thinkingById.has(resolvedDefaultReasoningEffort)) {
+    thinkingById.set(resolvedDefaultReasoningEffort, {
+      id: resolvedDefaultReasoningEffort,
+      label: resolvedDefaultReasoningEffort,
+      description:
+        configuredDefaultThinkingOptionId === resolvedDefaultReasoningEffort
+          ? "Configured default reasoning effort"
+          : "Model default reasoning effort",
+    });
+  }
+  return thinkingById;
 }
 
 function resolveSkillDescription(skill: Record<string, unknown>): string {
