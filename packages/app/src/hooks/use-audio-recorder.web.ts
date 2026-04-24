@@ -18,6 +18,37 @@ const MIME_TYPE_CANDIDATES = [
   "audio/ogg",
 ];
 
+function assertMicrophoneEnvironment(): void {
+  const missingNavigator =
+    typeof navigator === "undefined" ||
+    !navigator.mediaDevices ||
+    typeof navigator.mediaDevices.getUserMedia !== "function";
+
+  const secureContext =
+    typeof window !== "undefined" && typeof window.isSecureContext === "boolean"
+      ? window.isSecureContext
+      : true;
+  const currentOrigin =
+    typeof window !== "undefined" && window.location ? window.location.origin : "unknown";
+  const isDesktopApp = isElectronRuntime();
+
+  if (missingNavigator) {
+    throw new Error("Microphone capture is not supported in this environment");
+  }
+
+  if (!secureContext && !isDesktopApp) {
+    throw new Error(
+      `Microphone access requires HTTPS or localhost. Current origin: ${currentOrigin}`,
+    );
+  }
+  if (!secureContext && isDesktopApp) {
+    console.warn(
+      "[AudioRecorder][Web] Insecure context reported under Desktop; attempting getUserMedia anyway",
+      { currentOrigin },
+    );
+  }
+}
+
 export function useAudioRecorder(config?: AudioCaptureConfig) {
   const [isRecording, setIsRecording] = useState(false);
 
@@ -146,34 +177,7 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
       throw new Error("Already recording");
     }
 
-    const missingNavigator =
-      typeof navigator === "undefined" ||
-      !navigator.mediaDevices ||
-      typeof navigator.mediaDevices.getUserMedia !== "function";
-
-    const secureContext =
-      typeof window !== "undefined" && typeof window.isSecureContext === "boolean"
-        ? window.isSecureContext
-        : true;
-    const currentOrigin =
-      typeof window !== "undefined" && window.location ? window.location.origin : "unknown";
-    const isDesktopApp = isElectronRuntime();
-
-    if (missingNavigator) {
-      throw new Error("Microphone capture is not supported in this environment");
-    }
-
-    if (!secureContext && !isDesktopApp) {
-      throw new Error(
-        `Microphone access requires HTTPS or localhost. Current origin: ${currentOrigin}`,
-      );
-    }
-    if (!secureContext && isDesktopApp) {
-      console.warn(
-        "[AudioRecorder][Web] Insecure context reported under Desktop; attempting getUserMedia anyway",
-        { currentOrigin },
-      );
-    }
+    assertMicrophoneEnvironment();
 
     const options = configRef.current;
     const constraints: MediaStreamConstraints = {
