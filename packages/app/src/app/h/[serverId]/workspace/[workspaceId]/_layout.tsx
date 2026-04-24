@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useIsFocused } from "@react-navigation/native";
 import { useGlobalSearchParams, useLocalSearchParams, useRootNavigationState } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
 import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
@@ -44,6 +45,7 @@ export default function HostWorkspaceLayout() {
 }
 
 function HostWorkspaceLayoutContent() {
+  const isFocused = useIsFocused();
   const rootNavigationState = useRootNavigationState();
   const consumedIntentRef = useRef<string | null>(null);
   const [intentConsumed, setIntentConsumed] = useState(false);
@@ -63,6 +65,15 @@ function HostWorkspaceLayoutContent() {
 
   useEffect(() => {
     if (!openValue) {
+      return;
+    }
+    // Only the focused workspace layout should consume the `?open=` intent.
+    // Without this guard, navigating from /h/A/workspace/foo to
+    // /h/A/workspace/bar in the same project leaves the old workspace's
+    // layout still mounted briefly, and it consumes/strips the intent meant
+    // for the new one — so the new workspace opens without the right tab.
+    // (Paseo commit d0be7c3.)
+    if (!isFocused) {
       return;
     }
     if (!rootNavigationState?.key) {
@@ -97,7 +108,7 @@ function HostWorkspaceLayoutContent() {
     }
 
     setIntentConsumed(true);
-  }, [openValue, rootNavigationState?.key, serverId, workspaceId]);
+  }, [isFocused, openValue, rootNavigationState?.key, serverId, workspaceId]);
 
   if (openValue && !intentConsumed) {
     return null;

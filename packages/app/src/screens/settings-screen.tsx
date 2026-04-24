@@ -856,11 +856,13 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
           showsVerticalScrollIndicator={false}
         >
           {sections.map((section) => {
-          const isSelected = section.id === selectedSectionId;
-          const IconComponent = section.icon;
-          const showSeparator =
-            section.id === "account" || section.id === "integrations" || section.id === "providers";
-          return (
+            const isSelected = section.id === selectedSectionId;
+            const IconComponent = section.icon;
+            const showSeparator =
+              section.id === "account" ||
+              section.id === "integrations" ||
+              section.id === "providers";
+            return (
               <View key={section.id}>
                 {showSeparator ? <View style={desktopStyles.sidebarSeparator} /> : null}
                 <Pressable
@@ -1833,8 +1835,10 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
   },
   content: {
+    // Settings content sits directly under MenuHeader — an extra paddingTop
+    // on top of the uniform padding made the first section look like the
+    // header was pushed down. Use symmetric padding. (Paseo 0.1.60 fix.)
     padding: theme.spacing[4],
-    paddingTop: theme.spacing[6],
     width: "100%",
     maxWidth: 720,
     alignSelf: "center",

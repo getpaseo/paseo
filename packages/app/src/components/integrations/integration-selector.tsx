@@ -6,13 +6,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { View, Text, Pressable, TextInput, FlatList, ActivityIndicator } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { X, Search, ExternalLink, ChevronDown } from "lucide-react-native";
+import { X, Search, ExternalLink, ChevronDown, Lock } from "lucide-react-native";
 import type { IntegrationRegistryEntry, IntegrationId } from "@/types/kanban";
 import { IntegrationIcon } from "@/components/kanban/integration-context";
 import { useIntegrationSearch } from "@/hooks/use-integration-status";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { isWeb } from "@/constants/platform";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 
 interface IntegrationSelectorProps {
   integration: IntegrationRegistryEntry;
@@ -34,6 +35,7 @@ export function IntegrationSelector({
   searchSeed,
 }: IntegrationSelectorProps) {
   const { theme } = useUnistyles();
+  const { isAuthenticated, signIn } = useAuthSession();
   const [showSelector, setShowSelector] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedItem, setSelectedItem] = useState<Record<string, unknown> | null>(null);
@@ -72,9 +74,15 @@ export function IntegrationSelector({
     console.log(`[IntegrationSelector] handleOpen called`, {
       integrationId: integration.id,
       isConnected,
+      isAuthenticated,
       serverId,
       cwd,
     });
+
+    if (!isAuthenticated) {
+      void signIn(undefined);
+      return;
+    }
 
     if (!isConnected) {
       console.warn(`[IntegrationSelector] BLOCKED — isConnected=false for ${integration.id}`);
@@ -130,7 +138,7 @@ export function IntegrationSelector({
       setIsFetchingItems(false);
       console.log(`[IntegrationSelector] handleOpen complete for ${integration.id}`);
     }
-  }, [isConnected, serverId, integration.id, cwd]);
+  }, [isAuthenticated, signIn, isConnected, serverId, integration.id, cwd]);
 
   const handleSelect = useCallback(
     (item: Record<string, unknown>) => {
@@ -214,8 +222,10 @@ export function IntegrationSelector({
           style={({ pressed }) => [
             selectorStyles.selectButton,
             pressed && selectorStyles.selectButtonPressed,
+            !isAuthenticated && selectorStyles.selectButtonLocked,
           ]}
           onPress={handleOpen}
+          accessibilityLabel={isAuthenticated ? labelText : `${labelText} — sign in to unlock`}
         >
           <IntegrationIcon
             integration={integration.id}
@@ -223,7 +233,11 @@ export function IntegrationSelector({
             color={theme.colors.foregroundMuted}
           />
           <Text style={selectorStyles.selectButtonText}>{labelText}</Text>
-          <ChevronDown size={14} color={theme.colors.foregroundMuted} />
+          {isAuthenticated ? (
+            <ChevronDown size={14} color={theme.colors.foregroundMuted} />
+          ) : (
+            <Lock size={14} color={theme.colors.foregroundMuted} />
+          )}
         </Pressable>
       )}
 
@@ -379,6 +393,9 @@ const selectorStyles = StyleSheet.create((theme) => ({
   },
   selectButtonPressed: {
     backgroundColor: theme.colors.surface2,
+  },
+  selectButtonLocked: {
+    opacity: 0.6,
   },
   selectButtonText: {
     fontSize: theme.fontSize.sm,

@@ -234,6 +234,10 @@ export function WorkspaceDraftAgentTab({
       };
     },
     onCreateSuccess: ({ result }) => {
+      // Clear the draft text/images now that the agent was created. Without
+      // this, the draft rehydrates on reload and the same prompt sits in the
+      // composer waiting to be resent. (Paseo 0.1.60 fix, commit a582fcc.)
+      draftInput.clear("sent");
       onCreated(result);
     },
   });

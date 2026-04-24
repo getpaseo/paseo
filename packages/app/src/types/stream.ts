@@ -348,6 +348,26 @@ function mergeUnknownValue(existing: unknown | null, incoming: unknown | null): 
   return incoming;
 }
 
+function hasSameIncomingFields<T extends Record<string, unknown>>(
+  existing: T,
+  incoming: T,
+): boolean {
+  for (const key in incoming) {
+    if (existing[key] !== incoming[key]) return false;
+  }
+  return true;
+}
+
+function mergeToolCallMetadata(
+  existing: Record<string, unknown> | undefined,
+  incoming: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!incoming) return existing;
+  if (!existing) return incoming;
+  if (hasSameIncomingFields(existing, incoming)) return existing;
+  return { ...existing, ...incoming };
+}
+
 function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail): ToolCallDetail {
   if (existing.type === "unknown" && incoming.type !== "unknown") {
     return incoming;
@@ -357,15 +377,23 @@ function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail)
     return existing;
   }
 
+  // Preserve existing references when fields are unchanged — otherwise
+  // every tool_call_update event creates a new object, busts React.memo,
+  // and re-renders the whole tool call subtree. ACP providers can send
+  // 200+ redundant updates per call. (Paseo commit 5a232d8.)
   if (existing.type === "unknown" && incoming.type === "unknown") {
-    return {
-      type: "unknown",
-      input: mergeUnknownValue(existing.input, incoming.input),
-      output: mergeUnknownValue(existing.output, incoming.output),
-    };
+    const input = mergeUnknownValue(existing.input, incoming.input);
+    const output = mergeUnknownValue(existing.output, incoming.output);
+    if (input === existing.input && output === existing.output) {
+      return existing;
+    }
+    return { type: "unknown", input, output };
   }
 
   if (existing.type === incoming.type) {
+    if (hasSameIncomingFields(existing, incoming)) {
+      return existing;
+    }
     return { ...existing, ...incoming } as ToolCallDetail;
   }
 
@@ -403,8 +431,7 @@ function appendAgentToolCall(
   const existingIndex = findExistingAgentToolCallIndex(state, data.callId);
 
   if (existingIndex >= 0) {
-    const next = [...state];
-    const existing = next[existingIndex];
+    const existing = state[existingIndex];
     if (!existing || !isAgentToolCallItem(existing)) {
       return state;
     }
@@ -413,12 +440,25 @@ function appendAgentToolCall(
       mergedStatus === "failed"
         ? (data.error ?? existing.payload.data.error ?? { message: "Tool call failed" })
         : null;
-    const mergedMetadata =
-      data.metadata || existing.payload.data.metadata
-        ? { ...existing.payload.data.metadata, ...data.metadata }
-        : undefined;
+    const mergedMetadata = mergeToolCallMetadata(existing.payload.data.metadata, data.metadata);
     const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
 
+    // If nothing meaningful changed, preserve the existing state array — this
+    // keeps downstream React.memo subtrees stable through flood updates.
+    // (Paseo commit 5a232d8.)
+    if (
+      data.provider === existing.payload.data.provider &&
+      data.callId === existing.payload.data.callId &&
+      data.name === existing.payload.data.name &&
+      mergedStatus === existing.payload.data.status &&
+      mergedError === existing.payload.data.error &&
+      mergedDetail === existing.payload.data.detail &&
+      mergedMetadata === existing.payload.data.metadata
+    ) {
+      return state;
+    }
+
+    const next = [...state];
     next[existingIndex] = {
       ...existing,
       timestamp,

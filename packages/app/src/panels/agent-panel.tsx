@@ -866,6 +866,7 @@ function AgentSessionUnavailableState({
   lastError: string | null;
   isUnknownDaemon?: boolean;
 }) {
+  const { theme } = useUnistyles();
   if (isUnknownDaemon) {
     return (
       <View style={styles.container}>
@@ -889,7 +890,7 @@ function AgentSessionUnavailableState({
       <View style={styles.centerState}>
         {isConnecting || isPreparingSession ? (
           <>
-            <ActivityIndicator size="large" />
+            <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
             <Text style={styles.loadingText}>
               {isPreparingSession
                 ? `Preparing ${serverLabel} session...`

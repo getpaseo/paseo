@@ -411,11 +411,7 @@ function CommandModal({
 
         <View style={{ gap: 4 }}>
           <Text style={settingsStyles.rowTitle}>Target agents</Text>
-          <TargetAgentPicker
-            serverId={serverId}
-            value={targetAgents}
-            onChange={setTargetAgents}
-          />
+          <TargetAgentPicker serverId={serverId} value={targetAgents} onChange={setTargetAgents} />
         </View>
 
         <View style={{ gap: 4 }}>

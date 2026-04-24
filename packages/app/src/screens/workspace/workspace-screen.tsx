@@ -53,6 +53,7 @@ import {
   buildWorkspaceTabPersistenceKey,
   collectAllTabs,
   useWorkspaceLayoutStore,
+  useWorkspaceLayoutStoreHydrated,
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
@@ -1157,8 +1158,16 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
   ]);
 
   const emptyWorkspaceSeedRef = useRef<string | null>(null);
+  const hasHydratedWorkspaceLayoutStore = useWorkspaceLayoutStoreHydrated();
   useEffect(() => {
     if (!persistenceKey) {
+      return;
+    }
+    // Don't seed a new draft tab until the persisted layout has rehydrated —
+    // otherwise the effect runs against the initial empty state on refresh,
+    // creates a blank draft, and clobbers the tab the user last focused.
+    // (Paseo commit 43b9123.)
+    if (!hasHydratedWorkspaceLayoutStore) {
       return;
     }
     if (workspaceAgentVisibility.activeAgentIds.size > 0 || terminals.length > 0) {
@@ -1179,6 +1188,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     }
     openWorkspaceDraftTab();
   }, [
+    hasHydratedWorkspaceLayoutStore,
     launchWorkspaceCliAgentIfDefault,
     normalizedServerId,
     normalizedWorkspaceId,

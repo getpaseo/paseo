@@ -302,7 +302,11 @@ export function FilePane({
       );
       return { file: payload.file ?? null, error: payload.error ?? null };
     },
-    staleTime: 5_000,
+    // Always refetch when the pane mounts with a new file path — cached
+    // content from a previous open was showing stale data when the file had
+    // changed externally (agent edits, git checkout, etc.). (Paseo 0.1.58 fix.)
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const toast = useToast();

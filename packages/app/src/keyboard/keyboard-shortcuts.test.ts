@@ -29,7 +29,6 @@ function shortcutContext(
     isDesktop: false,
     focusScope: "other",
     commandCenterOpen: false,
-    hasSelectedAgent: true,
     ...overrides,
   };
 }

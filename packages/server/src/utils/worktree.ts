@@ -12,6 +12,7 @@ import {
   writeHubcodeWorktreeMetadata,
   writeHubcodeWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
+import { childEnv } from "./child-env.js";
 import { runGitCommand } from "./run-git-command.js";
 import { platformBash, spawnProcess } from "./spawn.js";
 import { resolveHubcodeHome } from "../server/hubcode-home.js";
@@ -25,10 +26,7 @@ interface HubcodeConfig {
 }
 
 const execAsync = promisify(exec);
-const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
-  ...process.env,
-  GIT_OPTIONAL_LOCKS: "0",
-};
+const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = childEnv({ GIT_OPTIONAL_LOCKS: "0" });
 
 export interface WorktreeConfig {
   branchName: string;
@@ -419,10 +417,7 @@ export async function runWorktreeSetupCommands(options: {
       branchName: options.branchName,
       ...(options.repoRootPath ? { repoRootPath: options.repoRootPath } : {}),
     }));
-  const setupEnv = {
-    ...process.env,
-    ...runtimeEnv,
-  };
+  const setupEnv = childEnv(runtimeEnv);
 
   const results: WorktreeSetupCommandResult[] = [];
   for (const [index, cmd] of setupCommands.entries()) {
@@ -530,8 +525,7 @@ export async function runWorktreeTeardownCommands(options: {
     options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
   const worktreePort = readHubcodeWorktreeRuntimePort(options.worktreePath);
 
-  const teardownEnv: NodeJS.ProcessEnv = {
-    ...process.env,
+  const teardownEnv: NodeJS.ProcessEnv = childEnv({
     // Source checkout path is the original git repo root (shared across worktrees), not the
     // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
     // from the source checkout.
@@ -541,7 +535,7 @@ export async function runWorktreeTeardownCommands(options: {
     HUBCODE_WORKTREE_PATH: options.worktreePath,
     HUBCODE_BRANCH_NAME: branchName,
     ...(worktreePort !== null ? { HUBCODE_WORKTREE_PORT: String(worktreePort) } : {}),
-  };
+  });
 
   const results: WorktreeTeardownCommandResult[] = [];
   for (const cmd of teardownCommands) {
@@ -903,10 +897,23 @@ export async function deleteHubcodeWorktree({
     worktreePath: resolvedWorktree,
   });
 
-  await runGitCommand(["worktree", "remove", resolvedWorktree, "--force"], {
-    cwd,
-    timeout: 120_000,
-  });
+  // Recover cleanly from a previously-interrupted archive: if the worktree
+  // dir was already removed on disk but git's admin entry was left behind
+  // (or vice versa), `git worktree remove --force` exits non-zero with
+  // "is not a working tree" / "already exists". Tolerate that and prune
+  // the admin side explicitly so the second attempt converges. (Paseo
+  // 0.1.60 fix.)
+  try {
+    await runGitCommand(["worktree", "remove", resolvedWorktree, "--force"], {
+      cwd,
+      timeout: 120_000,
+    });
+  } catch {
+    // fall through — prune handles the admin side, rmSync the fs side.
+  }
+
+  // Prune always: clears dangling admin entries whether or not remove succeeded.
+  await runGitCommand(["worktree", "prune"], { cwd, timeout: 60_000 }).catch(() => undefined);
 
   if (existsSync(resolvedWorktree)) {
     rmSync(resolvedWorktree, { recursive: true, force: true });

@@ -477,6 +477,12 @@ function AppContainer({
 
   const isCompactLayout = useIsCompactFormFactor();
   const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
+  const shortcutsPathname = usePathname();
+  // `chromeEnabled` is false on /settings (no active server in the path), which
+  // also disables global shortcuts there. Keep keyboard shortcuts alive on
+  // Settings so Cmd+B, Cmd+., theme cycle, etc. still work. (Paseo commit
+  // f483e62; TODO: split chrome/shortcut gating properly.)
+  const keyboardShortcutsEnabled = chromeEnabled || shortcutsPathname.startsWith("/settings");
 
   useEffect(() => {
     const bp = UnistylesRuntime.breakpoint;
@@ -522,7 +528,7 @@ function AppContainer({
   }, [isCompactLayout, desktopAgentListOpen, toggleAgentList, toggleAgentListCollapsed]);
 
   useKeyboardShortcuts({
-    enabled: chromeEnabled,
+    enabled: keyboardShortcutsEnabled,
     isMobile: isCompactLayout,
     toggleAgentList: handleSidebarShortcut,
     selectedAgentId,

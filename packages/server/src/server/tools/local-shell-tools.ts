@@ -15,6 +15,8 @@
 
 import { spawn } from "node:child_process";
 
+import { childEnv } from "../../utils/child-env.js";
+
 export interface RunCommandInput {
   cwd: string;
   command: string;
@@ -57,7 +59,7 @@ export async function runCommand(input: RunCommandInput): Promise<RunCommandResu
 
     const child = spawn("/bin/sh", ["-c", input.command], {
       cwd: input.cwd,
-      env: { ...process.env, ...(input.env ?? {}) },
+      env: childEnv(input.env ?? {}),
     });
 
     const timer = setTimeout(() => {

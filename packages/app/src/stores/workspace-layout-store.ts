@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
@@ -580,6 +581,35 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
           splitSizesByWorkspace: state.splitSizesByWorkspace,
         };
       },
+      onRehydrateStorage: () => () => {
+        hasHydratedWorkspaceLayoutStore.state = true;
+        for (const listener of hasHydratedWorkspaceLayoutStore.listeners) listener();
+      },
     },
   ),
 );
+
+// Tracks whether the persisted layout has finished rehydrating from AsyncStorage.
+// Workspace screens must wait for this before running effects that seed empty
+// drafts — otherwise they see the initial empty state, create a new draft tab,
+// and clobber the previously focused tab on refresh. (Paseo commit 43b9123.)
+const hasHydratedWorkspaceLayoutStore = {
+  state: false,
+  listeners: new Set<() => void>(),
+};
+
+export function useWorkspaceLayoutStoreHydrated(): boolean {
+  const [hydrated, setHydrated] = useState(hasHydratedWorkspaceLayoutStore.state);
+  useEffect(() => {
+    if (hasHydratedWorkspaceLayoutStore.state) {
+      setHydrated(true);
+      return;
+    }
+    const listener = () => setHydrated(true);
+    hasHydratedWorkspaceLayoutStore.listeners.add(listener);
+    return () => {
+      hasHydratedWorkspaceLayoutStore.listeners.delete(listener);
+    };
+  }, []);
+  return hydrated;
+}

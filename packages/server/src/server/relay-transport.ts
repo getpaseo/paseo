@@ -168,8 +168,10 @@ export function startRelayTransport({
         if (stopped) return;
         if (controlWs !== socket) return;
         if (controlConnected) return;
+        // URL contains secrets (serverId + daemon public key); keep it out of
+        // logs. (Paseo commit 4de2766.)
         relayLogger.warn(
-          { url, connectionId, waitedMs: CONTROL_READY_TIMEOUT_MS },
+          { connectionId, waitedMs: CONTROL_READY_TIMEOUT_MS },
           "relay_control_ready_timeout_terminating",
         );
         try {
@@ -227,7 +229,7 @@ export function startRelayTransport({
     socket.on("close", (code, reason) => {
       if (controlWs !== socket) return;
       relayLogger.warn(
-        { code, reason: reason?.toString?.(), url, connectionId },
+        { code, reason: reason?.toString?.(), connectionId },
         "relay_control_disconnected",
       );
       controlWs = null;
@@ -352,7 +354,7 @@ export function startRelayTransport({
     socket.on("close", (code, reason) => {
       clearTimeout(openTimeout);
       relayLogger.warn(
-        { code, reason: reason?.toString?.(), url, connectionId },
+        { code, reason: reason?.toString?.(), connectionId },
         "relay_data_disconnected",
       );
       if (dataSockets.get(connectionId) === socket) {

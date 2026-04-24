@@ -971,7 +971,16 @@ function ProjectHeaderRow({
           <NewWorktreeButton
             displayName={displayName}
             onPress={() => setShowTaskModal(true)}
-            visible={isHovered || platformIsNative || isMobileBreakpoint}
+            // While creating, keep the button visible even if the user moves
+            // the mouse off the row — otherwise the spinner vanishes mid-
+            // creation and there's no indicator the request is still in
+            // flight. (Paseo 0.1.55 fix.)
+            visible={
+              isHovered ||
+              platformIsNative ||
+              isMobileBreakpoint ||
+              createWorktreeMutation.isPending
+            }
             loading={createWorktreeMutation.isPending}
             showShortcutHint={isProjectActive}
             testID={`sidebar-project-new-worktree-${project.projectKey}`}

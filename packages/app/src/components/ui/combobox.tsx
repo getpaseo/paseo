@@ -901,11 +901,18 @@ const styles = StyleSheet.create((theme) => ({
   comboboxItemLabel: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
+    // Shrink (not break) in inline layout so the description doesn't push the
+    // label into mid-word truncation on web. Also hint the browser to break
+    // at word boundaries rather than characters.
+    flexShrink: 1,
+    minWidth: 0,
+    ...({ wordBreak: "normal", overflowWrap: "normal" } as object),
   },
   comboboxItemDescription: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
+    minWidth: 0,
   },
   emptyText: {
     paddingHorizontal: theme.spacing[3],

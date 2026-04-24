@@ -259,8 +259,7 @@ export const CHAT_MODES: ChatMode[] = [
     id: "hacker",
     name: "Hacker (Offensive Security)",
     emoji: "🕶️",
-    description:
-      "Red team / CTF / authorized pentest — MITRE ATT&CK, PTES. Ethical use only.",
+    description: "Red team / CTF / authorized pentest — MITRE ATT&CK, PTES. Ethical use only.",
     systemPrefix:
       "Act as an offensive-security engineer — STRICTLY for authorized pentests, CTFs, " +
       "bug bounties, and security research. Anchor on MITRE ATT&CK tactics (TA0001 Initial " +
@@ -517,6 +516,7 @@ export const CHAT_MODES_BY_ID: Record<string, ChatMode> = Object.fromEntries(
  */
 export function applyChatMode(message: string, mode: ChatMode | null): string {
   if (!mode) return message;
-  const rulesBlock = mode.rules.length > 0 ? `\n\nRules:\n${mode.rules.map((r) => `- ${r}`).join("\n")}` : "";
+  const rulesBlock =
+    mode.rules.length > 0 ? `\n\nRules:\n${mode.rules.map((r) => `- ${r}`).join("\n")}` : "";
   return `[Mode: ${mode.name}]\n${mode.systemPrefix}${rulesBlock}\n\n---\n\n${message}`;
 }

@@ -145,6 +145,10 @@ export function FileExplorerPane({
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const queryClient = useQueryClient();
   const isElectron = getIsElectron();
+  // Used below to re-initialize the explorer after a reconnect — when the
+  // client instance is replaced, previously fetched listings are stale and
+  // the pane needs to request them again. (Paseo 0.1.58 fix.)
+  const clientIdentity = client;
 
   const refreshExplorerDir = useCallback(
     (dirPath: string) => {
@@ -285,7 +289,7 @@ export function FileExplorerPane({
 
   useEffect(() => {
     hasInitializedRef.current = false;
-  }, [workspaceStateKey]);
+  }, [workspaceStateKey, clientIdentity]);
 
   useEffect(() => {
     if (!hasWorkspaceScope) {

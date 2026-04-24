@@ -1,5 +1,18 @@
 import { promises as fs } from "fs";
+import os from "node:os";
 import path from "path";
+
+/**
+ * Expand a leading `~` to the user's home directory. Node's `path.resolve`
+ * does NOT expand tildes, so a client-provided `~/foo.png` gets resolved
+ * against CWD and fails. Used to make assistant-authored image paths with
+ * tilde prefixes load on the desktop daemon. (Paseo 0.1.60 fix.)
+ */
+function expandTilde(value: string): string {
+  if (value === "~") return os.homedir();
+  if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
+  return value;
+}
 
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
@@ -246,8 +259,8 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
 }
 
 async function resolveScopedPath({ root, relativePath = "." }: ScopedPathParams): Promise<string> {
-  const normalizedRoot = path.resolve(root);
-  const requestedPath = path.resolve(normalizedRoot, relativePath);
+  const normalizedRoot = path.resolve(expandTilde(root));
+  const requestedPath = path.resolve(normalizedRoot, expandTilde(relativePath));
   const relative = path.relative(normalizedRoot, requestedPath);
 
   if (relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative))) {

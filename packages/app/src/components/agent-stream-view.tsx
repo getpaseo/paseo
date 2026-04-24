@@ -414,11 +414,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 message={item.message}
                 timestamp={item.timestamp.getTime()}
                 metadata={item.metadata}
+                itemId={item.id}
               />
             );
 
           case "todo_list":
-            return <TodoListCard items={item.items} />;
+            return <TodoListCard items={item.items} itemId={item.id} />;
 
           case "compaction":
             return <CompactionMarker status={item.status} preTokens={item.preTokens} />;

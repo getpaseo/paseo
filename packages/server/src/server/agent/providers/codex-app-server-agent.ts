@@ -2674,16 +2674,19 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   /**
-   * Prepare the session for plan implementation by disabling plan/fast mode
-   * and returning the implementation prompt. The caller is responsible for
+   * Prepare the session for plan implementation by leaving plan mode and
+   * returning the implementation prompt. The caller is responsible for
    * starting the turn through the normal streamAgent path.
+   *
+   * `fast_mode` is a user-controlled performance toggle — leaving plan mode
+   * must NOT reset it, otherwise the user loses their preference on every
+   * plan approval. (Paseo 0.1.60 / PR #526.)
    */
   private preparePlanImplementation(params: { planText?: unknown }): string {
     const planText =
       typeof params.planText === "string" ? normalizePlanMarkdown(params.planText) : "";
 
     this.applyFeatureValue("plan_mode", false);
-    this.applyFeatureValue("fast_mode", false);
 
     return buildCodexPlanImplementationPrompt(planText);
   }

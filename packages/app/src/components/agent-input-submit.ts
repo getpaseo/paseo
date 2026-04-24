@@ -34,6 +34,10 @@ export async function submitAgentInput<TImage>(
     input.queueMessage({ message: trimmedMessage, imageAttachments });
     input.setUserInput("");
     input.setSelectedImages([]);
+    // Queueing counts as "sent" for draft lifecycle — the text has left the
+    // composer and is now owned by the queue. Without this the persisted
+    // draft lingers and rehydrates on reload. (Paseo 0.1.60 fix.)
+    input.clearDraft("sent");
     return "queued";
   }
 

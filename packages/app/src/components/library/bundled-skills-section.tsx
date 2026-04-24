@@ -51,9 +51,19 @@ export function BundledSkillsSection() {
             <Text style={styles.title}>Orchestration skills</Text>
           </View>
           <Text style={styles.hint}>
-            Bundled pack ({["hubcode", "hubcode-loop", "hubcode-handoff", "hubcode-orchestrate", "hubcode-chat", "hubcode-committee"].length} skills) that teaches your CLI agents to drive Hubcode
-            workflows. Installed into `~/.claude/skills/`, `~/.codex/skills/`, and
-            `~/.agents/skills/`.
+            Bundled pack (
+            {
+              [
+                "hubcode",
+                "hubcode-loop",
+                "hubcode-handoff",
+                "hubcode-orchestrate",
+                "hubcode-chat",
+                "hubcode-committee",
+              ].length
+            }{" "}
+            skills) that teaches your CLI agents to drive Hubcode workflows. Installed into
+            `~/.claude/skills/`, `~/.codex/skills/`, and `~/.agents/skills/`.
           </Text>
         </View>
         {status?.installed ? (

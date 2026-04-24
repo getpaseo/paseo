@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Plus, RefreshCw, Search, FolderSync } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
@@ -33,6 +33,7 @@ export function McpLibraryScreen() {
   const activeProjectId = useDefaultProjectId();
   const qc = useQueryClient();
   const isCompact = useIsCompactFormFactor();
+  const { theme } = useUnistyles();
 
   const [query, setQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -146,7 +147,7 @@ export function McpLibraryScreen() {
           ) : null}
           {catalogQuery.isLoading && catalogItems.length === 0 ? (
             <View style={styles.loaderRow}>
-              <ActivityIndicator size="small" />
+              <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
               <Text style={styles.loaderText}>Loading servers…</Text>
             </View>
           ) : catalogQuery.isError && catalogItems.length === 0 ? (

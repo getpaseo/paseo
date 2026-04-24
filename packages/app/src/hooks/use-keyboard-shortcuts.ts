@@ -15,7 +15,6 @@ import {
   type MessageInputKeyboardActionKind,
   type KeyboardShortcutPayload,
 } from "@/keyboard/actions";
-import { canToggleFileExplorerShortcut } from "@/keyboard/keyboard-shortcut-routing";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
 import {
   type ChordState,
@@ -262,19 +261,9 @@ export function useKeyboardShortcuts({
           }
           return true;
         case "sidebar.toggle.right":
-          if (!toggleFileExplorer) {
-            return false;
+          if (toggleFileExplorer) {
+            toggleFileExplorer();
           }
-          if (
-            !canToggleFileExplorerShortcut({
-              selectedAgentId,
-              pathname,
-              toggleFileExplorer,
-            })
-          ) {
-            return false;
-          }
-          toggleFileExplorer();
           return true;
         case "view.toggle.focus":
           if (toggleFocusMode) {
@@ -353,11 +342,6 @@ export function useKeyboardShortcuts({
           isDesktop: isDesktopApp,
           focusScope,
           commandCenterOpen: store.commandCenterOpen,
-          hasSelectedAgent: canToggleFileExplorerShortcut({
-            selectedAgentId,
-            pathname,
-            toggleFileExplorer,
-          }),
         },
         chordState: chordStateRef.current,
         onChordReset: () => {

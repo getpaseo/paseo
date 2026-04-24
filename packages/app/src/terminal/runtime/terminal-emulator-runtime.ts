@@ -157,6 +157,7 @@ export class TerminalEmulatorRuntime {
       convertEol: false,
       cursorBlink: true,
       cursorStyle: "bar",
+      customGlyphs: true,
       fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
       fontSize: 13,
       lineHeight: 1.0,
@@ -172,6 +173,7 @@ export class TerminalEmulatorRuntime {
     const fitAddon = new FitAddon();
     const unicode11Addon = new Unicode11Addon();
     let webglAddon: WebglAddon | null = null;
+    let imageAddon: ImageAddon | null = null;
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(unicode11Addon);
     terminal.loadAddon(
@@ -196,31 +198,46 @@ export class TerminalEmulatorRuntime {
 
     // Prefer GPU rendering when available. This tends to reduce visible seams in block characters
     // and improves scroll performance, but must gracefully fall back on platforms without WebGL.
+    const disposeImageAddon = (): void => {
+      try {
+        imageAddon?.dispose();
+      } catch {
+        // ignore
+      }
+      imageAddon = null;
+    };
+    const disposeWebglRenderer = (): void => {
+      if (!webglAddon) return;
+      try {
+        webglAddon.dispose();
+      } catch {
+        // ignore
+      }
+      webglAddon = null;
+      // Image addon depends on the WebGL renderer for pixel output — dispose
+      // it alongside so context loss cleans up both. (Paseo commit d152b4f.)
+      disposeImageAddon();
+      // WebGL and DOM renderers have different cell dimensions; re-fit so
+      // the next frame lays out correctly.
+      this.fitAndEmitResize?.(true);
+    };
+
     let webglAddonRaf: number | null = requestAnimationFrame(() => {
       webglAddonRaf = null;
       try {
+        disposeWebglRenderer();
         webglAddon = new WebglAddon();
         webglAddon.onContextLoss(() => {
-          try {
-            webglAddon?.dispose();
-          } catch {
-            // ignore
-          }
-          webglAddon = null;
-          // Force a refresh after context loss to avoid visual corruption.
-          try {
-            terminal.refresh(0, terminal.rows - 1);
-          } catch {
-            // ignore
-          }
+          disposeWebglRenderer();
         });
         terminal.loadAddon(webglAddon);
+        imageAddon = new ImageAddon();
+        terminal.loadAddon(imageAddon);
+        this.fitAndEmitResize?.(true);
       } catch {
-        webglAddon = null;
+        disposeWebglRenderer();
       }
     });
-
-    terminal.loadAddon(new ImageAddon());
 
     // Suppress terminal query responses — the server-side headless xterm handles these.
     // Without this, xterm.js generates DA/CPR responses via onData that feed back

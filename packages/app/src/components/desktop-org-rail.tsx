@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ImagePlus,
   Info,
+  LogIn,
   Plus,
   Search,
   Settings as SettingsIcon,
@@ -146,7 +147,7 @@ export function DesktopTitlebarAccent() {
  */
 export function DesktopOrgRail() {
   const { theme } = useUnistyles();
-  const { user, isAuthenticated } = useAuthSession();
+  const { user, isAuthenticated, signIn, isSigningIn } = useAuthSession();
   const { organizations, createOrganization, isCreating } = useOrganizations();
   const activeOrgId = useActiveOrgId();
   const windowPadding = useWindowControlsPadding("sidebar");
@@ -268,28 +269,48 @@ export function DesktopOrgRail() {
           borderRightColor: theme.colors.border,
         }}
       />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Set status (current: ${myStatus})`}
-        style={({ hovered = false }) => [styles.avatarWrap, hovered && styles.itemHovered]}
-        onPress={() => setStatusOpen(true)}
-      >
-        <View style={{ width: 32, height: 32 }}>
-          {user?.avatarUrl ? (
-            <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
-          ) : (
+      {!isAuthenticated ? (
+        <>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Sign in to unlock Messages, Skills, MCP and shared workspaces"
+            disabled={isSigningIn}
+            style={({ hovered = false }) => [styles.avatarWrap, hovered && styles.itemHovered]}
+            onPress={() => void signIn(undefined)}
+          >
             <View style={[styles.avatar, styles.avatarFallback]}>
-              <User size={16} color="rgba(255,255,255,0.85)" />
+              <LogIn size={16} color="rgba(255,255,255,0.9)" />
             </View>
-          )}
-          <View style={styles.statusDotWrap}>
-            <StatusDot status={myStatus} size={10} />
-          </View>
-        </View>
-      </Pressable>
-      <StatusPicker visible={statusOpen} onClose={() => setStatusOpen(false)} />
+          </Pressable>
+          <View style={styles.divider} />
+        </>
+      ) : null}
+      {isAuthenticated ? (
+        <>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Set status (current: ${myStatus})`}
+            style={({ hovered = false }) => [styles.avatarWrap, hovered && styles.itemHovered]}
+            onPress={() => setStatusOpen(true)}
+          >
+            <View style={{ width: 32, height: 32 }}>
+              {user?.avatarUrl ? (
+                <Image source={{ uri: user.avatarUrl }} style={styles.avatar} />
+              ) : (
+                <View style={[styles.avatar, styles.avatarFallback]}>
+                  <User size={16} color="rgba(255,255,255,0.85)" />
+                </View>
+              )}
+              <View style={styles.statusDotWrap}>
+                <StatusDot status={myStatus} size={10} />
+              </View>
+            </View>
+          </Pressable>
+          <StatusPicker visible={statusOpen} onClose={() => setStatusOpen(false)} />
 
-      <View style={styles.divider} />
+          <View style={styles.divider} />
+        </>
+      ) : null}
 
       <View style={styles.orgList}>
         {orgTiles.map((o) => {

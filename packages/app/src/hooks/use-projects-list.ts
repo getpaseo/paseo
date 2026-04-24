@@ -23,7 +23,6 @@ export function useProjectsList(serverId: string | null): ProjectEntry[] {
     if (!workspaces) return [];
     const byId = new Map<string, ProjectEntry>();
     for (const w of workspaces.values()) {
-      if (w.status === "archived") continue;
       if (!w.projectId || !w.projectRootPath) continue;
       const existing = byId.get(w.projectId);
       if (existing) {

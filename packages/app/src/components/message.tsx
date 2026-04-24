@@ -23,6 +23,7 @@ import {
   cloneElement,
 } from "react";
 import type { ReactNode, ComponentType } from "react";
+import { useExpandedItemState } from "@/components/use-expanded-item-state";
 import Markdown, { MarkdownIt, type RenderRules } from "react-native-markdown-display";
 import { useQuery } from "@tanstack/react-query";
 import MaskedView from "@react-native-masked-view/masked-view";
@@ -1320,6 +1321,8 @@ interface ActivityLogProps {
   title?: string;
   onArtifactClick?: (artifactId: string) => void;
   disableOuterSpacing?: boolean;
+  /** Stable id used to preserve expand state across FlatList virtualization. */
+  itemId?: string;
 }
 
 const activityLogStylesheet = StyleSheet.create((theme) => ({
@@ -1404,9 +1407,10 @@ export const ActivityLog = memo(function ActivityLog({
   title,
   onArtifactClick,
   disableOuterSpacing,
+  itemId,
 }: ActivityLogProps) {
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, toggleExpanded] = useExpandedItemState(itemId ?? null);
 
   const typeConfig = {
     system: {
@@ -1439,7 +1443,7 @@ export const ActivityLog = memo(function ActivityLog({
     if (type === "artifact" && artifactId && onArtifactClick) {
       onArtifactClick(artifactId);
     } else if (metadata) {
-      setIsExpanded(!isExpanded);
+      toggleExpanded();
     }
   };
 
@@ -1552,6 +1556,8 @@ export const CompactionMarker = memo(function CompactionMarker({
 interface TodoListCardProps {
   items: TodoEntry[];
   disableOuterSpacing?: boolean;
+  /** Stable id used to preserve expand state across FlatList virtualization. */
+  itemId?: string;
 }
 
 const todoListCardStylesheet = StyleSheet.create((theme) => ({
@@ -1598,15 +1604,13 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
 export const TodoListCard = memo(function TodoListCard({
   items,
   disableOuterSpacing,
+  itemId,
 }: TodoListCardProps) {
   const { theme: unistylesTheme } = useUnistyles();
-  const [isExpanded, setIsExpanded] = useState(false);
+  // Persist expand state across FlatList virtualization unmounts on mobile.
+  const [isExpanded, handleToggle] = useExpandedItemState(itemId ?? null);
 
   const nextTask = useMemo(() => items.find((item) => !item.completed)?.text, [items]);
-
-  const handleToggle = useCallback(() => {
-    setIsExpanded((prev) => !prev);
-  }, []);
 
   const renderDetails = useCallback(() => {
     return (

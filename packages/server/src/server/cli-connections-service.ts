@@ -16,6 +16,7 @@ import {
   type CliProviderOverrides,
 } from "../shared/cli-provider-registry.js";
 import type { CliAgentStatusEntry } from "../shared/messages.js";
+import { childEnv } from "../utils/child-env.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -77,7 +78,7 @@ async function runVersionCheck(
     const { stdout, stderr } = await execFileAsync(command, versionArgs, {
       timeout: timeoutMs,
       encoding: "utf8",
-      env: { ...process.env, TERM: "dumb" },
+      env: childEnv({ TERM: "dumb" }),
     });
     const version = extractVersion(stdout) || extractVersion(stderr);
     return { success: true, stdout, stderr, version, resolvedPath };

@@ -561,6 +561,22 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     });
   }, [disabled, handleStopRealtimeVoice, isConnected, toast, voice, voiceAgentId, voiceServerId]);
 
+  // Web input height measurement
+  function isTextAreaLike(v: unknown): v is TextAreaHandle {
+    return typeof v === "object" && v !== null && "scrollHeight" in v;
+  }
+
+  const getWebTextArea = useCallback((): TextAreaHandle | null => {
+    const ref = textInputRef.current;
+    if (!ref) return null;
+    if (typeof (ref as any).getNativeRef === "function") {
+      const native = (ref as any).getNativeRef();
+      if (isTextAreaLike(native)) return native;
+    }
+    if (isTextAreaLike(ref)) return ref;
+    return null;
+  }, []);
+
   const handleSendMessage = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed && images.length === 0) return;
@@ -573,7 +589,19 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     inputHeightRef.current = MIN_INPUT_HEIGHT;
     setInputHeight(MIN_INPUT_HEIGHT);
     onHeightChange?.(MIN_INPUT_HEIGHT);
-  }, [value, images, onSubmit, isAgentRunning, onHeightChange]);
+    // Web-only: <textarea>'s intrinsic scrollHeight sticks to whatever the
+    // prior content expanded to, even when the value becomes empty. React's
+    // style.height update alone isn't enough — the browser keeps the old
+    // computed height until a relayout. Force the textarea to shrink back
+    // to the baseline inline so the composer doesn't look empty-but-tall
+    // after send (the Paseo 0.1.60 fix).
+    if (isWeb) {
+      const textarea = getWebTextArea();
+      if (textarea?.style) {
+        textarea.style.height = `${MIN_INPUT_HEIGHT}px`;
+      }
+    }
+  }, [value, images, onSubmit, isAgentRunning, onHeightChange, getWebTextArea]);
 
   const handleQueueMessage = useCallback(() => {
     if (!onQueue) return;
@@ -588,7 +616,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     inputHeightRef.current = MIN_INPUT_HEIGHT;
     setInputHeight(MIN_INPUT_HEIGHT);
     onHeightChange?.(MIN_INPUT_HEIGHT);
-  }, [value, images, onQueue, onChangeText, onHeightChange]);
+    if (isWeb) {
+      const textarea = getWebTextArea();
+      if (textarea?.style) {
+        textarea.style.height = `${MIN_INPUT_HEIGHT}px`;
+      }
+    }
+  }, [value, images, onQueue, onChangeText, onHeightChange, getWebTextArea]);
 
   // Default send action: respects the sendBehavior setting.
   // When "interrupt" (default), primary action sends immediately (interrupts).
@@ -609,22 +643,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
       handleQueueMessage(); // queue
     }
   }, [defaultSendBehavior, handleSendMessage, handleQueueMessage, onQueue]);
-
-  // Web input height measurement
-  function isTextAreaLike(v: unknown): v is TextAreaHandle {
-    return typeof v === "object" && v !== null && "scrollHeight" in v;
-  }
-
-  const getWebTextArea = useCallback((): TextAreaHandle | null => {
-    const ref = textInputRef.current;
-    if (!ref) return null;
-    if (typeof (ref as any).getNativeRef === "function") {
-      const native = (ref as any).getNativeRef();
-      if (isTextAreaLike(native)) return native;
-    }
-    if (isTextAreaLike(ref)) return ref;
-    return null;
-  }, []);
 
   const webTextareaRef = useRef<HTMLElement | null>(null);
 

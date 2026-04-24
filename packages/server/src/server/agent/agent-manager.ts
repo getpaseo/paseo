@@ -1329,24 +1329,31 @@ export class AgentManager {
 
     const self = this;
     return (async function* replaceRunForwarder() {
+      let completedSuccessfully = false;
       try {
         await self.cancelAgentRun(agentId);
         const nextRun = self.streamAgent(agentId, prompt, options);
         for await (const event of nextRun) {
           yield event;
         }
-      } catch (error) {
-        const latest = self.agents.get(agentId);
-        if (latest) {
-          const latestActive = latest as ActiveManagedAgent;
-          latestActive.pendingReplacement = false;
-          if (!latestActive.activeForegroundTurnId && latestActive.lifecycle === "running") {
-            (latestActive as ActiveManagedAgent).lifecycle = "idle";
-            self.touchUpdatedAt(latestActive);
-            self.emitState(latestActive);
+        completedSuccessfully = true;
+      } finally {
+        // Always clear pendingReplacement — if we don't, a consumer that
+        // break/returns from the generator before completion leaves the flag
+        // stuck, and future state updates get held indefinitely waiting for
+        // the "replacement" that already ended. (Paseo 0.1.60 fix.)
+        if (!completedSuccessfully) {
+          const latest = self.agents.get(agentId);
+          if (latest) {
+            const latestActive = latest as ActiveManagedAgent;
+            latestActive.pendingReplacement = false;
+            if (!latestActive.activeForegroundTurnId && latestActive.lifecycle === "running") {
+              (latestActive as ActiveManagedAgent).lifecycle = "idle";
+              self.touchUpdatedAt(latestActive);
+              self.emitState(latestActive);
+            }
           }
         }
-        throw error;
       }
     })();
   }

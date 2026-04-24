@@ -78,9 +78,7 @@ export function ChatModePicker({ visible, selectedId, onClose, onSelect }: ChatM
             }}
           >
             <X size={14} color={theme.colors.foreground} />
-            <Text style={{ color: theme.colors.foreground, fontSize: 13 }}>
-              Clear current mode
-            </Text>
+            <Text style={{ color: theme.colors.foreground, fontSize: 13 }}>Clear current mode</Text>
           </Pressable>
         ) : null}
 
@@ -113,9 +111,7 @@ export function ChatModePicker({ visible, selectedId, onClose, onSelect }: ChatM
                       alignItems: "flex-start",
                       gap: 10,
                       backgroundColor:
-                        pressed || hovered || isSelected
-                          ? theme.colors.surface2
-                          : "transparent",
+                        pressed || hovered || isSelected ? theme.colors.surface2 : "transparent",
                     },
                   ]}
                 >

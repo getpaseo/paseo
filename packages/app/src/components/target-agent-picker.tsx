@@ -45,9 +45,7 @@ export function TargetAgentPicker({ serverId, value, onChange }: TargetAgentPick
 
   return (
     <View style={{ gap: 6 }}>
-      <Text style={settingsStyles.rowHint}>
-        Leave empty to install into every supported agent.
-      </Text>
+      <Text style={settingsStyles.rowHint}>Leave empty to install into every supported agent.</Text>
 
       {options.length === 0 ? (
         <Text style={settingsStyles.rowHint}>
@@ -94,9 +92,7 @@ export function TargetAgentPicker({ serverId, value, onChange }: TargetAgentPick
                 </View>
                 <Icon size={12} color={theme.colors.mutedForeground} />
                 <Text style={{ color: theme.colors.foreground, fontSize: 13 }}>{opt.name}</Text>
-                <Text style={{ color: theme.colors.mutedForeground, fontSize: 11 }}>
-                  {opt.id}
-                </Text>
+                <Text style={{ color: theme.colors.mutedForeground, fontSize: 11 }}>{opt.id}</Text>
               </Pressable>
             );
           })}

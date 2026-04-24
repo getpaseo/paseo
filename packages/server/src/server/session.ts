@@ -4456,11 +4456,19 @@ export class Session {
   private async handleClearAgentAttention(agentId: string | string[]): Promise<void> {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
-    try {
-      await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
-    } catch (error: any) {
-      this.sessionLogger.error({ err: error, agentIds }, "Failed to clear agent attention");
-      // Don't throw - this is not critical
+    // Use allSettled so one missing/archived/timed-out agent doesn't abort the
+    // rest — Promise.all rejects on the first failure, leaving other agents'
+    // attention flags stuck. (Paseo 0.1.58 fix.)
+    const results = await Promise.allSettled(
+      agentIds.map((id) => this.agentManager.clearAgentAttention(id)),
+    );
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") {
+        this.sessionLogger.warn(
+          { err: result.reason, agentId: agentIds[index] },
+          "Failed to clear agent attention (non-fatal)",
+        );
+      }
     }
   }
 
@@ -6207,14 +6215,24 @@ export class Session {
         continue;
       }
       const projectRecord = activeProjects.get(workspace.projectId) ?? null;
-      descriptorsByWorkspaceId.set(
-        workspace.workspaceId,
-        await this.buildWorkspaceDescriptor({
-          workspace,
-          projectRecord,
-          includeGitData: options.includeGitData,
-        }),
-      );
+      // Isolate per-workspace descriptor builds so a single bad project
+      // (empty git repo, missing worktree dir, corrupt index) doesn't
+      // block the rest of the workspace list from loading.
+      try {
+        descriptorsByWorkspaceId.set(
+          workspace.workspaceId,
+          await this.buildWorkspaceDescriptor({
+            workspace,
+            projectRecord,
+            includeGitData: options.includeGitData,
+          }),
+        );
+      } catch (err) {
+        this.sessionLogger.warn(
+          { err, workspaceId: workspace.workspaceId, cwd: workspace.cwd },
+          "buildWorkspaceDescriptor failed — skipping workspace",
+        );
+      }
     }
 
     for (const agent of agents) {

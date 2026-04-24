@@ -9,7 +9,15 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
-import { ArrowUp, Square, Pencil, AudioLines, Zap, Sparkles, X as XIcon } from "lucide-react-native";
+import {
+  ArrowUp,
+  Square,
+  Pencil,
+  AudioLines,
+  Zap,
+  Sparkles,
+  X as XIcon,
+} from "lucide-react-native";
 import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -589,28 +597,25 @@ export function AgentInputArea({
   // Handle keyboard navigation for command autocomplete and stop action.
   const handleCommandKeyPress = useCallback(
     (event: { key: string; preventDefault: () => void }) => {
-      if (
-        event.key === "Escape" &&
-        isAgentRunning &&
-        !hasSendableContent &&
-        !isCancellingAgent &&
-        isConnected
-      ) {
+      // Let autocomplete handle Escape first (close suggestions), but if it
+      // doesn't claim the event and the agent is running, interrupt it —
+      // regardless of whether the composer has draft text. Users expect
+      // Escape to stop the agent; keeping drafts intact is worth more than
+      // blocking the interrupt. (Paseo 0.1.60 fix.)
+      const autocompleteHandled = autocomplete.onKeyPress(event);
+      if (autocompleteHandled) {
+        return true;
+      }
+
+      if (event.key === "Escape" && isAgentRunning && !isCancellingAgent && isConnected) {
         event.preventDefault();
         handleCancelAgent();
         return true;
       }
 
-      return autocomplete.onKeyPress(event);
+      return false;
     },
-    [
-      autocomplete,
-      hasSendableContent,
-      isAgentRunning,
-      isCancellingAgent,
-      isConnected,
-      handleCancelAgent,
-    ],
+    [autocomplete, isAgentRunning, isCancellingAgent, isConnected, handleCancelAgent],
   );
 
   const cancelButton =

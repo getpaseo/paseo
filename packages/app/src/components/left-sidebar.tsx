@@ -37,11 +37,13 @@ import {
   MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Lock,
   Plug,
   Plus,
   Puzzle,
   Settings,
   Share2,
+  Sparkles,
   Users,
 } from "lucide-react-native";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -363,13 +365,30 @@ function HostSwitchOption({
   );
 }
 
-function ChatTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
+function useLockedPromptSignIn(locked: boolean) {
+  const { signIn } = useAuthSession();
+  return useCallback(() => {
+    if (!locked) return false;
+    void signIn(undefined);
+    return true;
+  }, [locked, signIn]);
+}
+
+function ChatTabButton({
+  onNavigate,
+  locked = false,
+}: {
+  onNavigate?: () => void;
+  locked?: boolean;
+} = {}) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
-  const isActive = pathname === "/chat" || pathname.startsWith("/chat/");
+  const isActive = !locked && (pathname === "/chat" || pathname.startsWith("/chat/"));
+  const promptSignIn = useLockedPromptSignIn(locked);
   return (
     <Pressable
       onPress={() => {
+        if (promptSignIn()) return;
         router.push("/chat");
         onNavigate?.();
       }}
@@ -377,9 +396,10 @@ function ChatTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
         styles.newAgentButton,
         hovered && styles.newAgentButtonHovered,
         isActive && styles.newAgentButtonActive,
+        locked && styles.tabLocked,
       ]}
       accessibilityRole="button"
-      accessibilityLabel="Messages"
+      accessibilityLabel={locked ? "Messages — sign in to unlock" : "Messages"}
     >
       {({ hovered }) => (
         <>
@@ -396,16 +416,20 @@ function ChatTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
           >
             Messages
           </Text>
+          {locked ? (
+            <Lock size={12} color={theme.colors.foregroundMuted} style={styles.tabLockIcon} />
+          ) : null}
         </>
       )}
     </Pressable>
   );
 }
 
-function SessionsButton({ onPress }: { onPress: () => void }) {
+function SessionsButton({ onPress, locked = false }: { onPress: () => void; locked?: boolean }) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
-  const isActive = pathname.includes("/sessions");
+  const isActive = !locked && pathname.includes("/sessions");
+  const promptSignIn = useLockedPromptSignIn(locked);
 
   return (
     <Pressable
@@ -413,12 +437,16 @@ function SessionsButton({ onPress }: { onPress: () => void }) {
         styles.newAgentButton,
         hovered && styles.newAgentButtonHovered,
         isActive && styles.newAgentButtonActive,
+        locked && styles.tabLocked,
       ]}
       testID="sidebar-sessions"
       accessible
       accessibilityRole="button"
-      accessibilityLabel="Sessions"
-      onPress={onPress}
+      accessibilityLabel={locked ? "Sessions — sign in to unlock" : "Sessions"}
+      onPress={() => {
+        if (promptSignIn()) return;
+        onPress();
+      }}
     >
       {({ hovered }) => (
         <>
@@ -434,6 +462,9 @@ function SessionsButton({ onPress }: { onPress: () => void }) {
           >
             Sessions
           </Text>
+          {locked ? (
+            <Lock size={12} color={theme.colors.foregroundMuted} style={styles.tabLockIcon} />
+          ) : null}
         </>
       )}
     </Pressable>
@@ -450,12 +481,15 @@ function LibraryRow({
   icon,
   active,
   onPress,
+  locked = false,
 }: {
   label: string;
   icon: React.ReactNode;
   active: boolean;
   onPress: () => void;
+  locked?: boolean;
 }) {
+  const { theme } = useUnistyles();
   return (
     <Pressable
       onPress={onPress}
@@ -464,12 +498,16 @@ function LibraryRow({
         hovered && styles.libraryRowHovered,
         pressed && styles.libraryRowPressed,
         active && styles.libraryRowActive,
+        locked && styles.tabLocked,
       ]}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={locked ? `${label} — sign in to unlock` : label}
     >
       {icon}
       <Text style={[styles.libraryRowText, active && styles.libraryRowTextActive]}>{label}</Text>
+      {locked ? (
+        <Lock size={12} color={theme.colors.foregroundMuted} style={styles.tabLockIcon} />
+      ) : null}
     </Pressable>
   );
 }
@@ -531,13 +569,22 @@ function ProjectsSection({
   );
 }
 
-function SkillsTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
+function SkillsTabButton({
+  onNavigate,
+  locked = false,
+}: {
+  onNavigate?: () => void;
+  locked?: boolean;
+} = {}) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
-  const isActive = pathname === "/library/skills" || pathname.startsWith("/library/skills/");
+  const isActive =
+    !locked && (pathname === "/library/skills" || pathname.startsWith("/library/skills/"));
+  const promptSignIn = useLockedPromptSignIn(locked);
   return (
     <LibraryRow
       label="Skills"
+      locked={locked}
       icon={
         <Puzzle
           size={theme.iconSize.md}
@@ -546,6 +593,7 @@ function SkillsTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
       }
       active={isActive}
       onPress={() => {
+        if (promptSignIn()) return;
         router.push("/library/skills" as never);
         onNavigate?.();
       }}
@@ -553,13 +601,21 @@ function SkillsTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
   );
 }
 
-function McpTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
+function McpTabButton({
+  onNavigate,
+  locked = false,
+}: {
+  onNavigate?: () => void;
+  locked?: boolean;
+} = {}) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
-  const isActive = pathname === "/library/mcp" || pathname.startsWith("/library/mcp/");
+  const isActive = !locked && (pathname === "/library/mcp" || pathname.startsWith("/library/mcp/"));
+  const promptSignIn = useLockedPromptSignIn(locked);
   return (
     <LibraryRow
       label="MCP"
+      locked={locked}
       icon={
         <Plug
           size={theme.iconSize.md}
@@ -568,6 +624,7 @@ function McpTabButton({ onNavigate }: { onNavigate?: () => void } = {}) {
       }
       active={isActive}
       onPress={() => {
+        if (promptSignIn()) return;
         router.push("/library/mcp" as never);
         onNavigate?.();
       }}
@@ -604,6 +661,7 @@ function MobileSidebar({
   isScopedRecipient,
 }: MobileSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
+  const { isAuthenticated } = useAuthSession();
   const setTeamProjectsModalOpen = useKeyboardShortcutsStore((s) => s.setTeamProjectsModalOpen);
   const handleOpenTeamProjects = useCallback(() => {
     setTeamProjectsModalOpen(true);
@@ -759,18 +817,20 @@ function MobileSidebar({
           <View style={[styles.sidebarContent, { pointerEvents: "auto" }]}>
             {!isScopedRecipient && (
               <>
-                <View style={styles.sidebarOrgSwitcher}>
-                  <CompactOrgSwitcher onAfterSwitch={() => closeToAgent()} />
-                </View>
+                {isAuthenticated ? (
+                  <View style={styles.sidebarOrgSwitcher}>
+                    <CompactOrgSwitcher onAfterSwitch={() => closeToAgent()} />
+                  </View>
+                ) : null}
                 <View style={styles.sidebarHeader}>
                   <View style={styles.sidebarHeaderRow}>
-                    <ChatTabButton onNavigate={() => closeToAgent()} />
+                    <ChatTabButton onNavigate={() => closeToAgent()} locked={!isAuthenticated} />
                     <SessionsButton onPress={handleViewMore} />
                   </View>
                 </View>
                 <View style={styles.libraryGroup}>
-                  <SkillsTabButton onNavigate={() => closeToAgent()} />
-                  <McpTabButton onNavigate={() => closeToAgent()} />
+                  <SkillsTabButton onNavigate={() => closeToAgent()} locked={!isAuthenticated} />
+                  <McpTabButton onNavigate={() => closeToAgent()} locked={!isAuthenticated} />
                 </View>
               </>
             )}
@@ -779,12 +839,15 @@ function MobileSidebar({
               <SidebarAgentListSkeleton />
             ) : (
               <>
-                {!isScopedRecipient && (
-                  <SidebarSharedWorkspaces
-                    serverId={activeServerId}
-                    onWorkspacePress={() => closeToAgent()}
-                  />
-                )}
+                {!isScopedRecipient &&
+                  (isAuthenticated ? (
+                    <SidebarSharedWorkspaces
+                      serverId={activeServerId}
+                      onWorkspacePress={() => closeToAgent()}
+                    />
+                  ) : (
+                    <LockedSharedWorkspacesRow />
+                  ))}
                 <ProjectsSection
                   count={projects.length}
                   onAdd={isScopedRecipient ? undefined : handleOpenProject}
@@ -804,6 +867,8 @@ function MobileSidebar({
                 </ProjectsSection>
               </>
             )}
+
+            {!isScopedRecipient && <SidebarSignInCard />}
 
             <View style={styles.sidebarFooter}>
               <View style={styles.footerHostSlot}>
@@ -915,14 +980,19 @@ function MobileSidebar({
 
 function SidebarSignInCard() {
   const { theme } = useUnistyles();
-  const isElectron = getIsElectron();
   const { isAuthenticated, signIn, isSigningIn } = useAuthSession();
 
-  if (!isElectron || isAuthenticated) return null;
+  if (isAuthenticated) return null;
 
   return (
     <View style={styles.signInCard}>
-      <Text style={styles.signInCardText}>Sign in to sync settings and manage your team.</Text>
+      <View style={styles.signInCardHeader}>
+        <Sparkles size={14} color={theme.colors.brandMagenta} />
+        <Text style={styles.signInCardTitle}>Create your account</Text>
+      </View>
+      <Text style={styles.signInCardText}>
+        Unlock exclusive tools: Messages, Skills, MCP and shared workspaces.
+      </Text>
       <Pressable
         style={({ hovered = false }) => [
           styles.signInCardButton,
@@ -932,7 +1002,9 @@ function SidebarSignInCard() {
         onPress={() => void signIn(undefined)}
         disabled={isSigningIn}
       >
-        <Text style={styles.signInCardButtonText}>{isSigningIn ? "Waiting..." : "Sign in"}</Text>
+        <Text style={styles.signInCardButtonText}>
+          {isSigningIn ? "Waiting..." : "Sign in / Create account"}
+        </Text>
       </Pressable>
     </View>
   );
@@ -960,6 +1032,7 @@ function CollapsedDesktopSidebar({
   projects,
   activeServerId,
   isScopedRecipient,
+  isAuthenticated,
 }: {
   theme: SidebarTheme;
   insetsTop: number;
@@ -973,6 +1046,7 @@ function CollapsedDesktopSidebar({
   projects: SidebarProjectEntry[];
   activeServerId: string | null;
   isScopedRecipient: boolean;
+  isAuthenticated: boolean;
 }) {
   const pathname = usePathname();
   const isChatActive = pathname === "/chat" || pathname.startsWith("/chat/");
@@ -1015,8 +1089,9 @@ function CollapsedDesktopSidebar({
           {!isScopedRecipient && (
             <>
               <CollapsedRailIconBtn
-                label="Messages"
-                active={isChatActive}
+                label={isAuthenticated ? "Messages" : "Messages — sign in to unlock"}
+                active={!isAuthenticated ? false : isChatActive}
+                locked={!isAuthenticated}
                 icon={
                   <MessageSquare
                     size={18}
@@ -1041,7 +1116,10 @@ function CollapsedDesktopSidebar({
                 onPress={onOpenSessions}
               />
               <CollapsedRailIconBtn
-                label="Shared workspaces"
+                label={
+                  isAuthenticated ? "Shared workspaces" : "Shared workspaces — sign in to unlock"
+                }
+                locked={!isAuthenticated}
                 icon={<Share2 size={18} color={theme.colors.foregroundMuted} strokeWidth={1.75} />}
                 onPress={onOpenTeamProjects}
               />
@@ -1134,17 +1212,24 @@ function CollapsedRailIconBtn({
   icon,
   onPress,
   active,
+  locked = false,
 }: {
   label: string;
   icon: React.ReactNode;
   onPress: () => void;
   active?: boolean;
+  locked?: boolean;
 }) {
+  const { theme } = useUnistyles();
+  const promptSignIn = useLockedPromptSignIn(locked);
   return (
     <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>
         <Pressable
-          onPress={onPress}
+          onPress={() => {
+            if (promptSignIn()) return;
+            onPress();
+          }}
           hitSlop={6}
           accessibilityRole="button"
           accessibilityLabel={label}
@@ -1153,15 +1238,44 @@ function CollapsedRailIconBtn({
             active && styles.collapsedRailBtnActive,
             !active && hovered && styles.collapsedRailBtnHover,
             pressed && styles.collapsedRailBtnPressed,
+            locked && styles.tabLocked,
           ]}
         >
           {icon}
+          {locked ? (
+            <View style={styles.collapsedLockBadge}>
+              <Lock size={8} color={theme.colors.foregroundMuted} />
+            </View>
+          ) : null}
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="right" align="center" offset={8}>
         <Text style={styles.tooltipText}>{label}</Text>
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+function LockedSharedWorkspacesRow() {
+  const { theme } = useUnistyles();
+  const { signIn } = useAuthSession();
+  return (
+    <View style={styles.projectsSectionHeaderRow}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Shared workspaces — sign in to unlock"
+        onPress={() => void signIn(undefined)}
+        style={({ hovered = false }) => [
+          styles.projectsSectionToggle,
+          hovered && styles.projectsSectionHeaderHovered,
+          styles.tabLocked,
+        ]}
+      >
+        <Share2 size={12} color={theme.colors.foregroundMuted} />
+        <Text style={styles.projectsSectionText}>Shared workspaces</Text>
+        <Lock size={10} color={theme.colors.foregroundMuted} style={styles.tabLockIcon} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -1194,6 +1308,7 @@ function DesktopSidebar({
   isScopedRecipient,
 }: DesktopSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
+  const { isAuthenticated } = useAuthSession();
   const padding = useWindowControlsPadding("sidebar");
   const sharedSessionActive = useIsInSharedSession();
   const setTeamProjectsModalOpen = useKeyboardShortcutsStore((s) => s.setTeamProjectsModalOpen);
@@ -1262,6 +1377,7 @@ function DesktopSidebar({
         projects={projects}
         activeServerId={activeServerId}
         isScopedRecipient={isScopedRecipient}
+        isAuthenticated={isAuthenticated}
       />
     );
   }
@@ -1285,13 +1401,13 @@ function DesktopSidebar({
             <>
               <View style={styles.sidebarHeader}>
                 <View style={styles.sidebarHeaderRow}>
-                  <ChatTabButton />
+                  <ChatTabButton locked={!isAuthenticated} />
                   <SessionsButton onPress={handleViewMore} />
                 </View>
               </View>
               <View style={styles.libraryGroup}>
-                <SkillsTabButton />
-                <McpTabButton />
+                <SkillsTabButton locked={!isAuthenticated} />
+                <McpTabButton locked={!isAuthenticated} />
               </View>
             </>
           )}
@@ -1301,7 +1417,12 @@ function DesktopSidebar({
           <SidebarAgentListSkeleton />
         ) : (
           <>
-            {!isScopedRecipient && <SidebarSharedWorkspaces serverId={activeServerId} />}
+            {!isScopedRecipient &&
+              (isAuthenticated ? (
+                <SidebarSharedWorkspaces serverId={activeServerId} />
+              ) : (
+                <LockedSharedWorkspacesRow />
+              ))}
             <ProjectsSection
               count={projects.length}
               onAdd={isScopedRecipient ? undefined : handleOpenProject}
@@ -1756,6 +1877,33 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
     gap: theme.spacing[3],
+  },
+  tabLocked: {
+    opacity: 0.55,
+  },
+  tabLockIcon: {
+    marginLeft: theme.spacing[1],
+  },
+  collapsedLockBadge: {
+    position: "absolute",
+    right: 2,
+    bottom: 2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.surface1,
+  },
+  signInCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  signInCardTitle: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
   },
   signInCardText: {
     fontSize: theme.fontSize.xs,

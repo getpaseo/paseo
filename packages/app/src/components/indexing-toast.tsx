@@ -75,9 +75,11 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
   // Keep the toast visible for a moment after transitioning to "ready" so
   // the user sees completion. We mirror the active entry into local state
   // and swap to a terminal "ready" snapshot for the dismiss countdown.
-  const [terminal, setTerminal] = useState<
-    { kind: "ready" | "error"; label: string; detail: string | null } | null
-  >(null);
+  const [terminal, setTerminal] = useState<{
+    kind: "ready" | "error";
+    label: string;
+    detail: string | null;
+  } | null>(null);
   const lastActiveRef = useRef<typeof active>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

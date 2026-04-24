@@ -1,18 +1,16 @@
 import { resolve, dirname, basename } from "path";
 import { existsSync, realpathSync } from "fs";
-import { open as openFile, stat as statFile } from "fs/promises";
+import { open as openFile, readFile as readFileAsync, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
 import { findExecutable } from "./executable.js";
 import { runGitCommand } from "./run-git-command.js";
+import { childEnv } from "./child-env.js";
 import { execCommand } from "./spawn.js";
 import { isHubcodeOwnedWorktreeCwd } from "./worktree.js";
 import { requireHubcodeWorktreeBaseRefName } from "./worktree-metadata.js";
-const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
-  ...process.env,
-  GIT_OPTIONAL_LOCKS: "0",
-};
+const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = childEnv({ GIT_OPTIONAL_LOCKS: "0" });
 
 const DEFAULT_PULL_REQUEST_STATUS_CACHE_TTL_MS = 30_000;
 const PULL_REQUEST_STATUS_CACHE_MAX = 1_000;
@@ -557,12 +555,46 @@ async function requireGitRepo(cwd: string): Promise<void> {
 }
 
 export async function getCurrentBranch(cwd: string): Promise<string | null> {
-  const { stdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
-    cwd,
-    env: READ_ONLY_GIT_ENV,
-  });
-  const branch = stdout.trim();
-  return branch.length > 0 ? branch : null;
+  // Empty repo (`git init` with no commits) has no HEAD yet — `rev-parse`
+  // exits 128 with "unknown revision" and crashes the caller. Treat it as
+  // "no branch yet" instead of bubbling up. (Paseo 0.1.56.)
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    const branch = stdout.trim();
+    if (branch.length === 0) return null;
+    // During `git rebase` HEAD is detached and `rev-parse --abbrev-ref HEAD`
+    // returns the literal string "HEAD". Callers then fail with "Cannot
+    // rename branch in detached HEAD state" even though the user clearly
+    // HAS a target branch. Recover by reading the rebase head-name files
+    // that git keeps while the rebase is in progress. (Paseo 0.1.60 fix.)
+    if (branch === "HEAD") {
+      const rebaseTarget = await readRebaseHeadName(cwd);
+      if (rebaseTarget) return rebaseTarget;
+    }
+    return branch;
+  } catch {
+    return null;
+  }
+}
+
+async function readRebaseHeadName(cwd: string): Promise<string | null> {
+  const gitDir = await resolveAbsoluteGitDir(cwd);
+  if (!gitDir) return null;
+  for (const relativePath of ["rebase-merge/head-name", "rebase-apply/head-name"]) {
+    const fullPath = resolve(gitDir, relativePath);
+    try {
+      const raw = (await readFileAsync(fullPath, "utf8")).trim();
+      // Format is `refs/heads/<branch>` — strip the prefix for display.
+      const stripped = raw.replace(/^refs\/heads\//, "");
+      if (stripped.length > 0) return stripped;
+    } catch {
+      // File not present — not in that rebase mode.
+    }
+  }
+  return null;
 }
 
 async function getWorktreeRoot(cwd: string): Promise<string | null> {
@@ -901,18 +933,26 @@ async function getAheadBehind(
   if (!normalizedBaseRef || !currentBranch || normalizedBaseRef === currentBranch) {
     return null;
   }
-  const comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, normalizedBaseRef);
-  const { stdout } = await runGitCommand(
-    ["rev-list", "--left-right", "--count", `${comparisonBaseRef}...${currentBranch}`],
-    { cwd, env: READ_ONLY_GIT_ENV },
-  );
-  const [behindRaw, aheadRaw] = stdout.trim().split(/\s+/);
-  const behind = Number.parseInt(behindRaw ?? "0", 10);
-  const ahead = Number.parseInt(aheadRaw ?? "0", 10);
-  if (Number.isNaN(behind) || Number.isNaN(ahead)) {
+  // rev-list throws when the comparison ref doesn't exist yet (fresh
+  // branch with no upstream, fresh fork, missing origin). Treat "can't
+  // compute" as null so the workspace snapshot keeps loading instead of
+  // erroring out. (Paseo 0.1.54 fix.)
+  try {
+    const comparisonBaseRef = await resolveBestComparisonBaseRef(cwd, normalizedBaseRef);
+    const { stdout } = await runGitCommand(
+      ["rev-list", "--left-right", "--count", `${comparisonBaseRef}...${currentBranch}`],
+      { cwd, env: READ_ONLY_GIT_ENV },
+    );
+    const [behindRaw, aheadRaw] = stdout.trim().split(/\s+/);
+    const behind = Number.parseInt(behindRaw ?? "0", 10);
+    const ahead = Number.parseInt(aheadRaw ?? "0", 10);
+    if (Number.isNaN(behind) || Number.isNaN(ahead)) {
+      return null;
+    }
+    return { ahead, behind };
+  } catch {
     return null;
   }
-  return { ahead, behind };
 }
 
 async function getAheadOfOrigin(cwd: string, currentBranch: string): Promise<number | null> {
@@ -1891,7 +1931,7 @@ export async function createPullRequest(
 
   await runGitCommand(["push", "-u", "origin", head], { cwd, timeout: 120_000 });
 
-  const ghEnv: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+  const ghEnv: NodeJS.ProcessEnv = childEnv({ GIT_TERMINAL_PROMPT: "0" });
   const args = ["api", "-X", "POST", `repos/${repo}/pulls`, "-f", `title=${options.title}`];
   args.push("-f", `head=${head}`);
   args.push("-f", `base=${normalizedBase}`);
@@ -1950,11 +1990,50 @@ async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestSta
     };
   }
   try {
-    const { stdout } = await execCommand(
-      ghPath,
-      ["pr", "view", "--json", "url,title,state,baseRefName,headRefName,mergedAt"],
-      { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
-    );
+    let stdout: string;
+    try {
+      ({ stdout } = await execCommand(
+        ghPath,
+        ["pr", "view", "--json", "url,title,state,baseRefName,headRefName,mergedAt"],
+        { cwd, env: childEnv({ GIT_TERMINAL_PROMPT: "0" }) },
+      ));
+    } catch (viewErr) {
+      // `gh pr view` resolves the PR from the current branch's *origin*
+      // remote, which silently misses PRs opened from forks (the fork's
+      // head is `owner:branch`, not `branch`). Fall back to a head-scoped
+      // list query that walks PRs across the whole base repo including
+      // those originating from forks. (Paseo 0.1.62 fix.)
+      if (isGhAuthError(viewErr)) throw viewErr;
+      const message = viewErr instanceof Error ? viewErr.message : String(viewErr);
+      if (!message.includes("no pull requests found") && !message.includes("Could not resolve")) {
+        throw viewErr;
+      }
+      try {
+        const { stdout: listStdout } = await execCommand(
+          ghPath,
+          [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--head",
+            head,
+            "--limit",
+            "1",
+            "--json",
+            "url,title,state,baseRefName,headRefName,mergedAt",
+          ],
+          { cwd, env: childEnv({ GIT_TERMINAL_PROMPT: "0" }) },
+        );
+        const arr = JSON.parse(listStdout.trim());
+        if (!Array.isArray(arr) || arr.length === 0) {
+          return { status: null, githubFeaturesEnabled: true };
+        }
+        stdout = JSON.stringify(arr[0]);
+      } catch {
+        return { status: null, githubFeaturesEnabled: true };
+      }
+    }
     const pr = JSON.parse(stdout.trim());
     if (!pr || typeof pr !== "object" || !pr.url || !pr.title) {
       return { status: null, githubFeaturesEnabled: true };

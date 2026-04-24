@@ -45,10 +45,15 @@ export function BranchSwitcher({
   const sharedScope = useSharedWorkspaceScope();
   const isScopedRecipient = sharedScope.workspaceId !== null;
 
-  if (!currentBranchName || isScopedRecipient) {
+  // Non-git workspaces should never show a branch icon — the concept of
+  // "branch" doesn't apply. Same when there's no branch to display or the
+  // user is a scoped recipient (read-only share view). (Paseo 0.1.58 fix.)
+  if (!isGitCheckout || !currentBranchName || isScopedRecipient) {
     return (
       <View style={styles.readOnlyBranchRow} collapsable={false}>
-        {currentBranchName ? <GitBranch size={14} color={theme.colors.foregroundMuted} /> : null}
+        {isGitCheckout && currentBranchName ? (
+          <GitBranch size={14} color={theme.colors.foregroundMuted} />
+        ) : null}
         <Text testID="workspace-header-title" style={styles.headerTitle} numberOfLines={1}>
           {title}
         </Text>
@@ -112,7 +117,11 @@ const styles = StyleSheet.create((theme) => ({
       md: "300",
     },
     color: theme.colors.foreground,
+    // flexShrink + minWidth:0 lets the title ellipsize instead of forcing the
+    // parent row to grow (which pushed the chevron off-screen on narrow rows).
+    // Paseo 0.1.60 fix.
     flexShrink: 1,
+    minWidth: 0,
   },
   branchSwitcherTrigger: {
     flexDirection: "row",

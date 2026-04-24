@@ -349,8 +349,21 @@ export function processAgentStreamEvent(
           },
         });
       }
+    } else if (decision === "drop_epoch") {
+      // Epoch change = daemon restart, agent resume under a new generation.
+      // Dropping silently left the client stranded: its cursor pointed at the
+      // old epoch, every new event was dropped, and the UI froze until a
+      // manual reload. Request a full catch-up so the client re-hydrates with
+      // the new epoch/seq range. (Paseo 0.1.58 reconnect-ordering fix.)
+      shouldApplyStreamEvent = false;
+      sideEffects.push({
+        type: "catch_up",
+        cursor: currentCursor
+          ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq }
+          : { epoch, endSeq: seq - 1 },
+      });
     } else {
-      // drop_stale or drop_epoch
+      // drop_stale — a duplicate of something we already have.
       shouldApplyStreamEvent = false;
     }
   }

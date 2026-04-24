@@ -1,5 +1,6 @@
+import type { QueryKey } from "@tanstack/react-query";
 import { create } from "zustand";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { queryClient } from "@/query/query-client";
 
 const SUCCESS_DISPLAY_MS = 1000;
@@ -121,6 +122,57 @@ function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: 
     },
     removeFromList,
   );
+}
+
+interface WorktreeArchiveSnapshot {
+  workspace: WorkspaceDescriptor | null;
+  worktreeLists: Array<[QueryKey, unknown]>;
+}
+
+function isWorktreeListQuery(input: { queryKey: QueryKey; serverId: string }): boolean {
+  return (
+    Array.isArray(input.queryKey) &&
+    (input.queryKey[0] === "hubcodeWorktreeList" ||
+      input.queryKey[0] === "sidebarHubcodeWorktreeList") &&
+    input.queryKey[1] === input.serverId
+  );
+}
+
+function snapshotWorktreeArchiveState(input: {
+  serverId: string;
+  worktreePath: string;
+}): WorktreeArchiveSnapshot {
+  return {
+    workspace:
+      useSessionStore.getState().sessions[input.serverId]?.workspaces.get(input.worktreePath) ??
+      null,
+    worktreeLists: queryClient.getQueriesData({
+      predicate: (query) =>
+        isWorktreeListQuery({ queryKey: query.queryKey, serverId: input.serverId }),
+    }),
+  };
+}
+
+function removeWorktreeFromSessionStore(input: { serverId: string; worktreePath: string }): void {
+  const serverId = input.serverId.trim();
+  const worktreePath = input.worktreePath.trim();
+  if (!serverId || !worktreePath) {
+    return;
+  }
+  useSessionStore.getState().removeWorkspace(serverId, worktreePath);
+}
+
+function restoreWorktreeArchiveState(input: {
+  serverId: string;
+  worktreePath: string;
+  snapshot: WorktreeArchiveSnapshot;
+}): void {
+  if (input.snapshot.workspace) {
+    useSessionStore.getState().mergeWorkspaces(input.serverId, [input.snapshot.workspace]);
+  }
+  for (const [queryKey, data] of input.snapshot.worktreeLists) {
+    queryClient.setQueryData(queryKey, data);
+  }
 }
 
 const successTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -314,11 +366,21 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
       actionId: "archive-worktree",
       run: async () => {
         const client = resolveClient(serverId);
-        const payload = await client.archiveHubcodeWorktree({ worktreePath });
-        if (payload.error) {
-          throw new Error(payload.error.message);
-        }
+        // Optimistic: snapshot state, remove the worktree from the UI
+        // immediately, then restore if the server call fails. (Paseo 0.1.63
+        // improvement, commit 8010275.)
+        const snapshot = snapshotWorktreeArchiveState({ serverId, worktreePath });
         removeWorktreeFromCachedLists({ serverId, worktreePath });
+        removeWorktreeFromSessionStore({ serverId, worktreePath });
+        try {
+          const payload = await client.archiveHubcodeWorktree({ worktreePath });
+          if (payload.error) {
+            throw new Error(payload.error.message);
+          }
+        } catch (error) {
+          restoreWorktreeArchiveState({ serverId, worktreePath, snapshot });
+          throw error;
+        }
         invalidateWorktreeList();
       },
     });

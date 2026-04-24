@@ -396,8 +396,10 @@ export function useSidebarWorkspacesList(options?: {
     })();
   }, [connectionStatus, isActive, runtime, serverId]);
 
-  const isLoading =
-    isActive && Boolean(serverId) && connectionStatus === "online" && !hasHydratedWorkspaces;
+  // Don't gate the loading state on `connectionStatus === "online"` — cached
+  // workspaces should render immediately on startup instead of showing a
+  // spinner while the daemon connection is still coming up. (Paseo PR #542.)
+  const isLoading = isActive && Boolean(serverId) && !hasHydratedWorkspaces;
   const isInitialLoad = isLoading && projects.length === 0;
   const isRevalidating = false;
 
