@@ -2270,6 +2270,7 @@ class ClaudeAgentSession implements AgentSession {
       ...(this.claudeSessionId ? { resume: this.claudeSessionId } : {}),
       ...(thinking ? { thinking } : {}),
       ...(effort ? { effort } : {}),
+      ...this.calculateMaxTokens(),
       ...this.config.extra?.claude,
     };
 
@@ -2295,6 +2296,40 @@ class ClaudeAgentSession implements AgentSession {
 
   private applyRuntimeSettings(options: ClaudeOptions): ClaudeOptions {
     return applyRuntimeSettingsToClaudeOptions(options, this.runtimeSettings, this.launchEnv);
+  }
+
+  /**
+   * Calculate the maximum output tokens based on remaining context window space.
+   * This prevents "input tokens + output tokens exceeds context limit" errors.
+   *
+   * When using thinking: { type: "adaptive" }, the SDK defaults to 32000 max_tokens,
+   * which can exceed the context window for long-running sessions with accumulated history.
+   *
+   * @returns An object with maxTokens property, or empty object if context window info is unavailable.
+   */
+  private calculateMaxTokens(): { maxTokens: number } | {} {
+    // If we don't have context window info yet, let the SDK use its default
+    if (this.lastContextWindowMaxTokens === undefined) {
+      return {};
+    }
+
+    const maxTokens = this.lastContextWindowMaxTokens;
+    const usedTokens = this.lastContextWindowUsedTokens ?? 0;
+    const remainingTokens = maxTokens - usedTokens;
+
+    // Leave a 10% buffer for safety and intermediate operations
+    const bufferRatio = 0.1;
+    const safeMaxTokens = Math.floor(remainingTokens * (1 - bufferRatio));
+
+    // Ensure we have at least 4096 tokens for reasonable responses
+    // but don't exceed what's actually available
+    const minTokens = 4096;
+    const result = Math.max(minTokens, safeMaxTokens);
+
+    // If even the minimum exceeds remaining space, use what's available
+    const finalMaxTokens = remainingTokens < minTokens ? Math.max(1024, remainingTokens) : result;
+
+    return { maxTokens: finalMaxTokens };
   }
 
   private normalizeMcpServers(
