@@ -102,7 +102,8 @@ export class OpenAIRealtimeTranscriptionSession
 
     this.closing = false;
     this.ready = new Promise<void>((resolve, reject) => {
-      const url = "wss://api.openai.com/v1/realtime?intent=transcription";
+      const url =
+        process.env.OPENAI_REALTIME_URL ?? "wss://api.openai.com/v1/realtime?intent=transcription";
       const ws = new WebSocket(url, {
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
