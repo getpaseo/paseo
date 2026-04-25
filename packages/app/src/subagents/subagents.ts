@@ -2,21 +2,21 @@ import equal from "fast-deep-equal";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 
-export type SubagentRow = {
+export interface SubagentRow {
   id: Agent["id"];
   provider: Agent["provider"];
   title: Agent["title"];
   status: Agent["status"];
   requiresAttention: Agent["requiresAttention"];
   createdAt: Agent["createdAt"];
-};
+}
 
 type SessionStoreSnapshot = ReturnType<typeof useSessionStore.getState>;
 
-type SelectSubagentsParams = {
+interface SelectSubagentsParams {
   serverId: string;
   parentAgentId: string;
-};
+}
 
 const EMPTY_SUBAGENT_ROWS: SubagentRow[] = [];
 
