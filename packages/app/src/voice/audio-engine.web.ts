@@ -106,6 +106,16 @@ export function createAudioEngine(
       reject: (error: Error) => void;
       settled: boolean;
     } | null;
+    /**
+     * Epoch-ms until which captured audio is silently dropped after the
+     * agent stops speaking. The browser's built-in echo cancellation
+     * handles WebRTC-routed playback but the speaker→mic acoustic path
+     * still bleeds for a few hundred ms (especially on laptop speakers
+     * without headphones), which the daemon's VAD picks up as new user
+     * speech and starts an infinite loop. Half-duplex with a small tail
+     * window is the simplest reliable fix.
+     */
+    suppressUntilMs: number;
   } = {
     playbackContext: null,
     captureContext: null,
@@ -118,7 +128,13 @@ export function createAudioEngine(
     queue: [],
     processingQueue: false,
     activePlayback: null,
+    suppressUntilMs: 0,
   };
+
+  // Tuned empirically: long enough to outlast typical laptop-speaker decay
+  // and the daemon's audio-chunk window (~1s), short enough that a quick
+  // user reply right after the agent finishes still gets through.
+  const PLAYBACK_SUPPRESS_TAIL_MS = 400;
 
   async function ensurePlaybackContext(): Promise<AudioContext> {
     if (refs.playbackContext) {
@@ -189,6 +205,9 @@ export function createAudioEngine(
         }
         active.settled = true;
         refs.activePlayback = null;
+        // Arm the post-playback suppression window so the speaker decay /
+        // residual echo doesn't immediately re-trigger the mic.
+        refs.suppressUntilMs = Date.now() + PLAYBACK_SUPPRESS_TAIL_MS;
         fn();
       };
 
@@ -331,6 +350,16 @@ export function createAudioEngine(
           callbacks.onVolumeLevel(normalized);
 
           if (refs.muted) {
+            return;
+          }
+
+          // Half-duplex: drop chunks while the agent is speaking or within
+          // the tail window after playback ends. Without this, laptop
+          // speakers feed the agent's own voice back into the mic and the
+          // daemon hears it as new user speech, producing an infinite
+          // self-conversation loop. Headphones make the symptom disappear,
+          // which is the giveaway that this is acoustic echo bleed-through.
+          if (refs.activePlayback !== null || Date.now() < refs.suppressUntilMs) {
             return;
           }
 

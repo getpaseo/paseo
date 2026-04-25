@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { app, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
 import log from "electron-log/main";
 import { resolveHubcodeHome, spawnProcess } from "@hubcode/server";
 import {
@@ -418,12 +418,45 @@ function resolveCurrentUpdateVersion(): string {
 // IPC registration
 // ---------------------------------------------------------------------------
 
+/**
+ * Notify all open windows that the local daemon is up and listening. The
+ * renderer uses this signal to defer its initial WebSocket probe until the
+ * daemon is actually reachable, which removes the cosmetic
+ * `ERR_CONNECTION_REFUSED` console noise that otherwise appears for the
+ * first 1–2 attempts during cold start.
+ */
+function broadcastDaemonReady(status: DesktopDaemonStatus): void {
+  if (status.status !== "running" || !status.serverId || !status.listen) return;
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      win.webContents.send("hubcode:event:daemon-ready", {
+        serverId: status.serverId,
+        listen: status.listen,
+      });
+    } catch {
+      // window may be closed mid-broadcast; ignore.
+    }
+  }
+}
+
+async function startDaemonAndAnnounce(): Promise<DesktopDaemonStatus> {
+  const status = await startDaemon();
+  broadcastDaemonReady(status);
+  return status;
+}
+
+async function restartDaemonAndAnnounce(): Promise<DesktopDaemonStatus> {
+  const status = await restartDaemon();
+  broadcastDaemonReady(status);
+  return status;
+}
+
 export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
   return {
     desktop_daemon_status: () => resolveStatus(),
-    start_desktop_daemon: () => startDaemon(),
+    start_desktop_daemon: () => startDaemonAndAnnounce(),
     stop_desktop_daemon: () => stopDaemon(),
-    restart_desktop_daemon: () => restartDaemon(),
+    restart_desktop_daemon: () => restartDaemonAndAnnounce(),
     desktop_daemon_logs: () => getDaemonLogs(),
     desktop_daemon_pairing: () => getDaemonPairing(),
     cli_daemon_status: () => getCliDaemonStatus(),

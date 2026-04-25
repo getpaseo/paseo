@@ -15,6 +15,8 @@ import {
 } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
+import { HubcodeSignInPill } from "@/components/billing/hubcode-signin-pill";
+import { useHubcodeModels } from "@/hooks/use-hubcode-models";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -296,6 +298,16 @@ function ControlledStatusBar({
 
   const modelDisabled = disabled;
 
+  // When the agent is locked into the Hubcode provider but the user
+  // has no auth-server session (or the combos fetch failed with 401),
+  // the daemon-backed model picker is empty — and we can't change
+  // provider on a live agent, so the user is stuck. Replace the
+  // picker with a "Sign in to Hubcode" pill that opens the auth-server
+  // sign-in flow; the picker auto-restores once the cookie returns.
+  const hubcodeModels = useHubcodeModels();
+  const showHubcodeSignInFallback =
+    provider === "hubcode" && hubcodeModels.requiresSignIn;
+
   const SEARCH_THRESHOLD = 6;
 
   const comboboxProviderOptions = useMemo<ComboboxOption[]>(
@@ -416,39 +428,43 @@ function ControlledStatusBar({
           ) : null}
 
           {canSelectModel ? (
-            <Tooltip
-              key={`model-${displayModel}`}
-              delayDuration={0}
-              enabledOnDesktop
-              enabledOnMobile={false}
-            >
-              <TooltipTrigger asChild triggerRefProp="ref">
-                <View>
-                  <CombinedModelSelector
-                    providerDefinitions={effectiveProviderDefinitions}
-                    allProviderModels={effectiveAllProviderModels}
-                    selectedProvider={provider}
-                    selectedModel={selectedModelId ?? ""}
-                    canSelectProvider={canSelectProviderInModelMenu}
-                    onSelect={(selectedProviderId, modelId) => {
-                      if (selectedProviderId === provider) {
-                        onSelectModel?.(modelId);
-                      }
-                    }}
-                    favoriteKeys={favoriteKeys}
-                    onToggleFavorite={onToggleFavoriteModel}
-                    isLoading={isModelLoading}
-                    disabled={modelDisabled}
-                    onOpen={onModelSelectorOpen}
-                    onClose={onDropdownClose}
-                    compact={isCompact}
-                  />
-                </View>
-              </TooltipTrigger>
-              <TooltipContent side="top" align="center" offset={8}>
-                <Text style={styles.tooltipText}>{getStatusSelectorHint("model")}</Text>
-              </TooltipContent>
-            </Tooltip>
+            showHubcodeSignInFallback ? (
+              <HubcodeSignInPill compact={isCompact} />
+            ) : (
+              <Tooltip
+                key={`model-${displayModel}`}
+                delayDuration={0}
+                enabledOnDesktop
+                enabledOnMobile={false}
+              >
+                <TooltipTrigger asChild triggerRefProp="ref">
+                  <View>
+                    <CombinedModelSelector
+                      providerDefinitions={effectiveProviderDefinitions}
+                      allProviderModels={effectiveAllProviderModels}
+                      selectedProvider={provider}
+                      selectedModel={selectedModelId ?? ""}
+                      canSelectProvider={canSelectProviderInModelMenu}
+                      onSelect={(selectedProviderId, modelId) => {
+                        if (selectedProviderId === provider) {
+                          onSelectModel?.(modelId);
+                        }
+                      }}
+                      favoriteKeys={favoriteKeys}
+                      onToggleFavorite={onToggleFavoriteModel}
+                      isLoading={isModelLoading}
+                      disabled={modelDisabled}
+                      onOpen={onModelSelectorOpen}
+                      onClose={onDropdownClose}
+                      compact={isCompact}
+                    />
+                  </View>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="center" offset={8}>
+                  <Text style={styles.tooltipText}>{getStatusSelectorHint("model")}</Text>
+                </TooltipContent>
+              </Tooltip>
+            )
           ) : null}
 
           {thinkingOptions && thinkingOptions.length > 0 ? (
@@ -676,7 +692,11 @@ function ControlledStatusBar({
             stackBehavior="replace"
             testID="agent-preferences-sheet"
           >
-            {canSelectModel ? (
+            {canSelectModel && showHubcodeSignInFallback ? (
+              <View style={styles.sheetSection}>
+                <HubcodeSignInPill />
+              </View>
+            ) : canSelectModel ? (
               <View style={styles.sheetSection}>
                 <CombinedModelSelector
                   providerDefinitions={effectiveProviderDefinitions}

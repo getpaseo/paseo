@@ -90,6 +90,7 @@ import { DownloadToast } from "@/components/download-toast";
 import { IndexingToast } from "@/components/indexing-toast";
 import { UpdateBanner } from "@/desktop/updates/update-banner";
 import { ToastProvider } from "@/contexts/toast-context";
+import { UpgradeModalProvider } from "@/components/billing/upgrade-modal-provider";
 import { usePanelStore } from "@/stores/panel-store";
 import { runOnJS, interpolate, Extrapolation, useSharedValue } from "react-native-reanimated";
 import {
@@ -746,7 +747,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       <HubcodeAuthSyncMount />
       <BillingStreamMount />
       <FaviconStatusSync />
-      {children}
+      <UpgradeModalProvider>{children}</UpgradeModalProvider>
     </VoiceProvider>
   );
 }

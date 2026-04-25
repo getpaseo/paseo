@@ -309,8 +309,17 @@ export async function webCreateWorkspaceShare(
     body: JSON.stringify(params),
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Failed to create share (${res.status})`);
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
+      error?: string;
+      code?: string;
+    };
+    const err = new Error(
+      typeof body.error === "string" ? body.error : `Failed to create share (${res.status})`,
+    ) as Error & { status?: number; code?: string; details?: Record<string, unknown> };
+    err.status = res.status;
+    err.code = typeof body.code === "string" ? body.code : undefined;
+    err.details = body;
+    throw err;
   }
   const body = (await res.json()) as Record<string, unknown>;
   return {

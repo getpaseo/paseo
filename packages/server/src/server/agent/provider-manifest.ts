@@ -27,6 +27,37 @@ export interface AgentProviderDefinition {
   };
 }
 
+const HUBCODE_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "default",
+    label: "Always Ask",
+    description: "Prompts for permission before each tool call",
+    icon: "ShieldCheck",
+    colorTier: "safe",
+  },
+  {
+    id: "acceptEdits",
+    label: "Accept File Edits",
+    description: "Auto-approves edit-focused tools without prompting",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "plan",
+    label: "Plan Mode",
+    description: "Read-only analysis — agent proposes steps but won't run modifying tools",
+    icon: "ShieldCheck",
+    colorTier: "planning",
+  },
+  {
+    id: "bypassPermissions",
+    label: "Bypass",
+    description: "Skip all permission prompts (use with caution)",
+    icon: "ShieldAlert",
+    colorTier: "dangerous",
+  },
+];
+
 const CLAUDE_MODES: AgentProviderModeDefinition[] = [
   {
     id: "default",
@@ -170,8 +201,10 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     id: "hubcode",
     label: "Hubcode",
     description: "Hubcode curated combos — gated by your plan",
-    defaultModeId: null,
-    modes: [],
+    defaultModeId: "default",
+    // Mirror Claude's permission tiers so users get the same mental model
+    // (Always Ask / Accept Edits / Plan / Bypass) across both providers.
+    modes: HUBCODE_MODES,
   },
 ];
 

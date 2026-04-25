@@ -25,6 +25,7 @@ import { useSyncLibrary } from "@/hooks/library/use-sync-library";
 import { SyncResultBanner } from "@/components/library/sync-result-banner";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
+import { PlanUsageBadge } from "@/components/billing/plan-usage-badge";
 
 export function McpLibraryScreen() {
   const { session } = useAuthSession();
@@ -124,7 +125,16 @@ export function McpLibraryScreen() {
         <SyncResultBanner error={syncLibrary.error} lastResult={syncLibrary.lastResult} />
 
         {installed.length > 0 ? (
-          <Section label="Installed">
+          <Section
+            label="Installed"
+            rightSlot={
+              <PlanUsageBadge
+                limitKey="max_active_mcps"
+                current={installed.filter((e) => e.activation?.active).length}
+                upgradeFeatureLabel="Activate more MCP servers"
+              />
+            }
+          >
             <Grid compact={isCompact}>
               {installed.map((e) => (
                 <McpCard
@@ -309,10 +319,21 @@ function ActionButtons({ onRefresh, onSync, syncPending, onCustom, compact }: Ac
   );
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({
+  label,
+  children,
+  rightSlot,
+}: {
+  label: string;
+  children: React.ReactNode;
+  rightSlot?: React.ReactNode;
+}) {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionLabel}>{label}</Text>
+      <View style={styles.sectionLabelRow}>
+        <Text style={styles.sectionLabel}>{label}</Text>
+        {rightSlot}
+      </View>
       {children}
     </View>
   );
@@ -442,6 +463,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   section: {
     gap: theme.spacing[3],
+  },
+  sectionLabelRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "space-between" as const,
+    gap: theme.spacing[2],
   },
   sectionLabel: {
     fontSize: theme.fontSize.xs,

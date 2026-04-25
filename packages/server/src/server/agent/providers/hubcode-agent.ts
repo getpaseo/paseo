@@ -15,7 +15,6 @@
 //   - Cancellation via AbortController.
 //
 // Out of scope:
-//   - Persisted sessions (resumeSession) — needs DB integration.
 //   - Voice / dynamic modes / parallel tool execution.
 
 import type {
@@ -39,10 +38,47 @@ import type {
   ListModelsOptions,
   ListModesOptions,
 } from "../agent-sdk-types.js";
+import { randomUUID } from "node:crypto";
 import { HubcodeMcpRuntime, type OpenAiTool } from "./hubcode-mcp-runtime.js";
+import { AGENT_PROVIDER_DEFINITIONS } from "../provider-manifest.js";
+import { isReadOnlyTool } from "./tool-safety.js";
+import { loadHubcodeSession, saveHubcodeSession } from "./hubcode-session-store.js";
 
 const DEFAULT_AUTH_URL = process.env.HUBCODE_AUTH_SERVER_URL || "http://localhost:3002";
 const MAX_TOOL_LOOP_ITERATIONS = 10;
+
+/**
+ * Modes mirror Claude's permission tiers so users get the same mental model.
+ * Behavior summary:
+ *   - "default"           → ask before every tool call (uses approval flow)
+ *   - "acceptEdits"       → auto-approve, normal tool execution
+ *   - "plan"              → auto-approve BUT a system prompt forbids
+ *                            modifying tools (best we can do without a
+ *                            read/write tool taxonomy on MCP)
+ *   - "bypassPermissions" → auto-approve, no warnings
+ */
+const HUBCODE_MODE_IDS = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;
+type HubcodeModeId = (typeof HUBCODE_MODE_IDS)[number];
+function isHubcodeMode(value: string): value is HubcodeModeId {
+  return (HUBCODE_MODE_IDS as readonly string[]).includes(value);
+}
+const PLAN_MODE_PREAMBLE =
+  "You are in PLAN MODE. Do NOT call any tool that writes files, runs shell " +
+  "commands, mutates state, or changes anything outside of read-only inspection. " +
+  "Use read-only tools (search, list, read) and your reasoning to produce a " +
+  "step-by-step plan, then ask the user to approve switching out of plan mode " +
+  "before executing it.";
+
+function getHubcodeModesFromManifest(): AgentMode[] {
+  const def = AGENT_PROVIDER_DEFINITIONS.find((d) => d.id === "hubcode");
+  return (def?.modes ?? []).map((m) => ({
+    id: m.id,
+    label: m.label,
+    description: m.description,
+    icon: m.icon,
+    colorTier: m.colorTier,
+  }));
+}
 
 const CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -136,7 +172,7 @@ class HubcodeAgentClient implements AgentClient {
   }
 
   async listModes(_options?: ListModesOptions): Promise<AgentMode[]> {
-    return [];
+    return getHubcodeModesFromManifest();
   }
 
   async createSession(
@@ -179,11 +215,65 @@ class HubcodeAgentClient implements AgentClient {
   }
 
   async resumeSession(
-    _handle: AgentPersistenceHandle,
-    _overrides?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    throw new Error("Hubcode agent does not support persisted sessions yet.");
+    // The session id is the file id on disk. If the record is missing
+    // (e.g. user wiped $HUBCODE_HOME) we fall through to a fresh session
+    // rather than fail outright — the agent reappears, just empty.
+    const persisted = await loadHubcodeSession(handle.sessionId).catch((err) => {
+      this.logger.warn?.(
+        `[hubcode] failed to load persisted session ${handle.sessionId}:`,
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    });
+
+    const config: AgentSessionConfig = {
+      ...(overrides as AgentSessionConfig),
+      provider: "hubcode",
+    };
+    const token = launchContext?.env?.HUBCODE_SESSION_TOKEN ?? readTokenFromEnv(config.cwd);
+    if (!token) {
+      throw new Error("Missing Hubcode session token — sign in before resuming a Hubcode chat.");
+    }
+    const overrideAuthUrl = launchContext?.env?.HUBCODE_AUTH_SERVER_URL;
+    const bundle = await this.fetchBundle(token, overrideAuthUrl);
+    if (bundle.requiresUpgrade) {
+      throw new HubcodeUpgradeRequiredError();
+    }
+    if (!bundle.apiKey) {
+      throw new Error("Hubcode account is missing an API key — try signing in again.");
+    }
+    const comboName =
+      config.model ??
+      persisted?.model ??
+      bundle.combos[0]?.comboName ??
+      (() => {
+        throw new Error("No Hubcode combo available for this plan.");
+      })();
+
+    const mcpRuntime = config.mcpServers
+      ? new HubcodeMcpRuntime({ servers: config.mcpServers, logger: this.logger })
+      : null;
+
+    return new HubcodeAgentSession({
+      config,
+      model: comboName,
+      baseUrl: bundle.baseUrl,
+      apiKey: bundle.apiKey,
+      fetchImpl: this.fetchImpl,
+      logger: this.logger,
+      mcpRuntime,
+      sessionId: handle.sessionId,
+      // The on-disk shape matches `ChatMessage` (we wrote it ourselves);
+      // the runtime cast is safe because `loadHubcodeSession` validated
+      // that `messages` is an array.
+      restoredMessages: (persisted?.messages as ChatMessage[] | undefined) ?? [],
+      restoredMode:
+        persisted?.modeId && isHubcodeMode(persisted.modeId) ? persisted.modeId : undefined,
+    });
   }
 
   private async fetchBundle(
@@ -213,6 +303,15 @@ interface SessionDeps {
   fetchImpl: FetchLike;
   logger: Logger;
   mcpRuntime?: HubcodeMcpRuntime | null;
+  /**
+   * When present, identifies a previously persisted conversation. New
+   * sessions get a fresh uuid; resumed sessions reuse the disk record's id.
+   */
+  sessionId?: string;
+  /** Pre-loaded conversation history (used by `resumeSession`). */
+  restoredMessages?: ChatMessage[];
+  /** Pre-loaded permission/behavior mode (used by `resumeSession`). */
+  restoredMode?: HubcodeModeId;
 }
 
 /** Conversation message accepted by OpenAI chat/completions. */
@@ -238,7 +337,7 @@ interface PendingToolCall {
 class HubcodeAgentSession implements AgentSession {
   readonly provider: AgentProvider = "hubcode";
   readonly capabilities = CAPABILITIES;
-  readonly id: string | null = null;
+  readonly id: string;
 
   private readonly config: AgentSessionConfig;
   private readonly model: string;
@@ -253,7 +352,21 @@ class HubcodeAgentSession implements AgentSession {
   private readonly mcpRuntime: HubcodeMcpRuntime | null;
   private cachedTools: OpenAiTool[] | null = null;
   private activeController: AbortController | null = null;
+  /**
+   * Promise that resolves when the in-flight `runTurn` settles (completes,
+   * cancels, or fails). Tracked so `startTurn` can abort + await before
+   * mutating `this.messages` for the next turn — otherwise an interrupted
+   * tool execution can still push a `role: "tool"` reply AFTER the new user
+   * message, breaking the conversation history.
+   */
+  private activeRunPromise: Promise<void> | null = null;
   private turnCounter = 0;
+  /**
+   * Current permission/behavior mode. Seeded from `config.modeId` and
+   * mutated by `setMode` (see also `provider-manifest.ts:HUBCODE_MODES`).
+   * Drives both `askApproval` and the plan-mode system-prompt preamble.
+   */
+  private currentMode: HubcodeModeId = "default";
   /** Tool-call approvals waiting on `respondToPermission`. */
   private readonly pendingPermissions = new Map<
     string,
@@ -271,6 +384,18 @@ class HubcodeAgentSession implements AgentSession {
     this.fetchImpl = deps.fetchImpl;
     this.logger = deps.logger;
     this.mcpRuntime = deps.mcpRuntime ?? null;
+    this.id = deps.sessionId ?? randomUUID();
+    if (deps.restoredMessages && deps.restoredMessages.length > 0) {
+      this.messages.push(...deps.restoredMessages);
+    }
+    // Restore order: explicit dep wins over config (so a resumed session
+    // keeps the mode it was using even if the user later changed the
+    // default in their config).
+    if (deps.restoredMode && isHubcodeMode(deps.restoredMode)) {
+      this.currentMode = deps.restoredMode;
+    } else if (deps.config.modeId && isHubcodeMode(deps.config.modeId)) {
+      this.currentMode = deps.config.modeId;
+    }
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -290,17 +415,24 @@ class HubcodeAgentSession implements AgentSession {
       sessionId: this.id,
       model: this.model,
       thinkingOptionId: null,
-      modeId: null,
+      modeId: this.currentMode,
     };
   }
   async getAvailableModes(): Promise<AgentMode[]> {
-    return [];
+    return getHubcodeModesFromManifest();
   }
   async getCurrentMode() {
-    return null;
+    return this.currentMode;
   }
-  async setMode(_modeId: string): Promise<void> {
-    /* no-op */
+  async setMode(modeId: string): Promise<void> {
+    if (!isHubcodeMode(modeId)) {
+      throw new Error(`Unknown hubcode mode: ${modeId}`);
+    }
+    if (this.currentMode === modeId) return;
+    this.currentMode = modeId;
+    this.persist();
+    // The UI picks up the new mode via the next `getRuntimeInfo` round-trip
+    // (same flow as claude-agent), so we don't need a dedicated stream event.
   }
   getPendingPermissions(): AgentPermissionRequest[] {
     return Array.from(this.pendingPermissions.values()).map((p) => p.request);
@@ -321,7 +453,33 @@ class HubcodeAgentSession implements AgentSession {
     });
   }
   describePersistence(): AgentPersistenceHandle | null {
-    return null;
+    // The handle just *points* to the on-disk record (`<sessionId>.json`);
+    // the messages themselves live in the file written by `persist()`.
+    return {
+      provider: this.provider,
+      sessionId: this.id,
+      nativeHandle: this.id,
+    };
+  }
+
+  /**
+   * Best-effort write of the current conversation to disk. Called after each
+   * settled turn and after `setMode`. Failures are logged but never thrown —
+   * losing one save is recoverable, losing the next turn because we crashed
+   * the agent on a disk error is not.
+   */
+  private persist(): void {
+    void saveHubcodeSession({
+      sessionId: this.id,
+      modeId: this.currentMode,
+      model: this.model,
+      messages: this.messages,
+    }).catch((err) => {
+      this.logger.warn?.(
+        `[hubcode] failed to persist session ${this.id}:`,
+        err instanceof Error ? err.message : err,
+      );
+    });
   }
   async setModel(modelId: string | null): Promise<void> {
     if (modelId) Object.assign(this, { model: modelId });
@@ -368,10 +526,37 @@ class HubcodeAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     _options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    // If a previous turn is still in flight, abort it and wait for the run
+    // loop to fully settle. Without this, an interrupted tool execution
+    // can keep running (mcpRuntime.invoke isn't signal-aware) and push a
+    // late `role: "tool"` reply AFTER the new user message — which breaks
+    // the openai→anthropic translation in OmniRoute and yields a 400
+    // "each tool_use must have a single result". The await is bounded:
+    // runTurn either returns on AbortError, completes normally, or throws.
+    if (this.activeController) {
+      this.activeController.abort();
+    }
+    if (this.activeRunPromise) {
+      try {
+        await this.activeRunPromise;
+      } catch {
+        // Swallow — the previous run's failure was already emitted.
+      }
+    }
+
     this.turnCounter += 1;
     const turnId = `hubcode-${this.turnCounter}`;
     const controller = new AbortController();
     this.activeController = controller;
+
+    // If the prior turn was cancelled mid-tool-execution before pushing
+    // its `role: "tool"` reply, the assistant message with `tool_calls`
+    // sits in `this.messages` without a partner. OmniRoute's
+    // openai→anthropic translator would insert a synthetic tool_result
+    // for the missing pair, breaking later turns. Backfill synthetic
+    // `[interrupted by user]` replies so the conversation is always
+    // balanced before we push the new user input.
+    this.backfillMissingToolResults();
 
     const userText = typeof prompt === "string" ? prompt : promptToText(prompt);
     this.messages.push({ role: "user", content: userText });
@@ -381,9 +566,16 @@ class HubcodeAgentSession implements AgentSession {
     // they hit send. Re-emitting here would duplicate the bubble.
 
     // Run the HTTP + SSE in the background so startTurn can return promptly.
-    void this.runTurn(controller, turnId).catch((err) => {
+    const runPromise = this.runTurn(controller, turnId).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       this.emit({ type: "turn_failed", provider: this.provider, turnId, error: message });
+    });
+    this.activeRunPromise = runPromise;
+    void runPromise.finally(() => {
+      // Only clear if no newer turn has overwritten it.
+      if (this.activeRunPromise === runPromise) {
+        this.activeRunPromise = null;
+      }
     });
     return { turnId };
   }
@@ -407,6 +599,33 @@ class HubcodeAgentSession implements AgentSession {
 
   // ── internal ───────────────────────────────────────────────────────────
 
+  /**
+   * Walk `this.messages` and, for any assistant `tool_calls` id that lacks a
+   * subsequent `role: "tool"` reply, append a synthetic one. Idempotent — if
+   * everything is already balanced, no messages are pushed. See call-site in
+   * `startTurn` for the why.
+   */
+  private backfillMissingToolResults(): void {
+    const repliedIds = new Set<string>();
+    for (const msg of this.messages) {
+      if (msg.role === "tool") {
+        repliedIds.add(msg.tool_call_id);
+      }
+    }
+    for (const msg of this.messages) {
+      if (msg.role !== "assistant" || !("tool_calls" in msg)) continue;
+      for (const tc of msg.tool_calls) {
+        if (repliedIds.has(tc.id)) continue;
+        this.messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: "[interrupted by user]",
+        });
+        repliedIds.add(tc.id);
+      }
+    }
+  }
+
   private emit(event: AgentStreamEvent): void {
     this.history.push(event);
     for (const sub of this.subscribers) {
@@ -415,6 +634,17 @@ class HubcodeAgentSession implements AgentSession {
       } catch (err) {
         this.logger.warn?.("[hubcode] subscriber threw:", err);
       }
+    }
+    // Persist on every settled turn so a daemon crash mid-conversation only
+    // loses the in-progress turn, not anything already completed. Saving on
+    // every message-push would be wasteful and racy with the streaming loop;
+    // turn boundaries are the natural commit points.
+    if (
+      event.type === "turn_completed" ||
+      event.type === "turn_canceled" ||
+      event.type === "turn_failed"
+    ) {
+      this.persist();
     }
   }
 
@@ -425,7 +655,13 @@ class HubcodeAgentSession implements AgentSession {
       const body: Record<string, unknown> = {
         model: this.model,
         stream: true,
-        messages: buildOpenAiMessages(this.config, this.messages),
+        messages: buildOpenAiMessages(this.config, this.messages, {
+          // In plan mode, prepend a hard preamble so the model knows it's
+          // not allowed to call write/exec tools. Without a tool taxonomy
+          // on MCP we can't filter the tools list itself, so the prompt
+          // is the contract.
+          extraSystem: this.currentMode === "plan" ? PLAN_MODE_PREAMBLE : null,
+        }),
       };
       if (tools && tools.length > 0) body.tools = tools;
       applyOptionalRequestExtras(body, this.config);
@@ -484,7 +720,11 @@ class HubcodeAgentSession implements AgentSession {
       }
 
       // Execute every tool serially (parallelism is a follow-up).
-      const askApproval = this.config.approvalPolicy === "ask";
+      // Mode wins over the legacy `approvalPolicy` flag — the dropdown the
+      // user sees in the chat input drives behavior. Only "default" prompts;
+      // every other mode auto-approves at this layer (plan mode is enforced
+      // separately via the system-prompt preamble below).
+      const askApproval = this.currentMode === "default" || this.config.approvalPolicy === "ask";
       let interrupted = false;
       for (const call of stepResult.toolCalls) {
         const callId = call.id || `tc-${turnId}-${iteration}-${call.name}`;
@@ -532,6 +772,19 @@ class HubcodeAgentSession implements AgentSession {
             detail: { type: "unknown", input: args, output: null },
           },
         });
+        // For voice-mode `speak` calls, surface the spoken text into the chat
+        // timeline so the user *sees* what's being read aloud. Without this
+        // the chat shows only the collapsed tool call card while audio plays,
+        // which makes voice replies feel invisible (and breaks accessibility
+        // for anyone who can't hear the audio at that moment).
+        if (call.name === "hubcode__speak" && typeof args?.text === "string" && args.text.trim()) {
+          this.emit({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: { type: "assistant_message", text: args.text },
+          });
+        }
         const output = this.mcpRuntime
           ? await this.mcpRuntime.invoke(call.name, args ?? {})
           : JSON.stringify({ error: "MCP runtime not configured" });
@@ -603,12 +856,28 @@ class HubcodeAgentSession implements AgentSession {
 
   private async resolveTools(): Promise<OpenAiTool[] | null> {
     if (!this.mcpRuntime) return null;
-    if (this.cachedTools !== null) return this.cachedTools;
-    try {
-      this.cachedTools = await this.mcpRuntime.listOpenAiTools();
-    } catch (err) {
-      this.logger.warn?.("[hubcode] tool discovery failed:", err);
-      this.cachedTools = [];
+    if (this.cachedTools === null) {
+      try {
+        this.cachedTools = await this.mcpRuntime.listOpenAiTools();
+      } catch (err) {
+        this.logger.warn?.("[hubcode] tool discovery failed:", err);
+        this.cachedTools = [];
+      }
+    }
+    // Plan mode: hide every tool that isn't classifiable as read-only so the
+    // model can't even *see* a write/exec tool to call. Belt-and-suspenders
+    // alongside the PLAN_MODE_PREAMBLE system prompt — prompt is the polite
+    // version, this is the enforcement. Recomputed each turn (not cached)
+    // since the user can flip modes mid-session.
+    if (this.currentMode === "plan") {
+      const filtered = this.cachedTools.filter((t) => isReadOnlyTool(t.function.name));
+      const dropped = this.cachedTools.length - filtered.length;
+      if (dropped > 0) {
+        this.logger.debug?.(
+          `[hubcode] plan mode hid ${dropped}/${this.cachedTools.length} non-read tools`,
+        );
+      }
+      return filtered;
     }
     return this.cachedTools;
   }
@@ -620,7 +889,7 @@ class HubcodeAgentSession implements AgentSession {
    */
   private async streamOneStep(
     controller: AbortController,
-    turnId: string,
+    _turnId: string,
     body: Record<string, unknown>,
   ): Promise<StepResult> {
     const res = await this.fetchImpl(`${this.baseUrl}/v1/chat/completions`, {
@@ -779,10 +1048,17 @@ function promptToText(prompt: AgentPromptInput): string {
   return "";
 }
 
-function buildOpenAiMessages(config: AgentSessionConfig, turns: ChatMessage[]): unknown[] {
+function buildOpenAiMessages(
+  config: AgentSessionConfig,
+  turns: ChatMessage[],
+  options?: { extraSystem?: string | null },
+): unknown[] {
   const out: unknown[] = [];
   if (config.systemPrompt && config.systemPrompt.trim().length > 0) {
     out.push({ role: "system", content: config.systemPrompt });
+  }
+  if (options?.extraSystem) {
+    out.push({ role: "system", content: options.extraSystem });
   }
   for (const m of turns) out.push(m);
   return out;

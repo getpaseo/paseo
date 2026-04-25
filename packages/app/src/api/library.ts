@@ -127,6 +127,7 @@ export class LibraryApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "LibraryApiError";
@@ -140,14 +141,15 @@ interface FetchArgs {
 async function request<T>(path: string, init: RequestInit & FetchArgs): Promise<T> {
   const res = await authServerFetch(path, init);
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as {
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
       error?: string;
       code?: string;
     };
     throw new LibraryApiError(
       res.status,
-      body.code ?? "unknown",
-      body.error ?? `HTTP ${res.status}`,
+      typeof body.code === "string" ? body.code : "unknown",
+      typeof body.error === "string" ? body.error : `HTTP ${res.status}`,
+      body,
     );
   }
   if (res.status === 204) return undefined as T;

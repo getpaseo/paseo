@@ -21,6 +21,8 @@ import { getProviderIcon } from "@/components/provider-icons";
 import type { FavoriteModelRow } from "@/hooks/use-form-preferences";
 import { useHubcodeModels } from "@/hooks/use-hubcode-models";
 import { Alert } from "react-native";
+import { authServerBaseUrl } from "@/desktop/auth/web-auth-api";
+import { openExternalUrl } from "@/utils/open-external-url";
 import {
   buildModelRows,
   buildSelectedTriggerLabel,
@@ -543,25 +545,48 @@ export function CombinedModelSelector({
   // see the entry but get an upgrade CTA on selection. The daemon's
   // provider snapshot already registers the hubcode entry; we only ever
   // augment models so we never produce duplicate keys.
-  const { bundle: hubcodeBundle } = useHubcodeModels();
+  const { bundle: hubcodeBundle, requiresSignIn: hubcodeRequiresSignIn } = useHubcodeModels();
+
+  // Three Hubcode states the picker has to handle gracefully:
+  //   1. requiresSignIn — user has no auth-server session. We keep the
+  //      Hubcode entry visible so users learn it exists, but its only
+  //      "model" is a `__signin__` row that opens the sign-in flow.
+  //   2. bundle.requiresUpgrade — user is signed in but on Free. One
+  //      `__upgrade__` row that opens the upgrade modal.
+  //   3. bundle has combos — list them.
+  // Other agents (Claude/Codex/OpenCode/Copilot/Pi) are completely
+  // independent of auth-server and remain pickable in all three states.
   const providerDefinitionsWithHubcode = useMemo(() => {
-    if (!hubcodeBundle) return providerDefinitions;
     if (providerDefinitions.some((d) => d.id === "hubcode")) {
       return providerDefinitions;
     }
+    if (!hubcodeBundle && !hubcodeRequiresSignIn) return providerDefinitions;
+    const description = hubcodeRequiresSignIn
+      ? "Sign in to unlock curated combos"
+      : hubcodeBundle?.requiresUpgrade
+        ? "Upgrade to unlock curated combos"
+        : "Your plan's curated combos";
     const hubcodeDef: AgentProviderDefinition = {
       id: "hubcode" as AgentProvider,
       label: "Hubcode",
-      description: hubcodeBundle.requiresUpgrade
-        ? "Upgrade to unlock curated combos"
-        : "Your plan's curated combos",
+      description,
     } as AgentProviderDefinition;
     return [hubcodeDef, ...providerDefinitions];
-  }, [hubcodeBundle, providerDefinitions]);
+  }, [hubcodeBundle, hubcodeRequiresSignIn, providerDefinitions]);
 
   const allProviderModelsWithHubcode = useMemo(() => {
-    if (!hubcodeBundle) return allProviderModels;
     const next = new Map(allProviderModels);
+    if (hubcodeRequiresSignIn) {
+      next.set("hubcode", [
+        {
+          id: "__signin__",
+          label: "Sign in to Hubcode",
+          description: "Open auth-server to sign in",
+        } as AgentModelDefinition,
+      ]);
+      return next;
+    }
+    if (!hubcodeBundle) return allProviderModels;
     const existing = next.get("hubcode") ?? [];
     const models: AgentModelDefinition[] = hubcodeBundle.requiresUpgrade
       ? [
@@ -590,10 +615,17 @@ export function CombinedModelSelector({
     }
     if (models.length > 0) next.set("hubcode", models);
     return next;
-  }, [hubcodeBundle, allProviderModels]);
+  }, [hubcodeBundle, hubcodeRequiresSignIn, allProviderModels]);
 
   const handleHubcodeSelection = useCallback(
     (modelId: string): boolean => {
+      if (modelId === "__signin__" || (hubcodeRequiresSignIn && !hubcodeBundle)) {
+        // Open auth-server sign-in. The hook's React Query auto-refetches
+        // on window focus, so coming back to the app after signing in
+        // restores combos without a reload.
+        void openExternalUrl(`${authServerBaseUrl()}/sign-in/web`).catch(() => {});
+        return true;
+      }
       if (!hubcodeBundle) return false;
       if (hubcodeBundle.requiresUpgrade || modelId === "__upgrade__") {
         Alert.alert(
@@ -605,7 +637,7 @@ export function CombinedModelSelector({
       }
       return false;
     },
-    [hubcodeBundle],
+    [hubcodeBundle, hubcodeRequiresSignIn],
   );
 
   // Single-provider mode: only one provider with models → skip Level 1 entirely

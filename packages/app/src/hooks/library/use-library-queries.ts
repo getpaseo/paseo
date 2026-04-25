@@ -13,6 +13,7 @@ import {
   type LibraryVisibility,
 } from "@/api/library";
 import { fetchMcpCatalog, fetchSkillsCatalog, type CatalogPage } from "@/api/catalog";
+import { useUpgradeModal } from "@/components/billing/upgrade-modal-provider";
 
 const MINUTE = 60_000;
 
@@ -110,11 +111,18 @@ export function useDeleteLibraryEntry(sessionToken: string | null) {
 
 export function useSetLibraryActivation(sessionToken: string | null) {
   const qc = useQueryClient();
+  // Plan-gate denials open the upgrade modal instead of surfacing a raw
+  // error to the user. The provider is mounted at the root, so the hook
+  // is always available.
+  const { handlePlanGateError } = useUpgradeModal();
   return useMutation({
     mutationFn: (input: { entryId: string; active?: boolean; syncTargets?: LibrarySyncTarget[] }) =>
       setLibraryActivation({ sessionToken, ...input }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: libraryKeys.all });
+    },
+    onError: (err) => {
+      handlePlanGateError(err);
     },
   });
 }

@@ -50,7 +50,10 @@ interface RuntimeDeps {
     listTools: () => Promise<{
       tools: { name: string; description?: string; inputSchema?: unknown }[];
     }>;
-    callTool: (args: { name: string; arguments?: Record<string, unknown> }) => Promise<unknown>;
+    callTool: (
+      args: { name: string; arguments?: Record<string, unknown> },
+      options?: { timeout?: number },
+    ) => Promise<unknown>;
     close: () => Promise<void>;
   }>;
 }
@@ -103,7 +106,16 @@ export class HubcodeMcpRuntime {
     }
     const client = await this.ensureClient(entry.serverName);
     try {
-      const result = await client.callTool({ name: entry.toolName, arguments: args });
+      // The MCP SDK defaults to a 60s request timeout, which is far too
+      // short for inherently long-running tools we expose here — e.g.
+      // `hubcode__speak` blocks until TTS playback completes (can be
+      // several minutes for long replies), `crg_*` tools that walk a
+      // freshly-indexed repo, etc. Cap at 10 minutes to still bound
+      // pathological hangs while letting normal usage breathe.
+      const result = await client.callTool(
+        { name: entry.toolName, arguments: args },
+        { timeout: 10 * 60 * 1000 },
+      );
       return jsonStringifyToolResult(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -215,7 +227,10 @@ async function defaultClientFactory(
   listTools: () => Promise<{
     tools: { name: string; description?: string; inputSchema?: unknown }[];
   }>;
-  callTool: (args: { name: string; arguments?: Record<string, unknown> }) => Promise<unknown>;
+  callTool: (
+    args: { name: string; arguments?: Record<string, unknown> },
+    options?: { timeout?: number },
+  ) => Promise<unknown>;
   close: () => Promise<void>;
 }> {
   const client = new Client({ name: "hubcode-agent", version: "1.0.0" }, { capabilities: {} });
@@ -240,7 +255,8 @@ async function defaultClientFactory(
       (await client.listTools()) as {
         tools: { name: string; description?: string; inputSchema?: unknown }[];
       },
-    callTool: async (args) => client.callTool(args),
+    callTool: async (args, options) =>
+      options ? client.callTool(args, undefined, options) : client.callTool(args),
     close: async () => {
       try {
         await client.close();

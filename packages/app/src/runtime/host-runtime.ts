@@ -1109,7 +1109,17 @@ export class HostRuntimeController {
 }
 
 const REGISTRY_STORAGE_KEY = "@hubcode:daemon-registry";
-const DEFAULT_LOCALHOST_ENDPOINT = process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim() || "localhost:6767";
+/** Cap on how long we hold off on initial probes waiting for the
+ *  daemon-ready IPC. Acts as a safety net so we never strand the renderer
+ *  if the main process broadcast somehow gets lost. */
+const DAEMON_READY_WAIT_TIMEOUT_MS = 3_000;
+// Default to 127.0.0.1 instead of "localhost" — on macOS/Linux with both
+// IPv4 and IPv6 entries in /etc/hosts, "localhost" often resolves to ::1
+// first, but the daemon binds only to 127.0.0.1. The IPv6 attempt then
+// fails with ECONNREFUSED before the browser falls back to IPv4 (most
+// browsers don't fall back at all). Pinning to 127.0.0.1 eliminates the
+// race entirely.
+const DEFAULT_LOCALHOST_ENDPOINT = process.env.EXPO_PUBLIC_LOCAL_DAEMON?.trim() || "127.0.0.1:6767";
 const DEFAULT_LOCALHOST_BOOTSTRAP_KEY = "@hubcode:default-localhost-bootstrap-v1";
 const DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS = 2500;
 const CONNECTION_ONLINE_TIMEOUT_MS = 15_000;
@@ -1128,6 +1138,14 @@ export class HostRuntimeStore {
   private agentDirectoryBootstrapInFlight = new Map<string, Promise<void>>();
   private storageLoaded = false;
   private bootstrapAttempted = false;
+  /**
+   * Resolves once the Electron main process broadcasts the
+   * `hubcode:event:daemon-ready` IPC event (or the fallback timeout fires).
+   * `loadFromStorage` awaits this in desktop-managed mode so the renderer
+   * doesn't race the daemon's port bind, which produced
+   * `ERR_CONNECTION_REFUSED` console noise on every cold start.
+   */
+  private daemonReadyPromise: Promise<void> | null = null;
 
   constructor(input?: {
     deps?: HostRuntimeControllerDeps;
@@ -1169,12 +1187,48 @@ export class HostRuntimeStore {
       const profiles = parsed
         .map((entry) => normalizeStoredHostProfile(entry))
         .filter((entry): entry is HostProfile => entry !== null);
+
+      // In Electron-managed mode, hold off on creating controllers (which
+      // immediately start probing the saved daemon endpoint) until the
+      // local daemon has signalled it's ready. This eliminates the cold-
+      // start `ERR_CONNECTION_REFUSED` console noise.
+      if (shouldUseDesktopDaemon()) {
+        await this.waitForDaemonReady(DAEMON_READY_WAIT_TIMEOUT_MS);
+      }
+
       this.hosts = profiles;
       this.syncHosts(profiles);
       this.emitHostList();
     } catch (error) {
       console.error("[HostRuntime] Failed to load host registry from storage", error);
     }
+  }
+
+  private waitForDaemonReady(timeoutMs: number): Promise<void> {
+    if (this.daemonReadyPromise) return this.daemonReadyPromise;
+    this.daemonReadyPromise = new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const timeout = setTimeout(settle, timeoutMs);
+      // The desktop event API may be unavailable (web/mobile) — listen
+      // defensively and fall back to the timeout.
+      void (async () => {
+        try {
+          const { listenToDesktopEvent } = await import("@/desktop/electron/events");
+          await listenToDesktopEvent("daemon-ready", () => {
+            clearTimeout(timeout);
+            settle();
+          });
+        } catch {
+          // Listener unavailable — the timeout will resolve eventually.
+        }
+      })();
+    });
+    return this.daemonReadyPromise;
   }
 
   async bootstrap(options?: { manageBuiltInDaemon?: boolean }): Promise<void> {

@@ -66,10 +66,20 @@ export function useAuthSession() {
 
   const session = query.data ?? null;
 
+  // `refetchOnMount: "always"` revalidates the session on boot, but
+  // React Query returns the previous run's cached `data` while the
+  // refetch is in flight. That cached session can be expired on the
+  // server, so any consumer that fires HTTP calls keyed off it will
+  // hit a 401 during the boot window. `isVerified` is true only once
+  // the refetch settles — auth-scoped queries (plan-limits, hubcode
+  // models) gate on it so they never fire against a stale token.
+  const isVerified = query.isFetched && !query.isFetching;
+
   return {
     session,
     user: session?.user ?? null,
     isAuthenticated: session !== null,
+    isVerified,
     isLoading: query.isLoading,
     error: query.error instanceof Error ? query.error.message : null,
     signIn: signInMutation.mutateAsync,

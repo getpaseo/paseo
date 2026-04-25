@@ -19,6 +19,7 @@ import {
   webUpdateWorkspaceShare,
 } from "@/desktop/auth/web-auth-api";
 import { getIsElectron } from "@/constants/platform";
+import { useUpgradeModal } from "@/components/billing/upgrade-modal-provider";
 
 // Route workspace-share CRUD between the Electron bridge (desktop app) and
 // the auth-server HTTP API (browsers + mobile). Desktop carries a bearer
@@ -89,6 +90,7 @@ export function useSharedWorkspaces(orgId: string | null) {
  */
 export function useWorkspaceShareMutations(orgId: string | null) {
   const queryClient = useQueryClient();
+  const { handlePlanGateError } = useUpgradeModal();
 
   const invalidate = useCallback(() => {
     if (!orgId) return;
@@ -99,6 +101,9 @@ export function useWorkspaceShareMutations(orgId: string | null) {
   const createMutation = useMutation({
     mutationFn: (params: DesktopCreateWorkspaceShareParams) => createShare(params),
     onSuccess: invalidate,
+    onError: (err) => {
+      handlePlanGateError(err);
+    },
   });
 
   const updateMutation = useMutation({

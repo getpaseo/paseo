@@ -296,14 +296,68 @@ async function signIn(args?: Record<string, unknown>): Promise<{
   };
 }
 
-function signOut(): { success: true } {
+async function signOut(): Promise<{ success: true }> {
   log.info("[auth] signing out");
+  // Best-effort: tell the auth-server to invalidate the DB session row
+  // before we wipe the local file. If this fails (network, server
+  // down, token already gone), we still clear local — the user
+  // expects "logout" to mean "I'm logged out" regardless.
+  const session = loadAuthSession();
+  if (session) {
+    try {
+      await fetch(`${AUTH_SERVER_URL}/api/auth/sign-out`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.sessionToken}`,
+        },
+      });
+    } catch (err) {
+      log.warn("[auth] server-side sign-out failed (continuing with local clear):", err);
+    }
+  }
   clearAuthSession();
   return { success: true };
 }
 
-function getSession(): StoredAuthSession | null {
-  return loadAuthSession();
+// Module-level guard so we only revalidate the session against the
+// auth-server once per app launch. After the first call, subsequent
+// reads trust the local file until the next app start.
+let sessionValidatedThisRun = false;
+
+async function getSession(): Promise<StoredAuthSession | null> {
+  const session = loadAuthSession();
+  if (!session) {
+    sessionValidatedThisRun = true;
+    return null;
+  }
+  if (sessionValidatedThisRun) {
+    return session;
+  }
+  // First read this run — confirm the token is still valid on the
+  // auth-server. The DB session may have been deleted out-of-band
+  // (browser-side sign-out, admin revoke, expiry past `expiresAt`).
+  // authFetch clears the local file on 401 so the next read returns
+  // null cleanly.
+  try {
+    const res = await fetch(`${AUTH_SERVER_URL}/api/auth/get-session`, {
+      headers: { Authorization: `Bearer ${session.sessionToken}` },
+    });
+    if (res.status === 401) {
+      log.info("[auth] cached session rejected by auth-server, clearing");
+      clearAuthSession();
+      sessionValidatedThisRun = true;
+      return null;
+    }
+    sessionValidatedThisRun = true;
+    return session;
+  } catch (err) {
+    // Network unreachable (auth-server down, offline). Don't punish
+    // the user — keep the cached session and let downstream calls
+    // surface their own errors. We'll re-validate on the next launch.
+    log.warn("[auth] session validation failed, keeping cached session:", err);
+    sessionValidatedThisRun = true;
+    return session;
+  }
 }
 
 async function getOrganizations(): Promise<unknown> {

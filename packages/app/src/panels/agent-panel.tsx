@@ -12,6 +12,7 @@ import { AgentInputArea } from "@/components/agent-input-area";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { SessionIntegrationBanner } from "@/components/session-integration-banner";
+import { FreeSessionCountdownBanner } from "@/components/billing/free-session-countdown-banner";
 import type { ImageAttachment } from "@/components/message-input";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ToastViewport, useToastHost } from "@/components/toast-host";
@@ -244,6 +245,11 @@ function AgentPanelBody({
   const { theme } = useUnistyles();
   const panelToast = useToastHost();
   const { isArchivingAgent } = useArchiveAgent();
+
+  // Per-agent session start time (epoch ms). Captured the first time
+  // this panel renders for the user; accurate enough to drive the
+  // Free-tier 1h countdown banner. The daemon enforces the real cutoff.
+  const sessionStartedAt = useRef<number>(Date.now()).current;
 
   const isElectron = getIsElectron();
   const { isAuthenticated, session: authSession } = useAuthSession();
@@ -777,6 +783,9 @@ function AgentPanelBody({
       <FileDropZone onFilesDropped={handleFilesDropped} disabled={isArchivingCurrentAgent}>
         <View style={styles.container}>
           <SessionIntegrationBanner serverId={serverId} cwd={agentState.cwd ?? workspaceId} />
+          <View style={styles.freeBannerWrap}>
+            <FreeSessionCountdownBanner sessionStartedAt={sessionStartedAt} />
+          </View>
           <View style={styles.contentContainer}>
             <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>
               <AgentStreamView
@@ -928,6 +937,11 @@ const styles = StyleSheet.create((theme) => ({
   contentContainer: {
     flex: 1,
     overflow: "hidden",
+  },
+  freeBannerWrap: {
+    alignItems: "flex-end" as const,
+    paddingHorizontal: theme.spacing[3],
+    paddingTop: theme.spacing[2],
   },
   content: {
     flex: 1,

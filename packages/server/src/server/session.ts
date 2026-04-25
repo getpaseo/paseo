@@ -629,6 +629,13 @@ export class Session {
   private agentMcpClient: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
   private agentTools: ToolSet | null = null;
   private agentManager: AgentManager;
+  // Per-session Hubcode auth, set by the connected client (Electron, mobile,
+  // CLI). Each WebSocket session represents one logged-in user; we MUST NOT
+  // mix tokens across sessions, otherwise client A's createAgent could fetch
+  // client B's plan from the auth-server. The manager-level singleton stays
+  // as a CLI/dev fallback.
+  private hubcodeAuthToken: string | null = null;
+  private hubcodeAuthServerUrl: string | null = null;
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
@@ -1587,7 +1594,10 @@ export class Session {
         if (!config) {
           throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
         }
-        snapshot = await this.agentManager.createAgent(config, agentId, { labels: record.labels });
+        snapshot = await this.agentManager.createAgent(config, agentId, {
+          labels: record.labels,
+          launchEnv: this.buildHubcodeLaunchEnv(),
+        });
         this.sessionLogger.info(
           { agentId, provider: record.provider },
           "Agent created from stored config",
@@ -2091,6 +2101,19 @@ export class Session {
             break;
 
           case "set_hubcode_auth_session_request":
+            // Store the token on THIS session (per-WebSocket), not on
+            // the shared agent manager. createAgent() folds this into
+            // the launchContext per-call so each user's request hits
+            // the auth-server with their own bearer token.
+            this.hubcodeAuthToken = msg.token && msg.token.length > 0 ? msg.token : null;
+            if (typeof msg.authServerUrl === "string" && msg.authServerUrl.length > 0) {
+              this.hubcodeAuthServerUrl = msg.authServerUrl;
+            } else if (msg.authServerUrl === null) {
+              this.hubcodeAuthServerUrl = null;
+            }
+            // Mirror to the manager singleton for backward-compat with
+            // callers that resolve the token from process.env (CLI runs
+            // outside any WebSocket session).
             this.agentManager.setHubcodeAuthSession(msg.token, msg.authServerUrl ?? null);
             this.emit({
               type: "set_hubcode_auth_session_response",
@@ -3585,7 +3608,10 @@ export class Session {
         labels,
       );
       await this.ensureWorkspaceRegistered(sessionConfig.cwd);
-      const snapshot = await this.agentManager.createAgent(sessionConfig, undefined, { labels });
+      const snapshot = await this.agentManager.createAgent(sessionConfig, undefined, {
+        labels,
+        launchEnv: this.buildHubcodeLaunchEnv(),
+      });
       await this.forwardAgentUpdate(snapshot);
 
       if (trimmedPrompt) {
@@ -3803,6 +3829,23 @@ export class Session {
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
     }
+  }
+
+  /**
+   * Materialize the per-session Hubcode auth env into the shape the
+   * provider expects. Returns undefined when this WebSocket session
+   * never registered a token — in that case the AgentManager falls
+   * back to its singleton (CLI / dev) or to nothing at all.
+   */
+  private buildHubcodeLaunchEnv(): Record<string, string> | undefined {
+    if (!this.hubcodeAuthToken) return undefined;
+    const env: Record<string, string> = {
+      HUBCODE_SESSION_TOKEN: this.hubcodeAuthToken,
+    };
+    if (this.hubcodeAuthServerUrl) {
+      env.HUBCODE_AUTH_SERVER_URL = this.hubcodeAuthServerUrl;
+    }
+    return env;
   }
 
   private async buildAgentSessionConfig(
@@ -8847,6 +8890,34 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "integration_connect_request" }>,
   ): Promise<void> {
     try {
+      // Plan-gate: cap concurrent connected integrations against the
+      // user's plan. The auth-server is the source of truth — we ask
+      // it for `max_issue_integrations` keyed off the same Bearer
+      // token this Session was registered with. If the count would
+      // exceed the limit we refuse before storing credentials, so
+      // the user never has to "rollback" a half-saved connection.
+      const cap = await this.fetchIssueIntegrationCap();
+      if (Number.isFinite(cap)) {
+        const { listIntegrationStatus } = await import("./integration-service.js");
+        const current = await listIntegrationStatus();
+        // The user might be REPLACING an existing connection (same
+        // integrationId). Only count distinct OTHER integrations.
+        const usedSlots = current.filter(
+          (e) => e.connected && e.id !== request.integrationId,
+        ).length;
+        if (usedSlots >= cap) {
+          this.emit({
+            type: "integration_connect_response",
+            payload: {
+              requestId: request.requestId,
+              integrationId: request.integrationId,
+              success: false,
+              error: `Integration limit reached (${usedSlots}/${cap}). Upgrade to add more.`,
+            },
+          });
+          return;
+        }
+      }
       const { connectIntegration } = await import("./integration-service.js");
       const result = await connectIntegration(request.integrationId, request.credentials);
       this.emit({
@@ -8869,6 +8940,35 @@ export class Session {
           error: err instanceof Error ? err.message : "Connection failed",
         },
       });
+    }
+  }
+
+  /**
+   * Ask the auth-server for the user's `max_issue_integrations` limit.
+   * Returns Infinity when the plan reports unlimited, NaN when the
+   * lookup fails (in that case we fall through and let the connect
+   * proceed — better to allow than to brick the user on a transient
+   * auth-server outage).
+   */
+  private async fetchIssueIntegrationCap(): Promise<number> {
+    if (!this.hubcodeAuthToken) return Number.NaN;
+    const baseUrl = this.hubcodeAuthServerUrl ?? "http://localhost:3002";
+    try {
+      const res = await fetch(`${baseUrl}/api/me/plan-limits`, {
+        headers: { Authorization: `Bearer ${this.hubcodeAuthToken}` },
+      });
+      if (!res.ok) return Number.NaN;
+      const body = (await res.json()) as {
+        limits?: {
+          max_issue_integrations?: { numeric: number; isUnlimited: boolean };
+        };
+      };
+      const limit = body.limits?.max_issue_integrations;
+      if (!limit) return Number.NaN;
+      if (limit.isUnlimited) return Number.POSITIVE_INFINITY;
+      return limit.numeric;
+    } catch {
+      return Number.NaN;
     }
   }
 

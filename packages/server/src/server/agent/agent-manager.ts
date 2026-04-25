@@ -739,7 +739,18 @@ export class AgentManager {
   async createAgent(
     config: AgentSessionConfig,
     agentId?: string,
-    options?: { labels?: Record<string, string> },
+    options?: {
+      labels?: Record<string, string>;
+      /**
+       * Per-call env overrides folded into the launch context. Used by
+       * the WebSocket session layer to inject the *caller's* Hubcode
+       * session token instead of relying on the manager-level singleton
+       * (which would be wrong with multiple users connected to the
+       * same daemon — last writer wins, masking other users' real
+       * plans).
+       */
+      launchEnv?: Record<string, string>;
+    },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     const injectedConfig =
@@ -757,6 +768,12 @@ export class AgentManager {
           };
     const normalizedConfig = await this.normalizeConfig(injectedConfig);
     const launchContext = this.buildLaunchContext(resolvedAgentId);
+    if (options?.launchEnv) {
+      // Merge per-caller env on top of the manager defaults so caller-
+      // supplied tokens (HUBCODE_SESSION_TOKEN per-user) win over the
+      // singleton fallback.
+      launchContext.env = { ...(launchContext.env ?? {}), ...options.launchEnv };
+    }
     const client = this.requireClient(normalizedConfig.provider);
     const available = await client.isAvailable();
     if (!available) {
