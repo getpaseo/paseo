@@ -349,13 +349,18 @@ function seedReadyAgent(agent: Agent = makeAgent()) {
   seedReadyAgents([agent]);
 }
 
-function buildTestPaneValue(
-  options: {
-    agentId?: string;
-    openTab?: (target: { kind: "agent"; agentId: string }) => void;
-    closeCurrentTab?: () => void;
-  } = {},
-) {
+interface PaneOverrides {
+  agentId?: string;
+  openTab?: (target: { kind: "agent"; agentId: string }) => void;
+  closeCurrentTab?: () => void;
+}
+
+Object.defineProperty(globalThis, "React", {
+  value: React,
+  configurable: true,
+});
+
+function buildTestPaneValue(options: PaneOverrides = {}) {
   const agentId = options.agentId ?? "agent";
   return {
     serverId: "server",
@@ -376,16 +381,8 @@ async function renderAgentPanel(
     isPaneFocused: false,
     isInteractive: false,
   },
-  options: {
-    agentId?: string;
-    openTab?: (target: { kind: "agent"; agentId: string }) => void;
-    closeCurrentTab?: () => void;
-  } = {},
+  options: PaneOverrides = {},
 ) {
-  Object.defineProperty(globalThis, "React", {
-    value: React,
-    configurable: true,
-  });
   const AgentPanel = agentPanelRegistration.component;
   const queryClient = new QueryClient({
     defaultOptions: {

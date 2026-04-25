@@ -1430,42 +1430,23 @@ interface EntityTabGroup {
   tabs: WorkspaceTab[];
 }
 
-function buildVisibleAgentIds(input: {
-  activeAgentIds: Set<string>;
+function applyPinnedAndHidden(input: {
+  baseAgentIds: Set<string>;
   pinnedAgentIds: Set<string>;
   hiddenAgentIds: Set<string>;
   knownAgentIds: Set<string>;
 }): Set<string> {
-  const { activeAgentIds, pinnedAgentIds, hiddenAgentIds, knownAgentIds } = input;
-  const visibleAgentIds = new Set(activeAgentIds);
+  const { baseAgentIds, pinnedAgentIds, hiddenAgentIds, knownAgentIds } = input;
+  const result = new Set(baseAgentIds);
   for (const agentId of pinnedAgentIds) {
     if (knownAgentIds.has(agentId)) {
-      visibleAgentIds.add(agentId);
+      result.add(agentId);
     }
   }
   for (const agentId of hiddenAgentIds) {
-    visibleAgentIds.delete(agentId);
+    result.delete(agentId);
   }
-  return visibleAgentIds;
-}
-
-function buildAutoOpenAgentIds(input: {
-  autoOpenAgentIds: Set<string>;
-  pinnedAgentIds: Set<string>;
-  hiddenAgentIds: Set<string>;
-  knownAgentIds: Set<string>;
-}): Set<string> {
-  const { autoOpenAgentIds, pinnedAgentIds, hiddenAgentIds, knownAgentIds } = input;
-  const autoOpenSet = new Set(autoOpenAgentIds);
-  for (const agentId of pinnedAgentIds) {
-    if (knownAgentIds.has(agentId)) {
-      autoOpenSet.add(agentId);
-    }
-  }
-  for (const agentId of hiddenAgentIds) {
-    autoOpenSet.delete(agentId);
-  }
-  return autoOpenSet;
+  return result;
 }
 
 function buildEntityTabGroups(initialTabs: WorkspaceTab[]): Map<string, EntityTabGroup> {
@@ -1591,14 +1572,14 @@ export function reconcileWorkspaceTabs(
   const knownTerminalIds = snapshot.knownTerminalIds
     ? normalizeStringSet(snapshot.knownTerminalIds)
     : standaloneTerminalIds;
-  const visibleAgentIds = buildVisibleAgentIds({
-    activeAgentIds,
+  const visibleAgentIds = applyPinnedAndHidden({
+    baseAgentIds: activeAgentIds,
     pinnedAgentIds,
     hiddenAgentIds,
     knownAgentIds,
   });
-  const autoOpenSet = buildAutoOpenAgentIds({
-    autoOpenAgentIds,
+  const autoOpenSet = applyPinnedAndHidden({
+    baseAgentIds: autoOpenAgentIds,
     pinnedAgentIds,
     hiddenAgentIds,
     knownAgentIds,
