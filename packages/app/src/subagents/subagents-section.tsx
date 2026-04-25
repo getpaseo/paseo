@@ -1,4 +1,4 @@
-import React, { useMemo, useState, type ReactElement } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -18,10 +18,6 @@ type SubagentsSectionProps = {
 
 const SUBAGENTS_LIST_MAX_HEIGHT = 200;
 
-function formatCount(count: number, singular: string, plural: string): string {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
 function formatHeaderLabel(rows: SubagentRow[]): string {
   let runningCount = 0;
   let attentionCount = 0;
@@ -38,12 +34,12 @@ function formatHeaderLabel(rows: SubagentRow[]): string {
     }
   }
 
-  const parts = [formatCount(rows.length, "subagent", "subagents")];
+  const parts = [`${rows.length} ${rows.length === 1 ? "subagent" : "subagents"}`];
   if (runningCount > 0) {
-    parts.push(formatCount(runningCount, "running", "running"));
+    parts.push(`${runningCount} running`);
   }
   if (attentionCount > 0) {
-    parts.push(formatCount(attentionCount, "needs attention", "needs attention"));
+    parts.push(`${attentionCount} needs attention`);
   }
   return parts.join(" · ");
 }

@@ -1,3 +1,4 @@
+import equal from "fast-deep-equal";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useSessionStore, type Agent } from "@/stores/session-store";
 
@@ -55,36 +56,10 @@ export function selectSubagentsForParent(
   return rows;
 }
 
-function areSubagentRowsEqual(left: SubagentRow[], right: SubagentRow[]): boolean {
-  if (left === right) {
-    return true;
-  }
-  if (left.length !== right.length) {
-    return false;
-  }
-  for (let index = 0; index < left.length; index += 1) {
-    const leftRow = left[index];
-    const rightRow = right[index];
-    if (
-      !leftRow ||
-      !rightRow ||
-      leftRow.id !== rightRow.id ||
-      leftRow.provider !== rightRow.provider ||
-      leftRow.title !== rightRow.title ||
-      leftRow.status !== rightRow.status ||
-      leftRow.requiresAttention !== rightRow.requiresAttention ||
-      leftRow.createdAt !== rightRow.createdAt
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
 export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRow[] {
   return useStoreWithEqualityFn(
     useSessionStore,
     (state) => selectSubagentsForParent(state, params),
-    areSubagentRowsEqual,
+    equal,
   );
 }
