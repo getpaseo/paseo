@@ -6010,8 +6010,10 @@ export class Session {
       return exact.workspaceId;
     }
 
+    const userHome = homedir();
     let bestMatch: PersistedWorkspaceRecord | null = null;
     for (const workspace of workspaces) {
+      if (workspace.cwd === userHome) continue;
       const prefix = workspace.cwd.endsWith(sep) ? workspace.cwd : `${workspace.cwd}${sep}`;
       if (!normalizedCwd.startsWith(prefix)) {
         continue;
