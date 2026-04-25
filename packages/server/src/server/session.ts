@@ -966,7 +966,7 @@ export class Session {
 
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     const descriptor = await this.describeWorkspaceRecordWithGitData(workspace);
-    this.syncWorkspaceGitObservers([descriptor]);
+    await this.syncWorkspaceGitObservers([descriptor]);
   }
 
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
@@ -4957,16 +4957,18 @@ export class Session {
     this.onBranchChanged?.(target.workspaceId, previousBranchName, branchName);
   }
 
-  private syncWorkspaceGitObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void {
+  private async syncWorkspaceGitObservers(
+    workspaces: Iterable<WorkspaceDescriptorPayload>,
+  ): Promise<void> {
     for (const workspace of workspaces) {
-      this.syncWorkspaceGitObserver(workspace.workspaceDirectory, {
+      await this.syncWorkspaceGitObserver(workspace.workspaceDirectory, {
         isGit: workspace.projectKind === "git",
       });
       this.rememberWorkspaceGitDescriptorState(workspace.workspaceDirectory, workspace);
     }
   }
 
-  private syncWorkspaceGitObserver(cwd: string, options: { isGit: boolean }): void {
+  private async syncWorkspaceGitObserver(cwd: string, options: { isGit: boolean }): Promise<void> {
     const normalizedCwd = normalizePersistedWorkspaceId(cwd);
     if (!options.isGit) {
       this.removeWorkspaceGitSubscription(normalizedCwd);
@@ -4976,6 +4978,22 @@ export class Session {
     if (this.workspaceGitSubscriptions.has(normalizedCwd)) {
       return;
     }
+
+    const workspaceId = this.resolveRegisteredWorkspaceIdForCwd(
+      normalizedCwd,
+      await this.workspaceRegistry.list(),
+    );
+    const target: WorkspaceGitWatchTarget = {
+      cwd: normalizedCwd,
+      workspaceId,
+      watchers: [],
+      debounceTimer: null,
+      refreshPromise: null,
+      refreshQueued: false,
+      latestDescriptorStateKey: null,
+      lastBranchName: null,
+    };
+    this.workspaceGitWatchTargets.set(normalizedCwd, target);
 
     const subscription = this.workspaceGitService.registerWorkspace(
       { cwd: normalizedCwd },
@@ -7021,7 +7039,7 @@ export class Session {
       }
 
       const payload = await this.listFetchWorkspacesEntries(request);
-      this.syncWorkspaceGitObservers(payload.entries);
+      await this.syncWorkspaceGitObservers(payload.entries);
       this.sessionLogger.debug(
         {
           requestId: request.requestId,

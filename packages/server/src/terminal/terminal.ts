@@ -666,20 +666,22 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     return true;
   });
 
-  titleChangeSubscription = terminal.onTitleChange((nextTitle) => {
-    if (disposed || killed || titleMode === "manual") {
-      return;
-    }
-    pendingTitle = nextTitle.trim().length > 0 ? nextTitle : undefined;
-    if (titleDebounceTimer) {
-      clearTimeout(titleDebounceTimer);
-    }
-    titleDebounceTimer = setTimeout(() => {
-      titleDebounceTimer = null;
-      emitTitleChange(pendingTitle);
-      pendingTitle = undefined;
-    }, TERMINAL_TITLE_DEBOUNCE_MS);
-  });
+  if (titleMode === "auto") {
+    titleChangeSubscription = terminal.onTitleChange((nextTitle) => {
+      if (disposed || killed) {
+        return;
+      }
+      pendingTitle = nextTitle.trim().length > 0 ? nextTitle : undefined;
+      if (titleDebounceTimer) {
+        clearTimeout(titleDebounceTimer);
+      }
+      titleDebounceTimer = setTimeout(() => {
+        titleDebounceTimer = null;
+        emitTitleChange(pendingTitle);
+        pendingTitle = undefined;
+      }, TERMINAL_TITLE_DEBOUNCE_MS);
+    });
+  }
 
   const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
     const commandFinished = parseCommandFinishedOsc(data);

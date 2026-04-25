@@ -1638,7 +1638,7 @@ function WorkspaceRowWithMenu({
       if (!payload.success || payload.error) {
         throw new Error(payload.error?.message ?? "Failed to rename branch");
       }
-      return { targetCwd, branch: payload.currentBranch ?? branch };
+      return { targetCwd };
     },
     onSuccess: async ({ targetCwd }) => {
       await invalidateCheckoutGitQueriesForClient(queryClient, {
@@ -1665,7 +1665,8 @@ function WorkspaceRowWithMenu({
 
   const validateRenameSlug = useCallback((value: string): string | null => {
     const result = validateBranchSlug(value);
-    return result.valid ? null : (result.error ?? "Invalid branch name");
+    if (result.valid) return null;
+    return result.error ?? "Invalid branch name";
   }, []);
 
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
