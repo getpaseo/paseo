@@ -964,6 +964,14 @@ function ProjectHeaderRow({
           <Text style={styles.projectTitle} numberOfLines={1}>
             {displayName}
           </Text>
+          {project.isGlobal ? (
+            <Text
+              style={styles.projectGlobalBadge}
+              accessibilityLabel="Global project — not associated with the active organization"
+            >
+              Global
+            </Text>
+          ) : null}
         </View>
       </View>
       <View style={styles.projectTrailingActions}>
@@ -1848,7 +1856,9 @@ function ProjectBlock({
       setIsRemovingProject(true);
       try {
         for (const ws of project.workspaces) {
-          const payload = await client.archiveWorkspace(ws.workspaceId);
+          // Hard-remove (not archive) so an agent emit later can't silently
+          // re-register the workspace. Files on disk are untouched.
+          const payload = await client.removeWorkspace(ws.workspaceId);
           if (payload.error) {
             throw new Error(payload.error);
           }
@@ -2375,9 +2385,23 @@ const styles = StyleSheet.create((theme) => ({
   projectTitleGroup: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
     flex: 1,
     minWidth: 0,
+  },
+  projectGlobalBadge: {
+    color: theme.colors.foregroundMuted,
+    fontSize: 9,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    fontWeight: theme.fontWeight.medium,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+    flexShrink: 0,
   },
   projectIcon: {
     width: "100%",

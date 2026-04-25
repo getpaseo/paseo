@@ -130,6 +130,8 @@ import {
   useSharedSessionStore,
 } from "@/stores/shared-session-store";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
+import { useBillingStream } from "@/desktop/hooks/use-billing-stream";
+import { useHubcodeAuthSync } from "@/hooks/use-hubcode-auth-sync";
 import { useActiveOrgId } from "@/stores/active-org-store";
 import { useLibraryEntries } from "@/hooks/library/use-library-queries";
 import { useGuiMcpSync } from "@/hooks/library/use-gui-mcp-sync";
@@ -310,6 +312,16 @@ function HostSessionManager() {
       ))}
     </>
   );
+}
+
+function HubcodeAuthSyncMount() {
+  useHubcodeAuthSync();
+  return null;
+}
+
+function BillingStreamMount() {
+  useBillingStream();
+  return null;
 }
 
 function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
@@ -731,6 +743,8 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       <JoiningSharedSessionOverlay />
       <OfferLinkListener upsertDaemonFromOfferUrl={upsertConnectionFromOfferUrl} />
       <HostSessionManager />
+      <HubcodeAuthSyncMount />
+      <BillingStreamMount />
       <FaviconStatusSync />
       {children}
     </VoiceProvider>

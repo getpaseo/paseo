@@ -1039,6 +1039,7 @@ export class Session {
       "restart_server_request",
       "shutdown_server_request",
       "set_daemon_config_request",
+      "set_hubcode_auth_session_request",
       "open_project_request",
       "clone_repository_request",
       "hubcode_worktree_list_request",
@@ -2086,6 +2087,14 @@ export class Session {
                 requestId: msg.requestId,
                 config: this.daemonConfigStore.patch(msg.config),
               },
+            });
+            break;
+
+          case "set_hubcode_auth_session_request":
+            this.agentManager.setHubcodeAuthSession(msg.token, msg.authServerUrl ?? null);
+            this.emit({
+              type: "set_hubcode_auth_session_response",
+              payload: { requestId: msg.requestId, ok: true },
             });
             break;
 
@@ -7080,7 +7089,24 @@ export class Session {
         throw new Error("Use worktree archive for Hubcode worktrees");
       }
       const archivedAt = new Date().toISOString();
-      await this.archiveWorkspaceRecord(request.workspaceId, archivedAt);
+      if (request.delete) {
+        // Hard-delete: remove the workspace registry row entirely (and its
+        // indexing state) so a later `ensureWorkspaceRegistered` call from an
+        // agent emit can't silently un-archive it. Files on disk are
+        // untouched — this only severs the daemon's record of the project.
+        await this.indexingService?.deleteState(request.workspaceId).catch((err) => {
+          this.sessionLogger.warn(
+            { err, workspaceId: request.workspaceId },
+            "Failed to delete indexing state during workspace removal",
+          );
+        });
+        this.removeWorkspaceGitSubscription(request.workspaceId);
+        await this.workspaceRegistry.remove(request.workspaceId);
+        // Archive the parent project record if this was its last workspace.
+        await this.archiveProjectRecordIfEmpty(existing.projectId, archivedAt);
+      } else {
+        await this.archiveWorkspaceRecord(request.workspaceId, archivedAt);
+      }
       await this.emitWorkspaceUpdateForCwd(existing.cwd);
       this.emit({
         type: "archive_workspace_response",

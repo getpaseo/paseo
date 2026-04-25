@@ -6,12 +6,24 @@ import { useOrganizations } from "@/desktop/hooks/use-organizations";
 import { useActiveOrgId } from "@/stores/active-org-store";
 
 // Any plan that isn't the free tier unlocks everything — hide upgrade UI.
+//
+// The backend normalizes plan ids as `plan_free`, `plan_pro`, `plan_enterprise`
+// (see auth-server `getUserBillingSummary`), so a naive `=== "free"` check
+// would never match and every Free user would be treated as paid — which is
+// exactly the bug that made upgrade banners disappear for Free users. We
+// strip the `plan_` / `plan-` prefix before comparing to keep both shapes
+// (`free` and `plan_free`) classified correctly.
 function useIsOnPaidPlan(): boolean {
   const { organizations } = useOrganizations();
   const activeOrgId = useActiveOrgId();
   const activeOrg = organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
   const planId = activeOrg?.planId;
-  return !!planId && planId.toLowerCase() !== "free";
+  if (!planId) return false;
+  const slug = planId
+    .toLowerCase()
+    .replace(/^plan[_-]/, "")
+    .trim();
+  return slug !== "" && slug !== "free";
 }
 
 const AUTH_SERVER_URL = "https://auth.hubcode.ai";

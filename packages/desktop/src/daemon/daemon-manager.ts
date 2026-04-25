@@ -493,7 +493,39 @@ export function registerDaemonManager(): void {
       if (!handler) {
         throw new Error(`Unknown desktop command: ${command}`);
       }
-      return await handler(args);
+      try {
+        return await handler(args);
+      } catch (err) {
+        // Auth/authz errors are part of normal flow — the user can be signed
+        // out, the session expired, or the active org is one they're not a
+        // member of. Don't let Electron's IPC layer print a noisy "Error
+        // occurred in handler" stack trace for these. Wrap the message in a
+        // marker that the preload script re-throws, so callers still see a
+        // rejection but the main process stays quiet.
+        if (isExpectedHandlerError(err)) {
+          const e = err as Error;
+          return {
+            __hubcodeExpectedError: true,
+            message: e.message,
+            name: e.name,
+          };
+        }
+        throw err;
+      }
     },
   );
+}
+
+const EXPECTED_AUTH_ERROR_PREFIXES = [
+  "Not authenticated",
+  "Session expired",
+  "Forbidden",
+  "Not a member of",
+  "Failed to list shared workspaces (403)",
+  "Failed to list workspace shares (403)",
+];
+
+function isExpectedHandlerError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return EXPECTED_AUTH_ERROR_PREFIXES.some((prefix) => err.message.startsWith(prefix));
 }

@@ -4,8 +4,25 @@ type EventHandler = (payload: unknown) => void;
 
 contextBridge.exposeInMainWorld("hubcodeDesktop", {
   platform: process.platform,
-  invoke: (command: string, args?: Record<string, unknown>) =>
-    ipcRenderer.invoke("hubcode:invoke", command, args),
+  invoke: async (command: string, args?: Record<string, unknown>) => {
+    const result = await ipcRenderer.invoke("hubcode:invoke", command, args);
+    // Main-process handlers wrap "expected" errors (auth expired, forbidden,
+    // etc.) in this marker shape so Electron doesn't print a noisy
+    // `Error occurred in handler` stack trace for what is just the user
+    // not being signed in. Re-throw on the renderer side so the call site
+    // observes the same rejection it would have otherwise.
+    if (
+      result &&
+      typeof result === "object" &&
+      (result as { __hubcodeExpectedError?: unknown }).__hubcodeExpectedError === true
+    ) {
+      const err = result as { message?: string; name?: string };
+      const error = new Error(err.message ?? "expected handler error");
+      if (err.name) error.name = err.name;
+      throw error;
+    }
+    return result;
+  },
   getPendingOpenProject: () =>
     ipcRenderer.invoke("hubcode:get-pending-open-project") as Promise<string | null>,
   getPendingDeepLink: () =>

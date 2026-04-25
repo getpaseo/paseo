@@ -37,6 +37,13 @@ export interface SidebarProjectEntry {
   activeCount: number;
   totalWorkspaces: number;
   workspaces: SidebarWorkspaceEntry[];
+  /**
+   * True when none of this project's workspaces have an orgId — i.e. they
+   * were registered before the user joined an organization, or the daemon is
+   * being used standalone. Surfaced as a "Global" badge so the user knows
+   * they aren't sharable through the active org until promoted.
+   */
+  isGlobal: boolean;
 }
 
 export interface SidebarWorkspacesListResult {
@@ -110,7 +117,14 @@ export function buildSidebarProjectsFromWorkspaces(input: {
         activeCount: 0,
         totalWorkspaces: 0,
         workspaces: [],
+        // Initialized true; flipped to false the moment we see any workspace
+        // belonging to an org. Stays true if all workspaces are global.
+        isGlobal: true,
       } satisfies SidebarProjectEntry);
+
+    if (workspace.orgId) {
+      project.isGlobal = false;
+    }
 
     const row: SidebarWorkspaceEntry = {
       workspaceKey: `${input.serverId}:${workspace.id}`,
@@ -296,14 +310,16 @@ export function useSidebarWorkspacesList(options?: {
           })()
         : sessionWorkspaces.values();
 
-    // Scope strictly by active organization. Workspaces without an orgId (legacy
-    // or created outside any org context) stay visible only when no org is
-    // selected — otherwise switching orgs wouldn't actually narrow the view.
+    // Scope by active organization, but always include "global" workspaces
+    // (no orgId) so users who started using the app pre-signup don't lose
+    // their work the moment they create or join an org. Globals are surfaced
+    // with a "Global" badge in the project row so it's clear they aren't
+    // tied to the current org and can be promoted later.
     const iter: Iterable<WorkspaceDescriptor> = activeOrgId
       ? (() => {
           const filtered: WorkspaceDescriptor[] = [];
           for (const ws of baseIter) {
-            if (ws.orgId === activeOrgId) filtered.push(ws);
+            if (ws.orgId === activeOrgId || !ws.orgId) filtered.push(ws);
           }
           return filtered;
         })()

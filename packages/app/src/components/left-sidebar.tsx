@@ -82,6 +82,37 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useIsInSharedSession } from "@/stores/shared-session-store";
 import { isWeb, getIsElectron } from "@/constants/platform";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
+import { useActiveOrgId } from "@/stores/active-org-store";
+
+/**
+ * Decide what label, if any, to show next to the PROJECTS count so the user
+ * knows where these projects "live":
+ *   - signed out → projects are stored only on this machine, no sync; show
+ *     "Local-only". When the user later signs in and creates/joins an org,
+ *     the project-registry sync hook automatically uploads them.
+ *   - signed in but no active org → same story; the upload waits for an org.
+ *   - signed in with an active org → no tag; the section header is enough.
+ */
+function resolveProjectsScopeLabel(input: {
+  isAuthenticated: boolean;
+  activeOrgId: string | null;
+}): { label: string; tooltip: string } | null {
+  if (!input.isAuthenticated) {
+    return {
+      label: "Local-only",
+      tooltip:
+        "These projects exist only on this machine. Sign in and join an organization to share them with your team — your local list is preserved.",
+    };
+  }
+  if (!input.activeOrgId) {
+    return {
+      label: "No org · local-only",
+      tooltip:
+        "You're signed in but haven't joined an organization yet. These projects stay local until you pick or create an org.",
+    };
+  }
+  return null;
+}
 import { UpgradeBanner } from "@/desktop/components/upgrade-banner";
 import { CompactOrgSwitcher } from "@/components/compact-org-switcher";
 import { useSharedWorkspaceScope } from "@/stores/shared-session-store";
@@ -377,14 +408,24 @@ function useLockedPromptSignIn(locked: boolean) {
 function ChatTabButton({
   onNavigate,
   locked = false,
+  hidden = false,
 }: {
   onNavigate?: () => void;
   locked?: boolean;
+  /**
+   * When the user is signed in but not a member of any organization, the
+   * messages backend (mentions, channel members, pins) returns 403/404 for
+   * every call. Hide the entry rather than showing a tab that can't load.
+   * The user discovers it again the moment they create/join an org.
+   */
+  hidden?: boolean;
 } = {}) {
   const { theme } = useUnistyles();
   const pathname = usePathname();
   const isActive = !locked && (pathname === "/chat" || pathname.startsWith("/chat/"));
   const promptSignIn = useLockedPromptSignIn(locked);
+  // Conditional return goes AFTER hooks so React's hook order stays stable.
+  if (hidden) return null;
   return (
     <Pressable
       onPress={() => {
@@ -520,10 +561,20 @@ function LibraryRow({
 function ProjectsSection({
   count,
   onAdd,
+  scopeLabel,
+  scopeTooltip,
   children,
 }: {
   count: number;
   onAdd?: () => void;
+  /**
+   * Inline tag rendered after the count. Used to disambiguate where the
+   * projects belong when the user is signed out or hasn't joined an org —
+   * those projects live only on this machine, and we surface "Local-only"
+   * so the user understands they aren't synced anywhere yet.
+   */
+  scopeLabel?: string;
+  scopeTooltip?: string;
   children: React.ReactNode;
 }) {
   const { theme } = useUnistyles();
@@ -549,6 +600,11 @@ function ProjectsSection({
           <Boxes size={12} color={theme.colors.foregroundMuted} />
           <Text style={styles.projectsSectionText}>Projects</Text>
           <Text style={styles.projectsSectionCount}>{count}</Text>
+          {scopeLabel ? (
+            <Text style={styles.projectsScopeTag} accessibilityLabel={scopeTooltip ?? scopeLabel}>
+              · {scopeLabel}
+            </Text>
+          ) : null}
         </Pressable>
         {onAdd ? (
           <Pressable
@@ -662,6 +718,8 @@ function MobileSidebar({
 }: MobileSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const { isAuthenticated } = useAuthSession();
+  const activeOrgId = useActiveOrgId();
+  const projectsScope = resolveProjectsScopeLabel({ isAuthenticated, activeOrgId });
   const setTeamProjectsModalOpen = useKeyboardShortcutsStore((s) => s.setTeamProjectsModalOpen);
   const handleOpenTeamProjects = useCallback(() => {
     setTeamProjectsModalOpen(true);
@@ -824,7 +882,11 @@ function MobileSidebar({
                 ) : null}
                 <View style={styles.sidebarHeader}>
                   <View style={styles.sidebarHeaderRow}>
-                    <ChatTabButton onNavigate={() => closeToAgent()} locked={!isAuthenticated} />
+                    <ChatTabButton
+                      onNavigate={() => closeToAgent()}
+                      locked={!isAuthenticated}
+                      hidden={isAuthenticated && !activeOrgId}
+                    />
                     <SessionsButton onPress={handleViewMore} />
                   </View>
                 </View>
@@ -839,18 +901,27 @@ function MobileSidebar({
               <SidebarAgentListSkeleton />
             ) : (
               <>
+                {/* Shared workspaces are an org-level feature; hide entirely
+                   when the user is signed in but isn't a member of any org —
+                   the backend returns 403 for every shared-workspace endpoint.
+                   The locked state still appears for signed-out users so they
+                   discover the feature. */}
                 {!isScopedRecipient &&
                   (isAuthenticated ? (
-                    <SidebarSharedWorkspaces
-                      serverId={activeServerId}
-                      onWorkspacePress={() => closeToAgent()}
-                    />
+                    activeOrgId !== null && (
+                      <SidebarSharedWorkspaces
+                        serverId={activeServerId}
+                        onWorkspacePress={() => closeToAgent()}
+                      />
+                    )
                   ) : (
                     <LockedSharedWorkspacesRow />
                   ))}
                 <ProjectsSection
                   count={projects.length}
                   onAdd={isScopedRecipient ? undefined : handleOpenProject}
+                  scopeLabel={projectsScope?.label}
+                  scopeTooltip={projectsScope?.tooltip}
                 >
                   <SidebarWorkspaceList
                     serverId={activeServerId}
@@ -1309,6 +1380,8 @@ function DesktopSidebar({
 }: DesktopSidebarProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const { isAuthenticated } = useAuthSession();
+  const activeOrgId = useActiveOrgId();
+  const projectsScope = resolveProjectsScopeLabel({ isAuthenticated, activeOrgId });
   const padding = useWindowControlsPadding("sidebar");
   const sharedSessionActive = useIsInSharedSession();
   const setTeamProjectsModalOpen = useKeyboardShortcutsStore((s) => s.setTeamProjectsModalOpen);
@@ -1401,7 +1474,10 @@ function DesktopSidebar({
             <>
               <View style={styles.sidebarHeader}>
                 <View style={styles.sidebarHeaderRow}>
-                  <ChatTabButton locked={!isAuthenticated} />
+                  <ChatTabButton
+                    locked={!isAuthenticated}
+                    hidden={isAuthenticated && !activeOrgId}
+                  />
                   <SessionsButton onPress={handleViewMore} />
                 </View>
               </View>
@@ -1419,13 +1495,15 @@ function DesktopSidebar({
           <>
             {!isScopedRecipient &&
               (isAuthenticated ? (
-                <SidebarSharedWorkspaces serverId={activeServerId} />
+                activeOrgId !== null && <SidebarSharedWorkspaces serverId={activeServerId} />
               ) : (
                 <LockedSharedWorkspacesRow />
               ))}
             <ProjectsSection
               count={projects.length}
               onAdd={isScopedRecipient ? undefined : handleOpenProject}
+              scopeLabel={projectsScope?.label}
+              scopeTooltip={projectsScope?.tooltip}
             >
               <SidebarWorkspaceList
                 serverId={activeServerId}
@@ -1723,6 +1801,12 @@ const styles = StyleSheet.create((theme) => ({
   projectsSectionCount: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  projectsScopeTag: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontStyle: "italic",
+    opacity: 0.85,
   },
   libraryRow: {
     flexDirection: "row",

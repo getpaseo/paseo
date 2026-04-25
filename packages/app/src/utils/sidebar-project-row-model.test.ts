@@ -30,6 +30,7 @@ function project(overrides: Partial<SidebarProjectEntry> = {}): SidebarProjectEn
     statusBucket: "done",
     activeCount: 0,
     totalWorkspaces: 1,
+    isGlobal: false,
     workspaces: [workspace()],
     ...overrides,
   };

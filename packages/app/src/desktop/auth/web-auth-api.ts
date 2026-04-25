@@ -19,7 +19,7 @@ import type {
   DesktopUpdateWorkspaceShareParams,
 } from "./desktop-auth";
 
-function authServerBaseUrl(): string {
+export function authServerBaseUrl(): string {
   // Dev auth-server runs on 3002; prod lives at auth.hubcode.ai.
   if (typeof __DEV__ !== "undefined" && __DEV__) {
     return "http://localhost:3002";
@@ -343,5 +343,35 @@ export async function webRevokeWorkspaceShare(token: string): Promise<void> {
   if (!res.ok && res.status !== 404) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `Failed to revoke share (${res.status})`);
+  }
+}
+
+// ── Hubcode models (OmniRoute proxy) ────────────────────────────────────────
+
+export interface HubcodeCombo {
+  comboId: string;
+  comboName: string;
+}
+
+export interface HubcodeModelsBundle {
+  requiresUpgrade: boolean;
+  planId: string;
+  apiKey: string | null;
+  baseUrl: string;
+  combos: HubcodeCombo[];
+}
+
+export async function webGetHubcodeModels(
+  sessionToken?: string | null,
+): Promise<HubcodeModelsBundle | null> {
+  try {
+    const res = await webFetch("/api/me/hubcode-models", {
+      headers: sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {},
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as HubcodeModelsBundle;
+    return body;
+  } catch {
+    return null;
   }
 }

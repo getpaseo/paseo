@@ -102,6 +102,13 @@ export function parseCliPassthroughArgsFromArgv(argv: string[]): string[] | null
   });
 }
 
+// `--expose-gc` lets the in-process Hubcode Local embedding pipeline trigger
+// a synchronous GC every N batches (see `hubcode-local-inference.ts`). Without
+// it, the @xenova/transformers extractor's tensor caches grow monotonically
+// across thousands of batches and OOM-kill the daemon. Always pass it so the
+// fallback is available; the cost when not used is essentially zero.
+const DAEMON_BASE_EXEC_ARGV = ["--expose-gc"] as const;
+
 export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
   if (app.isPackaged) {
     return {
@@ -117,7 +124,7 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
           "supervisor-entrypoint.js",
         ),
       }),
-      execArgv: [],
+      execArgv: [...DAEMON_BASE_EXEC_ARGV],
     };
   }
 
@@ -126,7 +133,7 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
   if (existsSync(distRunner)) {
     return {
       entryPath: distRunner,
-      execArgv: [],
+      execArgv: [...DAEMON_BASE_EXEC_ARGV],
     };
   }
 
@@ -135,7 +142,7 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
       label: "Daemon runner source",
       filePath: path.join(serverPackage.root, "scripts", "supervisor-entrypoint.ts"),
     }),
-    execArgv: ["--import", "tsx"],
+    execArgv: [...DAEMON_BASE_EXEC_ARGV, "--import", "tsx"],
   };
 }
 

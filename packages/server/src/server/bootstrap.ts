@@ -541,6 +541,37 @@ export async function createHubcodeDaemon(
       logger.warn({ err }, "Initial syncEmbeddingEnv failed");
     });
 
+    // Recover orphan workspaces stuck in phase=indexing. If the daemon
+    // crashed mid-reindex (e.g. the crg subprocess OOM-killed by the
+    // kernel), the persisted state still says "indexing" and the UI shows
+    // a frozen ~85% spinner forever. Reset those to error on startup so
+    // the user gets a clear "interrupted" message and can retry.
+    try {
+      const persisted = await workspaceRegistry.list();
+      for (const record of persisted) {
+        if (record.indexing?.status?.phase === "indexing") {
+          await indexingService
+            .setStatus(record.workspaceId, {
+              phase: "error",
+              error:
+                "Indexing was interrupted (the daemon may have crashed, often from running out of memory). Try again, and consider indexing a smaller scope if it keeps failing.",
+            })
+            .catch((err) => {
+              logger.debug(
+                { err, workspaceId: record.workspaceId },
+                "Failed to reset orphan indexing status",
+              );
+            });
+          logger.warn(
+            { workspaceId: record.workspaceId },
+            "Reset orphan indexing status (was stuck in phase=indexing from previous daemon)",
+          );
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, "Orphan indexing recovery failed");
+    }
+
     // fs watcher registry — one watcher per indexing-enabled workspace.
     // On a debounced change, ask crg to update its graph via MCP.
     const fsWatchers = new WorkspaceFsWatcherRegistry({ logger });
@@ -559,6 +590,27 @@ export async function createHubcodeDaemon(
         ? CRG_REINDEX_TIMEOUT_MS
         : 10 * 60 * 1000;
     const reindexWarnAtMs = [60_000, 180_000, 300_000]; // 1, 3, 5 minutes
+
+    // Hard ceiling on workspace size when using the in-process Hubcode Local
+    // embedding model (`@xenova/transformers` BGE). The model and its
+    // activations live in the daemon process — there's no isolation — so
+    // large repos consistently OOM-kill the daemon during embed. Block the
+    // reindex up front with a clear error instead of letting the daemon
+    // crash mid-run. Repos this size should use a remote embedding provider
+    // (OpenAI, Voyage, etc.).
+    //
+    // Resolution order (live-reads on every reindex so Settings tweaks take
+    // effect without a daemon restart):
+    //   1. user setting from DaemonConfigStore (set via Settings UI)
+    //   2. HUBCODE_LOCAL_EMBED_MAX_FILES env var (dev/CI escape hatch)
+    //   3. conservative default (1500) — survives most laptops with the
+    //      stock 6GB Node heap
+    const resolveLocalEmbedMaxFiles = (): number => {
+      const userValue = daemonConfigStore.get().indexing?.localEmbedMaxFiles;
+      if (typeof userValue === "number" && userValue > 0) return userValue;
+      const env = Number.parseInt(process.env.HUBCODE_LOCAL_EMBED_MAX_FILES ?? "", 10);
+      return Number.isFinite(env) && env > 0 ? env : 1500;
+    };
 
     // Concurrency guard: one reindex per workspace at a time. Extra calls
     // while one is running are rejected fast — callers can retry after the
@@ -580,6 +632,28 @@ export async function createHubcodeDaemon(
         reindexLog.info("Reindex skipped — another reindex is already in flight");
         return { ok: false, error: "Reindex already in progress for this workspace" };
       }
+
+      // Block large repos from running through Hubcode Local before we ever
+      // load the model. Local embedding can't survive batches this size and
+      // takes the daemon down with it. Use the previous reindex's fileCount
+      // as a size proxy. First-run repos pass (we don't know their size yet);
+      // their second run will be blocked if they exceeded the limit.
+      const prior = await workspaceRegistry.get(workspaceId).catch(() => null);
+      const providerKind = prior?.indexing?.embeddingProvider?.kind;
+      const priorFileCount = prior?.indexing?.status?.fileCount ?? 0;
+      const localEmbedMaxFiles = resolveLocalEmbedMaxFiles();
+      if (providerKind === "hubcode-local" && priorFileCount > localEmbedMaxFiles) {
+        const message = `This workspace has ${priorFileCount} indexed files, which exceeds the Hubcode Local safety limit of ${localEmbedMaxFiles}. The local embedding model runs in the daemon process and cannot survive workspaces this large without crashing the daemon. Raise the limit in Settings → Indexing if your machine supports it, or switch to a remote embedding provider (OpenAI, Voyage, etc.).`;
+        reindexLog.warn(
+          { priorFileCount, limit: localEmbedMaxFiles },
+          "Reindex blocked — workspace too large for Hubcode Local",
+        );
+        await indexingService
+          .setStatus(workspaceId, { phase: "error", error: message })
+          .catch((err) => reindexLog.debug({ err }, "setStatus(error) failed"));
+        return { ok: false, error: message };
+      }
+
       const abortController = new AbortController();
       reindexInFlight.set(workspaceId, abortController);
 
@@ -588,8 +662,6 @@ export async function createHubcodeDaemon(
       // phase=ready) or stops on error. Time constant τ is sourced from the
       // previous run's fileCount (≈ 40ms per file, 5s floor / 120s cap), so
       // large repos ramp slower. It's a wishful progress bar, not truth.
-      const prior = await workspaceRegistry.get(workspaceId).catch(() => null);
-      const priorFileCount = prior?.indexing?.status?.fileCount ?? 0;
       const tauMs = Math.max(5_000, Math.min(120_000, priorFileCount * 40));
       const startedAt = Date.now();
       let progressTimer: NodeJS.Timeout | null = null;
@@ -667,7 +739,7 @@ export async function createHubcodeDaemon(
         const callPromise = crgMcpClient.callTool(
           "crg_build_or_update_graph",
           { repo_root: cwd, full_rebuild: isFirstBuild },
-          { signal: abortController.signal },
+          { signal: abortController.signal, timeoutMs: reindexTimeoutMs },
         ) as Promise<{ content?: Array<{ text?: string }>; isError?: boolean } | null | undefined>;
         let timeoutHandle: NodeJS.Timeout | null = null;
         const timeoutPromise = new Promise<never>((_, reject) => {
@@ -683,11 +755,71 @@ export async function createHubcodeDaemon(
             );
           }, reindexTimeoutMs);
         });
+
+        // Watch the crg subprocess connection — if it dies mid-call (OOM,
+        // segfault, kernel-killed) the SDK never resolves the in-flight
+        // request. Abort fast so the UI flips to error instead of hanging at
+        // ~85% forever (the asymptotic curve never reaches 100% without a
+        // resolved call).
+        //
+        // ALSO watches the daemon's own RSS — Hubcode Local embeddings
+        // (`@xenova/transformers`) load the BGE model into THIS process and
+        // can balloon when embedding a large repo. The kernel will OOM-kill
+        // the daemon (taking everything down) without warning. Abort the
+        // reindex when we see ourselves climbing past the configured ceiling
+        // so the user gets a clean error instead of a daemon crash.
+        const daemonMaxRssBytes = (() => {
+          // Resolution order: user setting → env var → default. Live-read so
+          // Settings tweaks take effect on the next reindex.
+          const userMb = daemonConfigStore.get().indexing?.daemonMaxRssMb;
+          if (typeof userMb === "number" && userMb > 0) return userMb * 1024 * 1024;
+          const envMb = Number.parseInt(process.env.HUBCODE_DAEMON_MAX_RSS_MB ?? "", 10);
+          const mb = Number.isFinite(envMb) && envMb > 0 ? envMb : 6144;
+          return mb * 1024 * 1024;
+        })();
+        let disconnectHandle: NodeJS.Timeout | null = null;
+        const disconnectPromise = new Promise<never>((_, reject) => {
+          disconnectHandle = setInterval(() => {
+            if (!crgMcpClient.isConnected()) {
+              reindexLog.error(
+                { elapsedMs: elapsed() },
+                "crg subprocess disconnected during reindex — aborting",
+              );
+              abortController.abort();
+              reject(
+                new Error(
+                  "code-review-graph subprocess disconnected during indexing (likely out of memory)",
+                ),
+              );
+              return;
+            }
+            const rss = process.memoryUsage.rss();
+            if (rss > daemonMaxRssBytes) {
+              reindexLog.error(
+                {
+                  elapsedMs: elapsed(),
+                  rssBytes: rss,
+                  rssMb: Math.round(rss / (1024 * 1024)),
+                  limitMb: Math.round(daemonMaxRssBytes / (1024 * 1024)),
+                },
+                "daemon RSS exceeded ceiling — aborting reindex before kernel OOM",
+              );
+              abortController.abort();
+              reject(
+                new Error(
+                  `Indexing aborted: daemon memory ceiling reached (${Math.round(rss / (1024 * 1024))}MB / ${Math.round(daemonMaxRssBytes / (1024 * 1024))}MB). The local embedding model is too heavy for this workspace — try a smaller scope or a remote embedding provider.`,
+                ),
+              );
+            }
+          }, 1_000);
+        });
+
         let result: { content?: Array<{ text?: string }>; isError?: boolean } | null | undefined;
         try {
-          result = await Promise.race([callPromise, timeoutPromise]);
+          result = await Promise.race([callPromise, timeoutPromise, disconnectPromise]);
         } finally {
           if (timeoutHandle) clearTimeout(timeoutHandle);
+          if (disconnectHandle) clearInterval(disconnectHandle);
         }
 
         // MCP tool errors come back with `isError: true` — treat them as
@@ -727,13 +859,15 @@ export async function createHubcodeDaemon(
         // call, semantic_search_nodes returns empty and the UI shows
         // "Embeddings: 0" despite the graph being ready. Best-effort; a
         // failed embed doesn't fail the overall reindex.
-        const providerKind = prior?.indexing?.embeddingProvider?.kind;
         if (providerKind && providerKind !== "none") {
           try {
             await crgMcpClient.callTool(
               "crg_embed_graph",
               { repo_root: cwd },
-              { signal: abortController.signal },
+              // Embeddings can take minutes on large repos with local models;
+              // share the same hard ceiling as the build itself instead of
+              // the SDK's 60s default that was timing out incomplete embeds.
+              { signal: abortController.signal, timeoutMs: reindexTimeoutMs },
             );
             reindexLog.info({ providerKind }, "Embeddings computed");
           } catch (err) {

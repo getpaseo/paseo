@@ -105,11 +105,20 @@ export function useProjectRegistrySync(): void {
               sessionToken || null,
             );
           } catch (err) {
-            console.warn(
-              "[project-registry] upsert failed for",
-              project.projectKey,
-              err instanceof Error ? err.message : err,
-            );
+            // Auth errors (signed out, session expired, not a member of org)
+            // are part of normal flow — don't spam the log; the sync just
+            // becomes a no-op until the user signs in or switches org.
+            const message = err instanceof Error ? err.message : String(err);
+            if (
+              message.includes("Unauthorized") ||
+              message.includes("Forbidden") ||
+              message.startsWith("Not authenticated") ||
+              message.startsWith("Session expired") ||
+              message.startsWith("Not a member of")
+            ) {
+              continue;
+            }
+            console.warn("[project-registry] upsert failed for", project.projectKey, message);
           }
         }
       })();

@@ -33,10 +33,37 @@ export async function authServerFetch(
     ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
     ...(headersInit as Record<string, string> | undefined),
   };
-  return fetch(url, {
+  const response = await fetch(url, {
     ...rest,
     credentials: "include",
     headers,
     body,
   });
+  // Self-healing: a persisted activeOrgId from a previous session can outlive
+  // the user's membership (kicked, org deleted, account switched). The first
+  // request to that org returns 403 "Not a member of this organization"; we
+  // clear the local pin so the next render falls back to organizations[0]
+  // (the Personal org guarantees one always exists post-signup) and the
+  // useless 403 storm stops on its own.
+  if (response.status === 403 && path.includes(getActiveOrgIdSnapshot() ?? "\0__never__\0")) {
+    void clearActiveOrgIfNotAMember(response.clone());
+  }
+  return response;
 }
+
+async function clearActiveOrgIfNotAMember(response: Response): Promise<void> {
+  try {
+    const body = await response.text();
+    if (body.toLowerCase().includes("not a member")) {
+      const { setActiveOrgId } = await import("@/stores/active-org-store");
+      setActiveOrgId(null);
+    }
+  } catch {
+    // Body unreadable / not JSON — leave activeOrgId alone.
+  }
+}
+
+// Imported lazily inside clearActiveOrgIfNotAMember to avoid a circular dep
+// with the store; this top-level import is just for the snapshot read on the
+// hot path (no side effects).
+import { getActiveOrgIdSnapshot } from "@/stores/active-org-store";

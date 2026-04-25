@@ -62,12 +62,31 @@ export interface CrgProcessManagerDeps {
   args?: string[];
   /** Inject scheduler for tests. Defaults to setTimeout. */
   scheduleRestart?: (fn: () => void, delayMs: number) => { cancel(): void };
+  /**
+   * Resident Set Size (RSS) ceiling for the subprocess in bytes. When
+   * exceeded, the manager kills the child with SIGTERM (then SIGKILL after a
+   * grace) so we crash the subprocess gracefully BEFORE the kernel OOM-kills
+   * the parent daemon. The crg embedding stage (Xenova/BGE local models)
+   * can pull ~1-2GB on a single repo; left unchecked, large monorepos kill
+   * the daemon entirely. Tunable via HUBCODE_CRG_MAX_RSS_MB. Default 4096MB.
+   */
+  maxRssBytes?: number;
+  /** Polling interval for RSS monitor (default 5s). */
+  rssPollMs?: number;
+  /**
+   * Inject for tests. Returns the RSS in bytes for the given pid, or null if
+   * unavailable. Defaults to a `ps` shell-out (macOS/Linux only).
+   */
+  rssOf?: (pid: number) => Promise<number | null>;
 }
 
 const DEFAULT_INITIAL_BACKOFF = 500;
 const DEFAULT_MAX_BACKOFF = 30_000;
 const DEFAULT_MAX_FAILURES = 5;
 const DEFAULT_ARGS = ["serve"];
+const DEFAULT_MAX_RSS_MB = 4096;
+const DEFAULT_RSS_POLL_MS = 5_000;
+const RSS_KILL_GRACE_MS = 5_000;
 
 interface PendingRestart {
   cancel(): void;
@@ -90,12 +109,16 @@ export class CrgProcessManager extends EventEmitter {
   private readonly maxConsecutiveFailures: number;
   private readonly args: string[];
   private readonly schedule: NonNullable<CrgProcessManagerDeps["scheduleRestart"]>;
+  private readonly maxRssBytes: number;
+  private readonly rssPollMs: number;
+  private readonly rssOf: (pid: number) => Promise<number | null>;
 
   private state: CrgProcessState = { phase: "stopped", restartCount: 0 };
   private child: CrgSpawnHandle | null = null;
   private pendingRestart: PendingRestart | null = null;
   private consecutiveFailures = 0;
   private intentionalStop = false;
+  private rssMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(deps: CrgProcessManagerDeps) {
     super();
@@ -109,6 +132,16 @@ export class CrgProcessManager extends EventEmitter {
     this.maxConsecutiveFailures = deps.maxConsecutiveFailures ?? DEFAULT_MAX_FAILURES;
     this.args = deps.args ?? DEFAULT_ARGS;
     this.schedule = deps.scheduleRestart ?? defaultScheduleRestart;
+    const envRssMb = Number.parseInt(process.env.HUBCODE_CRG_MAX_RSS_MB ?? "", 10);
+    const resolvedRssMb =
+      deps.maxRssBytes !== undefined
+        ? deps.maxRssBytes / (1024 * 1024)
+        : Number.isFinite(envRssMb) && envRssMb > 0
+          ? envRssMb
+          : DEFAULT_MAX_RSS_MB;
+    this.maxRssBytes = Math.round(resolvedRssMb * 1024 * 1024);
+    this.rssPollMs = deps.rssPollMs ?? DEFAULT_RSS_POLL_MS;
+    this.rssOf = deps.rssOf ?? defaultRssOf;
   }
 
   getState(): CrgProcessState {
@@ -233,6 +266,7 @@ export class CrgProcessManager extends EventEmitter {
 
   private attachChild(child: CrgSpawnHandle): void {
     this.child = child;
+    this.startRssMonitor(child);
     child.stdout?.on("data", (chunk: Buffer) => this.emit("stdout", chunk));
     // Surface stderr to the logger — crg prints diagnostics there. Without
     // this the subprocess is a black box when the MCP call hangs.
@@ -278,6 +312,7 @@ export class CrgProcessManager extends EventEmitter {
     signal: NodeJS.Signals | null,
     errorMessage: string | null,
   ): void {
+    this.stopRssMonitor();
     const wasRunning = this.state.phase === "running" || this.state.phase === "starting";
     this.child = null;
     if (this.intentionalStop) {
@@ -331,6 +366,89 @@ export class CrgProcessManager extends EventEmitter {
     this.state = next;
     this.emit("state", { ...next });
   }
+
+  private startRssMonitor(child: CrgSpawnHandle): void {
+    this.stopRssMonitor();
+    if (this.maxRssBytes <= 0) return;
+    const pid = child.pid;
+    this.rssMonitorTimer = setInterval(() => {
+      // Only check the current child — restarts swap `this.child`, and we
+      // don't want a stale timer killing the new process.
+      if (this.child !== child) {
+        this.stopRssMonitor();
+        return;
+      }
+      void this.rssOf(pid)
+        .then((rss) => {
+          if (rss === null) return;
+          if (rss <= this.maxRssBytes) return;
+          this.logger.error(
+            {
+              pid,
+              rssBytes: rss,
+              rssMb: Math.round(rss / (1024 * 1024)),
+              limitMb: Math.round(this.maxRssBytes / (1024 * 1024)),
+            },
+            "crg subprocess exceeded RSS limit — killing before kernel OOM",
+          );
+          this.stopRssMonitor();
+          try {
+            child.kill("SIGTERM");
+          } catch (err) {
+            this.logger.warn({ err }, "kill(crg, SIGTERM) on RSS-exceed failed");
+          }
+          // Escalate to SIGKILL if SIGTERM doesn't take. The exit handler
+          // will treat this as a failure and trigger backoff/restart.
+          setTimeout(() => {
+            if (this.child === child) {
+              try {
+                child.kill("SIGKILL");
+              } catch (err) {
+                this.logger.warn({ err }, "kill(crg, SIGKILL) on RSS-exceed failed");
+              }
+            }
+          }, RSS_KILL_GRACE_MS);
+        })
+        .catch((err) => {
+          this.logger.debug({ err, pid }, "RSS poll failed (non-fatal)");
+        });
+    }, this.rssPollMs);
+  }
+
+  private stopRssMonitor(): void {
+    if (this.rssMonitorTimer) {
+      clearInterval(this.rssMonitorTimer);
+      this.rssMonitorTimer = null;
+    }
+  }
+}
+
+async function defaultRssOf(pid: number): Promise<number | null> {
+  return await new Promise((resolve) => {
+    // `ps -o rss=` prints RSS in KB (BSD/Linux ps both support this). One
+    // shell-out per poll interval (default 5s) is acceptable for a single
+    // long-lived subprocess.
+    const ps = nodeSpawn("ps", ["-o", "rss=", "-p", String(pid)], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let stdout = "";
+    ps.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    ps.on("error", () => resolve(null));
+    ps.on("exit", (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+      const kb = Number.parseInt(stdout.trim(), 10);
+      if (!Number.isFinite(kb) || kb <= 0) {
+        resolve(null);
+        return;
+      }
+      resolve(kb * 1024);
+    });
+  });
 }
 
 function defaultSpawn(cmd: string, args: string[], env: NodeJS.ProcessEnv): CrgSpawnHandle {

@@ -125,6 +125,24 @@ const MutableDaemonAgentsConfigSchema = z
   })
   .passthrough();
 
+// User-tunable safety limits for the in-process Hubcode Local embedding
+// pipeline. The model and its activations live in the daemon process; large
+// repos can OOM-kill the daemon. These let the user trade safety for
+// throughput based on what their machine actually supports. Optional for
+// backward compat — empty/missing fields fall back to env vars then defaults.
+export const MutableDaemonIndexingConfigSchema = z
+  .object({
+    /** Block local embedding for repos with more files than this. */
+    localEmbedMaxFiles: z.number().int().positive().optional(),
+    /** Hard cap on inputs per single inference call. */
+    localInferMaxInputs: z.number().int().positive().optional(),
+    /** Daemon process RSS ceiling in MB; reindex aborts when exceeded. */
+    daemonMaxRssMb: z.number().int().positive().optional(),
+    /** Items per @xenova/transformers batch. */
+    localBatchSize: z.number().int().positive().optional(),
+  })
+  .passthrough();
+
 export const MutableDaemonConfigSchema = z
   .object({
     mcp: z
@@ -133,6 +151,7 @@ export const MutableDaemonConfigSchema = z
       })
       .passthrough(),
     agents: MutableDaemonAgentsConfigSchema.optional(),
+    indexing: MutableDaemonIndexingConfigSchema.optional(),
   })
   .passthrough();
 
@@ -140,6 +159,7 @@ export const MutableDaemonConfigPatchSchema = z
   .object({
     mcp: MutableDaemonConfigSchema.shape.mcp.partial().optional(),
     agents: MutableDaemonAgentsConfigSchema.partial().optional(),
+    indexing: MutableDaemonIndexingConfigSchema.partial().optional(),
   })
   .partial()
   .passthrough();
@@ -859,6 +879,27 @@ export const SetDaemonConfigRequestMessageSchema = z.object({
   config: MutableDaemonConfigPatchSchema,
 });
 
+// Pushes the user's auth-server session token to the daemon so the Hubcode
+// agent provider can fetch per-user combos / API key on demand. Tokens are
+// kept in memory only — the desktop/web/mobile app re-pushes them after each
+// sign-in. Sending `token: null` clears the cached credentials.
+export const SetHubcodeAuthSessionRequestMessageSchema = z.object({
+  type: z.literal("set_hubcode_auth_session_request"),
+  requestId: z.string(),
+  token: z.string().nullable(),
+  authServerUrl: z.string().nullable().optional(),
+});
+
+export const SetHubcodeAuthSessionResponseMessageSchema = z.object({
+  type: z.literal("set_hubcode_auth_session_response"),
+  payload: z
+    .object({
+      requestId: z.string(),
+      ok: z.boolean(),
+    })
+    .passthrough(),
+});
+
 // ============================================================================
 // Dictation Streaming (lossless, resumable)
 // ============================================================================
@@ -1356,6 +1397,11 @@ export const ArchiveWorkspaceRequestSchema = z.object({
   type: z.literal("archive_workspace_request"),
   workspaceId: z.string(),
   requestId: z.string(),
+  // When true, the daemon physically deletes the workspace+indexing rows
+  // instead of soft-archiving them. Files on disk are NOT touched. Optional
+  // for backward compatibility — older clients that omit this still get the
+  // legacy archive behaviour.
+  delete: z.boolean().optional(),
 });
 
 // Highlighted diff token schema
@@ -2111,6 +2157,7 @@ const _sessionInboundRaw: any = z.union([
   WaitForFinishRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
+  SetHubcodeAuthSessionRequestMessageSchema,
   DictationStreamStartMessageSchema,
   DictationStreamChunkMessageSchema,
   DictationStreamFinishMessageSchema,
@@ -2268,6 +2315,7 @@ export type SessionInboundMessage =
   | WaitForFinishRequest
   | GetDaemonConfigRequestMessage
   | SetDaemonConfigRequestMessage
+  | SetHubcodeAuthSessionRequestMessage
   | DictationStreamStartMessage
   | DictationStreamChunkMessage
   | DictationStreamFinishMessage
@@ -3809,6 +3857,7 @@ const _sessionOutboundRaw: any = z.union([
   SetVoiceModeResponseMessageSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
+  SetHubcodeAuthSessionResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
@@ -3973,6 +4022,7 @@ export type SessionOutboundMessage =
   | SetVoiceModeResponseMessage
   | GetDaemonConfigResponseMessage
   | SetDaemonConfigResponseMessage
+  | SetHubcodeAuthSessionResponseMessage
   | SetAgentModeResponseMessage
   | SetAgentModelResponseMessage
   | SetAgentThinkingResponseMessage
@@ -4417,6 +4467,12 @@ export type ArchiveAgentRequestMessage = z.infer<typeof ArchiveAgentRequestMessa
 export type SetVoiceModeMessage = z.infer<typeof SetVoiceModeMessageSchema>;
 export type GetDaemonConfigRequestMessage = z.infer<typeof GetDaemonConfigRequestMessageSchema>;
 export type SetDaemonConfigRequestMessage = z.infer<typeof SetDaemonConfigRequestMessageSchema>;
+export type SetHubcodeAuthSessionRequestMessage = z.infer<
+  typeof SetHubcodeAuthSessionRequestMessageSchema
+>;
+export type SetHubcodeAuthSessionResponseMessage = z.infer<
+  typeof SetHubcodeAuthSessionResponseMessageSchema
+>;
 export type RefreshAgentRequestMessage = z.infer<typeof RefreshAgentRequestMessageSchema>;
 export type CancelAgentRequestMessage = z.infer<typeof CancelAgentRequestMessageSchema>;
 export type FetchAgentTimelineRequestMessage = z.infer<

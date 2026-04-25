@@ -133,7 +133,7 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
         },
       ]}
     >
-      <View style={styles.toast}>
+      <View style={[styles.toastWrapper, styles.toast]}>
         {active ? (
           active.phase === "error" ? (
             <XCircle size={18} color={theme.colors.destructive} />
@@ -198,7 +198,14 @@ const styles = StyleSheet.create((theme) => ({
     position: "absolute",
     left: theme.spacing[4],
     right: theme.spacing[4],
+    alignItems: "flex-end",
     zIndex: 999,
+  },
+  // Cap the toast width so it doesn't stretch across ultra-wide windows.
+  // The inner toast handles its own layout; the wrapper just constrains it.
+  toastWrapper: {
+    maxWidth: 380,
+    width: "100%",
   },
   toast: {
     flexDirection: "row",

@@ -127,15 +127,21 @@ function getSettingsSections(context: {
     { id: "general", label: "General", icon: Settings },
     { id: "task-integrations", label: "Task Integrations", icon: Plug },
     { id: "permissions", label: "Permissions", icon: Shield },
-    { id: "plan", label: "Plan", icon: Zap },
   ];
 
-  // Account management (org + member admin) should be available whenever the
-  // user is authenticated — desktop or mobile/web. Previously gated on
-  // Electron only, which hid the section on mobile web even when signed in.
+  // Plan/billing only matters when there's an account to bill — it's the
+  // counterpart of the Account section. Keep them gated together so signed-
+  // out users don't see entries that have nothing actionable inside.
   if (context.isAuthenticated) {
-    sections.unshift({ id: "account", label: "Account", icon: Shield });
+    sections.push({ id: "plan", label: "Plan", icon: Zap });
   }
+
+  // Always expose Account in the sidebar so signed-out users can discover
+  // the sign-in entry point from inside Settings (the section's own content
+  // renders a SignInContent card when not authenticated). Previously this
+  // was gated on `isAuthenticated`, which made "where do I sign in?" a
+  // dead-end for users who landed on Settings before logging in.
+  sections.unshift({ id: "account", label: "Account", icon: Shield });
 
   if (context.isDesktopApp) {
     sections.push(
@@ -829,9 +835,10 @@ function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayout
   const insets = useSafeAreaInsets();
   const tabParams = useLocalSearchParams<{ tab?: string }>();
   const requestedTab = typeof tabParams.tab === "string" ? tabParams.tab : null;
-  // Default to "account" when available (signed-in users land on their
-  // account view) and fall back to "hosts" for guest mode where account is
-  // hidden. An explicit `?tab=` param always wins.
+  // Default to "account" — signed-in users land on their account view, and
+  // signed-out users land on the Sign in card (also lives in AccountSection)
+  // so logging in is a one-click discovery from Settings. An explicit
+  // `?tab=` param always wins.
   const hasAccount = sections.some((s) => s.id === "account");
   const initialSectionId: SettingsSectionId = sections.some((s) => s.id === requestedTab)
     ? (requestedTab as SettingsSectionId)

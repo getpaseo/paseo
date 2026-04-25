@@ -2615,10 +2615,35 @@ export class AgentManager {
   }
 
   private buildLaunchContext(agentId: string): AgentLaunchContext {
+    const env: Record<string, string> = {
+      HUBCODE_AGENT_ID: agentId,
+    };
+    if (this.hubcodeAuthToken) env.HUBCODE_SESSION_TOKEN = this.hubcodeAuthToken;
+    if (this.hubcodeAuthServerUrl) env.HUBCODE_AUTH_SERVER_URL = this.hubcodeAuthServerUrl;
+    return { env };
+  }
+
+  /**
+   * Cached credentials used by the Hubcode agent provider so it can fetch
+   * per-user combos / API key from the auth-server. The desktop/web/mobile
+   * app pushes the user's session token here right after sign-in.
+   */
+  private hubcodeAuthToken: string | null = null;
+  private hubcodeAuthServerUrl: string | null = null;
+
+  setHubcodeAuthSession(token: string | null, authServerUrl?: string | null): void {
+    this.hubcodeAuthToken = token && token.length > 0 ? token : null;
+    if (typeof authServerUrl === "string" && authServerUrl.length > 0) {
+      this.hubcodeAuthServerUrl = authServerUrl;
+    } else if (authServerUrl === null) {
+      this.hubcodeAuthServerUrl = null;
+    }
+  }
+
+  getHubcodeAuthSession(): { token: string | null; authServerUrl: string | null } {
     return {
-      env: {
-        HUBCODE_AGENT_ID: agentId,
-      },
+      token: this.hubcodeAuthToken,
+      authServerUrl: this.hubcodeAuthServerUrl,
     };
   }
 

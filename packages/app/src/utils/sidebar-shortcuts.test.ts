@@ -27,6 +27,7 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
     statusBucket: "done",
     activeCount: 0,
     totalWorkspaces: workspaces.length,
+    isGlobal: false,
     workspaces,
   };
 }

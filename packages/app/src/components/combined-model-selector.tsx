@@ -19,6 +19,8 @@ const IS_WEB = platformIsWeb;
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import { getProviderIcon } from "@/components/provider-icons";
 import type { FavoriteModelRow } from "@/hooks/use-form-preferences";
+import { useHubcodeModels } from "@/hooks/use-hubcode-models";
+import { Alert } from "react-native";
 import {
   buildModelRows,
   buildSelectedTriggerLabel,
@@ -72,6 +74,7 @@ interface SelectorContentProps {
   canSelectProvider: (provider: string) => boolean;
   onToggleFavorite?: (provider: string, modelId: string) => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
+  providerCountOverride?: (providerId: string, count: number) => string | null;
 }
 
 function resolveDefaultModelLabel(models: AgentModelDefinition[] | undefined): string {
@@ -272,6 +275,7 @@ function GroupedProviderRows({
   onToggleFavorite,
   onDrillDown,
   viewKind,
+  providerCountOverride,
 }: {
   providerDefinitions: AgentProviderDefinition[];
   groupedRows: Array<{ providerId: string; providerLabel: string; rows: SelectorModelRow[] }>;
@@ -283,6 +287,8 @@ function GroupedProviderRows({
   onToggleFavorite?: (provider: string, modelId: string) => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   viewKind: SelectorView["kind"];
+  /** Override the trailing count text per provider (e.g. "Upgrade"). */
+  providerCountOverride?: (providerId: string, count: number) => string | null;
 }) {
   const { theme } = useUnistyles();
 
@@ -325,7 +331,8 @@ function GroupedProviderRows({
                 <Text style={styles.drillDownText}>{group.providerLabel}</Text>
                 <View style={styles.drillDownTrailing}>
                   <Text style={styles.drillDownCount}>
-                    {group.rows.length} {group.rows.length === 1 ? "model" : "models"}
+                    {providerCountOverride?.(group.providerId, group.rows.length) ??
+                      `${group.rows.length} ${group.rows.length === 1 ? "model" : "models"}`}
                   </Text>
                   <ChevronRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
                 </View>
@@ -392,6 +399,7 @@ function SelectorContent({
   canSelectProvider,
   onToggleFavorite,
   onDrillDown,
+  providerCountOverride,
 }: SelectorContentProps) {
   const { theme } = useUnistyles();
   const allRows = useMemo(
@@ -461,6 +469,7 @@ function SelectorContent({
           onToggleFavorite={onToggleFavorite}
           onDrillDown={onDrillDown}
           viewKind={view.kind}
+          providerCountOverride={providerCountOverride}
         />
       ) : null}
 
@@ -529,6 +538,76 @@ export function CombinedModelSelector({
   const [view, setView] = useState<SelectorView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Inject the "Hubcode" virtual provider — combos served by the user's
+  // backend account, gated by the user's plan on auth-server. Free users
+  // see the entry but get an upgrade CTA on selection. The daemon's
+  // provider snapshot already registers the hubcode entry; we only ever
+  // augment models so we never produce duplicate keys.
+  const { bundle: hubcodeBundle } = useHubcodeModels();
+  const providerDefinitionsWithHubcode = useMemo(() => {
+    if (!hubcodeBundle) return providerDefinitions;
+    if (providerDefinitions.some((d) => d.id === "hubcode")) {
+      return providerDefinitions;
+    }
+    const hubcodeDef: AgentProviderDefinition = {
+      id: "hubcode" as AgentProvider,
+      label: "Hubcode",
+      description: hubcodeBundle.requiresUpgrade
+        ? "Upgrade to unlock curated combos"
+        : "Your plan's curated combos",
+    } as AgentProviderDefinition;
+    return [hubcodeDef, ...providerDefinitions];
+  }, [hubcodeBundle, providerDefinitions]);
+
+  const allProviderModelsWithHubcode = useMemo(() => {
+    if (!hubcodeBundle) return allProviderModels;
+    const next = new Map(allProviderModels);
+    const existing = next.get("hubcode") ?? [];
+    const models: AgentModelDefinition[] = hubcodeBundle.requiresUpgrade
+      ? [
+          {
+            id: "__upgrade__",
+            label: "Upgrade to Pro to use Hubcode",
+            description: "Click to upgrade",
+          } as AgentModelDefinition,
+        ]
+      : hubcodeBundle.combos.map(
+          (c) =>
+            ({
+              id: c.comboName,
+              label: c.comboName,
+              description: undefined,
+            }) as AgentModelDefinition,
+        );
+    // Merge: prefer fresh client-side data, then append any daemon-provided
+    // models we didn't already see (keyed by id) so we never duplicate.
+    const seen = new Set(models.map((m) => m.id));
+    for (const m of existing) {
+      if (!seen.has(m.id)) {
+        models.push(m);
+        seen.add(m.id);
+      }
+    }
+    if (models.length > 0) next.set("hubcode", models);
+    return next;
+  }, [hubcodeBundle, allProviderModels]);
+
+  const handleHubcodeSelection = useCallback(
+    (modelId: string): boolean => {
+      if (!hubcodeBundle) return false;
+      if (hubcodeBundle.requiresUpgrade || modelId === "__upgrade__") {
+        Alert.alert(
+          "Upgrade required",
+          "Hubcode combos are available on Pro and Enterprise plans. Upgrade your plan to unlock curated multi-model routing.",
+          [{ text: "OK" }],
+        );
+        return true; // handled — don't forward to onSelect
+      }
+      return false;
+    },
+    [hubcodeBundle],
+  );
+
   // Single-provider mode: only one provider with models → skip Level 1 entirely
   const singleProviderView = useMemo<SelectorView | null>(() => {
     const providers = Array.from(allProviderModels.keys());
@@ -554,12 +633,16 @@ export function CombinedModelSelector({
 
   const handleSelect = useCallback(
     (provider: string, modelId: string) => {
+      if (provider === "hubcode" && handleHubcodeSelection(modelId)) {
+        setIsOpen(false);
+        return;
+      }
       onSelect(provider as AgentProvider, modelId);
       setIsOpen(false);
       setView(singleProviderView ?? { kind: "all" });
       setSearchQuery("");
     },
-    [onSelect, singleProviderView],
+    [onSelect, singleProviderView, handleHubcodeSelection],
   );
 
   const ProviderIcon = getProviderIcon(selectedProvider);
@@ -569,22 +652,29 @@ export function CombinedModelSelector({
   );
 
   const selectedModelLabel = useMemo(() => {
-    const models = allProviderModels.get(selectedProvider);
+    // Same reason as `desktopFixedHeight` below — daemon's `hubcode` entry
+    // has no models, so we must read from the bundle-augmented map or the
+    // trigger renders "Select model" even after the user picked a combo.
+    const models = allProviderModelsWithHubcode.get(selectedProvider);
     if (!models) {
       return isLoading ? "Loading..." : "Select model";
     }
     const model = models.find((entry) => entry.id === selectedModel);
     return model?.label ?? resolveDefaultModelLabel(models);
-  }, [allProviderModels, isLoading, selectedModel, selectedProvider]);
+  }, [allProviderModelsWithHubcode, isLoading, selectedModel, selectedProvider]);
 
   const desktopFixedHeight = useMemo(() => {
     if (view.kind !== "provider") {
       return undefined;
     }
-    const models = allProviderModels.get(view.providerId);
+    // Must read the hubcode-augmented map — the raw `allProviderModels` from
+    // the daemon registers `hubcode` with zero models (combos come from
+    // auth-server), so using it here collapses the dropdown to just the
+    // search input and clips the merged combo rows out of view.
+    const models = allProviderModelsWithHubcode.get(view.providerId);
     const modelCount = models?.length ?? 0;
     return Math.min(80 + modelCount * 40, 400);
-  }, [allProviderModels, view]);
+  }, [allProviderModelsWithHubcode, view]);
 
   const triggerLabel = useMemo(() => {
     if (selectedModelLabel === "Loading..." || selectedModelLabel === "Select model") {
@@ -681,8 +771,8 @@ export function CombinedModelSelector({
         {isContentReady ? (
           <SelectorContent
             view={view}
-            providerDefinitions={providerDefinitions}
-            allProviderModels={allProviderModels}
+            providerDefinitions={providerDefinitionsWithHubcode}
+            allProviderModels={allProviderModelsWithHubcode}
             selectedProvider={selectedProvider}
             selectedModel={selectedModel}
             searchQuery={searchQuery}
@@ -692,7 +782,18 @@ export function CombinedModelSelector({
             canSelectProvider={canSelectProvider}
             onToggleFavorite={onToggleFavorite}
             onDrillDown={(providerId, providerLabel) => {
+              if (providerId === "hubcode" && hubcodeBundle?.requiresUpgrade) {
+                handleHubcodeSelection("__upgrade__");
+                setIsOpen(false);
+                return;
+              }
               setView({ kind: "provider", providerId, providerLabel });
+            }}
+            providerCountOverride={(providerId) => {
+              if (providerId === "hubcode" && hubcodeBundle?.requiresUpgrade) {
+                return "Upgrade";
+              }
+              return null;
             }}
           />
         ) : (

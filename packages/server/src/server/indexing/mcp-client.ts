@@ -178,7 +178,7 @@ export class CrgMcpClient {
   async callTool(
     namespacedName: string,
     args?: Record<string, unknown>,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<unknown> {
     if (!this.backend) {
       throw new Error("CrgMcpClient not connected");
@@ -194,11 +194,15 @@ export class CrgMcpClient {
         "crg tool name resolved via cached manifest",
       );
     }
-    return this.backend.callTool(
-      { name: resolvedName, arguments: args },
-      undefined,
-      options ? { signal: options.signal } : undefined,
-    );
+    // Default SDK timeout is 60s, which is too short for `crg_embed_graph`
+    // on large repos with local embeddings (Xenova/BGE running in-process can
+    // take 2-5 minutes for 2k+ files). Callers pass a larger ceiling for the
+    // long-running tools; the overall reindex hard-cap (CRG_REINDEX_TIMEOUT_MS,
+    // default 10min) still applies via the outer Promise.race.
+    return this.backend.callTool({ name: resolvedName, arguments: args }, undefined, {
+      ...(options?.signal ? { signal: options.signal } : {}),
+      ...(options?.timeoutMs ? { timeout: options.timeoutMs } : {}),
+    });
   }
 
   /**

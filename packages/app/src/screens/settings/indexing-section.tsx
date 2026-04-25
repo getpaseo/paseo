@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, Pressable, ScrollView, Switch, Text, View } from "react-native";
-import { useUnistyles } from "react-native-unistyles";
+import {
+  Animated,
+  Easing,
+  Pressable,
+  ScrollView,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -432,6 +442,8 @@ function IndexingSectionInner({ routeServerId }: IndexingSectionProps) {
         </Button>
       </View>
 
+      <LocalEmbeddingLimitsCard routeServerId={routeServerId} entries={indexing.entries} />
+
       <StderrLogsDrawer
         visible={logsOpen}
         fetchStderrTail={indexing.fetchStderrTail}
@@ -447,6 +459,296 @@ function IndexingSectionInner({ routeServerId }: IndexingSectionProps) {
     </View>
   );
 }
+
+// Knobs for the in-process Hubcode Local embedding pipeline. Daemon-wide
+// (not per-workspace) — they cap memory the daemon allocates, which is
+// shared across every workspace using the local provider.
+//
+// Hidden when no workspace is using `hubcode-local` so we don't expose
+// daemon-internal ML knobs to users on remote-only providers.
+function LocalEmbeddingLimitsCard({
+  routeServerId,
+  entries,
+}: {
+  routeServerId: string;
+  entries: IndexingWorkspaceEntry[];
+}) {
+  const { theme } = useUnistyles();
+  const { config, patchConfig } = useDaemonConfig(routeServerId);
+  const indexingCfg = config?.indexing ?? {};
+
+  const localWorkspaces = useMemo(
+    () => entries.filter((e) => e.indexing?.embeddingProvider?.kind === "hubcode-local"),
+    [entries],
+  );
+
+  const [maxFiles, setMaxFiles] = useState<string>("");
+  const [maxRssMb, setMaxRssMb] = useState<string>("");
+  const [batchSize, setBatchSize] = useState<string>("");
+  const [maxInputs, setMaxInputs] = useState<string>("");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    setMaxFiles(indexingCfg.localEmbedMaxFiles?.toString() ?? "");
+    setMaxRssMb(indexingCfg.daemonMaxRssMb?.toString() ?? "");
+    setBatchSize(indexingCfg.localBatchSize?.toString() ?? "");
+    setMaxInputs(indexingCfg.localInferMaxInputs?.toString() ?? "");
+  }, [
+    indexingCfg.localEmbedMaxFiles,
+    indexingCfg.daemonMaxRssMb,
+    indexingCfg.localBatchSize,
+    indexingCfg.localInferMaxInputs,
+  ]);
+
+  const parseOptionalPositiveInt = (input: string): number | undefined => {
+    const trimmed = input.trim();
+    if (trimmed === "") return undefined;
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+    return parsed;
+  };
+
+  const handleSave = useCallback(async () => {
+    const patch: {
+      localEmbedMaxFiles?: number;
+      daemonMaxRssMb?: number;
+      localBatchSize?: number;
+      localInferMaxInputs?: number;
+    } = {};
+    const fields: Array<
+      [string, "localEmbedMaxFiles" | "daemonMaxRssMb" | "localBatchSize" | "localInferMaxInputs"]
+    > = [
+      [maxFiles, "localEmbedMaxFiles"],
+      [maxRssMb, "daemonMaxRssMb"],
+      [batchSize, "localBatchSize"],
+      [maxInputs, "localInferMaxInputs"],
+    ];
+    for (const [raw, key] of fields) {
+      const value = parseOptionalPositiveInt(raw);
+      if (value === undefined) continue;
+      patch[key] = value;
+    }
+    await patchConfig({ indexing: patch });
+    setSavedAt(Date.now());
+  }, [maxFiles, maxRssMb, batchSize, maxInputs, patchConfig]);
+
+  // Hide entirely when nobody is using the local provider — these limits
+  // protect the daemon from OOM during local embedding, so they're noise
+  // for users on OpenAI/Voyage/etc.
+  if (localWorkspaces.length === 0) {
+    return null;
+  }
+
+  const justSaved = savedAt !== null && Date.now() - savedAt < 3000;
+  const affectedNames = localWorkspaces
+    .map((e) => e.workspaceId.split("/").pop() ?? e.workspaceId)
+    .slice(0, 5);
+  const affectedSummary =
+    localWorkspaces.length === 1
+      ? `Affects ${affectedNames[0]}.`
+      : localWorkspaces.length <= 5
+        ? `Affects ${affectedNames.join(", ")}.`
+        : `Affects ${affectedNames.join(", ")} and ${localWorkspaces.length - 5} more.`;
+
+  return (
+    <View style={limitStyles.section}>
+      <View style={limitStyles.header}>
+        <Text style={settingsStyles.sectionTitle}>Local embedding limits</Text>
+        <Text style={limitStyles.affectedTag}>
+          Daemon-wide · {localWorkspaces.length} workspace
+          {localWorkspaces.length === 1 ? "" : "s"}
+        </Text>
+      </View>
+
+      <View style={[settingsStyles.card, limitStyles.cardPadding]}>
+        <Text style={limitStyles.help}>
+          Hubcode Local runs the embedding model inside the daemon process, so very large repos can
+          OOM-crash it. Raise these only if your machine has headroom; lower them if the daemon
+          keeps crashing during indexing. Empty fields use the safe default.
+        </Text>
+        <Text style={limitStyles.affectedLine}>{affectedSummary}</Text>
+
+        <View style={limitStyles.fieldsGroup}>
+          <LimitField
+            label="Max files per workspace"
+            help="Block reindex when a workspace exceeds this many files."
+            placeholder="1500 (default)"
+            value={maxFiles}
+            onChange={setMaxFiles}
+            theme={theme}
+          />
+          <LimitField
+            label="Daemon RSS ceiling"
+            help="Abort indexing if daemon memory crosses this. Units in MB."
+            placeholder="6144 (default · 6 GB)"
+            value={maxRssMb}
+            onChange={setMaxRssMb}
+            theme={theme}
+          />
+          <LimitField
+            label="Batch size"
+            help="Items per embedding call. Smaller = safer + slower."
+            placeholder="8 (default)"
+            value={batchSize}
+            onChange={setBatchSize}
+            theme={theme}
+          />
+          <LimitField
+            label="Max inputs per call"
+            help="Hard upper bound on a single embedding request."
+            placeholder="5000 (default)"
+            value={maxInputs}
+            onChange={setMaxInputs}
+            theme={theme}
+          />
+        </View>
+
+        <View style={limitStyles.actionsRow}>
+          <Button onPress={handleSave} variant="secondary" size="sm">
+            Save limits
+          </Button>
+          <Text style={[limitStyles.savedHint, !justSaved && limitStyles.savedHintHidden]}>
+            Saved — applies on the next reindex.
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function LimitField({
+  label,
+  help,
+  value,
+  onChange,
+  placeholder,
+  theme,
+}: {
+  label: string;
+  help: string;
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+  theme: ReturnType<typeof useUnistyles>["theme"];
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={limitStyles.fieldRow}>
+      <View style={limitStyles.fieldLabelGroup}>
+        <Text style={limitStyles.fieldLabel}>{label}</Text>
+        <Text style={limitStyles.fieldHelp}>{help}</Text>
+      </View>
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        placeholder={placeholder}
+        placeholderTextColor={theme.colors.foregroundMuted}
+        keyboardType="number-pad"
+        inputMode="numeric"
+        selectTextOnFocus
+        style={[
+          limitStyles.input,
+          {
+            color: theme.colors.foreground,
+            backgroundColor: theme.colors.surface0,
+            borderColor: focused ? theme.colors.accent : theme.colors.border,
+          },
+        ]}
+      />
+    </View>
+  );
+}
+
+const limitStyles = StyleSheet.create((theme) => ({
+  section: {
+    marginTop: theme.spacing[6],
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing[2],
+    gap: theme.spacing[2],
+  },
+  affectedTag: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  cardPadding: {
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[4],
+  },
+  help: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 20,
+  },
+  affectedLine: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontStyle: "italic",
+    marginTop: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+  },
+  fieldsGroup: {
+    gap: theme.spacing[1],
+  },
+  fieldRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: theme.spacing[3],
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+    gap: theme.spacing[4],
+  },
+  fieldLabelGroup: {
+    flex: 1,
+    gap: 4,
+    minWidth: 0,
+  },
+  fieldLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  fieldHelp: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+  },
+  input: {
+    width: 180,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    fontSize: theme.fontSize.sm,
+    textAlign: "right",
+    fontVariant: ["tabular-nums"],
+  },
+  actionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    marginTop: theme.spacing[4],
+    paddingTop: theme.spacing[4],
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+  },
+  savedHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    transitionDuration: "200ms",
+  },
+  savedHintHidden: {
+    opacity: 0,
+  },
+}));
 
 function StatusRow({
   label,

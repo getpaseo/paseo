@@ -1423,6 +1423,25 @@ export class DaemonClient {
     });
   }
 
+  /**
+   * Permanently unlink a workspace from the daemon: deletes the registry row
+   * and the workspace's indexing state. Files on disk are NOT touched. Use
+   * this when the user wants the project gone for good (vs. archived which
+   * can be revived by an agent emitting an update for the same cwd).
+   */
+  async removeWorkspace(workspaceId: string, requestId?: string): Promise<ArchiveWorkspacePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "archive_workspace_request",
+        workspaceId,
+        delete: true,
+      },
+      responseType: "archive_workspace_response",
+      timeout: 10000,
+    });
+  }
+
   async fetchAgent(agentId: string, requestId?: string): Promise<FetchAgentResult | null> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
@@ -2930,6 +2949,28 @@ export class DaemonClient {
         config,
       },
       responseType: "set_daemon_config_response",
+      timeout: 10000,
+    });
+  }
+
+  /**
+   * Push the user's auth-server session token to the daemon. The Hubcode
+   * agent provider uses it to fetch per-user combos / API key on demand.
+   * Send `token: null` to clear the cached credentials on sign-out.
+   */
+  async setHubcodeAuthSession(
+    token: string | null,
+    authServerUrl?: string | null,
+    requestId?: string,
+  ): Promise<{ requestId: string; ok: boolean }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "set_hubcode_auth_session_request",
+        token,
+        ...(authServerUrl !== undefined ? { authServerUrl } : {}),
+      },
+      responseType: "set_hubcode_auth_session_response",
       timeout: 10000,
     });
   }

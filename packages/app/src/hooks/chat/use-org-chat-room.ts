@@ -125,7 +125,18 @@ async function openConnection(
     });
     emit();
   } catch (err) {
-    console.error("[org-chat] join failed", err);
+    const message = err instanceof Error ? err.message : String(err);
+    // Stale activeOrgId — user was kicked, the org was deleted, or they
+    // signed in to a different account. Clear the pin so the next render
+    // uses organizations[0] (Personal is guaranteed to exist post-signup)
+    // and stop logging the error as if it were unexpected.
+    if (message.toLowerCase().includes("not a member")) {
+      console.info("[org-chat] join refused (stale activeOrgId) — clearing");
+      const { setActiveOrgId } = await import("@/stores/active-org-store");
+      setActiveOrgId(null);
+    } else {
+      console.error("[org-chat] join failed", err);
+    }
     if (!entry.disposed) {
       entry.error = err instanceof Error ? err : new Error(String(err));
       entry.state = "error";

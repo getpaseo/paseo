@@ -495,6 +495,16 @@ export class IndexingService {
     return next;
   }
 
+  /**
+   * Wipe the workspace's persisted indexing state. Called when the workspace
+   * itself is being unlinked from the daemon — there's no point keeping
+   * orphan rows around. Idempotent: if the workspace has no record we no-op.
+   */
+  async deleteState(workspaceId: string): Promise<void> {
+    await this.adapter.setIndexing(workspaceId, null);
+    this.logger.debug({ workspaceId }, "Indexing state cleared (workspace removed)");
+  }
+
   async getDetection(force = false): Promise<IndexingToolDetection> {
     const fresh = !this.cachedDetection || force || Date.now() - this.detectionAt > 10_000;
     if (!fresh) return this.cachedDetection as IndexingToolDetection;

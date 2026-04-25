@@ -166,6 +166,13 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     defaultModeId: null,
     modes: [],
   },
+  {
+    id: "hubcode",
+    label: "Hubcode",
+    description: "Hubcode curated combos — gated by your plan",
+    defaultModeId: null,
+    modes: [],
+  },
 ];
 
 export function getAgentProviderDefinition(
