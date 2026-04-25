@@ -27,45 +27,48 @@ const SERVER_ID = "server-1";
 const WORKSPACE_ID = "ws-main";
 const WORKSPACE_DIRECTORY = "/repo/worktree";
 
+const AGENT_TIMESTAMP = new Date("2026-04-21T10:00:00.000Z");
+
+const AGENT_DEFAULTS: Agent = {
+  serverId: SERVER_ID,
+  id: "agent",
+  provider: "codex",
+  status: "idle",
+  createdAt: AGENT_TIMESTAMP,
+  updatedAt: AGENT_TIMESTAMP,
+  lastUserMessageAt: null,
+  lastActivityAt: AGENT_TIMESTAMP,
+  capabilities: {
+    supportsStreaming: true,
+    supportsSessionPersistence: true,
+    supportsDynamicModes: true,
+    supportsMcpServers: true,
+    supportsReasoningStream: true,
+    supportsToolInvocations: true,
+  },
+  currentModeId: null,
+  availableModes: [],
+  pendingPermissions: [],
+  persistence: null,
+  runtimeInfo: undefined,
+  lastUsage: undefined,
+  lastError: null,
+  title: "Agent",
+  cwd: WORKSPACE_DIRECTORY,
+  model: null,
+  features: undefined,
+  thinkingOptionId: undefined,
+  requiresAttention: false,
+  attentionReason: null,
+  attentionTimestamp: null,
+  archivedAt: null,
+  parentAgentId: null,
+  labels: {},
+  projectPlacement: null,
+};
+
 function makeAgent(input: Partial<Agent> & Pick<Agent, "id">): Agent {
-  const timestamp = new Date("2026-04-21T10:00:00.000Z");
-  return {
-    serverId: input.serverId ?? SERVER_ID,
-    id: input.id,
-    provider: input.provider ?? "codex",
-    status: input.status ?? "idle",
-    createdAt: input.createdAt ?? timestamp,
-    updatedAt: input.updatedAt ?? timestamp,
-    lastUserMessageAt: input.lastUserMessageAt ?? null,
-    lastActivityAt: input.lastActivityAt ?? timestamp,
-    capabilities: input.capabilities ?? {
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    },
-    currentModeId: input.currentModeId ?? null,
-    availableModes: input.availableModes ?? [],
-    pendingPermissions: input.pendingPermissions ?? [],
-    persistence: input.persistence ?? null,
-    runtimeInfo: input.runtimeInfo,
-    lastUsage: input.lastUsage,
-    lastError: input.lastError ?? null,
-    title: input.title ?? "Agent",
-    cwd: input.cwd ?? WORKSPACE_DIRECTORY,
-    model: input.model ?? null,
-    features: input.features,
-    thinkingOptionId: input.thinkingOptionId,
-    requiresAttention: input.requiresAttention ?? false,
-    attentionReason: input.attentionReason ?? null,
-    attentionTimestamp: input.attentionTimestamp ?? null,
-    archivedAt: input.archivedAt ?? null,
-    parentAgentId: input.parentAgentId ?? null,
-    labels: input.labels ?? {},
-    projectPlacement: input.projectPlacement ?? null,
-  };
+  return { ...AGENT_DEFAULTS, ...input };
 }
 
 function initializeAgents(agents: Agent[]): void {

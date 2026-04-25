@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactElement } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
+import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -11,10 +11,10 @@ import {
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SubagentRow } from "@/subagents/subagents";
 
-type SubagentsSectionProps = {
+interface SubagentsSectionProps {
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
-};
+}
 
 const SUBAGENTS_LIST_MAX_HEIGHT = 200;
 
@@ -81,6 +81,24 @@ export function SubagentsSection({
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = useState(false);
 
+  const surfaceStyle = useMemo(
+    () => [styles.surface, expanded ? styles.surfaceExpanded : styles.surfaceCollapsed],
+    [expanded],
+  );
+
+  const toggleExpanded = useCallback(() => {
+    setExpanded((current) => !current);
+  }, []);
+
+  const headerStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType) => [
+      styles.header,
+      expanded && styles.headerDivider,
+      (hovered || pressed) && styles.headerActive,
+    ],
+    [expanded],
+  );
+
   if (rows.length === 0) {
     return null;
   }
@@ -91,17 +109,13 @@ export function SubagentsSection({
   return (
     <View style={styles.outer} testID="subagents-section">
       <View style={styles.track}>
-        <View style={[styles.surface, expanded ? styles.surfaceExpanded : styles.surfaceCollapsed]}>
+        <View style={surfaceStyle}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={headerLabel}
             testID="subagents-section-header"
-            onPress={() => setExpanded((current) => !current)}
-            style={({ hovered, pressed }) => [
-              styles.header,
-              expanded && styles.headerDivider,
-              (hovered || pressed) && styles.headerActive,
-            ]}
+            onPress={toggleExpanded}
+            style={headerStyle}
           >
             <ChevronIcon size={12} color={theme.colors.foregroundMuted} />
             <Text style={styles.headerLabel} numberOfLines={1}>
@@ -126,23 +140,29 @@ export function SubagentsSection({
   );
 }
 
-function SubagentsSectionRow({
-  row,
-  onOpenSubagent,
-}: {
+interface SubagentsSectionRowProps {
   row: SubagentRow;
   onOpenSubagent: (id: string) => void;
-}): ReactElement {
+}
+
+function rowStyle({ hovered, pressed }: PressableStateCallbackType) {
+  return [styles.row, (hovered || pressed) && styles.rowActive];
+}
+
+function SubagentsSectionRow({ row, onOpenSubagent }: SubagentsSectionRowProps): ReactElement {
   const presentation = useMemo(() => buildRowPresentation(row), [row]);
   const displayLabel = presentation.titleState === "loading" ? "Loading..." : presentation.label;
+  const handlePress = useCallback(() => {
+    onOpenSubagent(row.id);
+  }, [onOpenSubagent, row.id]);
 
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={displayLabel}
       testID={`subagents-section-row-${row.id}`}
-      onPress={() => onOpenSubagent(row.id)}
-      style={({ hovered, pressed }) => [styles.row, (hovered || pressed) && styles.rowActive]}
+      onPress={handlePress}
+      style={rowStyle}
     >
       <WorkspaceTabIcon presentation={presentation} />
       <Text style={styles.rowLabel} numberOfLines={1}>
