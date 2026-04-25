@@ -427,41 +427,29 @@ export class TerminalSessionController {
   }
 
   private async handleRenameTerminalRequest(msg: RenameTerminalRequest): Promise<void> {
+    const respond = (success: boolean, error: string | null): void => {
+      this.emit({
+        type: "rename_terminal_response",
+        payload: { requestId: msg.requestId, success, error },
+      });
+    };
+
     const title = msg.title.trim();
-
     if (title.length === 0) {
-      this.emit({
-        type: "rename_terminal_response",
-        payload: {
-          requestId: msg.requestId,
-          success: false,
-          error: "Title is required",
-        },
-      });
+      respond(false, "Title is required");
       return;
     }
-
     if (title.length > 200) {
-      this.emit({
-        type: "rename_terminal_response",
-        payload: {
-          requestId: msg.requestId,
-          success: false,
-          error: "Title is too long",
-        },
-      });
+      respond(false, "Title is too long");
+      return;
+    }
+    if (!this.terminalManager) {
+      respond(false, "Terminal manager not available");
       return;
     }
 
-    const success = this.terminalManager?.setTerminalTitle(msg.terminalId, title) === true;
-    this.emit({
-      type: "rename_terminal_response",
-      payload: {
-        requestId: msg.requestId,
-        success,
-        error: success ? null : "Terminal not found",
-      },
-    });
+    const renamed = this.terminalManager.setTerminalTitle(msg.terminalId, title);
+    respond(renamed, renamed ? null : "Terminal not found");
   }
 
   private async handleSubscribeTerminalRequest(msg: SubscribeTerminalRequest): Promise<void> {

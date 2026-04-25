@@ -52,13 +52,10 @@ export function RenameModal({
       const node = inputRef.current;
       if (!node) return;
       node.focus();
-      if (isWeb) {
-        const htmlNode: unknown = node;
-        if (htmlNode instanceof HTMLInputElement) {
-          htmlNode.setSelectionRange(0, length);
-        }
-      } else if (length > 0) {
-        node.setNativeProps?.({ selection: { start: 0, end: length } });
+      if (isWeb && node instanceof HTMLInputElement) {
+        node.setSelectionRange(0, length);
+      } else if (!isWeb && length > 0) {
+        node.setNativeProps({ selection: { start: 0, end: length } });
       }
     }, 50);
     return () => clearTimeout(timeout);

@@ -202,7 +202,7 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
       <RenameModal
         visible={isEditing}
         title="Rename host"
-        initialValue={host.label ?? ""}
+        initialValue={host.label}
         placeholder="My Host"
         submitLabel="Save"
         onClose={() => setIsEditing(false)}

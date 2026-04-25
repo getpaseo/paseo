@@ -684,29 +684,22 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   }
   emitTitleChange(initialTitle);
 
-  // Respond to DA1 queries (CSI c or CSI 0 c) — apps like nvim query terminal capabilities
-  terminal.parser.registerCsiHandler({ final: "c" }, (params) => {
-    if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
-      ptyProcess.write("\x1b[?62;4;22c");
-      return true;
-    }
-    return false;
-  });
-
-  titleChangeSubscription = terminal.onTitleChange((nextTitle) => {
-    if (disposed || killed || titleMode === "manual") {
-      return;
-    }
-    pendingTitle = nextTitle.trim().length > 0 ? nextTitle : undefined;
-    if (titleDebounceTimer) {
-      clearTimeout(titleDebounceTimer);
-    }
-    titleDebounceTimer = setTimeout(() => {
-      titleDebounceTimer = null;
-      emitTitleChange(pendingTitle);
-      pendingTitle = undefined;
-    }, TERMINAL_TITLE_DEBOUNCE_MS);
-  });
+  if (titleMode === "auto") {
+    titleChangeSubscription = terminal.onTitleChange((nextTitle) => {
+      if (disposed || killed) {
+        return;
+      }
+      pendingTitle = nextTitle.trim().length > 0 ? nextTitle : undefined;
+      if (titleDebounceTimer) {
+        clearTimeout(titleDebounceTimer);
+      }
+      titleDebounceTimer = setTimeout(() => {
+        titleDebounceTimer = null;
+        emitTitleChange(pendingTitle);
+        pendingTitle = undefined;
+      }, TERMINAL_TITLE_DEBOUNCE_MS);
+    });
+  }
 
   const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
     const commandFinished = parseCommandFinishedOsc(data);
