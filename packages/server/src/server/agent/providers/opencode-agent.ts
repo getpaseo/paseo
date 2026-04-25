@@ -711,11 +711,7 @@ function buildOpenCodePromptParts(
       });
       continue;
     }
-    const renderedAttachment = renderPromptAttachmentAsText(part);
-    if (renderedAttachment !== null) {
-      output.push({ type: "text", text: renderedAttachment });
-      continue;
-    }
+    output.push({ type: "text", text: renderPromptAttachmentAsText(part) });
   }
   return output;
 }

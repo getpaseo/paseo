@@ -1819,21 +1819,16 @@ function toACPContentBlocks(prompt: AgentPromptInput): ContentBlock[] {
 
   const contentBlocks: ContentBlock[] = [];
   for (const block of prompt) {
-    if (block.type === "text") {
-      contentBlocks.push({ type: "text", text: block.text });
-      continue;
-    }
-    if (block.type === "image") {
-      contentBlocks.push({
-        type: "image",
-        data: block.data,
-        mimeType: block.mimeType,
-      });
-      continue;
-    }
-    const renderedAttachment = renderPromptAttachmentAsText(block);
-    if (renderedAttachment !== null) {
-      contentBlocks.push({ type: "text", text: renderedAttachment });
+    switch (block.type) {
+      case "text":
+        contentBlocks.push({ type: "text", text: block.text });
+        break;
+      case "image":
+        contentBlocks.push({ type: "image", data: block.data, mimeType: block.mimeType });
+        break;
+      default:
+        contentBlocks.push({ type: "text", text: renderPromptAttachmentAsText(block) });
+        break;
     }
   }
   return contentBlocks;

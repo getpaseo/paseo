@@ -415,10 +415,7 @@ function convertPromptInput(prompt: AgentPromptInput): PiPromptPayload {
       continue;
     }
 
-    const renderedAttachment = renderPromptAttachmentAsText(block);
-    if (renderedAttachment !== null) {
-      textParts.push(renderedAttachment);
-    }
+    textParts.push(renderPromptAttachmentAsText(block));
   }
 
   const payload: PiPromptPayload = {

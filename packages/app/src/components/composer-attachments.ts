@@ -1,7 +1,6 @@
 import type { AttachmentMetadata, ComposerAttachment } from "@/attachments/types";
 import type { AgentAttachment } from "@server/shared/messages";
 import { buildGitHubAttachmentFromSearchItem } from "@/utils/review-attachments";
-import { isGeneratedReviewAttachment } from "@/attachments/composer-attachment-utils";
 
 export type ImageAttachment = AttachmentMetadata;
 
@@ -18,7 +17,7 @@ export function splitComposerAttachmentsForSubmit(attachments: ComposerAttachmen
       continue;
     }
 
-    if (isGeneratedReviewAttachment(attachment)) {
+    if (attachment.kind === "review") {
       reviewAttachments.push(attachment.attachment);
       continue;
     }

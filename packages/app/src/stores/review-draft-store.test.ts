@@ -1,13 +1,15 @@
 import "@/test/window-local-storage";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { describe, expect, it } from "vitest";
 import type { ParsedDiffFile } from "@/hooks/use-checkout-diff-query";
 import {
   buildReviewAttachmentSnapshot,
   buildReviewDraftKey,
   buildReviewDraftScopeKey,
-  __reviewDraftStoreTestUtils,
   useReviewDraftStore,
 } from "./review-draft-store";
+
+const STORE_STORAGE_KEY = "@paseo:review-draft-store";
 
 function makeFile(): ParsedDiffFile {
   return {
@@ -88,20 +90,53 @@ describe("buildReviewDraftKey", () => {
 });
 
 describe("review draft store", () => {
-  it("normalizes persisted active review modes with draft comments", () => {
-    const state = __reviewDraftStoreTestUtils.normalizePersistedState({
-      drafts: {},
-      activeModesByScope: {
-        "review:scope:base": "base",
-        "review:scope:dirty": "uncommitted",
-        "review:scope:bad": "other",
-      },
-    });
+  it("normalizes persisted active review modes with draft comments", async () => {
+    await AsyncStorage.setItem(
+      STORE_STORAGE_KEY,
+      JSON.stringify({
+        version: 0,
+        state: {
+          drafts: {
+            "review:key": [
+              {
+                id: "comment-1",
+                filePath: "src/example.ts",
+                side: "new",
+                lineNumber: 41,
+                body: "Keep me.",
+                createdAt: "2026-04-21T00:00:00.000Z",
+                updatedAt: "2026-04-21T00:00:00.000Z",
+              },
+              { id: "bad", filePath: "src/example.ts" },
+            ],
+          },
+          activeModesByScope: {
+            "review:scope:base": "base",
+            "review:scope:dirty": "uncommitted",
+            "review:scope:bad": "other",
+          },
+        },
+      }),
+    );
 
+    await useReviewDraftStore.persist.rehydrate();
+
+    const state = useReviewDraftStore.getState();
     expect(state.activeModesByScope).toEqual({
       "review:scope:base": "base",
       "review:scope:dirty": "uncommitted",
     });
+    expect(state.drafts["review:key"]).toEqual([
+      {
+        id: "comment-1",
+        filePath: "src/example.ts",
+        side: "new",
+        lineNumber: 41,
+        body: "Keep me.",
+        createdAt: "2026-04-21T00:00:00.000Z",
+        updatedAt: "2026-04-21T00:00:00.000Z",
+      },
+    ]);
   });
 
   it("persists compact draft comments separately from generated wire context", () => {

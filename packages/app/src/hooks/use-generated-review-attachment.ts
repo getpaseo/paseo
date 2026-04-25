@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { GeneratedReviewComposerAttachment } from "@/attachments/composer-attachment-utils";
+import type { GeneratedReviewComposerAttachment } from "@/attachments/types";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutDiffQuery } from "@/hooks/use-checkout-diff-query";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";

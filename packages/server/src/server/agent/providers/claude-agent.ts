@@ -2351,10 +2351,7 @@ class ClaudeAgentSession implements AgentSession {
             },
           });
         } else {
-          const renderedAttachment = renderPromptAttachmentAsText(chunk);
-          if (renderedAttachment !== null) {
-            content.push({ type: "text", text: renderedAttachment });
-          }
+          content.push({ type: "text", text: renderPromptAttachmentAsText(chunk) });
         }
       }
     } else {

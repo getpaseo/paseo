@@ -2410,20 +2410,14 @@ export async function codexAppServerTurnInputFromPrompt(
     return [{ type: "text", text: prompt }];
   }
 
-  const blocks = prompt as Array<unknown>;
   const output = await Promise.all(
-    blocks.map(async (block) => {
-      if (!block || typeof block !== "object") {
+    prompt.map(async (block) => {
+      if (block.type === "text") {
         return block;
       }
-      const record = block as { type?: unknown; mimeType?: unknown; data?: unknown };
-      if (
-        record.type === "image" &&
-        typeof record.mimeType === "string" &&
-        typeof record.data === "string"
-      ) {
+      if (block.type === "image") {
         try {
-          const filePath = await writeImageAttachment(record.mimeType, record.data);
+          const filePath = await writeImageAttachment(block.mimeType, block.data);
           return { type: "localImage", path: filePath };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -2434,11 +2428,7 @@ export async function codexAppServerTurnInputFromPrompt(
           };
         }
       }
-      const renderedAttachment = renderPromptAttachmentAsText(record);
-      if (renderedAttachment !== null) {
-        return { type: "text", text: renderedAttachment };
-      }
-      return block;
+      return { type: "text", text: renderPromptAttachmentAsText(block) };
     }),
   );
   return output;

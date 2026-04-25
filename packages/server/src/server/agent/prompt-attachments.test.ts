@@ -73,17 +73,7 @@ describe("prompt attachments", () => {
     );
   });
 
-  it("renders prompt attachments centrally and returns null for unsupported blocks", () => {
-    expect(renderPromptAttachmentAsText(null)).toBeNull();
-    expect(renderPromptAttachmentAsText(undefined)).toBeNull();
-    expect(renderPromptAttachmentAsText({ type: "text", text: "hello" })).toBeNull();
-    expect(
-      renderPromptAttachmentAsText({
-        type: "image",
-        mimeType: "image/png",
-        data: "base64",
-      }),
-    ).toBeNull();
+  it("renders github_issue attachments as readable text", () => {
     expect(
       renderPromptAttachmentAsText({
         type: "github_issue",

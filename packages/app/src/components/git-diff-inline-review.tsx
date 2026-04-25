@@ -46,8 +46,8 @@ export function isInlineReviewEditorForTarget(
 ): boolean {
   return Boolean(
     editor &&
-      target &&
-      buildReviewableDiffTargetKey(editor.target) === buildReviewableDiffTargetKey(target),
+    target &&
+    buildReviewableDiffTargetKey(editor.target) === buildReviewableDiffTargetKey(target),
   );
 }
 
@@ -295,10 +295,6 @@ export function InlineReviewEditor({
   const [isFocused, setIsFocused] = useState(false);
   const trimmedBody = body.trim();
   const canSave = trimmedBody.length > 0;
-
-  useEffect(() => {
-    setBody(initialBody);
-  }, [initialBody]);
 
   useEffect(() => {
     inputRef.current?.focus();

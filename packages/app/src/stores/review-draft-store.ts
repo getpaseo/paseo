@@ -8,8 +8,8 @@ import { generateMessageId } from "@/types/stream";
 import { buildNumberedDiffHunks, type NumberedDiffLine } from "@/utils/diff-layout";
 import type { AgentAttachment } from "@server/shared/messages";
 
-const REVIEW_DRAFT_STORE_VERSION = 1;
-const REVIEW_CONTEXT_RADIUS = 3;
+const STORE_VERSION = 1;
+const CONTEXT_RADIUS = 3;
 const EMPTY_REVIEW_DRAFT_COMMENTS: ReviewDraftComment[] = [];
 
 type ReviewAttachment = Extract<AgentAttachment, { type: "review" }>;
@@ -115,21 +115,9 @@ export function buildReviewDraftKey(input: BuildReviewDraftKeyInput): string {
   );
 }
 
-function normalizeComment(comment: ReviewDraftComment): ReviewDraftComment {
-  return {
-    id: comment.id,
-    filePath: comment.filePath,
-    side: comment.side,
-    lineNumber: comment.lineNumber,
-    body: comment.body,
-    createdAt: comment.createdAt,
-    updatedAt: comment.updatedAt,
-  };
-}
-
 function createDraftComment(input: ReviewDraftCommentInput): ReviewDraftComment {
   const now = new Date().toISOString();
-  return normalizeComment({
+  return {
     id: input.id ?? generateMessageId(),
     filePath: input.filePath,
     side: input.side,
@@ -137,7 +125,7 @@ function createDraftComment(input: ReviewDraftCommentInput): ReviewDraftComment 
     body: input.body,
     createdAt: input.createdAt ?? now,
     updatedAt: input.updatedAt ?? input.createdAt ?? now,
-  });
+  };
 }
 
 function normalizePersistedState(state: unknown): ReviewDraftStoreState {
@@ -155,9 +143,9 @@ function normalizePersistedState(state: unknown): ReviewDraftStoreState {
     if (!Array.isArray(value)) {
       continue;
     }
-    normalized[key] = value
-      .filter((comment): comment is ReviewDraftComment => isReviewDraftComment(comment))
-      .map(normalizeComment);
+    normalized[key] = value.filter((comment): comment is ReviewDraftComment =>
+      isReviewDraftComment(comment),
+    );
   }
 
   const activeModesByScope: Record<string, ReviewDraftMode> = {};
@@ -230,11 +218,11 @@ export const useReviewDraftStore = create<ReviewDraftStore>()(
               ...state.drafts,
               [key]: comments.map((comment) =>
                 comment.id === id
-                  ? normalizeComment({
+                  ? {
                       ...comment,
                       ...updates,
                       updatedAt: updatedAt ?? new Date().toISOString(),
-                    })
+                    }
                   : comment,
               ),
             },
@@ -262,7 +250,7 @@ export const useReviewDraftStore = create<ReviewDraftStore>()(
     }),
     {
       name: "@paseo:review-draft-store",
-      version: REVIEW_DRAFT_STORE_VERSION,
+      version: STORE_VERSION,
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         drafts: state.drafts,
@@ -285,10 +273,12 @@ function toContextLine(line: NumberedDiffLine): ReviewAttachmentContextLine | nu
   };
 }
 
-function findTarget(input: {
-  comment: ReviewDraftComment;
-  diffFiles: readonly ParsedDiffFile[];
-}): { hunkHeader: string; hunkLines: NumberedDiffLine[]; targetIndex: number } | null {
+function findTarget(input: { comment: ReviewDraftComment; diffFiles: readonly ParsedDiffFile[] }): {
+  hunkHeader: string;
+  hunkLines: NumberedDiffLine[];
+  targetIndex: number;
+  targetLine: NumberedDiffLine;
+} | null {
   const file = input.diffFiles.find((candidate) => candidate.path === input.comment.filePath);
   if (!file) {
     return null;
@@ -299,8 +289,14 @@ function findTarget(input: {
       const cell = input.comment.side === "old" ? line.oldCell : line.newCell;
       return cell?.lineNumber === input.comment.lineNumber;
     });
-    if (targetIndex >= 0) {
-      return { hunkHeader: hunk.hunkHeader, hunkLines: hunk.lines, targetIndex };
+    const targetLine = hunk.lines[targetIndex];
+    if (targetLine) {
+      return {
+        hunkHeader: hunk.hunkHeader,
+        hunkLines: hunk.lines,
+        targetIndex,
+        targetLine,
+      };
     }
   }
 
@@ -313,21 +309,21 @@ export function buildReviewAttachmentSnapshot(
   const comments: ReviewAttachment["comments"] = [];
 
   for (const draftComment of input.comments) {
-    const target = findTarget({ comment: draftComment, diffFiles: input.diffFiles });
+    const target = findTarget({
+      comment: draftComment,
+      diffFiles: input.diffFiles,
+    });
     if (!target) {
       continue;
     }
 
-    const targetLine = toContextLine(target.hunkLines[target.targetIndex]!);
+    const targetLine = toContextLine(target.targetLine);
     if (!targetLine) {
       continue;
     }
 
-    const contextStart = Math.max(0, target.targetIndex - REVIEW_CONTEXT_RADIUS);
-    const contextEnd = Math.min(
-      target.hunkLines.length,
-      target.targetIndex + REVIEW_CONTEXT_RADIUS + 1,
-    );
+    const contextStart = Math.max(0, target.targetIndex - CONTEXT_RADIUS);
+    const contextEnd = Math.min(target.hunkLines.length, target.targetIndex + CONTEXT_RADIUS + 1);
     const lines = target.hunkLines
       .slice(contextStart, contextEnd)
       .map(toContextLine)
@@ -412,7 +408,3 @@ export function useReviewAttachmentSnapshot(input: {
     [comments, input.cwd, input.mode, input.baseRef, input.diffFiles],
   );
 }
-
-export const __reviewDraftStoreTestUtils = {
-  normalizePersistedState,
-};
