@@ -59,6 +59,7 @@ function createCheckoutStatus(
   return {
     isGit: true,
     repoRoot: cwd,
+    mainRepoRoot: null,
     currentBranch: "main",
     isDirty: false,
     baseRef: "main",
