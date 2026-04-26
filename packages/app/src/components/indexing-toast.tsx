@@ -159,13 +159,15 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
 
   return (
     <View
-      style={[
-        styles.container,
-        {
-          bottom: insets.bottom + TOAST_OFFSET,
-          pointerEvents: "box-none",
-        },
-      ]}
+      // `pointerEvents` MUST be a prop here, not a style key. The container
+      // is a full-width band sitting at the same vertical position as the
+      // chat input; without `box-none` the invisible band swallows every
+      // click in that strip and the user can't focus the message field.
+      // RN-Web translates the prop form to `pointer-events: none` on the
+      // wrapper while keeping children clickable; the style-key form does
+      // not translate reliably (it's silently dropped on some paths).
+      pointerEvents="box-none"
+      style={[styles.container, { bottom: insets.bottom + TOAST_OFFSET }]}
     >
       <View style={[styles.toastWrapper, styles.toast]}>
         {active ? (

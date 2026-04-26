@@ -28,6 +28,11 @@ mac:
   # generating a "Developer ID Application" cert under that team.
   # Set to true once configured; until then, builds run unsigned.
   notarize: false
+  # identity: null forces unsigned builds. Without it, electron-builder
+  # silently picks up the FIRST "Developer ID Application" cert in the
+  # operator's Keychain — which has burned us before by accidentally
+  # signing Hubcode with an unrelated company's cert (PATUBANK LTDA).
+  identity: null
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extraResources:

@@ -42,10 +42,12 @@ export function DownloadToast() {
 
   return (
     <View
-      style={[
-        styles.container,
-        { bottom: theme.spacing[4] + insets.bottom, pointerEvents: "box-none" },
-      ]}
+      // See indexing-toast.tsx for why this MUST be a prop, not a style key:
+      // RN-Web silently drops `pointerEvents` from the style object on some
+      // paths, leaving the invisible full-width container blocking clicks
+      // in the chat-input strip.
+      pointerEvents="box-none"
+      style={[styles.container, { bottom: theme.spacing[4] + insets.bottom }]}
     >
       <View style={styles.toast}>
         {activeDownload.status === "downloading" ? (
