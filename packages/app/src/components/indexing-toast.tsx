@@ -46,17 +46,34 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
   const indexing = useIndexing();
   const workspaces = useSessionStore((s) => s.sessions[serverId]?.workspaces);
 
+  // Workspace errors stay active in the daemon until the user takes action
+  // (re-index, fix config, etc.) — without a local dismiss the toast would
+  // sit on screen forever. We track the (workspaceId, error) pair the user
+  // closed so we can suppress only THAT specific error; if the workspace
+  // moves to indexing/ready or starts a different error, we let the toast
+  // re-appear.
+  const [dismissedError, setDismissedError] = useState<{
+    workspaceId: string;
+    message: string | null;
+  } | null>(null);
+
   // Most-recently active indexing entry — prefer error > indexing > installing.
   const active = useMemo(() => {
     const entries = indexing.entries ?? [];
+    const isDismissed = (entry: { workspaceId: string; status?: { error?: string | null } }) =>
+      dismissedError !== null &&
+      entry.workspaceId === dismissedError.workspaceId &&
+      (entry.status?.error ?? null) === dismissedError.message;
+    const flat = entries.map((e) => ({
+      workspaceId: e.workspaceId,
+      status: e.indexing?.status,
+    }));
     const picked =
-      entries.find((e) => e.indexing?.status?.phase === "error") ??
-      entries.find((e) => e.indexing?.status?.phase === "indexing") ??
-      entries.find((e) => e.indexing?.status?.phase === "installing") ??
+      flat.find((e) => e.status?.phase === "error" && !isDismissed(e)) ??
+      flat.find((e) => e.status?.phase === "indexing") ??
+      flat.find((e) => e.status?.phase === "installing") ??
       null;
-    if (!picked) return null;
-    const status = picked.indexing?.status;
-    if (!status) return null;
+    if (!picked || !picked.status) return null;
     const ws = workspaces?.get(picked.workspaceId);
     const label =
       ws?.projectDisplayName ||
@@ -65,12 +82,29 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
     return {
       workspaceId: picked.workspaceId,
       label,
-      phase: status.phase,
-      progress: status.progress ?? null,
-      fileCount: status.fileCount ?? null,
-      error: status.error ?? null,
+      phase: picked.status.phase,
+      progress: picked.status.progress ?? null,
+      fileCount: picked.status.fileCount ?? null,
+      error: picked.status.error ?? null,
     };
-  }, [indexing.entries, workspaces]);
+  }, [indexing.entries, workspaces, dismissedError]);
+
+  // Clear the dismiss memory once the offending workspace either recovers or
+  // disappears, so a future fresh failure shows a toast again.
+  useEffect(() => {
+    if (!dismissedError) return;
+    const entry = (indexing.entries ?? []).find(
+      (e) => e.workspaceId === dismissedError.workspaceId,
+    );
+    if (!entry) {
+      setDismissedError(null);
+      return;
+    }
+    const status = entry.indexing?.status;
+    if (!status || status.phase !== "error") {
+      setDismissedError(null);
+    }
+  }, [indexing.entries, dismissedError]);
 
   // Keep the toast visible for a moment after transitioning to "ready" so
   // the user sees completion. We mirror the active entry into local state
@@ -162,8 +196,27 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
           ) : null}
         </View>
 
-        {!active && terminal ? (
-          <Pressable onPress={() => setTerminal(null)} hitSlop={8} style={styles.dismiss}>
+        {active && active.phase === "error" ? (
+          <Pressable
+            onPress={() =>
+              setDismissedError({
+                workspaceId: active.workspaceId,
+                message: active.error,
+              })
+            }
+            hitSlop={8}
+            style={styles.dismiss}
+            accessibilityLabel="Dismiss indexing error"
+          >
+            <X size={16} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        ) : !active && terminal ? (
+          <Pressable
+            onPress={() => setTerminal(null)}
+            hitSlop={8}
+            style={styles.dismiss}
+            accessibilityLabel="Dismiss indexing toast"
+          >
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>
         ) : null}

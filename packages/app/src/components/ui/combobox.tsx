@@ -311,11 +311,28 @@ export function Combobox({
     setSearchQueryWithCallback("");
   }, [setOpen, setSearchQueryWithCallback]);
 
+  // Records when the popover opened so the backdrop can ignore presses
+  // that arrive in the same gesture cycle as the open click. Fixes the
+  // "click trigger → flash → nothing" bug on Electron/RN-Web: the
+  // trigger's `onPress` (fires on pointer-UP) opens the Modal, but the
+  // Modal mounts a full-screen backdrop synchronously and the SAME
+  // pointer-up event then lands on the backdrop, immediately closing
+  // the popover.
+  const openedAtRef = useRef<number>(0);
   useEffect(() => {
     if (isOpen) {
+      openedAtRef.current = Date.now();
       setSearchQueryWithCallback("");
     }
   }, [isOpen, setSearchQueryWithCallback]);
+
+  // 150ms is well above the worst-case gap between a Pressable's onPress
+  // (pointer-up) and any follow-up event from the same gesture, while
+  // still feeling instant if the user clicks outside intentionally.
+  const handleBackdropClose = useCallback(() => {
+    if (Date.now() - openedAtRef.current < 150) return;
+    handleClose();
+  }, [handleClose]);
 
   const collisionPadding = useMemo(() => {
     const basePadding = 16;
@@ -734,7 +751,7 @@ export function Combobox({
   return (
     <Modal transparent animationType="none" visible={isOpen} onRequestClose={handleClose}>
       <View ref={refs.setOffsetParent} collapsable={false} style={styles.desktopOverlay}>
-        <Pressable style={styles.desktopBackdrop} onPress={handleClose} />
+        <Pressable style={styles.desktopBackdrop} onPress={handleBackdropClose} />
         <Animated.View
           testID="combobox-desktop-container"
           entering={shouldUseDesktopFade ? FadeIn.duration(100) : undefined}

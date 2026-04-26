@@ -305,8 +305,7 @@ function ControlledStatusBar({
   // picker with a "Sign in to Hubcode" pill that opens the auth-server
   // sign-in flow; the picker auto-restores once the cookie returns.
   const hubcodeModels = useHubcodeModels();
-  const showHubcodeSignInFallback =
-    provider === "hubcode" && hubcodeModels.requiresSignIn;
+  const showHubcodeSignInFallback = provider === "hubcode" && hubcodeModels.requiresSignIn;
 
   const SEARCH_THRESHOLD = 6;
 
@@ -446,9 +445,22 @@ function ControlledStatusBar({
                       selectedModel={selectedModelId ?? ""}
                       canSelectProvider={canSelectProviderInModelMenu}
                       onSelect={(selectedProviderId, modelId) => {
-                        if (selectedProviderId === provider) {
-                          onSelectModel?.(modelId);
+                        // Match the prefs-sheet path (lines 705-715): if the
+                        // user picks a model from a different provider, fire
+                        // both `onSelectProvider` and `onSelectModel` so the
+                        // live agent actually switches. The previous early-
+                        // return-on-mismatch silently dropped cross-provider
+                        // selections — making the picker look broken when a
+                        // user on Free wanted to swap from Hubcode to e.g.
+                        // their local Claude/Codex.
+                        if (onSelectProviderAndModel) {
+                          onSelectProviderAndModel(selectedProviderId, modelId);
+                          return;
                         }
+                        if (selectedProviderId !== provider) {
+                          onSelectProvider?.(selectedProviderId);
+                        }
+                        onSelectModel?.(modelId);
                       }}
                       favoriteKeys={favoriteKeys}
                       onToggleFavorite={onToggleFavoriteModel}

@@ -79,8 +79,7 @@ export function UpgradeModalProvider({ children }: { children: ReactNode }) {
         featureLabel,
         description,
         usage,
-        recommended:
-          payload.recommendedPlan === "plan_enterprise" ? "plan_enterprise" : "plan_pro",
+        recommended: payload.recommendedPlan === "plan_enterprise" ? "plan_enterprise" : "plan_pro",
       });
       return true;
     },
@@ -96,8 +95,7 @@ export function UpgradeModalProvider({ children }: { children: ReactNode }) {
         featureLabel,
         description,
         usage,
-        recommended:
-          payload.recommendedPlan === "plan_enterprise" ? "plan_enterprise" : "plan_pro",
+        recommended: payload.recommendedPlan === "plan_enterprise" ? "plan_enterprise" : "plan_pro",
       });
       return true;
     },

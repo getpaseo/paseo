@@ -71,17 +71,9 @@ export function FreeSessionCountdownBanner({ sessionStartedAt }: Props) {
     >
       <Clock
         size={13}
-        color={
-          danger
-            ? "#dc2626"
-            : warning
-              ? "#f59e0b"
-              : theme.colors.foregroundMuted
-        }
+        color={danger ? "#dc2626" : warning ? "#f59e0b" : theme.colors.foregroundMuted}
       />
-      <Text
-        style={[styles.text, warning && styles.warningText, danger && styles.dangerText]}
-      >
+      <Text style={[styles.text, warning && styles.warningText, danger && styles.dangerText]}>
         {minutes}:{seconds.toString().padStart(2, "0")} left on Free
       </Text>
       <View style={styles.upgradePill}>

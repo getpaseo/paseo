@@ -23,7 +23,11 @@ mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns
   hardenedRuntime: true
-  notarize: true
+  # notarize requires a valid Apple Developer team. Set teamId here
+  # AFTER enrolling Hubcode in the Apple Developer Program and
+  # generating a "Developer ID Application" cert under that team.
+  # Set to true once configured; until then, builds run unsigned.
+  notarize: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extraResources:
