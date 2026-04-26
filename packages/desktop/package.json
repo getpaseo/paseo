@@ -1,6 +1,6 @@
 {
   "name": "@hubcode/desktop",
-  "version": "2.7.1",
+  "version": "2.7.2",
   "private": true,
   "description": "Hubcode desktop app (Electron wrapper)",
   "main": "dist/main.js",

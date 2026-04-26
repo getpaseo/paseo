@@ -288,8 +288,17 @@ export function Combobox({
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = isControlled ? open : internalOpen;
 
+  // Records when the popover opened so the backdrop can ignore presses
+  // that arrive in the same gesture cycle as the open click. Fixes the
+  // "click trigger → flash → nothing" bug on Electron/RN-Web: the
+  // trigger's `onPress` (fires on pointer-UP) opens the Modal, but the
+  // Modal mounts a full-screen backdrop synchronously and the SAME
+  // pointer-up event then lands on the backdrop, immediately closing
+  // the popover.
+  const openedAtRef = useRef<number>(0);
   const setOpen = useCallback(
     (nextOpen: boolean) => {
+      if (nextOpen) openedAtRef.current = Date.now();
       if (!isControlled) {
         setInternalOpen(nextOpen);
       }
@@ -297,6 +306,20 @@ export function Combobox({
     },
     [isControlled, onOpenChange],
   );
+
+  // In controlled mode the parent flips `open` directly without going
+  // through our `setOpen`, so we also stamp the timestamp on the prop
+  // transition. `useLayoutEffect` is critical here — a regular effect
+  // runs AFTER the browser's microtask queue, which is too late: the
+  // backdrop's `onPress` from the same gesture has already fired and
+  // missed the stamp.
+  const prevOpenRef = useRef<boolean>(isOpen);
+  useLayoutEffect(() => {
+    if (isOpen && !prevOpenRef.current) {
+      openedAtRef.current = Date.now();
+    }
+    prevOpenRef.current = isOpen;
+  }, [isOpen]);
 
   const setSearchQueryWithCallback = useCallback(
     (nextQuery: string) => {
@@ -311,17 +334,8 @@ export function Combobox({
     setSearchQueryWithCallback("");
   }, [setOpen, setSearchQueryWithCallback]);
 
-  // Records when the popover opened so the backdrop can ignore presses
-  // that arrive in the same gesture cycle as the open click. Fixes the
-  // "click trigger → flash → nothing" bug on Electron/RN-Web: the
-  // trigger's `onPress` (fires on pointer-UP) opens the Modal, but the
-  // Modal mounts a full-screen backdrop synchronously and the SAME
-  // pointer-up event then lands on the backdrop, immediately closing
-  // the popover.
-  const openedAtRef = useRef<number>(0);
   useEffect(() => {
     if (isOpen) {
-      openedAtRef.current = Date.now();
       setSearchQueryWithCallback("");
     }
   }, [isOpen, setSearchQueryWithCallback]);
