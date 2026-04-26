@@ -258,6 +258,7 @@ const CODEX_BADGE_ICON = <CodexIcon className="h-6 w-6" />;
 const OPENCODE_BADGE_ICON = <OpenCodeIcon className="h-6 w-6" />;
 const COPILOT_BADGE_ICON = <CopilotIcon className="h-6 w-6" />;
 const PI_BADGE_ICON = <PiIcon className="h-6 w-6" />;
+const KIMI_BADGE_ICON = <KimiIcon className="h-6 w-6" />;
 
 function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
   const [hovered, setHovered] = React.useState(false);
@@ -319,6 +320,7 @@ function MultiProviderSection() {
     { name: "Claude Code", icon: <ClaudeIcon size={28} /> },
     { name: "Codex", icon: <CodexIcon className="w-7 h-7" /> },
     { name: "OpenCode", icon: <OpenCodeIcon className="w-7 h-7" /> },
+    { name: "Kimi", icon: <KimiIcon className="w-7 h-7" /> },
     { name: "Copilot", icon: <CopilotIcon className="w-7 h-7" /> },
     { name: "Pi", icon: <PiIcon className="w-7 h-7" /> },
   ];
@@ -328,19 +330,8 @@ function MultiProviderSection() {
       title="Use the best agent for the job"
       description="Run multiple providers from a single interface. Paseo runs the native agent harness as you'd normally run it, with your skills, config and MCP servers intact."
     >
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {providers.slice(0, 3).map((p) => (
-          <div
-            key={p.name}
-            className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4"
-          >
-            <span className="text-white/80">{p.icon}</span>
-            <span className="font-medium">{p.name}</span>
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-2 gap-4 sm:w-2/3">
-        {providers.slice(3).map((p) => (
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        {providers.map((p) => (
           <div
             key={p.name}
             className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4"
@@ -1021,6 +1012,7 @@ function GetStarted() {
           <AgentBadge name="Claude Code" icon={CLAUDE_CODE_BADGE_ICON} />
           <AgentBadge name="Codex" icon={CODEX_BADGE_ICON} />
           <AgentBadge name="OpenCode" icon={OPENCODE_BADGE_ICON} />
+          <AgentBadge name="Kimi" icon={KIMI_BADGE_ICON} />
           <AgentBadge name="Copilot" icon={COPILOT_BADGE_ICON} />
           <AgentBadge name="Pi" icon={PI_BADGE_ICON} />
         </div>
@@ -1154,6 +1146,30 @@ function PiIcon(props: React.SVGProps<SVGSVGElement>) {
         fillRule="evenodd"
       />
       <path d="M517.36 400 H634.72 V634.72 H517.36 Z" />
+    </svg>
+  );
+}
+
+function KimiIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      {...props}
+    >
+      <text
+        x="50%"
+        y="55%"
+        dominantBaseline="middle"
+        textAnchor="middle"
+        fontSize="16"
+        fontWeight="bold"
+        fontFamily="system-ui, sans-serif"
+      >
+        K
+      </text>
     </svg>
   );
 }
