@@ -23,7 +23,8 @@
     "typecheck": "tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@getpaseo/server": "0.1.63-beta.2",
+    "@getpaseo/cli": "*",
+    "@getpaseo/server": "*",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
     "ws": "^8.14.2"
