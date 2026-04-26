@@ -807,6 +807,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     let rejectCompletion!: (error: Error) => void;
     const buffered: AgentStreamEvent[] = [];
 
+    const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resetIdleTimer = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+      }
+      idleTimer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          rejectCompletion(
+            new Error(
+              `ACP agent timed out: no events received for ${IDLE_TIMEOUT_MS / 1000}s. The agent process may be stuck.`,
+            ),
+          );
+        }
+      }, IDLE_TIMEOUT_MS);
+    };
+
     const completion = new Promise<void>((resolve, reject) => {
       resolveCompletion = resolve;
       rejectCompletion = reject;
@@ -819,6 +838,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (turnId && "turnId" in event && event.turnId && event.turnId !== turnId) {
         return;
       }
+      resetIdleTimer();
       if (event.type === "timeline") {
         timeline.push(event.item);
         if (event.item.type === "assistant_message") {
@@ -860,9 +880,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         processEvent(event);
       }
       if (!settled) {
+        resetIdleTimer();
         await completion;
       }
     } finally {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+      }
       unsubscribe();
     }
 

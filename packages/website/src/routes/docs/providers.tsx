@@ -59,6 +59,10 @@ function Providers() {
             and session support.
           </li>
           <li>
+            <code className="font-mono">kimi</code> — Moonshot AI's Kimi Code CLI with ACP support,
+            reasoning, and MCP tools.
+          </li>
+          <li>
             <code className="font-mono">pi</code> — Minimal terminal-based coding agent with
             multi-provider LLM support.
           </li>
