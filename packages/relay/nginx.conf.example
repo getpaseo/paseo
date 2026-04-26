@@ -1,0 +1,27 @@
+upstream relay {
+    server relay:8080;
+}
+
+server {
+    listen 443 ssl;
+    server_name relay.example.com;
+
+    ssl_certificate /etc/nginx/certs/cert.pem;
+    ssl_certificate_key /etc/nginx/certs/key.pem;
+
+    location / {
+        proxy_pass http://relay;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 86400;
+    }
+}
+
+server {
+    listen 80;
+    server_name relay.example.com;
+    return 301 https://$server_name$request_uri;
+}

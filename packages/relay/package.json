@@ -32,6 +32,9 @@
   },
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && tsc -p tsconfig.json --incremental false",
+    "build:nodejs": "node -e \"require('node:fs').rmSync('dist/nodejs-adapter',{ recursive: true, force: true })\" && tsc -p tsconfig.nodejs.json --incremental false",
+    "start:nodejs": "node --experimental-vm-modules dist/nodejs-adapter.js",
+    "dev:nodejs": "node --watch dist/nodejs-adapter.js",
     "prepack": "npm run build",
     "typecheck": "tsgo --noEmit",
     "test": "vitest run",
