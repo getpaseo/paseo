@@ -3,6 +3,7 @@ appId: sh.paseo.desktop
 productName: Paseo
 executableName: Paseo
 afterPack: ./scripts/after-pack.js
+afterSign: ./scripts/after-sign.js
 directories:
   output: release
 files:

@@ -24,6 +24,19 @@ on:
           - macos
           - linux
           - windows
+      checkout_ref:
+        description: "Optional branch/ref to checkout while using tag for release metadata."
+        required: false
+        default: ""
+        type: string
+      publish:
+        description: "Publish built artifacts to GitHub Releases."
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 concurrency:
   group: desktop-release-${{ github.ref }}
@@ -31,12 +44,14 @@ concurrency:
 
 env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+  CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.checkout_ref || github.ref_name) || github.ref_name }}
+  SHOULD_PUBLISH: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false' }}
   DESKTOP_WORKSPACE: "@getpaseo/desktop"
   DESKTOP_PACKAGE_PATH: "packages/desktop"
 
 jobs:
   create-release:
-    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all') }}
+    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all' && github.event.inputs.publish != 'false') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -44,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: scripts
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release metadata
         shell: bash
@@ -91,7 +106,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release metadata
         shell: bash
@@ -140,20 +155,22 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PASEO_DESKTOP_SMOKE: "1"
         run: |
           set -euo pipefail
           publish_mode="never"
-          publish_args=()
-          if [[ "$IS_SMOKE_TAG" != "true" ]]; then
+          build_args=(-- --publish "$publish_mode" --mac --${{ matrix.electron_arch }})
+          if [[ "$SHOULD_PUBLISH" == "true" && "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
-            publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
-            publish_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+            build_args=(-- --publish "$publish_mode" --mac --${{ matrix.electron_arch }})
+            build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           fi
 
-          npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --mac --${{ matrix.electron_arch }} "${publish_args[@]}"
+          npm run build --workspace="$DESKTOP_WORKSPACE" "${build_args[@]}"
 
       - name: Upload manifest artifact
-        if: env.IS_SMOKE_TAG != 'true'
+        if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mac-manifest-${{ matrix.electron_arch }}
@@ -162,7 +179,7 @@ jobs:
 
   finalize-mac-manifest:
     needs: [publish-macos]
-    if: ${{ needs.publish-macos.result == 'success' }}
+    if: ${{ needs.publish-macos.result == 'success' && (github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -171,7 +188,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: scripts
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release tag
         shell: bash
@@ -269,7 +286,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release metadata
         shell: bash
@@ -308,22 +325,27 @@ jobs:
       - name: Build web app for desktop
         run: npm run build:web --workspace=@getpaseo/app
 
+      - name: Install Linux smoke display
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
       - name: Build desktop release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
+          PASEO_DESKTOP_SMOKE: "1"
         run: |
           set -euo pipefail
           publish_mode="never"
-          publish_args=()
-          if [[ "$IS_SMOKE_TAG" != "true" ]]; then
+          build_args=(-- --publish "$publish_mode" --linux --x64)
+          if [[ "$SHOULD_PUBLISH" == "true" && "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
-            publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
-            publish_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+            build_args=(-- --publish "$publish_mode" --linux --x64)
+            build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           fi
 
-          npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --linux --x64 "${publish_args[@]}"
+          npm run build --workspace="$DESKTOP_WORKSPACE" "${build_args[@]}"
 
   publish-windows:
     needs: [create-release]
@@ -337,7 +359,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release metadata
         shell: bash
@@ -389,14 +411,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
+          PASEO_DESKTOP_SMOKE: "1"
         run: |
           set -euo pipefail
           publish_mode="never"
-          publish_args=()
-          if [[ "$IS_SMOKE_TAG" != "true" ]]; then
+          build_args=(-- --publish "$publish_mode" --win --x64)
+          if [[ "$SHOULD_PUBLISH" == "true" && "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
-            publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
-            publish_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+            build_args=(-- --publish "$publish_mode" --win --x64)
+            build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           fi
 
-          npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --win --x64 "${publish_args[@]}"
+          npm run build --workspace="$DESKTOP_WORKSPACE" "${build_args[@]}"

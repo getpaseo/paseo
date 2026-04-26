@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol } from "electron";
-import { registerDaemonManager } from "./daemon/daemon-manager.js";
+import { createDaemonCommandHandlers, registerDaemonManager } from "./daemon/daemon-manager.js";
 import {
   parseCliPassthroughArgsFromArgv,
   runCliPassthroughCommand,
@@ -47,6 +47,8 @@ import {
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
 const OPEN_PROJECT_EVENT = "paseo:event:open-project";
+const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
+const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
 app.setName("Paseo");
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
@@ -288,6 +290,53 @@ async function runCliPassthroughIfRequested(): Promise<boolean> {
   return true;
 }
 
+async function runDesktopSmokeIfRequested(): Promise<boolean> {
+  if (process.env[DESKTOP_SMOKE_ENV] !== "1") {
+    return false;
+  }
+
+  const handlers = createDaemonCommandHandlers();
+  const startStatus = await handlers.start_desktop_daemon();
+  process.stdout.write(
+    `[paseo-smoke] ${JSON.stringify({
+      type: "desktop-daemon-smoke-started",
+      status: startStatus,
+    })}\n`,
+  );
+
+  await waitForDesktopSmokeStopRequest();
+
+  const stopStatus = await handlers.stop_desktop_daemon();
+  process.stdout.write(
+    `[paseo-smoke] ${JSON.stringify({
+      type: "desktop-daemon-smoke-stopped",
+      stopStatus,
+    })}\n`,
+  );
+
+  app.exit(0);
+  return true;
+}
+
+function waitForDesktopSmokeStopRequest(): Promise<void> {
+  return new Promise((resolve) => {
+    let buffer = "";
+    const stop = () => {
+      process.stdin.off("data", onData);
+      resolve();
+    };
+    const onData = (chunk: Buffer | string) => {
+      buffer += chunk.toString();
+      if (buffer.includes(DESKTOP_SMOKE_STOP_REQUEST)) {
+        stop();
+      }
+    };
+
+    process.stdin.on("data", onData);
+    process.stdin.resume();
+  });
+}
+
 async function bootstrap(): Promise<void> {
   if (!pendingOpenProjectPath && (await runCliPassthroughIfRequested())) {
     return;
@@ -329,6 +378,9 @@ async function bootstrap(): Promise<void> {
   applyAppIcon();
   setupApplicationMenu();
   ensureNotificationCenterRegistration();
+  if (await runDesktopSmokeIfRequested()) {
+    return;
+  }
   registerDaemonManager();
   registerWindowManager();
   registerDialogHandlers();

@@ -21,9 +21,13 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
 RESOURCES_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 
 # macOS: MacOS/Paseo is a sibling of Resources/
-# Linux: the executable sits next to resources/
+# Linux: the executable sits next to resources/. Prefer Paseo.bin when present
+# because Paseo is a GUI wrapper that adds Chromium flags not accepted by
+# ELECTRON_RUN_AS_NODE.
 if [ -x "${RESOURCES_DIR}/../MacOS/Paseo" ]; then
   APP_EXECUTABLE="${RESOURCES_DIR}/../MacOS/Paseo"
+elif [ -x "${RESOURCES_DIR}/../Paseo.bin" ]; then
+  APP_EXECUTABLE="${RESOURCES_DIR}/../Paseo.bin"
 elif [ -x "${RESOURCES_DIR}/../Paseo" ]; then
   APP_EXECUTABLE="${RESOURCES_DIR}/../Paseo"
 else
