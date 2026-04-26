@@ -1,16 +1,37 @@
 # Changelog
 
-## 0.1.63-beta.1 - 2026-04-24
+## 0.1.63-beta.2 - 2026-04-26
+
+### Added
+
+- Project settings page with a built-in `paseo.json` editor.
+- Cold start restores your last open workspace.
+- Tool call badges have a button to open the referenced file directly.
+- Enable or disable providers from Settings without editing config files.
+- Paseo prompts you to configure a worktree setup script when one is missing.
 
 ### Improved
 
+- Provider settings and model selection have been redesigned, with switches replacing toggle buttons.
+- Adding a project no longer waits for GitHub PR status to load.
+- Startup splash screen is cleaner — just the logo with a subtle shimmer.
+- Desktop quit flow is smoother with a clearer shutdown dialog.
+- `paseo.json` setup and teardown accept a single command string, not just an array.
 - Archiving a worktree is instant instead of waiting for the backend to confirm.
-- Terminal sessions recover cleanly after rendering hiccups.
 - Agent timelines and git diff lists no longer jump around while loading or streaming.
 
 ### Fixed
 
+- Terminal sessions recover cleanly after rendering hiccups, including the initial resize for nvim.
+- Terminal protocol query responses no longer leak into the browser.
+- Assistant link color matches the theme again.
 - File links with line numbers (like `foo.ts:42`) open correctly from assistant messages.
+- Claude's Grep results show up in the search detail body.
+- Reopening a worktree lands under the right project.
+- Agents from disabled or unavailable providers stay visible in history.
+- New CLI agents now require a provider instead of failing silently.
+- Git diff headers no longer truncate.
+- The packaged desktop app preserves your zsh prompt.
 
 ## 0.1.62 - 2026-04-23
 
