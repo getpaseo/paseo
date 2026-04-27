@@ -1046,7 +1046,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     const headRef = snapshot.git.currentBranch;
-    if (!headRef || !hasGitHubRemoteUrl(snapshot.git.remoteUrl)) {
+    const hasGitHubRemote =
+      target.cachedGitHubRemote?.remoteUrl === snapshot.git.remoteUrl &&
+      target.cachedGitHubRemote.identity !== null;
+    if (!headRef || !hasGitHubRemote) {
       this.stopGitHubPollForTarget(target);
       return;
     }
@@ -1640,18 +1643,6 @@ async function loadGitHubSnapshot(options: {
       },
     };
   }
-}
-
-function hasGitHubRemoteUrl(remoteUrl: string | null): boolean {
-  if (!remoteUrl) {
-    return false;
-  }
-
-  return (
-    remoteUrl.includes("github.com/") ||
-    remoteUrl.startsWith("git@github.com:") ||
-    remoteUrl.startsWith("ssh://git@github.com/")
-  );
 }
 
 function parseWorkspaceGitStashList(

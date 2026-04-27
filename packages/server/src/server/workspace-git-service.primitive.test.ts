@@ -782,6 +782,32 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     service.dispose();
   });
 
+  test("subscription starts GitHub self-heal polling for ssh.github.com remotes", async () => {
+    const retainCurrentPullRequestStatusPoll = vi.fn(() => ({ unsubscribe: vi.fn() }));
+    const github = {
+      ...createGitHubServiceStub(),
+      retainCurrentPullRequestStatusPoll,
+    };
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, {
+        remoteUrl: "ssh://git@ssh.github.com/acme/repo.git",
+      }),
+    );
+    const service = createService({
+      getCheckoutStatus,
+      github,
+    });
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    await flushPromises();
+
+    await vi.waitFor(() => {
+      expect(retainCurrentPullRequestStatusPoll).toHaveBeenCalledTimes(1);
+    });
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("multiple subscribers on the same target share one self-heal timer", async () => {
     let nowMs = 0;
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));

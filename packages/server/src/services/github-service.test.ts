@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GitHubAuthenticationError,
@@ -1837,16 +1841,20 @@ describe("GitHubService", () => {
     expect(valid.reason).toBe("test");
   });
 
-  it("resolves GitHub repos from a WorkspaceGitService-owned remote URL", async () => {
-    const workspaceGitService = {
-      resolveRepoRemoteUrl: async (cwd: string) => {
-        expect(cwd).toBe("/repo");
-        return "git@github.com:getpaseo/paseo.git";
-      },
-    };
+  it("resolves GitHub repos from the origin remote URL", async () => {
+    vi.useRealTimers();
+    const cwd = mkdtempSync(join(tmpdir(), "github-service-repo-"));
 
-    await expect(resolveGitHubRepo("/repo", { workspaceGitService })).resolves.toBe(
-      "getpaseo/paseo",
-    );
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
+      execFileSync("git", ["remote", "add", "origin", "git@github.com:getpaseo/paseo.git"], {
+        cwd,
+        stdio: "ignore",
+      });
+
+      await expect(resolveGitHubRepo(cwd)).resolves.toBe("getpaseo/paseo");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
