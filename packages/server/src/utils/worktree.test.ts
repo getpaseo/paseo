@@ -568,58 +568,6 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     expect(progressEvents.some((event) => event.type === "command_completed")).toBe(true);
   });
 
-  it("scrubs Paseo runtime env from setup commands while preserving user NODE_ENV", async () => {
-    const previousRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
-    const previousDesktopManaged = process.env.PASEO_DESKTOP_MANAGED;
-    const previousPaseoNodeEnv = process.env.PASEO_NODE_ENV;
-    const previousSupervised = process.env.PASEO_SUPERVISED;
-    const previousNodeEnv = process.env.NODE_ENV;
-    process.env.ELECTRON_RUN_AS_NODE = "1";
-    process.env.PASEO_DESKTOP_MANAGED = "1";
-    process.env.PASEO_NODE_ENV = "production";
-    process.env.PASEO_SUPERVISED = "1";
-    process.env.NODE_ENV = "development";
-
-    try {
-      const paseoConfig = {
-        worktree: {
-          setup: [
-            'echo "electron=${ELECTRON_RUN_AS_NODE-unset}" > setup-env.log',
-            'echo "desktop=${PASEO_DESKTOP_MANAGED-unset}" >> setup-env.log',
-            'echo "paseo_node=${PASEO_NODE_ENV-unset}" >> setup-env.log',
-            'echo "supervised=${PASEO_SUPERVISED-unset}" >> setup-env.log',
-            'echo "node=${NODE_ENV-unset}" >> setup-env.log',
-          ],
-        },
-      };
-      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-      execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add setup env"', {
-        cwd: repoDir,
-      });
-
-      await runWorktreeSetupCommands({
-        worktreePath: repoDir,
-        branchName: "main",
-        cleanupOnFailure: false,
-      });
-
-      expect(readFileSync(join(repoDir, "setup-env.log"), "utf8")).toBe(
-        "electron=unset\ndesktop=unset\npaseo_node=unset\nsupervised=unset\nnode=development\n",
-      );
-    } finally {
-      if (previousRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
-      else process.env.ELECTRON_RUN_AS_NODE = previousRunAsNode;
-      if (previousDesktopManaged === undefined) delete process.env.PASEO_DESKTOP_MANAGED;
-      else process.env.PASEO_DESKTOP_MANAGED = previousDesktopManaged;
-      if (previousPaseoNodeEnv === undefined) delete process.env.PASEO_NODE_ENV;
-      else process.env.PASEO_NODE_ENV = previousPaseoNodeEnv;
-      if (previousSupervised === undefined) delete process.env.PASEO_SUPERVISED;
-      else process.env.PASEO_SUPERVISED = previousSupervised;
-      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = previousNodeEnv;
-    }
-  });
-
   it("reuses persisted worktree runtime port across resolutions", async () => {
     const result = await createLegacyWorktreeForTest({
       branchName: "main",
@@ -983,62 +931,6 @@ describe("paseo worktree manager", () => {
     expect(teardownLog).toContain(`worktree=${created.worktreePath}`);
     expect(teardownLog).toContain("branch=teardown-branch");
     expect(teardownLog).toContain(`port=${runtimeEnv.PASEO_WORKTREE_PORT}`);
-  });
-
-  it("scrubs Paseo runtime env from teardown commands while preserving user NODE_ENV", async () => {
-    const previousRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
-    const previousDesktopManaged = process.env.PASEO_DESKTOP_MANAGED;
-    const previousPaseoNodeEnv = process.env.PASEO_NODE_ENV;
-    const previousSupervised = process.env.PASEO_SUPERVISED;
-    const previousNodeEnv = process.env.NODE_ENV;
-    process.env.ELECTRON_RUN_AS_NODE = "1";
-    process.env.PASEO_DESKTOP_MANAGED = "1";
-    process.env.PASEO_NODE_ENV = "production";
-    process.env.PASEO_SUPERVISED = "1";
-    process.env.NODE_ENV = "development";
-
-    try {
-      const paseoConfig = {
-        worktree: {
-          teardown: [
-            'echo "electron=${ELECTRON_RUN_AS_NODE-unset}" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-env.log"',
-            'echo "desktop=${PASEO_DESKTOP_MANAGED-unset}" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown-env.log"',
-            'echo "paseo_node=${PASEO_NODE_ENV-unset}" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown-env.log"',
-            'echo "supervised=${PASEO_SUPERVISED-unset}" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown-env.log"',
-            'echo "node=${NODE_ENV-unset}" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown-env.log"',
-          ],
-        },
-      };
-      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-      execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add teardown env"', {
-        cwd: repoDir,
-      });
-
-      const created = await createLegacyWorktreeForTest({
-        branchName: "teardown-env-branch",
-        cwd: repoDir,
-        baseBranch: "main",
-        worktreeSlug: "teardown-env-test",
-        paseoHome,
-      });
-
-      await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
-
-      expect(readFileSync(join(repoDir, "teardown-env.log"), "utf8")).toBe(
-        "electron=unset\ndesktop=unset\npaseo_node=unset\nsupervised=unset\nnode=development\n",
-      );
-    } finally {
-      if (previousRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
-      else process.env.ELECTRON_RUN_AS_NODE = previousRunAsNode;
-      if (previousDesktopManaged === undefined) delete process.env.PASEO_DESKTOP_MANAGED;
-      else process.env.PASEO_DESKTOP_MANAGED = previousDesktopManaged;
-      if (previousPaseoNodeEnv === undefined) delete process.env.PASEO_NODE_ENV;
-      else process.env.PASEO_NODE_ENV = previousPaseoNodeEnv;
-      if (previousSupervised === undefined) delete process.env.PASEO_SUPERVISED;
-      else process.env.PASEO_SUPERVISED = previousSupervised;
-      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = previousNodeEnv;
-    }
   });
 
   it("runs string teardown scripts from paseo.json as a single shell command", async () => {

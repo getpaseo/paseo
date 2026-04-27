@@ -1,4 +1,4 @@
-import { execFile, spawn } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
 import { rm, stat } from "fs/promises";
@@ -27,6 +27,7 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
+import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { ensureNodePtySpawnHelperExecutableForCurrentPlatform } from "../terminal/terminal.js";
@@ -451,7 +452,7 @@ async function execSetupCommandStreamed(options: {
 
     const spawnWithPipes = () => {
       const shellInvocation = buildStringCommandShellInvocation({ command: options.command });
-      const child = spawn(shellInvocation.shell, shellInvocation.args, {
+      const child = spawnProcess(shellInvocation.shell, shellInvocation.args, {
         cwd: options.cwd,
         env: options.env,
         stdio: ["ignore", "pipe", "pipe"],

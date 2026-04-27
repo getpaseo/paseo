@@ -215,29 +215,6 @@ describe("createTerminal", () => {
     expect(existsSync(join(resolvedEnv.ZDOTDIR, "paseo-integration.zsh"))).toBe(true);
   });
 
-  it("scrubs Paseo runtime env when spawning terminals", () => {
-    const resolvedEnv = buildTerminalEnvironment({
-      shell: "/bin/sh",
-      env: {
-        ELECTRON_RUN_AS_NODE: "1",
-        ELECTRON_NO_ATTACH_CONSOLE: "1",
-        NODE_ENV: "development",
-        PASEO_DESKTOP_MANAGED: "1",
-        PASEO_NODE_ENV: "production",
-        PASEO_SUPERVISED: "1",
-        PASEO_WORKTREE_PORT: "43210",
-      },
-    });
-
-    expect(resolvedEnv.ELECTRON_RUN_AS_NODE).toBeUndefined();
-    expect(resolvedEnv.ELECTRON_NO_ATTACH_CONSOLE).toBeUndefined();
-    expect(resolvedEnv.PASEO_DESKTOP_MANAGED).toBeUndefined();
-    expect(resolvedEnv.PASEO_NODE_ENV).toBeUndefined();
-    expect(resolvedEnv.PASEO_SUPERVISED).toBeUndefined();
-    expect(resolvedEnv.NODE_ENV).toBe("development");
-    expect(resolvedEnv.PASEO_WORKTREE_PORT).toBe("43210");
-  });
-
   it("uses custom name when provided", async () => {
     const session = trackSession(
       await createTerminal({

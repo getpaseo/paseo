@@ -28,7 +28,7 @@ describe("paseo env contract", () => {
   ] as const;
 
   test("builds internal daemon child env by preserving pass-through and control vars", () => {
-    const env = createPaseoInternalEnv(baseEnv, { nodeEnv: "test" });
+    const env = createPaseoInternalEnv(baseEnv);
 
     expect(env).toMatchObject({
       [ELECTRON_RUN_AS_NODE]: "1",
@@ -36,7 +36,7 @@ describe("paseo env contract", () => {
       NODE_ENV: "development",
       PATH: "/usr/bin",
       PASEO_DESKTOP_MANAGED: "1",
-      [PASEO_NODE_ENV]: "test",
+      [PASEO_NODE_ENV]: "production",
       PASEO_SUPERVISED: "1",
       PASEO_AGENT_ID: "agent-123",
     });

@@ -2,7 +2,11 @@ import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:chil
 import { promisify } from "node:util";
 
 import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/paseo-env.js";
-import { isWindowsCommandScript, quoteWindowsArgument, quoteWindowsCommand } from "./executable.js";
+import {
+  isWindowsCommandScript,
+  quoteWindowsArgument,
+  quoteWindowsCommand,
+} from "./windows-command.js";
 
 const execFileAsync = promisify(execFile);
 

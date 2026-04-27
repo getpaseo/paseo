@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
+import { spawnProcess } from "@getpaseo/server";
 
 function findDesktopApp(): string | null {
   if (process.platform === "darwin") {
@@ -60,7 +60,7 @@ function cleanEnvForDesktopLaunch(): NodeJS.ProcessEnv {
 }
 
 function spawnDetached(command: string, args: string[]): void {
-  spawn(command, args, {
+  spawnProcess(command, args, {
     detached: true,
     stdio: "ignore",
     env: cleanEnvForDesktopLaunch(),

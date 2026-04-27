@@ -18,14 +18,8 @@ type ExternalProcessEnv = NodeJS.ProcessEnv & Record<string, string>;
 
 let resolvedProcessExecPath: string | undefined;
 
-function buildInternalProcessEnv<T extends ProcessEnvRecord>(
-  baseEnv: T,
-  options: { nodeEnv?: PaseoNodeEnv } = {},
-): T {
-  return {
-    ...baseEnv,
-    ...(options.nodeEnv ? { [PASEO_NODE_ENV]: options.nodeEnv } : {}),
-  } as T;
+function buildInternalProcessEnv<T extends ProcessEnvRecord>(baseEnv: T): T {
+  return { ...baseEnv } as T;
 }
 
 function buildExternalProcessEnv(
@@ -75,11 +69,8 @@ function isProcessExecPathCommand(command: string): boolean {
   );
 }
 
-export function createPaseoInternalEnv(
-  baseEnv: NodeJS.ProcessEnv,
-  options: { nodeEnv?: PaseoNodeEnv } = {},
-): NodeJS.ProcessEnv {
-  return buildInternalProcessEnv(baseEnv, options);
+export function createPaseoInternalEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return buildInternalProcessEnv(baseEnv);
 }
 
 export function createExternalProcessEnv(

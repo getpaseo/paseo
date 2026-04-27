@@ -1,8 +1,8 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolvePaseoHome } from "@getpaseo/server";
+import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
 export interface DaemonStartOptions {
@@ -104,13 +104,8 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   return args;
 }
 
-function resolvePaseoNodeEnvForRunner(daemonRunnerEntry: string): "development" | "production" {
-  return daemonRunnerEntry.endsWith(".ts") ? "development" : "production";
-}
-
-function buildChildEnv(options: DaemonStartOptions, daemonRunnerEntry: string): NodeJS.ProcessEnv {
+function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
-  childEnv.PASEO_NODE_ENV = resolvePaseoNodeEnvForRunner(daemonRunnerEntry);
   if (options.home) {
     childEnv.PASEO_HOME = options.home;
   }
@@ -379,15 +374,16 @@ export async function startLocalDaemonDetached(
   }
 
   const daemonRunnerEntry = resolveDaemonRunnerEntry();
-  const childEnv = buildChildEnv(options, daemonRunnerEntry);
+  const childEnv = buildChildEnv(options);
 
   const paseoHome = resolvePaseoHome(childEnv);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
-  const child = spawn(
+  const child = spawnProcess(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
     {
       detached: true,
+      envMode: "internal",
       env: childEnv,
       stdio: ["ignore", "ignore", "ignore"],
     },
@@ -444,7 +440,7 @@ export function startLocalDaemonForeground(options: DaemonStartOptions): number 
   }
 
   const daemonRunnerEntry = resolveDaemonRunnerEntry();
-  const childEnv = buildChildEnv(options, daemonRunnerEntry);
+  const childEnv = buildChildEnv(options);
   const result = spawnSync(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
