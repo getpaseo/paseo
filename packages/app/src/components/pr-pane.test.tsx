@@ -89,7 +89,7 @@ function makeData(overrides: Partial<PrPaneData> = {}): PrPaneData {
     number: 1284,
     title: "fix(server,app): coalesce tool call stream events",
     state: "open",
-    url: "https://github.com/getpaseo/paseo/pull/1284",
+    url: "https://github.com/hubtool/hubcode/pull/1284",
     reviewDecision: "changes_requested",
     awaitingReviewers: [],
     checks: [

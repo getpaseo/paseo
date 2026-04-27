@@ -1,10 +1,10 @@
-# AGENTS.md — Paseo Server Development Guide
+# AGENTS.md — Hubcode Server Development Guide
 
 For AI coding agents working in `packages/server`. Supplements [CLAUDE.md](../CLAUDE.md) at the repo root.
 
 ## Project Overview
 
-Paseo is a mobile + CLI app for monitoring and controlling local AI coding agents (Claude Code, Codex, OpenCode). The daemon runs on your machine, manages agent processes, and streams their output over WebSocket to clients.
+Hubcode is a mobile + CLI app for monitoring and controlling local AI coding agents (Claude Code, Codex, OpenCode). The daemon runs on your machine, manages agent processes, and streams their output over WebSocket to clients.
 
 ---
 
@@ -49,8 +49,8 @@ npm run test:ui                     # Vitest UI at localhost:51204
 ### Other useful commands
 
 ```bash
-npm run build --workspace=@getpaseo/relay    # Rebuild relay before daemon
-npm run build --workspace=@getpaseo/server   # Rebuild server
+npm run build --workspace=@gethubcode/relay    # Rebuild relay before daemon
+npm run build --workspace=@gethubcode/server   # Rebuild server
 npm run db:query -- "SELECT ..."             # Run arbitrary SQL
 npm run cli -- ls -a -g                      # List agents
 npm run cli -- daemon status                 # Check daemon status
@@ -171,15 +171,15 @@ packages/server/src/
 └── client/daemon-client.ts   # Client library for daemon connection
 ```
 
-Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`  
-Daemon logs: `$PASEO_HOME/daemon.log`
+Agent state persists to `$HUBCODE_HOME/agents/{cwd-with-dashes}/{agent-id}.json`  
+Daemon logs: `$HUBCODE_HOME/daemon.log`
 
 ---
 
 ## Debugging
 
 ```bash
-tail -f $PASEO_HOME/daemon.log      # Daemon logs
+tail -f $HUBCODE_HOME/daemon.log      # Daemon logs
 npm run test:ui                     # Vitest browser UI at localhost:51204
 npm run cli -- inspect <agent-id>   # Detailed agent info
 npm run db:query -- "SELECT * FROM agent_timeline_rows..."

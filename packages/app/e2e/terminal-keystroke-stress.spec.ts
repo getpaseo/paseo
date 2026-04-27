@@ -14,7 +14,7 @@ const INPUT_TEXT = buildStressText(600);
 const BIG_DIFF_BYTES = 256_000;
 const SMALL_AGENT_STREAM_UPDATES = 1000;
 const STRESS_TIMEOUT_MS = 15_000;
-const RUN_MANUAL_TERMINAL_PERF = process.env.PASEO_TERMINAL_PERF_E2E === "1";
+const RUN_MANUAL_TERMINAL_PERF = process.env.HUBCODE_TERMINAL_PERF_E2E === "1";
 const terminalPerfDescribe = RUN_MANUAL_TERMINAL_PERF ? test.describe : test.describe.skip;
 
 interface DaemonEchoReport {

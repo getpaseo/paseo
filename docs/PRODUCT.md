@@ -1,12 +1,12 @@
 # Product
 
-What Paseo is, who it's for, and where it's going.
+What Hubcode is, who it's for, and where it's going.
 
-## What is Paseo
+## What is Hubcode
 
-Paseo is a next-generation development environment built around agents. One interface to run, monitor, and interact with coding agents across desktop, mobile, terminal, and web.
+Hubcode is a next-generation development environment built around agents. One interface to run, monitor, and interact with coding agents across desktop, mobile, terminal, and web.
 
-The development workflow is shifting from manually editing files to orchestrating agents that do the editing. Paseo is built for that workflow.
+The development workflow is shifting from manually editing files to orchestrating agents that do the editing. Hubcode is built for that workflow.
 
 ## Core philosophy
 
@@ -17,7 +17,7 @@ Freedom and flexibility. Every design decision follows from this:
 - **Self-hosted** — The daemon runs on your machine. Your code, your keys, your environment. No inference markup, no cloud dependency.
 - **Respectful** - No telemetry, no forced cloud, no forced accounts
 - **Open source** — AGPL-3.0. Users can inspect, fork, and contribute.
-- **BYOK** — Bring your own keys. Use your subsidized plans and first-party provider pricing. Paseo adds zero cost on top.
+- **BYOK** — Bring your own keys. Use your subsidized plans and first-party provider pricing. Hubcode adds zero cost on top.
 
 ## How it works
 
@@ -37,7 +37,7 @@ A workspace is a flexible canvas:
 
 ### The daemon
 
-Paseo is a client-server system. The daemon (Node.js) runs on your machine, manages agent processes, and streams output in real time over WebSocket. Clients connect to the daemon — locally or remotely.
+Hubcode is a client-server system. The daemon (Node.js) runs on your machine, manages agent processes, and streams output in real time over WebSocket. Clients connect to the daemon — locally or remotely.
 
 This architecture means:
 

@@ -19,7 +19,7 @@ function placement(input: {
       currentBranch: "main",
       remoteUrl: input.remoteUrl,
       worktreeRoot: input.cwd,
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       mainRepoRoot: input.mainRepoRoot ?? null,
     },
   };
@@ -48,7 +48,7 @@ function workspace(input: {
     gitRuntime: {
       currentBranch: "main",
       remoteUrl: input.remoteUrl ?? input.project?.checkout.remoteUrl ?? null,
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       isDirty: false,
       aheadBehind: null,
       aheadOfOrigin: null,

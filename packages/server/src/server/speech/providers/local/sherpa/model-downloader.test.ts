@@ -7,7 +7,7 @@ import pino from "pino";
 import { ensureSherpaOnnxModel, getSherpaOnnxModelDir } from "./model-downloader.js";
 
 function makeTmpDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "paseo-speech-models-"));
+  return mkdtempSync(path.join(tmpdir(), "hubcode-speech-models-"));
 }
 
 const logger = pino({ level: "silent" });

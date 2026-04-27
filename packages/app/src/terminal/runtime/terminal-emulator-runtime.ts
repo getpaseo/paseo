@@ -68,7 +68,7 @@ interface TerminalOutputOperation {
 
 declare global {
   interface Window {
-    __paseoTerminal?: Terminal;
+    __hubcodeTerminal?: Terminal;
   }
 }
 
@@ -267,7 +267,7 @@ export class TerminalEmulatorRuntime {
 
     this.terminal = terminal;
     this.fitAddon = fitAddon;
-    window.__paseoTerminal = terminal;
+    window.__hubcodeTerminal = terminal;
 
     const fitAndEmitResize = (force: boolean): void => {
       const currentTerminal = this.terminal;
@@ -598,8 +598,8 @@ export class TerminalEmulatorRuntime {
 
     this.cleanup?.();
     this.cleanup = null;
-    if (window.__paseoTerminal === this.terminal) {
-      window.__paseoTerminal = undefined;
+    if (window.__hubcodeTerminal === this.terminal) {
+      window.__hubcodeTerminal = undefined;
     }
     this.terminal = null;
     this.fitAddon = null;

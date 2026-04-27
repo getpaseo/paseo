@@ -296,12 +296,12 @@ export class LoopService {
 
   constructor(
     private readonly options: {
-      paseoHome: string;
+      hubcodeHome: string;
       agentManager: AgentManager;
       logger: Logger;
     },
   ) {
-    this.storePath = path.join(options.paseoHome, "loops", "loops.json");
+    this.storePath = path.join(options.hubcodeHome, "loops", "loops.json");
     this.logger = options.logger.child({ module: "loop-service" });
   }
 

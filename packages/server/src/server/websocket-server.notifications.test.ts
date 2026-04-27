@@ -98,7 +98,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     agentManager as unknown as AgentManager,
     {} as unknown as AgentStorage,
     {} as unknown as DownloadTokenStore,
-    "/tmp/paseo-test",
+    "/tmp/hubcode-test",
     daemonConfigStore as unknown as DaemonConfigStore,
     null,
     { allowedOrigins: new Set() },

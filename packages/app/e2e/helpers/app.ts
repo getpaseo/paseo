@@ -28,7 +28,7 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
 
   const needsReset = await page.evaluate(
     ({ expectedEndpoint: endpoint, expectedServerId: serverId }) => {
-      const raw = localStorage.getItem("@paseo:daemon-registry");
+      const raw = localStorage.getItem("@hubcode:daemon-registry");
       if (!raw) return true;
       try {
         const parsed = JSON.parse(raw);
@@ -70,10 +70,10 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
   const preferences = buildCreateAgentPreferences(expectedServerId);
   await page.evaluate(
     ({ daemon: seededDaemon, preferences: seededPreferences }) => {
-      localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededDaemon]));
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(seededPreferences));
-      localStorage.removeItem("@paseo:settings");
+      localStorage.setItem("@hubcode:e2e", "1");
+      localStorage.setItem("@hubcode:daemon-registry", JSON.stringify([seededDaemon]));
+      localStorage.setItem("@hubcode:create-agent-preferences", JSON.stringify(seededPreferences));
+      localStorage.removeItem("@hubcode:settings");
     },
     { daemon, preferences },
   );
@@ -86,11 +86,11 @@ function parseRegistryEntry(registryRaw: string): { serverId: string; connection
   try {
     registry = JSON.parse(registryRaw);
   } catch {
-    throw new Error("E2E expected @paseo:daemon-registry to be valid JSON.");
+    throw new Error("E2E expected @hubcode:daemon-registry to be valid JSON.");
   }
   if (!Array.isArray(registry) || registry.length !== 1) {
     throw new Error(
-      `E2E expected @paseo:daemon-registry to contain exactly 1 daemon (got ${Array.isArray(registry) ? registry.length : "non-array"}).`,
+      `E2E expected @hubcode:daemon-registry to contain exactly 1 daemon (got ${Array.isArray(registry) ? registry.length : "non-array"}).`,
     );
   }
   const daemon = registry[0] as { serverId?: string; connections?: unknown };
@@ -137,7 +137,7 @@ function assertPreferencesMatch(prefsRaw: string, serverId: string): void {
     }
   } catch (error) {
     if (error instanceof Error) throw error;
-    throw new Error("E2E expected @paseo:create-agent-preferences to be valid JSON.", {
+    throw new Error("E2E expected @hubcode:create-agent-preferences to be valid JSON.", {
       cause: error,
     });
   }
@@ -152,13 +152,13 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
   }
 
   const snapshot = await page.evaluate(() => {
-    const registryRaw = localStorage.getItem("@paseo:daemon-registry");
-    const prefsRaw = localStorage.getItem("@paseo:create-agent-preferences");
+    const registryRaw = localStorage.getItem("@hubcode:daemon-registry");
+    const prefsRaw = localStorage.getItem("@hubcode:create-agent-preferences");
     return { registryRaw, prefsRaw };
   });
 
   if (!snapshot.registryRaw) {
-    throw new Error("E2E expected @paseo:daemon-registry to be set before app load.");
+    throw new Error("E2E expected @hubcode:daemon-registry to be set before app load.");
   }
 
   const { serverId, connections } = parseRegistryEntry(snapshot.registryRaw);
@@ -170,7 +170,7 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
   assertDaemonConnections(connections, expectedEndpoint);
 
   if (!snapshot.prefsRaw) {
-    throw new Error("E2E expected @paseo:create-agent-preferences to be set before app load.");
+    throw new Error("E2E expected @hubcode:create-agent-preferences to be set before app load.");
   }
   assertPreferencesMatch(snapshot.prefsRaw, serverId);
 }
@@ -355,8 +355,8 @@ export const ensureHostSelected = async (page: Page) => {
     }
 
     const fix = await page.evaluate(() => {
-      const registryRaw = localStorage.getItem("@paseo:daemon-registry");
-      const prefsRaw = localStorage.getItem("@paseo:create-agent-preferences");
+      const registryRaw = localStorage.getItem("@hubcode:daemon-registry");
+      const prefsRaw = localStorage.getItem("@hubcode:create-agent-preferences");
       if (!registryRaw || !prefsRaw) return { ok: false, reason: "missing storage" } as const;
       const registry = JSON.parse(registryRaw) as Array<{ serverId?: string }>;
       const prefs = JSON.parse(prefsRaw) as { serverId?: string };
@@ -366,10 +366,10 @@ export const ensureHostSelected = async (page: Page) => {
       if (typeof serverId !== "string" || serverId.length === 0)
         return { ok: false, reason: "missing serverId" } as const;
       prefs.serverId = serverId;
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(prefs));
+      localStorage.setItem("@hubcode:create-agent-preferences", JSON.stringify(prefs));
       // Prevent the fixture's init-script from overwriting the corrected prefs on reload.
-      const nonce = localStorage.getItem("@paseo:e2e-seed-nonce") ?? "1";
-      localStorage.setItem("@paseo:e2e-disable-default-seed-once", nonce);
+      const nonce = localStorage.getItem("@hubcode:e2e-seed-nonce") ?? "1";
+      localStorage.setItem("@hubcode:e2e-disable-default-seed-once", nonce);
       return { ok: true } as const;
     });
 

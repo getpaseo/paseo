@@ -29,7 +29,7 @@ export async function connectScheduleClient(
     throw {
       code: "DAEMON_NOT_RUNNING",
       message: `Cannot connect to daemon at ${resolvedHost}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
+      details: "Start the daemon with: hubcode daemon start",
     } satisfies CommandError;
   }
 }
@@ -89,7 +89,7 @@ function resolveScheduleTarget(args: {
   createNewAgentTarget: () => ScheduleTarget;
 }): ScheduleTarget {
   const { targetValue, hasExplicitProviderSelection, createNewAgentTarget } = args;
-  const currentAgentId = process.env.PASEO_AGENT_ID?.trim();
+  const currentAgentId = process.env.HUBCODE_AGENT_ID?.trim();
 
   if (!targetValue) {
     if (currentAgentId && !hasExplicitProviderSelection) {
@@ -114,7 +114,7 @@ function resolveScheduleTarget(args: {
     if (!currentAgentId) {
       throw {
         code: "INVALID_TARGET",
-        message: "--target self requires running inside a Paseo agent",
+        message: "--target self requires running inside a Hubcode agent",
       } satisfies CommandError;
     }
     return { type: "self", agentId: currentAgentId };

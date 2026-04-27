@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { createRequire } from "node:module";
-import { getOrCreateServerId, findExecutable, execCommand } from "@getpaseo/server";
+import { getOrCreateServerId, findExecutable, execCommand } from "@gethubcode/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";

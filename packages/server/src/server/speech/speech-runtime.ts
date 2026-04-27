@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
 
-import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
+import type { HubcodeOpenAIConfig, HubcodeSpeechConfig } from "../bootstrap.js";
 import type { LocalSpeechModelId } from "./providers/local/config.js";
 import {
   ensureLocalSpeechModels,
@@ -54,7 +54,7 @@ export interface SpeechReadinessSnapshot {
 }
 
 function resolveRequestedSpeechProviders(
-  speechConfig: PaseoSpeechConfig | null,
+  speechConfig: HubcodeSpeechConfig | null,
 ): RequestedSpeechProviders {
   const defaults: RequestedSpeechProviders = {
     dictationStt: { provider: "local", explicit: false, enabled: true },
@@ -354,8 +354,8 @@ export interface SpeechService {
 
 export function createSpeechService(params: {
   logger: Logger;
-  openaiConfig?: PaseoOpenAIConfig;
-  speechConfig?: PaseoSpeechConfig;
+  openaiConfig?: HubcodeOpenAIConfig;
+  speechConfig?: HubcodeSpeechConfig;
 }): SpeechService {
   const logger = params.logger.child({ module: "speech-runtime" });
   const speechConfig = params.speechConfig ?? null;

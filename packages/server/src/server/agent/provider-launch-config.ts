@@ -3,7 +3,7 @@ import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { isCommandAvailable } from "../../utils/executable.js";
-import { createExternalProcessEnv, type ProcessEnvRecord } from "../paseo-env.js";
+import { createExternalProcessEnv, type ProcessEnvRecord } from "../hubcode-env.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
 
@@ -167,7 +167,7 @@ export function migrateProviderSettings(
 }
 
 // Env vars that indicate a running Claude Code session. If the daemon itself is
-// launched from inside Claude Code (e.g. by a Paseo agent), these leak into
+// launched from inside Claude Code (e.g. by a Hubcode agent), these leak into
 // child processes and cause "cannot be launched inside another session" errors.
 const PARENT_SESSION_ENV_VARS = [
   "CLAUDECODE",

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { resolveAppVersion } from "@/utils/app-version";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { buildHostRootRoute } from "@/utils/host-routes";
-import { PaseoLogo } from "@/components/icons/paseo-logo";
+import { HubcodeLogo } from "@/components/icons/hubcode-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isWeb, isNative } from "@/constants/platform";
 
@@ -178,8 +178,8 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
     [router],
   );
 
-  const handleOpenPaseoSite = useCallback(() => {
-    void openExternalUrl("https://paseo.sh");
+  const handleOpenHubcodeSite = useCallback(() => {
+    void openExternalUrl("https://hubcode.ai");
   }, []);
 
   const handleOpenSettings = useCallback(() => {
@@ -264,17 +264,17 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
         testID="welcome-screen"
       >
         <View style={styles.content}>
-          <PaseoLogo size={96} />
+          <HubcodeLogo size={96} />
           <View style={styles.copyBlock}>
             {isConnectingToSavedHosts ? (
               <Text style={styles.subtitle}>Connecting…</Text>
             ) : (
               <>
-                <Text style={styles.title}>Welcome to Paseo</Text>
+                <Text style={styles.title}>Welcome to Hubcode</Text>
                 <Text style={styles.subtitle}>Connect your computer to get started</Text>
                 {isNative ? (
-                  <Pressable style={styles.setupLink} onPress={handleOpenPaseoSite}>
-                    <Text style={styles.setupLinkText}>paseo.sh</Text>
+                  <Pressable style={styles.setupLink} onPress={handleOpenHubcodeSite}>
+                    <Text style={styles.setupLinkText}>hubcode.ai</Text>
                     <ExternalLink size={14} color={theme.colors.accent} />
                   </Pressable>
                 ) : null}

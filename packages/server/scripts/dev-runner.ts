@@ -8,7 +8,7 @@ dotenv.config({
 });
 
 const daemonRunnerEntry = fileURLToPath(new URL("./supervisor-entrypoint.ts", import.meta.url));
-const inspectArg = process.env.PASEO_NODE_INSPECT ?? "--inspect";
+const inspectArg = process.env.HUBCODE_NODE_INSPECT ?? "--inspect";
 const inspectArgs =
   inspectArg === "0" || inspectArg === "false" || inspectArg === "off" ? [] : [inspectArg];
 
@@ -17,7 +17,7 @@ const supervisorArgs = [
   "--heapsnapshot-near-heap-limit=3",
   "--max-old-space-size=3072",
   "--report-on-fatalerror",
-  "--report-directory=/tmp/paseo-reports",
+  "--report-directory=/tmp/hubcode-reports",
   ...process.execArgv,
   daemonRunnerEntry,
   "--dev",

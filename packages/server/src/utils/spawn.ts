@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:chil
 import { extname } from "node:path";
 import { promisify } from "node:util";
 
-import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/paseo-env.js";
+import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/hubcode-env.js";
 import {
   isWindowsCommandScript,
   quoteWindowsArgument,

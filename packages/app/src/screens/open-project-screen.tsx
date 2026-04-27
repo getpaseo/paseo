@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { FolderOpen, Smartphone } from "lucide-react-native";
-import { PaseoLogo } from "@/components/icons/paseo-logo";
+import { HubcodeLogo } from "@/components/icons/hubcode-logo";
 import { Button } from "@/components/ui/button";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
@@ -48,7 +48,7 @@ export function OpenProjectScreen({ serverId }: { serverId: string }) {
       <View style={styles.content}>
         <TitlebarDragRegion />
         <View style={styles.logo}>
-          <PaseoLogo size={56} />
+          <HubcodeLogo size={56} />
         </View>
         <View style={styles.headingGroup}>
           <Text style={styles.heading}>What shall we build today?</Text>

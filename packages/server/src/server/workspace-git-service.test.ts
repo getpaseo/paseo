@@ -38,7 +38,7 @@ function createSnapshot(
       mainRepoRoot: null,
       currentBranch: "main",
       remoteUrl: "https://github.com/acme/repo.git",
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       isDirty: false,
       baseRef: "main",
       aheadBehind: { ahead: 0, behind: 0 },
@@ -98,7 +98,7 @@ function createCheckoutStatus(
     behindOfOrigin: 0,
     hasRemote: true,
     remoteUrl: "https://github.com/acme/repo.git",
-    isPaseoOwnedWorktree: false,
+    isHubcodeOwnedWorktree: false,
     ...overrides,
   };
 }
@@ -219,7 +219,7 @@ function buildDefaultTestServiceDeps() {
 function createService(options?: CreateServiceTestOptions) {
   return new WorkspaceGitServiceImpl({
     logger: createLogger() as unknown as pino.Logger,
-    paseoHome: "/tmp/paseo-test",
+    hubcodeHome: "/tmp/hubcode-test",
     deps: { ...buildDefaultTestServiceDeps(), ...options },
   });
 }
@@ -289,7 +289,7 @@ describe("WorkspaceGitServiceImpl", () => {
   test("getSnapshot keeps plain git classification when shortstat lookup fails", async () => {
     const getCheckoutShortstat = vi.fn(async () => {
       throw new Error(
-        "Missing Paseo worktree base metadata: /tmp/repo/.git/worktrees/feature/paseo/worktree.json",
+        "Missing Hubcode worktree base metadata: /tmp/repo/.git/worktrees/feature/hubcode/worktree.json",
       );
     });
     const service = createService({
@@ -297,7 +297,7 @@ describe("WorkspaceGitServiceImpl", () => {
         createCheckoutStatus(cwd, {
           repoRoot: cwd,
           currentBranch: "feature/worktree",
-          isPaseoOwnedWorktree: false,
+          isHubcodeOwnedWorktree: false,
           mainRepoRoot: "/tmp/main-repo",
         }),
       ),
@@ -309,7 +309,7 @@ describe("WorkspaceGitServiceImpl", () => {
         git: {
           repoRoot: "/tmp/repo",
           currentBranch: "feature/worktree",
-          isPaseoOwnedWorktree: false,
+          isHubcodeOwnedWorktree: false,
           mainRepoRoot: "/tmp/main-repo",
           diffStat: null,
         },
@@ -827,7 +827,7 @@ describe("WorkspaceGitServiceImpl", () => {
 
     expect(getCheckoutShortstat).toHaveBeenLastCalledWith(
       "/tmp/repo",
-      { paseoHome: "/tmp/paseo-test" },
+      { hubcodeHome: "/tmp/hubcode-test" },
       { force: true },
     );
     expect(workspaceListener).toHaveBeenCalledWith(

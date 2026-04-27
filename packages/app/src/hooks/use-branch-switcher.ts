@@ -81,7 +81,7 @@ export function useBranchSwitcher({
     async (branchId: string) => {
       if (!client) return;
       try {
-        const stashPayload = await client.stashList(normalizedWorkspaceId, { paseoOnly: true });
+        const stashPayload = await client.stashList(normalizedWorkspaceId, { hubcodeOnly: true });
         const targetStash = stashPayload.entries.find((e) => e.branch === branchId);
         if (!targetStash) return;
         const shouldRestore = await confirmDialog({

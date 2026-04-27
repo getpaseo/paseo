@@ -49,7 +49,7 @@ describe("worktree shell selection", () => {
     try {
       mkdirSync(join(worktreePath, ".git"), { recursive: true });
       writeFileSync(
-        join(worktreePath, "paseo.json"),
+        join(worktreePath, "hubcode.json"),
         JSON.stringify({
           worktree: {
             teardown: ["Write-Output 'teardown'"],

@@ -6,18 +6,18 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
-  PaseoConfigRaw,
-  PaseoConfigRevision,
+  HubcodeConfigRaw,
+  HubcodeConfigRevision,
   ProjectConfigRpcError,
 } from "@server/shared/messages";
 import type { ProjectHostEntry, ProjectSummary, WorkspaceSummary } from "@/utils/projects";
 import type { ProjectHostError, UseProjectsResult } from "@/hooks/use-projects";
 
 type ReadResult =
-  | { ok: true; config: PaseoConfigRaw | null; revision: PaseoConfigRevision | null }
+  | { ok: true; config: HubcodeConfigRaw | null; revision: HubcodeConfigRevision | null }
   | { ok: false; error: ProjectConfigRpcError };
 type WriteResult =
-  | { ok: true; config: PaseoConfigRaw; revision: PaseoConfigRevision }
+  | { ok: true; config: HubcodeConfigRaw; revision: HubcodeConfigRevision }
   | { ok: false; error: ProjectConfigRpcError };
 
 interface MockClient {
@@ -460,8 +460,8 @@ function setProjectsState(overrides: Partial<UseProjectsResult>) {
 }
 
 function readSuccess(input: {
-  config: PaseoConfigRaw | null;
-  revision: PaseoConfigRevision | null;
+  config: HubcodeConfigRaw | null;
+  revision: HubcodeConfigRevision | null;
 }): ReadResult {
   return { ok: true, config: input.config, revision: input.revision };
 }
@@ -471,8 +471,8 @@ function readError(error: ProjectConfigRpcError): ReadResult {
 }
 
 function writeSuccess(input: {
-  config: PaseoConfigRaw;
-  revision: PaseoConfigRevision;
+  config: HubcodeConfigRaw;
+  revision: HubcodeConfigRevision;
 }): WriteResult {
   return { ok: true, config: input.config, revision: input.revision };
 }
@@ -728,18 +728,18 @@ describe("ProjectSettingsScreen — save flow", () => {
     setProjectsState({
       projects: [project({ hosts: [hostEntry({ serverId: "a", repoRoot: "/p/a" })] })],
     });
-    const baseConfig: PaseoConfigRaw = {
+    const baseConfig: HubcodeConfigRaw = {
       worktree: { setup: "npm install" },
       customTopLevel: "preserved",
-    } as unknown as PaseoConfigRaw;
-    const initialRevision: PaseoConfigRevision = { mtimeMs: 100, size: 50 };
-    const newRevision: PaseoConfigRevision = { mtimeMs: 200, size: 60 };
+    } as unknown as HubcodeConfigRaw;
+    const initialRevision: HubcodeConfigRevision = { mtimeMs: 100, size: 50 };
+    const newRevision: HubcodeConfigRevision = { mtimeMs: 200, size: 60 };
 
     client.readProjectConfig.mockResolvedValue(
       readSuccess({ config: baseConfig, revision: initialRevision }),
     );
     client.writeProjectConfig.mockImplementation(
-      async (input: { config: PaseoConfigRaw; expectedRevision: PaseoConfigRevision | null }) =>
+      async (input: { config: HubcodeConfigRaw; expectedRevision: HubcodeConfigRevision | null }) =>
         writeSuccess({ config: input.config, revision: newRevision }),
     );
 
@@ -754,8 +754,8 @@ describe("ProjectSettingsScreen — save flow", () => {
     expect(client.writeProjectConfig).toHaveBeenCalledTimes(1);
     const callArg = client.writeProjectConfig.mock.calls[0]![0] as {
       repoRoot: string;
-      config: PaseoConfigRaw;
-      expectedRevision: PaseoConfigRevision | null;
+      config: HubcodeConfigRaw;
+      expectedRevision: HubcodeConfigRevision | null;
     };
     expect(callArg.repoRoot).toBe("/p/a");
     expect(callArg.expectedRevision).toEqual(initialRevision);
@@ -768,7 +768,7 @@ describe("ProjectSettingsScreen — save flow", () => {
     click(requireById("save-button"));
     await flush();
     const secondArg = client.writeProjectConfig.mock.calls[1]![0] as {
-      expectedRevision: PaseoConfigRevision;
+      expectedRevision: HubcodeConfigRevision;
     };
     expect(secondArg.expectedRevision).toEqual(newRevision);
   });
@@ -814,7 +814,7 @@ describe("ProjectSettingsScreen — save flow", () => {
     await flush();
 
     const callout = requireById("invalid-callout");
-    expect(callout.textContent).toContain("paseo.json couldn't be parsed");
+    expect(callout.textContent).toContain("hubcode.json couldn't be parsed");
     expect(findById("invalid-callout-action-0")?.textContent).toBe("Reload");
   });
 
@@ -834,7 +834,7 @@ describe("ProjectSettingsScreen — save flow", () => {
     await flush();
 
     const callout = requireById("write-failed-callout");
-    expect(callout.textContent).toContain("Couldn't save paseo.json");
+    expect(callout.textContent).toContain("Couldn't save hubcode.json");
     expect(findById("write-failed-callout-action-0")?.textContent).toBe("Try again");
     expect(findById("write-failed-callout-action-1")?.textContent).toBe("Reload");
 
@@ -856,7 +856,7 @@ describe("ProjectSettingsScreen — round-trip semantics", () => {
         revision: { mtimeMs: 1, size: 1 },
       }),
     );
-    client.writeProjectConfig.mockImplementation(async (input: { config: PaseoConfigRaw }) =>
+    client.writeProjectConfig.mockImplementation(async (input: { config: HubcodeConfigRaw }) =>
       writeSuccess({ config: input.config, revision: { mtimeMs: 2, size: 2 } }),
     );
 
@@ -869,7 +869,7 @@ describe("ProjectSettingsScreen — round-trip semantics", () => {
     click(requireById("save-button"));
     await flush();
 
-    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as PaseoConfigRaw;
+    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as HubcodeConfigRaw;
     // string stays string when edited in place
     expect(savedConfig.worktree?.setup).toBe("npm install\nnpm run prepare");
   });
@@ -884,7 +884,7 @@ describe("ProjectSettingsScreen — round-trip semantics", () => {
         revision: { mtimeMs: 1, size: 1 },
       }),
     );
-    client.writeProjectConfig.mockImplementation(async (input: { config: PaseoConfigRaw }) =>
+    client.writeProjectConfig.mockImplementation(async (input: { config: HubcodeConfigRaw }) =>
       writeSuccess({ config: input.config, revision: { mtimeMs: 2, size: 2 } }),
     );
 
@@ -897,7 +897,7 @@ describe("ProjectSettingsScreen — round-trip semantics", () => {
     click(requireById("save-button"));
     await flush();
 
-    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as PaseoConfigRaw;
+    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as HubcodeConfigRaw;
     expect(savedConfig.worktree?.teardown).toEqual(["docker compose down", "rm -rf .cache"]);
   });
 
@@ -908,7 +908,7 @@ describe("ProjectSettingsScreen — round-trip semantics", () => {
     client.readProjectConfig.mockResolvedValue(
       readSuccess({ config: {}, revision: { mtimeMs: 1, size: 1 } }),
     );
-    client.writeProjectConfig.mockImplementation(async (input: { config: PaseoConfigRaw }) =>
+    client.writeProjectConfig.mockImplementation(async (input: { config: HubcodeConfigRaw }) =>
       writeSuccess({ config: input.config, revision: { mtimeMs: 2, size: 2 } }),
     );
 
@@ -920,7 +920,7 @@ describe("ProjectSettingsScreen — round-trip semantics", () => {
     click(requireById("save-button"));
     await flush();
 
-    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as PaseoConfigRaw;
+    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as HubcodeConfigRaw;
     expect(savedConfig.worktree?.setup).toBe("npm install");
   });
 
@@ -931,7 +931,7 @@ describe("ProjectSettingsScreen — round-trip semantics", () => {
     client.readProjectConfig.mockResolvedValue(
       readSuccess({ config: {}, revision: { mtimeMs: 1, size: 1 } }),
     );
-    client.writeProjectConfig.mockImplementation(async (input: { config: PaseoConfigRaw }) =>
+    client.writeProjectConfig.mockImplementation(async (input: { config: HubcodeConfigRaw }) =>
       writeSuccess({ config: input.config, revision: { mtimeMs: 2, size: 2 } }),
     );
 
@@ -943,7 +943,7 @@ describe("ProjectSettingsScreen — round-trip semantics", () => {
     click(requireById("save-button"));
     await flush();
 
-    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as PaseoConfigRaw;
+    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as HubcodeConfigRaw;
     expect(savedConfig.worktree?.setup).toEqual(["npm install", "npm run prepare"]);
   });
 });
@@ -964,7 +964,7 @@ describe("ProjectSettingsScreen — scripts editor", () => {
         revision: { mtimeMs: 1, size: 1 },
       }),
     );
-    client.writeProjectConfig.mockImplementation(async (input: { config: PaseoConfigRaw }) =>
+    client.writeProjectConfig.mockImplementation(async (input: { config: HubcodeConfigRaw }) =>
       writeSuccess({ config: input.config, revision: { mtimeMs: 2, size: 2 } }),
     );
     confirmDialogMock.mockResolvedValue(true);
@@ -996,7 +996,7 @@ describe("ProjectSettingsScreen — scripts editor", () => {
     click(requireById("save-button"));
     await flush();
 
-    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as PaseoConfigRaw;
+    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as HubcodeConfigRaw;
     const scriptKeys = Object.keys((savedConfig as Record<string, unknown>).scripts ?? {});
     // One of the two scripts was removed.
     expect(scriptKeys.length).toBe(1);
@@ -1017,11 +1017,11 @@ describe("ProjectSettingsScreen — scripts editor", () => {
         },
       },
       customTopLevel: "preserved",
-    } as unknown as PaseoConfigRaw;
+    } as unknown as HubcodeConfigRaw;
     client.readProjectConfig.mockResolvedValue(
       readSuccess({ config: base, revision: { mtimeMs: 1, size: 1 } }),
     );
-    client.writeProjectConfig.mockImplementation(async (input: { config: PaseoConfigRaw }) =>
+    client.writeProjectConfig.mockImplementation(async (input: { config: HubcodeConfigRaw }) =>
       writeSuccess({ config: input.config, revision: { mtimeMs: 2, size: 2 } }),
     );
 
@@ -1031,7 +1031,7 @@ describe("ProjectSettingsScreen — scripts editor", () => {
     click(requireById("save-button"));
     await flush();
 
-    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as PaseoConfigRaw;
+    const savedConfig = client.writeProjectConfig.mock.calls[0]![0]!.config as HubcodeConfigRaw;
     expect((savedConfig as Record<string, unknown>).customTopLevel).toBe("preserved");
     const worktreeRecord = (savedConfig.worktree ?? {}) as Record<string, unknown>;
     expect(worktreeRecord.customWorktreeField).toBe("keep");

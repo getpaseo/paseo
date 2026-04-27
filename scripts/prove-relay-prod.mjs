@@ -20,21 +20,21 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv);
 
-const serverId = args["server-id"] ?? process.env.PASEO_SERVER_ID;
-const daemonPublicKeyB64 = args["daemon-public-key-b64"] ?? process.env.PASEO_DAEMON_PUBLIC_KEY_B64;
+const serverId = args["server-id"] ?? process.env.HUBCODE_SERVER_ID;
+const daemonPublicKeyB64 = args["daemon-public-key-b64"] ?? process.env.HUBCODE_DAEMON_PUBLIC_KEY_B64;
 const relayEndpoint =
-  args["relay-endpoint"] ?? process.env.PASEO_RELAY_ENDPOINT ?? "relay.paseo.sh:443";
-const baseUrl = args["base-url"] ?? process.env.PASEO_APP_URL ?? "https://app.paseo.sh";
-const timeoutMs = Number(args["timeout-ms"] ?? process.env.PASEO_PROVE_TIMEOUT_MS ?? 60_000);
-const stabilityMs = Number(args["stability-ms"] ?? process.env.PASEO_PROVE_STABILITY_MS ?? 30_000);
+  args["relay-endpoint"] ?? process.env.HUBCODE_RELAY_ENDPOINT ?? "relay.hubcode.ai:443";
+const baseUrl = args["base-url"] ?? process.env.HUBCODE_APP_URL ?? "https://app.hubcode.ai";
+const timeoutMs = Number(args["timeout-ms"] ?? process.env.HUBCODE_PROVE_TIMEOUT_MS ?? 60_000);
+const stabilityMs = Number(args["stability-ms"] ?? process.env.HUBCODE_PROVE_STABILITY_MS ?? 30_000);
 
 if (!serverId || typeof serverId !== "string") {
-  console.error("Missing server ID. Provide --server-id or PASEO_SERVER_ID.");
+  console.error("Missing server ID. Provide --server-id or HUBCODE_SERVER_ID.");
   process.exit(2);
 }
 if (!daemonPublicKeyB64 || typeof daemonPublicKeyB64 !== "string") {
   console.error(
-    "Missing daemon public key. Provide --daemon-public-key-b64 or PASEO_DAEMON_PUBLIC_KEY_B64.",
+    "Missing daemon public key. Provide --daemon-public-key-b64 or HUBCODE_DAEMON_PUBLIC_KEY_B64.",
   );
   process.exit(2);
 }
@@ -58,8 +58,8 @@ page.on("pageerror", (e) => console.error(`[browser:pageerror] ${e.message}`));
 
 await page.addInitScript(
   (seed) => {
-    localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seed.daemon]));
-    localStorage.removeItem("@paseo:settings");
+    localStorage.setItem("@hubcode:daemon-registry", JSON.stringify([seed.daemon]));
+    localStorage.removeItem("@hubcode:settings");
   },
   { daemon },
 );

@@ -277,7 +277,7 @@ async function inspectFullscreenResizer(page) {
     await page.waitForTimeout(1000);
 
     const details = await page.evaluate(async () => {
-      const bridge = window.paseoDesktop?.window;
+      const bridge = window.hubcodeDesktop?.window;
       const bridgeFullscreen =
         typeof bridge?.isFullscreen === "function" ? await bridge.isFullscreen() : null;
       const visibleNoDragResizers = Array.from(document.querySelectorAll("*"))
@@ -393,7 +393,7 @@ async function navigateToWelcome(page) {
 
 async function detectDesktopBridge(page) {
   return page.evaluate(() => {
-    const bridge = window.paseoDesktop;
+    const bridge = window.hubcodeDesktop;
     const keys = bridge && typeof bridge === "object" ? Object.keys(bridge) : [];
     const keyTypes =
       bridge && typeof bridge === "object"
@@ -537,7 +537,7 @@ async function main() {
   });
 
   const desktopStatus = await page.evaluate(() =>
-    window.paseoDesktop.invoke("desktop_daemon_status"),
+    window.hubcodeDesktop.invoke("desktop_daemon_status"),
   );
   assert(
     typeof desktopStatus?.serverId === "string" && desktopStatus.serverId.trim().length > 0,

@@ -4,21 +4,21 @@
 
 ### Added
 
-- Project settings page with a built-in `paseo.json` editor.
+- Project settings page with a built-in `hubcode.json` editor.
 - Cold start restores your last open workspace.
 - Tool call badges have a button to open the referenced file directly.
 - Enable or disable providers from Settings without editing config files.
-- Paseo prompts you to configure a worktree setup script when one is missing.
+- Hubcode prompts you to configure a worktree setup script when one is missing.
 
 ### Improved
 
 - Provider settings and model selection have been redesigned, with switches replacing toggle buttons.
-- Voice mode transcription endpoint is configurable for OpenAI-compatible providers. ([#570](https://github.com/getpaseo/paseo/pull/570) by [@yuruiz](https://github.com/yuruiz))
+- Voice mode transcription endpoint is configurable for OpenAI-compatible providers. ([#570](https://github.com/hubtool/hubcode/pull/570) by [@yuruiz](https://github.com/yuruiz))
 - Adding a project no longer waits for GitHub PR status to load.
 - Startup splash screen is cleaner — just the logo with a subtle shimmer.
 - Desktop quit flow is smoother with a clearer shutdown dialog.
-- `paseo.json` setup and teardown accept a single command string, not just an array.
-- New worktrees auto-seed a `paseo.json` so scripts edited in Settings apply on the first run without committing.
+- `hubcode.json` setup and teardown accept a single command string, not just an array.
+- New worktrees auto-seed a `hubcode.json` so scripts edited in Settings apply on the first run without committing.
 - Archiving a worktree is instant instead of waiting for the backend to confirm.
 - Agent timelines and git diff lists no longer jump around while loading or streaming.
 
@@ -50,15 +50,15 @@
 ### Fixed
 
 - Pull request status resolves correctly for PRs opened from forks.
-- Installing the paseo CLI from the macOS desktop app now works in packaged builds.
+- Installing the hubcode CLI from the macOS desktop app now works in packaged builds.
 - Agents launched from the desktop app no longer inherit Electron-only environment variables.
 
 ## 0.1.61 - 2026-04-23
 
 ### Added
 
-- `additionalModels` option in provider config lets you add or relabel models without replacing the full list — entries merge with runtime-discovered models (ACP) or your static `models` list. See the [Providers docs](https://paseo.sh/docs/providers).
-- New [Providers docs page](https://paseo.sh/docs/providers) covering first-class providers and every custom provider config pattern in one place.
+- `additionalModels` option in provider config lets you add or relabel models without replacing the full list — entries merge with runtime-discovered models (ACP) or your static `models` list. See the [Providers docs](https://hubcode.ai/docs/providers).
+- New [Providers docs page](https://hubcode.ai/docs/providers) covering first-class providers and every custom provider config pattern in one place.
 
 ### Improved
 
@@ -70,7 +70,7 @@
 
 ### Added
 
-- Scripts and services per worktree — define named commands in `paseo.json`, and long-running services get supervised with their own ports and nice proxy URLs like `http://web.my-app.localhost:6767`. See the [worktrees guide](https://paseo.sh/docs/worktrees).
+- Scripts and services per worktree — define named commands in `hubcode.json`, and long-running services get supervised with their own ports and nice proxy URLs like `http://web.my-app.localhost:6767`. See the [worktrees guide](https://hubcode.ai/docs/worktrees).
 - Launch scripts and services for a worktree directly from the workspace header.
 - New Setup tab in every workspace showing setup, teardown, and script progress live.
 - GitHub checks and PR reviews in the explorer sidebar, with a hover card for the full breakdown.
@@ -95,7 +95,7 @@
 - Keyboard shortcuts keep working while Settings is open.
 - Escape reliably interrupts the active agent.
 - Checking out a pull request from a fork lands on an owner-prefixed branch so multiple forks don't collide.
-- `paseo ls` defaults to active agents; pass `-a` to include archived.
+- `hubcode ls` defaults to active agents; pass `-a` to include archived.
 - GitHub branch and PR picker loads faster — queries are deferred until the picker opens.
 
 ### Fixed
@@ -105,7 +105,7 @@
 - Replacing a running agent cleans up the previous one without leaving it behind.
 - Agent notifications no longer get swallowed by a backgrounded focused client.
 - Removed workspace folders disappear from the workspace list again.
-- Codex keeps fast mode after you approve a plan. ([#526](https://github.com/getpaseo/paseo/pull/526) by [@therainisme](https://github.com/therainisme))
+- Codex keeps fast mode after you approve a plan. ([#526](https://github.com/hubtool/hubcode/pull/526) by [@therainisme](https://github.com/therainisme))
 - Workspace tab focus is preserved across page refreshes.
 - Settings screen no longer pushes its header down with extra spacing.
 - Branch switcher title no longer overflows on narrow rows.
@@ -129,27 +129,27 @@
 
 ### Added
 
-- Markdown files render as formatted markdown in the file pane. ([#427](https://github.com/getpaseo/paseo/pull/427) by [@aaronflorey](https://github.com/aaronflorey))
+- Markdown files render as formatted markdown in the file pane. ([#427](https://github.com/hubtool/hubcode/pull/427) by [@aaronflorey](https://github.com/aaronflorey))
 - Cmd+L (Ctrl+L on Windows/Linux) focuses the agent message input.
-- Provider models refresh on a freshness TTL; Settings shows last-updated time and any fetch errors. ([#426](https://github.com/getpaseo/paseo/pull/426))
+- Provider models refresh on a freshness TTL; Settings shows last-updated time and any fetch errors. ([#426](https://github.com/hubtool/hubcode/pull/426))
 - `disallowedTools` option in provider config to block specific tools from an agent.
 
 ### Improved
 
-- Windows: agents launch reliably from npm `.cmd` shims, paths with spaces, and JSON config args — fixes `spawn EINVAL` startup errors. ([#454](https://github.com/getpaseo/paseo/pull/454))
-- OpenCode permission prompts include the requesting tool's context. ([#398](https://github.com/getpaseo/paseo/pull/398) by [@aaronflorey](https://github.com/aaronflorey))
-- OpenCode todo and compaction events render in the timeline. ([#429](https://github.com/getpaseo/paseo/pull/429) by [@aaronflorey](https://github.com/aaronflorey))
-- OpenCode sessions archive cleanly when closed. ([#408](https://github.com/getpaseo/paseo/pull/408) by [@aaronflorey](https://github.com/aaronflorey))
-- OpenCode slash commands recover from SSE timeouts. ([#407](https://github.com/getpaseo/paseo/pull/407) by [@aaronflorey](https://github.com/aaronflorey))
-- Paseo MCP tools work against archived agents, matching the CLI. ([#423](https://github.com/getpaseo/paseo/pull/423))
-- Native scrollbars match the active theme across all web views. ([#399](https://github.com/getpaseo/paseo/pull/399) by [@ethersh](https://github.com/ethersh))
+- Windows: agents launch reliably from npm `.cmd` shims, paths with spaces, and JSON config args — fixes `spawn EINVAL` startup errors. ([#454](https://github.com/hubtool/hubcode/pull/454))
+- OpenCode permission prompts include the requesting tool's context. ([#398](https://github.com/hubtool/hubcode/pull/398) by [@aaronflorey](https://github.com/aaronflorey))
+- OpenCode todo and compaction events render in the timeline. ([#429](https://github.com/hubtool/hubcode/pull/429) by [@aaronflorey](https://github.com/aaronflorey))
+- OpenCode sessions archive cleanly when closed. ([#408](https://github.com/hubtool/hubcode/pull/408) by [@aaronflorey](https://github.com/aaronflorey))
+- OpenCode slash commands recover from SSE timeouts. ([#407](https://github.com/hubtool/hubcode/pull/407) by [@aaronflorey](https://github.com/aaronflorey))
+- Hubcode MCP tools work against archived agents, matching the CLI. ([#423](https://github.com/hubtool/hubcode/pull/423))
+- Native scrollbars match the active theme across all web views. ([#399](https://github.com/hubtool/hubcode/pull/399) by [@ethersh](https://github.com/ethersh))
 
 ### Fixed
 
-- Code file previews can be selected and copied on iOS. ([#447](https://github.com/getpaseo/paseo/pull/447) by [@muzhi1991](https://github.com/muzhi1991))
-- File preview no longer shows stale content when reopening the same file. ([#411](https://github.com/getpaseo/paseo/pull/411) by [@muzhi1991](https://github.com/muzhi1991))
-- File explorer reinitialises when the client reconnects after a page refresh. ([#442](https://github.com/getpaseo/paseo/pull/442) by [@1996fanrui](https://github.com/1996fanrui))
-- Generic ACP providers no longer receive duplicated command arguments. ([#444](https://github.com/getpaseo/paseo/pull/444) by [@edvardchen](https://github.com/edvardchen))
+- Code file previews can be selected and copied on iOS. ([#447](https://github.com/hubtool/hubcode/pull/447) by [@muzhi1991](https://github.com/muzhi1991))
+- File preview no longer shows stale content when reopening the same file. ([#411](https://github.com/hubtool/hubcode/pull/411) by [@muzhi1991](https://github.com/muzhi1991))
+- File explorer reinitialises when the client reconnects after a page refresh. ([#442](https://github.com/hubtool/hubcode/pull/442) by [@1996fanrui](https://github.com/1996fanrui))
+- Generic ACP providers no longer receive duplicated command arguments. ([#444](https://github.com/hubtool/hubcode/pull/444) by [@edvardchen](https://github.com/edvardchen))
 - Workspace headers no longer show a branch icon for non-git workspaces.
 - Branch switcher layout is stable on mobile.
 - Model names no longer truncate mid-word in the picker rows.
@@ -167,8 +167,8 @@
 
 ### Added
 
-- Provider profiles — define custom providers in your Paseo config that appear alongside built-ins. Override a built-in's binary, env, or models, or create entirely new providers. See the [configuration guide](https://github.com/getpaseo/paseo/blob/main/docs/CUSTOM-PROVIDERS.md).
-- ACP agent support — add any ACP-compatible agent to Paseo with `extends: "acp"` in your provider config. No code changes needed.
+- Provider profiles — define custom providers in your Hubcode config that appear alongside built-ins. Override a built-in's binary, env, or models, or create entirely new providers. See the [configuration guide](https://github.com/hubtool/hubcode/blob/main/docs/CUSTOM-PROVIDERS.md).
+- ACP agent support — add any ACP-compatible agent to Hubcode with `extends: "acp"` in your provider config. No code changes needed.
 - Choose provider and model when creating scheduled agents.
 - Max reasoning effort option for Opus 4.6 models.
 - Cmd+, (Ctrl+, on Windows/Linux) opens settings.
@@ -196,8 +196,8 @@
 
 ### Improved
 
-- Paseo tools are no longer injected into agents by default — opt in from Settings when you need agent-to-agent orchestration.
-- Agent provider and mode are now resolved server-side, so CLI commands like `paseo run` use consistent defaults without client-side lookups.
+- Hubcode tools are no longer injected into agents by default — opt in from Settings when you need agent-to-agent orchestration.
+- Agent provider and mode are now resolved server-side, so CLI commands like `hubcode run` use consistent defaults without client-side lookups.
 
 ### Fixed
 
@@ -209,10 +209,10 @@
 
 ### Added
 
-- Agents get Paseo tools automatically — every new agent gets access to terminals, schedules, worktrees, and other agents through MCP. Toggle it off in Settings under "Inject Paseo tools".
+- Agents get Hubcode tools automatically — every new agent gets access to terminals, schedules, worktrees, and other agents through MCP. Toggle it off in Settings under "Inject Hubcode tools".
 - Git pull — pull remote changes directly from the workspace header. Promoted to the primary action when your branch is behind origin.
 - Child agent notifications — parent agents are automatically notified when a child agent finishes, errors, or needs permission approval.
-- Agent reload — `paseo agent reload` restarts an agent's underlying process from the CLI.
+- Agent reload — `hubcode agent reload` restarts an agent's underlying process from the CLI.
 - Middle-click to close tabs on desktop.
 - Keyboard shortcut to cycle themes.
 
@@ -221,7 +221,7 @@
 - Unavailable git actions now explain why in a toast instead of being silently greyed out.
 - Streaming markdown on mobile renders significantly faster.
 - Sidebar, branch switcher, and agent panel no longer re-render unnecessarily — noticeable on large workspaces.
-- Paseo tool calls in agent timelines show the Paseo logo and human-readable names.
+- Hubcode tool calls in agent timelines show the Hubcode logo and human-readable names.
 - Relay and pairing URLs are stripped from daemon logs.
 
 ### Fixed
@@ -272,7 +272,7 @@
 ### Added
 
 - Context window meter — see how much of the context window your agent has used, with color thresholds at 70% and 90%. Works with Claude Code, Codex, and OpenCode.
-- Open in editor — jump from any workspace straight into Cursor, VS Code, Zed, or your file manager. Paseo remembers your choice.
+- Open in editor — jump from any workspace straight into Cursor, VS Code, Zed, or your file manager. Hubcode remembers your choice.
 - Side-by-side diffs — toggle between unified and split-column diff views, with a whitespace visibility option.
 - Spoken messages — when using voice mode, agent speech now appears as regular messages in the conversation instead of raw tool output.
 - Plan actions — plan cards now show the actions your agent supports (e.g. "Implement", "Deny") instead of generic accept/reject buttons.
@@ -322,7 +322,7 @@
 
 ### Fixed
 
-- Desktop app now resolves the user's full login shell environment at startup, fixing tools like `codex`, `node`, `bun`, and `direnv` not being found when Paseo is launched from Finder or Dock. Terminals spawned by Paseo now inherit the same PATH and environment variables as a normal terminal session. Approach adapted from VS Code's battle-tested shell environment resolution.
+- Desktop app now resolves the user's full login shell environment at startup, fixing tools like `codex`, `node`, `bun`, and `direnv` not being found when Hubcode is launched from Finder or Dock. Terminals spawned by Hubcode now inherit the same PATH and environment variables as a normal terminal session. Approach adapted from VS Code's battle-tested shell environment resolution.
 - Input field on running agent screens now correctly receives keyboard focus.
 - Mobile model selector alignment and sizing.
 
@@ -350,14 +350,14 @@
 
 - Pi (pi.dev) agent provider — connect Pi as a new ACP-based agent type with thinking levels and tool call support.
 - Copilot agent provider re-enabled after ACP compatibility fixes.
-- `paseo .` and `paseo <path>` open the desktop app with the given project, similar to `code .`.
+- `hubcode .` and `hubcode <path>` open the desktop app with the given project, similar to `code .`.
 - Provider-declared features system — providers can expose dynamic toggles and selects that the app renders automatically. First consumer: Codex fast mode.
 - Codex plan mode — start agents in plan-only mode with a dedicated plan card UI for reviewing proposed changes before execution.
 - OpenCode custom agents and slash commands — user-defined agents from opencode.json now appear in the mode picker, and slash commands accept optional arguments.
-- Desktop Integrations settings — install the Paseo CLI and orchestration skills directly from the app without touching the terminal.
+- Desktop Integrations settings — install the Hubcode CLI and orchestration skills directly from the app without touching the terminal.
 - Daemon status dialog in desktop settings for quick health checks.
 - Auto-restart daemon on version mismatch — the desktop app detects when the running daemon is outdated and restarts it automatically.
-- Setup hint and paseo.sh link on the mobile welcome screen so new App Store users know what to do next.
+- Setup hint and hubcode.ai link on the mobile welcome screen so new App Store users know what to do next.
 
 ### Improved
 
@@ -458,7 +458,7 @@
 
 ### Added
 
-- **Terminal management from the CLI** — new `paseo terminal` command group lets you list, create, and interact with workspace terminals without leaving your terminal.
+- **Terminal management from the CLI** — new `hubcode terminal` command group lets you list, create, and interact with workspace terminals without leaving your terminal.
 - **Material file icons in the explorer** — the file explorer tree now shows language-specific icons (TypeScript, JSON, Markdown, etc.) so you can spot files at a glance.
 
 ### Fixed
@@ -517,8 +517,8 @@
 
 ### Added
 
-- Added `paseo archive` as a top-level alias for `paseo agent archive`.
-- Added the `PASEO_AGENT_ID` environment variable for Claude and Codex agents.
+- Added `hubcode archive` as a top-level alias for `hubcode agent archive`.
+- Added the `HUBCODE_AGENT_ID` environment variable for Claude and Codex agents.
 - Added a redesigned command autocomplete with a detail card and dropdown styling.
 - Linked Android download surfaces to the Google Play Store.
 
@@ -533,7 +533,7 @@
 
 ### Fixed
 
-- Fixed `paseo send --no-wait` not taking effect.
+- Fixed `hubcode send --no-wait` not taking effect.
 - Fixed stale abort results contaminating replacement turns after an interrupt.
 - Fixed Claude interrupt handling and autonomous wake reliability.
 - Fixed nested Claude Code session detection and provider availability checks.
@@ -656,7 +656,7 @@
 
 ### Improved
 
-- Improved desktop runtime behavior on Windows by suppressing console windows and defaulting app data to `~/.paseo`.
+- Improved desktop runtime behavior on Windows by suppressing console windows and defaulting app data to `~/.hubcode`.
 - Added a Discord link to the website navigation.
 
 ### Fixed
@@ -761,11 +761,11 @@
 
 ### Added
 
-- Update the Paseo desktop app and local daemon directly from Settings.
+- Update the Hubcode desktop app and local daemon directly from Settings.
 - Microphone and notification permission controls in Settings.
 - Thinking/reasoning mode — agents can use extended thinking when the provider supports it.
 - Autonomous run mode — let agents keep working without manual approval at each step.
-- `paseo wait` now shows a snapshot of recent agent activity while you wait.
+- `hubcode wait` now shows a snapshot of recent agent activity while you wait.
 
 ### Improved
 

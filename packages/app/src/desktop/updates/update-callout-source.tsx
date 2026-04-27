@@ -11,7 +11,7 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { openExternalUrl } from "@/utils/open-external-url";
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
-const CHANGELOG_URL = "https://paseo.sh/changelog";
+const CHANGELOG_URL = "https://hubcode.ai/changelog";
 
 function resolveUpdateCalloutTitle(args: {
   isInstalled: boolean;

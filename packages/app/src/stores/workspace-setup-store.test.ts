@@ -94,7 +94,7 @@ describe("workspace-setup-store", () => {
           log: "",
           commands: [],
         },
-        error: "Failed to parse paseo.json",
+        error: "Failed to parse hubcode.json",
         updatedAt: Date.now(),
       }),
     ).toBe(true);

@@ -10,7 +10,7 @@
 }:
 
 buildNpmPackage rec {
-  pname = "paseo";
+  pname = "hubcode";
   version = (builtins.fromJSON (builtins.readFile ../package.json)).version;
 
   src = lib.cleanSourceWith {
@@ -34,7 +34,7 @@ buildNpmPackage rec {
       && !(lib.hasSuffix ".e2e.test.ts" baseName)
       && baseName != "node_modules"
       && baseName != ".git"
-      && baseName != ".paseo"
+      && baseName != ".hubcode"
       && baseName != ".DS_Store";
   };
 
@@ -79,24 +79,24 @@ buildNpmPackage rec {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p $out/lib/paseo
+    mkdir -p $out/lib/hubcode
 
     # Copy root package metadata
-    cp package.json $out/lib/paseo/
+    cp package.json $out/lib/hubcode/
 
     # Copy node_modules (preserving workspace symlinks)
-    cp -a node_modules $out/lib/paseo/
+    cp -a node_modules $out/lib/hubcode/
 
-    # Auto-detect which @getpaseo/* packages were built by build:daemon
+    # Auto-detect which @gethubcode/* packages were built by build:daemon
     # (they'll have a dist/ directory). Copy those and remove the rest.
-    for link in $out/lib/paseo/node_modules/@getpaseo/*; do
+    for link in $out/lib/hubcode/node_modules/@gethubcode/*; do
       name=$(basename "$link")
       if [ -d "packages/$name/dist" ]; then
-        mkdir -p "$out/lib/paseo/packages/$name"
-        cp "packages/$name/package.json" "$out/lib/paseo/packages/$name/"
-        cp -a "packages/$name/dist" "$out/lib/paseo/packages/$name/"
+        mkdir -p "$out/lib/hubcode/packages/$name"
+        cp "packages/$name/package.json" "$out/lib/hubcode/packages/$name/"
+        cp -a "packages/$name/dist" "$out/lib/hubcode/packages/$name/"
         if [ -d "packages/$name/node_modules" ]; then
-          cp -a "packages/$name/node_modules" "$out/lib/paseo/packages/$name/"
+          cp -a "packages/$name/node_modules" "$out/lib/hubcode/packages/$name/"
         fi
       else
         rm -f "$link"
@@ -104,41 +104,41 @@ buildNpmPackage rec {
     done
 
     # Copy CLI bin entry
-    mkdir -p $out/lib/paseo/packages/cli/bin
-    cp packages/cli/bin/paseo $out/lib/paseo/packages/cli/bin/
+    mkdir -p $out/lib/hubcode/packages/cli/bin
+    cp packages/cli/bin/hubcode $out/lib/hubcode/packages/cli/bin/
 
     # Copy extra server files referenced at runtime
     for f in agent-prompt.md .env.example; do
       if [ -f packages/server/$f ]; then
-        cp packages/server/$f $out/lib/paseo/packages/server/
+        cp packages/server/$f $out/lib/hubcode/packages/server/
       fi
     done
 
     # Copy server scripts (including supervisor-entrypoint) needed by CLI
     if [ -d packages/server/dist/scripts ]; then
-      mkdir -p $out/lib/paseo/packages/server/dist/scripts
-      cp -a packages/server/dist/scripts/* $out/lib/paseo/packages/server/dist/scripts/
+      mkdir -p $out/lib/hubcode/packages/server/dist/scripts
+      cp -a packages/server/dist/scripts/* $out/lib/hubcode/packages/server/dist/scripts/
     fi
 
     # Create wrapper for the server entry point (for systemd / direct use)
     mkdir -p $out/bin
-    makeWrapper ${nodejs}/bin/node $out/bin/paseo-server \
-      --add-flags "$out/lib/paseo/packages/server/dist/server/server/index.js" \
+    makeWrapper ${nodejs}/bin/node $out/bin/hubcode-server \
+      --add-flags "$out/lib/hubcode/packages/server/dist/server/server/index.js" \
       --set NODE_ENV production
 
     # Create wrapper for the CLI
-    makeWrapper ${nodejs}/bin/node $out/bin/paseo \
-      --add-flags "$out/lib/paseo/packages/cli/dist/index.js" \
-      --set NODE_PATH "$out/lib/paseo/node_modules"
+    makeWrapper ${nodejs}/bin/node $out/bin/hubcode \
+      --add-flags "$out/lib/hubcode/packages/cli/dist/index.js" \
+      --set NODE_PATH "$out/lib/hubcode/node_modules"
 
     runHook postInstall
   '';
 
   meta = {
     description = "Self-hosted daemon for Claude Code, Codex, and OpenCode";
-    homepage = "https://github.com/getpaseo/paseo";
+    homepage = "https://github.com/hubtool/hubcode";
     license = lib.licenses.agpl3Plus;
-    mainProgram = "paseo";
+    mainProgram = "hubcode";
     platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };
 }

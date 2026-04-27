@@ -44,14 +44,14 @@ describe("resolveWorkspaceIdByExecutionDirectory", () => {
       createWorkspace({
         id: "workspace-1",
         projectRootPath: "/repo",
-        workspaceDirectory: "/repo/.paseo/worktrees/feature",
+        workspaceDirectory: "/repo/.hubcode/worktrees/feature",
       }),
     ];
 
     expect(
       resolveWorkspaceIdByExecutionDirectory({
         workspaces,
-        workspaceDirectory: "/repo/.paseo/worktrees/feature",
+        workspaceDirectory: "/repo/.hubcode/worktrees/feature",
       }),
     ).toBe("workspace-1");
   });
@@ -61,7 +61,7 @@ describe("resolveWorkspaceIdByExecutionDirectory", () => {
       createWorkspace({
         id: "workspace-1",
         projectRootPath: "/repo",
-        workspaceDirectory: "/repo/.paseo/worktrees/feature",
+        workspaceDirectory: "/repo/.hubcode/worktrees/feature",
       }),
     ];
 
@@ -81,7 +81,7 @@ describe("resolveWorkspaceMapKeyByIdentity", () => {
         "workspace-1",
         createWorkspace({
           id: "workspace-1",
-          workspaceDirectory: "/repo/.paseo/worktrees/feature",
+          workspaceDirectory: "/repo/.hubcode/worktrees/feature",
         }),
       ],
     ]);
@@ -159,7 +159,7 @@ describe("workspace execution authority", () => {
         createWorkspace({
           id: "workspace-1",
           projectRootPath: "/repo",
-          workspaceDirectory: "/repo/.paseo/worktrees/feature",
+          workspaceDirectory: "/repo/.hubcode/worktrees/feature",
         }),
       ],
     ]);
@@ -171,7 +171,7 @@ describe("workspace execution authority", () => {
       }),
     ).toEqual({
       workspaceId: "workspace-1",
-      workspaceDirectory: "/repo/.paseo/worktrees/feature",
+      workspaceDirectory: "/repo/.hubcode/worktrees/feature",
       workspace: workspaces.get("workspace-1"),
     });
   });

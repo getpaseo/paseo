@@ -15,7 +15,7 @@ describe("buildNewAgentRoute", () => {
   });
 
   it("encodes the working directory as a workspace path segment", () => {
-    expect(buildNewAgentRoute("srv-1", "/Users/me/dev/paseo")).toBe(
+    expect(buildNewAgentRoute("srv-1", "/Users/me/dev/hubcode")).toBe(
       "/h/srv-1/workspace/b64_L1VzZXJzL21lL2Rldi9wYXNlbw",
     );
   });
@@ -27,23 +27,23 @@ describe("resolveNewAgentWorkingDir", () => {
   });
 
   it("falls back to repo root when checkout metadata is unavailable", () => {
-    expect(resolveNewAgentWorkingDir("/repo/.paseo/worktrees/feature", null)).toBe("/repo");
+    expect(resolveNewAgentWorkingDir("/repo/.hubcode/worktrees/feature", null)).toBe("/repo");
   });
 
-  it("supports windows-style paseo worktree paths without checkout metadata", () => {
-    expect(resolveNewAgentWorkingDir("C:\\Users\\me\\repo\\.paseo\\worktrees\\feature", null)).toBe(
+  it("supports windows-style hubcode worktree paths without checkout metadata", () => {
+    expect(resolveNewAgentWorkingDir("C:\\Users\\me\\repo\\.hubcode\\worktrees\\feature", null)).toBe(
       "C:\\Users\\me\\repo",
     );
   });
 
-  it("returns the main repo root for paseo-owned worktrees", () => {
+  it("returns the main repo root for hubcode-owned worktrees", () => {
     const checkout = {
-      isPaseoOwnedWorktree: true,
-      worktreeRoot: "/repo/.paseo/worktrees/feature",
+      isHubcodeOwnedWorktree: true,
+      worktreeRoot: "/repo/.hubcode/worktrees/feature",
       mainRepoRoot: "/repo/main",
     } as unknown as CheckoutStatusPayload;
 
-    expect(resolveNewAgentWorkingDir("/repo/.paseo/worktrees/feature", checkout)).toBe(
+    expect(resolveNewAgentWorkingDir("/repo/.hubcode/worktrees/feature", checkout)).toBe(
       "/repo/main",
     );
   });

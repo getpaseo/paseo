@@ -41,13 +41,13 @@ describe("buildWorkspaceArchiveRedirectRoute", () => {
   it("redirects an archived worktree to the new workspace screen for the same project", () => {
     const workspaces = [
       workspace({ id: "/repo", workspaceKind: "checkout", name: "main" }),
-      workspace({ id: "/repo/.paseo/worktrees/feature", name: "feature" }),
+      workspace({ id: "/repo/.hubcode/worktrees/feature", name: "feature" }),
     ];
 
     expect(
       buildWorkspaceArchiveRedirectRoute({
         serverId: "server-1",
-        archivedWorkspaceId: "/repo/.paseo/worktrees/feature",
+        archivedWorkspaceId: "/repo/.hubcode/worktrees/feature",
         workspaces,
       }),
     ).toBe("/h/server-1/new?dir=%2Frepo&name=Project");
@@ -56,7 +56,7 @@ describe("buildWorkspaceArchiveRedirectRoute", () => {
   it("redirects to the new workspace route when no sibling workspace target exists", () => {
     const workspaces = [
       workspace({
-        id: "/repo/.paseo/worktrees/feature",
+        id: "/repo/.hubcode/worktrees/feature",
         name: "feature",
         projectRootPath: "/repo",
       }),
@@ -65,7 +65,7 @@ describe("buildWorkspaceArchiveRedirectRoute", () => {
     expect(
       buildWorkspaceArchiveRedirectRoute({
         serverId: "server-1",
-        archivedWorkspaceId: "/repo/.paseo/worktrees/feature",
+        archivedWorkspaceId: "/repo/.hubcode/worktrees/feature",
         workspaces,
       }),
     ).toBe("/h/server-1/new?dir=%2Frepo&name=Project");

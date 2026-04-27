@@ -22,8 +22,8 @@ describe("pull request timeline message schemas", () => {
       type: "pull_request_timeline_request",
       cwd: "/tmp/repo",
       prNumber: 42,
-      repoOwner: "getpaseo",
-      repoName: "paseo",
+      repoOwner: "gethubcode",
+      repoName: "hubcode",
       requestId: "request-1",
     });
 
@@ -31,8 +31,8 @@ describe("pull request timeline message schemas", () => {
       type: "pull_request_timeline_request",
       cwd: "/tmp/repo",
       prNumber: 42,
-      repoOwner: "getpaseo",
-      repoName: "paseo",
+      repoOwner: "gethubcode",
+      repoName: "hubcode",
       requestId: "request-1",
     });
   });
@@ -42,8 +42,8 @@ describe("pull request timeline message schemas", () => {
       type: "pull_request_timeline_request",
       cwd: "/tmp/repo",
       prNumber: 42,
-      repoOwner: "getpaseo",
-      repoName: "paseo",
+      repoOwner: "gethubcode",
+      repoName: "hubcode",
       requestId: "request-1",
     });
 
@@ -51,8 +51,8 @@ describe("pull request timeline message schemas", () => {
       type: "pull_request_timeline_request",
       cwd: "/tmp/repo",
       prNumber: 42,
-      repoOwner: "getpaseo",
-      repoName: "paseo",
+      repoOwner: "gethubcode",
+      repoName: "hubcode",
       requestId: "request-1",
     });
   });
@@ -108,7 +108,7 @@ describe("pull request timeline message schemas", () => {
             author: "octocat",
             body: "Future daemon item",
             createdAt: 1710000000000,
-            url: "https://github.com/getpaseo/paseo/pull/42#future-1",
+            url: "https://github.com/hubtool/hubcode/pull/42#future-1",
           },
         ],
       },
@@ -121,7 +121,7 @@ describe("pull request timeline message schemas", () => {
         author: "octocat",
         body: "Future daemon item",
         createdAt: 1710000000000,
-        url: "https://github.com/getpaseo/paseo/pull/42#future-1",
+        url: "https://github.com/hubtool/hubcode/pull/42#future-1",
       },
     ]);
   });
@@ -139,7 +139,7 @@ describe("pull request timeline message schemas", () => {
             author: "octocat",
             body: "Looks good",
             createdAt: 1710000000000,
-            url: "https://github.com/getpaseo/paseo/pull/42#pullrequestreview-1",
+            url: "https://github.com/hubtool/hubcode/pull/42#pullrequestreview-1",
             reviewState: "approved",
           },
           {
@@ -148,7 +148,7 @@ describe("pull request timeline message schemas", () => {
             author: "hubot",
             body: "Left a note",
             createdAt: 1710000001000,
-            url: "https://github.com/getpaseo/paseo/pull/42#issuecomment-1",
+            url: "https://github.com/hubtool/hubcode/pull/42#issuecomment-1",
           },
         ],
         truncated: true,
@@ -226,7 +226,7 @@ describe("checkout PR status compatibility", () => {
         cwd: "/tmp/repo",
         status: {
           number: 42,
-          url: "https://github.com/getpaseo/paseo/pull/42",
+          url: "https://github.com/hubtool/hubcode/pull/42",
           title: "Wire real PR pane data",
           state: "OPEN",
           baseRefName: "main",
@@ -237,7 +237,7 @@ describe("checkout PR status compatibility", () => {
             {
               name: "server-tests",
               status: "success",
-              url: "https://github.com/getpaseo/paseo/actions/runs/123",
+              url: "https://github.com/hubtool/hubcode/actions/runs/123",
               workflow: "Server CI",
               duration: "2m 14s",
             },
@@ -256,7 +256,7 @@ describe("checkout PR status compatibility", () => {
       payload: {
         cwd: "/tmp/repo",
         status: {
-          url: "https://github.com/getpaseo/paseo/pull/42",
+          url: "https://github.com/hubtool/hubcode/pull/42",
           title: "Wire real PR pane data",
           state: "OPEN",
           baseRefName: "main",
@@ -266,7 +266,7 @@ describe("checkout PR status compatibility", () => {
             {
               name: "server-tests",
               status: "success",
-              url: "https://github.com/getpaseo/paseo/actions/runs/123",
+              url: "https://github.com/hubtool/hubcode/actions/runs/123",
             },
           ],
           checksStatus: "success",

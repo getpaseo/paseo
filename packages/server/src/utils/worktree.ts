@@ -8,28 +8,28 @@ import { createHash } from "node:crypto";
 import * as pty from "node-pty";
 import stripAnsi from "strip-ansi";
 import { buildStringCommandShellInvocation } from "./string-command-shell.js";
-import { readPaseoConfigJson } from "./paseo-config-file.js";
+import { readHubcodeConfigJson } from "./hubcode-config-file.js";
 export {
-  PaseoConfigRawSchema,
-  PaseoLifecycleCommandRawSchema,
-  PaseoScriptEntryRawSchema,
-  PaseoWorktreeConfigRawSchema,
-  PaseoConfigSchema,
-  type PaseoConfig,
-  type PaseoConfigRaw,
-} from "./paseo-config-schema.js";
-import { PaseoConfigSchema, type PaseoConfig } from "./paseo-config-schema.js";
+  HubcodeConfigRawSchema,
+  HubcodeLifecycleCommandRawSchema,
+  HubcodeScriptEntryRawSchema,
+  HubcodeWorktreeConfigRawSchema,
+  HubcodeConfigSchema,
+  type HubcodeConfig,
+  type HubcodeConfigRaw,
+} from "./hubcode-config-schema.js";
+import { HubcodeConfigSchema, type HubcodeConfig } from "./hubcode-config-schema.js";
 import {
   normalizeBaseRefName,
-  readPaseoWorktreeMetadata,
-  readPaseoWorktreeRuntimePort,
-  writePaseoWorktreeMetadata,
-  writePaseoWorktreeRuntimeMetadata,
+  readHubcodeWorktreeMetadata,
+  readHubcodeWorktreeRuntimePort,
+  writeHubcodeWorktreeMetadata,
+  writeHubcodeWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
 import { spawnProcess } from "./spawn.js";
-import { resolvePaseoHome } from "../server/paseo-home.js";
-import { createExternalProcessEnv } from "../server/paseo-env.js";
+import { resolveHubcodeHome } from "../server/hubcode-home.js";
+import { createExternalProcessEnv } from "../server/hubcode-env.js";
 import { ensureNodePtySpawnHelperExecutableForCurrentPlatform } from "../terminal/terminal.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 
@@ -45,11 +45,11 @@ export interface WorktreeConfig {
 
 export interface WorktreeRuntimeEnv {
   [key: string]: string;
-  PASEO_SOURCE_CHECKOUT_PATH: string;
-  PASEO_ROOT_PATH: string;
-  PASEO_WORKTREE_PATH: string;
-  PASEO_BRANCH_NAME: string;
-  PASEO_WORKTREE_PORT: string;
+  HUBCODE_SOURCE_CHECKOUT_PATH: string;
+  HUBCODE_ROOT_PATH: string;
+  HUBCODE_WORKTREE_PATH: string;
+  HUBCODE_BRANCH_NAME: string;
+  HUBCODE_WORKTREE_PORT: string;
 }
 
 export interface WorktreeSetupCommandResult {
@@ -135,14 +135,14 @@ export class WorktreeTeardownError extends Error {
   }
 }
 
-export interface PaseoWorktreeInfo {
+export interface HubcodeWorktreeInfo {
   path: string;
   createdAt: string;
   branchName?: string;
   head?: string;
 }
 
-export interface PaseoWorktreeOwnership {
+export interface HubcodeWorktreeOwnership {
   allowed: boolean;
   repoRoot?: string;
   worktreeRoot?: string;
@@ -166,13 +166,13 @@ export interface CreateWorktreeOptions {
   worktreeSlug: string;
   source: WorktreeSource;
   runSetup: boolean;
-  paseoHome?: string;
+  hubcodeHome?: string;
 }
 
 interface ResolveExistingWorktreeForSlugOptions {
   slug: string;
   repoRoot: string;
-  paseoHome?: string;
+  hubcodeHome?: string;
 }
 
 export class BranchAlreadyCheckedOutError extends Error {
@@ -197,30 +197,30 @@ export class UnknownBranchError extends Error {
   }
 }
 
-export function readPaseoConfig(repoRoot: string): PaseoConfig | null {
+export function readHubcodeConfig(repoRoot: string): HubcodeConfig | null {
   try {
-    const json = readPaseoConfigJson(repoRoot);
+    const json = readHubcodeConfigJson(repoRoot);
     if (json === null) {
       return null;
     }
-    return PaseoConfigSchema.parse(json);
+    return HubcodeConfigSchema.parse(json);
   } catch {
-    throw new Error(`Failed to parse paseo.json`);
+    throw new Error(`Failed to parse hubcode.json`);
   }
 }
 
 export function getWorktreeSetupCommands(repoRoot: string): string[] {
-  const config = readPaseoConfig(repoRoot);
+  const config = readHubcodeConfig(repoRoot);
   return config?.worktree?.setup ?? [];
 }
 
 export function getWorktreeTeardownCommands(repoRoot: string): string[] {
-  const config = readPaseoConfig(repoRoot);
+  const config = readHubcodeConfig(repoRoot);
   return config?.worktree?.teardown ?? [];
 }
 
 export function getWorktreeTerminalSpecs(repoRoot: string): WorktreeTerminalConfig[] {
-  const config = readPaseoConfig(repoRoot);
+  const config = readHubcodeConfig(repoRoot);
   const terminals = config?.worktree?.terminals;
   if (!Array.isArray(terminals) || terminals.length === 0) {
     return [];
@@ -255,7 +255,7 @@ export function getWorktreeTerminalSpecs(repoRoot: string): WorktreeTerminalConf
 }
 
 export function getScriptConfigs(repoRoot: string): Map<string, ScriptConfig> {
-  const config = readPaseoConfig(repoRoot);
+  const config = readHubcodeConfig(repoRoot);
   const scripts = config?.scripts;
   if (!scripts || typeof scripts !== "object") {
     return new Map();
@@ -584,7 +584,7 @@ export async function runWorktreeSetupCommands(options: {
   runtimeEnv?: WorktreeRuntimeEnv;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult[]> {
-  // Read paseo.json from the worktree (it will have the same content as the source repo)
+  // Read hubcode.json from the worktree (it will have the same content as the source repo)
   const setupCommands = getWorktreeSetupCommands(options.worktreePath);
   if (setupCommands.length === 0) {
     return [];
@@ -664,12 +664,12 @@ export async function resolveWorktreeRuntimeEnv(options: {
   const branchName =
     options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
 
-  let worktreePort = readPaseoWorktreeRuntimePort(options.worktreePath);
+  let worktreePort = readHubcodeWorktreeRuntimePort(options.worktreePath);
   if (worktreePort === null) {
     worktreePort = await getAvailablePort();
-    const metadata = readPaseoWorktreeMetadata(options.worktreePath);
+    const metadata = readHubcodeWorktreeMetadata(options.worktreePath);
     if (metadata) {
-      writePaseoWorktreeRuntimeMetadata(options.worktreePath, { worktreePort });
+      writeHubcodeWorktreeRuntimeMetadata(options.worktreePath, { worktreePort });
     }
   } else {
     await assertPortAvailable(worktreePort);
@@ -679,12 +679,12 @@ export async function resolveWorktreeRuntimeEnv(options: {
     // Source checkout path is the original git repo root (shared across worktrees), not the
     // worktree itself. This allows setup scripts to copy local files (e.g. .env) from the
     // source checkout.
-    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    HUBCODE_SOURCE_CHECKOUT_PATH: repoRootPath,
     // Backward-compatible alias.
-    PASEO_ROOT_PATH: repoRootPath,
-    PASEO_WORKTREE_PATH: options.worktreePath,
-    PASEO_BRANCH_NAME: branchName,
-    PASEO_WORKTREE_PORT: String(worktreePort),
+    HUBCODE_ROOT_PATH: repoRootPath,
+    HUBCODE_WORKTREE_PATH: options.worktreePath,
+    HUBCODE_BRANCH_NAME: branchName,
+    HUBCODE_WORKTREE_PORT: String(worktreePort),
   };
 }
 
@@ -693,7 +693,7 @@ export async function runWorktreeTeardownCommands(options: {
   branchName?: string;
   repoRootPath?: string;
 }): Promise<WorktreeTeardownCommandResult[]> {
-  // Read paseo.json from the worktree (it will have the same content as the source repo)
+  // Read hubcode.json from the worktree (it will have the same content as the source repo)
   const teardownCommands = getWorktreeTeardownCommands(options.worktreePath);
   if (teardownCommands.length === 0) {
     return [];
@@ -703,18 +703,18 @@ export async function runWorktreeTeardownCommands(options: {
     options.repoRootPath ?? (await inferRepoRootPathFromWorktreePath(options.worktreePath));
   const branchName =
     options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
-  const worktreePort = readPaseoWorktreeRuntimePort(options.worktreePath);
+  const worktreePort = readHubcodeWorktreeRuntimePort(options.worktreePath);
 
   const teardownEnv: NodeJS.ProcessEnv = createExternalProcessEnv(process.env, {
     // Source checkout path is the original git repo root (shared across worktrees), not the
     // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
     // from the source checkout.
-    PASEO_SOURCE_CHECKOUT_PATH: repoRootPath,
+    HUBCODE_SOURCE_CHECKOUT_PATH: repoRootPath,
     // Backward-compatible alias.
-    PASEO_ROOT_PATH: repoRootPath,
-    PASEO_WORKTREE_PATH: options.worktreePath,
-    PASEO_BRANCH_NAME: branchName,
-    ...(worktreePort !== null ? { PASEO_WORKTREE_PORT: String(worktreePort) } : {}),
+    HUBCODE_ROOT_PATH: repoRootPath,
+    HUBCODE_WORKTREE_PATH: options.worktreePath,
+    HUBCODE_BRANCH_NAME: branchName,
+    ...(worktreePort !== null ? { HUBCODE_WORKTREE_PORT: String(worktreePort) } : {}),
   });
 
   const results: WorktreeTeardownCommandResult[] = [];
@@ -841,8 +841,8 @@ export async function deriveWorktreeProjectHash(cwd: string): Promise<string> {
   }
 }
 
-export async function getPaseoWorktreesRoot(cwd: string, paseoHome?: string): Promise<string> {
-  const home = paseoHome ? resolve(paseoHome) : resolvePaseoHome();
+export async function getHubcodeWorktreesRoot(cwd: string, hubcodeHome?: string): Promise<string> {
+  const home = hubcodeHome ? resolve(hubcodeHome) : resolveHubcodeHome();
   const projectHash = await deriveWorktreeProjectHash(cwd);
   return join(home, "worktrees", projectHash);
 }
@@ -850,9 +850,9 @@ export async function getPaseoWorktreesRoot(cwd: string, paseoHome?: string): Pr
 export async function computeWorktreePath(
   cwd: string,
   slug: string,
-  paseoHome?: string,
+  hubcodeHome?: string,
 ): Promise<string> {
-  const worktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
+  const worktreesRoot = await getHubcodeWorktreesRoot(cwd, hubcodeHome);
   return join(worktreesRoot, slug);
 }
 
@@ -871,10 +871,10 @@ function resolveRepoRootFromGitCommonDir(commonDir: string): string {
     : normalizedCommonDir;
 }
 
-export async function isPaseoOwnedWorktreeCwd(
+export async function isHubcodeOwnedWorktreeCwd(
   cwd: string,
-  options?: { paseoHome?: string },
-): Promise<PaseoWorktreeOwnership> {
+  options?: { hubcodeHome?: string },
+): Promise<HubcodeWorktreeOwnership> {
   const resolvedCwd = normalizePathForOwnership(cwd);
 
   // repoRoot is best-effort: git may be unreachable from the worktree (e.g. a
@@ -888,14 +888,14 @@ export async function isPaseoOwnedWorktreeCwd(
     // ignore
   }
 
-  const paseoHome = options?.paseoHome ? resolve(options.paseoHome) : resolvePaseoHome();
-  const paseoWorktreesPrefix = normalizePathForOwnership(join(paseoHome, "worktrees")) + sep;
+  const hubcodeHome = options?.hubcodeHome ? resolve(options.hubcodeHome) : resolveHubcodeHome();
+  const hubcodeWorktreesPrefix = normalizePathForOwnership(join(hubcodeHome, "worktrees")) + sep;
 
-  // Ownership is defined by the path living under $PASEO_HOME/worktrees/<hash>/<slug>[/...].
-  // The <hash>/<slug> prefix is Paseo-private — nothing else writes there — so the
+  // Ownership is defined by the path living under $HUBCODE_HOME/worktrees/<hash>/<slug>[/...].
+  // The <hash>/<slug> prefix is Hubcode-private — nothing else writes there — so the
   // path shape alone is sufficient proof of ownership, even when git has already
   // forgotten about the worktree.
-  if (!resolvedCwd.startsWith(paseoWorktreesPrefix)) {
+  if (!resolvedCwd.startsWith(hubcodeWorktreesPrefix)) {
     return {
       allowed: false,
       ...(repoRoot !== undefined ? { repoRoot } : {}),
@@ -903,7 +903,7 @@ export async function isPaseoOwnedWorktreeCwd(
     };
   }
 
-  const relative = resolvedCwd.slice(paseoWorktreesPrefix.length);
+  const relative = resolvedCwd.slice(hubcodeWorktreesPrefix.length);
   const parts = relative.split(sep).filter((part) => part.length > 0);
   if (parts.length < 2) {
     return {
@@ -913,7 +913,7 @@ export async function isPaseoOwnedWorktreeCwd(
     };
   }
 
-  const worktreesRoot = join(paseoHome, "worktrees", parts[0]!);
+  const worktreesRoot = join(hubcodeHome, "worktrees", parts[0]!);
   return {
     allowed: true,
     ...(repoRoot !== undefined ? { repoRoot } : {}),
@@ -922,11 +922,11 @@ export async function isPaseoOwnedWorktreeCwd(
   };
 }
 
-type ParsedPaseoWorktreeInfo = Omit<PaseoWorktreeInfo, "createdAt">;
+type ParsedHubcodeWorktreeInfo = Omit<HubcodeWorktreeInfo, "createdAt">;
 
-function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
-  const entries: ParsedPaseoWorktreeInfo[] = [];
-  let current: ParsedPaseoWorktreeInfo | null = null;
+function parseWorktreeList(output: string): ParsedHubcodeWorktreeInfo[] {
+  const entries: ParsedHubcodeWorktreeInfo[] = [];
+  let current: ParsedHubcodeWorktreeInfo | null = null;
 
   for (const line of output.split("\n")) {
     if (line.startsWith("worktree ")) {
@@ -973,14 +973,14 @@ function resolveWorktreeCreatedAtIso(worktreePath: string): string {
   }
 }
 
-export async function listPaseoWorktrees({
+export async function listHubcodeWorktrees({
   cwd,
-  paseoHome,
+  hubcodeHome,
 }: {
   cwd: string;
-  paseoHome?: string;
-}): Promise<PaseoWorktreeInfo[]> {
-  const worktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
+  hubcodeHome?: string;
+}): Promise<HubcodeWorktreeInfo[]> {
+  const worktreesRoot = await getHubcodeWorktreesRoot(cwd, hubcodeHome);
   const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
@@ -998,11 +998,11 @@ export async function listPaseoWorktrees({
 export async function resolveExistingWorktreeForSlug({
   slug,
   repoRoot,
-  paseoHome,
+  hubcodeHome,
 }: ResolveExistingWorktreeForSlugOptions): Promise<WorktreeConfig | null> {
-  const worktrees = await listPaseoWorktrees({
+  const worktrees = await listHubcodeWorktrees({
     cwd: repoRoot,
-    paseoHome,
+    hubcodeHome,
   });
   const slugSuffix = `${sep}${slug}`;
   const existingWorktree = worktrees.find((worktree) => worktree.path.endsWith(slugSuffix));
@@ -1025,9 +1025,9 @@ export async function resolveExistingWorktreeForSlug({
   };
 }
 
-export async function resolvePaseoWorktreeRootForCwd(
+export async function resolveHubcodeWorktreeRootForCwd(
   cwd: string,
-  options?: { paseoHome?: string },
+  options?: { hubcodeHome?: string },
 ): Promise<{ repoRoot: string; worktreeRoot: string; worktreePath: string } | null> {
   let gitCommonDir: string;
   try {
@@ -1036,7 +1036,7 @@ export async function resolvePaseoWorktreeRootForCwd(
     return null;
   }
 
-  const worktreesRoot = await getPaseoWorktreesRoot(cwd, options?.paseoHome);
+  const worktreesRoot = await getHubcodeWorktreesRoot(cwd, options?.hubcodeHome);
   const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
 
   let worktreeRoot: string | null = null;
@@ -1059,9 +1059,9 @@ export async function resolvePaseoWorktreeRootForCwd(
     return null;
   }
 
-  const knownWorktrees = await listPaseoWorktrees({
+  const knownWorktrees = await listHubcodeWorktrees({
     cwd,
-    paseoHome: options?.paseoHome,
+    hubcodeHome: options?.hubcodeHome,
   });
   const match = knownWorktrees.find((entry) => entry.path === resolvedWorktreeRoot);
   if (!match) {
@@ -1075,18 +1075,18 @@ export async function resolvePaseoWorktreeRootForCwd(
   };
 }
 
-export async function deletePaseoWorktree({
+export async function deleteHubcodeWorktree({
   cwd,
   worktreePath,
   worktreeSlug,
   worktreesRoot,
-  paseoHome,
+  hubcodeHome,
 }: {
   cwd: string | null;
   worktreePath?: string;
   worktreeSlug?: string;
   worktreesRoot?: string;
-  paseoHome?: string;
+  hubcodeHome?: string;
 }): Promise<void> {
   if (!worktreePath && !worktreeSlug) {
     throw new Error("worktreePath or worktreeSlug is required");
@@ -1099,20 +1099,20 @@ export async function deletePaseoWorktree({
   if (worktreesRoot) {
     resolvedWorktreesRoot = worktreesRoot;
   } else if (cwd) {
-    resolvedWorktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
+    resolvedWorktreesRoot = await getHubcodeWorktreesRoot(cwd, hubcodeHome);
   } else {
-    throw new Error("cwd or worktreesRoot is required to delete a Paseo worktree");
+    throw new Error("cwd or worktreesRoot is required to delete a Hubcode worktree");
   }
 
   const resolvedRoot = normalizePathForOwnership(resolvedWorktreesRoot) + sep;
   const requestedPath = worktreePath ?? join(resolvedWorktreesRoot, worktreeSlug!);
   const resolvedRequested = normalizePathForOwnership(requestedPath);
   const resolvedWorktree =
-    (await resolvePaseoWorktreeRootForCwd(requestedPath, { paseoHome }))?.worktreePath ??
+    (await resolveHubcodeWorktreeRootForCwd(requestedPath, { hubcodeHome }))?.worktreePath ??
     resolvedRequested;
 
   if (!resolvedWorktree.startsWith(resolvedRoot)) {
-    throw new Error("Refusing to delete non-Paseo worktree");
+    throw new Error("Refusing to delete non-Hubcode worktree");
   }
 
   if (await pathExists(resolvedWorktree)) {
@@ -1195,10 +1195,10 @@ export const createWorktree = async ({
   source,
   worktreeSlug,
   runSetup,
-  paseoHome,
+  hubcodeHome,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
-  let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome), worktreeSlug);
+  let worktreePath = join(await getHubcodeWorktreesRoot(cwd, hubcodeHome), worktreeSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
   // Also handle worktree path collision
@@ -1224,13 +1224,13 @@ export const createWorktree = async ({
     });
   }
 
-  writePaseoWorktreeMetadata(worktreePath, { baseRefName: sourcePlan.metadataBaseRefName });
+  writeHubcodeWorktreeMetadata(worktreePath, { baseRefName: sourcePlan.metadataBaseRefName });
 
-  // If paseo.json exists in the main repo but wasn't checked into the worktree
+  // If hubcode.json exists in the main repo but wasn't checked into the worktree
   // (e.g. uncommitted on first-time setup), seed the worktree with it so setup
   // commands and scripts pick up the user's intended config.
-  const mainConfigPath = join(cwd, "paseo.json");
-  const worktreeConfigPath = join(worktreePath, "paseo.json");
+  const mainConfigPath = join(cwd, "hubcode.json");
+  const worktreeConfigPath = join(worktreePath, "hubcode.json");
   try {
     await stat(worktreeConfigPath);
   } catch {
@@ -1339,7 +1339,7 @@ async function resolveWorktreeSourcePlan({
         ...(source.pushRemoteUrl
           ? {
               pushRemote: {
-                name: `paseo-pr-${source.githubPrNumber}`,
+                name: `hubcode-pr-${source.githubPrNumber}`,
                 url: source.pushRemoteUrl,
                 headRef: source.headRef,
               },
@@ -1385,10 +1385,10 @@ function validateWorktreeBranchName(branchName: string): void {
 function normalizeRequiredBaseBranch(baseBranch: string): string {
   const normalizedBaseBranch = normalizeBaseRefName(baseBranch);
   if (!normalizedBaseBranch) {
-    throw new Error("Base branch is required when creating a Paseo worktree");
+    throw new Error("Base branch is required when creating a Hubcode worktree");
   }
   if (normalizedBaseBranch === "HEAD") {
-    throw new Error("Base branch cannot be HEAD when creating a Paseo worktree");
+    throw new Error("Base branch cannot be HEAD when creating a Hubcode worktree");
   }
   return normalizedBaseBranch;
 }

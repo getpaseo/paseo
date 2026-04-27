@@ -6,7 +6,7 @@ import pino from "pino";
 
 import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
 import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
 
 function tmpCwd(): string {
@@ -33,7 +33,7 @@ describe("daemon E2E (real claude) - autonomous wake simple", () => {
   test("hello + background sleep returns idle, then wakes once on completion", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });

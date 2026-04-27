@@ -11,7 +11,7 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
 }
 
 function shouldPrintPairingQr(): boolean {
-  const env = parseBooleanEnv(process.env.PASEO_PAIRING_QR);
+  const env = parseBooleanEnv(process.env.HUBCODE_PAIRING_QR);
   if (env !== undefined) return env;
   return Boolean(process.stdout.isTTY);
 }

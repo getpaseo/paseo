@@ -13,14 +13,14 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import pino, { type Logger } from "pino";
 
 import type { SessionOutboundMessage, WorkspaceDescriptorPayload } from "./messages.js";
-import { archivePaseoWorktree } from "./paseo-worktree-archive-service.js";
+import { archiveHubcodeWorktree } from "./hubcode-worktree-archive-service.js";
 import {
   buildAgentSessionConfig,
-  handlePaseoWorktreeArchiveRequest,
-  handlePaseoWorktreeListRequest,
+  handleHubcodeWorktreeArchiveRequest,
+  handleHubcodeWorktreeListRequest,
   resolveGitCreateBaseBranch,
   runWorktreeSetupInBackground,
-  handleCreatePaseoWorktreeRequest,
+  handleCreateHubcodeWorktreeRequest,
   handleWorkspaceSetupStatusRequest,
 } from "./worktree-session.js";
 import {
@@ -35,9 +35,9 @@ import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { GitHubService } from "../services/github-service.js";
 import {
-  createPaseoWorktree as createPaseoWorktreeService,
-  type CreatePaseoWorktreeFn,
-} from "./paseo-worktree-service.js";
+  createHubcodeWorktree as createHubcodeWorktreeService,
+  type CreateHubcodeWorktreeFn,
+} from "./hubcode-worktree-service.js";
 import { createWorktreeCoreDeps } from "./worktree-core.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
@@ -48,7 +48,7 @@ interface LegacyCreateWorktreeTestOptions {
   baseBranch: string;
   worktreeSlug: string;
   runSetup?: boolean;
-  paseoHome?: string;
+  hubcodeHome?: string;
 }
 
 function createLegacyWorktreeForTest(
@@ -67,7 +67,7 @@ function createLegacyWorktreeForTest(
       newBranchName: options.branchName,
     },
     runSetup: options.runSetup ?? true,
-    paseoHome: options.paseoHome,
+    hubcodeHome: options.hubcodeHome,
   });
 }
 
@@ -199,15 +199,15 @@ function createWorkspaceDescriptor(input: {
   };
 }
 
-function createPaseoWorktreeForTest(options: {
-  paseoHome: string;
+function createHubcodeWorktreeForTest(options: {
+  hubcodeHome: string;
   events?: string[];
-}): CreatePaseoWorktreeFn {
+}): CreateHubcodeWorktreeFn {
   const projects = new Map<string, PersistedProjectRecord>();
   const workspaces = new Map<string, PersistedWorkspaceRecord>();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger: createLogger(),
-    paseoHome: options.paseoHome,
+    hubcodeHome: options.hubcodeHome,
     deps: {
       github: createGitHubServiceStub(),
     },
@@ -215,7 +215,7 @@ function createPaseoWorktreeForTest(options: {
 
   return (input, serviceOptions) => {
     const coreDeps = createWorktreeCoreDeps(createGitHubServiceStub());
-    return createPaseoWorktreeService(input, {
+    return createHubcodeWorktreeService(input, {
       ...coreDeps,
       ...(serviceOptions?.resolveDefaultBranch
         ? { resolveDefaultBranch: serviceOptions.resolveDefaultBranch }
@@ -276,13 +276,13 @@ function createManagedAgentForArchive(input: { id: string; cwd: string }): Manag
   };
 }
 
-describe("handlePaseoWorktreeListRequest", () => {
+describe("handleHubcodeWorktreeListRequest", () => {
   test("lists worktrees through the workspace git service", async () => {
     const emitted: SessionOutboundMessage[] = [];
     const workspaceGitService = {
       listWorktrees: vi.fn().mockResolvedValue([
         {
-          path: "/tmp/paseo-home/worktrees/repo/feature",
+          path: "/tmp/hubcode-home/worktrees/repo/feature",
           createdAt: "2026-04-12T00:00:00.000Z",
           branchName: "feature",
           head: "abc123",
@@ -290,14 +290,14 @@ describe("handlePaseoWorktreeListRequest", () => {
       ]),
     };
 
-    await handlePaseoWorktreeListRequest(
+    await handleHubcodeWorktreeListRequest(
       {
         emit: (message) => emitted.push(message),
-        paseoHome: "/tmp/paseo-home",
+        hubcodeHome: "/tmp/hubcode-home",
         workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
       },
       {
-        type: "paseo_worktree_list_request",
+        type: "hubcode_worktree_list_request",
         cwd: "/tmp/repo",
         requestId: "request-worktrees",
       },
@@ -306,11 +306,11 @@ describe("handlePaseoWorktreeListRequest", () => {
     expect(workspaceGitService.listWorktrees).toHaveBeenCalledTimes(1);
     expect(workspaceGitService.listWorktrees).toHaveBeenCalledWith("/tmp/repo");
     expect(emitted).toContainEqual({
-      type: "paseo_worktree_list_response",
+      type: "hubcode_worktree_list_response",
       payload: {
         worktrees: [
           {
-            worktreePath: "/tmp/paseo-home/worktrees/repo/feature",
+            worktreePath: "/tmp/hubcode-home/worktrees/repo/feature",
             createdAt: "2026-04-12T00:00:00.000Z",
             branchName: "feature",
             head: "abc123",
@@ -354,7 +354,7 @@ function createAgentStorageStub(): Pick<AgentStorage, "list" | "remove"> {
   };
 }
 
-function createGitRepo(options?: { paseoConfig?: Record<string, unknown> }) {
+function createGitRepo(options?: { hubcodeConfig?: Record<string, unknown> }) {
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "worktree-session-test-")));
   const repoDir = path.join(tempDir, "repo");
   execSync(`mkdir -p ${JSON.stringify(repoDir)}`);
@@ -362,8 +362,8 @@ function createGitRepo(options?: { paseoConfig?: Record<string, unknown> }) {
   execSync("git config user.email 'test@test.com'", { cwd: repoDir, stdio: "pipe" });
   execSync("git config user.name 'Test'", { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "hello\n");
-  if (options?.paseoConfig) {
-    writeFileSync(path.join(repoDir, "paseo.json"), JSON.stringify(options.paseoConfig, null, 2));
+  if (options?.hubcodeConfig) {
+    writeFileSync(path.join(repoDir, "hubcode.json"), JSON.stringify(options.hubcodeConfig, null, 2));
   }
   execSync("git add .", { cwd: repoDir, stdio: "pipe" });
   execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir, stdio: "pipe" });
@@ -413,7 +413,7 @@ describe("runWorktreeSetupInBackground", () => {
 
   test("emits running then completed snapshots for no-setup workspaces without auto-starting scripts", async () => {
     const { tempDir, repoDir } = createGitRepo({
-      paseoConfig: {
+      hubcodeConfig: {
         scripts: {
           web: {
             command: "npm run dev",
@@ -423,14 +423,14 @@ describe("runWorktreeSetupInBackground", () => {
     });
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const createdWorktree = await createLegacyWorktreeForTest({
       branchName: "feature-no-setup",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "feature-no-setup",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
     const worktreePath = createdWorktree.worktreePath;
     const emitted: SessionOutboundMessage[] = [];
@@ -442,7 +442,7 @@ describe("runWorktreeSetupInBackground", () => {
 
     await runWorktreeSetupInBackground(
       {
-        paseoHome,
+        hubcodeHome,
         emitWorkspaceUpdateForCwd,
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
           snapshots.set(workspaceId, snapshot),
@@ -515,21 +515,21 @@ describe("runWorktreeSetupInBackground", () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
 
-    writeFileSync(path.join(repoDir, "paseo.json"), "{ invalid json\n");
-    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    writeFileSync(path.join(repoDir, "hubcode.json"), "{ invalid json\n");
+    execSync("git add hubcode.json", { cwd: repoDir, stdio: "pipe" });
     execSync("git -c commit.gpgsign=false commit -m 'broken config'", {
       cwd: repoDir,
       stdio: "pipe",
     });
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const createdWorktree = await createLegacyWorktreeForTest({
       branchName: "broken-feature",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "broken-feature",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
     const worktreePath = createdWorktree.worktreePath;
     const emitted: SessionOutboundMessage[] = [];
@@ -541,7 +541,7 @@ describe("runWorktreeSetupInBackground", () => {
 
     await runWorktreeSetupInBackground(
       {
-        paseoHome,
+        hubcodeHome,
         emitWorkspaceUpdateForCwd,
         cacheWorkspaceSetupSnapshot: (snapshotWorkspaceId, snapshot) =>
           snapshots.set(snapshotWorkspaceId, snapshot),
@@ -572,11 +572,11 @@ describe("runWorktreeSetupInBackground", () => {
     expect(progressMessages[0]?.payload.status).toBe("running");
     expect(progressMessages[0]?.payload.error).toBeNull();
     expect(progressMessages[1]?.payload.status).toBe("failed");
-    expect(progressMessages[1]?.payload.error).toContain("Failed to parse paseo.json");
+    expect(progressMessages[1]?.payload.error).toContain("Failed to parse hubcode.json");
     expect(progressMessages[1]?.payload.detail.commands).toEqual([]);
     expect(snapshots.get(workspaceId)).toMatchObject({
       status: "failed",
-      error: expect.stringContaining("Failed to parse paseo.json"),
+      error: expect.stringContaining("Failed to parse hubcode.json"),
     });
     expect(archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceId);
     expect(emitWorkspaceUpdateForCwd).toHaveBeenCalledWith(worktreePath);
@@ -584,7 +584,7 @@ describe("runWorktreeSetupInBackground", () => {
 
   test("emits running setup snapshots before completed for real setup commands", async () => {
     const { tempDir, repoDir } = createGitRepo({
-      paseoConfig: {
+      hubcodeConfig: {
         worktree: {
           setup: ["sh -c \"printf 'phase-one\\\\n'; sleep 0.1; printf 'phase-two\\\\n'\""],
         },
@@ -592,14 +592,14 @@ describe("runWorktreeSetupInBackground", () => {
     });
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const createdWorktree = await createLegacyWorktreeForTest({
       branchName: "feature-running-setup",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "feature-running-setup",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
     const worktreePath = createdWorktree.worktreePath;
     const emitted: SessionOutboundMessage[] = [];
@@ -610,7 +610,7 @@ describe("runWorktreeSetupInBackground", () => {
 
     await runWorktreeSetupInBackground(
       {
-        paseoHome,
+        hubcodeHome,
         emitWorkspaceUpdateForCwd,
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
           snapshots.set(workspaceId, snapshot),
@@ -697,7 +697,7 @@ describe("runWorktreeSetupInBackground", () => {
 
   test("emits completed when reusing an existing worktree without bootstrapping or auto-starting scripts", async () => {
     const { tempDir, repoDir } = createGitRepo({
-      paseoConfig: {
+      hubcodeConfig: {
         worktree: {
           setup: ["printf 'ran' > setup-ran.txt"],
         },
@@ -710,14 +710,14 @@ describe("runWorktreeSetupInBackground", () => {
     });
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const existingWorktree = await createLegacyWorktreeForTest({
       branchName: "reused-worktree",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "reused-worktree",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
     const emitted: SessionOutboundMessage[] = [];
@@ -729,7 +729,7 @@ describe("runWorktreeSetupInBackground", () => {
 
     await runWorktreeSetupInBackground(
       {
-        paseoHome,
+        hubcodeHome,
         emitWorkspaceUpdateForCwd,
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
           snapshots.set(workspaceId, snapshot),
@@ -791,7 +791,7 @@ describe("runWorktreeSetupInBackground", () => {
 
   test("keeps setup completed without attempting script launch afterward", async () => {
     const { tempDir, repoDir } = createGitRepo({
-      paseoConfig: {
+      hubcodeConfig: {
         scripts: {
           web: {
             command: "npm run dev",
@@ -801,14 +801,14 @@ describe("runWorktreeSetupInBackground", () => {
     });
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const createdWorktree = await createLegacyWorktreeForTest({
       branchName: "feature-service-failure",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "feature-service-failure",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
     const worktreePath = createdWorktree.worktreePath;
     const emitted: SessionOutboundMessage[] = [];
@@ -824,7 +824,7 @@ describe("runWorktreeSetupInBackground", () => {
 
     await runWorktreeSetupInBackground(
       {
-        paseoHome,
+        hubcodeHome,
         emitWorkspaceUpdateForCwd,
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
           snapshots.set(workspaceId, snapshot),
@@ -877,7 +877,7 @@ describe("runWorktreeSetupInBackground", () => {
 
   test("does not auto-start scripts in socket mode", async () => {
     const { tempDir, repoDir } = createGitRepo({
-      paseoConfig: {
+      hubcodeConfig: {
         scripts: {
           web: {
             command: "npm run dev",
@@ -887,14 +887,14 @@ describe("runWorktreeSetupInBackground", () => {
     });
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const createdWorktree = await createLegacyWorktreeForTest({
       branchName: "feature-socket-mode",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "feature-socket-mode",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
     const worktreePath = createdWorktree.worktreePath;
     const emitted: SessionOutboundMessage[] = [];
@@ -906,7 +906,7 @@ describe("runWorktreeSetupInBackground", () => {
 
     await runWorktreeSetupInBackground(
       {
-        paseoHome,
+        hubcodeHome,
         emitWorkspaceUpdateForCwd,
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
           snapshots.set(workspaceId, snapshot),
@@ -947,7 +947,7 @@ describe("runWorktreeSetupInBackground", () => {
           status: "completed",
           detail: {
             type: "worktree_setup",
-            worktreePath: "/repo/.paseo/worktrees/feature-a",
+            worktreePath: "/repo/.hubcode/worktrees/feature-a",
             branchName: "feature-a",
             log: "done",
             commands: [],
@@ -978,7 +978,7 @@ describe("runWorktreeSetupInBackground", () => {
           status: "completed",
           detail: {
             type: "worktree_setup",
-            worktreePath: "/repo/.paseo/worktrees/feature-a",
+            worktreePath: "/repo/.hubcode/worktrees/feature-a",
             branchName: "feature-a",
             log: "done",
             commands: [],
@@ -1015,7 +1015,7 @@ describe("runWorktreeSetupInBackground", () => {
   });
 });
 
-describe("handleCreatePaseoWorktreeRequest", () => {
+describe("handleCreateHubcodeWorktreeRequest", () => {
   const cleanupPaths: string[] = [];
 
   afterEach(() => {
@@ -1030,21 +1030,21 @@ describe("handleCreatePaseoWorktreeRequest", () => {
 
     const emitted: SessionOutboundMessage[] = [];
     const logger = createLogger();
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
 
-    await handleCreatePaseoWorktreeRequest(
+    await handleCreateHubcodeWorktreeRequest(
       {
-        paseoHome,
+        hubcodeHome,
         describeWorkspaceRecord: async (result) =>
           createWorkspaceDescriptor({ workspace: result.workspace, repoDir }),
         emit: (message) => emitted.push(message),
-        createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+        createHubcodeWorktree: createHubcodeWorktreeForTest({ hubcodeHome }),
         warmWorkspaceGitData: async () => {},
         sessionLogger: logger,
         runWorktreeSetupInBackground: async () => {},
       },
       {
-        type: "create_paseo_worktree_request",
+        type: "create_hubcode_worktree_request",
         requestId: "req-pr-worktree",
         cwd: repoDir,
         worktreeSlug: "review-pr-123",
@@ -1054,7 +1054,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
             mimeType: "application/github-pr",
             number: 123,
             title: "Review branch",
-            url: "https://github.com/getpaseo/paseo/pull/123",
+            url: "https://github.com/hubtool/hubcode/pull/123",
             baseRefName: "main",
             headRefName: "feature/review-pr",
           },
@@ -1065,8 +1065,8 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     const response = emitted.find(
       (
         message,
-      ): message is Extract<SessionOutboundMessage, { type: "create_paseo_worktree_response" }> =>
-        message.type === "create_paseo_worktree_response",
+      ): message is Extract<SessionOutboundMessage, { type: "create_hubcode_worktree_response" }> =>
+        message.type === "create_hubcode_worktree_response",
     );
 
     expect(response?.payload.error).toBeNull();
@@ -1094,10 +1094,10 @@ describe("handleCreatePaseoWorktreeRequest", () => {
 
     const result = await buildAgentSessionConfig(
       {
-        paseoHome: path.join(tempDir, ".paseo"),
+        hubcodeHome: path.join(tempDir, ".hubcode"),
         sessionLogger: createLogger(),
-        createPaseoWorktree: createPaseoWorktreeForTest({
-          paseoHome: path.join(tempDir, ".paseo"),
+        createHubcodeWorktree: createHubcodeWorktreeForTest({
+          hubcodeHome: path.join(tempDir, ".hubcode"),
           events,
         }),
         checkoutExistingBranch: async () => {
@@ -1122,7 +1122,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           mimeType: "application/github-pr",
           number: 123,
           title: "Review branch",
-          url: "https://github.com/getpaseo/paseo/pull/123",
+          url: "https://github.com/hubtool/hubcode/pull/123",
           baseRefName: "main",
           headRefName: "feature/review-pr",
         },
@@ -1145,17 +1145,17 @@ describe("handleCreatePaseoWorktreeRequest", () => {
   test("buildAgentSessionConfig uses the normalized new branch name as the worktree slug fallback", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
 
     const result = await buildAgentSessionConfig(
       {
-        paseoHome,
+        hubcodeHome,
         sessionLogger: createLogger(),
         workspaceGitService: {
           resolveRepoRoot: vi.fn(async () => repoDir),
           resolveDefaultBranch: vi.fn(async () => "main"),
         } as unknown as WorkspaceGitService,
-        createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+        createHubcodeWorktree: createHubcodeWorktreeForTest({ hubcodeHome }),
         checkoutExistingBranch: async () => {
           throw new Error("should not checkout existing branch");
         },
@@ -1182,14 +1182,14 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     const invalidate = vi.fn();
     const createBranchFromBase = vi.fn(async () => {});
     const checkoutExistingBranch = vi.fn(async () => ({ source: "local" as const }));
-    const createPaseoWorktree = vi.fn(async () => {
+    const createHubcodeWorktree = vi.fn(async () => {
       throw new Error("should not create worktree");
     });
 
     await buildAgentSessionConfig(
       {
         sessionLogger: createLogger(),
-        createPaseoWorktree,
+        createHubcodeWorktree,
         checkoutExistingBranch,
         createBranchFromBase,
         github: { invalidate },
@@ -1217,7 +1217,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     await buildAgentSessionConfig(
       {
         sessionLogger: createLogger(),
-        createPaseoWorktree,
+        createHubcodeWorktree,
         checkoutExistingBranch,
         createBranchFromBase,
         github: { invalidate },
@@ -1235,19 +1235,19 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     expect(invalidate).toHaveBeenCalledWith({ cwd: "/tmp/repo" });
   });
 
-  test("createPaseoWorktreeForTest forwards the default branch resolver for branch-off intents", async () => {
+  test("createHubcodeWorktreeForTest forwards the default branch resolver for branch-off intents", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const resolveDefaultBranch = vi.fn(async () => "main");
 
-    const result = await createPaseoWorktreeForTest({ paseoHome })(
+    const result = await createHubcodeWorktreeForTest({ hubcodeHome })(
       {
         cwd: repoDir,
         worktreeSlug: "resolver-feature",
         action: "branch-off",
         runSetup: false,
-        paseoHome,
+        hubcodeHome,
       },
       { resolveDefaultBranch },
     );
@@ -1261,20 +1261,20 @@ describe("handleCreatePaseoWorktreeRequest", () => {
   });
 });
 
-describe("handleCreatePaseoWorktreeRequest", () => {
+describe("handleCreateHubcodeWorktreeRequest", () => {
   test("registers a pending workspace and emits a successful create response", async () => {
     const { tempDir, repoDir } = createGitRepo();
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const emitted: SessionOutboundMessage[] = [];
     const events: string[] = [];
 
     try {
-      await handleCreatePaseoWorktreeRequest(
+      await handleCreateHubcodeWorktreeRequest(
         {
-          paseoHome,
+          hubcodeHome,
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
-          createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome, events }),
+          createHubcodeWorktree: createHubcodeWorktreeForTest({ hubcodeHome, events }),
           describeWorkspaceRecord: vi.fn(async (result) => ({
             id: result.workspace.workspaceId,
             projectId: result.workspace.projectId,
@@ -1290,7 +1290,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
             gitRuntime: {
               currentBranch: "single-call",
               remoteUrl: null,
-              isPaseoOwnedWorktree: true,
+              isHubcodeOwnedWorktree: true,
               isDirty: false,
               aheadBehind: null,
               aheadOfOrigin: null,
@@ -1302,7 +1302,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           runWorktreeSetupInBackground: vi.fn(async () => {}),
         },
         {
-          type: "create_paseo_worktree_request",
+          type: "create_hubcode_worktree_request",
           cwd: repoDir,
           worktreeSlug: "single-call",
           requestId: "req-single-call",
@@ -1313,8 +1313,8 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       const response = emitted.find(
         (
           message,
-        ): message is Extract<SessionOutboundMessage, { type: "create_paseo_worktree_response" }> =>
-          message.type === "create_paseo_worktree_response",
+        ): message is Extract<SessionOutboundMessage, { type: "create_hubcode_worktree_response" }> =>
+          message.type === "create_hubcode_worktree_response",
       );
       expect(response?.payload.error).toBeNull();
     } finally {
@@ -1324,20 +1324,20 @@ describe("handleCreatePaseoWorktreeRequest", () => {
 
   test("creates the worktree before emitting the response", async () => {
     const { tempDir, repoDir } = createGitRepo();
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const emitted: SessionOutboundMessage[] = [];
     const backgroundWork = vi.fn(async () => {});
     const warmWorkspaceGitData = vi.fn(async () => {});
     let registeredWorktreePath: string | null = null;
 
     try {
-      await handleCreatePaseoWorktreeRequest(
+      await handleCreateHubcodeWorktreeRequest(
         {
-          paseoHome,
+          hubcodeHome,
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
-          createPaseoWorktree: async (input) => {
-            const result = await createPaseoWorktreeForTest({ paseoHome })(input);
+          createHubcodeWorktree: async (input) => {
+            const result = await createHubcodeWorktreeForTest({ hubcodeHome })(input);
             expect(existsSync(result.worktree.worktreePath)).toBe(true);
             registeredWorktreePath = result.worktree.worktreePath;
             return result;
@@ -1349,7 +1349,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           runWorktreeSetupInBackground: backgroundWork,
         },
         {
-          type: "create_paseo_worktree_request",
+          type: "create_hubcode_worktree_request",
           cwd: repoDir,
           worktreeSlug: "response-after-create",
           requestId: "req-1",
@@ -1359,13 +1359,13 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       const response = emitted.find(
         (
           message,
-        ): message is Extract<SessionOutboundMessage, { type: "create_paseo_worktree_response" }> =>
-          message.type === "create_paseo_worktree_response",
+        ): message is Extract<SessionOutboundMessage, { type: "create_hubcode_worktree_response" }> =>
+          message.type === "create_hubcode_worktree_response",
       );
       expect(response?.payload.error).toBeNull();
       expect(response?.payload.workspace?.id).toBeTruthy();
       expect(emitted.map((message) => message.type).slice(0, 2)).toEqual([
-        "create_paseo_worktree_response",
+        "create_hubcode_worktree_response",
         "workspace_update",
       ]);
       const workspaceUpdate = emitted[1];
@@ -1402,16 +1402,16 @@ describe("handleCreatePaseoWorktreeRequest", () => {
 
   test("emits a machine-readable error code for invalid worktree intent", async () => {
     const { tempDir, repoDir } = createGitRepo();
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const emitted: SessionOutboundMessage[] = [];
 
     try {
-      await handleCreatePaseoWorktreeRequest(
+      await handleCreateHubcodeWorktreeRequest(
         {
-          paseoHome,
+          hubcodeHome,
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
-          createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+          createHubcodeWorktree: createHubcodeWorktreeForTest({ hubcodeHome }),
           describeWorkspaceRecord: vi.fn(async (result) =>
             createWorkspaceDescriptor({ workspace: result.workspace, repoDir }),
           ),
@@ -1419,7 +1419,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           runWorktreeSetupInBackground: vi.fn(async () => {}),
         },
         {
-          type: "create_paseo_worktree_request",
+          type: "create_hubcode_worktree_request",
           cwd: repoDir,
           action: "checkout",
           attachments: [],
@@ -1430,8 +1430,8 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       const response = emitted.find(
         (
           message,
-        ): message is Extract<SessionOutboundMessage, { type: "create_paseo_worktree_response" }> =>
-          message.type === "create_paseo_worktree_response",
+        ): message is Extract<SessionOutboundMessage, { type: "create_hubcode_worktree_response" }> =>
+          message.type === "create_hubcode_worktree_response",
       );
       expect(response?.payload.workspace).toBeNull();
       expect(response?.payload.error).toBe('action "checkout" requires refName or githubPrNumber');
@@ -1443,16 +1443,16 @@ describe("handleCreatePaseoWorktreeRequest", () => {
 
   test("emits a machine-readable error code for unknown checkout branches", async () => {
     const { tempDir, repoDir } = createGitRepo();
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const emitted: SessionOutboundMessage[] = [];
 
     try {
-      await handleCreatePaseoWorktreeRequest(
+      await handleCreateHubcodeWorktreeRequest(
         {
-          paseoHome,
+          hubcodeHome,
           sessionLogger: createLogger(),
           emit: (message) => emitted.push(message),
-          createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+          createHubcodeWorktree: createHubcodeWorktreeForTest({ hubcodeHome }),
           describeWorkspaceRecord: vi.fn(async (result) =>
             createWorkspaceDescriptor({ workspace: result.workspace, repoDir }),
           ),
@@ -1460,7 +1460,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           runWorktreeSetupInBackground: vi.fn(async () => {}),
         },
         {
-          type: "create_paseo_worktree_request",
+          type: "create_hubcode_worktree_request",
           cwd: repoDir,
           action: "checkout",
           refName: "missing-branch",
@@ -1472,8 +1472,8 @@ describe("handleCreatePaseoWorktreeRequest", () => {
       const response = emitted.find(
         (
           message,
-        ): message is Extract<SessionOutboundMessage, { type: "create_paseo_worktree_response" }> =>
-          message.type === "create_paseo_worktree_response",
+        ): message is Extract<SessionOutboundMessage, { type: "create_hubcode_worktree_response" }> =>
+          message.type === "create_hubcode_worktree_response",
       );
       expect(response?.payload.workspace).toBeNull();
       expect(response?.payload.error).toBe("Unknown branch: missing-branch");
@@ -1484,7 +1484,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
   });
 });
 
-describe("archivePaseoWorktree", () => {
+describe("archiveHubcodeWorktree", () => {
   const cleanupPaths: string[] = [];
 
   afterEach(() => {
@@ -1508,14 +1508,14 @@ describe("archivePaseoWorktree", () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const created = await createLegacyWorktreeForTest({
       branchName: "archive-parallel",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "archive-parallel",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
     const teardownStartTimes: Record<string, number> = {};
@@ -1532,9 +1532,9 @@ describe("archivePaseoWorktree", () => {
     });
 
     const emitted: SessionOutboundMessage[] = [];
-    const removedAgents = await archivePaseoWorktree(
+    const removedAgents = await archiveHubcodeWorktree(
       {
-        paseoHome,
+        hubcodeHome,
         github: createGitHubServiceStub(),
         agentManager: {
           listAgents: () => [
@@ -1575,23 +1575,23 @@ describe("archivePaseoWorktree", () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const created = await createLegacyWorktreeForTest({
       branchName: "archive-terminal-throws",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "archive-terminal-throws",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
     const killTerminalsUnderPath = vi.fn(async () => {
       throw new Error("simulated terminal teardown failure");
     });
 
-    await archivePaseoWorktree(
+    await archiveHubcodeWorktree(
       {
-        paseoHome,
+        hubcodeHome,
         github: createGitHubServiceStub(),
         agentManager: {
           listAgents: () => [],
@@ -1620,22 +1620,22 @@ describe("archivePaseoWorktree", () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const created = await createLegacyWorktreeForTest({
       branchName: "archive-refresh",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "archive-refresh",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
     const workspaceGitService = {
       getSnapshot: vi.fn(async () => null),
     };
 
-    await archivePaseoWorktree(
+    await archiveHubcodeWorktree(
       {
-        paseoHome,
+        hubcodeHome,
         github: createGitHubServiceStub(),
         workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
         agentManager: {
@@ -1667,14 +1667,14 @@ describe("archivePaseoWorktree", () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const created = await createLegacyWorktreeForTest({
       branchName: "archive-orphan",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "archive-orphan",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
     // Simulate a prior failed archive that stripped git's admin dir.
@@ -1685,9 +1685,9 @@ describe("archivePaseoWorktree", () => {
     expect(existsSync(created.worktreePath)).toBe(true);
 
     const emitted: SessionOutboundMessage[] = [];
-    await handlePaseoWorktreeArchiveRequest(
+    await handleHubcodeWorktreeArchiveRequest(
       {
-        paseoHome,
+        hubcodeHome,
         github: createGitHubServiceStub(),
         agentManager: {
           listAgents: () => [],
@@ -1702,7 +1702,7 @@ describe("archivePaseoWorktree", () => {
         sessionLogger: createLogger(),
       },
       {
-        type: "paseo_worktree_archive_request",
+        type: "hubcode_worktree_archive_request",
         requestId: "req-archive-orphan",
         worktreePath: created.worktreePath,
       },
@@ -1711,8 +1711,8 @@ describe("archivePaseoWorktree", () => {
     const response = emitted.find(
       (
         message,
-      ): message is Extract<SessionOutboundMessage, { type: "paseo_worktree_archive_response" }> =>
-        message.type === "paseo_worktree_archive_response",
+      ): message is Extract<SessionOutboundMessage, { type: "hubcode_worktree_archive_response" }> =>
+        message.type === "hubcode_worktree_archive_response",
     );
     expect(response?.payload.success).toBe(true);
     expect(response?.payload.error).toBeNull();

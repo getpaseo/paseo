@@ -17,9 +17,9 @@ import type { ScheduleService } from "../schedule/service.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import {
-  createPaseoWorktree as createPaseoWorktreeService,
-  type CreatePaseoWorktreeFn,
-} from "../paseo-worktree-service.js";
+  createHubcodeWorktree as createHubcodeWorktreeService,
+  type CreateHubcodeWorktreeFn,
+} from "../hubcode-worktree-service.js";
 import { createWorktreeCoreDeps } from "../worktree-core.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import type { GitHubService } from "../../services/github-service.js";
@@ -288,23 +288,23 @@ function createStoredSchedule(input: CreateScheduleInput): StoredSchedule {
   };
 }
 
-function createPaseoWorktreeForMcpTest(options: {
-  paseoHome: string;
+function createHubcodeWorktreeForMcpTest(options: {
+  hubcodeHome: string;
   broadcasts: string[];
   createdWorkspaceIds?: string[];
-}): CreatePaseoWorktreeFn {
+}): CreateHubcodeWorktreeFn {
   const projects = new Map<string, PersistedProjectRecord>();
   const workspaces = new Map<string, PersistedWorkspaceRecord>();
   const github = createGitHubServiceStub();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger: createTestLogger(),
-    paseoHome: options.paseoHome,
+    hubcodeHome: options.hubcodeHome,
     deps: { github },
   });
 
   return async (input, serviceOptions) => {
     const coreDeps = createWorktreeCoreDeps(github);
-    const result = await createPaseoWorktreeService(input, {
+    const result = await createHubcodeWorktreeService(input, {
       ...coreDeps,
       ...(serviceOptions?.resolveDefaultBranch
         ? { resolveDefaultBranch: serviceOptions.resolveDefaultBranch }
@@ -603,9 +603,9 @@ describe("create_agent MCP tool", () => {
 
   it("registers and broadcasts a workspace when create_agent creates a worktree", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-worktree-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "hubcode-mcp-worktree-"));
     const repoDir = join(tempDir, "repo");
-    const paseoHome = join(tempDir, ".paseo");
+    const hubcodeHome = join(tempDir, ".hubcode");
     const broadcasts: string[] = [];
     const createdWorkspaceIds: string[] = [];
 
@@ -631,9 +631,9 @@ describe("create_agent MCP tool", () => {
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
-        paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({
-          paseoHome,
+        hubcodeHome,
+        createHubcodeWorktree: createHubcodeWorktreeForMcpTest({
+          hubcodeHome,
           broadcasts,
           createdWorkspaceIds,
         }),
@@ -667,9 +667,9 @@ describe("create_agent MCP tool", () => {
 
   it("registers and broadcasts a workspace when create_worktree creates a worktree", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-create-worktree-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "hubcode-mcp-create-worktree-"));
     const repoDir = join(tempDir, "repo");
-    const paseoHome = join(tempDir, ".paseo");
+    const hubcodeHome = join(tempDir, ".hubcode");
     const broadcasts: string[] = [];
 
     try {
@@ -688,8 +688,8 @@ describe("create_agent MCP tool", () => {
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
-        paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts }),
+        hubcodeHome,
+        createHubcodeWorktree: createHubcodeWorktreeForMcpTest({ hubcodeHome, broadcasts }),
         workspaceGitService: workspaceGitService as unknown as Pick<
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees"
@@ -725,9 +725,9 @@ describe("create_agent MCP tool", () => {
 
   it("forces a workspace git snapshot refresh when archive_worktree deletes a worktree", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-archive-worktree-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "hubcode-mcp-archive-worktree-"));
     const repoDir = join(tempDir, "repo");
-    const paseoHome = join(tempDir, ".paseo");
+    const hubcodeHome = join(tempDir, ".hubcode");
 
     try {
       execSync(`git init ${JSON.stringify(repoDir)}`, { stdio: "pipe" });
@@ -748,8 +748,8 @@ describe("create_agent MCP tool", () => {
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
-        paseoHome,
-        createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts: [] }),
+        hubcodeHome,
+        createHubcodeWorktree: createHubcodeWorktreeForMcpTest({ hubcodeHome, broadcasts: [] }),
         workspaceGitService: workspaceGitService as unknown as Pick<
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees"
@@ -793,7 +793,7 @@ describe("create_agent MCP tool", () => {
       getSnapshot: vi.fn(async () => null),
       listWorktrees: vi.fn(async () => [
         {
-          path: "/tmp/paseo/worktrees/repo/feature",
+          path: "/tmp/hubcode/worktrees/repo/feature",
           branchName: "feature",
           createdAt: "2026-04-12T00:00:00.000Z",
         },
@@ -817,7 +817,7 @@ describe("create_agent MCP tool", () => {
     });
     expect(response.structuredContent.worktrees).toEqual([
       {
-        path: "/tmp/paseo/worktrees/repo/feature",
+        path: "/tmp/hubcode/worktrees/repo/feature",
         branchName: "feature",
         createdAt: "2026-04-12T00:00:00.000Z",
       },
@@ -842,7 +842,7 @@ describe("create_agent MCP tool", () => {
 
   it("allows caller agents to override cwd and applies caller context labels", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    const baseDir = await mkdtemp(join(tmpdir(), "paseo-mcp-test-"));
+    const baseDir = await mkdtemp(join(tmpdir(), "hubcode-mcp-test-"));
     const subdir = join(baseDir, "subdir");
     await mkdir(subdir, { recursive: true });
     spies.agentManager.getAgent.mockReturnValue({
@@ -886,7 +886,7 @@ describe("create_agent MCP tool", () => {
       undefined,
       {
         labels: {
-          "paseo.parent-agent-id": "voice-agent",
+          "hubcode.parent-agent-id": "voice-agent",
           source: "voice",
         },
       },

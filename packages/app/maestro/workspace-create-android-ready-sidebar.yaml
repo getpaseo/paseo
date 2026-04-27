@@ -1,4 +1,4 @@
-appId: ${PASEO_MAESTRO_APP_ID}
+appId: ${HUBCODE_MAESTRO_APP_ID}
 ---
 # Setup-only flow. It stops with the Android sidebar open and the prepared
 # project visible, so focused recordings can start at the actual repro window.

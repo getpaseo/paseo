@@ -1129,7 +1129,7 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   };
 }
 
-const claudeDebug = process.env.PASEO_CLAUDE_DEBUG === "1";
+const claudeDebug = process.env.HUBCODE_CLAUDE_DEBUG === "1";
 
 export class ClaudeAgentClient implements AgentClient {
   readonly provider = "claude" as const;
@@ -3552,7 +3552,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const items: AgentTimelineItem[] = [];
-    // User SDK entries can arrive as multiple text blocks, but Paseo treats them as one message.
+    // User SDK entries can arrive as multiple text blocks, but Hubcode treats them as one message.
     const userTextParts: string[] = [];
     for (const block of content) {
       if (!isClaudeContentChunk(block)) {

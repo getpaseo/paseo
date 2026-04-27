@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { generateLocalPairingOffer, loadConfig, resolvePaseoHome } from "@getpaseo/server";
+import { generateLocalPairingOffer, loadConfig, resolveHubcodeHome } from "@gethubcode/server";
 import { addJsonOption } from "../../utils/command-options.js";
 
 interface PairOptions {
@@ -10,7 +10,7 @@ interface PairOptions {
 
 export function pairCommand(): Command {
   return addJsonOption(new Command("pair").description("Print the daemon pairing QR code and link"))
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .option("--home <path>", "Hubcode home directory (default: ~/.hubcode)")
     .action(async (_options: PairOptions, command: Command) => {
       await runPairCommand(command.optsWithGlobals() as PairOptions);
     });
@@ -18,13 +18,13 @@ export function pairCommand(): Command {
 
 export async function runPairCommand(options: PairOptions): Promise<void> {
   if (options.home) {
-    process.env.PASEO_HOME = options.home;
+    process.env.HUBCODE_HOME = options.home;
   }
 
-  const paseoHome = resolvePaseoHome();
-  const config = loadConfig(paseoHome);
+  const hubcodeHome = resolveHubcodeHome();
+  const config = loadConfig(hubcodeHome);
   const pairing = await generateLocalPairingOffer({
-    paseoHome,
+    hubcodeHome,
     relayEnabled: config.relayEnabled,
     relayEndpoint: config.relayEndpoint,
     relayPublicEndpoint: config.relayPublicEndpoint,

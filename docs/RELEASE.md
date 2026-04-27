@@ -23,7 +23,7 @@ npm run release:patch
 
 This bumps the version across all workspaces, runs checks, publishes to npm, and pushes the branch + tag (triggering desktop, APK, and EAS mobile workflows).
 
-If asked to "release paseo" without specifying major/minor, treat it as a patch release.
+If asked to "release hubcode" without specifying major/minor, treat it as a patch release.
 
 Use the direct stable path when the current `main` changes are ready to become the public release immediately.
 
@@ -102,7 +102,7 @@ This ensures the checkout ref matches the actual code on `main` with the fix inc
 
 ## Notes
 
-- `version:all:*` bumps root + syncs workspace versions and `@getpaseo/*` dependency versions
+- `version:all:*` bumps root + syncs workspace versions and `@gethubcode/*` dependency versions
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale types
 - `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`
 - If `release:publish` partially fails, re-run it — npm skips already-published versions
@@ -130,11 +130,11 @@ No prefix (`v`), no extra text. The parser matches the first `## X.Y.Z` line to 
 ## Changelog ownership
 
 - **Only Claude should write changelog entries.**
-- If you are Codex and a stable release needs a changelog entry, launch a Claude agent with Paseo to draft it, then review and commit the result.
+- If you are Codex and a stable release needs a changelog entry, launch a Claude agent with Hubcode to draft it, then review and commit the result.
 
 ## Changelog voice
 
-The changelog is shown on the Paseo homepage. Write it for **end users**, not developers.
+The changelog is shown on the Hubcode homepage. Write it for **end users**, not developers.
 
 - **Frame everything from the user's perspective.** Describe what changed in the app, not what changed in the code. Users care that "workspaces load instantly" — not that a component no longer remounts.
 - **Never mention component names, internal modules, or implementation details.** No `WorkingIndicator`, no `accumulatedUsage`, no `reconcileAndEmitWorkspaceUpdates`.
@@ -156,15 +156,15 @@ Every bullet must be scannable at a glance. The changelog is not release documen
 
 Every changelog bullet must credit contributors and link to the PR(s) that delivered the change. This is not one-PR-per-line — a single bullet describes a user-facing change and may reference multiple PRs.
 
-Format: append `([#123](https://github.com/getpaseo/paseo/pull/123) by [@user](https://github.com/user))` at the end of each bullet. For changes spanning multiple PRs or contributors:
+Format: append `([#123](https://github.com/hubtool/hubcode/pull/123) by [@user](https://github.com/user))` at the end of each bullet. For changes spanning multiple PRs or contributors:
 
 ```markdown
-- Voice mode now works on tablets with proper microphone permissions. ([#210](https://github.com/getpaseo/paseo/pull/210), [#215](https://github.com/getpaseo/paseo/pull/215) by [@alice](https://github.com/alice), [@bob](https://github.com/bob))
+- Voice mode now works on tablets with proper microphone permissions. ([#210](https://github.com/hubtool/hubcode/pull/210), [#215](https://github.com/hubtool/hubcode/pull/215) by [@alice](https://github.com/alice), [@bob](https://github.com/bob))
 ```
 
 Rules:
 
-- **Always link the PR number** as `[#N](https://github.com/getpaseo/paseo/pull/N)`.
+- **Always link the PR number** as `[#N](https://github.com/hubtool/hubcode/pull/N)`.
 - **Always link the contributor's GitHub profile** as `[@user](https://github.com/user)`.
 - **One bullet = one user-facing change**, regardless of how many PRs went into it. Group related PRs on the same bullet.
 - **De-duplicate contributors.** If the same person authored multiple PRs in one bullet, list them once.
@@ -183,7 +183,7 @@ Entries within each section (Added, Improved, Fixed) are ordered by user impact:
 
 Before cutting any release (beta or stable), run a Codex review of the diff as a last line of defence against shipping bugs.
 
-Load the `paseo` skill and launch a **Codex 5.4** agent with a prompt like:
+Load the `hubcode` skill and launch a **Codex 5.4** agent with a prompt like:
 
 > Review the diff between the latest release tag and HEAD. Focus on:
 >

@@ -4,7 +4,7 @@ import pino from "pino";
 import pretty from "pino-pretty";
 import { createStream as createRotatingFileStream } from "rotating-file-stream";
 import type { PersistedConfig } from "./persisted-config.js";
-import { resolvePaseoHome } from "./paseo-home.js";
+import { resolveHubcodeHome } from "./hubcode-home.js";
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 export type LogFormat = "pretty" | "json";
@@ -33,7 +33,7 @@ interface LegacyLogConfig {
 type LoggerConfigInput = PersistedConfig | LegacyLogConfig | undefined;
 
 interface ResolveLogConfigOptions {
-  paseoHome?: string;
+  hubcodeHome?: string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -82,8 +82,8 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
   return parsed;
 }
 
-function resolveFilePath(paseoHome: string, configuredPath: string | undefined): string {
-  const fallback = path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
+function resolveFilePath(hubcodeHome: string, configuredPath: string | undefined): string {
+  const fallback = path.join(hubcodeHome, DEFAULT_DAEMON_LOG_FILENAME);
   if (!configuredPath) {
     return fallback;
   }
@@ -92,7 +92,7 @@ function resolveFilePath(paseoHome: string, configuredPath: string | undefined):
     return configuredPath;
   }
 
-  return path.resolve(paseoHome, configuredPath);
+  return path.resolve(hubcodeHome, configuredPath);
 }
 
 function minLogLevel(levels: LogLevel[]): LogLevel {
@@ -107,11 +107,11 @@ function minLogLevel(levels: LogLevel[]): LogLevel {
   return minLevel;
 }
 
-function resolveConfiguredPaseoHome(options: ResolveLogConfigOptions | undefined): string {
-  if (options?.paseoHome) {
-    return options.paseoHome;
+function resolveConfiguredHubcodeHome(options: ResolveLogConfigOptions | undefined): string {
+  if (options?.hubcodeHome) {
+    return options.hubcodeHome;
   }
-  return resolvePaseoHome(options?.env ?? process.env);
+  return resolveHubcodeHome(options?.env ?? process.env);
 }
 
 function normalizeLoggerConfigInput(config: LoggerConfigInput): PersistedConfig | undefined {
@@ -189,22 +189,22 @@ function resolveLogLevelsAndFormat(
   env: NodeJS.ProcessEnv,
   persistedLog: NonNullable<ReturnType<typeof normalizeLoggerConfigInput>>["log"] | undefined,
 ): LogLevelResolution {
-  const envGlobalLevel = parseLogLevel(env.PASEO_LOG);
+  const envGlobalLevel = parseLogLevel(env.HUBCODE_LOG);
   const persistedGlobalLevel = persistedLog?.level;
   const consoleLevel: LogLevel =
-    parseLogLevel(env.PASEO_LOG_CONSOLE_LEVEL) ??
+    parseLogLevel(env.HUBCODE_LOG_CONSOLE_LEVEL) ??
     envGlobalLevel ??
     persistedLog?.console?.level ??
     persistedGlobalLevel ??
     DEFAULT_CONSOLE_LEVEL;
   const fileLevel: LogLevel =
-    parseLogLevel(env.PASEO_LOG_FILE_LEVEL) ??
+    parseLogLevel(env.HUBCODE_LOG_FILE_LEVEL) ??
     envGlobalLevel ??
     persistedLog?.file?.level ??
     persistedGlobalLevel ??
     DEFAULT_FILE_LEVEL;
   const consoleFormat: LogFormat =
-    parseLogFormat(env.PASEO_LOG_FORMAT) ??
+    parseLogFormat(env.HUBCODE_LOG_FORMAT) ??
     persistedLog?.console?.format ??
     persistedLog?.format ??
     DEFAULT_CONSOLE_FORMAT;
@@ -222,11 +222,11 @@ function resolveRotateConfig(
 ): RotateResolution {
   return {
     maxSize:
-      env.PASEO_LOG_FILE_ROTATE_SIZE?.trim() ||
+      env.HUBCODE_LOG_FILE_ROTATE_SIZE?.trim() ||
       persistedLog?.file?.rotate?.maxSize ||
       DEFAULT_FILE_ROTATE_SIZE,
     maxFiles:
-      parsePositiveInteger(env.PASEO_LOG_FILE_ROTATE_COUNT) ??
+      parsePositiveInteger(env.HUBCODE_LOG_FILE_ROTATE_COUNT) ??
       persistedLog?.file?.rotate?.maxFiles ??
       DEFAULT_FILE_ROTATE_MAX_FILES,
   };
@@ -238,11 +238,11 @@ export function resolveLogConfig(
 ): ResolvedLogConfig {
   const persistedConfig = normalizeLoggerConfigInput(configInput);
   const env = options?.env ?? process.env;
-  const paseoHome = resolveConfiguredPaseoHome(options);
+  const hubcodeHome = resolveConfiguredHubcodeHome(options);
   const persistedLog = persistedConfig?.log;
 
   const { consoleLevel, fileLevel, consoleFormat } = resolveLogLevelsAndFormat(env, persistedLog);
-  const filePath = resolveFilePath(paseoHome, env.PASEO_LOG_FILE_PATH ?? persistedLog?.file?.path);
+  const filePath = resolveFilePath(hubcodeHome, env.HUBCODE_LOG_FILE_PATH ?? persistedLog?.file?.path);
   const rotate = resolveRotateConfig(env, persistedLog);
 
   return {

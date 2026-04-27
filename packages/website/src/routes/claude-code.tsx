@@ -5,7 +5,7 @@ import { pageMeta } from "~/meta";
 export const Route = createFileRoute("/claude-code")({
   head: () => ({
     meta: pageMeta(
-      "Claude Code Mobile App – Ship from your phone | Paseo",
+      "Claude Code Mobile App – Ship from your phone | Hubcode",
       "Run Claude Code from your phone. Launch agents, check on progress, review diffs, and merge — all from your pocket. Self-hosted, your code stays on your machine.",
     ),
   }),

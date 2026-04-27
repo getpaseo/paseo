@@ -88,7 +88,7 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { createGitHubService } from "../services/github-service.js";
-import { createPaseoWorktree } from "./paseo-worktree-service.js";
+import { createHubcodeWorktree } from "./hubcode-worktree-service.js";
 import { createWorktreeCoreDeps } from "./worktree-core.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
@@ -151,12 +151,12 @@ function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null
   ).toString();
 }
 
-export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
-export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
+export type HubcodeOpenAIConfig = OpenAiSpeechProviderConfig;
+export type HubcodeLocalSpeechConfig = LocalSpeechProviderConfig;
 
-export interface PaseoSpeechConfig {
+export interface HubcodeSpeechConfig {
   providers: RequestedSpeechProviders;
-  local?: PaseoLocalSpeechConfig;
+  local?: HubcodeLocalSpeechConfig;
 }
 
 export type DaemonLifecycleIntent =
@@ -172,9 +172,9 @@ export type DaemonLifecycleIntent =
       reason?: string;
     };
 
-export interface PaseoDaemonConfig {
+export interface HubcodeDaemonConfig {
   listen: string;
-  paseoHome: string;
+  hubcodeHome: string;
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
@@ -189,8 +189,8 @@ export interface PaseoDaemonConfig {
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
   appBaseUrl?: string;
-  openai?: PaseoOpenAIConfig;
-  speech?: PaseoSpeechConfig;
+  openai?: HubcodeOpenAIConfig;
+  speech?: HubcodeSpeechConfig;
   voiceLlmProvider?: AgentProvider | null;
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
@@ -201,8 +201,8 @@ export interface PaseoDaemonConfig {
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
 }
 
-export interface PaseoDaemon {
-  config: PaseoDaemonConfig;
+export interface HubcodeDaemon {
+  config: HubcodeDaemonConfig;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager: TerminalManager;
@@ -213,16 +213,16 @@ export interface PaseoDaemon {
   getListenTarget(): ListenTarget | null;
 }
 
-export async function createPaseoDaemon(
-  config: PaseoDaemonConfig,
+export async function createHubcodeDaemon(
+  config: HubcodeDaemonConfig,
   rootLogger: Logger,
-): Promise<PaseoDaemon> {
+): Promise<HubcodeDaemon> {
   const logger = rootLogger.child({ module: "bootstrap" });
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = resolveDaemonVersion(import.meta.url);
   const daemonConfigStore = new DaemonConfigStore(
-    config.paseoHome,
+    config.hubcodeHome,
     {
       mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
       providers: Object.fromEntries(
@@ -238,8 +238,8 @@ export async function createPaseoDaemon(
     logger,
   );
 
-  const serverId = getOrCreateServerId(config.paseoHome, { logger });
-  const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
+  const serverId = getOrCreateServerId(config.hubcodeHome, { logger });
+  const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.hubcodeHome, logger);
   let relayTransport: RelayTransportController | null = null;
 
   const staticDir = config.staticDir;
@@ -301,8 +301,8 @@ export async function createPaseoDaemon(
   // CORS - allow same-origin + configured origins
   const allowedOrigins = new Set([
     ...config.corsAllowedOrigins,
-    // Packaged desktop renderers use the custom paseo:// protocol scheme.
-    "paseo://app",
+    // Packaged desktop renderers use the custom hubcode:// protocol scheme.
+    "hubcode://app",
     // For TCP, add localhost variants
     ...(listenTarget.type === "tcp"
       ? [
@@ -414,22 +414,22 @@ export async function createPaseoDaemon(
 
   const agentStorage = new AgentStorage(config.agentStoragePath, logger);
   const projectRegistry = new FileBackedProjectRegistry(
-    path.join(config.paseoHome, "projects", "projects.json"),
+    path.join(config.hubcodeHome, "projects", "projects.json"),
     logger,
   );
   workspaceRegistry = new FileBackedWorkspaceRegistry(
-    path.join(config.paseoHome, "projects", "workspaces.json"),
+    path.join(config.hubcodeHome, "projects", "workspaces.json"),
     logger,
   );
   const chatService = new FileBackedChatService({
-    paseoHome: config.paseoHome,
+    hubcodeHome: config.hubcodeHome,
     logger,
   });
   const terminalManager = createTerminalManager();
   const github = createGitHubService();
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
-    paseoHome: config.paseoHome,
+    hubcodeHome: config.hubcodeHome,
     deps: {
       github,
     },
@@ -458,7 +458,7 @@ export async function createPaseoDaemon(
   await agentStorage.initialize();
   logger.info({ elapsed: elapsed() }, "Agent storage initialized");
   await bootstrapWorkspaceRegistries({
-    paseoHome: config.paseoHome,
+    hubcodeHome: config.hubcodeHome,
     agentStorage,
     projectRegistry,
     workspaceRegistry,
@@ -470,18 +470,18 @@ export async function createPaseoDaemon(
   logger.info({ elapsed: elapsed() }, "Chat service initialized");
   const checkoutDiffManager = new CheckoutDiffManager({
     logger,
-    paseoHome: config.paseoHome,
+    hubcodeHome: config.hubcodeHome,
     workspaceGitService,
   });
   const loopService = new LoopService({
-    paseoHome: config.paseoHome,
+    hubcodeHome: config.hubcodeHome,
     logger,
     agentManager,
   });
   await loopService.initialize();
   logger.info({ elapsed: elapsed() }, "Loop service initialized");
   const scheduleService = new ScheduleService({
-    paseoHome: config.paseoHome,
+    hubcodeHome: config.hubcodeHome,
     logger,
     agentManager,
     agentStorage,
@@ -543,9 +543,9 @@ export async function createPaseoDaemon(
         archiveWorkspaceRecord: archiveWorkspaceRecordForMcp,
         emitWorkspaceUpdatesForCwds: emitWorkspaceUpdatesForMcpArchive,
         emitSessionMessage: emitMcpArchiveSessionMessage,
-        createPaseoWorktree: async (input, serviceOptions) => {
+        createHubcodeWorktree: async (input, serviceOptions) => {
           const coreDeps = createWorktreeCoreDeps(github);
-          const result = await createPaseoWorktree(input, {
+          const result = await createHubcodeWorktree(input, {
             ...coreDeps,
             ...(serviceOptions?.resolveDefaultBranch
               ? {
@@ -563,7 +563,7 @@ export async function createPaseoDaemon(
           );
           return result;
         },
-        paseoHome: config.paseoHome,
+        hubcodeHome: config.hubcodeHome,
         callerAgentId,
         enableVoiceTools: false,
         resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
@@ -713,9 +713,9 @@ export async function createPaseoDaemon(
             agentManager.setMcpBaseUrl(value ? mcpBaseUrl : null);
           });
           const relayEnabled = config.relayEnabled ?? true;
-          const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
+          const relayEndpoint = config.relayEndpoint ?? "relay.hubcode.ai:443";
           const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
-          const appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
+          const appBaseUrl = config.appBaseUrl ?? "https://app.hubcode.ai";
 
           if (boundListenTarget.type === "tcp") {
             logger.info(
@@ -740,7 +740,7 @@ export async function createPaseoDaemon(
             agentManager,
             agentStorage,
             downloadTokenStore,
-            config.paseoHome,
+            config.hubcodeHome,
             daemonConfigStore,
             mcpBaseUrl,
             { allowedOrigins, hostnames: configuredHostnames },
@@ -776,9 +776,9 @@ export async function createPaseoDaemon(
             github,
           );
 
-          if (typeof process.send === "function" && process.env.PASEO_SUPERVISED === "1") {
+          if (typeof process.send === "function" && process.env.HUBCODE_SUPERVISED === "1") {
             process.send({
-              type: "paseo:ready",
+              type: "hubcode:ready",
               listen:
                 boundListenTarget.type === "tcp"
                   ? `${boundListenTarget.host}:${boundListenTarget.port}`

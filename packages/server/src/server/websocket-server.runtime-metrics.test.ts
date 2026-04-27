@@ -99,7 +99,7 @@ function createServer(logger: ReturnType<typeof createLogger>) {
     } as unknown as AgentManager,
     {} as unknown as AgentStorage,
     {} as unknown as DownloadTokenStore,
-    "/tmp/paseo-test",
+    "/tmp/hubcode-test",
     daemonConfigStore as unknown as DaemonConfigStore,
     null,
     { allowedOrigins: new Set() },

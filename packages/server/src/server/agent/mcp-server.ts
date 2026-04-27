@@ -27,12 +27,12 @@ import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
 } from "./timeline-append.js";
-import { getPaseoWorktreesRoot, type WorktreeConfig } from "../../utils/worktree.js";
+import { getHubcodeWorktreesRoot, type WorktreeConfig } from "../../utils/worktree.js";
 import {
-  archivePaseoWorktree,
+  archiveHubcodeWorktree,
   killTerminalsUnderPath,
-  type ArchivePaseoWorktreeDependencies,
-} from "../paseo-worktree-archive-service.js";
+  type ArchiveHubcodeWorktreeDependencies,
+} from "../hubcode-worktree-archive-service.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
@@ -62,10 +62,10 @@ import {
 import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type {
-  CreatePaseoWorktreeFn,
-  CreatePaseoWorktreeInput,
-  CreatePaseoWorktreeResult,
-} from "../paseo-worktree-service.js";
+  CreateHubcodeWorktreeFn,
+  CreateHubcodeWorktreeInput,
+  CreateHubcodeWorktreeResult,
+} from "../hubcode-worktree-service.js";
 import { toWorktreeRequestError } from "../worktree-errors.js";
 import { join } from "node:path";
 
@@ -78,11 +78,11 @@ export interface AgentMcpServerOptions {
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
   github?: GitHubService;
   workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
-  archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
-  emitWorkspaceUpdatesForCwds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForCwds"];
-  emitSessionMessage?: ArchivePaseoWorktreeDependencies["emit"];
-  createPaseoWorktree?: CreatePaseoWorktreeFn;
-  paseoHome?: string;
+  archiveWorkspaceRecord?: ArchiveHubcodeWorktreeDependencies["archiveWorkspaceRecord"];
+  emitWorkspaceUpdatesForCwds?: ArchiveHubcodeWorktreeDependencies["emitWorkspaceUpdatesForCwds"];
+  emitSessionMessage?: ArchiveHubcodeWorktreeDependencies["emit"];
+  createHubcodeWorktree?: CreateHubcodeWorktreeFn;
+  hubcodeHome?: string;
   /**
    * ID of the agent that is connecting to this MCP server.
    * Used for cwd/mode inheritance when agents spawn child agents.
@@ -686,9 +686,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           action,
           githubPrNumber,
           runSetup: false,
-          paseoHome: options.paseoHome,
+          hubcodeHome: options.hubcodeHome,
         },
-        createPaseoWorktree: options.createPaseoWorktree,
+        createHubcodeWorktree: options.createHubcodeWorktree,
         resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
         workspaceGitService: options.workspaceGitService,
         logger: options.logger,
@@ -759,7 +759,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
       const childAgentDefaultLabels = callerContext?.childAgentDefaultLabels;
       const mergedLabels = {
-        ...(callerAgentId ? { "paseo.parent-agent-id": callerAgentId } : {}),
+        ...(callerAgentId ? { "hubcode.parent-agent-id": callerAgentId } : {}),
         ...childAgentDefaultLabels,
         ...labels,
       };
@@ -805,7 +805,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cwd: snapshot.cwd,
         initialPrompt: trimmedPrompt,
         explicitTitle: snapshot.config.title,
-        paseoHome: options.paseoHome,
+        hubcodeHome: options.hubcodeHome,
         logger: childLogger,
         deps: options.workspaceGitService
           ? {
@@ -1739,7 +1739,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     "list_worktrees",
     {
       title: "List worktrees",
-      description: "List Paseo-managed git worktrees for a repository.",
+      description: "List Hubcode-managed git worktrees for a repository.",
       inputSchema: {
         cwd: z
           .string()
@@ -1770,7 +1770,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     "create_worktree",
     {
       title: "Create worktree",
-      description: "Create a Paseo-managed git worktree.",
+      description: "Create a Hubcode-managed git worktree.",
       inputSchema: {
         cwd: z
           .string()
@@ -1800,9 +1800,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           action,
           githubPrNumber,
           runSetup: false,
-          paseoHome: options.paseoHome,
+          hubcodeHome: options.hubcodeHome,
         },
-        createPaseoWorktree: options.createPaseoWorktree,
+        createHubcodeWorktree: options.createHubcodeWorktree,
         resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
         workspaceGitService: options.workspaceGitService,
         logger: options.logger,
@@ -1823,7 +1823,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     "archive_worktree",
     {
       title: "Archive worktree",
-      description: "Delete a Paseo-managed git worktree.",
+      description: "Delete a Hubcode-managed git worktree.",
       inputSchema: {
         cwd: z
           .string()
@@ -1859,11 +1859,11 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
       const targetPath =
         worktreePath ??
-        join(await getPaseoWorktreesRoot(repoRoot, options.paseoHome), worktreeSlug!);
+        join(await getHubcodeWorktreesRoot(repoRoot, options.hubcodeHome), worktreeSlug!);
 
-      await archivePaseoWorktree(
+      await archiveHubcodeWorktree(
         {
-          paseoHome: options.paseoHome,
+          hubcodeHome: options.hubcodeHome,
           github: options.github,
           workspaceGitService: options.workspaceGitService,
           agentManager,
@@ -2039,8 +2039,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 }
 
 interface CreateMcpWorktreeOptions {
-  input: CreatePaseoWorktreeInput;
-  createPaseoWorktree: CreatePaseoWorktreeFn | undefined;
+  input: CreateHubcodeWorktreeInput;
+  createHubcodeWorktree: CreateHubcodeWorktreeFn | undefined;
   resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
   workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot">;
   logger: Logger;
@@ -2048,12 +2048,12 @@ interface CreateMcpWorktreeOptions {
 
 async function createMcpWorktree(
   options: CreateMcpWorktreeOptions,
-): Promise<CreatePaseoWorktreeResult> {
+): Promise<CreateHubcodeWorktreeResult> {
   try {
-    if (!options.createPaseoWorktree) {
-      throw new Error("Paseo worktree service is not configured");
+    if (!options.createHubcodeWorktree) {
+      throw new Error("Hubcode worktree service is not configured");
     }
-    const result = await options.createPaseoWorktree(options.input, {
+    const result = await options.createHubcodeWorktree(options.input, {
       resolveDefaultBranch: options.resolveDefaultBranch,
     });
     if (options.workspaceGitService) {

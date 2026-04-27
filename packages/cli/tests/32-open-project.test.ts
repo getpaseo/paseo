@@ -19,7 +19,7 @@ assert.equal(isPathLikeArg("foo"), false);
 console.log("  ✅ path-like detection matches the expected prefixes");
 
 console.log("  Testing existing directory detection and command precedence...");
-const existingProject = join(await mkdtemp(join(tmpdir(), "paseo-open-project-")), "project");
+const existingProject = join(await mkdtemp(join(tmpdir(), "hubcode-open-project-")), "project");
 await mkdir(existingProject);
 const originalCwd = process.cwd();
 process.chdir(join(existingProject, ".."));
@@ -55,8 +55,8 @@ process.stderr.write = ((chunk: string | Uint8Array) => {
 
 const previousExitCode = process.exitCode;
 process.exitCode = undefined;
-const previousDesktopCli = process.env.PASEO_DESKTOP_CLI;
-process.env.PASEO_DESKTOP_CLI = "1";
+const previousDesktopCli = process.env.HUBCODE_DESKTOP_CLI;
+process.env.HUBCODE_DESKTOP_CLI = "1";
 
 await openDesktopWithProject(existingProject);
 
@@ -64,7 +64,7 @@ process.stderr.write = originalWrite;
 assert.equal(process.exitCode, 1);
 assert.match(stderrChunks.join(""), /desktop CLI passthrough mode/);
 process.exitCode = previousExitCode;
-process.env.PASEO_DESKTOP_CLI = previousDesktopCli;
+process.env.HUBCODE_DESKTOP_CLI = previousDesktopCli;
 console.log("  ✅ desktop CLI passthrough mode is rejected");
 
 console.log("\n✅ Phase 32: Open Project CLI Tests PASSED");

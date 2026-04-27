@@ -176,8 +176,8 @@ function pullRequestCheckoutTargetJson(): string {
           isCrossRepository: true,
           headRepositoryOwner: { login: "therainisme" },
           headRepository: {
-            sshUrl: "git@github.com:therainisme/paseo.git",
-            url: "https://github.com/therainisme/paseo",
+            sshUrl: "git@github.com:therainisme/hubcode.git",
+            url: "https://github.com/therainisme/hubcode",
           },
         },
       },
@@ -187,8 +187,8 @@ function pullRequestCheckoutTargetJson(): string {
 
 function repoViewJson(): string {
   return JSON.stringify({
-    owner: { login: "getpaseo" },
-    name: "paseo",
+    owner: { login: "gethubcode" },
+    name: "hubcode",
     parent: null,
   });
 }
@@ -322,8 +322,8 @@ describe("GitHubService", () => {
       baseRefName: "main",
       headRefName: "main",
       headOwnerLogin: "therainisme",
-      headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
-      headRepositoryUrl: "https://github.com/therainisme/paseo",
+      headRepositorySshUrl: "git@github.com:therainisme/hubcode.git",
+      headRepositoryUrl: "https://github.com/therainisme/hubcode",
       isCrossRepository: true,
     });
 
@@ -334,8 +334,8 @@ describe("GitHubService", () => {
     });
     expect(runner.calls[1]?.cwd).toBe("/repo");
     expect(runner.calls[1]?.args.slice(0, 3)).toEqual(["api", "graphql", "-f"]);
-    expect(runner.calls[1]?.args).toContain("owner=getpaseo");
-    expect(runner.calls[1]?.args).toContain("name=paseo");
+    expect(runner.calls[1]?.args).toContain("owner=gethubcode");
+    expect(runner.calls[1]?.args).toContain("name=hubcode");
     expect(runner.calls[1]?.args).toContain("number=526");
   });
 
@@ -1847,12 +1847,12 @@ describe("GitHubService", () => {
 
     try {
       execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
-      execFileSync("git", ["remote", "add", "origin", "git@github.com:getpaseo/paseo.git"], {
+      execFileSync("git", ["remote", "add", "origin", "git@github.com:gethubcode/hubcode.git"], {
         cwd,
         stdio: "ignore",
       });
 
-      await expect(resolveGitHubRepo(cwd)).resolves.toBe("getpaseo/paseo");
+      await expect(resolveGitHubRepo(cwd)).resolves.toBe("gethubcode/hubcode");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

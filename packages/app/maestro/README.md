@@ -33,7 +33,7 @@ The reusable pieces live in `flows/`:
 Compose new workspace scenarios out of these primitives instead of copying the
 old full flow. The shell scripts render the top-level flows and every `flows/*.yaml`
 file into the same temp directory, so nested `runFlow: flows/...` paths keep
-working with `${PASEO_MAESTRO_*}` placeholders.
+working with `${HUBCODE_MAESTRO_*}` placeholders.
 
 The flow is intentionally strict. It must:
 
@@ -51,7 +51,7 @@ Do not weaken this flow to only wait for `message-input-root`. That can pass on
 the wrong route. The header assertion and the `New workspace` negative assertion
 are what prove the redirect actually completed.
 
-The scripts assume a development build with package id `sh.paseo.debug`, an
+The scripts assume a development build with package id `ai.hubcode.debug`, an
 already-running local daemon on `127.0.0.1:6767`, and a connected Android device
 or emulator. They call `adb reverse tcp:6767 tcp:6767`; they do not restart the
 daemon.
@@ -64,8 +64,8 @@ bash packages/app/maestro/record-workspace-create-android-focus.sh
 Optional environment:
 
 ```bash
-PASEO_MAESTRO_APP_ID=sh.paseo.debug
-PASEO_MAESTRO_DIRECT_ENDPOINT=127.0.0.1:6767
-PASEO_MAESTRO_DAEMON_WS_URL=ws://127.0.0.1:6767/ws
-PASEO_MAESTRO_PROJECT_PATH=/path/to/git/repo
+HUBCODE_MAESTRO_APP_ID=ai.hubcode.debug
+HUBCODE_MAESTRO_DIRECT_ENDPOINT=127.0.0.1:6767
+HUBCODE_MAESTRO_DAEMON_WS_URL=ws://127.0.0.1:6767/ws
+HUBCODE_MAESTRO_PROJECT_PATH=/path/to/git/repo
 ```

@@ -7,7 +7,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 const repoRoot = path.resolve(__dirname, "../..");
-const siteHost = "https://paseo.sh";
+const siteHost = "https://hubcode.ai";
 const sitemapPages = [
   "/",
   "/changelog",

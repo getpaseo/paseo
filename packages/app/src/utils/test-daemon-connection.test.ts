@@ -68,7 +68,7 @@ vi.mock("@/desktop/daemon/desktop-daemon-transport", () => ({
     }: {
       transportType: "socket" | "pipe";
       transportPath: string;
-    }) => `paseo+local://${transportType}?path=${encodeURIComponent(transportPath)}`,
+    }) => `hubcode+local://${transportType}?path=${encodeURIComponent(transportPath)}`,
   ),
 }));
 
@@ -105,14 +105,14 @@ describe("test-daemon-connection connectToDaemon", () => {
     const mod = await import("./test-daemon-connection");
 
     const result = await mod.connectToDaemon({
-      id: "socket:/tmp/paseo.sock",
+      id: "socket:/tmp/hubcode.sock",
       type: "directSocket",
-      path: "/tmp/paseo.sock",
+      path: "/tmp/hubcode.sock",
     });
     await result.client.close();
 
     expect(daemonClientMock.createdConfigs[0]?.url).toBe(
-      "paseo+local://socket?path=%2Ftmp%2Fpaseo.sock",
+      "hubcode+local://socket?path=%2Ftmp%2Fhubcode.sock",
     );
   });
 });

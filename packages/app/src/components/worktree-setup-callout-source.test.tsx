@@ -239,7 +239,7 @@ describe("WorktreeSetupCalloutSource", () => {
     expect(client.readProjectConfig).not.toHaveBeenCalled();
   });
 
-  it("does not register a callout when reading paseo.json fails", async () => {
+  it("does not register a callout when reading hubcode.json fails", async () => {
     client.readProjectConfig.mockResolvedValue(readError());
 
     await renderHarness(root!, queryClient!);
@@ -271,7 +271,7 @@ describe("WorktreeSetupCalloutSource", () => {
     });
 
     expect(asyncStorage.setItem).toHaveBeenCalledWith(
-      "@paseo:sidebar-callout-dismissals",
+      "@hubcode:sidebar-callout-dismissals",
       JSON.stringify(["worktree-setup-missing:project-1"]),
     );
     expect(container?.querySelector('[data-testid="worktree-setup-callout-project-1"]')).toBeNull();

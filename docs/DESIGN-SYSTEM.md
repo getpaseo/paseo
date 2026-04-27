@@ -6,7 +6,7 @@ Tokens — every color, font size, weight, spacing step, radius, icon size — l
 
 ## 1. Character
 
-Paseo is minimal, spacious, quiet, confident. Whitespace is deliberate. Nothing crowds, nothing decorates, nothing apologizes. A row, a label, a control. That is the bar.
+Hubcode is minimal, spacious, quiet, confident. Whitespace is deliberate. Nothing crowds, nothing decorates, nothing apologizes. A row, a label, a control. That is the bar.
 
 The app is calm so the user's work is not. Every visual decision serves either _act on this_ or _understand this_ — never _look at this_.
 
@@ -135,7 +135,7 @@ A new list+detail feature copies the settings shell. A new workspace-shaped feat
 
 ## 9. Copy and voice
 
-Sentence case. "Pair a device", "Danger zone", "Restart daemon", "Inject Paseo tools", "No sessions yet", "Load more". Proper nouns retain casing — Paseo, Beta, Stable, Local. Title case is wrong.
+Sentence case. "Pair a device", "Danger zone", "Restart daemon", "Inject Hubcode tools", "No sessions yet", "Load more". Proper nouns retain casing — Hubcode, Beta, Stable, Local. Title case is wrong.
 
 No trailing periods on row titles, labels, or buttons. No trailing period on a single-clause hint: "What happens when you press Enter while the agent is running" (`packages/app/src/screens/settings-screen.tsx:271-272`). Periods exist inside multi-sentence prose: "Restarts the daemon process. The app will reconnect automatically."
 

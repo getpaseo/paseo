@@ -302,7 +302,7 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     }
 
     const title = agentManager.getAgent(childAgentId)?.config?.title ?? childAgentId;
-    const prompt = `<paseo-system>\nAgent ${childAgentId} (${title}) ${reason}.\n</paseo-system>`;
+    const prompt = `<hubcode-system>\nAgent ${childAgentId} (${title}) ${reason}.\n</hubcode-system>`;
 
     startAgentRun(agentManager, callerAgentId, prompt, logger, {
       replaceRunning: true,

@@ -6,26 +6,26 @@ interface GlobalSnapshot {
   Notification: unknown;
   navigatorDescriptor?: PropertyDescriptor;
   windowDescriptor?: PropertyDescriptor;
-  paseoDesktop: unknown;
+  hubcodeDesktop: unknown;
 }
 
 const originalGlobals: GlobalSnapshot = {
   Notification: (globalThis as { Notification?: unknown }).Notification,
   navigatorDescriptor: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
   windowDescriptor: Object.getOwnPropertyDescriptor(globalThis, "window"),
-  paseoDesktop:
+  hubcodeDesktop:
     typeof globalThis.window === "undefined"
       ? undefined
-      : (globalThis.window as { paseoDesktop?: unknown }).paseoDesktop,
+      : (globalThis.window as { hubcodeDesktop?: unknown }).hubcodeDesktop,
 };
 
-function ensureWindow(): { paseoDesktop?: unknown } {
-  const existingWindow = (globalThis as { window?: { paseoDesktop?: unknown } }).window;
+function ensureWindow(): { hubcodeDesktop?: unknown } {
+  const existingWindow = (globalThis as { window?: { hubcodeDesktop?: unknown } }).window;
   if (existingWindow) {
     return existingWindow;
   }
 
-  const nextWindow: { paseoDesktop?: unknown } = {};
+  const nextWindow: { hubcodeDesktop?: unknown } = {};
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     writable: true,
@@ -58,7 +58,7 @@ function restoreGlobals(): void {
   }
 
   if (typeof globalThis.window !== "undefined") {
-    (globalThis.window as { paseoDesktop?: unknown }).paseoDesktop = originalGlobals.paseoDesktop;
+    (globalThis.window as { hubcodeDesktop?: unknown }).hubcodeDesktop = originalGlobals.hubcodeDesktop;
   }
 }
 
@@ -81,7 +81,7 @@ describe("desktop-permissions", () => {
 
     expect(shouldShowDesktopPermissionSection()).toBe(false);
 
-    ensureWindow().paseoDesktop = {};
+    ensureWindow().hubcodeDesktop = {};
     expect(shouldShowDesktopPermissionSection()).toBe(true);
   });
 

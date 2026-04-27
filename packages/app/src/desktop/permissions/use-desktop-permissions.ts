@@ -124,7 +124,7 @@ export function useDesktopPermissions(): UseDesktopPermissionsReturn {
     setTestNotificationError(null);
     try {
       const sent = await sendOsNotification({
-        title: "Paseo notification test",
+        title: "Hubcode notification test",
         body: "If you can see this, desktop notifications work.",
       });
       if (!sent) {

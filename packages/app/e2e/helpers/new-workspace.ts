@@ -9,11 +9,11 @@ import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws
 
 type NewWorkspaceDaemonClient = Pick<
   ServerDaemonClient,
-  | "archivePaseoWorktree"
+  | "archiveHubcodeWorktree"
   | "archiveWorkspace"
   | "close"
   | "connect"
-  | "createPaseoWorktree"
+  | "createHubcodeWorktree"
   | "openProject"
 >;
 
@@ -112,7 +112,7 @@ export async function archiveWorkspaceFromDaemon(
   client: NewWorkspaceDaemonClient,
   workspaceId: string,
 ): Promise<void> {
-  const payload = await client.archivePaseoWorktree({ worktreePath: workspaceId });
+  const payload = await client.archiveHubcodeWorktree({ worktreePath: workspaceId });
   if (payload.error) {
     throw new Error(payload.error.message);
   }
@@ -138,7 +138,7 @@ export async function createWorktreeViaDaemon(
   client: NewWorkspaceDaemonClient,
   input: { cwd: string; slug: string },
 ): Promise<OpenedProject> {
-  const payload = await client.createPaseoWorktree({
+  const payload = await client.createHubcodeWorktree({
     cwd: input.cwd,
     worktreeSlug: input.slug,
   });

@@ -88,7 +88,7 @@ function makeActivityErrorHandler(reject: (error: Error) => void) {
 }
 
 const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
-const shouldRun = process.env.PASEO_VOICE_ROUNDTRIP_E2E === "1" && Boolean(openaiApiKey);
+const shouldRun = process.env.HUBCODE_VOICE_ROUNDTRIP_E2E === "1" && Boolean(openaiApiKey);
 const speechTest = shouldRun ? test : test.skip;
 
 type VoiceRoundtripProvider = string;

@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import type { AgentSnapshotPayload } from "@getpaseo/server";
+import type { AgentSnapshotPayload } from "@gethubcode/server";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 
@@ -148,8 +148,8 @@ function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
       id: p.id,
       tool: p.name ?? "unknown",
     })),
-    Worktree: snapshot.labels?.["paseo.worktree"] ?? null,
-    ParentAgentId: snapshot.labels?.["paseo.parent-agent-id"] ?? null,
+    Worktree: snapshot.labels?.["hubcode.worktree"] ?? null,
+    ParentAgentId: snapshot.labels?.["hubcode.parent-agent-id"] ?? null,
   };
 }
 
@@ -223,7 +223,7 @@ export async function runInspectCommand(
     const error: CommandError = {
       code: "MISSING_AGENT_ID",
       message: "Agent ID is required",
-      details: "Usage: paseo agent inspect <id>",
+      details: "Usage: hubcode agent inspect <id>",
     };
     throw error;
   }
@@ -236,7 +236,7 @@ export async function runInspectCommand(
     const error: CommandError = {
       code: "DAEMON_NOT_RUNNING",
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
+      details: "Start the daemon with: hubcode daemon start",
     };
     throw error;
   }
@@ -247,7 +247,7 @@ export async function runInspectCommand(
       const error: CommandError = {
         code: "AGENT_NOT_FOUND",
         message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo ls" to list available agents',
+        details: 'Use "hubcode ls" to list available agents',
       };
       throw error;
     }

@@ -1,18 +1,18 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 
-const PASEO_NODE_ENV = "PASEO_NODE_ENV";
+const HUBCODE_NODE_ENV = "HUBCODE_NODE_ENV";
 const ELECTRON_RUN_AS_NODE = "ELECTRON_RUN_AS_NODE";
 
 const RUNTIME_CONTROL_ENV_KEYS = [
-  PASEO_NODE_ENV,
-  "PASEO_DESKTOP_MANAGED",
-  "PASEO_SUPERVISED",
+  HUBCODE_NODE_ENV,
+  "HUBCODE_DESKTOP_MANAGED",
+  "HUBCODE_SUPERVISED",
   ELECTRON_RUN_AS_NODE,
   "ELECTRON_NO_ATTACH_CONSOLE",
 ] as const;
 
-export type PaseoNodeEnv = "development" | "production" | "test";
+export type HubcodeNodeEnv = "development" | "production" | "test";
 export type ProcessEnvRecord = Record<string, string | undefined>;
 type ExternalProcessEnv = NodeJS.ProcessEnv & Record<string, string>;
 
@@ -69,7 +69,7 @@ function isProcessExecPathCommand(command: string): boolean {
   );
 }
 
-export function createPaseoInternalEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function createHubcodeInternalEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return buildInternalProcessEnv(baseEnv);
 }
 
@@ -92,7 +92,7 @@ export function createExternalCommandProcessEnv(
   return env;
 }
 
-export function resolvePaseoNodeEnv(env: NodeJS.ProcessEnv): PaseoNodeEnv | undefined {
-  const value = env[PASEO_NODE_ENV];
+export function resolveHubcodeNodeEnv(env: NodeJS.ProcessEnv): HubcodeNodeEnv | undefined {
+  const value = env[HUBCODE_NODE_ENV];
   return value === "development" || value === "production" || value === "test" ? value : undefined;
 }

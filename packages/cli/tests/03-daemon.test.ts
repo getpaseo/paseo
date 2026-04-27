@@ -3,7 +3,7 @@
 /**
  * Phase 2: Daemon Command Tests
  *
- * Tests daemon commands with an isolated PASEO_HOME.
+ * Tests daemon commands with an isolated HUBCODE_HOME.
  *
  * Tests:
  * - daemon --help shows subcommands
@@ -18,23 +18,23 @@ import assert from "node:assert";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { runLocalPaseo } from "./helpers/local-cli.ts";
+import { runLocalHubcode } from "./helpers/local-cli.ts";
 
 console.log("=== Daemon Commands ===\n");
 
 // Keep restart off default 6767 to avoid collisions with any existing daemon.
 const port = 10000 + Math.floor(Math.random() * 50000);
-const paseoHome = await mkdtemp(join(tmpdir(), "paseo-test-home-"));
+const hubcodeHome = await mkdtemp(join(tmpdir(), "hubcode-test-home-"));
 
 function daemonCommand(args: string[]) {
-  return runLocalPaseo(["daemon", ...args], { PASEO_HOME: paseoHome });
+  return runLocalHubcode(["daemon", ...args], { HUBCODE_HOME: hubcodeHome });
 }
 
 try {
   // Test 1: daemon --help shows subcommands
   {
     console.log("Test 1: daemon --help shows subcommands");
-    const result = await runLocalPaseo(["daemon", "--help"]);
+    const result = await runLocalHubcode(["daemon", "--help"]);
     assert.strictEqual(result.exitCode, 0, "daemon --help should exit 0");
     assert(result.stdout.includes("start"), "help should mention start");
     assert(result.stdout.includes("status"), "help should mention status");
@@ -85,7 +85,7 @@ try {
     const status = JSON.parse(result.stdout);
     assert.strictEqual(typeof status.serverId, "string", "json status should include serverId");
     assert.strictEqual(status.localDaemon, "stopped", "json status should report stopped");
-    assert.strictEqual(status.home, paseoHome, "json status should reflect the isolated home");
+    assert.strictEqual(status.home, hubcodeHome, "json status should reflect the isolated home");
     assert.strictEqual(
       status.hostname,
       null,
@@ -123,7 +123,7 @@ try {
   // Best-effort daemon cleanup in case assertions fail before explicit stop.
   await daemonCommand(["stop", "--force"]);
   // Clean up temp directory
-  await rm(paseoHome, { recursive: true, force: true });
+  await rm(hubcodeHome, { recursive: true, force: true });
 }
 
 console.log("=== All daemon tests passed ===");

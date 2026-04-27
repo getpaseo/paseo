@@ -1,12 +1,12 @@
 import Svg, { Path } from "react-native-svg";
 import { useUnistyles } from "react-native-unistyles";
 
-interface PaseoLogoProps {
+interface HubcodeLogoProps {
   size?: number;
   color?: string;
 }
 
-export function PaseoLogo({ size = 64, color }: PaseoLogoProps) {
+export function HubcodeLogo({ size = 64, color }: HubcodeLogoProps) {
   const { theme } = useUnistyles();
   const fill = color ?? theme.colors.foreground;
 

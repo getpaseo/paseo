@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { PaseoConfigRaw } from "@server/shared/messages";
+import type { HubcodeConfigRaw } from "@server/shared/messages";
 import { useRouter } from "expo-router";
 import { useEffect } from "react";
 import { useSidebarCallouts } from "@/contexts/sidebar-callout-context";
@@ -33,7 +33,7 @@ function selectActiveGitWorkspaceProject(
   return { serverId, projectKey, repoRoot };
 }
 
-function hasSetupCommands(config: PaseoConfigRaw): boolean {
+function hasSetupCommands(config: HubcodeConfigRaw): boolean {
   const setup = config.worktree?.setup;
   if (typeof setup === "string") {
     return setup.trim().length > 0;

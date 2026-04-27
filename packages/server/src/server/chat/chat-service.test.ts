@@ -11,7 +11,7 @@ import {
 } from "./chat-service.js";
 
 describe("FileBackedChatService", () => {
-  let paseoHome: string;
+  let hubcodeHome: string;
   let service: FileBackedChatService;
 
   async function sendChatMessage(input: PostChatMessageInput) {
@@ -19,16 +19,16 @@ describe("FileBackedChatService", () => {
   }
 
   beforeEach(async () => {
-    paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-chat-service-"));
+    hubcodeHome = await mkdtemp(path.join(tmpdir(), "hubcode-chat-service-"));
     service = new FileBackedChatService({
-      paseoHome,
+      hubcodeHome,
       logger: pino({ level: "silent" }),
     });
     await service.initialize();
   });
 
   afterEach(async () => {
-    await rm(paseoHome, { recursive: true, force: true });
+    await rm(hubcodeHome, { recursive: true, force: true });
   });
 
   test("creates rooms, enforces unique names, and persists to disk", async () => {
@@ -45,7 +45,7 @@ describe("FileBackedChatService", () => {
       code: "chat_room_name_taken",
     });
 
-    const raw = await readFile(path.join(paseoHome, "chat", "rooms.json"), "utf8");
+    const raw = await readFile(path.join(hubcodeHome, "chat", "rooms.json"), "utf8");
     expect(raw).toContain("cli-features-epic");
     expect(created.name).toBe("cli-features-epic");
     expect(created.purpose).toBe("Coordination room");

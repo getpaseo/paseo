@@ -1010,7 +1010,7 @@ describe("ProviderSnapshotManager", () => {
     ]);
     const manager = new ProviderSnapshotManager(registry, createTestLogger());
 
-    manager.getSnapshot("~/paseo-provider-test/../paseo-provider-test/");
+    manager.getSnapshot("~/hubcode-provider-test/../hubcode-provider-test/");
     manager.getSnapshot("relative-provider-test/..");
 
     await vi.waitFor(() => {

@@ -6,7 +6,7 @@ import {
 } from "./node-entrypoint-launcher";
 
 const CLI_ENTRYPOINT: NodeEntrypointSpec = {
-  entryPath: "/tmp/paseo-cli.js",
+  entryPath: "/tmp/hubcode-cli.js",
   execArgv: ["--import", "tsx"],
 };
 
@@ -15,7 +15,7 @@ describe("node-entrypoint-launcher", () => {
     it("returns null when no CLI args are provided", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo"],
+          argv: ["/Applications/Hubcode.app/Contents/MacOS/Hubcode"],
           isDefaultApp: false,
           forceCli: false,
         }),
@@ -25,7 +25,7 @@ describe("node-entrypoint-launcher", () => {
     it("ignores macOS GUI launch arguments", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo", "-psn_0_12345"],
+          argv: ["/Applications/Hubcode.app/Contents/MacOS/Hubcode", "-psn_0_12345"],
           isDefaultApp: false,
           forceCli: false,
         }),
@@ -35,7 +35,7 @@ describe("node-entrypoint-launcher", () => {
     it("ignores --no-sandbox injected by Linux wrapper", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: ["/usr/bin/Paseo", "--no-sandbox", "status"],
+          argv: ["/usr/bin/Hubcode", "--no-sandbox", "status"],
           isDefaultApp: false,
           forceCli: false,
         }),
@@ -45,7 +45,7 @@ describe("node-entrypoint-launcher", () => {
     it("returns null when only --no-sandbox is present", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: ["/usr/bin/Paseo", "--no-sandbox"],
+          argv: ["/usr/bin/Hubcode", "--no-sandbox"],
           isDefaultApp: false,
           forceCli: false,
         }),
@@ -55,7 +55,7 @@ describe("node-entrypoint-launcher", () => {
     it("preserves CLI flags for direct app invocations", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo", "--version"],
+          argv: ["/Applications/Hubcode.app/Contents/MacOS/Hubcode", "--version"],
           isDefaultApp: false,
           forceCli: false,
         }),
@@ -65,7 +65,7 @@ describe("node-entrypoint-launcher", () => {
     it("passes --open-project through as a normal CLI arg", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo", "--open-project", "/tmp/project"],
+          argv: ["/Applications/Hubcode.app/Contents/MacOS/Hubcode", "--open-project", "/tmp/project"],
           isDefaultApp: false,
           forceCli: false,
         }),
@@ -75,7 +75,7 @@ describe("node-entrypoint-launcher", () => {
     it("forces CLI mode for shim launches even without args", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Paseo.app/Contents/MacOS/Paseo"],
+          argv: ["/Applications/Hubcode.app/Contents/MacOS/Hubcode"],
           isDefaultApp: false,
           forceCli: true,
         }),
@@ -87,29 +87,29 @@ describe("node-entrypoint-launcher", () => {
     it("uses the packaged runner when the desktop app is packaged", () => {
       expect(
         createNodeEntrypointInvocation({
-          execPath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
+          execPath: "/Applications/Hubcode.app/Contents/MacOS/Hubcode",
           isPackaged: true,
           packagedRunnerPath:
-            "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
+            "/Applications/Hubcode.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
           entrypoint: CLI_ENTRYPOINT,
           argvMode: "node-script",
           args: ["ls", "--json"],
           baseEnv: { PATH: "/usr/bin" },
         }),
       ).toEqual({
-        command: "/Applications/Paseo.app/Contents/MacOS/Paseo",
+        command: "/Applications/Hubcode.app/Contents/MacOS/Hubcode",
         args: [
           "--disable-warning=DEP0040",
-          "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
+          "/Applications/Hubcode.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
           "node-script",
-          "/tmp/paseo-cli.js",
+          "/tmp/hubcode-cli.js",
           "ls",
           "--json",
         ],
         env: {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
-          PASEO_NODE_ENV: "production",
+          HUBCODE_NODE_ENV: "production",
         },
       });
     });
@@ -127,7 +127,7 @@ describe("node-entrypoint-launcher", () => {
         }),
       ).toEqual({
         command: "/opt/homebrew/bin/electron",
-        args: ["--import", "tsx", "/tmp/paseo-cli.js", "ls"],
+        args: ["--import", "tsx", "/tmp/hubcode-cli.js", "ls"],
         env: {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
@@ -138,10 +138,10 @@ describe("node-entrypoint-launcher", () => {
     it("forces packaged launches to production even when NODE_ENV is inherited as development", () => {
       expect(
         createNodeEntrypointInvocation({
-          execPath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
+          execPath: "/Applications/Hubcode.app/Contents/MacOS/Hubcode",
           isPackaged: true,
           packagedRunnerPath:
-            "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
+            "/Applications/Hubcode.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
           entrypoint: CLI_ENTRYPOINT,
           argvMode: "node-script",
           args: [],
@@ -151,35 +151,35 @@ describe("node-entrypoint-launcher", () => {
         PATH: "/usr/bin",
         ELECTRON_RUN_AS_NODE: "1",
         NODE_ENV: "development",
-        PASEO_NODE_ENV: "production",
+        HUBCODE_NODE_ENV: "production",
       });
     });
 
     it("keeps node-style argv for packaged script entrypoints", () => {
       expect(
         createNodeEntrypointInvocation({
-          execPath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
+          execPath: "/Applications/Hubcode.app/Contents/MacOS/Hubcode",
           isPackaged: true,
           packagedRunnerPath:
-            "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
+            "/Applications/Hubcode.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
           entrypoint: CLI_ENTRYPOINT,
           argvMode: "node-script",
           args: ["--dev"],
           baseEnv: { PATH: "/usr/bin" },
         }),
       ).toEqual({
-        command: "/Applications/Paseo.app/Contents/MacOS/Paseo",
+        command: "/Applications/Hubcode.app/Contents/MacOS/Hubcode",
         args: [
           "--disable-warning=DEP0040",
-          "/Applications/Paseo.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
+          "/Applications/Hubcode.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
           "node-script",
-          "/tmp/paseo-cli.js",
+          "/tmp/hubcode-cli.js",
           "--dev",
         ],
         env: {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
-          PASEO_NODE_ENV: "production",
+          HUBCODE_NODE_ENV: "production",
         },
       });
     });

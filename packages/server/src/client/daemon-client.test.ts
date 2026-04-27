@@ -131,7 +131,7 @@ test("dedupes in-flight checkout status requests per agentId", async () => {
         error: null,
         requestId: request.message.requestId,
         isGit: false,
-        isPaseoOwnedWorktree: false,
+        isHubcodeOwnedWorktree: false,
         repoRoot: null,
         currentBranch: null,
         isDirty: null,
@@ -239,14 +239,14 @@ test("normalizes workspace_setup_progress into a workspace-scoped daemon event",
         status: "running",
         detail: {
           type: "worktree_setup",
-          worktreePath: "/tmp/project/.paseo/worktrees/feature-a",
+          worktreePath: "/tmp/project/.hubcode/worktrees/feature-a",
           branchName: "feature-a",
           log: "phase-one\n",
           commands: [
             {
               index: 1,
               command: "npm install",
-              cwd: "/tmp/project/.paseo/worktrees/feature-a",
+              cwd: "/tmp/project/.hubcode/worktrees/feature-a",
               log: "phase-one\n",
               status: "running",
               exitCode: null,
@@ -266,14 +266,14 @@ test("normalizes workspace_setup_progress into a workspace-scoped daemon event",
       status: "running",
       detail: {
         type: "worktree_setup",
-        worktreePath: "/tmp/project/.paseo/worktrees/feature-a",
+        worktreePath: "/tmp/project/.hubcode/worktrees/feature-a",
         branchName: "feature-a",
         log: "phase-one\n",
         commands: [
           {
             index: 1,
             command: "npm install",
-            cwd: "/tmp/project/.paseo/worktrees/feature-a",
+            cwd: "/tmp/project/.hubcode/worktrees/feature-a",
             log: "phase-one\n",
             status: "running",
             exitCode: null,
@@ -304,7 +304,7 @@ test("sends create_agent_request with string workspace ids", async () => {
 
   const createPromise = client.createAgent({
     provider: "codex",
-    cwd: "/tmp/project/.paseo/worktrees/feature-a",
+    cwd: "/tmp/project/.hubcode/worktrees/feature-a",
     workspaceId: "ws-feature-a",
     title: "Compat agent",
     modeId: "default",
@@ -367,7 +367,7 @@ test("sends structured attachments with create_agent_request", async () => {
         mimeType: "application/github-pr",
         number: 123,
         title: "Fix race in worktree setup",
-        url: "https://github.com/getpaseo/paseo/pull/123",
+        url: "https://github.com/hubtool/hubcode/pull/123",
         baseRefName: "main",
         headRefName: "fix/worktree-race",
       },
@@ -389,7 +389,7 @@ test("sends structured attachments with create_agent_request", async () => {
       mimeType: "application/github-pr",
       number: 123,
       title: "Fix race in worktree setup",
-      url: "https://github.com/getpaseo/paseo/pull/123",
+      url: "https://github.com/hubtool/hubcode/pull/123",
       baseRefName: "main",
       headRefName: "fix/worktree-race",
     },
@@ -536,7 +536,7 @@ test("omitting create_agent_request worktree base-ref fields preserves legacy wi
   await expect(createPromise).rejects.toThrow("legacy git shape sentinel");
 });
 
-test("sends structured attachments with create_paseo_worktree_request", async () => {
+test("sends structured attachments with create_hubcode_worktree_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -553,7 +553,7 @@ test("sends structured attachments with create_paseo_worktree_request", async ()
   mock.triggerOpen();
   await connectPromise;
 
-  const createPromise = client.createPaseoWorktree({
+  const createPromise = client.createHubcodeWorktree({
     cwd: "/tmp/project",
     worktreeSlug: "review-pr-123",
     attachments: [
@@ -562,7 +562,7 @@ test("sends structured attachments with create_paseo_worktree_request", async ()
         mimeType: "application/github-pr",
         number: 123,
         title: "Fix race in worktree setup",
-        url: "https://github.com/getpaseo/paseo/pull/123",
+        url: "https://github.com/hubtool/hubcode/pull/123",
       },
     ],
   });
@@ -571,7 +571,7 @@ test("sends structured attachments with create_paseo_worktree_request", async ()
   const request = JSON.parse(String(mock.sent[0])) as {
     type: "session";
     message: {
-      type: "create_paseo_worktree_request";
+      type: "create_hubcode_worktree_request";
       requestId: string;
       attachments: Array<{ type: string; mimeType: string; number: number }>;
     };
@@ -582,13 +582,13 @@ test("sends structured attachments with create_paseo_worktree_request", async ()
       mimeType: "application/github-pr",
       number: 123,
       title: "Fix race in worktree setup",
-      url: "https://github.com/getpaseo/paseo/pull/123",
+      url: "https://github.com/hubtool/hubcode/pull/123",
     },
   ]);
 
   mock.triggerMessage(
     wrapSessionMessage({
-      type: "create_paseo_worktree_response",
+      type: "create_hubcode_worktree_response",
       payload: {
         requestId: request.message.requestId,
         workspace: null,
@@ -606,7 +606,7 @@ test("sends structured attachments with create_paseo_worktree_request", async ()
   });
 });
 
-test("sends worktree base-ref fields in create_paseo_worktree_request", async () => {
+test("sends worktree base-ref fields in create_hubcode_worktree_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -623,7 +623,7 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
   mock.triggerOpen();
   await connectPromise;
 
-  const createPromise = client.createPaseoWorktree(
+  const createPromise = client.createHubcodeWorktree(
     {
       cwd: "/tmp/project",
       worktreeSlug: "review-pr-123",
@@ -638,7 +638,7 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
   const request = JSON.parse(String(mock.sent[0])) as {
     type: "session";
     message: {
-      type: "create_paseo_worktree_request";
+      type: "create_hubcode_worktree_request";
       requestId: string;
       cwd: string;
       worktreeSlug: string;
@@ -648,7 +648,7 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
     };
   };
   expect(request.message).toEqual({
-    type: "create_paseo_worktree_request",
+    type: "create_hubcode_worktree_request",
     cwd: "/tmp/project",
     worktreeSlug: "review-pr-123",
     refName: "feature/worktree-base-ref",
@@ -659,7 +659,7 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
 
   mock.triggerMessage(
     wrapSessionMessage({
-      type: "create_paseo_worktree_response",
+      type: "create_hubcode_worktree_response",
       payload: {
         requestId: request.message.requestId,
         workspace: null,
@@ -677,7 +677,7 @@ test("sends worktree base-ref fields in create_paseo_worktree_request", async ()
   });
 });
 
-test("omitting create_paseo_worktree_request worktree base-ref fields preserves legacy wire shape", async () => {
+test("omitting create_hubcode_worktree_request worktree base-ref fields preserves legacy wire shape", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -694,7 +694,7 @@ test("omitting create_paseo_worktree_request worktree base-ref fields preserves 
   mock.triggerOpen();
   await connectPromise;
 
-  const createPromise = client.createPaseoWorktree(
+  const createPromise = client.createHubcodeWorktree(
     {
       cwd: "/tmp/project",
       worktreeSlug: "feature-a",
@@ -706,7 +706,7 @@ test("omitting create_paseo_worktree_request worktree base-ref fields preserves 
     JSON.stringify({
       type: "session",
       message: {
-        type: "create_paseo_worktree_request",
+        type: "create_hubcode_worktree_request",
         cwd: "/tmp/project",
         worktreeSlug: "feature-a",
         requestId: "req-worktree-legacy",
@@ -716,7 +716,7 @@ test("omitting create_paseo_worktree_request worktree base-ref fields preserves 
 
   mock.triggerMessage(
     wrapSessionMessage({
-      type: "create_paseo_worktree_response",
+      type: "create_hubcode_worktree_response",
       payload: {
         requestId: "req-worktree-legacy",
         workspace: null,
@@ -1345,7 +1345,7 @@ test("requests directory suggestions via RPC", async () => {
       message: {
         type: "directory_suggestions_response",
         payload: {
-          directories: ["/Users/test/projects/paseo"],
+          directories: ["/Users/test/projects/hubcode"],
           entries: [{ path: "README.md", kind: "file" }],
           error: null,
           requestId: "req-directories",
@@ -1355,7 +1355,7 @@ test("requests directory suggestions via RPC", async () => {
   );
 
   await expect(promise).resolves.toEqual({
-    directories: ["/Users/test/projects/paseo"],
+    directories: ["/Users/test/projects/hubcode"],
     entries: [{ path: "README.md", kind: "file" }],
     error: null,
     requestId: "req-directories",

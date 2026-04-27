@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
-import { resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import { resolveHubcodeHome, spawnProcess } from "@gethubcode/server";
 import {
   copyAttachmentFileToManagedStorage,
   deleteManagedAttachmentFile,
@@ -88,17 +88,17 @@ function parseReleaseChannel(
 // Utilities
 // ---------------------------------------------------------------------------
 
-function getPaseoHome(): string {
-  return resolvePaseoHome(process.env);
+function getHubcodeHome(): string {
+  return resolveHubcodeHome(process.env);
 }
 
 function logFilePath(): string {
-  return path.join(getPaseoHome(), DAEMON_LOG_FILENAME);
+  return path.join(getHubcodeHome(), DAEMON_LOG_FILENAME);
 }
 
 export function isDesktopManagedDaemonRunningSync(): boolean {
   try {
-    const raw = readFileSync(path.join(getPaseoHome(), "paseo.pid"), "utf-8");
+    const raw = readFileSync(path.join(getHubcodeHome(), "hubcode.pid"), "utf-8");
     const lock = JSON.parse(raw) as { pid?: unknown; desktopManaged?: unknown };
     if (lock.desktopManaged !== true) return false;
     if (typeof lock.pid !== "number" || !Number.isInteger(lock.pid)) return false;
@@ -232,7 +232,7 @@ function resolveDesktopAppVersion(): string {
 // ---------------------------------------------------------------------------
 
 export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus> {
-  const home = getPaseoHome();
+  const home = getHubcodeHome();
 
   try {
     const payload = (await runCliJsonCommand(["daemon", "status", "--json"])) as Record<
@@ -361,7 +361,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     detached: true,
     envMode: "internal",
     env: invocation.env,
-    envOverlay: { PASEO_DESKTOP_MANAGED: "1" },
+    envOverlay: { HUBCODE_DESKTOP_MANAGED: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -575,7 +575,7 @@ export function registerDaemonManager(): void {
   const handlers = createDaemonCommandHandlers();
 
   ipcMain.handle(
-    "paseo:invoke",
+    "hubcode:invoke",
     async (_event, command: string, args?: Record<string, unknown>) => {
       const handler = handlers[command];
       if (!handler) {

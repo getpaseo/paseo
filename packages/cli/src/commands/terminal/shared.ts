@@ -20,7 +20,7 @@ export async function connectTerminalClient(host?: string) {
     const error: CommandError = {
       code: "DAEMON_NOT_RUNNING",
       message: `Cannot connect to daemon at ${daemonHost}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
+      details: "Start the daemon with: hubcode daemon start",
     };
     throw error;
   }

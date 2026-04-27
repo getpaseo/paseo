@@ -143,7 +143,7 @@ index 1234567..abcdefg 100644
 --- a/config.yaml
 +++ b/config.yaml
 @@ -1,3 +1,3 @@
- app: paseo
+ app: hubcode
 -count: 1
 +count: 2
  enabled: true

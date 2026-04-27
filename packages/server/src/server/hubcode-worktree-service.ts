@@ -15,9 +15,9 @@ import {
 import type { WorktreeConfig } from "../utils/worktree.js";
 import type { WorktreeCreationIntent } from "./resolve-worktree-creation-intent.js";
 
-export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {}
+export interface CreateHubcodeWorktreeInput extends CreateWorktreeCoreInput {}
 
-export interface CreatePaseoWorktreeResult {
+export interface CreateHubcodeWorktreeResult {
   worktree: WorktreeConfig;
   intent: WorktreeCreationIntent;
   workspace: PersistedWorkspaceRecord;
@@ -25,23 +25,23 @@ export interface CreatePaseoWorktreeResult {
   created: boolean;
 }
 
-export type CreatePaseoWorktreeFn = (
-  input: CreatePaseoWorktreeInput,
+export type CreateHubcodeWorktreeFn = (
+  input: CreateHubcodeWorktreeInput,
   options?: {
     resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
   },
-) => Promise<CreatePaseoWorktreeResult>;
+) => Promise<CreateHubcodeWorktreeResult>;
 
-export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
+export interface CreateHubcodeWorktreeDeps extends CreateWorktreeCoreDeps {
   projectRegistry: Pick<ProjectRegistry, "get" | "upsert">;
   workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
   workspaceGitService: WorkspaceGitService;
 }
 
-export async function createPaseoWorktree(
-  input: CreatePaseoWorktreeInput,
-  deps: CreatePaseoWorktreeDeps,
-): Promise<CreatePaseoWorktreeResult> {
+export async function createHubcodeWorktree(
+  input: CreateHubcodeWorktreeInput,
+  deps: CreateHubcodeWorktreeDeps,
+): Promise<CreateHubcodeWorktreeResult> {
   const createdWorktree = await createWorktreeCore(input, deps);
   const workspace = await upsertWorkspaceForWorktree({
     inputCwd: input.cwd,
@@ -65,7 +65,7 @@ async function upsertWorkspaceForWorktree(options: {
   inputCwd: string;
   repoRoot: string;
   worktree: WorktreeConfig;
-  deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
+  deps: Pick<CreateHubcodeWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
 }): Promise<PersistedWorkspaceRecord> {
   const normalizedCwd = normalizeWorkspaceId(options.worktree.worktreePath);
   const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
@@ -114,7 +114,7 @@ async function resolveSourceProjectForWorktree(options: {
   inputCwd: string;
   repoRoot: string;
   existingWorkspace: PersistedWorkspaceRecord | null;
-  deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
+  deps: Pick<CreateHubcodeWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
 }): Promise<{
   projectId: string;
   rootPath: string;

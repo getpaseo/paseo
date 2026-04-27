@@ -26,7 +26,7 @@ import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
   getWorktreeSetupCommands,
-  isPaseoOwnedWorktreeCwd,
+  isHubcodeOwnedWorktreeCwd,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   slugify,
@@ -37,13 +37,13 @@ import {
 } from "../utils/worktree.js";
 import { toCheckoutError } from "./checkout-git-utils.js";
 import type {
-  CreatePaseoWorktreeInput,
-  CreatePaseoWorktreeResult,
-} from "./paseo-worktree-service.js";
+  CreateHubcodeWorktreeInput,
+  CreateHubcodeWorktreeResult,
+} from "./hubcode-worktree-service.js";
 import {
-  archivePaseoWorktree,
-  type ArchivePaseoWorktreeDependencies,
-} from "./paseo-worktree-archive-service.js";
+  archiveHubcodeWorktree,
+  type ArchiveHubcodeWorktreeDependencies,
+} from "./hubcode-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
@@ -63,15 +63,15 @@ export interface NormalizedGitOptions {
 type EmitSessionMessage = (message: SessionOutboundMessage) => void;
 
 interface BuildAgentSessionConfigDependencies {
-  paseoHome?: string;
+  hubcodeHome?: string;
   sessionLogger: Logger;
   workspaceGitService?: WorkspaceGitService;
-  createPaseoWorktree: (
-    input: CreatePaseoWorktreeInput,
+  createHubcodeWorktree: (
+    input: CreateHubcodeWorktreeInput,
     options?: {
       resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
     },
-  ) => Promise<CreatePaseoWorktreeResult>;
+  ) => Promise<CreateHubcodeWorktreeResult>;
   checkoutExistingBranch: (cwd: string, branch: string) => Promise<CheckoutExistingBranchResult>;
   createBranchFromBase: (params: {
     cwd: string;
@@ -81,8 +81,8 @@ interface BuildAgentSessionConfigDependencies {
   github?: Pick<GitHubService, "invalidate">;
 }
 
-interface CreatePaseoWorktreeInBackgroundDependencies {
-  paseoHome?: string;
+interface CreateHubcodeWorktreeInBackgroundDependencies {
+  hubcodeHome?: string;
   emitWorkspaceUpdateForCwd: (cwd: string, options?: { dedupeGitState?: boolean }) => Promise<void>;
   cacheWorkspaceSetupSnapshot: (workspaceId: string, snapshot: WorkspaceSetupSnapshot) => void;
   emit: EmitSessionMessage;
@@ -101,13 +101,13 @@ interface HandleWorkspaceSetupStatusRequestDependencies {
   workspaceSetupSnapshots: ReadonlyMap<string, WorkspaceSetupSnapshot>;
 }
 
-interface HandleCreatePaseoWorktreeRequestDependencies {
-  paseoHome?: string;
+interface HandleCreateHubcodeWorktreeRequestDependencies {
+  hubcodeHome?: string;
   describeWorkspaceRecord: (
-    result: CreatePaseoWorktreeResult,
+    result: CreateHubcodeWorktreeResult,
   ) => Promise<WorkspaceDescriptorPayload>;
   emit: EmitSessionMessage;
-  createPaseoWorktree: (input: CreatePaseoWorktreeInput) => Promise<CreatePaseoWorktreeResult>;
+  createHubcodeWorktree: (input: CreateHubcodeWorktreeInput) => Promise<CreateHubcodeWorktreeResult>;
   warmWorkspaceGitData: (workspace: PersistedWorkspaceRecord) => Promise<void>;
   sessionLogger: Logger;
   runWorktreeSetupInBackground: (options: {
@@ -150,7 +150,7 @@ export async function buildAgentSessionConfig(
       "Creating worktree through createWorktreeCore",
     );
 
-    const createdWorktree = await dependencies.createPaseoWorktree(
+    const createdWorktree = await dependencies.createHubcodeWorktree(
       {
         cwd,
         worktreeSlug: normalized.worktreeSlug,
@@ -159,7 +159,7 @@ export async function buildAgentSessionConfig(
         githubPrNumber: normalized.githubPrNumber,
         attachments,
         runSetup: false,
-        paseoHome: dependencies.paseoHome,
+        hubcodeHome: dependencies.hubcodeHome,
       },
       {
         resolveDefaultBranch: normalized.baseBranch
@@ -168,7 +168,7 @@ export async function buildAgentSessionConfig(
               resolveGitCreateBaseBranch(
                 repoRoot,
                 dependencies.workspaceGitService,
-                dependencies.paseoHome,
+                dependencies.hubcodeHome,
               ),
       },
     );
@@ -183,7 +183,7 @@ export async function buildAgentSessionConfig(
       (await resolveGitCreateBaseBranch(
         cwd,
         dependencies.workspaceGitService,
-        dependencies.paseoHome,
+        dependencies.hubcodeHome,
       ));
     await dependencies.createBranchFromBase({
       cwd,
@@ -303,7 +303,7 @@ export function assertSafeGitRef(ref: string, label: string): void {
 export async function resolveGitCreateBaseBranch(
   cwd: string,
   workspaceGitService?: WorkspaceGitService,
-  _paseoHome?: string,
+  _hubcodeHome?: string,
 ): Promise<string> {
   if (!workspaceGitService) {
     throw new Error("WorkspaceGitService is required to resolve the repository root");
@@ -312,19 +312,19 @@ export async function resolveGitCreateBaseBranch(
   return workspaceGitService.resolveDefaultBranch(cwd);
 }
 
-export async function handlePaseoWorktreeListRequest(
+export async function handleHubcodeWorktreeListRequest(
   dependencies: {
     emit: EmitSessionMessage;
-    paseoHome?: string;
+    hubcodeHome?: string;
     workspaceGitService: WorkspaceGitService;
   },
-  msg: Extract<SessionInboundMessage, { type: "paseo_worktree_list_request" }>,
+  msg: Extract<SessionInboundMessage, { type: "hubcode_worktree_list_request" }>,
 ): Promise<void> {
   const { requestId } = msg;
   const cwd = msg.repoRoot ?? msg.cwd;
   if (!cwd) {
     dependencies.emit({
-      type: "paseo_worktree_list_response",
+      type: "hubcode_worktree_list_response",
       payload: {
         worktrees: [],
         error: { code: "UNKNOWN", message: "cwd or repoRoot is required" },
@@ -337,7 +337,7 @@ export async function handlePaseoWorktreeListRequest(
   try {
     const worktrees = await dependencies.workspaceGitService.listWorktrees(cwd);
     dependencies.emit({
-      type: "paseo_worktree_list_response",
+      type: "hubcode_worktree_list_response",
       payload: {
         worktrees: worktrees.map((entry) => ({
           worktreePath: entry.path,
@@ -351,7 +351,7 @@ export async function handlePaseoWorktreeListRequest(
     });
   } catch (error) {
     dependencies.emit({
-      type: "paseo_worktree_list_response",
+      type: "hubcode_worktree_list_response",
       payload: {
         worktrees: [],
         error: toCheckoutError(error),
@@ -361,16 +361,16 @@ export async function handlePaseoWorktreeListRequest(
   }
 }
 
-export async function handlePaseoWorktreeArchiveRequest(
+export async function handleHubcodeWorktreeArchiveRequest(
   dependencies: Omit<
-    ArchivePaseoWorktreeDependencies,
+    ArchiveHubcodeWorktreeDependencies,
     "emitWorkspaceUpdatesForCwds" | "workspaceGitService"
   > & {
     emit: EmitSessionMessage;
     workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
     emitWorkspaceUpdatesForCwds: (cwds: Iterable<string>) => Promise<void>;
   },
-  msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
+  msg: Extract<SessionInboundMessage, { type: "hubcode_worktree_archive_request" }>,
 ): Promise<void> {
   const { requestId } = msg;
   let targetPath = msg.worktreePath;
@@ -384,7 +384,7 @@ export async function handlePaseoWorktreeArchiveRequest(
       const worktrees = await dependencies.workspaceGitService.listWorktrees(repoRoot);
       const match = worktrees.find((entry) => entry.branchName === msg.branchName);
       if (!match) {
-        throw new Error(`Paseo worktree not found for branch ${msg.branchName}`);
+        throw new Error(`Hubcode worktree not found for branch ${msg.branchName}`);
       }
       targetPath = match.path;
     }
@@ -392,18 +392,18 @@ export async function handlePaseoWorktreeArchiveRequest(
       throw new Error("worktreePath could not be resolved");
     }
 
-    const ownership = await isPaseoOwnedWorktreeCwd(targetPath, {
-      paseoHome: dependencies.paseoHome,
+    const ownership = await isHubcodeOwnedWorktreeCwd(targetPath, {
+      hubcodeHome: dependencies.hubcodeHome,
     });
     if (!ownership.allowed) {
       dependencies.emit({
-        type: "paseo_worktree_archive_response",
+        type: "hubcode_worktree_archive_response",
         payload: {
           success: false,
           removedAgents: [],
           error: {
             code: "NOT_ALLOWED",
-            message: "Worktree is not a Paseo-owned worktree",
+            message: "Worktree is not a Hubcode-owned worktree",
           },
           requestId,
         },
@@ -413,10 +413,10 @@ export async function handlePaseoWorktreeArchiveRequest(
 
     // repoRoot is best-effort: if git has forgotten about the worktree we
     // still proceed using the path-derived worktreesRoot, since the ownership
-    // check already proved the path lives under $PASEO_HOME/worktrees.
+    // check already proved the path lives under $HUBCODE_HOME/worktrees.
     repoRoot = ownership.repoRoot ?? repoRoot ?? null;
 
-    const removedAgents = await archivePaseoWorktree(dependencies, {
+    const removedAgents = await archiveHubcodeWorktree(dependencies, {
       targetPath,
       repoRoot,
       worktreesRoot: ownership.worktreeRoot,
@@ -424,7 +424,7 @@ export async function handlePaseoWorktreeArchiveRequest(
     });
 
     dependencies.emit({
-      type: "paseo_worktree_archive_response",
+      type: "hubcode_worktree_archive_response",
       payload: {
         success: true,
         removedAgents,
@@ -434,7 +434,7 @@ export async function handlePaseoWorktreeArchiveRequest(
     });
   } catch (error) {
     dependencies.emit({
-      type: "paseo_worktree_archive_response",
+      type: "hubcode_worktree_archive_response",
       payload: {
         success: false,
         removedAgents: [],
@@ -445,12 +445,12 @@ export async function handlePaseoWorktreeArchiveRequest(
   }
 }
 
-export async function handleCreatePaseoWorktreeRequest(
-  dependencies: HandleCreatePaseoWorktreeRequestDependencies,
-  request: Extract<SessionInboundMessage, { type: "create_paseo_worktree_request" }>,
+export async function handleCreateHubcodeWorktreeRequest(
+  dependencies: HandleCreateHubcodeWorktreeRequestDependencies,
+  request: Extract<SessionInboundMessage, { type: "create_hubcode_worktree_request" }>,
 ): Promise<void> {
   try {
-    const createdWorktree = await dependencies.createPaseoWorktree({
+    const createdWorktree = await dependencies.createHubcodeWorktree({
       cwd: request.cwd,
       worktreeSlug: request.worktreeSlug,
       refName: request.refName,
@@ -458,14 +458,14 @@ export async function handleCreatePaseoWorktreeRequest(
       githubPrNumber: request.githubPrNumber,
       attachments: request.attachments,
       runSetup: false,
-      paseoHome: dependencies.paseoHome,
+      hubcodeHome: dependencies.hubcodeHome,
     });
     const slug = basename(createdWorktree.worktree.worktreePath);
     const workspace = createdWorktree.workspace;
 
     const descriptor = await dependencies.describeWorkspaceRecord(createdWorktree);
     dependencies.emit({
-      type: "create_paseo_worktree_response",
+      type: "create_hubcode_worktree_response",
       payload: {
         workspace: descriptor,
         error: null,
@@ -503,7 +503,7 @@ export async function handleCreatePaseoWorktreeRequest(
       "Failed to create worktree",
     );
     dependencies.emit({
-      type: "create_paseo_worktree_response",
+      type: "create_hubcode_worktree_response",
       payload: {
         workspace: null,
         error: wireError.message,
@@ -533,7 +533,7 @@ export async function handleWorkspaceSetupStatusRequest(
 }
 
 export async function runWorktreeSetupInBackground(
-  dependencies: CreatePaseoWorktreeInBackgroundDependencies,
+  dependencies: CreateHubcodeWorktreeInBackgroundDependencies,
   options: {
     requestCwd: string;
     repoRoot: string;

@@ -601,7 +601,7 @@ export class ACPAgentClient implements AgentClient {
       connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities: ACP_CLIENT_CAPABILITIES,
-        clientInfo: { name: "Paseo", version: "dev" },
+        clientInfo: { name: "Hubcode", version: "dev" },
       }),
       spawnErrorPromise,
     ])) as InitializeResponse;
@@ -1444,7 +1444,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const initialize = await connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: ACP_CLIENT_CAPABILITIES,
-      clientInfo: { name: "Paseo", version: "dev" },
+      clientInfo: { name: "Hubcode", version: "dev" },
     });
 
     return { child, connection, initialize };

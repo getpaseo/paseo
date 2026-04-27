@@ -7,12 +7,12 @@ import { resolveSpeechConfig } from "./speech-config-resolver.js";
 
 describe("resolveSpeechConfig", () => {
   test("resolves local-first defaults without env overrides", () => {
-    const paseoHome = "/tmp/paseo-home";
+    const hubcodeHome = "/tmp/hubcode-home";
     const persisted = PersistedConfigSchema.parse({});
     const env = {} as NodeJS.ProcessEnv;
 
     const result = resolveSpeechConfig({
-      paseoHome,
+      hubcodeHome,
       env,
       persisted,
     });
@@ -39,7 +39,7 @@ describe("resolveSpeechConfig", () => {
       enabled: true,
     });
     expect(result.speech.local).toEqual({
-      modelsDir: path.join(paseoHome, "models", "local-speech"),
+      modelsDir: path.join(hubcodeHome, "models", "local-speech"),
       models: {
         dictationStt: "parakeet-tdt-0.6b-v2-int8",
         voiceStt: "parakeet-tdt-0.6b-v2-int8",
@@ -66,20 +66,20 @@ describe("resolveSpeechConfig", () => {
       },
     });
     const env = {
-      PASEO_DICTATION_LOCAL_STT_MODEL: "zipformer",
-      PASEO_VOICE_LOCAL_STT_MODEL: "parakeet",
-      PASEO_VOICE_LOCAL_TTS_MODEL: "kitten",
-      PASEO_VOICE_LOCAL_TTS_SPEAKER_ID: "5",
-      PASEO_VOICE_LOCAL_TTS_SPEED: "1.35",
-      PASEO_LOCAL_MODELS_DIR: "/tmp/models",
+      HUBCODE_DICTATION_LOCAL_STT_MODEL: "zipformer",
+      HUBCODE_VOICE_LOCAL_STT_MODEL: "parakeet",
+      HUBCODE_VOICE_LOCAL_TTS_MODEL: "kitten",
+      HUBCODE_VOICE_LOCAL_TTS_SPEAKER_ID: "5",
+      HUBCODE_VOICE_LOCAL_TTS_SPEED: "1.35",
+      HUBCODE_LOCAL_MODELS_DIR: "/tmp/models",
       OPENAI_API_KEY: "env-key",
-      PASEO_VOICE_STT_PROVIDER: "openai",
-      PASEO_DICTATION_STT_PROVIDER: "local",
-      PASEO_VOICE_TTS_PROVIDER: "local",
+      HUBCODE_VOICE_STT_PROVIDER: "openai",
+      HUBCODE_DICTATION_STT_PROVIDER: "local",
+      HUBCODE_VOICE_TTS_PROVIDER: "local",
     } as NodeJS.ProcessEnv;
 
     const result = resolveSpeechConfig({
-      paseoHome: "/tmp/paseo-home",
+      hubcodeHome: "/tmp/hubcode-home",
       env,
       persisted,
     });
@@ -126,12 +126,12 @@ describe("resolveSpeechConfig", () => {
   test("ignores deprecated shared local model env vars", () => {
     const persisted = PersistedConfigSchema.parse({});
     const env = {
-      PASEO_LOCAL_STT_MODEL: "zipformer-bilingual-zh-en-2023-02-20",
-      PASEO_LOCAL_TTS_MODEL: "kitten-nano-en-v0_1-fp16",
+      HUBCODE_LOCAL_STT_MODEL: "zipformer-bilingual-zh-en-2023-02-20",
+      HUBCODE_LOCAL_TTS_MODEL: "kitten-nano-en-v0_1-fp16",
     } as NodeJS.ProcessEnv;
 
     const result = resolveSpeechConfig({
-      paseoHome: "/tmp/paseo-home",
+      hubcodeHome: "/tmp/hubcode-home",
       env,
       persisted,
     });
@@ -151,7 +151,7 @@ describe("resolveSpeechConfig", () => {
     });
 
     const result = resolveSpeechConfig({
-      paseoHome: "/tmp/paseo-home",
+      hubcodeHome: "/tmp/hubcode-home",
       env: {} as NodeJS.ProcessEnv,
       persisted,
     });

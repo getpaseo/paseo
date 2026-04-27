@@ -70,7 +70,7 @@ describe("use-settings", () => {
 
   it("ignores renderer-owned daemon management state outside Electron", async () => {
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
-      if (key === "@paseo:app-settings") {
+      if (key === "@hubcode:app-settings") {
         return JSON.stringify({
           theme: "light",
           manageBuiltInDaemon: false,
@@ -92,7 +92,7 @@ describe("use-settings", () => {
 
   it("ignores renderer-owned release channel outside Electron", async () => {
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
-      if (key === "@paseo:app-settings") {
+      if (key === "@hubcode:app-settings") {
         return JSON.stringify({
           releaseChannel: "beta",
         });
@@ -108,10 +108,10 @@ describe("use-settings", () => {
 
   it("keeps legacy AsyncStorage migration for client settings only", async () => {
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
-      if (key === "@paseo:app-settings") {
+      if (key === "@hubcode:app-settings") {
         return null;
       }
-      if (key === "@paseo:settings") {
+      if (key === "@hubcode:settings") {
         return JSON.stringify({
           theme: "dark",
           manageBuiltInDaemon: false,
@@ -138,7 +138,7 @@ describe("use-settings", () => {
   it("migrates legacy desktop-owned settings through Electron before reading effective settings", async () => {
     electronRuntimeState.isElectron = true;
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
-      if (key === "@paseo:app-settings") {
+      if (key === "@hubcode:app-settings") {
         return JSON.stringify({
           theme: "light",
           manageBuiltInDaemon: false,

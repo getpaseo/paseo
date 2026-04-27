@@ -519,12 +519,12 @@ describe("codex tool-call mapper", () => {
     }
   });
 
-  it("normalizes codex paseo speak mcp calls and extracts spoken text", () => {
+  it("normalizes codex hubcode speak mcp calls and extracts spoken text", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "mcpToolCall",
       id: "codex-speak-thread-1",
       status: "completed",
-      server: "paseo",
+      server: "hubcode",
       tool: "speak",
       arguments: { text: "Voice response from Codex." },
       result: { ok: true },
@@ -539,14 +539,14 @@ describe("codex tool-call mapper", () => {
     });
   });
 
-  it("normalizes codex paseo_voice.speak mcp calls and extracts spoken text", () => {
+  it("normalizes codex hubcode_voice.speak mcp calls and extracts spoken text", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "mcpToolCall",
       id: "codex-speak-thread-2",
       status: "completed",
-      server: "paseo_voice",
+      server: "hubcode_voice",
       tool: "speak",
-      arguments: { text: "Voice response from Codex via paseo_voice." },
+      arguments: { text: "Voice response from Codex via hubcode_voice." },
       result: { ok: true },
     });
 
@@ -554,16 +554,16 @@ describe("codex tool-call mapper", () => {
     expect(item?.name).toBe("speak");
     expect(item?.detail).toEqual({
       type: "unknown",
-      input: "Voice response from Codex via paseo_voice.",
+      input: "Voice response from Codex via hubcode_voice.",
       output: null,
     });
   });
 
-  it("normalizes codex paseo speak rollout names and extracts spoken text", () => {
+  it("normalizes codex hubcode speak rollout names and extracts spoken text", () => {
     const item = expectMapped(
       mapCodexRolloutToolCall({
         callId: "codex-speak-rollout-1",
-        name: "paseo.speak",
+        name: "hubcode.speak",
         input: { text: "Rollout speech text." },
         output: { ok: true },
       }),

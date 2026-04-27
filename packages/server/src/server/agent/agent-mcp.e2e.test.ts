@@ -9,7 +9,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import pino from "pino";
 
 import { withTimeout } from "../../utils/promise-timeout.js";
-import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
+import { createHubcodeDaemon, type HubcodeDaemonConfig } from "../bootstrap.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
 interface StructuredContent {
@@ -93,24 +93,24 @@ async function waitForAgentCompletion(options: {
 
 describe("agent MCP end-to-end (offline)", () => {
   test("create_agent runs initial prompt and affects filesystem", async () => {
-    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
-    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+    const hubcodeHome = await mkdtemp(path.join(os.tmpdir(), "hubcode-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "hubcode-static-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "hubcode-agent-cwd-"));
     const port = await getAvailablePort();
 
-    const daemonConfig: PaseoDaemonConfig = {
+    const daemonConfig: HubcodeDaemonConfig = {
       listen: `127.0.0.1:${port}`,
-      paseoHome,
+      hubcodeHome,
       corsAllowedOrigins: [],
       hostnames: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
       agentClients: createTestAgentClients(),
-      agentStoragePath: path.join(paseoHome, "agents"),
+      agentStoragePath: path.join(hubcodeHome, "agents"),
     };
 
-    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    const daemon = await createHubcodeDaemon(daemonConfig, pino({ level: "silent" }));
     await daemon.start();
 
     const transport = new StreamableHTTPClientTransport(
@@ -159,31 +159,31 @@ describe("agent MCP end-to-end (offline)", () => {
       }
       await client.close();
       await daemon.stop();
-      await rm(paseoHome, { recursive: true, force: true });
+      await rm(hubcodeHome, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });
       await rm(agentCwd, { recursive: true, force: true });
     }
   }, 30_000);
 
-  test("create_agent auto-injects paseo MCP by default and can be disabled", async () => {
-    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
-    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+  test("create_agent auto-injects hubcode MCP by default and can be disabled", async () => {
+    const hubcodeHome = await mkdtemp(path.join(os.tmpdir(), "hubcode-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "hubcode-static-"));
+    const agentCwd = await mkdtemp(path.join(os.tmpdir(), "hubcode-agent-cwd-"));
     const port = await getAvailablePort();
 
-    const daemonConfig: PaseoDaemonConfig = {
+    const daemonConfig: HubcodeDaemonConfig = {
       listen: `127.0.0.1:${port}`,
-      paseoHome,
+      hubcodeHome,
       corsAllowedOrigins: [],
       hostnames: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
       agentClients: createTestAgentClients(),
-      agentStoragePath: path.join(paseoHome, "agents"),
+      agentStoragePath: path.join(hubcodeHome, "agents"),
     };
 
-    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    const daemon = await createHubcodeDaemon(daemonConfig, pino({ level: "silent" }));
     await daemon.start();
 
     const transport = new StreamableHTTPClientTransport(
@@ -191,13 +191,13 @@ describe("agent MCP end-to-end (offline)", () => {
     );
     const client = (await experimental_createMCPClient({ transport })) as McpClient;
 
-    const disabledPaseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-disabled-"));
-    const disabledStaticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-disabled-"));
-    const disabledAgentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-disabled-"));
+    const disabledHubcodeHome = await mkdtemp(path.join(os.tmpdir(), "hubcode-home-disabled-"));
+    const disabledStaticDir = await mkdtemp(path.join(os.tmpdir(), "hubcode-static-disabled-"));
+    const disabledAgentCwd = await mkdtemp(path.join(os.tmpdir(), "hubcode-agent-cwd-disabled-"));
     const disabledPort = await getAvailablePort();
-    const disabledDaemonConfig: PaseoDaemonConfig = {
+    const disabledDaemonConfig: HubcodeDaemonConfig = {
       listen: `127.0.0.1:${disabledPort}`,
-      paseoHome: disabledPaseoHome,
+      hubcodeHome: disabledHubcodeHome,
       corsAllowedOrigins: [],
       hostnames: true,
       mcpEnabled: true,
@@ -205,9 +205,9 @@ describe("agent MCP end-to-end (offline)", () => {
       staticDir: disabledStaticDir,
       mcpDebug: false,
       agentClients: createTestAgentClients(),
-      agentStoragePath: path.join(disabledPaseoHome, "agents"),
+      agentStoragePath: path.join(disabledHubcodeHome, "agents"),
     };
-    const disabledDaemon = await createPaseoDaemon(disabledDaemonConfig, pino({ level: "silent" }));
+    const disabledDaemon = await createHubcodeDaemon(disabledDaemonConfig, pino({ level: "silent" }));
     await disabledDaemon.start();
 
     const disabledTransport = new StreamableHTTPClientTransport(
@@ -237,7 +237,7 @@ describe("agent MCP end-to-end (offline)", () => {
 
       const injectedAgent = daemon.agentManager.getAgent(agentId!);
       expect(injectedAgent?.config.mcpServers).toMatchObject({
-        paseo: {
+        hubcode: {
           type: "http",
           url: `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${agentId!}`,
         },
@@ -259,7 +259,7 @@ describe("agent MCP end-to-end (offline)", () => {
       expect(disabledAgentId).toBeTruthy();
 
       const disabledAgent = disabledDaemon.agentManager.getAgent(disabledAgentId!);
-      expect(disabledAgent?.config.mcpServers?.paseo).toBeUndefined();
+      expect(disabledAgent?.config.mcpServers?.hubcode).toBeUndefined();
     } finally {
       if (agentId) {
         await client.callTool({ name: "kill_agent", args: { agentId } });
@@ -269,36 +269,36 @@ describe("agent MCP end-to-end (offline)", () => {
       }
       await disabledClient.close();
       await disabledDaemon.stop();
-      await rm(disabledPaseoHome, { recursive: true, force: true });
+      await rm(disabledHubcodeHome, { recursive: true, force: true });
       await rm(disabledStaticDir, { recursive: true, force: true });
       await rm(disabledAgentCwd, { recursive: true, force: true });
       await client.close();
       await daemon.stop();
-      await rm(paseoHome, { recursive: true, force: true });
+      await rm(hubcodeHome, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });
       await rm(agentCwd, { recursive: true, force: true });
     }
   }, 30_000);
 
   test("create_agent with worktree is async and boots terminals only after setup success", async () => {
-    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
-    const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
-    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-worktree-repo-"));
+    const hubcodeHome = await mkdtemp(path.join(os.tmpdir(), "hubcode-home-"));
+    const staticDir = await mkdtemp(path.join(os.tmpdir(), "hubcode-static-"));
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), "hubcode-worktree-repo-"));
     const port = await getAvailablePort();
 
-    const daemonConfig: PaseoDaemonConfig = {
+    const daemonConfig: HubcodeDaemonConfig = {
       listen: `127.0.0.1:${port}`,
-      paseoHome,
+      hubcodeHome,
       corsAllowedOrigins: [],
       hostnames: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
       agentClients: createTestAgentClients(),
-      agentStoragePath: path.join(paseoHome, "agents"),
+      agentStoragePath: path.join(hubcodeHome, "agents"),
     };
 
-    const daemon = await createPaseoDaemon(daemonConfig, pino({ level: "silent" }));
+    const daemon = await createHubcodeDaemon(daemonConfig, pino({ level: "silent" }));
     await daemon.start();
 
     const transport = new StreamableHTTPClientTransport(
@@ -317,9 +317,9 @@ describe("agent MCP end-to-end (offline)", () => {
       execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoRoot, stdio: "pipe" });
 
       const setupCommand =
-        'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"';
+        'while [ ! -f "$HUBCODE_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$HUBCODE_WORKTREE_PATH/setup-done.txt"';
       await writeFile(
-        path.join(repoRoot, "paseo.json"),
+        path.join(repoRoot, "hubcode.json"),
         JSON.stringify({
           worktree: {
             setup: [setupCommand],
@@ -333,7 +333,7 @@ describe("agent MCP end-to-end (offline)", () => {
         }),
         "utf8",
       );
-      execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+      execSync("git add hubcode.json", { cwd: repoRoot, stdio: "pipe" });
       execSync("git -c commit.gpgsign=false commit -m 'add worktree config'", {
         cwd: repoRoot,
         stdio: "pipe",
@@ -381,7 +381,7 @@ describe("agent MCP end-to-end (offline)", () => {
       }
       await client.close();
       await daemon.stop();
-      await rm(paseoHome, { recursive: true, force: true });
+      await rm(hubcodeHome, { recursive: true, force: true });
       await rm(staticDir, { recursive: true, force: true });
       await rm(repoRoot, { recursive: true, force: true });
     }

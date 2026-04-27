@@ -171,34 +171,34 @@ describe("estimateStreamItemHeight", () => {
 describe("web virtualization test overrides", () => {
   it("uses defaults unless explicit positive integer overrides are present", () => {
     const globalWithOverrides = globalThis as typeof globalThis & {
-      __PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
-      __PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS?: unknown;
+      __HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
+      __HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS?: unknown;
     };
-    const previousThreshold = globalWithOverrides.__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
-    const previousMounted = globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
+    const previousThreshold = globalWithOverrides.__HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
+    const previousMounted = globalWithOverrides.__HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
 
     try {
-      delete globalWithOverrides.__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
-      delete globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
+      delete globalWithOverrides.__HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
+      delete globalWithOverrides.__HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
       expect(getWebPartialVirtualizationThreshold()).toBe(
         DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD,
       );
       expect(getWebMountedRecentStreamItems()).toBe(DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS);
 
-      globalWithOverrides.__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 6;
-      globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS = 4;
+      globalWithOverrides.__HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 6;
+      globalWithOverrides.__HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS = 4;
       expect(getWebPartialVirtualizationThreshold()).toBe(6);
       expect(getWebMountedRecentStreamItems()).toBe(4);
     } finally {
       if (previousThreshold === undefined) {
-        delete globalWithOverrides.__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
+        delete globalWithOverrides.__HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
       } else {
-        globalWithOverrides.__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = previousThreshold;
+        globalWithOverrides.__HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = previousThreshold;
       }
       if (previousMounted === undefined) {
-        delete globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
+        delete globalWithOverrides.__HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS;
       } else {
-        globalWithOverrides.__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS = previousMounted;
+        globalWithOverrides.__HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS = previousMounted;
       }
     }
   });

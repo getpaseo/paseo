@@ -96,10 +96,10 @@ function findDirectCreateWorktreeCallSites(serverSrc: string): string[] {
   return matches.sort();
 }
 
-function createGitRepo(): { tempDir: string; repoDir: string; paseoHome: string } {
+function createGitRepo(): { tempDir: string; repoDir: string; hubcodeHome: string } {
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "worktree-core-test-")));
   const repoDir = path.join(tempDir, "repo");
-  const paseoHome = path.join(tempDir, ".paseo");
+  const hubcodeHome = path.join(tempDir, ".hubcode");
   execSync(`mkdir -p ${JSON.stringify(repoDir)}`);
   execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
   execSync("git config user.email 'test@test.com'", { cwd: repoDir, stdio: "pipe" });
@@ -107,11 +107,11 @@ function createGitRepo(): { tempDir: string; repoDir: string; paseoHome: string 
   writeFileSync(path.join(repoDir, "README.md"), "hello\n");
   execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
   execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir, stdio: "pipe" });
-  return { tempDir, repoDir, paseoHome };
+  return { tempDir, repoDir, hubcodeHome };
 }
 
-function createGitRepoWithDevBranch(): { tempDir: string; repoDir: string; paseoHome: string } {
-  const { tempDir, repoDir, paseoHome } = createGitRepo();
+function createGitRepoWithDevBranch(): { tempDir: string; repoDir: string; hubcodeHome: string } {
+  const { tempDir, repoDir, hubcodeHome } = createGitRepo();
   execSync("git checkout -b dev", { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "dev branch\n");
   execSync("git add README.md", { cwd: repoDir, stdio: "pipe" });
@@ -120,11 +120,11 @@ function createGitRepoWithDevBranch(): { tempDir: string; repoDir: string; paseo
     stdio: "pipe",
   });
   execSync("git checkout main", { cwd: repoDir, stdio: "pipe" });
-  return { tempDir, repoDir, paseoHome };
+  return { tempDir, repoDir, hubcodeHome };
 }
 
-function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string; paseoHome: string } {
-  const { tempDir, repoDir, paseoHome } = createGitRepo();
+function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string; hubcodeHome: string } {
+  const { tempDir, repoDir, hubcodeHome } = createGitRepo();
   const featureBranch = "feature/review-pr";
   execSync(`git checkout -b ${JSON.stringify(featureBranch)}`, { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "review branch\n");
@@ -150,16 +150,16 @@ function createGitHubPrRemoteRepo(): { tempDir: string; repoDir: string; paseoHo
   execSync(`git remote add origin ${JSON.stringify(remoteDir)}`, { cwd: repoDir, stdio: "pipe" });
   execSync("git fetch origin", { cwd: repoDir, stdio: "pipe" });
 
-  return { tempDir, repoDir, paseoHome };
+  return { tempDir, repoDir, hubcodeHome };
 }
 
 function createForkGitHubPrRemoteRepo(): {
   tempDir: string;
   repoDir: string;
   headRemoteDir: string;
-  paseoHome: string;
+  hubcodeHome: string;
 } {
-  const { tempDir, repoDir, paseoHome } = createGitRepo();
+  const { tempDir, repoDir, hubcodeHome } = createGitRepo();
   const baseRemoteDir = path.join(tempDir, "base.git");
   const headRemoteDir = path.join(tempDir, "therainisme.git");
   const headCloneDir = path.join(tempDir, "therainisme-clone");
@@ -200,7 +200,7 @@ function createForkGitHubPrRemoteRepo(): {
   );
   execSync("git fetch origin", { cwd: repoDir, stdio: "pipe" });
 
-  return { tempDir, repoDir, headRemoteDir, paseoHome };
+  return { tempDir, repoDir, headRemoteDir, hubcodeHome };
 }
 
 describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
@@ -213,7 +213,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("creates the legacy RPC branch-off worktree from the repo default branch", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitRepo();
     cleanupPaths.push(tempDir);
 
     const result = await createCoreWorktree(
@@ -221,7 +221,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
         cwd: repoDir,
         worktreeSlug: "legacy-rpc",
         attachments: [],
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
       },
       createCoreDeps(),
@@ -238,14 +238,14 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("checks out the legacy RPC GitHub PR attachment branch", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitHubPrRemoteRepo();
     cleanupPaths.push(tempDir);
 
     const result = await createCoreWorktree(
       {
         cwd: repoDir,
         worktreeSlug: "review-pr-123",
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
         attachments: [
           {
@@ -253,7 +253,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
             mimeType: "application/github-pr",
             number: 123,
             title: "Review branch",
-            url: "https://github.com/getpaseo/paseo/pull/123",
+            url: "https://github.com/hubtool/hubcode/pull/123",
             baseRefName: "main",
             headRefName: "feature/review-pr",
           },
@@ -272,13 +272,13 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("uses the PR head ref as the default slug when no slug is supplied", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitHubPrRemoteRepo();
     cleanupPaths.push(tempDir);
 
     const result = await createCoreWorktree(
       {
         cwd: repoDir,
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
         attachments: [
           {
@@ -286,7 +286,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
             mimeType: "application/github-pr",
             number: 123,
             title: "Review branch",
-            url: "https://github.com/getpaseo/paseo/pull/123",
+            url: "https://github.com/hubtool/hubcode/pull/123",
             baseRefName: "main",
             headRefName: "feature/review-pr",
           },
@@ -300,14 +300,14 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("creates the MCP standalone worktree input shape", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitRepo();
     cleanupPaths.push(tempDir);
 
     const result = await createCoreWorktree(
       {
         cwd: repoDir,
         worktreeSlug: "mcp-standalone",
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
       },
       createCoreDeps(),
@@ -322,7 +322,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("branches off an explicit refName base", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitRepoWithDevBranch();
+    const { tempDir, repoDir, hubcodeHome } = createGitRepoWithDevBranch();
     cleanupPaths.push(tempDir);
     const devTip = execSync("git rev-parse dev", { cwd: repoDir, stdio: "pipe" }).toString().trim();
 
@@ -332,7 +332,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
         worktreeSlug: "from-dev",
         action: "branch-off",
         refName: "dev",
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
       },
       createCoreDeps(),
@@ -353,7 +353,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("checks out an explicit existing branch", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitRepoWithDevBranch();
+    const { tempDir, repoDir, hubcodeHome } = createGitRepoWithDevBranch();
     cleanupPaths.push(tempDir);
 
     const result = await createCoreWorktree(
@@ -361,7 +361,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
         cwd: repoDir,
         action: "checkout",
         refName: "dev",
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
       },
       createCoreDeps(),
@@ -381,7 +381,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("checks out an explicit GitHub PR target", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitHubPrRemoteRepo();
     cleanupPaths.push(tempDir);
 
     const result = await createCoreWorktree(
@@ -389,7 +389,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
         cwd: repoDir,
         action: "checkout",
         githubPrNumber: 123,
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
       },
       createCoreDeps(),
@@ -405,7 +405,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("checks out a fork PR whose head branch collides with local main", async () => {
-    const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+    const { tempDir, repoDir, headRemoteDir, hubcodeHome } = createForkGitHubPrRemoteRepo();
     cleanupPaths.push(tempDir);
     const github = {
       ...createGitHubServiceStub(),
@@ -426,7 +426,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
         action: "checkout",
         githubPrNumber: 526,
         refName: "main",
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
       },
       createCoreDeps({ github }),
@@ -470,7 +470,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("uses a unique local branch when the same fork PR branch already exists", async () => {
-    const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+    const { tempDir, repoDir, headRemoteDir, hubcodeHome } = createForkGitHubPrRemoteRepo();
     cleanupPaths.push(tempDir);
     const github = {
       ...createGitHubServiceStub(),
@@ -492,7 +492,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
         action: "checkout",
         githubPrNumber: 526,
         refName: "main",
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
       },
       createCoreDeps({ github }),
@@ -504,7 +504,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
         action: "checkout",
         githubPrNumber: 526,
         refName: "main",
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
       },
       createCoreDeps({ github }),
@@ -513,7 +513,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
     expect(first.worktree.branchName).toBe("therainisme/main");
     expect(second.worktree.branchName).toBe("therainisme/main-1");
     expect(
-      execSync("git config --get remote.paseo-pr-526.push", {
+      execSync("git config --get remote.hubcode-pr-526.push", {
         cwd: second.worktree.worktreePath,
         stdio: "pipe",
       })
@@ -523,7 +523,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("throws a typed error for an unknown checkout branch", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitRepo();
     cleanupPaths.push(tempDir);
 
     await expect(
@@ -532,7 +532,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
           cwd: repoDir,
           action: "checkout",
           refName: "missing-branch",
-          paseoHome,
+          hubcodeHome,
           runSetup: false,
         },
         createCoreDeps(),
@@ -541,14 +541,14 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("creates the agent-create worktree input shape", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitRepo();
     cleanupPaths.push(tempDir);
 
     const result = await createCoreWorktree(
       {
         cwd: repoDir,
         worktreeSlug: "agent-worktree",
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
       },
       createCoreDeps(),
@@ -563,16 +563,16 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("reuses an existing branch-off worktree for the same slug", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitRepo();
     cleanupPaths.push(tempDir);
     const deps = createCoreDeps();
 
     const first = await createCoreWorktree(
-      { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
+      { cwd: repoDir, worktreeSlug: "reused-worktree", hubcodeHome, runSetup: false },
       deps,
     );
     const second = await createCoreWorktree(
-      { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
+      { cwd: repoDir, worktreeSlug: "reused-worktree", hubcodeHome, runSetup: false },
       deps,
     );
 
@@ -582,12 +582,12 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("reuses an existing GitHub PR worktree for the resolved slug", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitHubPrRemoteRepo();
     cleanupPaths.push(tempDir);
     const deps = createCoreDeps();
     const input = {
       cwd: repoDir,
-      paseoHome,
+      hubcodeHome,
       runSetup: false,
       attachments: [
         {
@@ -595,7 +595,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
           mimeType: "application/github-pr" as const,
           number: 123,
           title: "Review branch",
-          url: "https://github.com/getpaseo/paseo/pull/123",
+          url: "https://github.com/hubtool/hubcode/pull/123",
           baseRefName: "main",
           headRefName: "feature/review-pr",
         },
@@ -611,7 +611,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
   });
 
   test("uses an injectable GitHubService dependency for missing PR head refs", async () => {
-    const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
+    const { tempDir, repoDir, hubcodeHome } = createGitHubPrRemoteRepo();
     cleanupPaths.push(tempDir);
     const headRefLookups: Array<{ cwd: string; number: number }> = [];
     const github: GitHubService = {
@@ -626,7 +626,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
       {
         cwd: repoDir,
         worktreeSlug: "stubbed-github",
-        paseoHome,
+        hubcodeHome,
         runSetup: false,
         attachments: [
           {
@@ -634,7 +634,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
             mimeType: "application/github-pr",
             number: 123,
             title: "Review branch",
-            url: "https://github.com/getpaseo/paseo/pull/123",
+            url: "https://github.com/hubtool/hubcode/pull/123",
             baseRefName: "main",
           },
         ],
@@ -666,7 +666,7 @@ describe("resolveWorktreeRepoRoot", () => {
 
     await expect(
       resolveWorktreeRepoRoot(
-        { cwd: "/tmp/main-repo/worktrees/feature", paseoHome: "/tmp/paseo-home" },
+        { cwd: "/tmp/main-repo/worktrees/feature", hubcodeHome: "/tmp/hubcode-home" },
         workspaceGitService,
       ),
     ).resolves.toBe("/tmp/main-repo");

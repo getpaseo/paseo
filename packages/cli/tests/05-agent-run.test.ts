@@ -32,8 +32,8 @@ console.log("=== Run Command Tests ===\n");
 
 // Get random port that's definitely not in use (never 6767)
 const port = 10000 + Math.floor(Math.random() * 50000);
-const paseoHome = await mkdtemp(join(tmpdir(), "paseo-test-home-"));
-const schemaPath = join(paseoHome, "run-output-schema.json");
+const hubcodeHome = await mkdtemp(join(tmpdir(), "hubcode-test-home-"));
+const schemaPath = join(hubcodeHome, "run-output-schema.json");
 await writeFile(
   schemaPath,
   JSON.stringify({
@@ -50,7 +50,7 @@ try {
   // Test 1: run --help shows options
   {
     console.log("Test 1: run --help shows options");
-    const result = await $`npx paseo run --help`.nothrow();
+    const result = await $`npx hubcode run --help`.nothrow();
     assert.strictEqual(result.exitCode, 0, "run --help should exit 0");
     assert(result.stdout.includes("-d"), "help should mention -d flag");
     assert(result.stdout.includes("--detach"), "help should mention --detach flag");
@@ -69,7 +69,7 @@ try {
   {
     console.log("Test 2: run requires prompt argument");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail without prompt");
     const output = result.stdout + result.stderr;
     // Commander should complain about missing argument
@@ -85,7 +85,7 @@ try {
   {
     console.log("Test 3: run handles daemon not running");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --provider claude "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run --provider claude "test prompt"`.nothrow();
     // Should fail because daemon not running
     assert.notStrictEqual(result.exitCode, 0, "should fail when daemon not running");
     const output = result.stdout + result.stderr;
@@ -101,7 +101,7 @@ try {
   {
     console.log("Test 4: run -d flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run -d "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run -d "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept -d flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -112,7 +112,7 @@ try {
   {
     console.log("Test 5: run --name flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --name "test-agent" "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run --name "test-agent" "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --name flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -123,7 +123,7 @@ try {
   {
     console.log("Test 6: run --provider flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --provider codex "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run --provider codex "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --provider flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -134,7 +134,7 @@ try {
   {
     console.log("Test 6b: run --provider provider/model syntax is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --provider codex/gpt-5.4 "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run --provider codex/gpt-5.4 "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept provider/model syntax");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -145,7 +145,7 @@ try {
   {
     console.log("Test 7: run --mode flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --mode bypass "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run --mode bypass "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --mode flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -156,7 +156,7 @@ try {
   {
     console.log("Test 8: run --cwd flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --cwd /tmp "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run --cwd /tmp "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --cwd flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -167,7 +167,7 @@ try {
   {
     console.log("Test 9: run --output-schema flag is accepted");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --output-schema ${schemaPath} "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run --output-schema ${schemaPath} "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept --output-schema flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -178,7 +178,7 @@ try {
   {
     console.log("Test 10: run --output-schema cannot be used with --detach");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run -d --output-schema ${schemaPath} "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run -d --output-schema ${schemaPath} "test prompt"`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail with --detach and --output-schema");
     const output = result.stdout + result.stderr;
     assert(
@@ -192,7 +192,7 @@ try {
   {
     console.log("Test 11: -q (quiet) flag is accepted with run");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo -q run -d "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode -q run -d "test prompt"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept -q flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -203,7 +203,7 @@ try {
   {
     console.log("Test 12: Combined flags work together");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo -q run -d --name "test-fixer" --provider claude --mode bypass --cwd /tmp "Fix the tests"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode -q run -d --name "test-fixer" --provider claude --mode bypass --cwd /tmp "Fix the tests"`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept all combined flags");
     assert(!output.includes("error: option"), "should not have option parsing error");
@@ -214,7 +214,7 @@ try {
   {
     console.log("Test 12b: conflicting provider/model syntax is rejected");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --provider codex/gpt-5.4 --model gpt-5.5 "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run --provider codex/gpt-5.4 --model gpt-5.5 "test prompt"`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail for conflicting model inputs");
     const output = result.stdout + result.stderr;
     assert(
@@ -224,20 +224,20 @@ try {
     console.log("✓ conflicting provider/model syntax is rejected\n");
   }
 
-  // Test 13: paseo --help shows run command
+  // Test 13: hubcode --help shows run command
   {
-    console.log("Test 13: paseo --help shows run command");
-    const result = await $`npx paseo --help`.nothrow();
-    assert.strictEqual(result.exitCode, 0, "paseo --help should exit 0");
+    console.log("Test 13: hubcode --help shows run command");
+    const result = await $`npx hubcode --help`.nothrow();
+    assert.strictEqual(result.exitCode, 0, "hubcode --help should exit 0");
     assert(result.stdout.includes("run"), "help should mention run command");
-    console.log("✓ paseo --help shows run command\n");
+    console.log("✓ hubcode --help shows run command\n");
   }
 
   // Test 14: run --ui is rejected (flag removed)
   {
     console.log("Test 14: run --ui is rejected");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npx paseo run --ui "test prompt"`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npx hubcode run --ui "test prompt"`.nothrow();
     assert.notStrictEqual(result.exitCode, 0, "should fail for removed --ui flag");
     const output = result.stdout + result.stderr;
     assert(output.includes("unknown option"), "should report unknown option for --ui");
@@ -245,7 +245,7 @@ try {
   }
 } finally {
   // Clean up temp directory
-  await rm(paseoHome, { recursive: true, force: true });
+  await rm(hubcodeHome, { recursive: true, force: true });
 }
 
 console.log("=== All run tests passed ===");

@@ -87,7 +87,7 @@ describe("Claude spawn override", () => {
       await session.run("spawn shell regression");
       capturedOptions?.spawnClaudeCodeProcess?.({
         command: "node",
-        args: ["claude.js", "--mcp-config", '{"mcpServers":{"paseo":{"type":"http"}}}'],
+        args: ["claude.js", "--mcp-config", '{"mcpServers":{"hubcode":{"type":"http"}}}'],
         cwd: process.cwd(),
         env: {},
         signal: new AbortController().signal,

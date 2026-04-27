@@ -173,7 +173,7 @@ function enqueueSpawnBehaviors(...behaviors: FakeSpawnBehavior[]): void {
 
 async function loadRunGitCommand(concurrency: number) {
   vi.resetModules();
-  vi.stubEnv("PASEO_GIT_CONCURRENCY", String(concurrency));
+  vi.stubEnv("HUBCODE_GIT_CONCURRENCY", String(concurrency));
   return import("./run-git-command.js");
 }
 

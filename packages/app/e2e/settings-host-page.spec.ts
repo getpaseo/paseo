@@ -53,7 +53,7 @@ test.describe("Settings host page", () => {
 
     const injectMcpCard = page.getByTestId("host-page-inject-mcp-card");
     await expect(injectMcpCard).toBeVisible();
-    await expect(injectMcpCard.getByRole("switch", { name: "Inject Paseo tools" })).toBeVisible();
+    await expect(injectMcpCard.getByRole("switch", { name: "Inject Hubcode tools" })).toBeVisible();
 
     await expect(page.getByTestId("host-page-restart-card")).toBeVisible();
     await expect(page.getByTestId("host-page-restart-button")).toBeVisible();
@@ -133,7 +133,7 @@ test.describe("Settings host page", () => {
     // from get_desktop_settings) bypasses the desktop bootstrap flow so only
     // the sidebar's status query runs against the seeded test daemon.
     await page.addInitScript((localServerId) => {
-      (window as unknown as { paseoDesktop: unknown }).paseoDesktop = {
+      (window as unknown as { hubcodeDesktop: unknown }).hubcodeDesktop = {
         platform: "darwin",
         invoke: async (command: string) => {
           if (command === "desktop_daemon_status") {

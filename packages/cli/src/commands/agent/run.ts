@@ -3,7 +3,7 @@ import {
   getStructuredAgentResponse,
   StructuredAgentResponseError,
   type AgentSnapshotPayload,
-} from "@getpaseo/server";
+} from "@gethubcode/server";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -257,7 +257,7 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
     throw {
       code: "MISSING_PROMPT",
       message: "A prompt is required",
-      details: "Usage: paseo agent run [options] <prompt>",
+      details: "Usage: hubcode agent run [options] <prompt>",
     } satisfies CommandError;
   }
 
@@ -265,7 +265,7 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
     throw {
       code: "INVALID_OPTIONS",
       message: "--base can only be used with --worktree",
-      details: "Usage: paseo agent run --worktree <name> --base <branch> <prompt>",
+      details: "Usage: hubcode agent run --worktree <name> --base <branch> <prompt>",
     } satisfies CommandError;
   }
 
@@ -348,7 +348,7 @@ async function connectToDaemonOrThrow(
     throw {
       code: "DAEMON_NOT_RUNNING",
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
+      details: "Start the daemon with: hubcode daemon start",
     } satisfies CommandError;
   }
 }
@@ -378,7 +378,7 @@ export async function runRunCommand(
         code: "INVALID_THINKING_OPTION",
         message: "--thinking cannot be empty",
         details:
-          'Provide a thinking option ID. Use "paseo provider models <provider> --thinking" to list valid IDs.',
+          'Provide a thinking option ID. Use "hubcode provider models <provider> --thinking" to list valid IDs.',
       };
       throw error;
     }

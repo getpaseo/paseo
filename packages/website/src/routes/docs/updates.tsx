@@ -4,8 +4,8 @@ import { pageMeta } from "~/meta";
 export const Route = createFileRoute("/docs/updates")({
   head: () => ({
     meta: pageMeta(
-      "Updates - Paseo Docs",
-      "How to update Paseo daemon and apps across web, desktop, and mobile.",
+      "Updates - Hubcode Docs",
+      "How to update Hubcode daemon and apps across web, desktop, and mobile.",
     ),
   }),
   component: UpdatesDocs,
@@ -34,12 +34,12 @@ function UpdatesDocs() {
         <p className="text-white/60">Install the latest CLI/daemon package globally:</p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
           <span className="text-muted-foreground select-none">$ </span>
-          <span>npm install -g @getpaseo/cli@latest</span>
+          <span>npm install -g @gethubcode/cli@latest</span>
         </div>
         <p className="text-white/60">Then restart the daemon:</p>
         <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm">
           <span className="text-muted-foreground select-none">$ </span>
-          <span>paseo daemon restart</span>
+          <span>hubcode daemon restart</span>
         </div>
       </section>
 
@@ -47,12 +47,12 @@ function UpdatesDocs() {
         <h2 className="text-xl font-medium">Web app</h2>
         <p className="text-white/60">
           <a
-            href="https://app.paseo.sh"
+            href="https://app.hubcode.ai"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-white/80"
           >
-            app.paseo.sh
+            app.hubcode.ai
           </a>{" "}
           is always up to date. No manual update needed.
         </p>
@@ -65,12 +65,12 @@ function UpdatesDocs() {
           current version.
         </p>
         <a
-          href="https://github.com/getpaseo/paseo/releases"
+          href="https://github.com/hubtool/hubcode/releases"
           target="_blank"
           rel="noopener noreferrer"
           className="underline hover:text-white/80"
         >
-          Paseo releases
+          Hubcode releases
         </a>
       </section>
 

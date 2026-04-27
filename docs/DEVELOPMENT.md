@@ -15,18 +15,18 @@ The dev script automatically picks an available port. Both the server and Expo a
 
 ### Running alongside the main checkout
 
-Set `PASEO_HOME` to isolate state when running a second instance (e.g., in a worktree):
+Set `HUBCODE_HOME` to isolate state when running a second instance (e.g., in a worktree):
 
 ```bash
-PASEO_HOME=~/.paseo-blue npm run dev
+HUBCODE_HOME=~/.hubcode-blue npm run dev
 ```
 
-- `PASEO_HOME` — path for runtime state (agents, sockets, etc.). Defaults to `~/.paseo`.
-- In git worktrees, `npm run dev` derives a stable home like `~/.paseo-<worktree-name>`.
-  On first run, it seeds that home from `~/.paseo` by copying agent/project JSON metadata
+- `HUBCODE_HOME` — path for runtime state (agents, sockets, etc.). Defaults to `~/.hubcode`.
+- In git worktrees, `npm run dev` derives a stable home like `~/.hubcode-<worktree-name>`.
+  On first run, it seeds that home from `~/.hubcode` by copying agent/project JSON metadata
   and `config.json`; actual checkout/worktree directories are not copied.
-- `PASEO_DEV_SEED_HOME=/path/to/home npm run dev` seeds from a different source home.
-- `PASEO_DEV_RESET_HOME=1 npm run dev` clears and reseeds the derived worktree home.
+- `HUBCODE_DEV_SEED_HOME=/path/to/home npm run dev` seeds from a different source home.
+- `HUBCODE_DEV_RESET_HOME=1 npm run dev` clears and reseeds the derived worktree home.
 
 ### Default ports
 
@@ -39,7 +39,7 @@ In worktrees or with `npm run dev`, ports may differ. Never assume defaults.
 
 ### Daemon logs
 
-Check `$PASEO_HOME/daemon.log` for trace-level logs.
+Check `$HUBCODE_HOME/daemon.log` for trace-level logs.
 
 ### Database queries
 
@@ -57,10 +57,10 @@ npm run db:query -- "SELECT agent_id, seq, item_kind FROM agent_timeline_rows OR
 npm run db:query -- --db /path/to/db "SELECT ..."
 ```
 
-Auto-detects the running dev daemon's database from `/tmp/paseo-dev.*`, `PASEO_HOME`, or `~/.paseo/db`.
-Pass either a DB directory or a `paseo.sqlite` file to `--db`. The script opens the database directly in read-only mode.
+Auto-detects the running dev daemon's database from `/tmp/hubcode-dev.*`, `HUBCODE_HOME`, or `~/.hubcode/db`.
+Pass either a DB directory or a `hubcode.sqlite` file to `--db`. The script opens the database directly in read-only mode.
 
-## paseo.json service scripts
+## hubcode.json service scripts
 
 `worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
 of commands. Both run sequentially.
@@ -68,7 +68,7 @@ of commands. Both run sequentially.
 ```json
 {
   "worktree": {
-    "setup": "npm ci\ncp \"$PASEO_SOURCE_CHECKOUT_PATH/.env\" .env\nnpm run db:migrate",
+    "setup": "npm ci\ncp \"$HUBCODE_SOURCE_CHECKOUT_PATH/.env\" .env\nnpm run db:migrate",
     "teardown": "npm run db:drop || true"
   }
 }
@@ -78,10 +78,10 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
 
 | Variable                    | Value                                                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `PASEO_SERVICE_<NAME>_URL`  | Proxied daemon URL for a declared peer service. Prefer this for peer discovery; it survives peer restarts.                |
-| `PASEO_SERVICE_<NAME>_PORT` | Raw ephemeral port for a declared peer service. Use only as a bypass escape hatch; it can go stale if that peer restarts. |
-| `PASEO_URL`                 | Self alias for `PASEO_SERVICE_<SELF>_URL`.                                                                                |
-| `PASEO_PORT`                | Self alias for `PASEO_SERVICE_<SELF>_PORT`.                                                                               |
+| `HUBCODE_SERVICE_<NAME>_URL`  | Proxied daemon URL for a declared peer service. Prefer this for peer discovery; it survives peer restarts.                |
+| `HUBCODE_SERVICE_<NAME>_PORT` | Raw ephemeral port for a declared peer service. Use only as a bypass escape hatch; it can go stale if that peer restarts. |
+| `HUBCODE_URL`                 | Self alias for `HUBCODE_SERVICE_<SELF>_URL`.                                                                                |
+| `HUBCODE_PORT`                | Self alias for `HUBCODE_SERVICE_<SELF>_PORT`.                                                                               |
 | `HOST`                      | Bind host for the service process.                                                                                        |
 
 `<NAME>` is normalized from the script name by uppercasing it, replacing each run of non-`A-Z0-9` characters with `_`, and trimming leading or trailing `_`. For example, `app-server` and `app.server` both normalize to `APP_SERVER`; that collision fails at spawn time with an actionable error.
@@ -93,7 +93,7 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
   "scripts": {
     "web": {
       "type": "service",
-      "command": "PORT=$PASEO_PORT npm run dev:web"
+      "command": "PORT=$HUBCODE_PORT npm run dev:web"
     }
   }
 }
@@ -106,24 +106,24 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
 When changing `packages/relay/src/*`, rebuild before running the daemon:
 
 ```bash
-npm run build --workspace=@getpaseo/relay
+npm run build --workspace=@gethubcode/relay
 ```
 
-The Node daemon imports `@getpaseo/relay` from `packages/relay/dist/*`, not `src/*`.
+The Node daemon imports `@gethubcode/relay` from `packages/relay/dist/*`, not `src/*`.
 
 ### Server → CLI
 
 When changing `packages/server/src/client/*` (especially `daemon-client.ts`) or shared WS protocol types, rebuild before running CLI commands:
 
 ```bash
-npm run build --workspace=@getpaseo/server
+npm run build --workspace=@gethubcode/server
 ```
 
-The CLI imports `@getpaseo/server` via package exports resolving to `dist/*`. Stale `dist` means the CLI speaks an old protocol and fails with handshake warnings or timeouts.
+The CLI imports `@gethubcode/server` via package exports resolving to `dist/*`. Stale `dist` means the CLI speaks an old protocol and fails with handshake warnings or timeouts.
 
 ## CLI reference
 
-Use `npm run cli` to run the local CLI (instead of the globally installed `paseo` which points to the main checkout).
+Use `npm run cli` to run the local CLI (instead of the globally installed `hubcode` which points to the main checkout).
 
 ```bash
 npm run cli -- ls -a -g              # List all agents globally
@@ -144,19 +144,19 @@ npm run cli -- --host localhost:7777 ls -a
 Agent data lives at:
 
 ```
-$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json
+$HUBCODE_HOME/agents/{cwd-with-dashes}/{agent-id}.json
 ```
 
 Find an agent by ID:
 
 ```bash
-find $PASEO_HOME/agents -name "{agent-id}.json"
+find $HUBCODE_HOME/agents -name "{agent-id}.json"
 ```
 
 Find by content:
 
 ```bash
-rg -l "some title text" $PASEO_HOME/agents/
+rg -l "some title text" $HUBCODE_HOME/agents/
 ```
 
 ## Provider session files

@@ -9,7 +9,7 @@ import {
 } from "@/utils/thinking-tone.native-pcm";
 
 const PCM_MIME_TYPE = "audio/pcm;rate=16000;bits=16";
-const KEEP_AWAKE_TAG = "paseo:voice";
+const KEEP_AWAKE_TAG = "hubcode:voice";
 const THINKING_TONE_REPEAT_GAP_MS = 350;
 const DISPLAY_VOLUME_PUBLISH_INTERVAL_MS = 120;
 const DISPLAY_VOLUME_CHANGE_EPSILON = 0.02;

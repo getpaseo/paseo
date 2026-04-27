@@ -6,8 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronDown, MoreVertical, Plus } from "lucide-react-native";
 import { useProjectIconQuery } from "@/hooks/use-project-icon-query";
 import type {
-  PaseoConfigRaw,
-  PaseoConfigRevision,
+  HubcodeConfigRaw,
+  HubcodeConfigRevision,
   ProjectConfigRpcError,
 } from "@server/shared/messages";
 import type { DaemonClient } from "@server/client/daemon-client";
@@ -160,8 +160,8 @@ function ProjectSettingsBody({
   });
 
   const data = readQuery.data;
-  const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
-  const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
+  const loadedConfig: HubcodeConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
+  const loadedRevision: HubcodeConfigRevision | null = data?.ok ? data.revision : null;
   const readError: ProjectConfigRpcError | null = data && !data.ok ? data.error : null;
 
   const handleReload = useCallback(() => {
@@ -199,8 +199,8 @@ function ProjectSettingsBody({
 
 interface RenderContentInput {
   readQuery: ReturnType<typeof useQuery<ReadProjectConfigData>>;
-  loadedConfig: PaseoConfigRaw | null;
-  loadedRevision: PaseoConfigRevision | null;
+  loadedConfig: HubcodeConfigRaw | null;
+  loadedRevision: HubcodeConfigRevision | null;
   readError: ProjectConfigRpcError | null;
   selectedHost: ProjectHostEntry;
   queryKey: readonly [string, string, string];
@@ -272,7 +272,7 @@ function renderContent({
   );
 }
 
-function revisionToKey(revision: PaseoConfigRevision | null): string {
+function revisionToKey(revision: HubcodeConfigRevision | null): string {
   if (!revision) return "none";
   return `${revision.mtimeMs}-${revision.size}`;
 }
@@ -305,7 +305,7 @@ function resolveReadFailureCopy(input: {
   if (input.kind === "invalid_project_config") {
     return {
       testID: "invalid-callout",
-      title: "paseo.json couldn't be parsed",
+      title: "hubcode.json couldn't be parsed",
       description: "Fix the file on disk, then reload.",
     };
   }
@@ -322,13 +322,13 @@ function resolveReadFailureCopy(input: {
     const detail = errorToDetail(input.error);
     return {
       testID: "read-transport-callout",
-      title: "Couldn't load paseo.json",
+      title: "Couldn't load hubcode.json",
       description: detail ?? "The host didn't respond.",
     };
   }
   return {
     testID: "read-failed-callout",
-    title: "Couldn't load paseo.json",
+    title: "Couldn't load hubcode.json",
     description: "Reload to try again.",
   };
 }
@@ -340,8 +340,8 @@ function errorToDetail(error: unknown): string | null {
 }
 
 interface ProjectConfigFormProps {
-  baseConfig: PaseoConfigRaw;
-  revision: PaseoConfigRevision | null;
+  baseConfig: HubcodeConfigRaw;
+  revision: HubcodeConfigRevision | null;
   repoRoot: string;
   queryKey: readonly [string, string, string];
   client: DaemonClient;
@@ -365,8 +365,8 @@ function ProjectConfigForm({
 
   const saveMutation = useMutation({
     mutationFn: async (input: {
-      config: PaseoConfigRaw;
-      expectedRevision: PaseoConfigRevision | null;
+      config: HubcodeConfigRaw;
+      expectedRevision: HubcodeConfigRevision | null;
     }) => {
       return client.writeProjectConfig({
         repoRoot,
@@ -575,7 +575,7 @@ function ProjectConfigForm({
             testID="stale-callout"
             variant="error"
             title="Config changed on disk"
-            description="Reload to fetch the latest paseo.json before saving."
+            description="Reload to fetch the latest hubcode.json before saving."
           >
             <Button
               testID="stale-callout-action-0"
@@ -594,7 +594,7 @@ function ProjectConfigForm({
           <Alert
             testID="write-failed-callout"
             variant="error"
-            title="Couldn't save paseo.json"
+            title="Couldn't save hubcode.json"
             description="Try again, or reload the latest version from disk."
           >
             <Button
@@ -928,7 +928,7 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
           <View style={styles.serviceToggleText}>
             <Text style={styles.serviceToggleLabel}>Run as a service</Text>
             <Text style={styles.modalHint}>
-              Paseo supervises the process and assigns a port via $PASEO_PORT
+              Hubcode supervises the process and assigns a port via $HUBCODE_PORT
             </Text>
           </View>
           <Switch

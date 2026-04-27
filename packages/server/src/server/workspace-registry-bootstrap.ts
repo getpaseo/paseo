@@ -45,7 +45,7 @@ function resolveAgentUpdatedAt(record: StoredAgentRecord): string {
 }
 
 export async function bootstrapWorkspaceRegistries(options: {
-  paseoHome: string;
+  hubcodeHome: string;
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
@@ -158,8 +158,8 @@ export async function bootstrapWorkspaceRegistries(options: {
 
   options.logger.info(
     {
-      projectsFile: path.join(options.paseoHome, "projects", "projects.json"),
-      workspacesFile: path.join(options.paseoHome, "projects", "workspaces.json"),
+      projectsFile: path.join(options.hubcodeHome, "projects", "projects.json"),
+      workspacesFile: path.join(options.hubcodeHome, "projects", "workspaces.json"),
       materializedProjects: projectRanges.size,
       materializedWorkspaces: recordsByWorkspaceId.size,
     },

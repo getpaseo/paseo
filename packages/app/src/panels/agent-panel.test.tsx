@@ -253,7 +253,7 @@ function makeFetchedAgentResult(agent: Agent): Awaited<ReturnType<DaemonClient["
         currentBranch: null,
         remoteUrl: null,
         worktreeRoot: null,
-        isPaseoOwnedWorktree: false,
+        isHubcodeOwnedWorktree: false,
         mainRepoRoot: null,
       },
     },

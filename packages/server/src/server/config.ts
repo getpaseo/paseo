@@ -1,8 +1,8 @@
 import path from "node:path";
-import { resolvePaseoNodeEnv } from "./paseo-env.js";
+import { resolveHubcodeNodeEnv } from "./hubcode-env.js";
 import { z } from "zod";
 
-import type { PaseoDaemonConfig } from "./bootstrap.js";
+import type { HubcodeDaemonConfig } from "./bootstrap.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import type {
@@ -15,8 +15,8 @@ import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 
 const DEFAULT_PORT = 6767;
-const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
-const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
+const DEFAULT_RELAY_ENDPOINT = "relay.hubcode.ai:443";
+const DEFAULT_APP_BASE_URL = "https://app.hubcode.ai";
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) {
@@ -118,15 +118,15 @@ interface ResolvedRelay {
 function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
   const enabled =
     input.cliRelayEnabled ??
-    parseBooleanEnv(input.env.PASEO_RELAY_ENABLED) ??
+    parseBooleanEnv(input.env.HUBCODE_RELAY_ENABLED) ??
     input.persisted.daemon?.relay?.enabled ??
     true;
   const endpoint =
-    input.env.PASEO_RELAY_ENDPOINT ??
+    input.env.HUBCODE_RELAY_ENDPOINT ??
     input.persisted.daemon?.relay?.endpoint ??
     DEFAULT_RELAY_ENDPOINT;
   const publicEndpoint =
-    input.env.PASEO_RELAY_PUBLIC_ENDPOINT ??
+    input.env.HUBCODE_RELAY_PUBLIC_ENDPOINT ??
     input.persisted.daemon?.relay?.publicEndpoint ??
     endpoint;
   return { enabled, endpoint, publicEndpoint };
@@ -142,7 +142,7 @@ function resolveVoiceLlmConfig(
   env: NodeJS.ProcessEnv,
   persisted: ReturnType<typeof loadPersistedConfig>,
 ): ResolvedVoiceLlm {
-  const envVoiceLlmProvider = parseOptionalVoiceLlmProvider(env.PASEO_VOICE_LLM_PROVIDER);
+  const envVoiceLlmProvider = parseOptionalVoiceLlmProvider(env.HUBCODE_VOICE_LLM_PROVIDER);
   const persistedVoiceLlmProvider = parseOptionalVoiceLlmProvider(
     persisted.features?.voiceMode?.llm?.provider,
   );
@@ -157,8 +157,8 @@ function resolveCorsAllowedOrigins(
   env: NodeJS.ProcessEnv,
   persisted: ReturnType<typeof loadPersistedConfig>,
 ): string[] {
-  const envCorsOrigins = env.PASEO_CORS_ORIGINS
-    ? env.PASEO_CORS_ORIGINS.split(",").map((s) => s.trim())
+  const envCorsOrigins = env.HUBCODE_CORS_ORIGINS
+    ? env.HUBCODE_CORS_ORIGINS.split(",").map((s) => s.trim())
     : [];
   const persistedCorsOrigins = persisted.daemon?.cors?.allowedOrigins ?? [];
   return Array.from(
@@ -166,7 +166,7 @@ function resolveCorsAllowedOrigins(
   );
 }
 
-// PASEO_LISTEN can be:
+// HUBCODE_LISTEN can be:
 // - host:port (TCP)
 // - /path/to/socket (Unix socket)
 // - unix:///path/to/socket (Unix socket)
@@ -178,7 +178,7 @@ function resolveListenAddress(
 ): string {
   return (
     cli?.listen ??
-    env.PASEO_LISTEN ??
+    env.HUBCODE_LISTEN ??
     persisted.daemon?.listen ??
     `127.0.0.1:${env.PORT ?? DEFAULT_PORT}`
   );
@@ -195,22 +195,22 @@ function resolveStaticLoadConfigSettings(
       cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
     hostnames: mergeHostnames([
       persisted.daemon?.hostnames,
-      parseHostnamesEnv(env.PASEO_HOSTNAMES ?? env.PASEO_ALLOWED_HOSTS),
+      parseHostnamesEnv(env.HUBCODE_HOSTNAMES ?? env.HUBCODE_ALLOWED_HOSTS),
       cli?.hostnames,
     ]),
-    appBaseUrl: env.PASEO_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL,
+    appBaseUrl: env.HUBCODE_APP_BASE_URL ?? persisted.app?.baseUrl ?? DEFAULT_APP_BASE_URL,
   };
 }
 
 export function loadConfig(
-  paseoHome: string,
+  hubcodeHome: string,
   options?: {
     env?: NodeJS.ProcessEnv;
     cli?: CliConfigOverrides;
   },
-): PaseoDaemonConfig {
+): HubcodeDaemonConfig {
   const env = options?.env ?? process.env;
-  const persisted = loadPersistedConfig(paseoHome);
+  const persisted = loadPersistedConfig(hubcodeHome);
 
   const listen = resolveListenAddress(env, options?.cli, persisted);
   const { mcpEnabled, mcpInjectIntoAgents, hostnames, appBaseUrl } =
@@ -223,7 +223,7 @@ export function loadConfig(
   });
 
   const { openai, speech } = resolveSpeechConfig({
-    paseoHome,
+    hubcodeHome,
     env,
     persisted,
   });
@@ -235,14 +235,14 @@ export function loadConfig(
 
   return {
     listen,
-    paseoHome,
+    hubcodeHome,
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,
     mcpEnabled,
     mcpInjectIntoAgents,
     mcpDebug: env.MCP_DEBUG === "1",
-    isDev: resolvePaseoNodeEnv(env) === "development",
-    agentStoragePath: path.join(paseoHome, "agents"),
+    isDev: resolveHubcodeNodeEnv(env) === "development",
+    agentStoragePath: path.join(hubcodeHome, "agents"),
     staticDir: "public",
     agentClients: {},
     relayEnabled: relay.enabled,

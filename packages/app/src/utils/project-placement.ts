@@ -19,7 +19,7 @@ export function deriveProjectPlacementFromCwd(cwd: string): ProjectPlacementPayl
       currentBranch: null,
       remoteUrl: null,
       worktreeRoot: null,
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       mainRepoRoot: null,
     },
   };

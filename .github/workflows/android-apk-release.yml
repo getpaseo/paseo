@@ -50,7 +50,7 @@ jobs:
           release_args=(
             release create "$RELEASE_TAG"
             --repo "${{ github.repository }}"
-            --title "Paseo $RELEASE_TAG"
+            --title "Hubcode $RELEASE_TAG"
             --notes ""
           )
 
@@ -117,7 +117,7 @@ jobs:
             exit 1
           fi
 
-          asset_name="paseo-${RELEASE_TAG}-android.apk"
+          asset_name="hubcode-${RELEASE_TAG}-android.apk"
           asset_path="$RUNNER_TEMP/$asset_name"
 
           curl --fail --location --output "$asset_path" "$artifact_url"

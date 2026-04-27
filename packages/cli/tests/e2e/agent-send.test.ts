@@ -25,7 +25,7 @@ import assert from "node:assert";
 import { createE2ETestContext, type TestDaemonContext } from "../helpers/test-daemon.ts";
 
 interface E2EContext extends TestDaemonContext {
-  paseo: (
+  hubcode: (
     args: string[],
     opts?: { timeout?: number; cwd?: string },
   ) => Promise<{
@@ -44,7 +44,7 @@ async function setup(): Promise<void> {
   try {
     ctx = await createE2ETestContext({ timeout: 45000 });
     console.log(`Test daemon started on port ${ctx.port}`);
-    console.log(`PASEO_HOME: ${ctx.paseoHome}`);
+    console.log(`HUBCODE_HOME: ${ctx.hubcodeHome}`);
     console.log(`Work directory: ${ctx.workDir}`);
   } catch (err) {
     console.error("Failed to start test daemon:", err);
@@ -65,7 +65,7 @@ async function test_create_agent(): Promise<string> {
 
   // CRITICAL: Use haiku model for fast, cheap tests
   // CRITICAL: Use bypassPermissions mode so agent doesn't wait for permission approvals
-  const result = await ctx.paseo(
+  const result = await ctx.hubcode(
     [
       "-q",
       "run",
@@ -100,7 +100,7 @@ async function test_create_agent(): Promise<string> {
 async function test_wait_for_initial_task(agentId: string): Promise<void> {
   console.log("\n--- Test: Wait for initial task to complete ---");
 
-  const result = await ctx.paseo(["wait", "--timeout", "120s", agentId], { timeout: 130000 });
+  const result = await ctx.hubcode(["wait", "--timeout", "120s", agentId], { timeout: 130000 });
 
   console.log("Exit code:", result.exitCode);
   console.log("Stdout:", result.stdout);
@@ -115,7 +115,7 @@ async function test_agent_send(agentId: string): Promise<void> {
   console.log("\n--- Test: Send follow-up message ---");
 
   // Send a follow-up message to the agent
-  const result = await ctx.paseo(["send", agentId, 'Now say "follow-up task complete"'], {
+  const result = await ctx.hubcode(["send", agentId, 'Now say "follow-up task complete"'], {
     timeout: 180000,
   });
 
@@ -137,7 +137,7 @@ async function test_agent_send(agentId: string): Promise<void> {
 async function test_verify_logs(agentId: string): Promise<void> {
   console.log("\n--- Test: Verify agent processed both messages ---");
 
-  const result = await ctx.paseo(["logs", "--tail", "50", agentId]);
+  const result = await ctx.hubcode(["logs", "--tail", "50", agentId]);
 
   console.log("Exit code:", result.exitCode);
   console.log("Stdout length:", result.stdout.length);
@@ -156,7 +156,7 @@ async function test_verify_logs(agentId: string): Promise<void> {
 async function test_agent_delete(agentId: string): Promise<void> {
   console.log("\n--- Test: Delete agent ---");
 
-  const result = await ctx.paseo(["delete", agentId]);
+  const result = await ctx.hubcode(["delete", agentId]);
 
   console.log("Exit code:", result.exitCode);
   console.log("Stdout:", result.stdout);

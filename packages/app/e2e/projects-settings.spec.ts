@@ -16,7 +16,7 @@ interface ProjectsSettingsFixtures {
   editableProject: ProjectsSettingsProject;
 }
 
-const initialPaseoConfig = {
+const initialHubcodeConfig = {
   worktree: {
     setup: ["echo initial setup"],
     teardown: "echo cleanup",
@@ -37,7 +37,7 @@ const test = base.extend<ProjectsSettingsFixtures>({
   editableProject: async ({ page: _page }, provide) => {
     const client = await connectNewWorkspaceDaemonClient();
     const repo = await createTempGitRepo("projects-settings-", {
-      paseoConfig: initialPaseoConfig,
+      hubcodeConfig: initialHubcodeConfig,
     });
     const openedProject = await openProjectViaDaemon(client, repo.path);
 
@@ -89,18 +89,18 @@ async function expectProjectConfigSaved(project: ProjectsSettingsProject): Promi
     .toMatchObject({
       worktree: {
         setup: updatedSetup,
-        teardown: initialPaseoConfig.worktree.teardown,
-        customWorktreeField: initialPaseoConfig.worktree.customWorktreeField,
+        teardown: initialHubcodeConfig.worktree.teardown,
+        customWorktreeField: initialHubcodeConfig.worktree.customWorktreeField,
       },
       scripts: {
         dev: {
-          command: initialPaseoConfig.scripts.dev.command,
-          type: initialPaseoConfig.scripts.dev.type,
-          port: initialPaseoConfig.scripts.dev.port,
-          customScriptField: initialPaseoConfig.scripts.dev.customScriptField,
+          command: initialHubcodeConfig.scripts.dev.command,
+          type: initialHubcodeConfig.scripts.dev.type,
+          port: initialHubcodeConfig.scripts.dev.port,
+          customScriptField: initialHubcodeConfig.scripts.dev.customScriptField,
         },
       },
-      customTopLevelField: initialPaseoConfig.customTopLevelField,
+      customTopLevelField: initialHubcodeConfig.customTopLevelField,
     });
 
   const savedConfig = await readProjectConfigFile(project);
@@ -108,7 +108,7 @@ async function expectProjectConfigSaved(project: ProjectsSettingsProject): Promi
 }
 
 async function readProjectConfigFile(project: ProjectsSettingsProject): Promise<string> {
-  return readFile(path.join(project.path, "paseo.json"), "utf8");
+  return readFile(path.join(project.path, "hubcode.json"), "utf8");
 }
 
 test.describe("Projects settings", () => {

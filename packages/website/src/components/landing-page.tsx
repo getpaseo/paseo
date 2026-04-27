@@ -169,7 +169,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
                   Discord
                 </a>
                 <a
-                  href="https://github.com/getpaseo/paseo"
+                  href="https://github.com/hubtool/hubcode"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block text-white/40 hover:text-white/60 transition-colors"
@@ -198,7 +198,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
                   Google Play
                 </a>
                 <a
-                  href="https://github.com/getpaseo/paseo/releases"
+                  href="https://github.com/hubtool/hubcode/releases"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block text-white/40 hover:text-white/60 transition-colors"
@@ -326,7 +326,7 @@ function MultiProviderSection() {
   return (
     <FeatureSection
       title="Use the best agent for the job"
-      description="Run multiple providers from a single interface. Paseo runs the native agent harness as you'd normally run it, with your skills, config and MCP servers intact."
+      description="Run multiple providers from a single interface. Hubcode runs the native agent harness as you'd normally run it, with your skills, config and MCP servers intact."
     >
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {providers.slice(0, 3).map((p) => (
@@ -648,7 +648,7 @@ function ServiceProxySection() {
   return (
     <FeatureSection
       title="Forget about ports"
-      description="When agents work in parallel, they all run dev servers. Paseo gives each one a URL based on the branch name, no port conflicts, no guessing."
+      description="When agents work in parallel, they all run dev servers. Hubcode gives each one a URL based on the branch name, no port conflicts, no guessing."
     >
       <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
         <div className="px-5 py-4 space-y-3">
@@ -1056,7 +1056,7 @@ const SERVER_INSTALL_TRIGGER = (
 
 const SERVER_INSTALL_FOOTNOTE = (
   <>
-    Requires Node.js 18+. Run <span className="font-mono text-white/40">paseo</span> to start the
+    Requires Node.js 18+. Run <span className="font-mono text-white/40">hubcode</span> to start the
     daemon.
   </>
 );
@@ -1066,8 +1066,8 @@ function ServerInstallButton() {
     <CommandDialog
       trigger={SERVER_INSTALL_TRIGGER}
       title="Run agents on a remote machine"
-      description="For headless machines you want to connect to from the Paseo apps. The desktop app already includes a built-in daemon."
-      command="npm install -g @getpaseo/cli && paseo"
+      description="For headless machines you want to connect to from the Hubcode apps. The desktop app already includes a built-in daemon."
+      command="npm install -g @gethubcode/cli && hubcode"
       footnote={SERVER_INSTALL_FOOTNOTE}
     />
   );
@@ -1170,7 +1170,7 @@ const bashKeywords = new Set([
   "true",
   "false",
 ]);
-const bashCommands = new Set(["paseo", "echo", "jq"]);
+const bashCommands = new Set(["hubcode", "echo", "jq"]);
 
 function tokenizeBashComment(code: string, i: number): { node: React.ReactNode; len: number } {
   const end = code.indexOf("\n", i);
@@ -1344,38 +1344,38 @@ const cliExamples: CLIExample[] = [
     title: "Run agents",
     description:
       "Launch agents locally or on any remote host. The --worktree flag spins up an isolated git branch so you can run multiple agents on the same repo without conflicts.",
-    code: `paseo run "implement user authentication"
-paseo run --provider codex --worktree feature-x "implement feature X"
-paseo run --host devbox:6767 "run the full test suite"
+    code: `hubcode run "implement user authentication"
+hubcode run --provider codex --worktree feature-x "implement feature X"
+hubcode run --host devbox:6767 "run the full test suite"
 
-paseo ls                           # list running agents
-paseo attach abc123                # stream live output
-paseo send abc123 "also add tests" # follow-up task`,
+hubcode ls                           # list running agents
+hubcode attach abc123                # stream live output
+hubcode send abc123 "also add tests" # follow-up task`,
   },
   {
     title: "Loops",
     description:
       "Have one agent do the work, another verify the result, and loop until it passes. Built-in, no shell scripting needed.",
     code: `# Worker-verifier loop: fix tests until they pass
-paseo loop run "make all tests pass" \\
+hubcode loop run "make all tests pass" \\
   --verify "verify tests pass and the code is production-ready" \\
   --verify-check "npm test" \\
   --max-iterations 5
 
-paseo loop ls                        # list running loops
-paseo loop logs abc123               # stream loop output`,
+hubcode loop ls                        # list running loops
+hubcode loop logs abc123               # stream loop output`,
   },
   {
     title: "Schedules",
     description:
       "Run agents on a cron schedule. Automate recurring tasks like dependency updates, security audits, or report generation.",
     code: `# Run a security audit every Monday at 9am
-paseo schedule create --cron "0 9 * * 1" \\
+hubcode schedule create --cron "0 9 * * 1" \\
   "audit the codebase for security issues and open PRs for fixes"
 
-paseo schedule ls                    # list all schedules
-paseo schedule pause abc123          # pause a schedule
-paseo schedule delete abc123         # remove a schedule`,
+hubcode schedule ls                    # list all schedules
+hubcode schedule pause abc123          # pause a schedule
+hubcode schedule delete abc123         # remove a schedule`,
   },
 ];
 
@@ -1456,7 +1456,7 @@ function PhoneShowcase() {
         <motion.div style={leftPhoneStyle} className="w-[160px] md:w-[240px] absolute">
           <img
             src="/phone-1.png"
-            alt="Paseo sessions list"
+            alt="Hubcode sessions list"
             className="w-full rounded-[40px] shadow-2xl border-[3px] border-black outline-[3px] outline-white/20"
           />
         </motion.div>
@@ -1470,7 +1470,7 @@ function PhoneShowcase() {
         >
           <img
             src="/phone-2.png"
-            alt="Paseo agent chat"
+            alt="Hubcode agent chat"
             className="w-full rounded-[40px] shadow-2xl border-[3px] border-black outline-[3px] outline-white/20"
           />
         </motion.div>
@@ -1479,7 +1479,7 @@ function PhoneShowcase() {
         <motion.div style={rightPhoneStyle} className="w-[160px] md:w-[240px] absolute">
           <img
             src="/phone-3.png"
-            alt="Paseo diff view"
+            alt="Hubcode diff view"
             className="w-full rounded-[40px] shadow-2xl border-[3px] border-black outline-[3px] outline-white/20"
           />
         </motion.div>
@@ -1575,12 +1575,12 @@ function FAQ() {
       <h2 className="text-3xl font-medium">FAQ</h2>
       <div className="space-y-6">
         <FAQItem question="Is this free?">
-          Yes. Paseo is free and open source. You need Claude Code, Codex, or OpenCode installed
+          Yes. Hubcode is free and open source. You need Claude Code, Codex, or OpenCode installed
           with your own credentials. Voice is local-first by default and can optionally use OpenAI
           speech providers if you configure them.
         </FAQItem>
         <FAQItem question="Does my code leave my machine?">
-          Paseo doesn&apos;t send your code anywhere. Agents run locally and talk to their own APIs
+          Hubcode doesn&apos;t send your code anywhere. Agents run locally and talk to their own APIs
           as they normally would. For remote access, you can use the optional{" "}
           <a href="/docs/security" className="underline hover:text-white/80">
             end-to-end encrypted relay
@@ -1589,12 +1589,12 @@ function FAQ() {
         </FAQItem>
         <FAQItem question="What agents does it support?">
           Claude Code, Codex, and OpenCode. Each agent runs as its own process using its own CLI.
-          Paseo doesn&apos;t modify or wrap their behavior.
+          Hubcode doesn&apos;t modify or wrap their behavior.
         </FAQItem>
         <FAQItem question="Do I need the desktop app?">
           No. You can run the daemon headless with{" "}
           <code className="font-mono text-muted-foreground">
-            npm install -g @getpaseo/cli && paseo
+            npm install -g @gethubcode/cli && hubcode
           </code>{" "}
           and use the CLI, web app, or mobile app to connect. The desktop app just bundles the
           daemon with a UI.
@@ -1609,7 +1609,7 @@ function FAQ() {
           .
         </FAQItem>
         <FAQItem question="Can I connect from outside my network?">
-          Yes. You can use the hosted relay (end-to-end encrypted, Paseo can&apos;t read your
+          Yes. You can use the hosted relay (end-to-end encrypted, Hubcode can&apos;t read your
           traffic), set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the
           daemon port directly. See{" "}
           <a href="/docs/configuration" className="underline hover:text-white/80">
@@ -1618,21 +1618,21 @@ function FAQ() {
           .
         </FAQItem>
         <FAQItem question="Do I need git or GitHub?">
-          No. Paseo works in any directory. Worktrees are optional and only relevant if you use git.
+          No. Hubcode works in any directory. Worktrees are optional and only relevant if you use git.
           You can run agents anywhere you&apos;d normally work.
         </FAQItem>
-        <FAQItem question="Can I get banned for using Paseo?">
+        <FAQItem question="Can I get banned for using Hubcode?">
           <p>We can&apos;t make promises on behalf of providers.</p>
           <p>
-            That said, Paseo launches the official first-party CLIs (Claude Code, Codex, OpenCode)
+            That said, Hubcode launches the official first-party CLIs (Claude Code, Codex, OpenCode)
             as subprocesses. It doesn&apos;t extract tokens or call inference APIs directly. From
-            the provider&apos;s perspective, usage through Paseo is indistinguishable from running
+            the provider&apos;s perspective, usage through Hubcode is indistinguishable from running
             the CLI yourself.
           </p>
-          <p>I&apos;ve been using Paseo with all providers for months without issue.</p>
+          <p>I&apos;ve been using Hubcode with all providers for months without issue.</p>
         </FAQItem>
         <FAQItem question="How do worktrees work?">
-          When you launch an agent with the worktree option (from the app, desktop, or CLI), Paseo
+          When you launch an agent with the worktree option (from the app, desktop, or CLI), Hubcode
           creates a git worktree and runs the agent inside it. The agent works on an isolated branch
           without touching your main working directory. See the{" "}
           <a href="/docs/worktrees" className="underline hover:text-white/80">
@@ -1656,7 +1656,7 @@ function SponsorCTA() {
     >
       <div className="text-sm text-muted-foreground leading-relaxed space-y-3">
         <p>
-          I built Paseo because I wanted better tools for coding agents on my own setup. It&apos;s
+          I built Hubcode because I wanted better tools for coding agents on my own setup. It&apos;s
           an independent open source project, built around freedom of choice and real workflows. If
           you like what I&apos;m building, consider becoming a supporter.
         </p>

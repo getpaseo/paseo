@@ -38,7 +38,7 @@ describe("client-id", () => {
 
     expect(key).toBe("cid_123456781234123412341234567890ab");
     expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
-      "@paseo:client-id-v1",
+      "@hubcode:client-id-v1",
       "cid_123456781234123412341234567890ab",
     );
   });

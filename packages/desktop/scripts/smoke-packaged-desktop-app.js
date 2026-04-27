@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 
-const EXECUTABLE_NAME = "Paseo";
+const EXECUTABLE_NAME = "Hubcode";
 const SMOKE_TIMEOUT_MS = 60_000;
 const EXIT_TIMEOUT_MS = 10_000;
 
@@ -35,14 +35,14 @@ function getExecutablePath(appPath) {
 
 function getCliShimPath(appPath) {
   if (process.platform === "darwin") {
-    return path.join(appPath, "Contents", "Resources", "bin", "paseo");
+    return path.join(appPath, "Contents", "Resources", "bin", "hubcode");
   }
 
   if (process.platform === "win32") {
-    return path.join(appPath, "resources", "bin", "paseo.cmd");
+    return path.join(appPath, "resources", "bin", "hubcode.cmd");
   }
 
-  return path.join(appPath, "resources", "bin", "paseo");
+  return path.join(appPath, "resources", "bin", "hubcode");
 }
 
 function getLaunchCommand(executablePath) {
@@ -83,13 +83,13 @@ function createDefaultDaemonEnv(extraEnv) {
     ...extraEnv,
   };
 
-  delete env.PASEO_HOME;
-  delete env.PASEO_LISTEN;
+  delete env.HUBCODE_HOME;
+  delete env.HUBCODE_LISTEN;
   return env;
 }
 
 function parseSmokeLine(line) {
-  const prefix = "[paseo-smoke] ";
+  const prefix = "[hubcode-smoke] ";
   if (!line.startsWith(prefix)) {
     return null;
   }
@@ -113,7 +113,7 @@ function readIfExists(filePath) {
 
 function formatLogs({ stdout, stderr, userData }) {
   const desktopLog = readIfExists(path.join(userData, "logs", "main.log"));
-  const daemonLog = readIfExists(path.join(os.homedir(), ".paseo", "daemon.log"));
+  const daemonLog = readIfExists(path.join(os.homedir(), ".hubcode", "daemon.log"));
   return [
     `App stdout:\n${stdout.join("").trim() || "<empty>"}`,
     `App stderr:\n${stderr.join("").trim() || "<empty>"}`,
@@ -354,10 +354,10 @@ async function smokePackagedDesktopApp({ appPath }) {
   const executablePath = getExecutablePath(appPath);
   assertExecutable(executablePath, "Packaged app executable");
 
-  const userData = createTempDir("paseo-smoke-user-data-");
+  const userData = createTempDir("hubcode-smoke-user-data-");
   const env = createDefaultDaemonEnv({
-    PASEO_DESKTOP_SMOKE: "1",
-    PASEO_ELECTRON_USER_DATA_DIR: userData,
+    HUBCODE_DESKTOP_SMOKE: "1",
+    HUBCODE_ELECTRON_USER_DATA_DIR: userData,
   });
 
   const stdout = [];
@@ -425,7 +425,7 @@ if (require.main === module) {
   const appIndex = process.argv.indexOf("--app");
   const appPath = appIndex >= 0 ? process.argv[appIndex + 1] : null;
   if (!appPath) {
-    process.stderr.write("Usage: node smoke-packaged-desktop-app.js --app <Paseo.app>\n");
+    process.stderr.write("Usage: node smoke-packaged-desktop-app.js --app <Hubcode.app>\n");
     process.exit(2);
   }
 

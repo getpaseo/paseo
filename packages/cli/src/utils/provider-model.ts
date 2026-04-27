@@ -22,7 +22,7 @@ export function resolveProviderAndModel(
       code: "MISSING_PROVIDER",
       message: "Provider is required",
       details:
-        "Pass --provider <provider> or --provider <provider>/<model>. Use `paseo provider ls` to see providers and `paseo provider models <provider>` to see models.",
+        "Pass --provider <provider> or --provider <provider>/<model>. Use `hubcode provider ls` to see providers and `hubcode provider models <provider>` to see models.",
     };
     throw error;
   }

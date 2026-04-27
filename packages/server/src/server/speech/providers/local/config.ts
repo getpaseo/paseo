@@ -76,7 +76,7 @@ function shouldIncludeLocalProviderConfig(params: {
 
   return (
     localRequestedByFeature ||
-    params.env.PASEO_LOCAL_MODELS_DIR !== undefined ||
+    params.env.HUBCODE_LOCAL_MODELS_DIR !== undefined ||
     params.persisted.providers?.local?.modelsDir !== undefined
   );
 }
@@ -91,22 +91,22 @@ function firstDefinedValue<T>(values: Array<T | null | undefined>): T | undefine
 }
 
 function buildLocalSpeechResolutionInput(params: {
-  paseoHome: string;
+  hubcodeHome: string;
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
   providers: RequestedSpeechProviders;
   includeProviderConfig: boolean;
 }): Record<string, unknown> {
-  const { paseoHome, env, persisted, providers, includeProviderConfig } = params;
+  const { hubcodeHome, env, persisted, providers, includeProviderConfig } = params;
   return {
     includeProviderConfig,
     modelsDir: firstDefinedValue<string>([
-      env.PASEO_LOCAL_MODELS_DIR,
+      env.HUBCODE_LOCAL_MODELS_DIR,
       persisted.providers?.local?.modelsDir,
-      path.join(paseoHome, DEFAULT_LOCAL_MODELS_SUBDIR),
+      path.join(hubcodeHome, DEFAULT_LOCAL_MODELS_SUBDIR),
     ]),
     dictationLocalSttModel: firstDefinedValue<string>([
-      env.PASEO_DICTATION_LOCAL_STT_MODEL,
+      env.HUBCODE_DICTATION_LOCAL_STT_MODEL,
       persistedLocalFeatureModel(
         providers.dictationStt.provider,
         providers.dictationStt.enabled,
@@ -115,7 +115,7 @@ function buildLocalSpeechResolutionInput(params: {
       DEFAULT_LOCAL_STT_MODEL,
     ]),
     voiceLocalSttModel: firstDefinedValue<string>([
-      env.PASEO_VOICE_LOCAL_STT_MODEL,
+      env.HUBCODE_VOICE_LOCAL_STT_MODEL,
       persistedLocalFeatureModel(
         providers.voiceStt.provider,
         providers.voiceStt.enabled,
@@ -124,7 +124,7 @@ function buildLocalSpeechResolutionInput(params: {
       DEFAULT_LOCAL_STT_MODEL,
     ]),
     voiceLocalTtsModel: firstDefinedValue<string>([
-      env.PASEO_VOICE_LOCAL_TTS_MODEL,
+      env.HUBCODE_VOICE_LOCAL_TTS_MODEL,
       persistedLocalFeatureModel(
         providers.voiceTts.provider,
         providers.voiceTts.enabled,
@@ -133,18 +133,18 @@ function buildLocalSpeechResolutionInput(params: {
       DEFAULT_LOCAL_TTS_MODEL,
     ]),
     voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([
-      env.PASEO_VOICE_LOCAL_TTS_SPEAKER_ID,
+      env.HUBCODE_VOICE_LOCAL_TTS_SPEAKER_ID,
       persisted.features?.voiceMode?.tts?.speakerId,
     ]),
     voiceLocalTtsSpeed: firstDefinedValue<string | number>([
-      env.PASEO_VOICE_LOCAL_TTS_SPEED,
+      env.HUBCODE_VOICE_LOCAL_TTS_SPEED,
       persisted.features?.voiceMode?.tts?.speed,
     ]),
   };
 }
 
 export function resolveLocalSpeechConfig(params: {
-  paseoHome: string;
+  hubcodeHome: string;
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
   providers: RequestedSpeechProviders;

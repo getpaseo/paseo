@@ -58,10 +58,10 @@ describe("DaemonConfigStore", () => {
   });
 
   test("patch persists provider enabled flags into config.json", () => {
-    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
-    tempDirs.push(paseoHome);
+    const hubcodeHome = mkdtempSync(path.join(tmpdir(), "hubcode-daemon-config-store-"));
+    tempDirs.push(hubcodeHome);
 
-    const initial = loadPersistedConfig(paseoHome);
+    const initial = loadPersistedConfig(hubcodeHome);
     initial.agents = {
       providers: {
         gemini: {
@@ -71,14 +71,14 @@ describe("DaemonConfigStore", () => {
         },
       },
     };
-    const configPath = path.join(paseoHome, "config.json");
+    const configPath = path.join(hubcodeHome, "config.json");
     // Reuse the validated serializer through the store path by seeding the file directly.
     // This keeps the test focused on the merge behavior.
     const seeded = JSON.stringify(initial, null, 2) + "\n";
     writeFileSync(configPath, seeded);
 
     const store = new DaemonConfigStore(
-      paseoHome,
+      hubcodeHome,
       {
         mcp: { injectIntoAgents: false },
         providers: {},
@@ -92,7 +92,7 @@ describe("DaemonConfigStore", () => {
       },
     });
 
-    const persisted = loadPersistedConfig(paseoHome);
+    const persisted = loadPersistedConfig(hubcodeHome);
     expect(persisted.agents?.providers?.gemini).toEqual({
       extends: "acp",
       label: "Gemini",
@@ -102,11 +102,11 @@ describe("DaemonConfigStore", () => {
   });
 
   test("patch persists provider additional models into config.json", () => {
-    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
-    tempDirs.push(paseoHome);
+    const hubcodeHome = mkdtempSync(path.join(tmpdir(), "hubcode-daemon-config-store-"));
+    tempDirs.push(hubcodeHome);
 
     const store = new DaemonConfigStore(
-      paseoHome,
+      hubcodeHome,
       {
         mcp: { injectIntoAgents: false },
         providers: {},
@@ -127,7 +127,7 @@ describe("DaemonConfigStore", () => {
       },
     });
 
-    const persisted = loadPersistedConfig(paseoHome);
+    const persisted = loadPersistedConfig(hubcodeHome);
     expect(persisted.agents?.providers?.claude).toEqual({
       additionalModels: [
         {

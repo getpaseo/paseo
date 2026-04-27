@@ -45,16 +45,16 @@ import {
 } from "./daemon/quit-lifecycle.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
-const APP_SCHEME = "paseo";
-const OPEN_PROJECT_EVENT = "paseo:event:open-project";
-const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
-const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
-app.setName("Paseo");
+const APP_SCHEME = "hubcode";
+const OPEN_PROJECT_EVENT = "hubcode:event:open-project";
+const DESKTOP_SMOKE_ENV = "HUBCODE_DESKTOP_SMOKE";
+const DESKTOP_SMOKE_STOP_REQUEST = "hubcode-smoke-stop";
+app.setName("Hubcode");
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
 let devWorktreeName: string | null = null;
-const forcedUserDataDir = process.env.PASEO_ELECTRON_USER_DATA_DIR?.trim();
+const forcedUserDataDir = process.env.HUBCODE_ELECTRON_USER_DATA_DIR?.trim();
 if (forcedUserDataDir) {
   app.setPath("userData", forcedUserDataDir);
   log.info("[dev-user-data] forced userData dir:", forcedUserDataDir);
@@ -65,7 +65,7 @@ if (forcedUserDataDir) {
       timeout: 3000,
     }).trim();
     devWorktreeName = path.basename(topLevel);
-    // Main checkout (e.g. "paseo") gets default userData — only worktrees diverge.
+    // Main checkout (e.g. "hubcode") gets default userData — only worktrees diverge.
     const commonDir = path.resolve(
       topLevel,
       execFileSync("git", ["rev-parse", "--git-common-dir"], {
@@ -76,7 +76,7 @@ if (forcedUserDataDir) {
     );
     const isWorktree = path.resolve(topLevel, ".git") !== commonDir;
     if (isWorktree) {
-      app.setPath("userData", path.join(app.getPath("appData"), `Paseo-${devWorktreeName}`));
+      app.setPath("userData", path.join(app.getPath("appData"), `Hubcode-${devWorktreeName}`));
       log.info("[worktree] isolated userData for worktree:", devWorktreeName);
     } else {
       devWorktreeName = null;
@@ -86,10 +86,10 @@ if (forcedUserDataDir) {
   }
 }
 
-// Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
+// Allow users to pass Chromium flags via HUBCODE_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
 // Must run before app.whenReady().
-const electronFlags = process.env.PASEO_ELECTRON_FLAGS?.trim();
+const electronFlags = process.env.HUBCODE_ELECTRON_FLAGS?.trim();
 if (electronFlags) {
   for (const token of electronFlags.split(/\s+/)) {
     const [key, ...rest] = token.replace(/^--/, "").split("=");
@@ -109,7 +109,7 @@ log.info("[open-project] pendingOpenProjectPath:", pendingOpenProjectPath);
 
 // The renderer pulls the pending path on mount via IPC — this avoids
 // a race where the push event arrives before React registers its listener.
-ipcMain.handle("paseo:get-pending-open-project", () => {
+ipcMain.handle("hubcode:get-pending-open-project", () => {
   log.info("[open-project] renderer requested pending path:", pendingOpenProjectPath);
   const result = pendingOpenProjectPath;
   pendingOpenProjectPath = null;
@@ -182,7 +182,7 @@ async function createMainWindow(): Promise<void> {
   const iconPath = getWindowIconPath();
   const systemTheme = resolveSystemWindowTheme();
 
-  const title = devWorktreeName ? `Paseo (${devWorktreeName})` : "Paseo";
+  const title = devWorktreeName ? `Hubcode (${devWorktreeName})` : "Hubcode";
   const mainWindow = new BrowserWindow({
     title,
     width: 1200,
@@ -297,7 +297,7 @@ async function runDesktopSmokeIfRequested(): Promise<boolean> {
   const handlers = createDaemonCommandHandlers();
   const startStatus = await handlers.start_desktop_daemon();
   process.stdout.write(
-    `[paseo-smoke] ${JSON.stringify({
+    `[hubcode-smoke] ${JSON.stringify({
       type: "desktop-daemon-smoke-started",
       status: startStatus,
     })}\n`,
@@ -307,7 +307,7 @@ async function runDesktopSmokeIfRequested(): Promise<boolean> {
 
   const stopStatus = await handlers.stop_desktop_daemon();
   process.stdout.write(
-    `[paseo-smoke] ${JSON.stringify({
+    `[hubcode-smoke] ${JSON.stringify({
       type: "desktop-daemon-smoke-stopped",
       stopStatus,
     })}\n`,
@@ -402,7 +402,7 @@ void bootstrap().catch((error) => {
 
 function showDaemonShutdownDialog(): void {
   for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send("paseo:event:quitting", {});
+    win.webContents.send("hubcode:event:quitting", {});
   }
 }
 

@@ -18,7 +18,7 @@ Deploy all relevant auditors in parallel — they're read-only so they don't con
 
 ## Auditor Prompts
 
-All auditors are launched via the Paseo **create agent** tool with `background: true` and `notifyOnFinish: true`.
+All auditors are launched via the Hubcode **create agent** tool with `background: true` and `notifyOnFinish: true`.
 
 ### overeng (anti-over-engineering)
 
@@ -26,7 +26,7 @@ All auditors are launched via the Paseo **create agent** tool with `background: 
 title: "auditor-<scope>-overeng"
 initialPrompt: "You are an anti-over-engineering auditor.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 Check the recent changes (use git diff) for:
 - Unnecessary abstractions, helpers, or utility functions
@@ -47,7 +47,7 @@ Do NOT edit files."
 title: "auditor-<scope>-dry"
 initialPrompt: "You are a DRY auditor.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 Check the recent changes (use git diff) for:
 - Duplicated logic across files
@@ -66,7 +66,7 @@ Do NOT edit files."
 title: "auditor-<scope>-tests"
 initialPrompt: "You are a test coverage auditor. [Load the e2e-playwright skill if E2E tests are in scope.]
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 Check:
 - Does every new behavior have a test?
@@ -86,7 +86,7 @@ Do NOT edit files."
 title: "auditor-<scope>-regression"
 initialPrompt: "You are a regression auditor.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 Run the full test suite. Report:
 - Total tests, passed, failed, skipped
@@ -104,7 +104,7 @@ Do NOT edit files."
 title: "auditor-<scope>-types"
 initialPrompt: "You are a type auditor.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 Run typecheck (npm run typecheck). Report:
 - Pass/fail
@@ -120,7 +120,7 @@ Do NOT edit files."
 title: "auditor-<scope>-browser"
 initialPrompt: "You are a browser QA auditor. Load the e2e-playwright skill.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 Test the affected user flows in a browser:
 - Navigate to the relevant screens
@@ -137,7 +137,7 @@ Report what works and what doesn't with evidence. Do NOT edit files."
 title: "auditor-<scope>-parity"
 initialPrompt: "You are a parity auditor.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 This was a refactoring phase — behavior must be identical before and after. Check:
 - All existing tests still pass (run them)
@@ -152,8 +152,8 @@ Do NOT edit files."
 
 If any auditor reports issues:
 
-1. Check the auditor's activity with the Paseo **get agent activity** tool for details
-2. Direct the impl agent to fix them via the Paseo **send agent prompt** tool, or launch a new impl agent if the old one is stale
+1. Check the auditor's activity with the Hubcode **get agent activity** tool for details
+2. Direct the impl agent to fix them via the Hubcode **send agent prompt** tool, or launch a new impl agent if the old one is stale
 3. Re-deploy the same auditor after fixes
 4. Do not proceed to the next phase until all auditors pass
 

@@ -8,7 +8,7 @@ Run cleanup after all feature work is done and verified — not between phases. 
 
 ## Refactorer Prompts
 
-All refactorers are launched via the Paseo **create agent** tool with `background: true` and `notifyOnFinish: true`.
+All refactorers are launched via the Hubcode **create agent** tool with `background: true` and `notifyOnFinish: true`.
 
 ### dry (consolidate duplication)
 
@@ -16,7 +16,7 @@ All refactorers are launched via the Paseo **create agent** tool with `backgroun
 title: "refactorer-<scope>-dry"
 initialPrompt: "You are a cleanup engineer specializing in DRY.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 Look at the full diff of changes in this task (use git diff). Consolidate:
 - Duplicated logic — extract shared functions or reuse existing ones
@@ -34,7 +34,7 @@ Do NOT commit."
 title: "refactorer-<scope>-dead-code"
 initialPrompt: "You are a cleanup engineer specializing in dead code.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 Look at the full diff of changes (use git diff). Remove:
 - Unused imports
@@ -53,7 +53,7 @@ Do NOT commit."
 title: "refactorer-<scope>-naming"
 initialPrompt: "You are a cleanup engineer specializing in naming.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for context.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for context.
 
 Look at all new names introduced by this task (functions, variables, types, files). Fix:
 - Overly literal or verbose names (e.g., handleOnClickButtonSubmit -> submitForm)

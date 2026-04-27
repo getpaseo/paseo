@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 
-import type { PaseoSpeechConfig } from "../bootstrap.js";
+import type { HubcodeSpeechConfig } from "../bootstrap.js";
 import type { InitializedLocalSpeech } from "./providers/local/runtime.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech-provider.js";
 import type { TurnDetectionProvider } from "./turn-detection-provider.js";
@@ -66,7 +66,7 @@ function createStubTurnDetection(id: string): TurnDetectionProvider {
   };
 }
 
-function createSpeechConfig(providers: PaseoSpeechConfig["providers"]): PaseoSpeechConfig {
+function createSpeechConfig(providers: HubcodeSpeechConfig["providers"]): HubcodeSpeechConfig {
   return { providers };
 }
 

@@ -227,8 +227,8 @@ const hasOpenCode = isBinaryInstalled("opencode");
       path.join(cwd, "opencode.json"),
       JSON.stringify({
         agent: {
-          "paseo-test-custom": {
-            description: "Custom agent defined for Paseo integration test",
+          "hubcode-test-custom": {
+            description: "Custom agent defined for Hubcode integration test",
             mode: "primary",
           },
         },
@@ -243,10 +243,10 @@ const hasOpenCode = isBinaryInstalled("opencode");
     expect(modes.some((mode) => mode.id === "build")).toBe(true);
     expect(modes.some((mode) => mode.id === "plan")).toBe(true);
 
-    const custom = modes.find((mode) => mode.id === "paseo-test-custom");
+    const custom = modes.find((mode) => mode.id === "hubcode-test-custom");
     expect(custom).toBeDefined();
-    expect(custom!.label).toBe("Paseo-test-custom");
-    expect(custom!.description).toBe("Custom agent defined for Paseo integration test");
+    expect(custom!.label).toBe("Hubcode-test-custom");
+    expect(custom!.description).toBe("Custom agent defined for Hubcode integration test");
 
     // System agents should not appear as selectable modes
     expect(modes.some((mode) => mode.id === "compaction")).toBe(false);
@@ -542,7 +542,7 @@ describe("OpenCode adapter context-window normalization", () => {
         mimeType: "application/github-issue",
         number: 55,
         title: "Improve startup error details",
-        url: "https://github.com/getpaseo/paseo/issues/55",
+        url: "https://github.com/hubtool/hubcode/issues/55",
         body: "Issue body",
       },
     ]);

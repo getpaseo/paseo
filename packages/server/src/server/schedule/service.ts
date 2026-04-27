@@ -89,7 +89,7 @@ function buildAgentPrompt(text: string): AgentPromptInput {
 }
 
 export interface ScheduleServiceOptions {
-  paseoHome: string;
+  hubcodeHome: string;
   logger: Logger;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
@@ -108,7 +108,7 @@ export class ScheduleService {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ScheduleServiceOptions) {
-    this.store = new ScheduleStore(join(options.paseoHome, "schedules"));
+    this.store = new ScheduleStore(join(options.hubcodeHome, "schedules"));
     this.logger = options.logger.child({ module: "schedule-service" });
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
@@ -424,8 +424,8 @@ export class ScheduleService {
       mcpServers: schedule.target.config.mcpServers as AgentSessionConfig["mcpServers"],
     };
     const labels = {
-      "paseo.schedule-id": schedule.id,
-      "paseo.schedule-run": randomUUID(),
+      "hubcode.schedule-id": schedule.id,
+      "hubcode.schedule-run": randomUUID(),
     };
     const agent = await this.agentManager.createAgent(config, undefined, { labels });
     this.agentManager.recordUserMessage(agent.id, schedule.prompt, { emitState: false });

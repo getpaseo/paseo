@@ -16,8 +16,8 @@ import {
   type InstallStatus,
 } from "@/desktop/daemon/desktop-daemon";
 
-const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
-const SKILLS_DOCS_URL = "https://paseo.sh/docs/skills";
+const CLI_DOCS_URL = "https://hubcode.ai/docs/cli";
+const SKILLS_DOCS_URL = "https://hubcode.ai/docs/skills";
 const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
 
 export function IntegrationsSection() {

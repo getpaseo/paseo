@@ -16,7 +16,7 @@ import { toErrorMessage } from "@/utils/error-messages";
 import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
 import type {
   CreateAgentRequestOptions,
-  CreatePaseoWorktreeInput,
+  CreateHubcodeWorktreeInput,
   DaemonClient,
 } from "@server/client/daemon-client";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
@@ -73,7 +73,7 @@ function buildChatDraftComposerArgs({
   };
 }
 
-type WorkspaceCreationAttachments = NonNullable<CreatePaseoWorktreeInput["attachments"]>;
+type WorkspaceCreationAttachments = NonNullable<CreateHubcodeWorktreeInput["attachments"]>;
 
 async function callWorkspaceCreation({
   creationMethod,
@@ -87,7 +87,7 @@ async function callWorkspaceCreation({
   wirePayload: { attachments: WorkspaceCreationAttachments };
 }) {
   if (creationMethod === "create_worktree") {
-    return connectedClient.createPaseoWorktree({
+    return connectedClient.createHubcodeWorktree({
       cwd: input.cwd,
       worktreeSlug: createNameId(),
       ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),

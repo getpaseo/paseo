@@ -38,7 +38,7 @@ describe("workspace route parsing", () => {
 
   it("decodes non-canonical base64url workspace IDs used by older links", () => {
     expect(decodeWorkspaceIdFromPathSegment("L1VzZXJzL21vYm91ZHJhL2Rldi9wYXNlby")).toBe(
-      "/Users/moboudra/dev/paseo",
+      "/Users/moboudra/dev/hubcode",
     );
   });
 
@@ -148,8 +148,8 @@ describe("projects settings routes", () => {
   });
 
   it("buildProjectSettingsRoute encodes a local repo-root key", () => {
-    expect(buildProjectSettingsRoute("/Users/me/dev/paseo")).toBe(
-      "/settings/projects/%2FUsers%2Fme%2Fdev%2Fpaseo",
+    expect(buildProjectSettingsRoute("/Users/me/dev/hubcode")).toBe(
+      "/settings/projects/%2FUsers%2Fme%2Fdev%2Fhubcode",
     );
   });
 

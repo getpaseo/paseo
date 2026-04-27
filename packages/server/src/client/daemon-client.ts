@@ -17,7 +17,7 @@ import type {
   ProjectPlacementPayload,
   AgentPermissionResolvedMessage,
   CreateAgentRequestMessage,
-  CreatePaseoWorktreeRequest,
+  CreateHubcodeWorktreeRequest,
   FileDownloadTokenResponse,
   FileExplorerResponse,
   FetchAgentTimelineResponseMessage,
@@ -40,8 +40,8 @@ import type {
   GitHubSearchResponse,
   GitHubSearchRequest,
   DirectorySuggestionsResponse,
-  PaseoWorktreeListResponse,
-  PaseoWorktreeArchiveResponse,
+  HubcodeWorktreeListResponse,
+  HubcodeWorktreeArchiveResponse,
   ProjectIconResponse,
   ListAvailableEditorsResponseMessage,
   OpenInEditorResponseMessage,
@@ -68,8 +68,8 @@ import type {
   SessionOutboundMessage,
   SendAgentMessageRequest,
   EditorTargetId,
-  PaseoConfigRaw,
-  PaseoConfigRevision,
+  HubcodeConfigRaw,
+  HubcodeConfigRevision,
 } from "../shared/messages.js";
 import type {
   AgentPermissionRequest,
@@ -234,8 +234,8 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   labels?: Record<string, string>;
 }
 
-export interface CreatePaseoWorktreeInput extends Pick<
-  CreatePaseoWorktreeRequest,
+export interface CreateHubcodeWorktreeInput extends Pick<
+  CreateHubcodeWorktreeRequest,
   "cwd" | "worktreeSlug" | "attachments" | "refName" | "action" | "githubPrNumber"
 > {}
 
@@ -261,11 +261,11 @@ type ValidateBranchPayload = ValidateBranchResponse["payload"];
 type BranchSuggestionsPayload = BranchSuggestionsResponse["payload"];
 type GitHubSearchPayload = GitHubSearchResponse["payload"];
 type DirectorySuggestionsPayload = DirectorySuggestionsResponse["payload"];
-type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
-type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
-type CreatePaseoWorktreePayload = Extract<
+type HubcodeWorktreeListPayload = HubcodeWorktreeListResponse["payload"];
+type HubcodeWorktreeArchivePayload = HubcodeWorktreeArchiveResponse["payload"];
+type CreateHubcodeWorktreePayload = Extract<
   SessionOutboundMessage,
-  { type: "create_paseo_worktree_response" }
+  { type: "create_hubcode_worktree_response" }
 >["payload"];
 type FileExplorerPayload = FileExplorerResponse["payload"];
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
@@ -291,8 +291,8 @@ type ListCommandsDraftConfig = Pick<
 >;
 export interface WriteProjectConfigInput {
   repoRoot: string;
-  config: PaseoConfigRaw;
-  expectedRevision: PaseoConfigRevision | null;
+  config: HubcodeConfigRaw;
+  expectedRevision: HubcodeConfigRevision | null;
   requestId?: string;
 }
 interface ListCommandsOptions {
@@ -2647,7 +2647,7 @@ export class DaemonClient {
 
   async stashList(
     cwd: string,
-    options?: { paseoOnly?: boolean },
+    options?: { hubcodeOnly?: boolean },
     requestId?: string,
   ): Promise<StashListPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -2655,54 +2655,54 @@ export class DaemonClient {
       message: {
         type: "stash_list_request",
         cwd,
-        paseoOnly: options?.paseoOnly,
+        hubcodeOnly: options?.hubcodeOnly,
       },
       responseType: "stash_list_response",
       timeout: 10000,
     });
   }
 
-  async getPaseoWorktreeList(
+  async getHubcodeWorktreeList(
     input: { cwd?: string; repoRoot?: string },
     requestId?: string,
-  ): Promise<PaseoWorktreeListPayload> {
+  ): Promise<HubcodeWorktreeListPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: "paseo_worktree_list_request",
+        type: "hubcode_worktree_list_request",
         cwd: input.cwd,
         repoRoot: input.repoRoot,
       },
-      responseType: "paseo_worktree_list_response",
+      responseType: "hubcode_worktree_list_response",
       timeout: 60000,
     });
   }
 
-  async archivePaseoWorktree(
+  async archiveHubcodeWorktree(
     input: { worktreePath?: string; repoRoot?: string; branchName?: string },
     requestId?: string,
-  ): Promise<PaseoWorktreeArchivePayload> {
+  ): Promise<HubcodeWorktreeArchivePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: "paseo_worktree_archive_request",
+        type: "hubcode_worktree_archive_request",
         worktreePath: input.worktreePath,
         repoRoot: input.repoRoot,
         branchName: input.branchName,
       },
-      responseType: "paseo_worktree_archive_response",
+      responseType: "hubcode_worktree_archive_response",
       timeout: 20000,
     });
   }
 
-  async createPaseoWorktree(
-    input: CreatePaseoWorktreeInput,
+  async createHubcodeWorktree(
+    input: CreateHubcodeWorktreeInput,
     requestId?: string,
-  ): Promise<CreatePaseoWorktreePayload> {
+  ): Promise<CreateHubcodeWorktreePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: "create_paseo_worktree_request",
+        type: "create_hubcode_worktree_request",
         cwd: input.cwd,
         worktreeSlug: input.worktreeSlug,
         ...(input.attachments && input.attachments.length > 0
@@ -2712,7 +2712,7 @@ export class DaemonClient {
         ...(input.action !== undefined ? { action: input.action } : {}),
         ...(input.githubPrNumber !== undefined ? { githubPrNumber: input.githubPrNumber } : {}),
       },
-      responseType: "create_paseo_worktree_response",
+      responseType: "create_hubcode_worktree_response",
       timeout: 60000,
     });
   }

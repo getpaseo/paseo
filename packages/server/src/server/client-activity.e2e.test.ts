@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon, type TestHubcodeDaemon } from "./test-utils/hubcode-daemon.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import type { AgentStreamEventPayload } from "../shared/messages.js";
 import type { AgentSnapshotPayload } from "./messages.js";
@@ -28,7 +28,7 @@ describe("client activity tracking", () => {
   const TEST_PROVIDER = "claude";
   const TEST_MODEL = "haiku";
   const TEST_CWD = "/tmp";
-  let daemon: TestPaseoDaemon;
+  let daemon: TestHubcodeDaemon;
   let client1: DaemonClient;
   let client2: DaemonClient;
   let sendPushSpy: ReturnType<typeof vi.spyOn>;
@@ -39,7 +39,7 @@ describe("client activity tracking", () => {
     getAllTokensSpy = vi
       .spyOn(PushTokenStore.prototype, "getAllTokens")
       .mockReturnValue(["ExponentPushToken[activity-test]"]);
-    daemon = await createTestPaseoDaemon();
+    daemon = await createTestHubcodeDaemon();
   });
 
   afterEach(async () => {

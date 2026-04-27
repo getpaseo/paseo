@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
 import { isProviderAvailable } from "./agent-configs.js";
@@ -29,7 +29,7 @@ describe("daemon E2E (real claude) - model resolution on init", () => {
   test("runtimeInfo.model is set as soon as the agent starts running, not after turn completes", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });

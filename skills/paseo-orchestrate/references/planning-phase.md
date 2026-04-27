@@ -17,7 +17,7 @@ If the plan has a phase called "wire up" or "connect" or "integrate," a refactor
 
 ## Launching Planners
 
-Use the Paseo **create agent** tool with `background: true` and `notifyOnFinish: true`:
+Use the Hubcode **create agent** tool with `background: true` and `notifyOnFinish: true`:
 
 ```
 title: "planner-<scope>"
@@ -40,7 +40,7 @@ For each phase, specify:
 - Tests to write (failing test first — TDD)
 - Acceptance criteria for the phase
 
-Write the plan to ~/.paseo/plans/<task-slug>.md"
+Write the plan to ~/.hubcode/plans/<task-slug>.md"
 ```
 
 ## Launching Plan-Reviewers
@@ -53,7 +53,7 @@ background: true
 notifyOnFinish: true
 initialPrompt: "You are a plan-reviewer.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md.
+Read the plan at ~/.hubcode/plans/<task-slug>.md.
 
 Challenge the plan:
 - Is it bolting new code on top, or reshaping existing code first?
@@ -77,7 +77,7 @@ Then deploy a plan-reviewer to challenge the combined plan.
 
 If the plan-reviewer finds significant issues, either:
 
-1. Send follow-up instructions via the Paseo **send agent prompt** tool to the planner
+1. Send follow-up instructions via the Hubcode **send agent prompt** tool to the planner
 2. Launch a new planner if the original is stale
 
 Iterate until the plan-reviewer's only feedback is minor. Then synthesize the final plan.
@@ -109,8 +109,8 @@ The final plan must follow this structure:
 Save the final plan to disk:
 
 ```bash
-mkdir -p ~/.paseo/plans
-cat > ~/.paseo/plans/<task-slug>.md << 'PLAN'
+mkdir -p ~/.hubcode/plans
+cat > ~/.hubcode/plans/<task-slug>.md << 'PLAN'
 <plan content>
 PLAN
 ```

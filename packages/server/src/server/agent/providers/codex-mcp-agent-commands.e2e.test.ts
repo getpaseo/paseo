@@ -35,7 +35,7 @@ describe("codex agent commands E2E", () => {
         "argument-hint: NAME=<name>",
         "---",
         "",
-        "Say hello to $NAME and then output exactly PASEO_OK.",
+        "Say hello to $NAME and then output exactly HUBCODE_OK.",
         "",
       ].join("\n"),
       "utf8",
@@ -50,7 +50,7 @@ describe("codex agent commands E2E", () => {
         "user-invocable: true",
         "---",
         "",
-        "When invoked, respond with exactly PASEO_SKILL_OK.",
+        "When invoked, respond with exactly HUBCODE_SKILL_OK.",
         "",
       ].join("\n"),
       "utf8",
@@ -96,7 +96,7 @@ describe("codex agent commands E2E", () => {
 
     const promptsDir = path.join(codexHome, "prompts");
     mkdirSync(promptsDir, { recursive: true });
-    const promptPath = path.join(promptsDir, "paseo-test-sayok.md");
+    const promptPath = path.join(promptsDir, "hubcode-test-sayok.md");
     writeFileSync(
       promptPath,
       [
@@ -105,7 +105,7 @@ describe("codex agent commands E2E", () => {
         "argument-hint: NAME=<name>",
         "---",
         "",
-        "Output exactly: PASEO_OK $NAME",
+        "Output exactly: HUBCODE_OK $NAME",
         "",
       ].join("\n"),
       "utf8",
@@ -117,11 +117,11 @@ describe("codex agent commands E2E", () => {
       title: "Codex Prompt Execute Test Agent",
     });
 
-    await ctx.client.sendMessage(agent.id, "/prompts:paseo-test-sayok NAME=world");
+    await ctx.client.sendMessage(agent.id, "/prompts:hubcode-test-sayok NAME=world");
     const state = await ctx.client.waitForFinish(agent.id, 30_000);
 
     expect(state.status).toBe("idle");
-    expect(state.lastMessage).toContain("PASEO_OK");
+    expect(state.lastMessage).toContain("HUBCODE_OK");
 
     rmSync(promptPath, { force: true });
   }, 30_000);
@@ -132,8 +132,8 @@ describe("codex agent commands E2E", () => {
     const promptsDir = path.join(codexHome, "prompts");
     mkdirSync(promptsDir, { recursive: true });
     writeFileSync(
-      path.join(promptsDir, "paseo-test-sayok.md"),
-      ["---", "description: Say OK", "---", "", "Output exactly: PASEO_OK", ""].join("\n"),
+      path.join(promptsDir, "hubcode-test-sayok.md"),
+      ["---", "description: Say OK", "---", "", "Output exactly: HUBCODE_OK", ""].join("\n"),
       "utf8",
     );
     process.env.CODEX_HOME = codexHome;
@@ -145,11 +145,11 @@ describe("codex agent commands E2E", () => {
         title: "Codex Command Route Test",
       });
 
-      await ctx.client.sendMessage(agent.id, "/prompts:paseo-test-sayok NAME=world");
+      await ctx.client.sendMessage(agent.id, "/prompts:hubcode-test-sayok NAME=world");
       const state = await ctx.client.waitForFinish(agent.id, 30_000);
 
       expect(state.status).toBe("idle");
-      expect(state.lastMessage).toContain("PASEO_OK paseo-test-sayok");
+      expect(state.lastMessage).toContain("HUBCODE_OK hubcode-test-sayok");
     } finally {
       if (prevCodexHome === undefined) {
         delete process.env.CODEX_HOME;
@@ -173,7 +173,7 @@ describe("codex agent commands E2E", () => {
 
     expect(state.status).toBe("idle");
     expect(state.lastMessage).toContain(token);
-    expect(state.lastMessage).not.toContain("PASEO_SKILL_OK");
+    expect(state.lastMessage).not.toContain("HUBCODE_SKILL_OK");
   }, 30_000);
 
   test("returns error for non-existent agent", async () => {

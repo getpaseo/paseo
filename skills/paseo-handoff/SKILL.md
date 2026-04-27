@@ -1,12 +1,12 @@
 ---
-name: paseo-handoff
+name: hubcode-handoff
 description: Hand off the current task to another agent with full context. Use when the user says "handoff", "hand off", "hand this to", or wants to pass work to another agent (Codex or Claude).
 user-invocable: true
 ---
 
 # Handoff Skill
 
-You are handing off the current task to another agent. Your job is to write a comprehensive handoff prompt and launch the agent via Paseo CLI.
+You are handing off the current task to another agent. Your job is to write a comprehensive handoff prompt and launch the agent via Hubcode CLI.
 
 **User's arguments:** $ARGUMENTS
 
@@ -14,7 +14,7 @@ You are handing off the current task to another agent. Your job is to write a co
 
 ## Prerequisites
 
-Load the **Paseo skill** first — it contains the CLI reference for all agent commands.
+Load the **Hubcode skill** first — it contains the CLI reference for all agent commands.
 
 ## What Is a Handoff
 
@@ -109,27 +109,27 @@ This is the critical step. The receiving agent has **zero context** about your c
 ### Default (Codex, no worktree)
 
 ```bash
-paseo run -d --mode full-access --provider codex/gpt-5.4 --name "[Handoff] Task description" "$prompt"
+hubcode run -d --mode full-access --provider codex/gpt-5.4 --name "[Handoff] Task description" "$prompt"
 ```
 
 ### Claude (Opus, no worktree)
 
 ```bash
-paseo run -d --mode bypassPermissions --provider claude/opus --name "[Handoff] Task description" "$prompt"
+hubcode run -d --mode bypassPermissions --provider claude/opus --name "[Handoff] Task description" "$prompt"
 ```
 
 ### Codex in a worktree
 
 ```bash
 base=$(git branch --show-current)
-paseo run -d --mode full-access --provider codex/gpt-5.4 --worktree task-branch-name --base "$base" --name "[Handoff] Task description" "$prompt"
+hubcode run -d --mode full-access --provider codex/gpt-5.4 --worktree task-branch-name --base "$base" --name "[Handoff] Task description" "$prompt"
 ```
 
 ### Claude in a worktree
 
 ```bash
 base=$(git branch --show-current)
-paseo run -d --mode bypass --provider claude/opus --worktree task-branch-name --base "$base" --name "[Handoff] Task description" "$prompt"
+hubcode run -d --mode bypass --provider claude/opus --worktree task-branch-name --base "$base" --name "[Handoff] Task description" "$prompt"
 ```
 
 ## After Launch
@@ -137,8 +137,8 @@ paseo run -d --mode bypass --provider claude/opus --worktree task-branch-name --
 1. Print the agent ID and the command to follow along:
    ```
    Handed off to [provider] ([model]). Agent ID: <id>
-   Follow along: paseo logs <id> -f
-   Wait for completion: paseo wait <id>
+   Follow along: hubcode logs <id> -f
+   Wait for completion: hubcode wait <id>
    ```
 2. Do **not** wait for the agent by default — the user can choose to wait or move on.
-3. If the user wants to wait, run `paseo wait <id>` and then `paseo logs <id>` when done.
+3. If the user wants to wait, run `hubcode wait <id>` and then `hubcode logs <id>` when done.

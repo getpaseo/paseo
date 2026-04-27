@@ -1,9 +1,9 @@
 {
-  "name": "@getpaseo/desktop",
+  "name": "@gethubcode/desktop",
   "version": "0.1.63-beta.4",
   "private": true,
-  "description": "Paseo desktop app (Electron wrapper)",
-  "homepage": "https://paseo.sh",
+  "description": "Hubcode desktop app (Electron wrapper)",
+  "homepage": "https://hubcode.ai",
   "license": "AGPL-3.0-or-later",
   "author": {
     "name": "Mohamed Boudra",
@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/getpaseo/paseo.git"
+    "url": "https://github.com/hubtool/hubcode.git"
   },
   "main": "dist/main.js",
   "scripts": {
@@ -23,8 +23,8 @@
     "typecheck": "tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@getpaseo/cli": "*",
-    "@getpaseo/server": "*",
+    "@gethubcode/cli": "*",
+    "@gethubcode/server": "*",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
     "ws": "^8.14.2"

@@ -1,25 +1,25 @@
 import * as React from "react";
 
 export function releaseBase(version: string) {
-  return `https://github.com/getpaseo/paseo/releases/download/v${version}`;
+  return `https://github.com/hubtool/hubcode/releases/download/v${version}`;
 }
 
 export function downloadUrls(version: string) {
   const base = releaseBase(version);
   return {
-    macAppleSilicon: `${base}/Paseo-${version}-arm64.dmg`,
-    macIntel: `${base}/Paseo-${version}-x64.dmg`,
-    linuxAppImage: `${base}/Paseo-${version}-x86_64.AppImage`,
-    linuxDeb: `${base}/Paseo-${version}-amd64.deb`,
-    linuxRpm: `${base}/Paseo-${version}-x86_64.rpm`,
-    windowsExe: `${base}/Paseo-Setup-${version}.exe`,
-    androidApk: `${base}/paseo-v${version}-android.apk`,
+    macAppleSilicon: `${base}/Hubcode-${version}-arm64.dmg`,
+    macIntel: `${base}/Hubcode-${version}-x64.dmg`,
+    linuxAppImage: `${base}/Hubcode-${version}-x86_64.AppImage`,
+    linuxDeb: `${base}/Hubcode-${version}-amd64.deb`,
+    linuxRpm: `${base}/Hubcode-${version}-x86_64.rpm`,
+    windowsExe: `${base}/Hubcode-Setup-${version}.exe`,
+    androidApk: `${base}/hubcode-v${version}-android.apk`,
   };
 }
 
-export const appStoreUrl = "https://apps.apple.com/app/paseo-pocket-engineer/id6758887924";
-export const playStoreUrl = "https://play.google.com/store/apps/details?id=sh.paseo";
-export const webAppUrl = "https://app.paseo.sh";
+export const appStoreUrl = "https://apps.apple.com/app/hubcode-pocket-engineer/id6758887924";
+export const playStoreUrl = "https://play.google.com/store/apps/details?id=ai.hubcode";
+export const webAppUrl = "https://app.hubcode.ai";
 
 type Platform = "mac-silicon" | "mac-intel" | "windows" | "linux";
 

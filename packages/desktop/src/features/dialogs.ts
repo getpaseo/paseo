@@ -22,7 +22,7 @@ function resolveDialogType(kind: AskOptions["kind"]): "warning" | "error" | "que
 }
 
 export function registerDialogHandlers(): void {
-  ipcMain.handle("paseo:dialog:ask", async (event, message: string, options?: AskOptions) => {
+  ipcMain.handle("hubcode:dialog:ask", async (event, message: string, options?: AskOptions) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showMessageBox(win ?? BrowserWindow.getFocusedWindow()!, {
       type: resolveDialogType(options?.kind),
@@ -35,7 +35,7 @@ export function registerDialogHandlers(): void {
     return result.response === 1;
   });
 
-  ipcMain.handle("paseo:dialog:open", async (event, options?: OpenOptions) => {
+  ipcMain.handle("hubcode:dialog:open", async (event, options?: OpenOptions) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const properties: Electron.OpenDialogOptions["properties"] = [];
     if (options?.directory) properties.push("openDirectory");

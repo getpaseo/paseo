@@ -1,6 +1,6 @@
 # NOTE: Render through the workspace-create shell scripts before running when
-# using ${PASEO_MAESTRO_*}. Maestro does not substitute environment vars.
-appId: ${PASEO_MAESTRO_APP_ID}
+# using ${HUBCODE_MAESTRO_*}. Maestro does not substitute environment vars.
+appId: ${HUBCODE_MAESTRO_APP_ID}
 ---
 # Connect to the local daemon only when the app is on the welcome screen.
 
@@ -20,11 +20,11 @@ appId: ${PASEO_MAESTRO_APP_ID}
       - tapOn:
           id: "direct-host-input"
       - eraseText
-      - inputText: ${PASEO_MAESTRO_DIRECT_ENDPOINT}
+      - inputText: ${HUBCODE_MAESTRO_DIRECT_ENDPOINT}
 
       - assertVisible:
           id: "direct-host-input"
-          text: ${PASEO_MAESTRO_DIRECT_ENDPOINT}
+          text: ${HUBCODE_MAESTRO_DIRECT_ENDPOINT}
 
       - tapOn:
           id: "direct-host-submit"

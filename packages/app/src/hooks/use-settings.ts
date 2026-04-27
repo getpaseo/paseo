@@ -10,8 +10,8 @@ import {
 import { isElectronRuntime } from "@/desktop/host";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 
-export const APP_SETTINGS_KEY = "@paseo:app-settings";
-const LEGACY_SETTINGS_KEY = "@paseo:settings";
+export const APP_SETTINGS_KEY = "@hubcode:app-settings";
+const LEGACY_SETTINGS_KEY = "@hubcode:settings";
 const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
 export type SendBehavior = "interrupt" | "queue";

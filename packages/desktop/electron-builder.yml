@@ -1,7 +1,7 @@
 npmRebuild: false
-appId: sh.paseo.desktop
-productName: Paseo
-executableName: Paseo
+appId: ai.hubcode.desktop
+productName: Hubcode
+executableName: Hubcode
 afterPack: ./scripts/after-pack.js
 afterSign: ./scripts/after-sign.js
 directories:
@@ -10,7 +10,7 @@ files:
   - dist/**/*
 asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
-  - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
+  - node_modules/@gethubcode/server/dist/server/terminal/shell-integration/**/*
 extraResources:
   - from: ../app/dist
     to: app-dist
@@ -18,10 +18,10 @@ extraResources:
     to: skills
 publish:
   provider: github
-  owner: getpaseo
-  repo: paseo
+  owner: gethubcode
+  repo: hubcode
 mac:
-  artifactName: "Paseo-${version}-${arch}.${ext}"
+  artifactName: "Hubcode-${version}-${arch}.${ext}"
   category: public.app-category.developer-tools
   icon: assets/icon.icns
   hardenedRuntime: true
@@ -29,20 +29,20 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extraResources:
-    - from: bin/paseo
-      to: bin/paseo
+    - from: bin/hubcode
+      to: bin/hubcode
   target:
     - dmg
     - zip
 linux:
   category: Development
   icon: assets
-  artifactName: "Paseo-${version}-${arch}.${ext}"
+  artifactName: "Hubcode-${version}-${arch}.${ext}"
   maintainer: "Mohamed Boudra <hello@moboudra.com>"
-  vendor: "Paseo"
+  vendor: "Hubcode"
   extraResources:
-    - from: bin/paseo
-      to: bin/paseo
+    - from: bin/hubcode
+      to: bin/hubcode
   target:
     - AppImage
     - deb
@@ -51,8 +51,8 @@ linux:
 win:
   icon: assets/icon.ico
   extraResources:
-    - from: bin/paseo.cmd
-      to: bin/paseo.cmd
+    - from: bin/hubcode.cmd
+      to: bin/hubcode.cmd
   target:
     - nsis
     - zip

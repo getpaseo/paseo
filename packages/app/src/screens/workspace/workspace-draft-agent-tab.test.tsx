@@ -66,7 +66,7 @@ vi.mock("@/stores/session-store-hooks", () => ({
     ok: true,
     authority: {
       workspaceId: "workspace-1",
-      workspaceDirectory: "/repo/.paseo/worktrees/workspace-1",
+      workspaceDirectory: "/repo/.hubcode/worktrees/workspace-1",
     },
   }),
 }));
@@ -80,7 +80,7 @@ vi.mock("@/hooks/use-agent-input-draft", () => ({
       setText,
       attachments,
       setAttachments,
-      cwd: "/repo/.paseo/worktrees/workspace-1",
+      cwd: "/repo/.hubcode/worktrees/workspace-1",
       clear: () => {
         setText("");
         setAttachments([]);
@@ -253,7 +253,7 @@ describe("WorkspaceDraftAgentTab", () => {
       draftId: "draft-1",
       text: "please review this change",
       attachments: [],
-      cwd: "/repo/.paseo/worktrees/workspace-1",
+      cwd: "/repo/.hubcode/worktrees/workspace-1",
       provider: "codex",
       model: "gpt-5.4",
       allowEmptyText: true,

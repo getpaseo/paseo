@@ -450,7 +450,7 @@ function DaemonSection({ host, isLocalDaemon }: { host: HostProfile; isLocalDaem
     <>
       <SettingsSection title="Operations">
         <RestartDaemonCard host={host} />
-        <InjectPaseoToolsCard serverId={host.serverId} />
+        <InjectHubcodeToolsCard serverId={host.serverId} />
       </SettingsSection>
       {isLocalDaemon ? (
         <SettingsSection title="Pair devices">
@@ -528,7 +528,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
     if (!isHostConnected()) {
       Alert.alert(
         "Host offline",
-        "This host is offline. Paseo reconnects automatically—wait until it's back online before restarting.",
+        "This host is offline. Hubcode reconnects automatically—wait until it's back online before restarting.",
       );
       return;
     }
@@ -551,7 +551,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
             setIsRestarting(false);
             Alert.alert(
               "Error",
-              "Failed to send the restart request. Paseo reconnects automatically—try again once the host shows as online.",
+              "Failed to send the restart request. Hubcode reconnects automatically—try again once the host shows as online.",
             );
           });
         void waitForDaemonRestart();
@@ -592,7 +592,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
   );
 }
 
-function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
+function InjectHubcodeToolsCard({ serverId }: { serverId: string }) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
 
@@ -613,15 +613,15 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
     <View style={settingsStyles.card} testID="host-page-inject-mcp-card">
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>Inject Paseo tools</Text>
+          <Text style={settingsStyles.rowTitle}>Inject Hubcode tools</Text>
           <Text style={settingsStyles.rowHint}>
-            Automatically inject Paseo MCP tools into new agents
+            Automatically inject Hubcode MCP tools into new agents
           </Text>
         </View>
         <Switch
           value={config?.mcp.injectIntoAgents !== false}
           onValueChange={handleValueChange}
-          accessibilityLabel="Inject Paseo tools"
+          accessibilityLabel="Inject Hubcode tools"
         />
       </View>
     </View>

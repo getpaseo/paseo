@@ -6,8 +6,8 @@ export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = 50;
 const COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE = 40;
 
 type BottomAnchorE2ETestGlobals = typeof globalThis & {
-  __PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
-  __PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS?: unknown;
+  __HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
+  __HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS?: unknown;
 };
 
 function readPositiveIntegerOverride(value: unknown): number | null {
@@ -20,14 +20,14 @@ function readPositiveIntegerOverride(value: unknown): number | null {
 
 export function getWebPartialVirtualizationThreshold(): number {
   const override = readPositiveIntegerOverride(
-    (globalThis as BottomAnchorE2ETestGlobals).__PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD,
+    (globalThis as BottomAnchorE2ETestGlobals).__HUBCODE_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD,
   );
   return override ?? DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD;
 }
 
 export function getWebMountedRecentStreamItems(): number {
   const override = readPositiveIntegerOverride(
-    (globalThis as BottomAnchorE2ETestGlobals).__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS,
+    (globalThis as BottomAnchorE2ETestGlobals).__HUBCODE_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS,
   );
   return override ?? DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS;
 }

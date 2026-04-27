@@ -675,12 +675,12 @@ test("createAgent passes daemon launch env through the provider launch context",
   });
   expect(client.lastLaunchContext).toEqual({
     env: {
-      PASEO_AGENT_ID: snapshot.id,
+      HUBCODE_AGENT_ID: snapshot.id,
     },
   });
 });
 
-test("createAgent injects paseo MCP server when manager has an MCP base URL", async () => {
+test("createAgent injects hubcode MCP server when manager has an MCP base URL", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -717,7 +717,7 @@ test("createAgent injects paseo MCP server when manager has an MCP base URL", as
   });
 
   expect(snapshot.config.mcpServers).toEqual({
-    paseo: {
+    hubcode: {
       type: "http",
       url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
     },
@@ -729,7 +729,7 @@ test("createAgent injects paseo MCP server when manager has an MCP base URL", as
   expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
 });
 
-test("createAgent preserves a user-provided paseo MCP config", async () => {
+test("createAgent preserves a user-provided hubcode MCP config", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -758,17 +758,17 @@ test("createAgent preserves a user-provided paseo MCP config", async () => {
     provider: "codex",
     cwd: workdir,
     mcpServers: {
-      paseo: {
+      hubcode: {
         type: "http",
-        url: "https://example.com/custom-paseo",
+        url: "https://example.com/custom-hubcode",
       },
     },
   });
 
   expect(snapshot.config.mcpServers).toEqual({
-    paseo: {
+    hubcode: {
       type: "http",
-      url: "https://example.com/custom-paseo",
+      url: "https://example.com/custom-hubcode",
     },
   });
   expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
@@ -1055,35 +1055,35 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     cwd: workdir,
     systemPrompt: "new prompt",
     mcpServers: {
-      paseo: {
+      hubcode: {
         type: "stdio",
         command: "node",
-        args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
+        args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/hubcode.sock"],
       },
     },
   });
 
   expect(resumed.config.systemPrompt).toBe("new prompt");
   expect(resumed.config.mcpServers).toEqual({
-    paseo: {
+    hubcode: {
       type: "stdio",
       command: "node",
-      args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
+      args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/hubcode.sock"],
     },
   });
   expect(client.lastResumeOverrides).toMatchObject({
     systemPrompt: "new prompt",
     mcpServers: {
-      paseo: {
+      hubcode: {
         type: "stdio",
         command: "node",
-        args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
+        args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/hubcode.sock"],
       },
     },
   });
   expect(client.lastResumeLaunchContext).toEqual({
     env: {
-      PASEO_AGENT_ID: resumed.id,
+      HUBCODE_AGENT_ID: resumed.id,
     },
   });
 });
@@ -1145,7 +1145,7 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
 
   expect(client.lastCreateLaunchContext).toEqual({
     env: {
-      PASEO_AGENT_ID: snapshot.id,
+      HUBCODE_AGENT_ID: snapshot.id,
     },
   });
 
@@ -1155,7 +1155,7 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
 
   expect(client.lastResumeLaunchContext).toEqual({
     env: {
-      PASEO_AGENT_ID: snapshot.id,
+      HUBCODE_AGENT_ID: snapshot.id,
     },
   });
 });

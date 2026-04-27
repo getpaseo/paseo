@@ -20,7 +20,7 @@ import {
   lightHighlightColors,
   type HighlightToken,
   type HighlightStyle,
-} from "@getpaseo/highlight";
+} from "@gethubcode/highlight";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";

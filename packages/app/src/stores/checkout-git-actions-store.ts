@@ -106,11 +106,11 @@ function invalidateCheckoutGitQueries(serverId: string, cwd: string) {
 function invalidateWorktreeList() {
   void appQueryClient.invalidateQueries({
     predicate: (query) =>
-      Array.isArray(query.queryKey) && query.queryKey[0] === "paseoWorktreeList",
+      Array.isArray(query.queryKey) && query.queryKey[0] === "hubcodeWorktreeList",
   });
   void appQueryClient.invalidateQueries({
     predicate: (query) =>
-      Array.isArray(query.queryKey) && query.queryKey[0] === "sidebarPaseoWorktreeList",
+      Array.isArray(query.queryKey) && query.queryKey[0] === "sidebarHubcodeWorktreeList",
   });
 }
 
@@ -133,7 +133,7 @@ function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: 
     {
       predicate: (query) =>
         Array.isArray(query.queryKey) &&
-        query.queryKey[0] === "paseoWorktreeList" &&
+        query.queryKey[0] === "hubcodeWorktreeList" &&
         query.queryKey[1] === serverId,
     },
     removeFromList,
@@ -143,7 +143,7 @@ function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: 
     {
       predicate: (query) =>
         Array.isArray(query.queryKey) &&
-        query.queryKey[0] === "sidebarPaseoWorktreeList" &&
+        query.queryKey[0] === "sidebarHubcodeWorktreeList" &&
         query.queryKey[1] === serverId,
     },
     removeFromList,
@@ -158,8 +158,8 @@ interface WorktreeArchiveSnapshot {
 function isWorktreeListQuery(input: { queryKey: QueryKey; serverId: string }): boolean {
   return (
     Array.isArray(input.queryKey) &&
-    (input.queryKey[0] === "paseoWorktreeList" ||
-      input.queryKey[0] === "sidebarPaseoWorktreeList") &&
+    (input.queryKey[0] === "hubcodeWorktreeList" ||
+      input.queryKey[0] === "sidebarHubcodeWorktreeList") &&
     input.queryKey[1] === input.serverId
   );
 }
@@ -410,7 +410,7 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
         removeWorktreeFromCachedLists({ serverId, worktreePath });
         removeWorktreeFromSessionStore({ serverId, worktreePath });
         try {
-          const payload = await client.archivePaseoWorktree({ worktreePath });
+          const payload = await client.archiveHubcodeWorktree({ worktreePath });
           if (payload.error) {
             throw new Error(payload.error.message);
           }

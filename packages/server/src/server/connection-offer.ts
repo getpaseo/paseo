@@ -50,7 +50,7 @@ export function encodeOfferToFragmentUrl(args: {
 }
 
 function getPrimaryLanIp(): string | null {
-  const override = process.env.PASEO_PRIMARY_LAN_IP?.trim();
+  const override = process.env.HUBCODE_PRIMARY_LAN_IP?.trim();
   if (override) return override;
 
   const nets = os.networkInterfaces();

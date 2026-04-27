@@ -197,7 +197,7 @@ describe("SidebarCalloutProvider", () => {
 
     expect(container?.textContent).not.toContain("Update available");
     expect(asyncStorage.setItem).toHaveBeenCalledWith(
-      "@paseo:sidebar-callout-dismissals",
+      "@hubcode:sidebar-callout-dismissals",
       JSON.stringify(["desktop-update:available:1.2.3"]),
     );
 

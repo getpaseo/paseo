@@ -17,7 +17,7 @@ interface WebNotificationInstance {
   addEventListener: (type: "click", listener: (event: Event) => void) => void;
 }
 
-export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
+export const WEB_NOTIFICATION_CLICK_EVENT = "hubcode:web-notification-click";
 
 let permissionRequest: Promise<boolean> | null = null;
 let notificationIconUrl: string | null | undefined;

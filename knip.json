@@ -43,7 +43,7 @@
       "ignore": ["android/**", "ios/**", ".expo/**", "dist/**", "scripts/reset-project.js"]
     },
     "packages/cli": {
-      "entry": ["src/index.ts", "bin/paseo", "src/**/*.test.{ts,tsx}", "tests/**/*.{ts,tsx}"],
+      "entry": ["src/index.ts", "bin/hubcode", "src/**/*.test.{ts,tsx}", "tests/**/*.{ts,tsx}"],
       "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
     },
     "packages/relay": {

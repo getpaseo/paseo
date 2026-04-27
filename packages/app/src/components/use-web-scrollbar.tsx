@@ -14,7 +14,7 @@ import {
 import { isWeb as platformIsWeb } from "@/constants/platform";
 
 const METRICS_EPSILON = 0.5;
-const HIDE_SCROLLBAR_STYLE_ID = "paseo-hide-scrollbar";
+const HIDE_SCROLLBAR_STYLE_ID = "hubcode-hide-scrollbar";
 
 function ensureHideScrollbarStyle(): void {
   if (typeof document === "undefined") return;

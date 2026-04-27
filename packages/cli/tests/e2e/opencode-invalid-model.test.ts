@@ -4,7 +4,7 @@ import assert from "node:assert";
 import { createE2ETestContext, type TestDaemonContext } from "../helpers/test-daemon.ts";
 
 interface E2EContext extends TestDaemonContext {
-  paseo: (
+  hubcode: (
     args: string[],
     opts?: { timeout?: number; cwd?: string },
   ) => Promise<{
@@ -27,7 +27,7 @@ async function cleanup(): Promise<void> {
 }
 
 async function test_invalid_opencode_model_does_not_report_completed_while_still_running() {
-  const result = await ctx.paseo(["run", "--provider", "opencode/adklasldkdas", "hello"], {
+  const result = await ctx.hubcode(["run", "--provider", "opencode/adklasldkdas", "hello"], {
     timeout: 45_000,
   });
 
@@ -46,7 +46,7 @@ async function test_invalid_opencode_model_does_not_report_completed_while_still
 
   assert(agentId, `expected run output to include an agent id\nstdout:\n${result.stdout}`);
 
-  const inspect = await ctx.paseo(["inspect", agentId], { timeout: 15_000 });
+  const inspect = await ctx.hubcode(["inspect", agentId], { timeout: 15_000 });
   assert.strictEqual(
     inspect.exitCode,
     0,

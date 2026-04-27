@@ -1,8 +1,8 @@
-appId: sh.paseo
+appId: ai.hubcode
 ---
 - runFlow:
     when:
-      visible: "Open in.*Paseo.*\\?"
+      visible: "Open in.*Hubcode.*\\?"
     commands:
       - tapOn: "Open"
 

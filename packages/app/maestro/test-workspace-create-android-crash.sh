@@ -14,21 +14,21 @@
 #   bash packages/app/maestro/test-workspace-create-android-crash.sh
 #
 # Optional environment:
-#   PASEO_MAESTRO_APP_ID=sh.paseo.debug
-#   PASEO_MAESTRO_DIRECT_ENDPOINT=127.0.0.1:6767
-#   PASEO_MAESTRO_DAEMON_WS_URL=ws://127.0.0.1:6767/ws
-#   PASEO_MAESTRO_PROJECT_PATH=/path/to/git/repo
+#   HUBCODE_MAESTRO_APP_ID=ai.hubcode.debug
+#   HUBCODE_MAESTRO_DIRECT_ENDPOINT=127.0.0.1:6767
+#   HUBCODE_MAESTRO_DAEMON_WS_URL=ws://127.0.0.1:6767/ws
+#   HUBCODE_MAESTRO_PROJECT_PATH=/path/to/git/repo
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 FLOW_TEMPLATE="$REPO_ROOT/packages/app/maestro/workspace-create-android-crash.yaml"
 FLOW_TEMPLATE_DIR="$REPO_ROOT/packages/app/maestro"
-OUT_DIR="/tmp/paseo-workspace-create-android-$(date +%s)"
+OUT_DIR="/tmp/hubcode-workspace-create-android-$(date +%s)"
 SERVER_EXPORTS="$REPO_ROOT/packages/server/dist/server/server/exports.js"
 
-export PASEO_MAESTRO_APP_ID="${PASEO_MAESTRO_APP_ID:-sh.paseo.debug}"
-export PASEO_MAESTRO_DIRECT_ENDPOINT="${PASEO_MAESTRO_DIRECT_ENDPOINT:-127.0.0.1:6767}"
-export PASEO_MAESTRO_DAEMON_WS_URL="${PASEO_MAESTRO_DAEMON_WS_URL:-ws://127.0.0.1:6767/ws}"
+export HUBCODE_MAESTRO_APP_ID="${HUBCODE_MAESTRO_APP_ID:-ai.hubcode.debug}"
+export HUBCODE_MAESTRO_DIRECT_ENDPOINT="${HUBCODE_MAESTRO_DIRECT_ENDPOINT:-127.0.0.1:6767}"
+export HUBCODE_MAESTRO_DAEMON_WS_URL="${HUBCODE_MAESTRO_DAEMON_WS_URL:-ws://127.0.0.1:6767/ws}"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -48,9 +48,9 @@ render_flow() {
   local target="$2"
   mkdir -p "$(dirname "$target")"
   perl -0pe '
-    s/\$\{PASEO_MAESTRO_APP_ID\}/$ENV{PASEO_MAESTRO_APP_ID}/g;
-    s/\$\{PASEO_MAESTRO_DIRECT_ENDPOINT\}/$ENV{PASEO_MAESTRO_DIRECT_ENDPOINT}/g;
-    s/\$\{PASEO_MAESTRO_PROJECT_NAME\}/$ENV{PASEO_MAESTRO_PROJECT_NAME}/g;
+    s/\$\{HUBCODE_MAESTRO_APP_ID\}/$ENV{HUBCODE_MAESTRO_APP_ID}/g;
+    s/\$\{HUBCODE_MAESTRO_DIRECT_ENDPOINT\}/$ENV{HUBCODE_MAESTRO_DIRECT_ENDPOINT}/g;
+    s/\$\{HUBCODE_MAESTRO_PROJECT_NAME\}/$ENV{HUBCODE_MAESTRO_PROJECT_NAME}/g;
   ' "$source" > "$target"
 }
 
@@ -64,37 +64,37 @@ render_flow_tree() {
 
 if [ ! -f "$SERVER_EXPORTS" ]; then
   echo "Missing server build artifact: $SERVER_EXPORTS" >&2
-  echo "Run: npm run build --workspace=@getpaseo/server" >&2
+  echo "Run: npm run build --workspace=@gethubcode/server" >&2
   exit 1
 fi
 
 mkdir -p "$OUT_DIR"
 
-if [ -z "${PASEO_MAESTRO_PROJECT_PATH:-}" ]; then
-  PROJECT_PARENT="$(mktemp -d /tmp/paseo-maestro-project-XXXXXX)"
+if [ -z "${HUBCODE_MAESTRO_PROJECT_PATH:-}" ]; then
+  PROJECT_PARENT="$(mktemp -d /tmp/hubcode-maestro-project-XXXXXX)"
   PROJECT_BASENAME="aaa-workspace-create-android-$(basename "$PROJECT_PARENT")"
-  export PASEO_MAESTRO_PROJECT_PATH="$PROJECT_PARENT/$PROJECT_BASENAME"
-  mkdir -p "$PASEO_MAESTRO_PROJECT_PATH"
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" init >/dev/null
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" checkout -b main >/dev/null 2>&1 || true
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" config user.name "Paseo Maestro"
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" config user.email "maestro@getpaseo.local"
-  printf "# Workspace create Android repro\n" > "$PASEO_MAESTRO_PROJECT_PATH/README.md"
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" add README.md
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" commit -m "Initial commit" >/dev/null
+  export HUBCODE_MAESTRO_PROJECT_PATH="$PROJECT_PARENT/$PROJECT_BASENAME"
+  mkdir -p "$HUBCODE_MAESTRO_PROJECT_PATH"
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" init >/dev/null
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" checkout -b main >/dev/null 2>&1 || true
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" config user.name "Hubcode Maestro"
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" config user.email "maestro@gethubcode.local"
+  printf "# Workspace create Android repro\n" > "$HUBCODE_MAESTRO_PROJECT_PATH/README.md"
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" add README.md
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" commit -m "Initial commit" >/dev/null
 else
   PROJECT_PARENT=""
 fi
 
-export PASEO_MAESTRO_PROJECT_NAME="${PASEO_MAESTRO_PROJECT_NAME:-$(basename "$PASEO_MAESTRO_PROJECT_PATH")}"
+export HUBCODE_MAESTRO_PROJECT_NAME="${HUBCODE_MAESTRO_PROJECT_NAME:-$(basename "$HUBCODE_MAESTRO_PROJECT_PATH")}"
 
 echo "=== Workspace Create Android Crash Harness ==="
 echo "Output dir: $OUT_DIR"
-echo "App id: $PASEO_MAESTRO_APP_ID"
-echo "Android direct endpoint: $PASEO_MAESTRO_DIRECT_ENDPOINT"
-echo "Daemon websocket: $PASEO_MAESTRO_DAEMON_WS_URL"
-echo "Project: $PASEO_MAESTRO_PROJECT_PATH"
-echo "Project name: $PASEO_MAESTRO_PROJECT_NAME"
+echo "App id: $HUBCODE_MAESTRO_APP_ID"
+echo "Android direct endpoint: $HUBCODE_MAESTRO_DIRECT_ENDPOINT"
+echo "Daemon websocket: $HUBCODE_MAESTRO_DAEMON_WS_URL"
+echo "Project: $HUBCODE_MAESTRO_PROJECT_PATH"
+echo "Project name: $HUBCODE_MAESTRO_PROJECT_NAME"
 
 FLOW="$OUT_DIR/workspace-create-android-crash.rendered.yaml"
 render_flow_tree
@@ -111,8 +111,8 @@ import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 
 const repoRoot = process.env.REPO_ROOT;
-const projectPath = process.env.PASEO_MAESTRO_PROJECT_PATH;
-const daemonUrl = process.env.PASEO_MAESTRO_DAEMON_WS_URL;
+const projectPath = process.env.HUBCODE_MAESTRO_PROJECT_PATH;
+const daemonUrl = process.env.HUBCODE_MAESTRO_DAEMON_WS_URL;
 if (!repoRoot || !projectPath || !daemonUrl) {
   throw new Error("Missing required environment for daemon project setup.");
 }

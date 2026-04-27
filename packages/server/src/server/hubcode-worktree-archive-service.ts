@@ -6,13 +6,13 @@ import type { SessionOutboundMessage } from "./messages.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { normalizeWorkspaceId as normalizePersistedWorkspaceId } from "./workspace-registry-model.js";
 import type { GitHubService } from "../services/github-service.js";
-import { deletePaseoWorktree, resolvePaseoWorktreeRootForCwd } from "../utils/worktree.js";
+import { deleteHubcodeWorktree, resolveHubcodeWorktreeRootForCwd } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 
 type EmitSessionMessage = (message: SessionOutboundMessage) => void;
 
-export interface ArchivePaseoWorktreeDependencies {
-  paseoHome?: string;
+export interface ArchiveHubcodeWorktreeDependencies {
+  hubcodeHome?: string;
   github: GitHubService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
   agentManager: Pick<AgentManager, "listAgents" | "closeAgent">;
@@ -33,8 +33,8 @@ export interface KillTerminalsUnderPathDependencies {
   terminalManager: TerminalManager | null;
 }
 
-export async function archivePaseoWorktree(
-  dependencies: ArchivePaseoWorktreeDependencies,
+export async function archiveHubcodeWorktree(
+  dependencies: ArchiveHubcodeWorktreeDependencies,
   options: {
     targetPath: string;
     repoRoot: string | null;
@@ -43,8 +43,8 @@ export async function archivePaseoWorktree(
   },
 ): Promise<string[]> {
   let targetPath = options.targetPath;
-  const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
-    paseoHome: dependencies.paseoHome,
+  const resolvedWorktree = await resolveHubcodeWorktreeRootForCwd(targetPath, {
+    hubcodeHome: dependencies.hubcodeHome,
   });
   if (resolvedWorktree) {
     targetPath = resolvedWorktree.worktreePath;
@@ -118,11 +118,11 @@ export async function archivePaseoWorktree(
     );
   });
 
-  await deletePaseoWorktree({
+  await deleteHubcodeWorktree({
     cwd: options.repoRoot,
     worktreePath: targetPath,
     worktreesRoot: options.worktreesRoot,
-    paseoHome: dependencies.paseoHome,
+    hubcodeHome: dependencies.hubcodeHome,
   });
 
   if (options.repoRoot) {

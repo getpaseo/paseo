@@ -7,7 +7,7 @@ import {
   resolveSherpaLoaderEnv,
   sherpaPlatformPackageName,
 } from "./sherpa-runtime-env.js";
-import { createExternalCommandProcessEnv } from "../../../../paseo-env.js";
+import { createExternalCommandProcessEnv } from "../../../../hubcode-env.js";
 
 export interface SherpaOnnxNodeModule {
   OfflineRecognizer: new (config: unknown) => unknown;

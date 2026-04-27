@@ -340,7 +340,7 @@ describe("Codex app-server provider", () => {
           mimeType: "application/github-pr",
           number: 123,
           title: "Fix race in worktree setup",
-          url: "https://github.com/getpaseo/paseo/pull/123",
+          url: "https://github.com/hubtool/hubcode/pull/123",
           body: "Review body",
           baseRefName: "main",
           headRefName: "fix/worktree-race",
@@ -446,22 +446,22 @@ describe("Codex app-server provider", () => {
   test("builds app-server env from launch-context env overrides", () => {
     const launchContext: AgentLaunchContext = {
       env: {
-        PASEO_AGENT_ID: "00000000-0000-4000-8000-000000000301",
-        PASEO_TEST_FLAG: "codex-launch-value",
+        HUBCODE_AGENT_ID: "00000000-0000-4000-8000-000000000301",
+        HUBCODE_TEST_FLAG: "codex-launch-value",
       },
     };
     const env = __codexAppServerInternals.buildCodexAppServerEnv(
       {
         env: {
-          PASEO_AGENT_ID: "runtime-value",
-          PASEO_TEST_FLAG: "runtime-test-value",
+          HUBCODE_AGENT_ID: "runtime-value",
+          HUBCODE_TEST_FLAG: "runtime-test-value",
         },
       },
       launchContext.env,
     );
 
-    expect(env.PASEO_AGENT_ID).toBe(launchContext.env?.PASEO_AGENT_ID);
-    expect(env.PASEO_TEST_FLAG).toBe(launchContext.env?.PASEO_TEST_FLAG);
+    expect(env.HUBCODE_AGENT_ID).toBe(launchContext.env?.HUBCODE_AGENT_ID);
+    expect(env.HUBCODE_TEST_FLAG).toBe(launchContext.env?.HUBCODE_TEST_FLAG);
   });
 
   test("projects request_user_input into a question permission and running timeline tool call", () => {

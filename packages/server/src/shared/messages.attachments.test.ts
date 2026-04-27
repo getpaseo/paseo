@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CreateAgentRequestMessageSchema,
-  CreatePaseoWorktreeRequestSchema,
+  CreateHubcodeWorktreeRequestSchema,
   SendAgentMessageRequestSchema,
 } from "./messages.js";
 
@@ -22,7 +22,7 @@ describe("shared messages attachments", () => {
           mimeType: "application/github-pr",
           number: 123,
           title: "Fix race in worktree setup",
-          url: "https://github.com/getpaseo/paseo/pull/123",
+          url: "https://github.com/hubtool/hubcode/pull/123",
           body: "Body",
           baseRefName: "main",
           headRefName: "fix/worktree-race",
@@ -41,7 +41,7 @@ describe("shared messages attachments", () => {
         mimeType: "application/github-pr",
         number: 123,
         title: "Fix race in worktree setup",
-        url: "https://github.com/getpaseo/paseo/pull/123",
+        url: "https://github.com/hubtool/hubcode/pull/123",
         body: "Body",
         baseRefName: "main",
         headRefName: "fix/worktree-race",
@@ -61,7 +61,7 @@ describe("shared messages attachments", () => {
           mimeType: "application/github-issue",
           number: 55,
           title: "Improve startup error details",
-          url: "https://github.com/getpaseo/paseo/issues/55",
+          url: "https://github.com/hubtool/hubcode/issues/55",
           body: "Body",
         },
         {
@@ -78,15 +78,15 @@ describe("shared messages attachments", () => {
         mimeType: "application/github-issue",
         number: 55,
         title: "Improve startup error details",
-        url: "https://github.com/getpaseo/paseo/issues/55",
+        url: "https://github.com/hubtool/hubcode/issues/55",
         body: "Body",
       },
     ]);
   });
 
   it("keeps known attachments and drops unknown worktree-create attachments", () => {
-    const parsed = CreatePaseoWorktreeRequestSchema.parse({
-      type: "create_paseo_worktree_request",
+    const parsed = CreateHubcodeWorktreeRequestSchema.parse({
+      type: "create_hubcode_worktree_request",
       requestId: "req-3",
       cwd: "/tmp/repo",
       attachments: [
@@ -95,7 +95,7 @@ describe("shared messages attachments", () => {
           mimeType: "application/github-pr",
           number: 99,
           title: "Fork-safe PR checkout",
-          url: "https://github.com/getpaseo/paseo/pull/99",
+          url: "https://github.com/hubtool/hubcode/pull/99",
         },
         {
           type: "future_attachment",
@@ -111,21 +111,21 @@ describe("shared messages attachments", () => {
         mimeType: "application/github-pr",
         number: 99,
         title: "Fork-safe PR checkout",
-        url: "https://github.com/getpaseo/paseo/pull/99",
+        url: "https://github.com/hubtool/hubcode/pull/99",
       },
     ]);
   });
 
   it("parses old-shape create-worktree payloads without the new intent fields", () => {
-    const parsed = CreatePaseoWorktreeRequestSchema.parse({
-      type: "create_paseo_worktree_request",
+    const parsed = CreateHubcodeWorktreeRequestSchema.parse({
+      type: "create_hubcode_worktree_request",
       requestId: "req-4",
       cwd: "/tmp/repo",
       attachments: [],
     });
 
     expect(parsed).toEqual({
-      type: "create_paseo_worktree_request",
+      type: "create_hubcode_worktree_request",
       requestId: "req-4",
       cwd: "/tmp/repo",
       attachments: [],
@@ -133,8 +133,8 @@ describe("shared messages attachments", () => {
   });
 
   it("accepts and strips create-worktree intent fields compatibly", () => {
-    const parsed = CreatePaseoWorktreeRequestSchema.parse({
-      type: "create_paseo_worktree_request",
+    const parsed = CreateHubcodeWorktreeRequestSchema.parse({
+      type: "create_hubcode_worktree_request",
       requestId: "req-5",
       cwd: "/tmp/repo",
       attachments: [],
@@ -145,7 +145,7 @@ describe("shared messages attachments", () => {
     });
 
     expect(parsed).toEqual({
-      type: "create_paseo_worktree_request",
+      type: "create_hubcode_worktree_request",
       requestId: "req-5",
       cwd: "/tmp/repo",
       attachments: [],

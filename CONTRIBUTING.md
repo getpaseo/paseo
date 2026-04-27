@@ -1,10 +1,10 @@
-# Contributing to Paseo
+# Contributing to Hubcode
 
 Thanks for taking the time to contribute.
 
 ## How this project works
 
-Paseo is a BDFL project. Product direction, scope, and what ships are the maintainer's call.
+Hubcode is a BDFL project. Product direction, scope, and what ships are the maintainer's call.
 
 This means:
 
@@ -66,7 +66,7 @@ If a contribution contains multiple ideas, split it up.
 
 ## Product fit matters
 
-Paseo is an opinionated product.
+Hubcode is an opinionated product.
 
 When reviewing contributions, the bar is not just:
 
@@ -75,7 +75,7 @@ When reviewing contributions, the bar is not just:
 
 It is also:
 
-- does this fit Paseo?
+- does this fit Hubcode?
 - does this add product surface that will be hard to maintain?
 - does the value justify the maintenance surface it adds?
 - does this solve a common need or over-serve an edge case?
@@ -109,7 +109,7 @@ Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for build-sync gotchas, local st
 
 ## Multi-platform testing
 
-Paseo ships to mobile (iOS/Android), web, and desktop (Electron). Every UI change must be tested on mobile and web at minimum, and desktop if relevant. Things that look fine on one surface regularly break on another.
+Hubcode ships to mobile (iOS/Android), web, and desktop (Electron). Every UI change must be tested on mobile and web at minimum, and desktop if relevant. Things that look fine on one surface regularly break on another.
 
 Common checks:
 
@@ -130,7 +130,7 @@ If you touch protocol or shared client/server behavior, read the compatibility n
 
 ## Coding standards
 
-Paseo has explicit standards. Follow them.
+Hubcode has explicit standards. Follow them.
 
 The full guide lives in [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md).
 
@@ -165,4 +165,4 @@ Early alignment saves everyone time.
 
 If you want to explore a different product direction, a fork is completely fine.
 
-Paseo is open source on purpose. Not every idea needs to land in the main repo to be valuable.
+Hubcode is open source on purpose. Not every idea needs to land in the main repo to be valuable.

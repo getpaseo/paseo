@@ -8,7 +8,7 @@ const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
 const serverSrcRoot = path.resolve(projectRoot, "../server/src");
 const relaySrcRoot = path.resolve(projectRoot, "../relay/src");
-const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
+const customWebPlatform = (process.env.HUBCODE_WEB_PLATFORM ?? "")
   .trim()
   .replace(/^\./, "")
   .toLowerCase();

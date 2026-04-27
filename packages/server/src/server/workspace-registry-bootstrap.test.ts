@@ -13,7 +13,7 @@ import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js"
 
 describe("bootstrapWorkspaceRegistries", () => {
   let tmpDir: string;
-  let paseoHome: string;
+  let hubcodeHome: string;
   let agentStorage: AgentStorage;
   let projectRegistry: FileBackedProjectRegistry;
   let workspaceRegistry: FileBackedWorkspaceRegistry;
@@ -22,14 +22,14 @@ describe("bootstrapWorkspaceRegistries", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(path.join(os.tmpdir(), "workspace-bootstrap-"));
-    paseoHome = path.join(tmpDir, ".paseo");
-    agentStorage = new AgentStorage(path.join(paseoHome, "agents"), logger);
+    hubcodeHome = path.join(tmpDir, ".hubcode");
+    agentStorage = new AgentStorage(path.join(hubcodeHome, "agents"), logger);
     projectRegistry = new FileBackedProjectRegistry(
-      path.join(paseoHome, "projects", "projects.json"),
+      path.join(hubcodeHome, "projects", "projects.json"),
       logger,
     );
     workspaceRegistry = new FileBackedWorkspaceRegistry(
-      path.join(paseoHome, "projects", "workspaces.json"),
+      path.join(hubcodeHome, "projects", "workspaces.json"),
       logger,
     );
     workspaceGitService = createNoopWorkspaceGitService();
@@ -94,7 +94,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     });
 
     await bootstrapWorkspaceRegistries({
-      paseoHome,
+      hubcodeHome,
       agentStorage,
       projectRegistry,
       workspaceRegistry,
@@ -158,7 +158,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     });
 
     await bootstrapWorkspaceRegistries({
-      paseoHome,
+      hubcodeHome,
       agentStorage,
       projectRegistry,
       workspaceRegistry,

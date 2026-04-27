@@ -42,7 +42,7 @@ export interface BuildGitActionsInput {
   hasPullRequest: boolean;
   pullRequestUrl: string | null;
   hasRemote: boolean;
-  isPaseoOwnedWorktree: boolean;
+  isHubcodeOwnedWorktree: boolean;
   isOnBaseBranch: boolean;
   hasUncommittedChanges: boolean;
   baseRefAvailable: boolean;
@@ -139,9 +139,9 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     disabled: input.runtime["archive-worktree"].disabled,
     status: input.runtime["archive-worktree"].status,
     unavailableMessage:
-      input.runtime["archive-worktree"].disabled || input.isPaseoOwnedWorktree
+      input.runtime["archive-worktree"].disabled || input.isHubcodeOwnedWorktree
         ? undefined
-        : "Archive isn't available here because this workspace was not created as a Paseo worktree",
+        : "Archive isn't available here because this workspace was not created as a Hubcode worktree",
     icon: input.runtime["archive-worktree"].icon,
     handler: input.runtime["archive-worktree"].handler,
   });
@@ -153,7 +153,7 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
   if (!input.isOnBaseBranch) {
     secondaryIds.push(...FEATURE_ACTION_IDS);
   }
-  if (input.isPaseoOwnedWorktree) {
+  if (input.isHubcodeOwnedWorktree) {
     secondaryIds.push("archive-worktree");
   }
 
@@ -165,7 +165,7 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
 }
 
 function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
-  if (input.shouldPromoteArchive && input.isPaseoOwnedWorktree) {
+  if (input.shouldPromoteArchive && input.isHubcodeOwnedWorktree) {
     return "archive-worktree";
   }
   if (input.hasUncommittedChanges) {

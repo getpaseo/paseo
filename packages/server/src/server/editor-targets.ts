@@ -6,7 +6,7 @@ import type {
   EditorTargetId,
   KnownEditorTargetId,
 } from "../shared/messages.js";
-import { createExternalProcessEnv } from "./paseo-env.js";
+import { createExternalProcessEnv } from "./hubcode-env.js";
 import { findExecutable } from "../utils/executable.js";
 import { spawnProcess } from "../utils/spawn.js";
 

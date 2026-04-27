@@ -10,7 +10,7 @@ That model is powerful, but it has sharp edges. Use this note when adding theme-
 
 > We strongly recommend **not using** this hook, as it will re-render your component on every change. This hook was created to simplify the migration process and should only be used when other methods fail.
 
-We have hit this gotcha repeatedly in Paseo. It manifests as periodic, lockstep re-renders of warm subtrees (agent streams, panels, sidebars) even when nothing the user can see has changed — confirmed in profiling: `AgentStreamView` re-rendering constantly with `theme` showing as the only changed input on every render. The hook subscribes the component to **all** Unistyles runtime changes (theme, breakpoint, insets, color scheme, scale) and returns a fresh object reference each call, which also breaks every downstream `useMemo`/`memo` boundary that includes a derived theme value.
+We have hit this gotcha repeatedly in Hubcode. It manifests as periodic, lockstep re-renders of warm subtrees (agent streams, panels, sidebars) even when nothing the user can see has changed — confirmed in profiling: `AgentStreamView` re-rendering constantly with `theme` showing as the only changed input on every render. The hook subscribes the component to **all** Unistyles runtime changes (theme, breakpoint, insets, color scheme, scale) and returns a fresh object reference each call, which also breaks every downstream `useMemo`/`memo` boundary that includes a derived theme value.
 
 Before reaching for `useUnistyles()`, work down this list of alternatives in order:
 
@@ -191,7 +191,7 @@ Avoid the bug by preferring the wrapper-`View` pattern from the previous section
 
 ## Hidden Sheet Content
 
-`@gorhom/bottom-sheet` can keep `BottomSheetModal` content mounted while the sheet is hidden. That matters during Paseo's startup theme transition: a header node can be created under the initial adaptive theme, stay hidden, then appear later with stale native style values even though surrounding content has re-rendered correctly.
+`@gorhom/bottom-sheet` can keep `BottomSheetModal` content mounted while the sheet is hidden. That matters during Hubcode's startup theme transition: a header node can be created under the initial adaptive theme, stay hidden, then appear later with stale native style values even though surrounding content has re-rendered correctly.
 
 We saw this in `AdaptiveModalSheet`: the body text and buttons were dark-theme-correct, but the shared sheet title opened with the initial light-theme text color on a dark sheet background. For tiny values in a reusable sheet header, prefer the inline escape hatch:
 
@@ -245,7 +245,7 @@ Importing `baseColors`, theme-name constants, or `type Theme` is fine when the v
 
 Unistyles [`initialTheme`](https://www.unistyl.es/v3/guides/theming#select-theme) and [`adaptiveThemes`](https://www.unistyl.es/v3/guides/theming#adaptive-themes) are mutually exclusive. `initialTheme` can be a string or a synchronous function, but it cannot wait on async storage.
 
-Paseo currently stores app settings in AsyncStorage and loads them through react-query. That means the app can mount under adaptive/system theme first, then switch after settings load:
+Hubcode currently stores app settings in AsyncStorage and loads them through react-query. That means the app can mount under adaptive/system theme first, then switch after settings load:
 
 1. Unistyles config starts with `adaptiveThemes: true`.
 2. The device may report system light.
@@ -285,7 +285,7 @@ For paint-layer bugs, use high-contrast probes:
 3. Screenshot the simulator and sample pixels to see which color fills the area.
 4. Remove the probes before committing.
 
-The welcome-screen investigation used this approach to prove the white layer was the `ScrollView` content container. Deep-dive evidence is in [welcome-theme-split-research.md](/Users/moboudra/.paseo/notes/welcome-theme-split-research.md).
+The welcome-screen investigation used this approach to prove the white layer was the `ScrollView` content container. Deep-dive evidence is in [welcome-theme-split-research.md](/Users/moboudra/.hubcode/notes/welcome-theme-split-research.md).
 
 ## References
 
@@ -299,4 +299,4 @@ The welcome-screen investigation used this approach to prove the white layer was
 - [GitHub issue #550: ScrollView sticky-header theme updates](https://github.com/jpudysz/react-native-unistyles/issues/550)
 - [GitHub issue #817: `UnistylesRuntime.themeName` does not re-render](https://github.com/jpudysz/react-native-unistyles/issues/817)
 - [GitHub issue #1030: `Image.tintColor` and native style update edge case](https://github.com/jpudysz/react-native-unistyles/issues/1030)
-- [Local research note: welcome theme split](/Users/moboudra/.paseo/notes/welcome-theme-split-research.md)
+- [Local research note: welcome theme split](/Users/moboudra/.hubcode/notes/welcome-theme-split-research.md)

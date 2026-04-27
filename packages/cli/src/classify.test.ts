@@ -38,7 +38,7 @@ describe("classifyInvocation", () => {
   });
 
   it("classifies '.' as an open-project invocation", () => {
-    const projectDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-dot-"));
+    const projectDir = mkdtempSync(path.join(tmpdir(), "hubcode-classify-dot-"));
 
     expect(
       classifyInvocation({
@@ -53,7 +53,7 @@ describe("classifyInvocation", () => {
   });
 
   it("classifies '..' as an open-project invocation", () => {
-    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-parent-"));
+    const parentDir = mkdtempSync(path.join(tmpdir(), "hubcode-classify-parent-"));
     const childDir = path.join(parentDir, "child");
     mkdirSync(childDir);
 
@@ -70,7 +70,7 @@ describe("classifyInvocation", () => {
   });
 
   it("classifies './myproject' as an open-project invocation", () => {
-    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-relative-"));
+    const parentDir = mkdtempSync(path.join(tmpdir(), "hubcode-classify-relative-"));
     const projectDir = path.join(parentDir, "myproject");
     mkdirSync(projectDir);
 
@@ -87,7 +87,7 @@ describe("classifyInvocation", () => {
   });
 
   it("classifies an absolute path as an open-project invocation", () => {
-    const projectDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-absolute-"));
+    const projectDir = mkdtempSync(path.join(tmpdir(), "hubcode-classify-absolute-"));
 
     expect(
       classifyInvocation({
@@ -102,7 +102,7 @@ describe("classifyInvocation", () => {
   });
 
   it("classifies a home-relative path as an open-project invocation", () => {
-    const projectDir = mkdtempSync(path.join(homedir(), "paseo-classify-home-"));
+    const projectDir = mkdtempSync(path.join(homedir(), "hubcode-classify-home-"));
     const relativeToHome = `~/${path.basename(projectDir)}`;
 
     expect(
@@ -118,7 +118,7 @@ describe("classifyInvocation", () => {
   });
 
   it("classifies an existing directory name as an open-project invocation", () => {
-    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-existing-"));
+    const parentDir = mkdtempSync(path.join(tmpdir(), "hubcode-classify-existing-"));
     const projectDir = path.join(parentDir, "myproject");
     mkdirSync(projectDir);
 
@@ -135,7 +135,7 @@ describe("classifyInvocation", () => {
   });
 
   it("keeps known commands in CLI mode even when a matching directory exists", () => {
-    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-command-"));
+    const parentDir = mkdtempSync(path.join(tmpdir(), "hubcode-classify-command-"));
     mkdirSync(path.join(parentDir, "status"));
 
     expect(
@@ -178,7 +178,7 @@ describe("path helpers", () => {
   });
 
   it("detects existing directories relative to cwd", () => {
-    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-helper-"));
+    const parentDir = mkdtempSync(path.join(tmpdir(), "hubcode-classify-helper-"));
     const projectDir = path.join(parentDir, "project");
     mkdirSync(projectDir);
 

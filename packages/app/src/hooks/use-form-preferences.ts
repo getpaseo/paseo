@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 
-const FORM_PREFERENCES_STORAGE_KEY = "@paseo:create-agent-preferences";
+const FORM_PREFERENCES_STORAGE_KEY = "@hubcode:create-agent-preferences";
 const FORM_PREFERENCES_QUERY_KEY = ["form-preferences"];
 
 export interface FavoriteModelPreference {

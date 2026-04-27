@@ -83,19 +83,19 @@ describe("tool-call-display", () => {
 
   it("builds display model from worktree setup detail", () => {
     const display = buildToolCallDisplayModel({
-      name: "paseo_worktree_setup",
+      name: "hubcode_worktree_setup",
       status: "running",
       error: null,
       detail: {
         type: "worktree_setup",
-        worktreePath: "/tmp/repo/.paseo/worktrees/repo/branch",
+        worktreePath: "/tmp/repo/.hubcode/worktrees/repo/branch",
         branchName: "feature-branch",
         log: "==> [1/1] Running: npm install\n",
         commands: [
           {
             index: 1,
             command: "npm install",
-            cwd: "/tmp/repo/.paseo/worktrees/repo/branch",
+            cwd: "/tmp/repo/.hubcode/worktrees/repo/branch",
             log: "",
             status: "running",
             exitCode: null,

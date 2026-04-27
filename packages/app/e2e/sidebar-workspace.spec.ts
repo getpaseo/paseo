@@ -31,7 +31,7 @@ function setGitHubRemote(repoPath: string): void {
   });
 }
 
-async function createTempDirectory(prefix = "paseo-e2e-dir-") {
+async function createTempDirectory(prefix = "hubcode-e2e-dir-") {
   const tempRoot = process.platform === "win32" ? tmpdir() : await realpath("/tmp");
   const dirPath = await mkdtemp(path.join(tempRoot, prefix));
   await writeFile(path.join(dirPath, "README.md"), "# Temp Directory\n");

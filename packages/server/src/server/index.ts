@@ -1,6 +1,6 @@
-import { createPaseoDaemon } from "./bootstrap.js";
+import { createHubcodeDaemon } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
-import { resolvePaseoHome } from "./paseo-home.js";
+import { resolveHubcodeHome } from "./hubcode-home.js";
 import { createRootLogger } from "./logger.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { acquirePidLock, PidLockError, releasePidLock, updatePidLock } from "./pid-lock.js";
@@ -8,26 +8,26 @@ import type { DaemonLifecycleIntent } from "./bootstrap.js";
 
 type SupervisorLifecycleMessage =
   | {
-      type: "paseo:shutdown";
+      type: "hubcode:shutdown";
     }
   | {
-      type: "paseo:restart";
+      type: "hubcode:restart";
       reason?: string;
     };
 
 interface BootstrapResult {
-  paseoHome: string;
+  hubcodeHome: string;
   logger: ReturnType<typeof createRootLogger>;
   config: ReturnType<typeof loadConfig>;
 }
 
 function bootstrapFromEnvironment(): BootstrapResult {
   try {
-    const paseoHome = resolvePaseoHome();
-    const persistedConfig = loadPersistedConfig(paseoHome);
-    const logger = createRootLogger(persistedConfig, { paseoHome });
-    const config = loadConfig(paseoHome);
-    return { paseoHome, logger, config };
+    const hubcodeHome = resolveHubcodeHome();
+    const persistedConfig = loadPersistedConfig(hubcodeHome);
+    const logger = createRootLogger(persistedConfig, { hubcodeHome });
+    const config = loadConfig(hubcodeHome);
+    return { hubcodeHome, logger, config };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`${message}\n`);
@@ -48,11 +48,11 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
 }
 
 async function main() {
-  const { paseoHome, logger, config } = bootstrapFromEnvironment();
-  let daemon: Awaited<ReturnType<typeof createPaseoDaemon>> | null = null;
+  const { hubcodeHome, logger, config } = bootstrapFromEnvironment();
+  let daemon: Awaited<ReturnType<typeof createHubcodeDaemon>> | null = null;
   let shutdownPromise: Promise<number> | null = null;
   let exitHookInstalled = false;
-  const supervised = process.env.PASEO_SUPERVISED === "1" && typeof process.send === "function";
+  const supervised = process.env.HUBCODE_SUPERVISED === "1" && typeof process.send === "function";
   let pidLockAcquired = false;
 
   applyCliFlagOverrides(config);
@@ -90,7 +90,7 @@ async function main() {
           }
           await daemon.stop();
           if (pidLockAcquired) {
-            await releasePidLock(paseoHome);
+            await releasePidLock(hubcodeHome);
             pidLockAcquired = false;
           }
           clearTimeout(forceExit);
@@ -128,7 +128,7 @@ async function main() {
         { clientId: intent.clientId, requestId: intent.requestId },
         "Shutdown requested via websocket",
       );
-      if (sendSupervisorLifecycleMessage({ type: "paseo:shutdown" })) {
+      if (sendSupervisorLifecycleMessage({ type: "hubcode:shutdown" })) {
         return;
       }
       beginShutdown("shutdown lifecycle intent");
@@ -141,7 +141,7 @@ async function main() {
     );
     if (
       sendSupervisorLifecycleMessage({
-        type: "paseo:restart",
+        type: "hubcode:restart",
         ...(intent.reason ? { reason: intent.reason } : {}),
       })
     ) {
@@ -152,11 +152,11 @@ async function main() {
 
   try {
     if (!supervised) {
-      await acquirePidLock(paseoHome, null);
+      await acquirePidLock(hubcodeHome, null);
       pidLockAcquired = true;
     }
 
-    daemon = await createPaseoDaemon(
+    daemon = await createHubcodeDaemon(
       {
         ...config,
         onLifecycleIntent: handleLifecycleIntent,
@@ -165,7 +165,7 @@ async function main() {
     );
   } catch (err) {
     if (pidLockAcquired) {
-      await releasePidLock(paseoHome);
+      await releasePidLock(hubcodeHome);
       pidLockAcquired = false;
     }
     if (err instanceof PidLockError) {
@@ -187,11 +187,11 @@ async function main() {
       if (!listen) {
         throw new Error("Daemon did not expose a listen target after startup");
       }
-      await updatePidLock(paseoHome, { listen });
+      await updatePidLock(hubcodeHome, { listen });
     }
   } catch (err) {
     if (pidLockAcquired) {
-      await releasePidLock(paseoHome);
+      await releasePidLock(hubcodeHome);
       pidLockAcquired = false;
     }
     if (err instanceof PidLockError) {

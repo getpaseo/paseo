@@ -52,7 +52,7 @@ export async function runLoopLogsCommand(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: Cannot connect to daemon at ${host}: ${message}`);
-    console.error("Start the daemon with: paseo daemon start");
+    console.error("Start the daemon with: hubcode daemon start");
     process.exit(1);
   }
 

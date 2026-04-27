@@ -10,7 +10,7 @@ const schema = JSON.stringify({
 async function main() {
   const ctx = await createE2ETestContext({ timeout: 180000 });
   try {
-    const run = await ctx.paseo(
+    const run = await ctx.hubcode(
       [
         "run",
         "--provider",
@@ -29,14 +29,14 @@ async function main() {
     console.log("RUN STDOUT\n" + run.stdout);
     console.log("RUN STDERR\n" + run.stderr);
 
-    const ls = await ctx.paseo(["ls", "--json"]);
+    const ls = await ctx.hubcode(["ls", "--json"]);
     console.log("LS\n" + ls.stdout);
     const agents = JSON.parse(ls.stdout);
     const agentId = agents[0]?.id;
     if (agentId) {
-      const inspect = await ctx.paseo(["inspect", agentId]);
+      const inspect = await ctx.hubcode(["inspect", agentId]);
       console.log("INSPECT\n" + inspect.stdout);
-      const logs = await ctx.paseo(["logs", "--tail", "100", agentId], { timeout: 30000 });
+      const logs = await ctx.hubcode(["logs", "--tail", "100", agentId], { timeout: 30000 });
       console.log("LOGS\n" + logs.stdout);
     }
   } finally {

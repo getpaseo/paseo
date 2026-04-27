@@ -7,7 +7,7 @@ import {
   releasePidLock,
   updatePidLock,
 } from "../src/server/pid-lock.js";
-import { resolvePaseoHome } from "../src/server/paseo-home.js";
+import { resolveHubcodeHome } from "../src/server/hubcode-home.js";
 import { runSupervisor } from "./supervisor.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
@@ -61,7 +61,7 @@ function resolveWorkerExecArgv(workerEntry: string): string[] {
 }
 
 function resolvePackagedNodeEntrypointRunnerPath(currentScriptPath: string): string | null {
-  const packageMarker = `${path.sep}node_modules${path.sep}@getpaseo${path.sep}server${path.sep}`;
+  const packageMarker = `${path.sep}node_modules${path.sep}@gethubcode${path.sep}server${path.sep}`;
   const markerIndex = currentScriptPath.lastIndexOf(packageMarker);
   if (markerIndex === -1) {
     return null;
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   const config = parseConfig(process.argv.slice(2));
   const workerEntry = config.devMode ? resolveDevWorkerEntry() : resolveWorkerEntry();
   const workerExecArgv = resolveWorkerExecArgv(workerEntry);
-  const workerEnv: NodeJS.ProcessEnv = { ...process.env, PASEO_SUPERVISED: "1" };
+  const workerEnv: NodeJS.ProcessEnv = { ...process.env, HUBCODE_SUPERVISED: "1" };
   const packagedNodeEntrypointRunner =
     process.env.ELECTRON_RUN_AS_NODE === "1"
       ? resolvePackagedNodeEntrypointRunnerPath(fileURLToPath(import.meta.url))
@@ -84,10 +84,10 @@ async function main(): Promise<void> {
 
   applySherpaLoaderEnv(workerEnv);
 
-  const paseoHome = resolvePaseoHome(workerEnv);
+  const hubcodeHome = resolveHubcodeHome(workerEnv);
 
   try {
-    await acquirePidLock(paseoHome, null, {
+    await acquirePidLock(hubcodeHome, null, {
       ownerPid: process.pid,
     });
   } catch (error) {
@@ -105,7 +105,7 @@ async function main(): Promise<void> {
       return;
     }
     lockReleased = true;
-    await releasePidLock(paseoHome, {
+    await releasePidLock(hubcodeHome, {
       ownerPid: process.pid,
     });
   };
@@ -136,7 +136,7 @@ async function main(): Promise<void> {
       : undefined,
     restartOnCrash: config.devMode,
     onWorkerReady: async ({ listen }) => {
-      await updatePidLock(paseoHome, { listen }, { ownerPid: process.pid });
+      await updatePidLock(hubcodeHome, { listen }, { ownerPid: process.pid });
     },
     onSupervisorExit: releaseLock,
   });

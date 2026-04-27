@@ -17,7 +17,7 @@ const originalEnv = {
 const tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "paseo-executable-test-"));
+  const dir = mkdtempSync(path.join(os.tmpdir(), "hubcode-executable-test-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -127,7 +127,7 @@ describe("findExecutable", () => {
     const dir = makeTempDir();
     prependPath(dir);
 
-    await expect(findExecutable("paseo-definitely-missing-command")).resolves.toBeNull();
+    await expect(findExecutable("hubcode-definitely-missing-command")).resolves.toBeNull();
   });
 });
 

@@ -1,4 +1,4 @@
-appId: ${PASEO_MAESTRO_APP_ID}
+appId: ${HUBCODE_MAESTRO_APP_ID}
 ---
 # Android regression/reproduction flow for creating a workspace from an existing project.
 # The shell wrapper prepares the daemon/project and captures logcat around this flow.

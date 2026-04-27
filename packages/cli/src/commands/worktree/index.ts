@@ -5,10 +5,10 @@ import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 
 export function createWorktreeCommand(): Command {
-  const worktree = new Command("worktree").description("Manage Paseo-managed git worktrees");
+  const worktree = new Command("worktree").description("Manage Hubcode-managed git worktrees");
 
   addJsonAndDaemonHostOptions(
-    worktree.command("ls").description("List Paseo-managed git worktrees"),
+    worktree.command("ls").description("List Hubcode-managed git worktrees"),
   ).action(withOutput(runLsCommand));
 
   addJsonAndDaemonHostOptions(

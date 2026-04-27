@@ -103,7 +103,7 @@ function latestSize(sizes: TerminalSize[]): TerminalSize {
 }
 
 function getBrowserTerminal(): BrowserTerminal {
-  const terminal = window.__paseoTerminal as BrowserTerminal | undefined;
+  const terminal = window.__hubcodeTerminal as BrowserTerminal | undefined;
   if (!terminal) {
     throw new Error("Expected xterm to be exposed for browser test inspection");
   }

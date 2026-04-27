@@ -26,7 +26,7 @@ import type {
 const openaiApiKey = process.env.OPENAI_API_KEY ?? null;
 
 const localModelsDir =
-  process.env.PASEO_LOCAL_MODELS_DIR ?? path.join(homedir(), ".paseo", "models", "local-speech");
+  process.env.HUBCODE_LOCAL_MODELS_DIR ?? path.join(homedir(), ".hubcode", "models", "local-speech");
 const testFileDir = path.dirname(fileURLToPath(import.meta.url));
 const appE2eFixturesDir = path.resolve(testFileDir, "../../../app/e2e/fixtures");
 
@@ -224,10 +224,10 @@ function resolveSpeechConfig() {
         modelsDir: localModelsDir,
         models: {
           dictationStt:
-            process.env.PASEO_DICTATION_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
+            process.env.HUBCODE_DICTATION_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
           voiceStt:
-            process.env.PASEO_VOICE_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
-          voiceTts: process.env.PASEO_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
+            process.env.HUBCODE_VOICE_LOCAL_STT_MODEL ?? "zipformer-bilingual-zh-en-2023-02-20",
+          voiceTts: process.env.HUBCODE_VOICE_LOCAL_TTS_MODEL ?? "kitten-nano-en-v0_1-fp16",
         },
       },
     };
@@ -502,8 +502,8 @@ test("update_agent persists unloaded title and labels across auto-unarchive", as
 }, 180000);
 
 test("returns home-scoped directory suggestions", async () => {
-  const insideHomeDir = mkdtempSync(path.join(homedir(), "paseo-dir-suggestion-"));
-  const outsideHomeDir = mkdtempSync(path.join(tmpdir(), "paseo-dir-suggestion-outside-"));
+  const insideHomeDir = mkdtempSync(path.join(homedir(), "hubcode-dir-suggestion-"));
+  const outsideHomeDir = mkdtempSync(path.join(tmpdir(), "hubcode-dir-suggestion-outside-"));
 
   try {
     const insideQuery = path.basename(insideHomeDir);

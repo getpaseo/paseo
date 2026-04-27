@@ -11,14 +11,14 @@ REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 FLOW_TEMPLATE_DIR="$REPO_ROOT/packages/app/maestro"
 SETUP_TEMPLATE="$REPO_ROOT/packages/app/maestro/workspace-create-android-ready-sidebar.yaml"
 FOCUS_TEMPLATE="$REPO_ROOT/packages/app/maestro/workspace-create-android-create-focused.yaml"
-OUT_DIR="/tmp/paseo-workspace-create-android-focus-$(date +%s)"
-VIDEO_DIR="/tmp/paseo-maestro-videos"
-DEVICE_VIDEO="/sdcard/paseo-maestro-workspace-create-focused.mp4"
-LOCAL_VIDEO="$VIDEO_DIR/paseo-maestro-workspace-create-focused.mp4"
+OUT_DIR="/tmp/hubcode-workspace-create-android-focus-$(date +%s)"
+VIDEO_DIR="/tmp/hubcode-maestro-videos"
+DEVICE_VIDEO="/sdcard/hubcode-maestro-workspace-create-focused.mp4"
+LOCAL_VIDEO="$VIDEO_DIR/hubcode-maestro-workspace-create-focused.mp4"
 
-export PASEO_MAESTRO_APP_ID="${PASEO_MAESTRO_APP_ID:-sh.paseo.debug}"
-export PASEO_MAESTRO_DIRECT_ENDPOINT="${PASEO_MAESTRO_DIRECT_ENDPOINT:-127.0.0.1:6767}"
-export PASEO_MAESTRO_DAEMON_WS_URL="${PASEO_MAESTRO_DAEMON_WS_URL:-ws://127.0.0.1:6767/ws}"
+export HUBCODE_MAESTRO_APP_ID="${HUBCODE_MAESTRO_APP_ID:-ai.hubcode.debug}"
+export HUBCODE_MAESTRO_DIRECT_ENDPOINT="${HUBCODE_MAESTRO_DIRECT_ENDPOINT:-127.0.0.1:6767}"
+export HUBCODE_MAESTRO_DAEMON_WS_URL="${HUBCODE_MAESTRO_DAEMON_WS_URL:-ws://127.0.0.1:6767/ws}"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -32,9 +32,9 @@ render_flow() {
   local target="$2"
   mkdir -p "$(dirname "$target")"
   perl -0pe '
-    s/\$\{PASEO_MAESTRO_APP_ID\}/$ENV{PASEO_MAESTRO_APP_ID}/g;
-    s/\$\{PASEO_MAESTRO_DIRECT_ENDPOINT\}/$ENV{PASEO_MAESTRO_DIRECT_ENDPOINT}/g;
-    s/\$\{PASEO_MAESTRO_PROJECT_NAME\}/$ENV{PASEO_MAESTRO_PROJECT_NAME}/g;
+    s/\$\{HUBCODE_MAESTRO_APP_ID\}/$ENV{HUBCODE_MAESTRO_APP_ID}/g;
+    s/\$\{HUBCODE_MAESTRO_DIRECT_ENDPOINT\}/$ENV{HUBCODE_MAESTRO_DIRECT_ENDPOINT}/g;
+    s/\$\{HUBCODE_MAESTRO_PROJECT_NAME\}/$ENV{HUBCODE_MAESTRO_PROJECT_NAME}/g;
   ' "$source" > "$target"
 }
 
@@ -55,21 +55,21 @@ require_command perl
 
 mkdir -p "$OUT_DIR" "$VIDEO_DIR"
 
-if [ -z "${PASEO_MAESTRO_PROJECT_PATH:-}" ]; then
-  PROJECT_PARENT="$(mktemp -d /tmp/paseo-maestro-project-XXXXXX)"
+if [ -z "${HUBCODE_MAESTRO_PROJECT_PATH:-}" ]; then
+  PROJECT_PARENT="$(mktemp -d /tmp/hubcode-maestro-project-XXXXXX)"
   PROJECT_BASENAME="aaa-workspace-create-android-$(basename "$PROJECT_PARENT")"
-  export PASEO_MAESTRO_PROJECT_PATH="$PROJECT_PARENT/$PROJECT_BASENAME"
-  mkdir -p "$PASEO_MAESTRO_PROJECT_PATH"
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" init >/dev/null
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" checkout -b main >/dev/null 2>&1 || true
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" config user.name "Paseo Maestro"
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" config user.email "maestro@getpaseo.local"
-  printf "# Workspace create Android focused recording\n" > "$PASEO_MAESTRO_PROJECT_PATH/README.md"
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" add README.md
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" commit -m "Initial commit" >/dev/null
+  export HUBCODE_MAESTRO_PROJECT_PATH="$PROJECT_PARENT/$PROJECT_BASENAME"
+  mkdir -p "$HUBCODE_MAESTRO_PROJECT_PATH"
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" init >/dev/null
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" checkout -b main >/dev/null 2>&1 || true
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" config user.name "Hubcode Maestro"
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" config user.email "maestro@gethubcode.local"
+  printf "# Workspace create Android focused recording\n" > "$HUBCODE_MAESTRO_PROJECT_PATH/README.md"
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" add README.md
+  git -C "$HUBCODE_MAESTRO_PROJECT_PATH" commit -m "Initial commit" >/dev/null
 fi
 
-export PASEO_MAESTRO_PROJECT_NAME="${PASEO_MAESTRO_PROJECT_NAME:-$(basename "$PASEO_MAESTRO_PROJECT_PATH")}"
+export HUBCODE_MAESTRO_PROJECT_NAME="${HUBCODE_MAESTRO_PROJECT_NAME:-$(basename "$HUBCODE_MAESTRO_PROJECT_PATH")}"
 
 SETUP_FLOW="$OUT_DIR/workspace-create-android-ready-sidebar.rendered.yaml"
 FOCUS_FLOW="$OUT_DIR/workspace-create-android-create-focused.rendered.yaml"
@@ -78,8 +78,8 @@ render_flow_tree
 echo "=== Focused Android Workspace Create Recording ==="
 echo "Output dir: $OUT_DIR"
 echo "Video: $LOCAL_VIDEO"
-echo "Project: $PASEO_MAESTRO_PROJECT_PATH"
-echo "Project name: $PASEO_MAESTRO_PROJECT_NAME"
+echo "Project: $HUBCODE_MAESTRO_PROJECT_PATH"
+echo "Project name: $HUBCODE_MAESTRO_PROJECT_NAME"
 
 adb reverse tcp:6767 tcp:6767 >/dev/null
 
@@ -90,8 +90,8 @@ import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 
 const repoRoot = process.env.REPO_ROOT;
-const projectPath = process.env.PASEO_MAESTRO_PROJECT_PATH;
-const daemonUrl = process.env.PASEO_MAESTRO_DAEMON_WS_URL;
+const projectPath = process.env.HUBCODE_MAESTRO_PROJECT_PATH;
+const daemonUrl = process.env.HUBCODE_MAESTRO_DAEMON_WS_URL;
 if (!repoRoot || !projectPath || !daemonUrl) {
   throw new Error("Missing required environment for daemon project setup.");
 }

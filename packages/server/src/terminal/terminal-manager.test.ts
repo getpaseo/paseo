@@ -142,13 +142,13 @@ it("inherits registered env for the worktree root cwd", async () => {
 
     manager.registerCwdEnv({
       cwd,
-      env: { PASEO_WORKTREE_PORT: "45678" },
+      env: { HUBCODE_WORKTREE_PORT: "45678" },
     });
     const session = await manager.createTerminal({ cwd });
     for (let attempt = 0; attempt < 10 && !existsSync(markerPath); attempt++) {
       session.send({
         type: "input",
-        data: `printf '%s' "$PASEO_WORKTREE_PORT" > ${JSON.stringify(markerPath)}\r`,
+        data: `printf '%s' "$HUBCODE_WORKTREE_PORT" > ${JSON.stringify(markerPath)}\r`,
       });
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -169,13 +169,13 @@ it("inherits registered env for subdirectories within the worktree", async () =>
 
     manager.registerCwdEnv({
       cwd: rootCwd,
-      env: { PASEO_WORKTREE_PORT: "45679" },
+      env: { HUBCODE_WORKTREE_PORT: "45679" },
     });
     const session = await manager.createTerminal({ cwd: subdirCwd });
     for (let attempt = 0; attempt < 10 && !existsSync(markerPath); attempt++) {
       session.send({
         type: "input",
-        data: `printf '%s' "$PASEO_WORKTREE_PORT" > ${JSON.stringify(markerPath)}\r`,
+        data: `printf '%s' "$HUBCODE_WORKTREE_PORT" > ${JSON.stringify(markerPath)}\r`,
       });
       await new Promise((resolve) => setTimeout(resolve, 100));
     }

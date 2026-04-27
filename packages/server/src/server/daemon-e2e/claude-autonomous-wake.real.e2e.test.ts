@@ -6,7 +6,7 @@ import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { WebSocket } from "ws";
 import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
 import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
 
 function tmpCwd(): string {
@@ -439,7 +439,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   test("A: background sleep returns idle, then wakes autonomously and appends timeline activity", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });
@@ -512,7 +512,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   test("B: immediate HELLO before task notification returns promptly without deadlock", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });
@@ -585,7 +585,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   test("C: interrupt during overlap returns quickly and does not leave agent stuck running", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });
@@ -651,7 +651,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   test("returns to running after background sleep completes without a second prompt", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });
@@ -709,7 +709,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   test("accepts a new prompt after background sleep finishes and replies HELLO", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });
@@ -754,7 +754,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   test("repro: do-it-again + immediate hello can hang after autonomous wake under churn", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });
@@ -857,7 +857,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   test("repro: second background sleep completion after HELLO should settle back to idle", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });
@@ -929,7 +929,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   test("stress: immediate HELLO before task notification should not leave autonomous run stuck", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });
@@ -1015,7 +1015,7 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
   test("repro: transcript/timeline parity after do-it-again + hello race (hang + interrupt + drop)", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });

@@ -1,4 +1,4 @@
-import type { CreatePaseoWorktreeInput } from "@server/client/daemon-client";
+import type { CreateHubcodeWorktreeInput } from "@server/client/daemon-client";
 import type { GitHubSearchItem } from "@server/shared/messages";
 
 export type PickerItem =
@@ -9,7 +9,7 @@ export type PickerItem =
     };
 
 export type PickerCheckoutRequest = Pick<
-  CreatePaseoWorktreeInput,
+  CreateHubcodeWorktreeInput,
   "action" | "refName" | "githubPrNumber"
 >;
 

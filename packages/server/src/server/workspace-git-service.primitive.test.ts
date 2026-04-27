@@ -68,7 +68,7 @@ function createCheckoutStatus(
     behindOfOrigin: 0,
     hasRemote: true,
     remoteUrl: "https://github.com/acme/repo.git",
-    isPaseoOwnedWorktree: false,
+    isHubcodeOwnedWorktree: false,
     ...overrides,
   };
 }
@@ -118,7 +118,7 @@ function createSnapshot(
       mainRepoRoot: null,
       currentBranch: "main",
       remoteUrl: "https://github.com/acme/repo.git",
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       isDirty: false,
       baseRef: "main",
       aheadBehind: { ahead: 0, behind: 0 },
@@ -200,7 +200,7 @@ interface CreateServiceOptions {
   resolveBranchCheckout?: ReturnType<typeof vi.fn>;
   resolveRepositoryDefaultBranch?: ReturnType<typeof vi.fn>;
   listBranchSuggestions?: ReturnType<typeof vi.fn>;
-  listPaseoWorktrees?: ReturnType<typeof vi.fn>;
+  listHubcodeWorktrees?: ReturnType<typeof vi.fn>;
   github?: GitHubService;
   resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
   hasOriginRemote?: ReturnType<typeof vi.fn>;
@@ -224,7 +224,7 @@ function buildDefaultServiceDeps() {
     resolveBranchCheckout: vi.fn(async () => ({ kind: "not-found" })),
     resolveRepositoryDefaultBranch: vi.fn(async () => "main"),
     listBranchSuggestions: vi.fn(async () => []),
-    listPaseoWorktrees: vi.fn(async () => []),
+    listHubcodeWorktrees: vi.fn(async () => []),
     github: createGitHubServiceStub(),
     resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
     hasOriginRemote: vi.fn(async () => false),
@@ -247,7 +247,7 @@ function buildServiceDeps(options?: CreateServiceOptions) {
 function createService(options?: CreateServiceOptions) {
   return new WorkspaceGitServiceImpl({
     logger: createLogger() as never,
-    paseoHome: "/tmp/paseo-test",
+    hubcodeHome: "/tmp/hubcode-test",
     deps: buildServiceDeps(options),
   });
 }
@@ -1069,7 +1069,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
 
   test("listStashes cold-loads, warms, forces, and coalesces per cwd", async () => {
     let nowMs = 0;
-    const stashOutput = "stash@{0}\u0000paseo-auto-stash: feature\n";
+    const stashOutput = "stash@{0}\u0000hubcode-auto-stash: feature\n";
     const stashDeferred = createDeferred<{
       stdout: string;
       stderr: string;
@@ -1092,8 +1092,8 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       now: () => new Date(nowMs),
     });
 
-    const first = service.listStashes("/tmp/repo", { paseoOnly: true });
-    const second = service.listStashes("/tmp/repo/.", { paseoOnly: true });
+    const first = service.listStashes("/tmp/repo", { hubcodeOnly: true });
+    const second = service.listStashes("/tmp/repo/.", { hubcodeOnly: true });
     await flushPromises();
 
     expect(runGitCommand).toHaveBeenCalledTimes(1);
@@ -1105,15 +1105,15 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       signal: null,
     });
     await expect(Promise.all([first, second])).resolves.toEqual([
-      [{ index: 0, message: "paseo-auto-stash: feature", branch: "feature", isPaseo: true }],
-      [{ index: 0, message: "paseo-auto-stash: feature", branch: "feature", isPaseo: true }],
+      [{ index: 0, message: "hubcode-auto-stash: feature", branch: "feature", isHubcode: true }],
+      [{ index: 0, message: "hubcode-auto-stash: feature", branch: "feature", isHubcode: true }],
     ]);
 
     nowMs = 1_000;
-    await service.listStashes("/tmp/repo", { paseoOnly: true });
+    await service.listStashes("/tmp/repo", { hubcodeOnly: true });
     expect(runGitCommand).toHaveBeenCalledTimes(1);
 
-    await service.listStashes("/tmp/repo", { paseoOnly: true }, { force: true, reason: "test" });
+    await service.listStashes("/tmp/repo", { hubcodeOnly: true }, { force: true, reason: "test" });
     expect(runGitCommand).toHaveBeenCalledTimes(2);
 
     service.dispose();
@@ -1123,28 +1123,28 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     let nowMs = 0;
     const worktrees = [
       {
-        path: "/tmp/paseo-home/worktrees/repo/feature",
+        path: "/tmp/hubcode-home/worktrees/repo/feature",
         createdAt: "2026-04-12T00:00:00.000Z",
         branchName: "feature",
       },
     ];
-    const listPaseoWorktrees = vi.fn().mockResolvedValue(worktrees);
+    const listHubcodeWorktrees = vi.fn().mockResolvedValue(worktrees);
     const service = createService({
-      listPaseoWorktrees,
+      listHubcodeWorktrees,
       now: () => new Date(nowMs),
     });
 
     const first = service.listWorktrees("/tmp/repo");
     const second = service.listWorktrees("/tmp/repo/.");
     await expect(Promise.all([first, second])).resolves.toEqual([worktrees, worktrees]);
-    expect(listPaseoWorktrees).toHaveBeenCalledTimes(1);
+    expect(listHubcodeWorktrees).toHaveBeenCalledTimes(1);
 
     nowMs = 1_000;
     await service.listWorktrees("/tmp/repo");
-    expect(listPaseoWorktrees).toHaveBeenCalledTimes(1);
+    expect(listHubcodeWorktrees).toHaveBeenCalledTimes(1);
 
     await service.listWorktrees("/tmp/repo", { force: true, reason: "test" });
-    expect(listPaseoWorktrees).toHaveBeenCalledTimes(2);
+    expect(listHubcodeWorktrees).toHaveBeenCalledTimes(2);
 
     service.dispose();
   });
@@ -1158,15 +1158,15 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
 
     const worktrees = [
       {
-        path: join(tempDir, "paseo-home", "worktrees", "repo", "feature"),
+        path: join(tempDir, "hubcode-home", "worktrees", "repo", "feature"),
         createdAt: "2026-04-12T00:00:00.000Z",
         branchName: "feature",
       },
     ];
-    const listPaseoWorktrees = vi.fn(async () => worktrees);
+    const listHubcodeWorktrees = vi.fn(async () => worktrees);
     const service = createService({
       getCheckoutStatus: getCheckoutStatusUncached as never,
-      listPaseoWorktrees,
+      listHubcodeWorktrees,
     });
 
     try {
@@ -1175,10 +1175,10 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       ).resolves.toEqual([worktrees, worktrees]);
       await expect(service.listWorktrees(nestedWorkspaceDir)).resolves.toEqual(worktrees);
 
-      expect(listPaseoWorktrees).toHaveBeenCalledTimes(1);
-      expect(listPaseoWorktrees).toHaveBeenCalledWith({
+      expect(listHubcodeWorktrees).toHaveBeenCalledTimes(1);
+      expect(listHubcodeWorktrees).toHaveBeenCalledWith({
         cwd: repoDir,
-        paseoHome: "/tmp/paseo-test",
+        hubcodeHome: "/tmp/hubcode-test",
       });
     } finally {
       service.dispose();
@@ -1250,7 +1250,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     let nowMs = 0;
     const getCheckoutStatus = vi.fn(async (cwd: string) =>
       createCheckoutStatus(cwd, {
-        remoteUrl: "https://github.com/getpaseo/paseo.git",
+        remoteUrl: "https://github.com/hubtool/hubcode.git",
       }),
     );
     const service = createService({
@@ -1259,11 +1259,11 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     });
 
     await expect(service.resolveRepoRemoteUrl("/tmp/repo")).resolves.toBe(
-      "https://github.com/getpaseo/paseo.git",
+      "https://github.com/hubtool/hubcode.git",
     );
     nowMs = 1_000;
     await expect(service.resolveRepoRemoteUrl("/tmp/repo/.")).resolves.toBe(
-      "https://github.com/getpaseo/paseo.git",
+      "https://github.com/hubtool/hubcode.git",
     );
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
@@ -1276,7 +1276,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     const getCheckoutStatus = vi.fn(async (cwd: string) =>
       createCheckoutStatus(cwd, {
         currentBranch: "feature/service-metadata",
-        remoteUrl: "https://github.com/getpaseo/paseo.git",
+        remoteUrl: "https://github.com/hubtool/hubcode.git",
         repoRoot: "/tmp/repo",
       }),
     );
@@ -1289,14 +1289,14 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       service.getWorkspaceGitMetadata("/tmp/repo", { directoryName: "Local Repo" }),
     ).resolves.toEqual({
       projectKind: "git",
-      projectDisplayName: "getpaseo/paseo",
+      projectDisplayName: "gethubcode/hubcode",
       workspaceDisplayName: "feature/service-metadata",
-      gitRemote: "https://github.com/getpaseo/paseo.git",
+      gitRemote: "https://github.com/hubtool/hubcode.git",
       isWorktree: false,
-      projectSlug: "paseo",
+      projectSlug: "hubcode",
       repoRoot: "/tmp/repo",
       currentBranch: "feature/service-metadata",
-      remoteUrl: "https://github.com/getpaseo/paseo.git",
+      remoteUrl: "https://github.com/hubtool/hubcode.git",
     });
 
     nowMs = 1_000;

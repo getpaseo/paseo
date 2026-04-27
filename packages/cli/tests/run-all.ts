@@ -1,7 +1,7 @@
 #!/usr/bin/env npx zx
 
 /**
- * Test runner for Paseo CLI E2E tests
+ * Test runner for Hubcode CLI E2E tests
  *
  * Runs all test phases in sequence and reports results.
  * Each test is a separate .ts file that can also be run independently.
@@ -15,9 +15,9 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const testEnvDefaults = {
-  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? "0",
-  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? "0",
-  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? "0",
+  HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD ?? "0",
+  HUBCODE_DICTATION_ENABLED: process.env.HUBCODE_DICTATION_ENABLED ?? "0",
+  HUBCODE_VOICE_MODE_ENABLED: process.env.HUBCODE_VOICE_MODE_ENABLED ?? "0",
 };
 
 let jsonOutputPath: string | null = null;
@@ -73,7 +73,7 @@ async function writeJsonSummary({
     JSON.stringify(
       {
         suite: "cli-local",
-        command: "npm run test:local --workspace=@getpaseo/cli",
+        command: "npm run test:local --workspace=@gethubcode/cli",
         counts: {
           passed,
           failed,
@@ -91,7 +91,7 @@ async function writeJsonSummary({
   );
 }
 
-console.log("🧪 Paseo CLI E2E Test Runner\n");
+console.log("🧪 Hubcode CLI E2E Test Runner\n");
 console.log("=".repeat(50));
 
 // Discover all test files
@@ -114,9 +114,9 @@ let passed = 0;
 let failed = 0;
 const failures: Failure[] = [];
 
-await runCommand("Building relay", "npm run build --workspace=@getpaseo/relay");
-await runCommand("Building server", "npm run build --workspace=@getpaseo/server");
-await runCommand("Building CLI", "npm run build --workspace=@getpaseo/cli");
+await runCommand("Building relay", "npm run build --workspace=@gethubcode/relay");
+await runCommand("Building server", "npm run build --workspace=@gethubcode/server");
+await runCommand("Building CLI", "npm run build --workspace=@gethubcode/cli");
 
 type TestOutcome = { status: "passed" } | { status: "failed"; failure: Failure };
 
@@ -130,7 +130,7 @@ async function runSingleTest(testFile: string): Promise<TestOutcome> {
 
   try {
     const result =
-      await $`PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnvDefaults.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnvDefaults.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnvDefaults.PASEO_VOICE_MODE_ENABLED} npx tsx ${testPath}`.nothrow();
+      await $`HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnvDefaults.HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD} HUBCODE_DICTATION_ENABLED=${testEnvDefaults.HUBCODE_DICTATION_ENABLED} HUBCODE_VOICE_MODE_ENABLED=${testEnvDefaults.HUBCODE_VOICE_MODE_ENABLED} npx tsx ${testPath}`.nothrow();
     if (result.exitCode === 0) {
       console.log(`\n✅ ${testName} PASSED`);
       return { status: "passed" };

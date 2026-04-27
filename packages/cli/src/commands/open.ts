@@ -1,13 +1,13 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { spawnProcess } from "@getpaseo/server";
+import { spawnProcess } from "@gethubcode/server";
 
 function findDesktopApp(): string | null {
   if (process.platform === "darwin") {
     const candidates = [
-      "/Applications/Paseo.app",
-      path.join(homedir(), "Applications", "Paseo.app"),
+      "/Applications/Hubcode.app",
+      path.join(homedir(), "Applications", "Hubcode.app"),
     ];
 
     for (const candidate of candidates) {
@@ -21,9 +21,9 @@ function findDesktopApp(): string | null {
 
   if (process.platform === "linux") {
     const candidates = [
-      "/usr/bin/Paseo",
-      "/opt/Paseo/Paseo",
-      path.join(homedir(), "Applications", "Paseo.AppImage"),
+      "/usr/bin/Hubcode",
+      "/opt/Hubcode/Hubcode",
+      path.join(homedir(), "Applications", "Hubcode.AppImage"),
     ];
 
     for (const candidate of candidates) {
@@ -41,7 +41,7 @@ function findDesktopApp(): string | null {
       return null;
     }
 
-    const candidate = path.join(localAppData, "Programs", "Paseo", "Paseo.exe");
+    const candidate = path.join(localAppData, "Programs", "Hubcode", "Hubcode.exe");
     return existsSync(candidate) ? candidate : null;
   }
 
@@ -55,7 +55,7 @@ function cleanEnvForDesktopLaunch(): NodeJS.ProcessEnv {
   // desktop app would start as a bare Node process instead of Electron.
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.ELECTRON_NO_ATTACH_CONSOLE;
-  delete env.PASEO_NODE_ENV;
+  delete env.HUBCODE_NODE_ENV;
   return env;
 }
 
@@ -69,7 +69,7 @@ function spawnDetached(command: string, args: string[]): void {
 
 export async function openDesktopWithProject(projectPath: string): Promise<void> {
   try {
-    if (process.env.PASEO_DESKTOP_CLI === "1") {
+    if (process.env.HUBCODE_DESKTOP_CLI === "1") {
       throw new Error(
         "Cannot open a desktop project while running in desktop CLI passthrough mode.",
       );
@@ -78,7 +78,7 @@ export async function openDesktopWithProject(projectPath: string): Promise<void>
     const desktopApp = findDesktopApp();
     if (!desktopApp) {
       throw new Error(
-        "Paseo desktop app not found. Install it from https://github.com/getpaseo/paseo/releases",
+        "Hubcode desktop app not found. Install it from https://github.com/hubtool/hubcode/releases",
       );
     }
 

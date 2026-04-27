@@ -121,8 +121,8 @@ describe("STTManager", () => {
   });
 
   it("uses streaming segmentation for batch transcription and concatenates segment finals", async () => {
-    const original = process.env.PASEO_STT_BATCH_COMMIT_EVERY_SECONDS;
-    process.env.PASEO_STT_BATCH_COMMIT_EVERY_SECONDS = "1";
+    const original = process.env.HUBCODE_STT_BATCH_COMMIT_EVERY_SECONDS;
+    process.env.HUBCODE_STT_BATCH_COMMIT_EVERY_SECONDS = "1";
 
     try {
       const manager = new STTManager(
@@ -139,9 +139,9 @@ describe("STTManager", () => {
       expect(result.byteLength).toBe(threeSecondsPcm.length);
     } finally {
       if (original === undefined) {
-        delete process.env.PASEO_STT_BATCH_COMMIT_EVERY_SECONDS;
+        delete process.env.HUBCODE_STT_BATCH_COMMIT_EVERY_SECONDS;
       } else {
-        process.env.PASEO_STT_BATCH_COMMIT_EVERY_SECONDS = original;
+        process.env.HUBCODE_STT_BATCH_COMMIT_EVERY_SECONDS = original;
       }
     }
   });

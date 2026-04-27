@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { PersistedConfig } from "../persisted-config.js";
-import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
+import type { HubcodeOpenAIConfig, HubcodeSpeechConfig } from "../bootstrap.js";
 import { resolveLocalSpeechConfig } from "./providers/local/config.js";
 import { resolveOpenAiSpeechConfig } from "./providers/openai/config.js";
 import {
@@ -67,40 +67,40 @@ function buildFeatureProviderInputs(params: {
 }): Record<keyof RequestedSpeechProviders, FeatureProviderInputs> {
   const voiceModeEnabled = resolveOptionalBooleanFlag(
     firstSpeechDefinedValue<string | boolean>([
-      params.env.PASEO_VOICE_MODE_ENABLED,
+      params.env.HUBCODE_VOICE_MODE_ENABLED,
       params.persisted.features?.voiceMode?.enabled,
     ]),
   );
   return {
     dictationStt: {
       configuredValue: firstSpeechDefinedValue<string>([
-        params.env.PASEO_DICTATION_STT_PROVIDER,
+        params.env.HUBCODE_DICTATION_STT_PROVIDER,
         params.persisted.features?.dictation?.stt?.provider,
       ]),
       enabled: resolveOptionalBooleanFlag(
         firstSpeechDefinedValue<string | boolean>([
-          params.env.PASEO_DICTATION_ENABLED,
+          params.env.HUBCODE_DICTATION_ENABLED,
           params.persisted.features?.dictation?.enabled,
         ]),
       ),
     },
     voiceTurnDetection: {
       configuredValue: firstSpeechDefinedValue<string>([
-        params.env.PASEO_VOICE_TURN_DETECTION_PROVIDER,
+        params.env.HUBCODE_VOICE_TURN_DETECTION_PROVIDER,
         params.persisted.features?.voiceMode?.turnDetection?.provider,
       ]),
       enabled: voiceModeEnabled,
     },
     voiceStt: {
       configuredValue: firstSpeechDefinedValue<string>([
-        params.env.PASEO_VOICE_STT_PROVIDER,
+        params.env.HUBCODE_VOICE_STT_PROVIDER,
         params.persisted.features?.voiceMode?.stt?.provider,
       ]),
       enabled: voiceModeEnabled,
     },
     voiceTts: {
       configuredValue: firstSpeechDefinedValue<string>([
-        params.env.PASEO_VOICE_TTS_PROVIDER,
+        params.env.HUBCODE_VOICE_TTS_PROVIDER,
         params.persisted.features?.voiceMode?.tts?.provider,
       ]),
       enabled: voiceModeEnabled,
@@ -144,12 +144,12 @@ function resolveRequestedSpeechProviders(params: {
 }
 
 export function resolveSpeechConfig(params: {
-  paseoHome: string;
+  hubcodeHome: string;
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
 }): {
-  openai: PaseoOpenAIConfig | undefined;
-  speech: PaseoSpeechConfig;
+  openai: HubcodeOpenAIConfig | undefined;
+  speech: HubcodeSpeechConfig;
 } {
   const providers = resolveRequestedSpeechProviders({
     env: params.env,
@@ -157,7 +157,7 @@ export function resolveSpeechConfig(params: {
   });
 
   const local = resolveLocalSpeechConfig({
-    paseoHome: params.paseoHome,
+    hubcodeHome: params.hubcodeHome,
     env: params.env,
     persisted: params.persisted,
     providers,

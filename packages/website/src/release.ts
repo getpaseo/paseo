@@ -13,9 +13,9 @@ interface GitHubRelease {
 }
 
 const REQUIRED_ASSET_PATTERNS = [
-  /Paseo-.*-arm64\.dmg$/, // Mac Apple Silicon
-  /Paseo-.*-x86_64\.AppImage$/, // Linux AppImage
-  /Paseo-Setup-.*\.exe$/, // Windows
+  /Hubcode-.*-arm64\.dmg$/, // Mac Apple Silicon
+  /Hubcode-.*-x86_64\.AppImage$/, // Linux AppImage
+  /Hubcode-Setup-.*\.exe$/, // Windows
 ];
 
 function hasRequiredAssets(release: GitHubRelease): boolean {
@@ -28,7 +28,7 @@ function versionFromTag(tag: string): string {
   return tag.replace(/^v/, "");
 }
 
-const GITHUB_RELEASES_URL = "https://api.github.com/repos/getpaseo/paseo/releases?per_page=10";
+const GITHUB_RELEASES_URL = "https://api.github.com/repos/gethubcode/hubcode/releases?per_page=10";
 
 async function fetchLatestReadyRelease(): Promise<string> {
   const fallback = websitePackage.version.replace(/-.*$/, "");
@@ -37,7 +37,7 @@ async function fetchLatestReadyRelease(): Promise<string> {
     const res = await fetch(GITHUB_RELEASES_URL, {
       headers: {
         Accept: "application/vnd.github+json",
-        "User-Agent": "paseo-website",
+        "User-Agent": "hubcode-website",
       },
       // Cloudflare Workers: cache the upstream response with stale-while-revalidate.
       // Fresh for 60s, serve stale for up to 300s while revalidating in background.

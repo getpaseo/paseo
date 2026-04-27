@@ -5,7 +5,7 @@ import { JSDOM } from "jsdom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComposerAttachment } from "@/attachments/types";
-import type { CreatePaseoWorktreeInput } from "@server/client/daemon-client";
+import type { CreateHubcodeWorktreeInput } from "@server/client/daemon-client";
 import type { GitHubSearchItem } from "@server/shared/messages";
 import { NewWorkspaceScreen } from "./new-workspace-screen";
 
@@ -87,7 +87,7 @@ const {
 
   const hoistedCreatedWorkspace = {
     id: "workspace-1",
-    workspaceDirectory: "/repo/.paseo/worktrees/workspace-1",
+    workspaceDirectory: "/repo/.hubcode/worktrees/workspace-1",
   };
 
   const hoistedCreatedAgent = {
@@ -104,7 +104,7 @@ const {
       githubFeaturesEnabled: true,
       error: null,
     })),
-    createPaseoWorktree: vi.fn(async (_input: CreatePaseoWorktreeInput) => ({
+    createHubcodeWorktree: vi.fn(async (_input: CreateHubcodeWorktreeInput) => ({
       workspace: hoistedCreatedWorkspace,
       error: null,
     })),
@@ -563,7 +563,7 @@ beforeEach(() => {
     githubFeaturesEnabled: true,
     error: null,
   });
-  mockClient.createPaseoWorktree.mockClear();
+  mockClient.createHubcodeWorktree.mockClear();
   mockClient.createAgent.mockClear();
   saveDraftInputMock.mockClear();
   clearDraftInputMock.mockClear();
@@ -627,7 +627,7 @@ function queryAllByTestId(testID: string): HTMLElement[] {
   return Array.from(document.querySelectorAll(`[data-testid="${testID}"]`)) as HTMLElement[];
 }
 
-type CreatePaseoWorktreeArg = Parameters<typeof mockClient.createPaseoWorktree>[0];
+type CreateHubcodeWorktreeArg = Parameters<typeof mockClient.createHubcodeWorktree>[0];
 
 function createDeferredPromise<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -639,10 +639,10 @@ function createDeferredPromise<T>() {
   return { promise, resolve, reject };
 }
 
-function firstCreateWorktreeCall(): CreatePaseoWorktreeArg {
-  const calls = mockClient.createPaseoWorktree.mock.calls;
+function firstCreateWorktreeCall(): CreateHubcodeWorktreeArg {
+  const calls = mockClient.createHubcodeWorktree.mock.calls;
   const firstCall = calls[0];
-  if (!firstCall) throw new Error("createPaseoWorktree not called");
+  if (!firstCall) throw new Error("createHubcodeWorktree not called");
   return firstCall[0];
 }
 
@@ -679,7 +679,7 @@ describe("NewWorkspaceScreen picker payload", () => {
     click(await findByTestId("test-composer-submit"));
     await flush();
 
-    expect(mockClient.createPaseoWorktree).toHaveBeenCalledTimes(1);
+    expect(mockClient.createHubcodeWorktree).toHaveBeenCalledTimes(1);
     const call = firstCreateWorktreeCall();
     expect(call).toMatchObject({
       cwd: "/repo",
@@ -698,7 +698,7 @@ describe("NewWorkspaceScreen picker payload", () => {
     click(await findByTestId("test-composer-submit"));
     await flush();
 
-    expect(mockClient.createPaseoWorktree).toHaveBeenCalledTimes(1);
+    expect(mockClient.createHubcodeWorktree).toHaveBeenCalledTimes(1);
     expect(mockClient.createAgent).not.toHaveBeenCalled();
     expect(saveDraftInputMock).toHaveBeenCalledWith({
       draftKey: "draft:server:draft-new-workspace",
@@ -827,7 +827,7 @@ describe("NewWorkspaceScreen picker payload", () => {
     click(await findByTestId("test-composer-submit"));
     await flush();
 
-    expect(mockClient.createPaseoWorktree).toHaveBeenCalledTimes(1);
+    expect(mockClient.createHubcodeWorktree).toHaveBeenCalledTimes(1);
     const call = firstCreateWorktreeCall();
     expect(call).toMatchObject({
       cwd: "/repo",
@@ -851,7 +851,7 @@ describe("NewWorkspaceScreen picker payload", () => {
     click(await findByTestId("test-composer-submit"));
     await flush();
 
-    expect(mockClient.createPaseoWorktree).toHaveBeenCalledTimes(1);
+    expect(mockClient.createHubcodeWorktree).toHaveBeenCalledTimes(1);
     const call = firstCreateWorktreeCall();
     expect(call).toMatchObject({
       cwd: "/repo",
@@ -935,7 +935,7 @@ describe("NewWorkspaceScreen picker payload", () => {
       workspace: typeof createdWorkspace;
       error: null;
     }>();
-    mockClient.createPaseoWorktree.mockImplementationOnce(async () => await createWorktree.promise);
+    mockClient.createHubcodeWorktree.mockImplementationOnce(async () => await createWorktree.promise);
     renderScreen();
     await flush();
 

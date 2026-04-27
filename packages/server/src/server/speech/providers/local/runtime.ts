@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import type { PaseoSpeechConfig } from "../../../bootstrap.js";
+import type { HubcodeSpeechConfig } from "../../../bootstrap.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-provider.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import type { TurnDetectionProvider } from "../../turn-detection-provider.js";
@@ -57,10 +57,10 @@ export interface InitializedLocalSpeech {
 }
 
 function buildModelDownloadHint(modelId: LocalSpeechModelId): string {
-  return `Use 'paseo speech download --model ${modelId}' to download this model.`;
+  return `Use 'hubcode speech download --model ${modelId}' to download this model.`;
 }
 
-function resolveConfiguredLocalModels(speechConfig: PaseoSpeechConfig | null): ResolvedLocalModels {
+function resolveConfiguredLocalModels(speechConfig: HubcodeSpeechConfig | null): ResolvedLocalModels {
   return {
     dictationLocalSttModel: LocalSttModelIdSchema.parse(
       speechConfig?.local?.models.dictationStt ?? DEFAULT_LOCAL_STT_MODEL,
@@ -75,7 +75,7 @@ function resolveConfiguredLocalModels(speechConfig: PaseoSpeechConfig | null): R
 }
 
 export function getLocalSpeechAvailability(
-  speechConfig: PaseoSpeechConfig | null,
+  speechConfig: HubcodeSpeechConfig | null,
 ): LocalSpeechAvailability {
   const localConfig = speechConfig?.local ?? null;
   return {
@@ -183,7 +183,7 @@ async function createLocalSttEngine(params: {
   throw new Error(`Unsupported local STT model '${modelId}'`);
 }
 
-type LocalConfig = NonNullable<PaseoSpeechConfig["local"]>;
+type LocalConfig = NonNullable<HubcodeSpeechConfig["local"]>;
 
 function isLocalProviderEnabled(provider: { enabled?: boolean; provider: string }): boolean {
   return provider.enabled !== false && provider.provider === "local";
@@ -262,7 +262,7 @@ async function initializeLocalDictationStt(params: {
 
 async function initializeLocalVoiceTts(params: {
   localConfig: LocalConfig | null;
-  speechConfig: PaseoSpeechConfig | null;
+  speechConfig: HubcodeSpeechConfig | null;
   localModels: ResolvedLocalModels;
   logger: Logger;
 }): Promise<TextToSpeechProvider | null> {
@@ -311,7 +311,7 @@ async function initializeLocalVoiceTts(params: {
 
 export async function initializeLocalSpeechServices(params: {
   providers: RequestedSpeechProviders;
-  speechConfig: PaseoSpeechConfig | null;
+  speechConfig: HubcodeSpeechConfig | null;
   logger: Logger;
 }): Promise<InitializedLocalSpeech> {
   const { providers, logger, speechConfig } = params;

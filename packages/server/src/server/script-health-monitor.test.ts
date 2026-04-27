@@ -18,7 +18,7 @@ interface TcpServerHandle {
 
 function createWorkspaceRepo(options?: {
   branchName?: string;
-  paseoConfig?: Record<string, unknown>;
+  hubcodeConfig?: Record<string, unknown>;
 }): { tempDir: string; repoDir: string; cleanup: () => void } {
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "script-health-monitor-")));
   const repoDir = path.join(tempDir, "repo");
@@ -27,8 +27,8 @@ function createWorkspaceRepo(options?: {
   execSync("git config user.email 'test@test.com'", { cwd: repoDir, stdio: "pipe" });
   execSync("git config user.name 'Test'", { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "hello\n");
-  if (options?.paseoConfig) {
-    writeFileSync(path.join(repoDir, "paseo.json"), JSON.stringify(options.paseoConfig, null, 2));
+  if (options?.hubcodeConfig) {
+    writeFileSync(path.join(repoDir, "hubcode.json"), JSON.stringify(options.hubcodeConfig, null, 2));
   }
   execSync("git add .", { cwd: repoDir, stdio: "pipe" });
   execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir, stdio: "pipe" });
@@ -419,7 +419,7 @@ describe("ScriptHealthMonitor", () => {
     servers.add(service.server);
 
     const workspace = createWorkspaceRepo({
-      paseoConfig: {
+      hubcodeConfig: {
         scripts: {
           typecheck: { command: "npm run typecheck" },
           api: { type: "service", command: "npm run api", port: service.port },

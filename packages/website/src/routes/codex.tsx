@@ -5,7 +5,7 @@ import { pageMeta } from "~/meta";
 export const Route = createFileRoute("/codex")({
   head: () => ({
     meta: pageMeta(
-      "Codex Mobile App – Run Codex from anywhere | Paseo",
+      "Codex Mobile App – Run Codex from anywhere | Hubcode",
       "Run OpenAI Codex from your phone. Kick off agents, monitor progress, and ship code without being at your desk. Self-hosted, your code never leaves your machine.",
     ),
   }),

@@ -46,7 +46,7 @@ env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
   CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.checkout_ref || github.ref_name) || github.ref_name }}
   SHOULD_PUBLISH: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false' }}
-  DESKTOP_WORKSPACE: "@getpaseo/desktop"
+  DESKTOP_WORKSPACE: "@gethubcode/desktop"
   DESKTOP_PACKAGE_PATH: "packages/desktop"
 
 jobs:
@@ -79,7 +79,7 @@ jobs:
             fi
             gh release create "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
-              --title "Paseo $RELEASE_TAG" \
+              --title "Hubcode $RELEASE_TAG" \
               --notes "" \
               $prerelease_flag || {
                 echo "Release creation raced with another workflow; continuing."
@@ -143,7 +143,7 @@ jobs:
           NODE
 
       - name: Build web app for desktop
-        run: npm run build:web --workspace=@getpaseo/app
+        run: npm run build:web --workspace=@gethubcode/app
 
       - name: Build desktop release
         shell: bash
@@ -155,7 +155,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          PASEO_DESKTOP_SMOKE: "1"
+          HUBCODE_DESKTOP_SMOKE: "1"
         run: |
           set -euo pipefail
           publish_mode="never"
@@ -323,7 +323,7 @@ jobs:
           NODE
 
       - name: Build web app for desktop
-        run: npm run build:web --workspace=@getpaseo/app
+        run: npm run build:web --workspace=@gethubcode/app
 
       - name: Install Linux smoke display
         run: sudo apt-get update && sudo apt-get install -y xvfb
@@ -333,7 +333,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
-          PASEO_DESKTOP_SMOKE: "1"
+          HUBCODE_DESKTOP_SMOKE: "1"
         run: |
           set -euo pipefail
           publish_mode="never"
@@ -396,7 +396,7 @@ jobs:
           NODE
 
       - name: Build workspace dependencies
-        run: npm run build:workspace-deps --workspace=@getpaseo/app
+        run: npm run build:workspace-deps --workspace=@gethubcode/app
 
       - name: Build web app for desktop
         shell: pwsh
@@ -411,7 +411,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
-          PASEO_DESKTOP_SMOKE: "1"
+          HUBCODE_DESKTOP_SMOKE: "1"
         run: |
           set -euo pipefail
           publish_mode="never"

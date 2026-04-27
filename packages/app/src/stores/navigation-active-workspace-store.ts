@@ -39,7 +39,7 @@ interface NavigationObserverRef {
   } | null;
 }
 
-const LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-selection";
+const LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY = "hubcode:last-workspace-route-selection";
 
 let snapshot: ActiveWorkspaceSelection | null = null;
 let lastWorkspaceRouteSelection: ActiveWorkspaceSelection | null = null;

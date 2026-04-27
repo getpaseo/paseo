@@ -18,12 +18,12 @@ interface InstallStatus {
 // ---------------------------------------------------------------------------
 
 const SKILL_NAMES = [
-  "paseo",
-  "paseo-loop",
-  "paseo-handoff",
-  "paseo-orchestrator",
-  "paseo-chat",
-  "paseo-committee",
+  "hubcode",
+  "hubcode-loop",
+  "hubcode-handoff",
+  "hubcode-orchestrator",
+  "hubcode-chat",
+  "hubcode-committee",
 ];
 
 // ---------------------------------------------------------------------------
@@ -48,12 +48,12 @@ function getLocalBinDir(): string {
 }
 
 function getCliTargetPath(): string {
-  const filename = process.platform === "win32" ? "paseo.cmd" : "paseo";
+  const filename = process.platform === "win32" ? "hubcode.cmd" : "hubcode";
   return path.join(getLocalBinDir(), filename);
 }
 
 function getBundledCliShimPath(): string {
-  const cliShimFilename = process.platform === "win32" ? "paseo.cmd" : "paseo";
+  const cliShimFilename = process.platform === "win32" ? "hubcode.cmd" : "hubcode";
 
   if (process.platform === "darwin") {
     const electronExePath = app.getPath("exe");
@@ -169,7 +169,7 @@ async function ensurePathInShellRc(): Promise<{ shellUpdated: boolean }> {
     }
 
     await fs.mkdir(path.dirname(info.rcFile), { recursive: true });
-    await fs.appendFile(info.rcFile, `\n# Added by Paseo\n${info.exportLine}\n`);
+    await fs.appendFile(info.rcFile, `\n# Added by Hubcode\n${info.exportLine}\n`);
 
     return { shellUpdated: true };
   } catch (err) {
@@ -207,7 +207,7 @@ export async function installCli(): Promise<InstallStatus> {
       "@echo off",
       `set "BUNDLED_CLI=${shimPath}"`,
       `if not exist "%BUNDLED_CLI%" (`,
-      `  echo Paseo CLI not found at %BUNDLED_CLI% — is Paseo installed? 1>&2`,
+      `  echo Hubcode CLI not found at %BUNDLED_CLI% — is Hubcode installed? 1>&2`,
       `  exit /b 1`,
       `)`,
       `call "%BUNDLED_CLI%" %*`,

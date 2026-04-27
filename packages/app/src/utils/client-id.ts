@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const CLIENT_ID_STORAGE_KEY = "@paseo:client-id-v1";
+const CLIENT_ID_STORAGE_KEY = "@hubcode:client-id-v1";
 
 let cachedClientId: string | null = null;
 let inFlightClientId: Promise<string> | null = null;

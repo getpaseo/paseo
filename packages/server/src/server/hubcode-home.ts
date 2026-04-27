@@ -12,8 +12,8 @@ function expandHomeDir(input: string): string {
   return input;
 }
 
-export function resolvePaseoHome(env: NodeJS.ProcessEnv = process.env): string {
-  const raw = env.PASEO_HOME ?? "~/.paseo";
+export function resolveHubcodeHome(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.HUBCODE_HOME ?? "~/.hubcode";
   const resolved = path.resolve(expandHomeDir(raw));
   mkdirSync(resolved, { recursive: true });
   return resolved;

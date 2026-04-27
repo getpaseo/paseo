@@ -4,8 +4,8 @@ import { pageMeta } from "~/meta";
 export const Route = createFileRoute("/docs/skills")({
   head: () => ({
     meta: pageMeta(
-      "Orchestration Skills - Paseo Docs",
-      "Paseo orchestration skills: teach coding agents to spawn, coordinate, and manage other agents using slash commands.",
+      "Orchestration Skills - Hubcode Docs",
+      "Hubcode orchestration skills: teach coding agents to spawn, coordinate, and manage other agents using slash commands.",
     ),
   }),
   component: Skills,
@@ -25,8 +25,8 @@ function Skills() {
       <div>
         <h1 className="text-3xl font-medium font-title mb-4">Orchestration Skills</h1>
         <p className="text-white/60 leading-relaxed">
-          Paseo ships orchestration skills that teach coding agents (Claude Code, Codex) how to use
-          the Paseo CLI to spawn, coordinate, and manage other agents. Skills are slash commands
+          Hubcode ships orchestration skills that teach coding agents (Claude Code, Codex) how to use
+          the Hubcode CLI to spawn, coordinate, and manage other agents. Skills are slash commands
           your agent can invoke — they provide the prompts, context, and workflows so agents know
           how to orchestrate without you writing boilerplate. Install them from the desktop
           app&apos;s Integrations settings or via the CLI.
@@ -43,20 +43,20 @@ function Skills() {
           </li>
           <li>
             <strong>Manual:</strong>{" "}
-            <code className="font-mono">npx skills add getpaseo/paseo</code> — this installs to{" "}
+            <code className="font-mono">npx skills add gethubcode/hubcode</code> — this installs to{" "}
             <code className="font-mono">~/.agents/skills/</code> and sets up symlinks for each
             agent.
           </li>
         </ul>
       </section>
 
-      {/* /paseo */}
+      {/* /hubcode */}
       <section className="space-y-4">
         <h2 className="text-xl font-medium">
-          <code className="font-mono">/paseo</code> — CLI Reference
+          <code className="font-mono">/hubcode</code> — CLI Reference
         </h2>
         <p className="text-white/60 leading-relaxed">
-          The foundational skill. Loaded automatically by other skills. Contains the full Paseo CLI
+          The foundational skill. Loaded automatically by other skills. Contains the full Hubcode CLI
           command reference so agents know how to run commands.
         </p>
         <p className="text-white/60 leading-relaxed">
@@ -65,10 +65,10 @@ function Skills() {
         </p>
       </section>
 
-      {/* /paseo-handoff */}
+      {/* /hubcode-handoff */}
       <section className="space-y-4">
         <h2 className="text-xl font-medium">
-          <code className="font-mono">/paseo-handoff</code> — Task Handoff
+          <code className="font-mono">/hubcode-handoff</code> — Task Handoff
         </h2>
         <p className="text-white/60 leading-relaxed">
           Hands off your current task to another agent with full context. The receiving agent gets a
@@ -80,15 +80,15 @@ function Skills() {
           <code className="font-mono">--worktree</code> for isolated git branches.
         </p>
         <Code>
-          <pre className="text-white/80">{`/paseo-handoff hand off the auth fix to codex in a worktree
-/paseo-handoff hand this to claude opus for review`}</pre>
+          <pre className="text-white/80">{`/hubcode-handoff hand off the auth fix to codex in a worktree
+/hubcode-handoff hand this to claude opus for review`}</pre>
         </Code>
       </section>
 
-      {/* /paseo-loop */}
+      {/* /hubcode-loop */}
       <section className="space-y-4">
         <h2 className="text-xl font-medium">
-          <code className="font-mono">/paseo-loop</code> — Iterative Loops
+          <code className="font-mono">/hubcode-loop</code> — Iterative Loops
         </h2>
         <p className="text-white/60 leading-relaxed">
           Runs an agent in a loop with automatic verification until an exit condition is met. Worker
@@ -100,15 +100,15 @@ function Skills() {
           <code className="font-mono">--max-time</code>, or verification passes.
         </p>
         <Code>
-          <pre className="text-white/80">{`/paseo-loop fix the failing tests, verify with npm test, max 5 iterations
-/paseo-loop use codex to implement, claude sonnet to verify, loop until tests pass`}</pre>
+          <pre className="text-white/80">{`/hubcode-loop fix the failing tests, verify with npm test, max 5 iterations
+/hubcode-loop use codex to implement, claude sonnet to verify, loop until tests pass`}</pre>
         </Code>
       </section>
 
-      {/* /paseo-orchestrator */}
+      {/* /hubcode-orchestrator */}
       <section className="space-y-4">
         <h2 className="text-xl font-medium">
-          <code className="font-mono">/paseo-orchestrator</code> — Team Orchestration
+          <code className="font-mono">/hubcode-orchestrator</code> — Team Orchestration
         </h2>
         <p className="text-white/60 leading-relaxed">
           Builds and manages a team of agents coordinating through a shared chat room. You describe
@@ -119,14 +119,14 @@ function Skills() {
           Cross-provider: typically Codex for implementation, Claude for review.
         </p>
         <Code>
-          <pre className="text-white/80">{`/paseo-orchestrator spin up a team to implement the database migration, codex implements, claude reviews`}</pre>
+          <pre className="text-white/80">{`/hubcode-orchestrator spin up a team to implement the database migration, codex implements, claude reviews`}</pre>
         </Code>
       </section>
 
-      {/* /paseo-chat */}
+      {/* /hubcode-chat */}
       <section className="space-y-4">
         <h2 className="text-xl font-medium">
-          <code className="font-mono">/paseo-chat</code> — Chat Rooms
+          <code className="font-mono">/hubcode-chat</code> — Chat Rooms
         </h2>
         <p className="text-white/60 leading-relaxed">
           Use persistent chat rooms for asynchronous agent coordination. Create rooms, post
@@ -137,15 +137,15 @@ function Skills() {
           Typically used by the orchestrator skill, but can be used directly.
         </p>
         <Code>
-          <pre className="text-white/80">{`/paseo-chat create a room called "backend-refactor" for coordinating the API changes
-/paseo-chat post to backend-refactor: "API endpoints are done, ready for review"`}</pre>
+          <pre className="text-white/80">{`/hubcode-chat create a room called "backend-refactor" for coordinating the API changes
+/hubcode-chat post to backend-refactor: "API endpoints are done, ready for review"`}</pre>
         </Code>
       </section>
 
-      {/* /paseo-committee */}
+      {/* /hubcode-committee */}
       <section className="space-y-4">
         <h2 className="text-xl font-medium">
-          <code className="font-mono">/paseo-committee</code> — Committee Planning
+          <code className="font-mono">/hubcode-committee</code> — Committee Planning
         </h2>
         <p className="text-white/60 leading-relaxed">
           Forms a committee of two high-reasoning agents (Claude Opus + GPT 5.4) to analyze a
@@ -156,8 +156,8 @@ function Skills() {
           Agents are prevented from editing code — they only produce a plan.
         </p>
         <Code>
-          <pre className="text-white/80">{`/paseo-committee why are the websocket connections dropping under load?
-/paseo-committee plan the auth system migration`}</pre>
+          <pre className="text-white/80">{`/hubcode-committee why are the websocket connections dropping under load?
+/hubcode-committee plan the auth system migration`}</pre>
         </Code>
       </section>
     </div>

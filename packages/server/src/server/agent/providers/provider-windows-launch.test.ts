@@ -22,14 +22,14 @@ interface ProviderLaunchCase {
   shell?: boolean;
 }
 
-const JSON_ARG = '{"mcpServers":{"paseo":{"type":"http","url":"http://127.0.0.1:6767/mcp"}}}';
+const JSON_ARG = '{"mcpServers":{"hubcode":{"type":"http","url":"http://127.0.0.1:6767/mcp"}}}';
 const tempDirs: string[] = [];
 
 function makeFixture(binaryName: string, expectedArgs: string[]) {
-  const root = mkdtempSync(path.join(tmpdir(), `paseo ${binaryName} launch `));
+  const root = mkdtempSync(path.join(tmpdir(), `hubcode ${binaryName} launch `));
   tempDirs.push(root);
 
-  const fakeDaemonNode = path.join(root, "Fake Paseo.exe");
+  const fakeDaemonNode = path.join(root, "Fake Hubcode.exe");
   copyFileSync(process.execPath, fakeDaemonNode);
 
   const assertScript = path.join(root, "assert-argv.js");
@@ -41,7 +41,7 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 
-const expected = JSON.parse(process.env.PASEO_EXPECTED_ARGV_JSON);
+const expected = JSON.parse(process.env.HUBCODE_EXPECTED_ARGV_JSON);
 const actual = process.argv.slice(2);
 if (JSON.stringify(actual) !== JSON.stringify(expected)) {
   console.error("ARGV_MISMATCH");
@@ -114,7 +114,7 @@ async function runProviderFixture(params: {
   const child = spawnProcess(params.command, params.args, {
     env: {
       ...process.env,
-      PASEO_EXPECTED_ARGV_JSON: JSON.stringify(params.expectedArgs),
+      HUBCODE_EXPECTED_ARGV_JSON: JSON.stringify(params.expectedArgs),
     },
     stdio: ["ignore", "pipe", "pipe"],
     ...(params.shell === undefined ? {} : { shell: params.shell }),

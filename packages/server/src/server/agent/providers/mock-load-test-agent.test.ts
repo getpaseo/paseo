@@ -129,7 +129,7 @@ describe("MockLoadTestAgentClient", () => {
 
   test("agent manager coalesces adjacent markdown chunks from the mock provider", async () => {
     vi.useFakeTimers();
-    const workdir = mkdtempSync(join(tmpdir(), "paseo-mock-load-test-"));
+    const workdir = mkdtempSync(join(tmpdir(), "hubcode-mock-load-test-"));
     try {
       const client = new MockLoadTestAgentClient();
       const manager = new AgentManager({

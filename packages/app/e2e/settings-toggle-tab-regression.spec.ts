@@ -25,7 +25,7 @@ async function pressSettingsToggleShortcut(page: Page) {
 async function expectSendBehavior(page: Page, expected: "interrupt" | "queue") {
   await expect
     .poll(async () => {
-      const raw = await page.evaluate(() => localStorage.getItem("@paseo:app-settings"));
+      const raw = await page.evaluate(() => localStorage.getItem("@hubcode:app-settings"));
       if (!raw) {
         return null;
       }

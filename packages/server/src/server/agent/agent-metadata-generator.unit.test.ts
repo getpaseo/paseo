@@ -19,7 +19,7 @@ const ELIGIBLE_WORKTREE_SNAPSHOT: WorkspaceGitRuntimeSnapshot = {
     mainRepoRoot: "/tmp/repo",
     currentBranch: "metadata-worktree",
     remoteUrl: null,
-    isPaseoOwnedWorktree: true,
+    isHubcodeOwnedWorktree: true,
     isDirty: false,
     baseRef: "main",
     aheadBehind: null,
@@ -115,7 +115,7 @@ describe("agent metadata generator auto-title", () => {
       cwd: "/tmp/repo/metadata-worktree",
       initialPrompt: "Rename this worktree branch.",
       explicitTitle: "Keep explicit title",
-      paseoHome: "/tmp/paseo-home",
+      hubcodeHome: "/tmp/hubcode-home",
       logger,
       deps: {
         generateStructuredAgentResponseWithFallback: generateStructured,

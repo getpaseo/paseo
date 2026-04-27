@@ -50,7 +50,7 @@ function createWorkspaceRuntimeSnapshot(
       mainRepoRoot: null,
       currentBranch: "main",
       remoteUrl: "https://github.com/acme/repo.git",
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       isDirty: false,
       baseRef: "main",
       aheadBehind: { ahead: 0, behind: 0 },
@@ -153,7 +153,7 @@ function createSessionForWorkspaceGitWatchTests(): {
     logger: logger as unknown as pino.Logger,
     downloadTokenStore: {} as SessionOptions["downloadTokenStore"],
     pushTokenStore: {} as SessionOptions["pushTokenStore"],
-    paseoHome: "/tmp/paseo-test",
+    hubcodeHome: "/tmp/hubcode-test",
     agentManager: {
       subscribe: () => () => {},
       listAgents: () => [],
@@ -390,7 +390,7 @@ describe("workspace git watch targets", () => {
       behindOfOrigin: 1,
       hasRemote: true,
       remoteUrl: "https://github.com/acme/repo.git",
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       error: null,
       requestId: "subscription:/tmp/repo",
     });

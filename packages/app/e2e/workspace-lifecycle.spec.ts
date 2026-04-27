@@ -99,7 +99,7 @@ test.describe("Workspace lifecycle", () => {
       const resolvedTmp = realpathSync("/tmp");
       const worktreePath = path.join(
         resolvedTmp,
-        `paseo-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        `hubcode-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       );
       const branchName = `lifecycle-wt-chat-${Date.now()}`;
       let worktreeCreated = false;
@@ -149,7 +149,7 @@ test.describe("Workspace lifecycle", () => {
       const resolvedTmp = realpathSync("/tmp");
       const worktreePath = path.join(
         resolvedTmp,
-        `paseo-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        `hubcode-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       );
       const branchName = `lifecycle-wt-shell-${Date.now()}`;
       let worktreeCreated = false;

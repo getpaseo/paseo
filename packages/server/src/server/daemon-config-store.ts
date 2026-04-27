@@ -84,13 +84,13 @@ export function applyMutableProviderConfigToOverrides(
 
 export class DaemonConfigStore {
   private current: MutableDaemonConfig;
-  private readonly paseoHome: string;
+  private readonly hubcodeHome: string;
   private readonly logger: LoggerLike | undefined;
   private readonly changeListeners = new Set<ConfigListener>();
   private readonly fieldChangeHandlers = new Map<string, Set<FieldChangeHandler>>();
 
-  constructor(paseoHome: string, initial: MutableDaemonConfig, logger?: LoggerLike) {
-    this.paseoHome = paseoHome;
+  constructor(hubcodeHome: string, initial: MutableDaemonConfig, logger?: LoggerLike) {
+    this.hubcodeHome = hubcodeHome;
     this.logger = getLogger(logger);
     this.current = MutableDaemonConfigSchema.parse(initial);
   }
@@ -159,12 +159,12 @@ export class DaemonConfigStore {
   }
 
   private persistConfig(config: MutableDaemonConfig): void {
-    const persisted = loadPersistedConfig(this.paseoHome, this.logger);
+    const persisted = loadPersistedConfig(this.hubcodeHome, this.logger);
     const nextPersisted = mergeMutableConfigIntoPersistedConfig({
       persisted,
       mutable: config,
     });
-    savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
+    savePersistedConfig(this.hubcodeHome, nextPersisted, this.logger);
   }
 }
 

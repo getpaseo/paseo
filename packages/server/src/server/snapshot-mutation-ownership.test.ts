@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
-import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "./test-utils/hubcode-daemon.js";
 
 interface SessionInternals {
   archiveAgentForClose(agentId: string): Promise<{ archivedAt: string }>;
@@ -23,7 +23,7 @@ describe("snapshot mutation ownership boundary", () => {
   });
 
   test("daemon live mutations write one durable snapshot through the manager-owned path", async () => {
-    const daemonHandle = await createTestPaseoDaemon();
+    const daemonHandle = await createTestHubcodeDaemon();
     const cwd = mkdtempSync(path.join(os.tmpdir(), "snapshot-owner-live-"));
 
     try {
@@ -96,7 +96,7 @@ describe("snapshot mutation ownership boundary", () => {
       logger: logger as unknown as SessionOptions["logger"],
       downloadTokenStore: {} as unknown as SessionOptions["downloadTokenStore"],
       pushTokenStore: {} as unknown as SessionOptions["pushTokenStore"],
-      paseoHome: "/tmp/paseo-test",
+      hubcodeHome: "/tmp/hubcode-test",
       agentManager: {
         subscribe: () => () => {},
         listAgents: () => [],

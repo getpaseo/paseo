@@ -1,4 +1,4 @@
-import type { PaseoConfigRaw, PaseoScriptEntryRaw } from "@server/shared/messages";
+import type { HubcodeConfigRaw, HubcodeScriptEntryRaw } from "@server/shared/messages";
 
 export type LifecycleOriginalKind = "string" | "array" | "missing";
 
@@ -9,7 +9,7 @@ export interface ProjectScriptDraft {
   commandOriginalKind: LifecycleOriginalKind;
   type: string;
   portText: string;
-  rawEntry: PaseoScriptEntryRaw;
+  rawEntry: HubcodeScriptEntryRaw;
 }
 
 export interface ProjectConfigDraft {
@@ -88,7 +88,7 @@ function nextScriptDraftId(): string {
   return `script-draft-${scriptDraftIdCounter}`;
 }
 
-export function configToDraft(config: PaseoConfigRaw | null | undefined): ProjectConfigDraft {
+export function configToDraft(config: HubcodeConfigRaw | null | undefined): ProjectConfigDraft {
   const worktree = config?.worktree ?? {};
   const setup = projectLifecycle(worktree.setup);
   const teardown = projectLifecycle(worktree.teardown);
@@ -119,10 +119,10 @@ export function configToDraft(config: PaseoConfigRaw | null | undefined): Projec
 
 interface ApplyDraftInput {
   draft: ProjectConfigDraft;
-  base: PaseoConfigRaw | null | undefined;
+  base: HubcodeConfigRaw | null | undefined;
 }
 
-export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
+export function applyDraftToConfig(input: ApplyDraftInput): HubcodeConfigRaw {
   const baseConfig = input.base ?? {};
   const baseWorktree = baseConfig.worktree ?? {};
 
@@ -143,7 +143,7 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     nextWorktree.teardown = nextTeardown;
   }
 
-  const nextScripts: Record<string, PaseoScriptEntryRaw> = {};
+  const nextScripts: Record<string, HubcodeScriptEntryRaw> = {};
   for (const row of input.draft.scripts) {
     const trimmedName = row.name.trim();
     if (trimmedName.length === 0) {
@@ -169,7 +169,7 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     } else {
       nextEntry.port = nextPort;
     }
-    nextScripts[trimmedName] = nextEntry as PaseoScriptEntryRaw;
+    nextScripts[trimmedName] = nextEntry as HubcodeScriptEntryRaw;
   }
 
   const result: Record<string, unknown> = { ...baseConfig };
@@ -183,5 +183,5 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
   } else {
     result.scripts = nextScripts;
   }
-  return result as PaseoConfigRaw;
+  return result as HubcodeConfigRaw;
 }

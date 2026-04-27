@@ -732,7 +732,7 @@ export class AgentManager {
         : {
             ...config,
             mcpServers: {
-              paseo: {
+              hubcode: {
                 type: "http" as const,
                 url: `${this.mcpBaseUrl}?callerAgentId=${resolvedAgentId}`,
               },
@@ -3096,7 +3096,7 @@ export class AgentManager {
   private buildLaunchContext(agentId: string): AgentLaunchContext {
     return {
       env: {
-        PASEO_AGENT_ID: agentId,
+        HUBCODE_AGENT_ID: agentId,
       },
     };
   }

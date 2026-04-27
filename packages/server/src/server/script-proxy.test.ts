@@ -32,7 +32,7 @@ it("registerRoute and findRoute with exact match", () => {
   store.registerRoute({
     hostname: "route-a.example.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "editor",
   });
@@ -46,7 +46,7 @@ it("findRoute strips port from host header", () => {
   store.registerRoute({
     hostname: "route-a.example.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "editor",
   });
@@ -60,7 +60,7 @@ it("findRoute subdomain match", () => {
   store.registerRoute({
     hostname: "editor.example.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "editor",
   });
@@ -74,14 +74,14 @@ it("listRoutes returns enriched entries", () => {
   store.registerRoute({
     hostname: "a.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "web",
   });
   store.registerRoute({
     hostname: "b.localhost",
     port: 4000,
-    workspaceId: "/repo/.paseo/worktrees/feature-b",
+    workspaceId: "/repo/.hubcode/worktrees/feature-b",
     projectSlug: "repo",
     scriptName: "docs",
   });
@@ -91,14 +91,14 @@ it("listRoutes returns enriched entries", () => {
   expect(routes).toContainEqual({
     hostname: "a.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "web",
   });
   expect(routes).toContainEqual({
     hostname: "b.localhost",
     port: 4000,
-    workspaceId: "/repo/.paseo/worktrees/feature-b",
+    workspaceId: "/repo/.hubcode/worktrees/feature-b",
     projectSlug: "repo",
     scriptName: "docs",
   });
@@ -109,37 +109,37 @@ it("listRoutesForWorkspace returns only routes for that workspace", () => {
   store.registerRoute({
     hostname: "a.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "web",
   });
   store.registerRoute({
     hostname: "b.localhost",
     port: 4000,
-    workspaceId: "/repo/.paseo/worktrees/feature-b",
+    workspaceId: "/repo/.hubcode/worktrees/feature-b",
     projectSlug: "repo",
     scriptName: "docs",
   });
   store.registerRoute({
     hostname: "c.localhost",
     port: 5000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "api",
   });
 
-  expect(store.listRoutesForWorkspace("/repo/.paseo/worktrees/feature-a")).toEqual([
+  expect(store.listRoutesForWorkspace("/repo/.hubcode/worktrees/feature-a")).toEqual([
     {
       hostname: "a.localhost",
       port: 3000,
-      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      workspaceId: "/repo/.hubcode/worktrees/feature-a",
       projectSlug: "repo",
       scriptName: "web",
     },
     {
       hostname: "c.localhost",
       port: 5000,
-      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      workspaceId: "/repo/.hubcode/worktrees/feature-a",
       projectSlug: "repo",
       scriptName: "api",
     },
@@ -151,7 +151,7 @@ it("removeRoute works", () => {
   store.registerRoute({
     hostname: "route-a.example.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "editor",
   });
@@ -165,14 +165,14 @@ it("removeRoute cleans up workspace index", () => {
   store.registerRoute({
     hostname: "route-a.example.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "editor",
   });
 
   store.removeRoute("route-a.example.localhost");
 
-  expect(store.listRoutesForWorkspace("/repo/.paseo/worktrees/feature-a")).toEqual([]);
+  expect(store.listRoutesForWorkspace("/repo/.hubcode/worktrees/feature-a")).toEqual([]);
 });
 
 it("removeRoutesForPort works", () => {
@@ -180,21 +180,21 @@ it("removeRoutesForPort works", () => {
   store.registerRoute({
     hostname: "a.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "web",
   });
   store.registerRoute({
     hostname: "b.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "api",
   });
   store.registerRoute({
     hostname: "c.localhost",
     port: 4000,
-    workspaceId: "/repo/.paseo/worktrees/feature-b",
+    workspaceId: "/repo/.hubcode/worktrees/feature-b",
     projectSlug: "repo",
     scriptName: "docs",
   });
@@ -214,21 +214,21 @@ it("removeRoutesForPort cleans up workspace index", () => {
   store.registerRoute({
     hostname: "a.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "web",
   });
   store.registerRoute({
     hostname: "b.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "api",
   });
 
   store.removeRoutesForPort(3000);
 
-  expect(store.listRoutesForWorkspace("/repo/.paseo/worktrees/feature-a")).toEqual([]);
+  expect(store.listRoutesForWorkspace("/repo/.hubcode/worktrees/feature-a")).toEqual([]);
 });
 
 it("findRoute returns null for unknown hosts", () => {
@@ -236,7 +236,7 @@ it("findRoute returns null for unknown hosts", () => {
   store.registerRoute({
     hostname: "route-a.example.localhost",
     port: 3000,
-    workspaceId: "/repo/.paseo/worktrees/feature-a",
+    workspaceId: "/repo/.hubcode/worktrees/feature-a",
     projectSlug: "repo",
     scriptName: "editor",
   });

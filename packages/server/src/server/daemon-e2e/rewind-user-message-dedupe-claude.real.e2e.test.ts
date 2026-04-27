@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
 import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
@@ -29,7 +29,7 @@ describe("daemon E2E (real claude) - rewind user message dedupe", () => {
   test("emits /rewind user message once in persisted timeline", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { claude: new ClaudeAgentClient({ logger }) },
       logger,
     });

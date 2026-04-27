@@ -4,38 +4,38 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 
 import pino from "pino";
 import {
-  createPaseoDaemon,
-  type PaseoDaemonConfig,
-  type PaseoOpenAIConfig,
-  type PaseoSpeechConfig,
+  createHubcodeDaemon,
+  type HubcodeDaemonConfig,
+  type HubcodeOpenAIConfig,
+  type HubcodeSpeechConfig,
 } from "../bootstrap.js";
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
 
-interface TestPaseoDaemonOptions {
+interface TestHubcodeDaemonOptions {
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
-  logger?: Parameters<typeof createPaseoDaemon>[1];
+  logger?: Parameters<typeof createHubcodeDaemon>[1];
   relayEnabled?: boolean;
   relayEndpoint?: string;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
-  paseoHomeRoot?: string;
+  hubcodeHomeRoot?: string;
   staticDir?: string;
   cleanup?: boolean;
-  openai?: PaseoOpenAIConfig;
-  speech?: PaseoSpeechConfig;
-  voiceLlmProvider?: PaseoDaemonConfig["voiceLlmProvider"];
+  openai?: HubcodeOpenAIConfig;
+  speech?: HubcodeSpeechConfig;
+  voiceLlmProvider?: HubcodeDaemonConfig["voiceLlmProvider"];
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
 }
 
-export interface TestPaseoDaemon {
-  config: PaseoDaemonConfig;
-  daemon: Awaited<ReturnType<typeof createPaseoDaemon>>;
+export interface TestHubcodeDaemon {
+  config: HubcodeDaemonConfig;
+  daemon: Awaited<ReturnType<typeof createHubcodeDaemon>>;
   port: number;
-  paseoHome: string;
+  hubcodeHome: string;
   staticDir: string;
   close: () => Promise<void>;
 }
@@ -43,7 +43,7 @@ export interface TestPaseoDaemon {
 const TEST_DAEMON_START_TIMEOUT_MS = 20_000;
 
 async function startDaemonWithTimeout(
-  daemon: Awaited<ReturnType<typeof createPaseoDaemon>>,
+  daemon: Awaited<ReturnType<typeof createHubcodeDaemon>>,
   timeoutMs: number,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -69,16 +69,16 @@ async function startDaemonWithTimeout(
   });
 }
 
-export async function createTestPaseoDaemon(
-  options: TestPaseoDaemonOptions = {},
-): Promise<TestPaseoDaemon> {
+export async function createTestHubcodeDaemon(
+  options: TestHubcodeDaemonOptions = {},
+): Promise<TestHubcodeDaemon> {
   const maxAttempts = 8;
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const { config, paseoHomeRoot, paseoHome, staticDir } = await prepareTestDaemonConfig(options);
+    const { config, hubcodeHomeRoot, hubcodeHome, staticDir } = await prepareTestDaemonConfig(options);
     const logger = options.logger ?? pino({ level: "silent" });
-    const daemon = await createPaseoDaemon(config, logger);
+    const daemon = await createHubcodeDaemon(config, logger);
     try {
       await startDaemonWithTimeout(daemon, TEST_DAEMON_START_TIMEOUT_MS);
       const listenTarget = daemon.getListenTarget();
@@ -92,7 +92,7 @@ export async function createTestPaseoDaemon(
         if (options.cleanup ?? true) {
           await new Promise((r) => setTimeout(r, 50));
           await Promise.all([
-            rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+            rm(hubcodeHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
             rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
           ]);
         }
@@ -102,7 +102,7 @@ export async function createTestPaseoDaemon(
         config,
         daemon,
         port: listenTarget.port,
-        paseoHome,
+        hubcodeHome,
         staticDir,
         close,
       };
@@ -110,7 +110,7 @@ export async function createTestPaseoDaemon(
       lastError = error;
       await daemon.stop().catch(() => undefined);
       await Promise.all([
-        rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+        rm(hubcodeHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
         rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
       ]);
 
@@ -127,34 +127,34 @@ export async function createTestPaseoDaemon(
 }
 
 interface PreparedTestDaemonConfig {
-  config: PaseoDaemonConfig;
-  paseoHomeRoot: string;
-  paseoHome: string;
+  config: HubcodeDaemonConfig;
+  hubcodeHomeRoot: string;
+  hubcodeHome: string;
   staticDir: string;
 }
 
 async function prepareTestDaemonConfig(
-  options: TestPaseoDaemonOptions,
+  options: TestHubcodeDaemonOptions,
 ): Promise<PreparedTestDaemonConfig> {
-  const paseoHomeRoot =
-    options.paseoHomeRoot ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-home-")));
-  const paseoHome = path.join(paseoHomeRoot, ".paseo");
-  await mkdir(paseoHome, { recursive: true });
-  const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-static-")));
+  const hubcodeHomeRoot =
+    options.hubcodeHomeRoot ?? (await mkdtemp(path.join(os.tmpdir(), "hubcode-home-")));
+  const hubcodeHome = path.join(hubcodeHomeRoot, ".hubcode");
+  await mkdir(hubcodeHome, { recursive: true });
+  const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "hubcode-static-")));
   const listenHost = options.listen ?? "127.0.0.1";
-  const config: PaseoDaemonConfig = {
+  const config: HubcodeDaemonConfig = {
     listen: `${listenHost}:0`,
-    paseoHome,
+    hubcodeHome,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
     hostnames: true,
     mcpEnabled: true,
     staticDir,
     mcpDebug: false,
     agentClients: options.agentClients ?? createTestAgentClients(),
-    agentStoragePath: path.join(paseoHome, "agents"),
+    agentStoragePath: path.join(hubcodeHome, "agents"),
     relayEnabled: options.relayEnabled ?? false,
-    relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
-    appBaseUrl: "https://app.paseo.sh",
+    relayEndpoint: options.relayEndpoint ?? "relay.hubcode.ai:443",
+    appBaseUrl: "https://app.hubcode.ai",
     openai: options.openai,
     speech: options.speech,
     voiceLlmProvider: options.voiceLlmProvider ?? null,
@@ -163,7 +163,7 @@ async function prepareTestDaemonConfig(
     dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
     downloadTokenTtlMs: options.downloadTokenTtlMs,
   };
-  return { config, paseoHomeRoot, paseoHome, staticDir };
+  return { config, hubcodeHomeRoot, hubcodeHome, staticDir };
 }
 
 function isAddressInUseError(error: unknown): boolean {

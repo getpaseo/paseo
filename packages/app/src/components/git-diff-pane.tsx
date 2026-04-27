@@ -62,7 +62,7 @@ import {
   darkHighlightColors,
   lightHighlightColors,
   type HighlightStyle as HighlightStyleKey,
-} from "@getpaseo/highlight";
+} from "@gethubcode/highlight";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import { shouldAnchorHeaderBeforeCollapse } from "@/utils/git-diff-scroll";
@@ -1282,7 +1282,7 @@ interface DerivedBranchState {
   behindOfOrigin: number;
   hasPullRequest: boolean;
   hasRemote: boolean;
-  isPaseoOwnedWorktree: boolean;
+  isHubcodeOwnedWorktree: boolean;
   isMergedPullRequest: boolean;
   currentBranch: string | null | undefined;
 }
@@ -1298,7 +1298,7 @@ function deriveBranchState(
     behindOfOrigin: gitStatus?.behindOfOrigin ?? 0,
     hasPullRequest: Boolean(prStatus?.url),
     hasRemote: gitStatus?.hasRemote ?? false,
-    isPaseoOwnedWorktree: gitStatus?.isPaseoOwnedWorktree ?? false,
+    isHubcodeOwnedWorktree: gitStatus?.isHubcodeOwnedWorktree ?? false,
     isMergedPullRequest: Boolean(prStatus?.isMerged),
     currentBranch: gitStatus?.currentBranch,
   };
@@ -1321,13 +1321,13 @@ function computeCommittedDiffDescription(
 }
 
 function computeShouldPromoteArchive(
-  isPaseoOwnedWorktree: boolean,
+  isHubcodeOwnedWorktree: boolean,
   hasUncommittedChanges: boolean,
   postShipArchiveSuggested: boolean,
   isMergedPullRequest: boolean,
 ): boolean {
   return (
-    isPaseoOwnedWorktree &&
+    isHubcodeOwnedWorktree &&
     !hasUncommittedChanges &&
     (postShipArchiveSuggested || isMergedPullRequest)
   );
@@ -1408,7 +1408,7 @@ interface BuildGitActionsParams {
     hasPullRequest: boolean;
     pullRequestUrl: string | null;
     hasRemote: boolean;
-    isPaseoOwnedWorktree: boolean;
+    isHubcodeOwnedWorktree: boolean;
     isOnBaseBranch: boolean;
     hasUncommittedChanges: boolean;
     baseRefAvailable: boolean;
@@ -1631,7 +1631,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     if (!gitStatus?.repoRoot) {
       return null;
     }
-    return `@paseo:changes-ship-default:${gitStatus.repoRoot}`;
+    return `@hubcode:changes-ship-default:${gitStatus.repoRoot}`;
   }, [gitStatus?.repoRoot]);
 
   useEffect(() => {
@@ -2041,7 +2041,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
     behindOfOrigin,
     hasPullRequest,
     hasRemote,
-    isPaseoOwnedWorktree,
+    isHubcodeOwnedWorktree,
     isMergedPullRequest,
     currentBranch,
   } = branchState;
@@ -2052,7 +2052,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   );
   const isOnBaseBranch = currentBranch === baseRefLabel;
   const shouldPromoteArchive = computeShouldPromoteArchive(
-    isPaseoOwnedWorktree,
+    isHubcodeOwnedWorktree,
     hasUncommittedChanges,
     postShipArchiveSuggested,
     isMergedPullRequest,
@@ -2164,7 +2164,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
           hasPullRequest,
           pullRequestUrl: prStatus?.url ?? null,
           hasRemote,
-          isPaseoOwnedWorktree,
+          isHubcodeOwnedWorktree,
           isOnBaseBranch,
           hasUncommittedChanges,
           baseRefAvailable: Boolean(baseRef),
@@ -2197,7 +2197,7 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
       hasUncommittedChanges,
       isGit,
       isOnBaseBranch,
-      isPaseoOwnedWorktree,
+      isHubcodeOwnedWorktree,
       prStatus?.url,
       shipDefault,
       shouldPromoteArchive,

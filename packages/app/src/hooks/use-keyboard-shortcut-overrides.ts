@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-const STORAGE_KEY = "@paseo:keyboard-shortcut-overrides";
+const STORAGE_KEY = "@hubcode:keyboard-shortcut-overrides";
 const QUERY_KEY = ["keyboard-shortcut-overrides"];
 
 const EMPTY_OVERRIDES: Record<string, string> = {};

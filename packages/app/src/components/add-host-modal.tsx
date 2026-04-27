@@ -259,7 +259,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       onClose={handleClose}
       testID="add-host-modal"
     >
-      <Text style={styles.helper}>Enter the address of a Paseo server.</Text>
+      <Text style={styles.helper}>Enter the address of a Hubcode server.</Text>
 
       <View style={styles.field}>
         <Text style={styles.label}>Host</Text>

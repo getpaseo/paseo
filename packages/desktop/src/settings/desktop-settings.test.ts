@@ -10,7 +10,7 @@ import {
 } from "./desktop-settings";
 
 async function createTempUserDataDir(): Promise<string> {
-  return await mkdtemp(path.join(os.tmpdir(), "paseo-desktop-settings-"));
+  return await mkdtemp(path.join(os.tmpdir(), "hubcode-desktop-settings-"));
 }
 
 function settingsFilePath(userDataPath: string): string {

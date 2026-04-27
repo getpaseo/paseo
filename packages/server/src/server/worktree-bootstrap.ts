@@ -350,7 +350,7 @@ function buildSetupTimelineItem(input: {
   if (input.status === "running") {
     return {
       type: "tool_call",
-      name: "paseo_worktree_setup",
+      name: "hubcode_worktree_setup",
       callId: input.callId,
       status: "running",
       detail,
@@ -361,7 +361,7 @@ function buildSetupTimelineItem(input: {
   if (input.status === "completed") {
     return {
       type: "tool_call",
-      name: "paseo_worktree_setup",
+      name: "hubcode_worktree_setup",
       callId: input.callId,
       status: "completed",
       detail,
@@ -371,7 +371,7 @@ function buildSetupTimelineItem(input: {
 
   return {
     type: "tool_call",
-    name: "paseo_worktree_setup",
+    name: "hubcode_worktree_setup",
     callId: input.callId,
     status: "failed",
     detail,
@@ -398,7 +398,7 @@ function buildTerminalTimelineItem(input: {
   if (input.status === "running") {
     return {
       type: "tool_call",
-      name: "paseo_worktree_terminals",
+      name: "hubcode_worktree_terminals",
       callId: input.callId,
       status: "running",
       detail: {
@@ -413,7 +413,7 @@ function buildTerminalTimelineItem(input: {
   if (input.status === "completed") {
     return {
       type: "tool_call",
-      name: "paseo_worktree_terminals",
+      name: "hubcode_worktree_terminals",
       callId: input.callId,
       status: "completed",
       detail: {
@@ -427,7 +427,7 @@ function buildTerminalTimelineItem(input: {
 
   return {
     type: "tool_call",
-    name: "paseo_worktree_terminals",
+    name: "hubcode_worktree_terminals",
     callId: input.callId,
     status: "failed",
     detail: {
@@ -835,7 +835,7 @@ export async function spawnWorkspaceScript(
   const scriptConfigs = getScriptConfigs(repoRoot);
   const config = scriptConfigs.get(scriptName);
   if (!config) {
-    throw new Error(`Script '${scriptName}' is not configured in paseo.json`);
+    throw new Error(`Script '${scriptName}' is not configured in hubcode.json`);
   }
 
   const serviceScript = isServiceScript(config);

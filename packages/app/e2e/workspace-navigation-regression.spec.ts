@@ -142,7 +142,7 @@ test.describe("Workspace navigation regression", () => {
       await page.evaluate(
         ({ agentId, serverId: targetServerId }) => {
           globalThis.dispatchEvent(
-            new CustomEvent("paseo:web-notification-click", {
+            new CustomEvent("hubcode:web-notification-click", {
               detail: {
                 data: {
                   serverId: targetServerId,

@@ -620,7 +620,7 @@ export default function TerminalEmulator({
   const handleTravelDurationMs =
     isDraggingScrollbar || isScrollActive ? 0 : SCROLLBAR_HANDLE_TRAVEL_DURATION_MS;
   const showTerminalContextMenu = useCallback(() => {
-    const showContextMenu = window.paseoDesktop?.menu?.showContextMenu;
+    const showContextMenu = window.hubcodeDesktop?.menu?.showContextMenu;
     if (typeof showContextMenu !== "function") {
       return;
     }

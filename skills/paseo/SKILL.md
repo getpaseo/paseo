@@ -1,9 +1,9 @@
 ---
-name: paseo
-description: Paseo reference for managing agents and worktrees. Load whenever you need to create agents, send them prompts, or manage worktrees.
+name: hubcode
+description: Hubcode reference for managing agents and worktrees. Load whenever you need to create agents, send them prompts, or manage worktrees.
 ---
 
-Paseo is a daemon that supervises AI coding agents on your machine. Control it through tools or a CLI.
+Hubcode is a daemon that supervises AI coding agents on your machine. Control it through tools or a CLI.
 
 ## Worktrees
 
@@ -44,25 +44,25 @@ Compose: call `create_worktree` first, then `create_agent` with `cwd` set to the
 
 ## CLI parity
 
-The `paseo` CLI is a thin wrapper over the same daemon. Same surface:
+The `hubcode` CLI is a thin wrapper over the same daemon. Same surface:
 
 ```bash
-paseo run --provider codex/gpt-5.4 --mode full-access --worktree feat/x "<prompt>"
-paseo send <agent-id> "<follow-up>"
-paseo ls
-paseo worktree ls
-paseo schedule create --every 5m "ping main build"
+hubcode run --provider codex/gpt-5.4 --mode full-access --worktree feat/x "<prompt>"
+hubcode send <agent-id> "<follow-up>"
+hubcode ls
+hubcode worktree ls
+hubcode schedule create --every 5m "ping main build"
 ```
 
-Discover with `paseo --help` and `paseo <cmd> --help`.
+Discover with `hubcode --help` and `hubcode <cmd> --help`.
 
-**If `paseo` isn't on PATH but the desktop app is installed**, the bundled CLI is at:
+**If `hubcode` isn't on PATH but the desktop app is installed**, the bundled CLI is at:
 
-- macOS: `/Applications/Paseo.app/Contents/Resources/bin/paseo`
-- Linux: `<install-dir>/resources/bin/paseo`
-- Windows: `C:\Program Files\Paseo\resources\bin\paseo.cmd`
+- macOS: `/Applications/Hubcode.app/Contents/Resources/bin/hubcode`
+- Linux: `<install-dir>/resources/bin/hubcode`
+- Windows: `C:\Program Files\Hubcode\resources\bin\hubcode.cmd`
 
-The desktop app's first-run hook (`installCli`) symlinks this to `~/.local/bin/paseo` (macOS/Linux) or drops a `.cmd` trampoline (Windows) and adds `~/.local/bin` to PATH via shell rc files. If that didn't take, offer to symlink it — don't do it silently.
+The desktop app's first-run hook (`installCli`) symlinks this to `~/.local/bin/hubcode` (macOS/Linux) or drops a `.cmd` trampoline (Windows) and adds `~/.local/bin` to PATH via shell rc files. If that didn't take, offer to symlink it — don't do it silently.
 
 ## Ops and debugging
 
@@ -70,18 +70,18 @@ Daemon-client architecture: the daemon owns agent lifecycle, state, and the WebS
 
 |                | Default                                    |
 | -------------- | ------------------------------------------ |
-| Listen address | `127.0.0.1:6767` (override `PASEO_LISTEN`) |
-| Home           | `~/.paseo` (override `PASEO_HOME`)         |
-| Daemon log     | `$PASEO_HOME/daemon.log`                   |
-| Agent state    | `$PASEO_HOME/agents/<id>.json`             |
-| Worktrees      | `$PASEO_HOME/worktrees/`                   |
-| PID file       | `$PASEO_HOME/paseo.pid`                    |
+| Listen address | `127.0.0.1:6767` (override `HUBCODE_LISTEN`) |
+| Home           | `~/.hubcode` (override `HUBCODE_HOME`)         |
+| Daemon log     | `$HUBCODE_HOME/daemon.log`                   |
+| Agent state    | `$HUBCODE_HOME/agents/<id>.json`             |
+| Worktrees      | `$HUBCODE_HOME/worktrees/`                   |
+| PID file       | `$HUBCODE_HOME/hubcode.pid`                    |
 | Health         | `GET http://127.0.0.1:6767/api/health`     |
 
 Debug order:
 
-1. `tail -n 200 ~/.paseo/daemon.log`.
-2. `paseo daemon status` for liveness.
+1. `tail -n 200 ~/.hubcode/daemon.log`.
+2. `hubcode daemon status` for liveness.
 3. `curl -s localhost:6767/api/health` if the CLI itself is suspect.
 
 **Never restart the daemon without explicit user approval** — it kills every running agent, including, often, the one asking.

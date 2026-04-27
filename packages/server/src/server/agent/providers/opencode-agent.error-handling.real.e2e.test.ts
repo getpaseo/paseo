@@ -33,7 +33,7 @@ describe("opencode agent error handling (real)", () => {
     }
   });
 
-  test("surfaces error for the exact opencode/<bad-model> path used by paseo run", async () => {
+  test("surfaces error for the exact opencode/<bad-model> path used by hubcode run", async () => {
     const client = new OpenCodeAgentClient(pino({ level: "silent" }));
     const session = await client.createSession({
       provider: "opencode",

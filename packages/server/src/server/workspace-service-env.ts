@@ -34,11 +34,11 @@ export function buildWorkspaceServiceEnv(
 
   const env: Record<string, string> = {
     HOST: resolveServiceBindHost(options.daemonListenHost),
-    PASEO_PORT: String(selfPeer.port),
+    HUBCODE_PORT: String(selfPeer.port),
   };
 
   if (options.daemonPort !== null && options.daemonPort !== undefined) {
-    env.PASEO_URL = buildServiceProxyUrl({
+    env.HUBCODE_URL = buildServiceProxyUrl({
       projectSlug: options.projectSlug,
       branchName: options.branchName,
       scriptName: options.scriptName,
@@ -48,10 +48,10 @@ export function buildWorkspaceServiceEnv(
 
   for (const peer of options.peers) {
     const envName = normalizeServiceEnvName(peer.scriptName);
-    env[`PASEO_SERVICE_${envName}_PORT`] = String(peer.port);
+    env[`HUBCODE_SERVICE_${envName}_PORT`] = String(peer.port);
 
     if (options.daemonPort !== null && options.daemonPort !== undefined) {
-      env[`PASEO_SERVICE_${envName}_URL`] = buildServiceProxyUrl({
+      env[`HUBCODE_SERVICE_${envName}_URL`] = buildServiceProxyUrl({
         projectSlug: options.projectSlug,
         branchName: options.branchName,
         scriptName: peer.scriptName,

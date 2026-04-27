@@ -26,7 +26,7 @@ import {
   resolveBranchCheckout,
   resolveRepositoryDefaultBranch,
   parseWorktreeList,
-  isPaseoWorktreePath,
+  isHubcodeWorktreePath,
   isDescendantPath,
   warmCheckoutShortstatInBackground,
 } from "./checkout-git.js";
@@ -48,7 +48,7 @@ interface LegacyCreateWorktreeTestOptions {
   baseBranch: string;
   worktreeSlug: string;
   runSetup?: boolean;
-  paseoHome?: string;
+  hubcodeHome?: string;
 }
 
 function createLegacyWorktreeForTest(
@@ -67,10 +67,10 @@ function createLegacyWorktreeForTest(
       newBranchName: options.branchName,
     },
     runSetup: options.runSetup ?? true,
-    paseoHome: options.paseoHome,
+    hubcodeHome: options.hubcodeHome,
   });
 }
-import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
+import { getHubcodeWorktreeMetadataPath } from "./worktree-metadata.js";
 
 function initRepo(): { tempDir: string; repoDir: string } {
   const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "checkout-git-test-")));
@@ -100,7 +100,7 @@ function createGitHubServiceForStatus(
     getPullRequest: async () => ({
       number: 1,
       title: "PR",
-      url: "https://github.com/getpaseo/paseo/pull/1",
+      url: "https://github.com/hubtool/hubcode/pull/1",
       state: "OPEN",
       body: null,
       baseRefName: "main",
@@ -113,7 +113,7 @@ function createGitHubServiceForStatus(
       return status;
     },
     createPullRequest: async () => ({
-      url: "https://github.com/getpaseo/paseo/pull/1",
+      url: "https://github.com/hubtool/hubcode/pull/1",
       number: 1,
     }),
     isAuthenticated: async () => true,
@@ -123,7 +123,7 @@ function createGitHubServiceForStatus(
 
 function createPullRequestStatus(overrides?: Partial<GitHubCurrentPullRequestStatus>) {
   return {
-    url: "https://github.com/getpaseo/paseo/pull/123",
+    url: "https://github.com/hubtool/hubcode/pull/123",
     title: "Ship feature",
     state: "open",
     baseRefName: "main",
@@ -160,13 +160,13 @@ function commitFile(cwd: string, path: string, content: string, message: string)
 describe("checkout git utilities", () => {
   let tempDir: string;
   let repoDir: string;
-  let paseoHome: string;
+  let hubcodeHome: string;
 
   beforeEach(() => {
     const setup = initRepo();
     tempDir = setup.tempDir;
     repoDir = setup.repoDir;
-    paseoHome = join(tempDir, "paseo-home");
+    hubcodeHome = join(tempDir, "hubcode-home");
     __resetCheckoutShortstatCacheForTests();
     __resetPullRequestStatusCacheForTests();
   });
@@ -300,7 +300,7 @@ const x = 1;
     }
     expect(status.currentBranch).toBe("main");
     expect(status.repoRoot).toBe(repoDir);
-    expect(status.isPaseoOwnedWorktree).toBe(false);
+    expect(status.isHubcodeOwnedWorktree).toBe(false);
     expect(status.mainRepoRoot ?? null).toBeNull();
   });
 
@@ -778,31 +778,31 @@ const x = 1;
     expect(diff.diff).toContain("# untracked-large.txt: diff too large omitted");
   });
 
-  it("handles status/diff/commit in a .paseo worktree", async () => {
+  it("handles status/diff/commit in a .hubcode worktree", async () => {
     const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "alpha",
-      paseoHome,
+      hubcodeHome,
     });
 
     writeFileSync(join(result.worktreePath, "file.txt"), "worktree change\n");
 
-    const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(result.worktreePath, { hubcodeHome });
     expect(status.isGit).toBe(true);
     expect(status.repoRoot).toBe(result.worktreePath);
     expect(status.isDirty).toBe(true);
-    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.isHubcodeOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(repoDir);
 
-    const diff = await getCheckoutDiff(result.worktreePath, { mode: "uncommitted" }, { paseoHome });
+    const diff = await getCheckoutDiff(result.worktreePath, { mode: "uncommitted" }, { hubcodeHome });
     expect(diff.diff).toContain("-hello");
     expect(diff.diff).toContain("+worktree change");
 
     await commitAll(result.worktreePath, "worktree update");
 
-    const cleanStatus = await getCheckoutStatus(result.worktreePath, { paseoHome });
+    const cleanStatus = await getCheckoutStatus(result.worktreePath, { hubcodeHome });
     expect(cleanStatus.isDirty).toBe(false);
     const message = execSync("git log -1 --pretty=%B", {
       cwd: result.worktreePath,
@@ -812,22 +812,22 @@ const x = 1;
     expect(message).toBe("worktree update");
   });
 
-  it("returns checkout root metadata for .paseo worktrees", async () => {
+  it("returns checkout root metadata for .hubcode worktrees", async () => {
     const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "lite-alpha",
-      paseoHome,
+      hubcodeHome,
     });
 
-    const status = await getCheckoutStatus(result.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(result.worktreePath, { hubcodeHome });
     expect(status.isGit).toBe(true);
     if (!status.isGit) {
       return;
     }
     expect(status.repoRoot).toBe(result.worktreePath);
-    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.isHubcodeOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(repoDir);
   });
 
@@ -845,12 +845,12 @@ const x = 1;
       cwd: mainCheckoutDir,
       baseBranch: "main",
       worktreeSlug: "feature-worktree",
-      paseoHome,
+      hubcodeHome,
     });
 
-    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(worktree.worktreePath, { hubcodeHome });
     expect(status.isGit).toBe(true);
-    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.isHubcodeOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(mainCheckoutDir);
   });
 
@@ -858,10 +858,10 @@ const x = 1;
     const worktreeDir = join(tempDir, "plain-git-worktree");
     execSync(`git worktree add -b feature/plain ${worktreeDir} main`, { cwd: repoDir });
 
-    const status = await getCheckoutStatus(worktreeDir, { paseoHome });
+    const status = await getCheckoutStatus(worktreeDir, { hubcodeHome });
     expect(status.isGit).toBe(true);
     expect(status.repoRoot).toBe(worktreeDir);
-    expect(status.isPaseoOwnedWorktree).toBe(false);
+    expect(status.isHubcodeOwnedWorktree).toBe(false);
     expect(status.mainRepoRoot).toBe(repoDir);
     expect(status.currentBranch).toBe("feature/plain");
   });
@@ -872,7 +872,7 @@ const x = 1;
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "merge",
-      paseoHome,
+      hubcodeHome,
     });
 
     writeFileSync(join(worktree.worktreePath, "merge.txt"), "feature\n");
@@ -885,7 +885,7 @@ const x = 1;
       .toString()
       .trim();
 
-    await mergeToBase(worktree.worktreePath, { baseRef: "main" }, { paseoHome });
+    await mergeToBase(worktree.worktreePath, { baseRef: "main" }, { hubcodeHome });
 
     const baseContainsFeature = execSync(`git merge-base --is-ancestor ${featureCommit} main`, {
       cwd: repoDir,
@@ -893,7 +893,7 @@ const x = 1;
     });
     expect(baseContainsFeature).toBeDefined();
 
-    const statusAfterMerge = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    const statusAfterMerge = await getCheckoutStatus(worktree.worktreePath, { hubcodeHome });
     expect(statusAfterMerge.isGit).toBe(true);
     if (statusAfterMerge.isGit) {
       expect(statusAfterMerge.aheadBehind?.ahead ?? 0).toBe(0);
@@ -922,7 +922,7 @@ const x = 1;
       cwd: repoDir,
       baseBranch: "develop",
       worktreeSlug: "feature-worktree",
-      paseoHome,
+      hubcodeHome,
     });
 
     writeFileSync(join(featureWorktree.worktreePath, "feature.txt"), "feature\n");
@@ -931,7 +931,7 @@ const x = 1;
       cwd: featureWorktree.worktreePath,
     });
 
-    const mutatedCwd = await mergeToBase(featureWorktree.worktreePath, {}, { paseoHome });
+    const mutatedCwd = await mergeToBase(featureWorktree.worktreePath, {}, { hubcodeHome });
 
     expect(mutatedCwd).toBe(baseWorktreePath);
     expect(mutatedCwd).not.toBe(featureWorktree.worktreePath);
@@ -1359,7 +1359,7 @@ const x = 1;
   });
 
   it("disables GitHub features when gh is unavailable", async () => {
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
 
     const github = createGitHubServiceForStatus(null);
     github.getCurrentPullRequestStatus = async () => {
@@ -1372,7 +1372,7 @@ const x = 1;
 
   it("returns merged PR status when no open PR exists for the current branch", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
 
     const status = await getPullRequestStatus(
       repoDir,
@@ -1394,7 +1394,7 @@ const x = 1;
 
   it("propagates S1 PR metadata and check display fields through checkout PR status", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
 
     const status = await getPullRequestStatus(
       repoDir,
@@ -1406,7 +1406,7 @@ const x = 1;
             {
               name: "server-tests",
               status: "success",
-              url: "https://github.com/getpaseo/paseo/actions/runs/123",
+              url: "https://github.com/hubtool/hubcode/actions/runs/123",
               workflow: "Server CI",
               duration: "2m 14s",
             },
@@ -1419,7 +1419,7 @@ const x = 1;
       githubFeaturesEnabled: true,
       status: {
         number: 123,
-        url: "https://github.com/getpaseo/paseo/pull/123",
+        url: "https://github.com/hubtool/hubcode/pull/123",
         title: "Ship feature",
         state: "open",
         baseRefName: "main",
@@ -1430,7 +1430,7 @@ const x = 1;
           {
             name: "server-tests",
             status: "success",
-            url: "https://github.com/getpaseo/paseo/actions/runs/123",
+            url: "https://github.com/hubtool/hubcode/actions/runs/123",
             workflow: "Server CI",
             duration: "2m 14s",
           },
@@ -1443,16 +1443,16 @@ const x = 1;
 
   it("uses the tracked fork branch for PR worktree status lookup", async () => {
     execSync("git checkout -b chethanuk/main", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
-    execSync("git remote add paseo-pr-345 git@github.com:chethanuk/paseo.git", { cwd: repoDir });
-    execSync("git config branch.chethanuk/main.remote paseo-pr-345", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
+    execSync("git remote add hubcode-pr-345 git@github.com:chethanuk/hubcode.git", { cwd: repoDir });
+    execSync("git config branch.chethanuk/main.remote hubcode-pr-345", { cwd: repoDir });
     execSync("git config branch.chethanuk/main.merge refs/heads/main", { cwd: repoDir });
 
     const requestedTargets: Array<{ headRef: string; headRepositoryOwner?: string }> = [];
     const github = createGitHubServiceForStatus(
       createPullRequestStatus({
         number: 345,
-        url: "https://github.com/getpaseo/paseo/pull/345",
+        url: "https://github.com/hubtool/hubcode/pull/345",
         headRefName: "main",
       }),
       {
@@ -1468,7 +1468,7 @@ const x = 1;
       });
       return createPullRequestStatus({
         number: 345,
-        url: "https://github.com/getpaseo/paseo/pull/345",
+        url: "https://github.com/hubtool/hubcode/pull/345",
         headRefName: options.headRef,
       });
     };
@@ -1482,13 +1482,13 @@ const x = 1;
 
   it("returns closed-unmerged PR status without marking it as merged", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
 
     const status = await getPullRequestStatus(
       repoDir,
       createGitHubServiceForStatus(
         createPullRequestStatus({
-          url: "https://github.com/getpaseo/paseo/pull/999",
+          url: "https://github.com/hubtool/hubcode/pull/999",
           title: "Closed without merge",
           state: "closed",
         }),
@@ -1505,7 +1505,7 @@ const x = 1;
 
   it("caches PR status results for duplicate lookups", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
 
     let callCount = 0;
     const github = createGitHubServiceForStatus(createPullRequestStatus(), {
@@ -1522,7 +1522,7 @@ const x = 1;
 
   it("expires cached PR status after the TTL", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
 
     __setPullRequestStatusCacheTtlForTests(50);
     try {
@@ -1535,7 +1535,7 @@ const x = 1;
       github.getCurrentPullRequestStatus = async () => {
         callCount += 1;
         return createPullRequestStatus({
-          url: `https://github.com/getpaseo/paseo/pull/${callCount}`,
+          url: `https://github.com/hubtool/hubcode/pull/${callCount}`,
         });
       };
       const first = await getPullRequestStatus(repoDir, github);
@@ -1551,7 +1551,7 @@ const x = 1;
 
   it("keeps stale PR status when a refresh hits a transient GitHub error", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
 
     __setPullRequestStatusCacheTtlForTests(50);
     try {
@@ -1561,7 +1561,7 @@ const x = 1;
         callCount += 1;
         if (callCount === 1) {
           return createPullRequestStatus({
-            url: "https://github.com/getpaseo/paseo/pull/123",
+            url: "https://github.com/hubtool/hubcode/pull/123",
           });
         }
         throw new GitHubCommandError({
@@ -1587,7 +1587,7 @@ const x = 1;
 
   it("clears stale PR status after a successful no-PR refresh", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
 
     __setPullRequestStatusCacheTtlForTests(50);
     try {
@@ -1597,7 +1597,7 @@ const x = 1;
         callCount += 1;
         if (callCount === 1) {
           return createPullRequestStatus({
-            url: "https://github.com/getpaseo/paseo/pull/123",
+            url: "https://github.com/hubtool/hubcode/pull/123",
           });
         }
         return null;
@@ -1620,7 +1620,7 @@ const x = 1;
 
   it("dedupes concurrent PR status lookups for the same cwd", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
-    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/hubtool/hubcode.git", { cwd: repoDir });
 
     let callCount = 0;
     const github = createGitHubServiceForStatus(createPullRequestStatus(), {
@@ -1665,7 +1665,7 @@ const x = 1;
     );
   });
 
-  it("uses stored baseRefName for Paseo worktrees (no heuristics)", async () => {
+  it("uses stored baseRefName for Hubcode worktrees (no heuristics)", async () => {
     // Create a non-default base branch with a unique commit.
     execSync("git checkout -b develop", { cwd: repoDir });
     writeFileSync(join(repoDir, "file.txt"), "develop\n");
@@ -1679,7 +1679,7 @@ const x = 1;
       cwd: repoDir,
       baseBranch: "develop",
       worktreeSlug: "feature",
-      paseoHome,
+      hubcodeHome,
     });
 
     writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
@@ -1688,23 +1688,23 @@ const x = 1;
       cwd: worktree.worktreePath,
     });
 
-    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(worktree.worktreePath, { hubcodeHome });
     expect(status.isGit).toBe(true);
     expect(status.baseRef).toBe("develop");
     expect(status.aheadBehind?.ahead).toBe(1);
 
-    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome });
+    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { hubcodeHome });
     expect(baseDiff.diff).toContain("feature.txt");
     expect(baseDiff.diff).not.toContain("file.txt");
   });
 
-  it("excludes dirty working tree changes from Paseo worktree base diffs", async () => {
+  it("excludes dirty working tree changes from Hubcode worktree base diffs", async () => {
     const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "dirty-feature",
-      paseoHome,
+      hubcodeHome,
     });
 
     writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
@@ -1719,7 +1719,7 @@ const x = 1;
     const baseDiff = await getCheckoutDiff(
       worktree.worktreePath,
       { mode: "base", includeStructured: true },
-      { paseoHome },
+      { hubcodeHome },
     );
 
     expect(baseDiff.diff).toContain("feature.txt");
@@ -1749,13 +1749,13 @@ const x = 1;
     execSync("git -c commit.gpgsign=false commit -m 'develop change'", { cwd: repoDir });
     execSync("git checkout main", { cwd: repoDir });
 
-    // Create a Paseo worktree configured to use develop as base.
+    // Create a Hubcode worktree configured to use develop as base.
     const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",
       cwd: repoDir,
       baseBranch: "develop",
       worktreeSlug: "merge-to-develop",
-      paseoHome,
+      hubcodeHome,
     });
 
     writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
@@ -1768,7 +1768,7 @@ const x = 1;
       .trim();
 
     // No baseRef passed: should merge into the configured base (develop), not default/main.
-    await mergeToBase(worktree.worktreePath, {}, { paseoHome });
+    await mergeToBase(worktree.worktreePath, {}, { hubcodeHome });
 
     execSync(`git merge-base --is-ancestor ${featureCommit} develop`, {
       cwd: repoDir,
@@ -1788,7 +1788,7 @@ const x = 1;
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "missing-metadata",
-      paseoHome,
+      hubcodeHome,
     });
 
     writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
@@ -1797,33 +1797,33 @@ const x = 1;
       cwd: worktree.worktreePath,
     });
 
-    const metadataPath = getPaseoWorktreeMetadataPath(worktree.worktreePath);
+    const metadataPath = getHubcodeWorktreeMetadataPath(worktree.worktreePath);
     rmSync(metadataPath, { force: true });
 
-    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome });
+    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { hubcodeHome });
     expect(baseDiff.diff).toContain("feature.txt");
 
-    const shortstat = await getCheckoutShortstat(worktree.worktreePath, { paseoHome });
+    const shortstat = await getCheckoutShortstat(worktree.worktreePath, { hubcodeHome });
     expect(shortstat).toEqual({ additions: 1, deletions: 0 });
   });
 
-  it("falls back to plain git checkout status when Paseo worktree metadata is missing", async () => {
+  it("falls back to plain git checkout status when Hubcode worktree metadata is missing", async () => {
     const worktree = await createLegacyWorktreeForTest({
       branchName: "feature",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "missing-metadata-status-fallback",
-      paseoHome,
+      hubcodeHome,
     });
 
-    const metadataPath = getPaseoWorktreeMetadataPath(worktree.worktreePath);
+    const metadataPath = getHubcodeWorktreeMetadataPath(worktree.worktreePath);
     rmSync(metadataPath, { force: true });
 
-    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    const status = await getCheckoutStatus(worktree.worktreePath, { hubcodeHome });
     expect(status.isGit).toBe(true);
     expect(status.currentBranch).toBe("feature");
     expect(status.repoRoot).toBe(worktree.worktreePath);
-    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.isHubcodeOwnedWorktree).toBe(true);
     expect(status.mainRepoRoot).toBe(repoDir);
     expect(status.baseRef).toBe("main");
   });
@@ -1834,7 +1834,7 @@ const x = 1;
         "worktree /home/user/repo",
         "branch refs/heads/main",
         "",
-        "worktree /home/user/.paseo/worktrees/feature",
+        "worktree /home/user/.hubcode/worktrees/feature",
         "branch refs/heads/feature",
         "",
       ].join("\n");
@@ -1843,7 +1843,7 @@ const x = 1;
       expect(entries).toHaveLength(2);
       expect(entries[0]).toEqual({ path: "/home/user/repo", branchRef: "refs/heads/main" });
       expect(entries[1]).toEqual({
-        path: "/home/user/.paseo/worktrees/feature",
+        path: "/home/user/.hubcode/worktrees/feature",
         branchRef: "refs/heads/feature",
       });
     });
@@ -1856,18 +1856,18 @@ const x = 1;
     });
   });
 
-  describe("isPaseoWorktreePath", () => {
-    it("matches Unix .paseo/worktrees/ paths", () => {
-      expect(isPaseoWorktreePath("/home/user/.paseo/worktrees/feature")).toBe(true);
+  describe("isHubcodeWorktreePath", () => {
+    it("matches Unix .hubcode/worktrees/ paths", () => {
+      expect(isHubcodeWorktreePath("/home/user/.hubcode/worktrees/feature")).toBe(true);
     });
 
-    it("matches Windows .paseo\\worktrees\\ paths", () => {
-      expect(isPaseoWorktreePath("C:\\Users\\dev\\.paseo\\worktrees\\feature")).toBe(true);
+    it("matches Windows .hubcode\\worktrees\\ paths", () => {
+      expect(isHubcodeWorktreePath("C:\\Users\\dev\\.hubcode\\worktrees\\feature")).toBe(true);
     });
 
-    it("rejects paths without .paseo/worktrees segment", () => {
-      expect(isPaseoWorktreePath("/home/user/repo")).toBe(false);
-      expect(isPaseoWorktreePath("C:\\Users\\dev\\repo")).toBe(false);
+    it("rejects paths without .hubcode/worktrees segment", () => {
+      expect(isHubcodeWorktreePath("/home/user/repo")).toBe(false);
+      expect(isHubcodeWorktreePath("C:\\Users\\dev\\repo")).toBe(false);
     });
   });
 

@@ -8,7 +8,7 @@ import type { AgentClient } from "../agent/agent-sdk-types.js";
 import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
 import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import {
   allProviders,
@@ -470,7 +470,7 @@ describe.each(allProviders)("daemon E2E (real %s) - UI action stress", (provider
   test("normal UI submit path (idle sends) stays correct", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: {
         [provider]: createRealAgentClient(provider, logger),
       } as Partial<Record<AgentProvider, AgentClient>>,
@@ -506,7 +506,7 @@ describe.each(allProviders)("daemon E2E (real %s) - UI action stress", (provider
   test("queued-send-now path is stable under overlap", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: {
         [provider]: createRealAgentClient(provider, logger),
       } as Partial<Record<AgentProvider, AgentClient>>,

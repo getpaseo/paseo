@@ -94,7 +94,7 @@ function workspace(input: {
     gitRuntime: {
       currentBranch: "main",
       remoteUrl: input.remoteUrl,
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       isDirty: false,
       aheadBehind: null,
       aheadOfOrigin: null,
@@ -110,7 +110,7 @@ function workspace(input: {
         currentBranch: "main",
         remoteUrl: input.remoteUrl,
         worktreeRoot: input.cwd,
-        isPaseoOwnedWorktree: false,
+        isHubcodeOwnedWorktree: false,
         mainRepoRoot: null,
       },
     },

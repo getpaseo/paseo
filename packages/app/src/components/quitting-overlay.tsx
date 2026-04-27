@@ -37,7 +37,7 @@ export function QuittingOverlay() {
   return (
     <View style={styles.overlay}>
       <LoadingSpinner size="large" color={theme.colors.foregroundMuted} />
-      <Text style={styles.title}>Quitting Paseo…</Text>
+      <Text style={styles.title}>Quitting Hubcode…</Text>
       <Text style={styles.detail}>Stopping the local daemon.</Text>
     </View>
   );

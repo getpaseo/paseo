@@ -8,7 +8,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { GitHubService } from "../services/github-service.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
-import { createPaseoWorktree, type CreatePaseoWorktreeDeps } from "./paseo-worktree-service.js";
+import { createHubcodeWorktree, type CreateHubcodeWorktreeDeps } from "./hubcode-worktree-service.js";
 import { createWorktreeCoreDeps } from "./worktree-core.js";
 
 const cleanupPaths: string[] = [];
@@ -40,12 +40,12 @@ test("creates a worktree and registers it in the source workspace project withou
   deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
   deps.workspaceGitService.getSnapshot = vi.fn(deps.workspaceGitService.getSnapshot);
 
-  const result = await createPaseoWorktree(
+  const result = await createHubcodeWorktree(
     {
       cwd: repoDir,
       worktreeSlug: "feature-one",
       runSetup: false,
-      paseoHome: path.join(tempDir, ".paseo"),
+      hubcodeHome: path.join(tempDir, ".hubcode"),
     },
     deps,
   );
@@ -65,14 +65,14 @@ test("creates a worktree and registers it in the source workspace project withou
 test("reuses an existing worktree and still upserts the workspace", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
-  const paseoHome = path.join(tempDir, ".paseo");
+  const hubcodeHome = path.join(tempDir, ".hubcode");
   const firstDeps = createDeps();
-  const first = await createPaseoWorktree(
+  const first = await createHubcodeWorktree(
     {
       cwd: repoDir,
       worktreeSlug: "reuse-me",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     },
     firstDeps,
   );
@@ -83,12 +83,12 @@ test("reuses an existing worktree and still upserts the workspace", async () => 
     workspaces: firstDeps.workspaces,
   });
 
-  const second = await createPaseoWorktree(
+  const second = await createHubcodeWorktree(
     {
       cwd: repoDir,
       worktreeSlug: "reuse-me",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     },
     deps,
   );
@@ -99,17 +99,17 @@ test("reuses an existing worktree and still upserts the workspace", async () => 
 });
 
 test("does not mutate registries or broadcast when core worktree creation fails", async () => {
-  const tempDir = mkdtempSync(path.join(tmpdir(), "paseo-worktree-service-"));
+  const tempDir = mkdtempSync(path.join(tmpdir(), "hubcode-worktree-service-"));
   cleanupPaths.push(tempDir);
   const deps = createDeps();
 
   await expect(
-    createPaseoWorktree(
+    createHubcodeWorktree(
       {
         cwd: tempDir,
         worktreeSlug: "not-git",
         runSetup: false,
-        paseoHome: path.join(tempDir, ".paseo"),
+        hubcodeHome: path.join(tempDir, ".hubcode"),
       },
       deps,
     ),
@@ -131,10 +131,10 @@ test("keeps direct core worktree creation calls behind the service boundary", ()
     return Array.from(contents.matchAll(pattern), () => path.relative(serverSrc, filePath));
   });
 
-  expect(matches).toEqual(["paseo-worktree-service.test.ts", "paseo-worktree-service.ts"]);
+  expect(matches).toEqual(["hubcode-worktree-service.test.ts", "hubcode-worktree-service.ts"]);
 });
 
-interface TestDeps extends CreatePaseoWorktreeDeps {
+interface TestDeps extends CreateHubcodeWorktreeDeps {
   projects: Map<string, PersistedProjectRecord>;
   workspaces: Map<string, PersistedWorkspaceRecord>;
 }
@@ -280,7 +280,7 @@ function createWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
       mainRepoRoot,
       currentBranch,
       remoteUrl: null,
-      isPaseoOwnedWorktree: repoRoot !== mainRepoRoot,
+      isHubcodeOwnedWorktree: repoRoot !== mainRepoRoot,
       isDirty: false,
       baseRef: "main",
       aheadBehind: null,
@@ -298,7 +298,7 @@ function createWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
 }
 
 function createGitRepo(): { tempDir: string; repoDir: string } {
-  const tempDir = mkdtempSync(path.join(tmpdir(), "paseo-worktree-service-"));
+  const tempDir = mkdtempSync(path.join(tmpdir(), "hubcode-worktree-service-"));
   const repoDir = path.join(tempDir, "repo");
   execSync(`git init ${JSON.stringify(repoDir)}`, { stdio: "pipe" });
   execSync("git config user.email test@example.com", { cwd: repoDir, stdio: "pipe" });

@@ -10,7 +10,7 @@ type PullRequestTimeline = PullRequestTimelineResponse["payload"];
 
 const baseStatus: CheckoutPrStatus = {
   number: 42,
-  url: "https://github.com/getpaseo/paseo/pull/42",
+  url: "https://github.com/hubtool/hubcode/pull/42",
   title: "Wire PR pane data",
   state: "open",
   baseRefName: "main",
@@ -48,7 +48,7 @@ describe("mapPrPaneData", () => {
     const data = mapPrPaneData(
       status({
         number: undefined,
-        url: "https://github.com/getpaseo/paseo/pull/1284",
+        url: "https://github.com/hubtool/hubcode/pull/1284",
       }),
       timeline({ prNumber: 1284 }),
     );
@@ -58,7 +58,7 @@ describe("mapPrPaneData", () => {
 
   it("returns null when status has no number and no parseable PR URL", () => {
     expect(
-      mapPrPaneData(status({ number: undefined, url: "https://github.com/getpaseo/paseo" }), null),
+      mapPrPaneData(status({ number: undefined, url: "https://github.com/hubtool/hubcode" }), null),
     ).toBeNull();
   });
 

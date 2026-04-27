@@ -12,10 +12,10 @@ import type {
 } from "../agent/agent-sdk-types.js";
 import { PiDirectAgentClient } from "../agent/providers/pi-direct-agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
 import { isProviderAvailable } from "./agent-configs.js";
 
-process.env.PASEO_SUPERVISED = "0";
+process.env.HUBCODE_SUPERVISED = "0";
 
 const PI_TEST_TIMEOUT_MS = 240_000;
 const PI_REAL_TEST_MODEL = "openrouter/google/gemini-2.5-flash-lite";
@@ -32,7 +32,7 @@ function createPiClient(): PiDirectAgentClient {
 
 function createPiToolDaemon() {
   const logger = pino({ level: "silent" });
-  return createTestPaseoDaemon({
+  return createTestHubcodeDaemon({
     agentClients: { pi: new PiDirectAgentClient({ logger }) },
     logger,
   });

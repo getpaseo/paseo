@@ -26,7 +26,7 @@ export interface AgentMetadataGenerationOptions {
   cwd: string;
   initialPrompt?: string | null;
   explicitTitle?: string | null;
-  paseoHome?: string;
+  hubcodeHome?: string;
   logger: Logger;
   deps?: AgentMetadataGeneratorDeps;
 }
@@ -64,7 +64,7 @@ async function canRenameBranch(
     return false;
   }
 
-  if (!snapshot.git.isGit || !snapshot.git.isPaseoOwnedWorktree) {
+  if (!snapshot.git.isGit || !snapshot.git.isHubcodeOwnedWorktree) {
     return false;
   }
 
@@ -79,7 +79,7 @@ async function canRenameBranch(
 export async function determineAgentMetadataNeeds(
   options: Pick<
     AgentMetadataGenerationOptions,
-    "initialPrompt" | "explicitTitle" | "cwd" | "paseoHome" | "deps"
+    "initialPrompt" | "explicitTitle" | "cwd" | "hubcodeHome" | "deps"
   >,
 ): Promise<AgentMetadataNeeds> {
   const prompt = options.initialPrompt?.trim();
@@ -240,7 +240,7 @@ async function applyGeneratedBranchRename(params: {
     return;
   }
 
-  if (!snapshot.git.isGit || !snapshot.git.isPaseoOwnedWorktree || !snapshot.git.currentBranch) {
+  if (!snapshot.git.isGit || !snapshot.git.isHubcodeOwnedWorktree || !snapshot.git.currentBranch) {
     return;
   }
 

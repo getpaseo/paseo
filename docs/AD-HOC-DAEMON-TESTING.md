@@ -9,29 +9,29 @@ import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import pino from "pino";
-import { createPaseoDaemon } from "./bootstrap.js";
+import { createHubcodeDaemon } from "./bootstrap.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 
 const logger = pino({ level: "warn" });
-const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-test-"));
-const paseoHome = path.join(paseoHomeRoot, ".paseo");
-await mkdir(paseoHome, { recursive: true });
-const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+const hubcodeHomeRoot = await mkdtemp(path.join(os.tmpdir(), "hubcode-test-"));
+const hubcodeHome = path.join(hubcodeHomeRoot, ".hubcode");
+await mkdir(hubcodeHome, { recursive: true });
+const staticDir = await mkdtemp(path.join(os.tmpdir(), "hubcode-static-"));
 
-const daemon = await createPaseoDaemon(
+const daemon = await createHubcodeDaemon(
   {
     listen: "127.0.0.1:0", // OS picks a free port
-    paseoHome,
+    hubcodeHome,
     corsAllowedOrigins: [],
     hostnames: true,
     mcpEnabled: false,
     staticDir,
     mcpDebug: false,
     agentClients: {},
-    agentStoragePath: path.join(paseoHome, "agents"),
+    agentStoragePath: path.join(hubcodeHome, "agents"),
     relayEnabled: false,
-    relayEndpoint: "relay.paseo.sh:443",
-    appBaseUrl: "https://app.paseo.sh",
+    relayEndpoint: "relay.hubcode.ai:443",
+    appBaseUrl: "https://app.hubcode.ai",
     // Add custom config here, e.g.:
     // providerOverrides: { ... },
   },
@@ -53,7 +53,7 @@ await client.fetchAgents({ subscribe: { subscriptionId: "test" } });
 
 await client.close();
 await daemon.stop();
-await rm(paseoHomeRoot, { recursive: true, force: true });
+await rm(hubcodeHomeRoot, { recursive: true, force: true });
 await rm(staticDir, { recursive: true, force: true });
 ```
 
@@ -65,13 +65,13 @@ npx tsx packages/server/src/server/your-script.ts
 
 ## Using the test helper
 
-For simpler cases, `createTestPaseoDaemon` + `DaemonClient` handles temp dirs and port selection:
+For simpler cases, `createTestHubcodeDaemon` + `DaemonClient` handles temp dirs and port selection:
 
 ```typescript
-import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "./test-utils/hubcode-daemon.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 
-const daemon = await createTestPaseoDaemon();
+const daemon = await createTestHubcodeDaemon();
 const client = new DaemonClient({
   url: `ws://127.0.0.1:${daemon.port}/ws`,
   appVersion: "0.1.54",
@@ -85,7 +85,7 @@ await client.close();
 await daemon.close(); // stops daemon + cleans up temp dirs
 ```
 
-The test helper does **not** expose `providerOverrides`. Use `createPaseoDaemon` directly when you need it (see quick start above).
+The test helper does **not** expose `providerOverrides`. Use `createHubcodeDaemon` directly when you need it (see quick start above).
 
 ## Common client methods
 
@@ -152,7 +152,7 @@ try {
 } finally {
   await client.close();
   await daemon.stop().catch(() => undefined);
-  await rm(paseoHomeRoot, { recursive: true, force: true });
+  await rm(hubcodeHomeRoot, { recursive: true, force: true });
 }
 ```
 

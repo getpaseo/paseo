@@ -2,14 +2,14 @@ import { fork, spawn, type ChildProcess } from "child_process";
 
 type WorkerLifecycleMessage =
   | {
-      type: "paseo:shutdown";
+      type: "hubcode:shutdown";
     }
   | {
-      type: "paseo:ready";
+      type: "hubcode:ready";
       listen: string;
     }
   | {
-      type: "paseo:restart";
+      type: "hubcode:restart";
       reason?: string;
     };
 
@@ -39,20 +39,20 @@ function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
     return null;
   }
   const type = (msg as { type?: unknown }).type;
-  if (type === "paseo:shutdown") {
-    return { type: "paseo:shutdown" };
+  if (type === "hubcode:shutdown") {
+    return { type: "hubcode:shutdown" };
   }
-  if (type === "paseo:ready") {
+  if (type === "hubcode:ready") {
     const listen = (msg as { listen?: unknown }).listen;
     if (typeof listen !== "string" || listen.trim().length === 0) {
       return null;
     }
-    return { type: "paseo:ready", listen };
+    return { type: "hubcode:ready", listen };
   }
-  if (type === "paseo:restart") {
+  if (type === "hubcode:restart") {
     const reason = (msg as { reason?: unknown }).reason;
     return {
-      type: "paseo:restart",
+      type: "hubcode:restart",
       ...(typeof reason === "string" && reason.trim().length > 0 ? { reason } : {}),
     };
   }
@@ -122,7 +122,7 @@ export function runSupervisor(options: SupervisorOptions): void {
         return;
       }
 
-      if (lifecycleMessage.type === "paseo:ready") {
+      if (lifecycleMessage.type === "hubcode:ready") {
         Promise.resolve(options.onWorkerReady?.({ listen: lifecycleMessage.listen })).catch(
           (error) => {
             const message = error instanceof Error ? error.message : String(error);
@@ -132,7 +132,7 @@ export function runSupervisor(options: SupervisorOptions): void {
         return;
       }
 
-      if (lifecycleMessage.type === "paseo:shutdown") {
+      if (lifecycleMessage.type === "hubcode:shutdown") {
         requestShutdown("Shutdown requested by worker");
         return;
       }

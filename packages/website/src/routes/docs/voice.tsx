@@ -4,8 +4,8 @@ import { pageMeta } from "~/meta";
 export const Route = createFileRoute("/docs/voice")({
   head: () => ({
     meta: pageMeta(
-      "Voice - Paseo Docs",
-      "Paseo voice architecture, local-first model execution, and provider configuration.",
+      "Voice - Hubcode Docs",
+      "Hubcode voice architecture, local-first model execution, and provider configuration.",
     ),
   }),
   component: VoiceDocs,
@@ -17,7 +17,7 @@ function VoiceDocs() {
       <div>
         <h1 className="text-3xl font-medium font-title mb-4">Voice</h1>
         <p className="text-white/60 leading-relaxed">
-          Paseo has first-class voice support for dictation and realtime conversations with your
+          Hubcode has first-class voice support for dictation and realtime conversations with your
           coding environment.
         </p>
       </div>
@@ -26,7 +26,7 @@ function VoiceDocs() {
         <h2 className="text-xl font-medium">Philosophy</h2>
         <p className="text-white/60 leading-relaxed">
           Voice is local-first. You can run speech fully on-device, or choose OpenAI for speech
-          features. For voice reasoning/orchestration, Paseo reuses agent providers already
+          features. For voice reasoning/orchestration, Hubcode reuses agent providers already
           installed and authenticated on your machine.
         </p>
         <p className="text-white/60 leading-relaxed">
@@ -61,7 +61,7 @@ function VoiceDocs() {
         </p>
         <p className="text-white/60 leading-relaxed">
           Missing models are downloaded at daemon startup into{" "}
-          <code className="font-mono">$PASEO_HOME/models/local-speech</code>. Downloads happen only
+          <code className="font-mono">$HUBCODE_HOME/models/local-speech</code>. Downloads happen only
           for missing files.
         </p>
         <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
@@ -77,7 +77,7 @@ function VoiceDocs() {
   },
   "providers": {
     "local": {
-      "modelsDir": "~/.paseo/models/local-speech"
+      "modelsDir": "~/.hubcode/models/local-speech"
     }
   }
 }`}
@@ -115,25 +115,25 @@ function VoiceDocs() {
             <code className="font-mono">OPENAI_API_KEY</code> — OpenAI speech credentials
           </li>
           <li>
-            <code className="font-mono">PASEO_VOICE_LLM_PROVIDER</code> — voice agent provider
+            <code className="font-mono">HUBCODE_VOICE_LLM_PROVIDER</code> — voice agent provider
             override
           </li>
           <li>
-            <code className="font-mono">PASEO_LOCAL_MODELS_DIR</code> — local model storage
+            <code className="font-mono">HUBCODE_LOCAL_MODELS_DIR</code> — local model storage
             directory
           </li>
           <li>
-            <code className="font-mono">PASEO_DICTATION_LOCAL_STT_MODEL</code> — local dictation STT
+            <code className="font-mono">HUBCODE_DICTATION_LOCAL_STT_MODEL</code> — local dictation STT
             model ID
           </li>
           <li>
-            <code className="font-mono">PASEO_VOICE_LOCAL_STT_MODEL</code>,{" "}
-            <code className="font-mono">PASEO_VOICE_LOCAL_TTS_MODEL</code> — local voice STT/TTS
+            <code className="font-mono">HUBCODE_VOICE_LOCAL_STT_MODEL</code>,{" "}
+            <code className="font-mono">HUBCODE_VOICE_LOCAL_TTS_MODEL</code> — local voice STT/TTS
             model IDs
           </li>
           <li>
-            <code className="font-mono">PASEO_VOICE_LOCAL_TTS_SPEAKER_ID</code>,{" "}
-            <code className="font-mono">PASEO_VOICE_LOCAL_TTS_SPEED</code> — optional local voice
+            <code className="font-mono">HUBCODE_VOICE_LOCAL_TTS_SPEAKER_ID</code>,{" "}
+            <code className="font-mono">HUBCODE_VOICE_LOCAL_TTS_SPEED</code> — optional local voice
             TTS tuning
           </li>
         </ul>

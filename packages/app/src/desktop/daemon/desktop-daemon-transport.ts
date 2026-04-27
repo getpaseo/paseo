@@ -7,7 +7,7 @@ import {
   type LocalTransportTarget,
 } from "./desktop-daemon";
 
-const LOCAL_TRANSPORT_SCHEME = "paseo+local:";
+const LOCAL_TRANSPORT_SCHEME = "hubcode+local:";
 
 function encodeBinaryToBase64(data: Uint8Array | ArrayBuffer): string {
   const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;

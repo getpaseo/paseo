@@ -7,7 +7,7 @@ import { basename, dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import stripAnsi from "strip-ansi";
-import { createExternalProcessEnv } from "../server/paseo-env.js";
+import { createExternalProcessEnv } from "../server/hubcode-env.js";
 import type { TerminalCell, TerminalState } from "../shared/messages.js";
 
 const { Terminal } = xterm;
@@ -196,7 +196,7 @@ function resolveZshShellIntegrationRuntimeDir(): string {
   } catch {
     // keep fallback
   }
-  return join(tmpdir(), `${username}-paseo-zsh`);
+  return join(tmpdir(), `${username}-hubcode-zsh`);
 }
 
 function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegrationDir()): string {
@@ -206,8 +206,8 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
   chmodSync(runtimeDir, 0o700);
   copyFileSync(join(readableSourceDir, ".zshenv"), join(runtimeDir, ".zshenv"));
   copyFileSync(
-    join(readableSourceDir, "paseo-integration.zsh"),
-    join(runtimeDir, "paseo-integration.zsh"),
+    join(readableSourceDir, "hubcode-integration.zsh"),
+    join(runtimeDir, "hubcode-integration.zsh"),
   );
   return runtimeDir;
 }
@@ -226,7 +226,7 @@ export function buildTerminalEnvironment(
   const originalZdotdir = baseEnv.ZDOTDIR ?? "";
   return {
     ...baseEnv,
-    PASEO_ZSH_ZDOTDIR: originalZdotdir,
+    HUBCODE_ZSH_ZDOTDIR: originalZdotdir,
     ZDOTDIR: prepareZshShellIntegrationRuntimeDir(input.zshShellIntegrationDir),
   };
 }

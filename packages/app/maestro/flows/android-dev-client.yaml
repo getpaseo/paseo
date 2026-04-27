@@ -1,6 +1,6 @@
 # NOTE: Render through the workspace-create shell scripts before running when
-# using ${PASEO_MAESTRO_APP_ID}. Maestro does not substitute environment vars.
-appId: ${PASEO_MAESTRO_APP_ID}
+# using ${HUBCODE_MAESTRO_APP_ID}. Maestro does not substitute environment vars.
+appId: ${HUBCODE_MAESTRO_APP_ID}
 ---
 # Handle Expo dev launcher/dev menu screens when testing Android development
 # builds. Release builds no-op through these optional/conditional steps.

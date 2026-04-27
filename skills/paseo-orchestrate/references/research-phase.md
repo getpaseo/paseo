@@ -15,7 +15,7 @@ Each researcher gets a narrow mandate. Examples:
 
 ## Launching Researchers
 
-Use the Paseo **create agent** tool with `background: true` and `notifyOnFinish: true`:
+Use the Hubcode **create agent** tool with `background: true` and `notifyOnFinish: true`:
 
 ```
 title: "researcher-<scope>"
@@ -25,7 +25,7 @@ background: true
 notifyOnFinish: true
 initialPrompt: "You are a researcher.
 
-Read the plan at ~/.paseo/plans/<task-slug>.md for the objective.
+Read the plan at ~/.hubcode/plans/<task-slug>.md for the objective.
 
 <specific research mandate>
 
@@ -34,7 +34,7 @@ Include in your findings: relevant files, types, interfaces, patterns, gotchas, 
 
 ## Collecting Findings
 
-Wait for all researchers to complete (you'll be notified). Use the Paseo **get agent activity** tool to read their findings. Synthesize into a research summary that feeds the planning phase.
+Wait for all researchers to complete (you'll be notified). Use the Hubcode **get agent activity** tool to read their findings. Synthesize into a research summary that feeds the planning phase.
 
 If a researcher's findings raise new questions (in default mode), go back and ask the user before proceeding to planning.
 

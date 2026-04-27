@@ -19,8 +19,8 @@ import "~/styles.css";
 export const Route = createFileRoute("/download")({
   head: () => ({
     meta: pageMeta(
-      "Download - Paseo",
-      "Download Paseo for macOS, Windows, Linux, iOS, and Android. Your dev environment, in your pocket.",
+      "Download - Hubcode",
+      "Download Hubcode for macOS, Windows, Linux, iOS, and Android. Your dev environment, in your pocket.",
     ),
   }),
   component: Download,
@@ -41,8 +41,8 @@ function Download() {
       <div className="max-w-3xl mx-auto p-6 md:p-12">
         <header className="flex items-center justify-between gap-4 mb-12">
           <Link to="/" className="flex items-center gap-3">
-            <img src="/logo.svg" alt="Paseo" className="w-6 h-6" />
-            <span className="text-lg font-medium">Paseo</span>
+            <img src="/logo.svg" alt="Hubcode" className="w-6 h-6" />
+            <span className="text-lg font-medium">Hubcode</span>
           </Link>
           <div className="flex items-center gap-4">
             <Link
@@ -76,7 +76,7 @@ function Download() {
               </svg>
             </a>
             <a
-              href="https://github.com/getpaseo/paseo"
+              href="https://github.com/hubtool/hubcode"
               target="_blank"
               rel="noopener noreferrer"
               aria-label="GitHub"
@@ -118,7 +118,7 @@ function Download() {
                 <CommandDialog
                   trigger={homebrewTrigger}
                   title="Install via Homebrew"
-                  command="brew install --cask paseo"
+                  command="brew install --cask hubcode"
                 />
               </div>
             </div>
@@ -207,7 +207,7 @@ function Download() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <code className="text-sm text-muted-foreground font-mono bg-muted px-3 py-1.5 rounded-lg">
-                  npm install -g @getpaseo/cli
+                  npm install -g @gethubcode/cli
                 </code>
               </div>
             </div>
@@ -217,7 +217,7 @@ function Download() {
         <p className="text-center text-xs text-muted-foreground mt-8">
           All releases are available on{" "}
           <a
-            href="https://github.com/getpaseo/paseo/releases"
+            href="https://github.com/hubtool/hubcode/releases"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-foreground transition-colors"

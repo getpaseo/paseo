@@ -93,7 +93,7 @@ export async function runUpdateCommand(
     const error: CommandError = {
       code: "MISSING_AGENT_ID",
       message: "Agent ID is required",
-      details: "Usage: paseo agent update <id> [--name <name>] [--label <key=value>]",
+      details: "Usage: hubcode agent update <id> [--name <name>] [--label <key=value>]",
     };
     throw error;
   }
@@ -126,7 +126,7 @@ export async function runUpdateCommand(
     const error: CommandError = {
       code: "DAEMON_NOT_RUNNING",
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
+      details: "Start the daemon with: hubcode daemon start",
     };
     throw error;
   }
@@ -137,7 +137,7 @@ export async function runUpdateCommand(
       const error: CommandError = {
         code: "AGENT_NOT_FOUND",
         message: `Agent not found: ${agentIdArg}`,
-        details: 'Use "paseo ls" to list available agents',
+        details: 'Use "hubcode ls" to list available agents',
       };
       throw error;
     }

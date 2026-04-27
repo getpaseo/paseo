@@ -1,4 +1,4 @@
-appId: sh.paseo
+appId: ai.hubcode
 ---
 - runFlow: flows/land-in-chat.yaml
 

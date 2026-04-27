@@ -78,14 +78,14 @@ DEEPGRAM_API_KEY=your-deepgram-key-here  # Streaming STT
 STT_MODEL=whisper-1        # Optional: override to gpt-4o-transcribe, etc.
 STT_CONFIDENCE_THRESHOLD=-3.0  # Optional: reject low-confidence clips
 STT_DEBUG_AUDIO_DIR=.stt-debug # Optional: persist raw dictation audio for debugging
-PASEO_HOME=~/.paseo        # Runtime state directory (agents/, etc.)
-PASEO_LISTEN=127.0.0.1:6767  # Listen address (host:port or /path/to/socket)
+HUBCODE_HOME=~/.hubcode        # Runtime state directory (agents/, etc.)
+HUBCODE_LISTEN=127.0.0.1:6767  # Listen address (host:port or /path/to/socket)
 ```
 
-`PASEO_HOME` defaults to `~/.paseo` and isolates runtime artifacts like `agents/`. `PASEO_LISTEN` controls the daemon listen address. For blue/green testing you can run a parallel server without touching production state:
+`HUBCODE_HOME` defaults to `~/.hubcode` and isolates runtime artifacts like `agents/`. `HUBCODE_LISTEN` controls the daemon listen address. For blue/green testing you can run a parallel server without touching production state:
 
 ```bash
-PASEO_HOME=~/.paseo-blue PASEO_LISTEN=127.0.0.1:7777 npm run dev
+HUBCODE_HOME=~/.hubcode-blue HUBCODE_LISTEN=127.0.0.1:7777 npm run dev
 ```
 
 ## Tech Stack

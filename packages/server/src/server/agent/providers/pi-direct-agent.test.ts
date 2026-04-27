@@ -31,7 +31,7 @@ function createPiSession(prompt: () => Promise<void>): PiDirectSessionAdapter {
     },
     sessionManager: {
       getSessionFile: () => "/tmp/pi-session.json",
-      getCwd: () => "/tmp/paseo-pi-test",
+      getCwd: () => "/tmp/hubcode-pi-test",
     },
     subscribe: vi.fn(),
     prompt,
@@ -65,7 +65,7 @@ describe("PiDirectAgentSession", () => {
       { find: vi.fn(), getAll: vi.fn(() => []) },
       {
         provider: "pi",
-        cwd: "/tmp/paseo-pi-test",
+        cwd: "/tmp/hubcode-pi-test",
       },
     );
     const events: AgentStreamEvent[] = [];
@@ -94,7 +94,7 @@ describe("PiDirectAgentSession", () => {
       },
       {
         provider: "pi",
-        cwd: "/tmp/paseo-pi-test",
+        cwd: "/tmp/hubcode-pi-test",
       },
     );
 
@@ -128,7 +128,7 @@ describe("PiDirectAgentClient", () => {
     };
     (client as unknown as { modelRegistry: typeof registry }).modelRegistry = registry;
 
-    const models = await client.listModels({ cwd: "/tmp/paseo-pi-test", force: false });
+    const models = await client.listModels({ cwd: "/tmp/hubcode-pi-test", force: false });
 
     expect(registry.getAvailable).toHaveBeenCalledTimes(1);
     expect(registry.getAll).not.toHaveBeenCalled();
@@ -136,7 +136,7 @@ describe("PiDirectAgentClient", () => {
   });
 
   test("loads project extensions before listing available models", async () => {
-    const testRoot = await mkdtemp(join(tmpdir(), "paseo-pi-extension-"));
+    const testRoot = await mkdtemp(join(tmpdir(), "hubcode-pi-extension-"));
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
     try {
@@ -150,9 +150,9 @@ describe("PiDirectAgentClient", () => {
         join(extensionDir, "dummy-provider.ts"),
         `
 export default function(pi) {
-  pi.registerProvider("paseo-dummy", {
+  pi.registerProvider("hubcode-dummy", {
     baseUrl: "https://example.invalid/v1",
-    apiKey: "paseo-test-key",
+    apiKey: "hubcode-test-key",
     api: "openai-responses",
     models: [
       {
@@ -177,7 +177,7 @@ export default function(pi) {
 
       const models = await client.listModels({ cwd, force: false });
 
-      expect(models.map((model) => model.id)).toContain("paseo-dummy/extension-model");
+      expect(models.map((model) => model.id)).toContain("hubcode-dummy/extension-model");
     } finally {
       if (previousAgentDir === undefined) {
         delete process.env.PI_CODING_AGENT_DIR;
@@ -189,7 +189,7 @@ export default function(pi) {
   });
 
   test("creates sessions with project extension models and exposes extension commands", async () => {
-    const testRoot = await mkdtemp(join(tmpdir(), "paseo-pi-extension-session-"));
+    const testRoot = await mkdtemp(join(tmpdir(), "hubcode-pi-extension-session-"));
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
     try {
@@ -203,9 +203,9 @@ export default function(pi) {
         join(extensionDir, "dummy-command.ts"),
         `
 export default function(pi) {
-  pi.registerProvider("paseo-dummy", {
+  pi.registerProvider("hubcode-dummy", {
     baseUrl: "https://example.invalid/v1",
-    apiKey: "paseo-test-key",
+    apiKey: "hubcode-test-key",
     api: "openai-responses",
     models: [
       {
@@ -235,7 +235,7 @@ export default function(pi) {
       const session = await client.createSession({
         provider: "pi",
         cwd,
-        model: "paseo-dummy/extension-model",
+        model: "hubcode-dummy/extension-model",
       });
 
       try {

@@ -15,8 +15,8 @@ import {
 } from "../services/github-service.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand } from "./run-git-command.js";
-import { isPaseoOwnedWorktreeCwd } from "./worktree.js";
-import { readPaseoWorktreeMetadata } from "./worktree-metadata.js";
+import { isHubcodeOwnedWorktreeCwd } from "./worktree.js";
+import { readHubcodeWorktreeMetadata } from "./worktree-metadata.js";
 const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
 } as const;
@@ -638,7 +638,7 @@ export interface CheckoutStatus {
   isGit: false;
 }
 
-export interface CheckoutStatusGitNonPaseo {
+export interface CheckoutStatusGitNonHubcode {
   isGit: true;
   repoRoot: string;
   mainRepoRoot: string | null;
@@ -650,10 +650,10 @@ export interface CheckoutStatusGitNonPaseo {
   behindOfOrigin: number | null;
   hasRemote: boolean;
   remoteUrl: string | null;
-  isPaseoOwnedWorktree: false;
+  isHubcodeOwnedWorktree: false;
 }
 
-export interface CheckoutStatusGitPaseo {
+export interface CheckoutStatusGitHubcode {
   isGit: true;
   repoRoot: string;
   mainRepoRoot: string;
@@ -665,10 +665,10 @@ export interface CheckoutStatusGitPaseo {
   behindOfOrigin: number | null;
   hasRemote: boolean;
   remoteUrl: string | null;
-  isPaseoOwnedWorktree: true;
+  isHubcodeOwnedWorktree: true;
 }
 
-export type CheckoutStatusGit = CheckoutStatusGitNonPaseo | CheckoutStatusGitPaseo;
+export type CheckoutStatusGit = CheckoutStatusGitNonHubcode | CheckoutStatusGitHubcode;
 
 export type CheckoutStatusResult = CheckoutStatus | CheckoutStatusGit;
 
@@ -696,7 +696,7 @@ export interface MergeFromBaseOptions {
 }
 
 export interface CheckoutContext {
-  paseoHome?: string;
+  hubcodeHome?: string;
 }
 
 function isGitError(error: unknown): boolean {
@@ -784,10 +784,10 @@ export async function getMainRepoRoot(cwd: string): Promise<string> {
     envOverlay: READ_ONLY_GIT_ENV,
   });
   const worktrees = parseWorktreeList(worktreeOut);
-  const nonBareNonPaseo = worktrees.filter((wt) => !wt.isBare && !isPaseoWorktreePath(wt.path));
-  const childrenOfBareRepo = nonBareNonPaseo.filter((wt) => isDescendantPath(wt.path, normalized));
+  const nonBareNonHubcode = worktrees.filter((wt) => !wt.isBare && !isHubcodeWorktreePath(wt.path));
+  const childrenOfBareRepo = nonBareNonHubcode.filter((wt) => isDescendantPath(wt.path, normalized));
   const mainChild = childrenOfBareRepo.find((wt) => basename(wt.path) === "main");
-  return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonPaseo[0]?.path ?? normalized;
+  return mainChild?.path ?? childrenOfBareRepo[0]?.path ?? nonBareNonHubcode[0]?.path ?? normalized;
 }
 
 export interface GitWorktreeEntry {
@@ -796,9 +796,9 @@ export interface GitWorktreeEntry {
   isBare?: boolean;
 }
 
-/** Check whether a path contains a `.paseo/worktrees/` segment (both `/` and `\`). */
-export function isPaseoWorktreePath(p: string): boolean {
-  return /[/\\]\.paseo[/\\]worktrees[/\\]/.test(p);
+/** Check whether a path contains a `.hubcode/worktrees/` segment (both `/` and `\`). */
+export function isHubcodeWorktreePath(p: string): boolean {
+  return /[/\\]\.hubcode[/\\]worktrees[/\\]/.test(p);
 }
 
 /** True when `child` is strictly inside `parent` (handles both `/` and `\`). */
@@ -877,44 +877,44 @@ export async function renameCurrentBranch(
   return { previousBranch, currentBranch };
 }
 
-type PaseoWorktreeForCwd =
-  | { isPaseoOwnedWorktree: false }
-  | { isPaseoOwnedWorktree: true; worktreeRoot: string };
+type HubcodeWorktreeForCwd =
+  | { isHubcodeOwnedWorktree: false }
+  | { isHubcodeOwnedWorktree: true; worktreeRoot: string };
 
-async function getPaseoWorktreeForCwd(
+async function getHubcodeWorktreeForCwd(
   cwd: string,
   context?: CheckoutContext,
-): Promise<PaseoWorktreeForCwd> {
+): Promise<HubcodeWorktreeForCwd> {
   // Fast-path reject: non-worktree paths do not need expensive ownership checks.
   if (!/[\\/]worktrees[\\/]/.test(cwd)) {
-    return { isPaseoOwnedWorktree: false };
+    return { isHubcodeOwnedWorktree: false };
   }
 
-  const ownership = await isPaseoOwnedWorktreeCwd(cwd, { paseoHome: context?.paseoHome });
+  const ownership = await isHubcodeOwnedWorktreeCwd(cwd, { hubcodeHome: context?.hubcodeHome });
   if (!ownership.allowed) {
-    return { isPaseoOwnedWorktree: false };
+    return { isHubcodeOwnedWorktree: false };
   }
 
   return {
-    isPaseoOwnedWorktree: true,
+    isHubcodeOwnedWorktree: true,
     worktreeRoot: (await getWorktreeRoot(cwd)) ?? cwd,
   };
 }
 
-function readPaseoWorktreeBaseRef(worktreeRoot: string): string | null {
-  return readPaseoWorktreeMetadata(worktreeRoot)?.baseRefName ?? null;
+function readHubcodeWorktreeBaseRef(worktreeRoot: string): string | null {
+  return readHubcodeWorktreeMetadata(worktreeRoot)?.baseRefName ?? null;
 }
 
 async function getStoredBaseRefForCwd(
   cwd: string,
   context?: CheckoutContext,
 ): Promise<string | null> {
-  const paseoWorktree = await getPaseoWorktreeForCwd(cwd, context);
-  if (!paseoWorktree.isPaseoOwnedWorktree) {
+  const hubcodeWorktree = await getHubcodeWorktreeForCwd(cwd, context);
+  if (!hubcodeWorktree.isHubcodeOwnedWorktree) {
     return null;
   }
 
-  return readPaseoWorktreeBaseRef(paseoWorktree.worktreeRoot);
+  return readHubcodeWorktreeBaseRef(hubcodeWorktree.worktreeRoot);
 }
 
 async function getResolvedBaseRefForCwd(
@@ -994,7 +994,7 @@ async function resolvePullRequestStatusLookupTarget(
   currentBranch: string,
 ): Promise<PullRequestStatusLookupTarget> {
   const remoteName = await getGitConfigValue(cwd, `branch.${currentBranch}.remote`);
-  if (!remoteName?.startsWith("paseo-pr-")) {
+  if (!remoteName?.startsWith("hubcode-pr-")) {
     return { headRef: currentBranch };
   }
 
@@ -1263,7 +1263,7 @@ interface CheckoutInspectionContext {
   worktreeRoot: string;
   currentBranch: string | null;
   remoteUrl: string | null;
-  paseoWorktree: PaseoWorktreeForCwd;
+  hubcodeWorktree: HubcodeWorktreeForCwd;
 }
 
 async function inspectCheckoutContext(
@@ -1276,17 +1276,17 @@ async function inspectCheckoutContext(
       return null;
     }
 
-    const [currentBranch, remoteUrl, paseoWorktree] = await Promise.all([
+    const [currentBranch, remoteUrl, hubcodeWorktree] = await Promise.all([
       getCurrentBranch(cwd),
       getOriginRemoteUrl(cwd),
-      getPaseoWorktreeForCwd(cwd, context),
+      getHubcodeWorktreeForCwd(cwd, context),
     ]);
 
     return {
       worktreeRoot: root,
       currentBranch,
       remoteUrl,
-      paseoWorktree,
+      hubcodeWorktree,
     };
   } catch (error) {
     if (isGitError(error)) {
@@ -1418,7 +1418,7 @@ export async function getCheckoutStatus(
   const worktreeRoot = inspected.worktreeRoot;
   const currentBranch = inspected.currentBranch;
   const remoteUrl = inspected.remoteUrl;
-  const paseoWorktree = inspected.paseoWorktree;
+  const hubcodeWorktree = inspected.hubcodeWorktree;
   const isDirty = await isWorkingTreeDirty(cwd);
   const hasRemote = remoteUrl !== null;
   const { resolvedBaseRef: baseRef } = await resolveBaseRefForCwd(cwd, context);
@@ -1429,7 +1429,7 @@ export async function getCheckoutStatus(
     hasRemote && currentBranch ? getBehindOfOrigin(cwd, currentBranch) : Promise.resolve(null),
   ]);
 
-  if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {
+  if (hubcodeWorktree.isHubcodeOwnedWorktree && baseRef) {
     return {
       isGit: true,
       repoRoot: worktreeRoot,
@@ -1442,7 +1442,7 @@ export async function getCheckoutStatus(
       behindOfOrigin,
       hasRemote,
       remoteUrl,
-      isPaseoOwnedWorktree: true,
+      isHubcodeOwnedWorktree: true,
     };
   }
 
@@ -1459,7 +1459,7 @@ export async function getCheckoutStatus(
     behindOfOrigin,
     hasRemote,
     remoteUrl,
-    isPaseoOwnedWorktree: false,
+    isHubcodeOwnedWorktree: false,
   };
 }
 

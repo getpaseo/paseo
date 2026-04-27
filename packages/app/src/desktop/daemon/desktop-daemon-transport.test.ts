@@ -77,7 +77,7 @@ describe("desktop-daemon-transport", () => {
     expect(transportFactory).not.toBeNull();
 
     const transport = transportFactory!({
-      url: "paseo+local://socket?path=%2Ftmp%2Fpaseo.sock",
+      url: "hubcode+local://socket?path=%2Ftmp%2Fhubcode.sock",
     });
 
     const onOpen = vi.fn();
@@ -119,7 +119,7 @@ describe("desktop-daemon-transport", () => {
     expect(transportFactory).not.toBeNull();
 
     const transport = transportFactory!({
-      url: "paseo+local://socket?path=%2Ftmp%2Fpaseo.sock",
+      url: "hubcode+local://socket?path=%2Ftmp%2Fhubcode.sock",
     });
 
     transport.close();

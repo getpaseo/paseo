@@ -122,13 +122,13 @@ describe("checkout-git-actions-store", () => {
   it("hides an archived worktree optimistically while the archive RPC is in flight", async () => {
     const deferred = createDeferred<Record<string, never>>();
     const client = {
-      archivePaseoWorktree: vi.fn(() => deferred.promise),
+      archiveHubcodeWorktree: vi.fn(() => deferred.promise),
     };
     const featureWorkspace = workspace({ id: cwd, name: "feature" });
     useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
     useSessionStore.getState().setWorkspaces(serverId, new Map([[cwd, featureWorkspace]]));
     appQueryClient.setQueryData(
-      ["sidebarPaseoWorktreeList", serverId, "/tmp"],
+      ["sidebarHubcodeWorktreeList", serverId, "/tmp"],
       [{ worktreePath: cwd }, { worktreePath: "/tmp/other" }],
     );
 
@@ -136,9 +136,9 @@ describe("checkout-git-actions-store", () => {
       .getState()
       .archiveWorktree({ serverId, cwd, worktreePath: cwd });
 
-    expect(client.archivePaseoWorktree).toHaveBeenCalledWith({ worktreePath: cwd });
+    expect(client.archiveHubcodeWorktree).toHaveBeenCalledWith({ worktreePath: cwd });
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(cwd)).toBe(false);
-    expect(appQueryClient.getQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"])).toEqual([
+    expect(appQueryClient.getQueryData(["sidebarHubcodeWorktreeList", serverId, "/tmp"])).toEqual([
       { worktreePath: "/tmp/other" },
     ]);
 
@@ -148,13 +148,13 @@ describe("checkout-git-actions-store", () => {
 
   it("restores an optimistically hidden worktree when archive fails", async () => {
     const client = {
-      archivePaseoWorktree: vi.fn(async () => ({ error: { message: "archive failed" } })),
+      archiveHubcodeWorktree: vi.fn(async () => ({ error: { message: "archive failed" } })),
     };
     const featureWorkspace = workspace({ id: cwd, name: "feature" });
     const listSnapshot = [{ worktreePath: cwd }, { worktreePath: "/tmp/other" }];
     useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
     useSessionStore.getState().setWorkspaces(serverId, new Map([[cwd, featureWorkspace]]));
-    appQueryClient.setQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"], listSnapshot);
+    appQueryClient.setQueryData(["sidebarHubcodeWorktreeList", serverId, "/tmp"], listSnapshot);
 
     await expect(
       useCheckoutGitActionsStore.getState().archiveWorktree({ serverId, cwd, worktreePath: cwd }),
@@ -163,7 +163,7 @@ describe("checkout-git-actions-store", () => {
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.get(cwd)).toEqual(
       featureWorkspace,
     );
-    expect(appQueryClient.getQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"])).toEqual(
+    expect(appQueryClient.getQueryData(["sidebarHubcodeWorktreeList", serverId, "/tmp"])).toEqual(
       listSnapshot,
     );
   });

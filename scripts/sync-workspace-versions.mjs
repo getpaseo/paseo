@@ -43,7 +43,7 @@ for (const workspacePath of workspacePaths) {
     changed = true;
   }
 
-  if (pkg.name === "@getpaseo/desktop") {
+  if (pkg.name === "@gethubcode/desktop") {
     for (const [field, value] of Object.entries(sharedMetadata)) {
       const currentValue = JSON.stringify(pkg[field]);
       const nextValue = JSON.stringify(value);
@@ -66,7 +66,7 @@ for (const workspacePath of workspacePaths) {
     }
 
     for (const name of Object.keys(deps)) {
-      if (!name.startsWith("@getpaseo/")) {
+      if (!name.startsWith("@gethubcode/")) {
         continue;
       }
       if (name === pkg.name) {

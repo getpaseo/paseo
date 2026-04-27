@@ -115,7 +115,7 @@ function makeHistoryEntry(input: {
         currentBranch: null,
         remoteUrl: null,
         worktreeRoot: null,
-        isPaseoOwnedWorktree: false,
+        isHubcodeOwnedWorktree: false,
         mainRepoRoot: null,
       },
     },

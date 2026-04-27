@@ -7,7 +7,7 @@ const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 dotenv.config({ path: path.resolve(serverRoot, ".env.test"), override: true });
 dotenv.config({ path: path.resolve(serverRoot, "../.env") });
 
-process.env.PASEO_SUPERVISED = "0";
+process.env.HUBCODE_SUPERVISED = "0";
 process.env.GIT_TERMINAL_PROMPT = "0";
 process.env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes";
 process.env.SSH_ASKPASS = "/usr/bin/false";

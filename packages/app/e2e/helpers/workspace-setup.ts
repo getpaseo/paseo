@@ -20,7 +20,7 @@ interface WorkspaceSetupDaemonClient {
     } | null;
     error: string | null;
   }>;
-  createPaseoWorktree(input: { cwd: string; worktreeSlug?: string }): Promise<{
+  createHubcodeWorktree(input: { cwd: string; worktreeSlug?: string }): Promise<{
     workspace: {
       id: string;
       name: string;
@@ -260,7 +260,7 @@ export async function createWorkspaceThroughDaemon(
   client: WorkspaceSetupDaemonClient,
   input: { cwd: string; worktreeSlug: string },
 ): Promise<{ id: string; name: string }> {
-  const result = await client.createPaseoWorktree(input);
+  const result = await client.createHubcodeWorktree(input);
   if (!result.workspace || result.error) {
     throw new Error(result.error ?? `Failed to create workspace for ${input.cwd}`);
   }

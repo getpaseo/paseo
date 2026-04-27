@@ -14,7 +14,7 @@ import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js
 
 function createWorkspaceRepo(options?: {
   branchName?: string;
-  paseoConfig?: Record<string, unknown>;
+  hubcodeConfig?: Record<string, unknown>;
 }): { tempDir: string; repoDir: string; cleanup: () => void } {
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "script-projection-")));
   const repoDir = path.join(tempDir, "repo");
@@ -23,8 +23,8 @@ function createWorkspaceRepo(options?: {
   execSync("git config user.email 'test@test.com'", { cwd: repoDir, stdio: "pipe" });
   execSync("git config user.name 'Test'", { cwd: repoDir, stdio: "pipe" });
   writeFileSync(path.join(repoDir, "README.md"), "hello\n");
-  if (options?.paseoConfig) {
-    writeFileSync(path.join(repoDir, "paseo.json"), JSON.stringify(options.paseoConfig, null, 2));
+  if (options?.hubcodeConfig) {
+    writeFileSync(path.join(repoDir, "hubcode.json"), JSON.stringify(options.hubcodeConfig, null, 2));
   }
   execSync("git add .", { cwd: repoDir, stdio: "pipe" });
   execSync("git -c commit.gpgsign=false commit -m 'initial'", { cwd: repoDir, stdio: "pipe" });
@@ -69,7 +69,7 @@ describe("script-status-projection", () => {
   it("projects plain scripts and services differently", () => {
     const workspaceId = "workspace-plain-and-service";
     const workspace = createWorkspaceRepo({
-      paseoConfig: {
+      hubcodeConfig: {
         scripts: {
           typecheck: { command: "npm run typecheck" },
           web: { type: "service", command: "npm run web", port: 3000 },
@@ -129,7 +129,7 @@ describe("script-status-projection", () => {
     const workspaceId = "workspace-service-metadata";
     const workspace = createWorkspaceRepo({
       branchName: "local-branch-that-should-not-be-read",
-      paseoConfig: {
+      hubcodeConfig: {
         scripts: {
           web: { type: "service", command: "npm run web", port: 3000 },
         },
@@ -173,7 +173,7 @@ describe("script-status-projection", () => {
     const workspaceId = "workspace-running-service";
     const workspace = createWorkspaceRepo({
       branchName: "feature/card",
-      paseoConfig: {
+      hubcodeConfig: {
         scripts: {
           web: { type: "service", command: "npm run web" },
         },
@@ -228,7 +228,7 @@ describe("script-status-projection", () => {
   it("maps internal pending health to null on the wire", () => {
     const workspaceId = "workspace-pending-health";
     const workspace = createWorkspaceRepo({
-      paseoConfig: {
+      hubcodeConfig: {
         scripts: {
           web: { type: "service", command: "npm run web" },
         },
@@ -372,7 +372,7 @@ describe("script-status-projection", () => {
   it("createScriptStatusEmitter overlays health onto the projected workspace script list", async () => {
     const workspaceId = "workspace-emitter";
     const workspace = createWorkspaceRepo({
-      paseoConfig: {
+      hubcodeConfig: {
         scripts: {
           api: { type: "service", command: "npm run api" },
           typecheck: { command: "npm run typecheck" },

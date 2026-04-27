@@ -18,11 +18,11 @@ $env:EXPO_DEV_URL = "http://localhost:$($env:EXPO_PORT)"
 # Allow any origin in dev so Electron on random ports works.
 # SECURITY: wildcard CORS is unsafe in production — only acceptable here because
 # the daemon binds to localhost and this script is never used for production.
-$env:PASEO_CORS_ORIGINS = "*"
+$env:HUBCODE_CORS_ORIGINS = "*"
 
 Write-Host @"
 ======================================================
-  Paseo Desktop Dev (Windows)
+  Hubcode Desktop Dev (Windows)
 ======================================================
   Metro:     http://localhost:$($env:EXPO_PORT)
 ======================================================

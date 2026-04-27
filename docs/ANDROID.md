@@ -6,8 +6,8 @@ Controlled by `APP_VARIANT` in `packages/app/app.config.js` (vanilla Expo, no cu
 
 | Variant       | App name    | Package ID       |
 | ------------- | ----------- | ---------------- |
-| `production`  | Paseo       | `sh.paseo`       |
-| `development` | Paseo Debug | `sh.paseo.debug` |
+| `production`  | Hubcode       | `ai.hubcode`       |
+| `development` | Hubcode Debug | `ai.hubcode.debug` |
 
 EAS profiles: `development`, `production`, and `production-apk` in `packages/app/eas.json`.
 

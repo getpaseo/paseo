@@ -15,16 +15,16 @@ import { SherpaOnnxSTT } from "./sherpa-stt.js";
 import { SherpaOfflineRecognizerEngine } from "./sherpa-offline-recognizer.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa-parakeet-stt.js";
 
-const RUN = process.env.PASEO_SPEECH_E2E_DOWNLOAD === "1";
+const RUN = process.env.HUBCODE_SPEECH_E2E_DOWNLOAD === "1";
 const downloadTest = RUN ? test : test.skip;
 
 type ModelSet = "zipformer-kitten" | "parakeet-pocket";
 
 function getModelSet(): ModelSet {
-  const raw = (process.env.PASEO_SPEECH_E2E_MODEL_SET ?? "parakeet-pocket").trim().toLowerCase();
+  const raw = (process.env.HUBCODE_SPEECH_E2E_MODEL_SET ?? "parakeet-pocket").trim().toLowerCase();
   if (raw === "zipformer-kitten" || raw === "zipformer") return "zipformer-kitten";
   if (raw === "parakeet-pocket" || raw === "parakeet") return "parakeet-pocket";
-  throw new Error(`Unknown PASEO_SPEECH_E2E_MODEL_SET: ${raw}`);
+  throw new Error(`Unknown HUBCODE_SPEECH_E2E_MODEL_SET: ${raw}`);
 }
 
 async function readFixtureWav(): Promise<Buffer> {
@@ -102,8 +102,8 @@ downloadTest(
     const logger = pino({ level: "silent" });
     const set = getModelSet();
 
-    const paseoHomeRoot = mkdtempSync(path.join(tmpdir(), "paseo-speech-download-"));
-    const modelsDir = path.join(paseoHomeRoot, ".paseo", "models", "local-speech");
+    const hubcodeHomeRoot = mkdtempSync(path.join(tmpdir(), "hubcode-speech-download-"));
+    const modelsDir = path.join(hubcodeHomeRoot, ".hubcode", "models", "local-speech");
 
     const modelIds: SherpaOnnxModelId[] =
       set === "parakeet-pocket"
@@ -117,7 +117,7 @@ downloadTest(
     });
 
     const ctx = await createDaemonTestContext({
-      paseoHomeRoot,
+      hubcodeHomeRoot,
       dictationFinalTimeoutMs: 8000,
       speech: {
         providers: {

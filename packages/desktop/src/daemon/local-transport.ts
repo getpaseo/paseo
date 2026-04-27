@@ -29,7 +29,7 @@ const sessions = new Map<string, Session>();
 
 function emitTransportEvent(payload: TransportEventPayload): void {
   for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send("paseo:event:local-daemon-transport-event", payload);
+    win.webContents.send("hubcode:event:local-daemon-transport-event", payload);
   }
 }
 
@@ -38,7 +38,7 @@ function emitTransportEvent(payload: TransportEventPayload): void {
  * named pipe.  The `ws` library supports these via the `ws+unix://` scheme:
  *
  *   ws+unix:///path/to/socket:/ws
- *   ws+unix://./pipe/paseo:/ws        (Windows named pipe)
+ *   ws+unix://./pipe/hubcode:/ws        (Windows named pipe)
  *
  * The part before `:` is the IPC path, the part after is the HTTP request
  * path used during the WebSocket upgrade handshake.

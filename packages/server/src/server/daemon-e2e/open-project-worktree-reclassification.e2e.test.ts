@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { DaemonClient } from "../test-utils/daemon-client.js";
-import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon, type TestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -15,7 +15,7 @@ import {
 } from "../workspace-registry.js";
 
 const cleanupPaths = new Set<string>();
-const cleanupDaemons = new Set<TestPaseoDaemon>();
+const cleanupDaemons = new Set<TestHubcodeDaemon>();
 const cleanupClients = new Set<DaemonClient>();
 
 afterEach(async () => {
@@ -30,23 +30,23 @@ afterEach(async () => {
 });
 
 test("openProject reclassifies an existing directory workspace into its parent git project", async () => {
-  const previousSupervised = process.env.PASEO_SUPERVISED;
-  process.env.PASEO_SUPERVISED = "0";
+  const previousSupervised = process.env.HUBCODE_SUPERVISED;
+  process.env.HUBCODE_SUPERVISED = "0";
   try {
-    const repoRoot = realpathSync(mkdtempSync(path.join(os.tmpdir(), "paseo-open-project-repo-")));
+    const repoRoot = realpathSync(mkdtempSync(path.join(os.tmpdir(), "hubcode-open-project-repo-")));
     const worktreeRoot = realpathSync(
-      mkdtempSync(path.join(os.tmpdir(), "paseo-open-project-worktree-")),
+      mkdtempSync(path.join(os.tmpdir(), "hubcode-open-project-worktree-")),
     );
-    const paseoHomeRoot = realpathSync(
-      mkdtempSync(path.join(os.tmpdir(), "paseo-open-project-home-")),
+    const hubcodeHomeRoot = realpathSync(
+      mkdtempSync(path.join(os.tmpdir(), "hubcode-open-project-home-")),
     );
     cleanupPaths.add(repoRoot);
     cleanupPaths.add(worktreeRoot);
-    cleanupPaths.add(paseoHomeRoot);
+    cleanupPaths.add(hubcodeHomeRoot);
 
     execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
-    execSync("git config user.email 'test@getpaseo.dev'", { cwd: repoRoot, stdio: "pipe" });
-    execSync("git config user.name 'Paseo Test'", { cwd: repoRoot, stdio: "pipe" });
+    execSync("git config user.email 'test@gethubcode.dev'", { cwd: repoRoot, stdio: "pipe" });
+    execSync("git config user.name 'Hubcode Test'", { cwd: repoRoot, stdio: "pipe" });
     writeFileSync(path.join(repoRoot, "README.md"), "# repo\n", "utf8");
     execSync("git add README.md", { cwd: repoRoot, stdio: "pipe" });
     execSync("git -c commit.gpgSign=false commit -m 'initial'", { cwd: repoRoot, stdio: "pipe" });
@@ -56,9 +56,9 @@ test("openProject reclassifies an existing directory workspace into its parent g
       stdio: "pipe",
     });
 
-    const paseoHome = path.join(paseoHomeRoot, ".paseo");
-    const projectsPath = path.join(paseoHome, "projects", "projects.json");
-    const workspacesPath = path.join(paseoHome, "projects", "workspaces.json");
+    const hubcodeHome = path.join(hubcodeHomeRoot, ".hubcode");
+    const projectsPath = path.join(hubcodeHome, "projects", "projects.json");
+    const workspacesPath = path.join(hubcodeHome, "projects", "workspaces.json");
     const timestamp = "2026-04-24T09:46:43.146Z";
 
     await mkdir(path.dirname(projectsPath), { recursive: true });
@@ -101,7 +101,7 @@ test("openProject reclassifies an existing directory workspace into its parent g
       }),
     ]);
 
-    const daemon = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: false });
+    const daemon = await createTestHubcodeDaemon({ hubcodeHomeRoot, cleanup: false });
     cleanupDaemons.add(daemon);
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
     cleanupClients.add(client);
@@ -125,7 +125,7 @@ test("openProject reclassifies an existing directory workspace into its parent g
       persistedWorkspaces.find((workspace) => workspace.workspaceId === worktreeRoot)?.kind,
     ).toBe("worktree");
   } finally {
-    process.env.PASEO_SUPERVISED = previousSupervised;
+    process.env.HUBCODE_SUPERVISED = previousSupervised;
   }
 }, 30_000);
 

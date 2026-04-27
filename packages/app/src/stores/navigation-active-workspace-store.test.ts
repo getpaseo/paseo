@@ -13,7 +13,7 @@ vi.mock("@/constants/platform", () => ({
   isWeb: true,
 }));
 
-const LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-selection";
+const LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY = "hubcode:last-workspace-route-selection";
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;

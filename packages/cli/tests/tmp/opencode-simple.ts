@@ -3,7 +3,7 @@ import { createE2ETestContext } from "../helpers/test-daemon.js";
 async function main() {
   const ctx = await createE2ETestContext({ timeout: 180000 });
   try {
-    const run = await ctx.paseo(
+    const run = await ctx.hubcode(
       [
         "run",
         "--provider",

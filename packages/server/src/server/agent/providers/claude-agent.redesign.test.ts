@@ -163,11 +163,11 @@ afterEach(() => {
 });
 
 test("logs redacted query summary and never leaks sentinel secrets", async () => {
-  const envSecret = "PASEO_ENV_SENTINEL_SECRET";
-  const runtimeSecret = "PASEO_RUNTIME_SENTINEL_SECRET";
-  const systemSecret = "PASEO_SYSTEM_PROMPT_SENTINEL_SECRET";
-  const previousEnv = process.env.PASEO_TEST_SENTINEL_SECRET;
-  process.env.PASEO_TEST_SENTINEL_SECRET = envSecret;
+  const envSecret = "HUBCODE_ENV_SENTINEL_SECRET";
+  const runtimeSecret = "HUBCODE_RUNTIME_SENTINEL_SECRET";
+  const systemSecret = "HUBCODE_SYSTEM_PROMPT_SENTINEL_SECRET";
+  const previousEnv = process.env.HUBCODE_TEST_SENTINEL_SECRET;
+  process.env.HUBCODE_TEST_SENTINEL_SECRET = envSecret;
 
   sdkQueryFactory.mockImplementation(() => {
     let step = 0;
@@ -219,7 +219,7 @@ test("logs redacted query summary and never leaks sentinel secrets", async () =>
     queryFactory: sdkQueryFactory,
     runtimeSettings: {
       env: {
-        PASEO_RUNTIME_SENTINEL_SECRET: runtimeSecret,
+        HUBCODE_RUNTIME_SENTINEL_SECRET: runtimeSecret,
       },
     },
   });
@@ -251,9 +251,9 @@ test("logs redacted query summary and never leaks sentinel secrets", async () =>
   } finally {
     await session.close();
     if (previousEnv === undefined) {
-      delete process.env.PASEO_TEST_SENTINEL_SECRET;
+      delete process.env.HUBCODE_TEST_SENTINEL_SECRET;
     } else {
-      process.env.PASEO_TEST_SENTINEL_SECRET = previousEnv;
+      process.env.HUBCODE_TEST_SENTINEL_SECRET = previousEnv;
     }
   }
 });

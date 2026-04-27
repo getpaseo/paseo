@@ -8,7 +8,7 @@ import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-a
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createMessageCollector } from "../test-utils/message-collector.js";
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
 import type { SessionOutboundMessage } from "../messages.js";
 import { getFullAccessConfig, isProviderAvailable } from "./agent-configs.js";
 
@@ -155,7 +155,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
   test("does not emit an idle agent_update between UI send and the replacement Codex turn", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { codex: new CodexAppServerAgentClient(logger) },
       logger,
     });
@@ -231,7 +231,7 @@ describe("daemon E2E (real codex) - send message during tool call", () => {
   test("does not emit an idle agent_update when a second prompt is sent 200ms after the first", async () => {
     const logger = pino({ level: "silent" });
     const cwd = tmpCwd();
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createTestHubcodeDaemon({
       agentClients: { codex: new CodexAppServerAgentClient(logger) },
       logger,
     });

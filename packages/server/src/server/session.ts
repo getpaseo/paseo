@@ -56,7 +56,7 @@ import { STTManager } from "./agent/stt-manager.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
-import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
+import { isHubcodeDictationDebugEnabled } from "./agent/recordings-debug.js";
 import { listAvailableEditorTargets, openInEditorTarget } from "./editor-targets.js";
 import {
   DictationStreamManager,
@@ -164,10 +164,10 @@ import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { type WorktreeConfig } from "../utils/worktree.js";
 import {
-  readPaseoConfigForEdit,
-  writePaseoConfigForEdit,
+  readHubcodeConfigForEdit,
+  writeHubcodeConfigForEdit,
   type ProjectConfigRpcError,
-} from "../utils/paseo-config-file.js";
+} from "../utils/hubcode-config-file.js";
 import { runAsyncWorktreeBootstrap } from "./worktree-bootstrap.js";
 import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
@@ -203,21 +203,21 @@ import {
   type PullRequestTimelineItem,
 } from "../services/github-service.js";
 import {
-  createPaseoWorktree,
-  type CreatePaseoWorktreeInput,
-  type CreatePaseoWorktreeResult,
-} from "./paseo-worktree-service.js";
+  createHubcodeWorktree,
+  type CreateHubcodeWorktreeInput,
+  type CreateHubcodeWorktreeResult,
+} from "./hubcode-worktree-service.js";
 import { createWorktreeCoreDeps } from "./worktree-core.js";
 import {
   assertSafeGitRef as assertWorktreeSafeGitRef,
   buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
   runWorktreeSetupInBackground as runWorktreeSetupInBackgroundSession,
-  handleCreatePaseoWorktreeRequest as handleCreateWorktreeRequest,
-  handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
-  handlePaseoWorktreeListRequest as handleWorktreeListRequest,
+  handleCreateHubcodeWorktreeRequest as handleCreateWorktreeRequest,
+  handleHubcodeWorktreeArchiveRequest as handleWorktreeArchiveRequest,
+  handleHubcodeWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
 } from "./worktree-session.js";
-import { killTerminalsUnderPath as killWorktreeTerminalsUnderPath } from "./paseo-worktree-archive-service.js";
+import { killTerminalsUnderPath as killWorktreeTerminalsUnderPath } from "./hubcode-worktree-archive-service.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
@@ -316,7 +316,7 @@ function buildWorkspaceCheckout(
       currentBranch: null,
       remoteUrl: null,
       worktreeRoot: null,
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       mainRepoRoot: null,
     };
   }
@@ -327,7 +327,7 @@ function buildWorkspaceCheckout(
       currentBranch: workspace.displayName,
       remoteUrl: null,
       worktreeRoot: workspace.cwd,
-      isPaseoOwnedWorktree: true,
+      isHubcodeOwnedWorktree: true,
       mainRepoRoot: project.rootPath,
     };
   }
@@ -337,7 +337,7 @@ function buildWorkspaceCheckout(
     currentBranch: workspace.displayName,
     remoteUrl: null,
     worktreeRoot: workspace.cwd,
-    isPaseoOwnedWorktree: false,
+    isHubcodeOwnedWorktree: false,
     mainRepoRoot: null,
   };
 }
@@ -656,7 +656,7 @@ export interface SessionOptions {
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushTokenStore: PushTokenStore;
-  paseoHome: string;
+  hubcodeHome: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
@@ -797,7 +797,7 @@ export class Session {
   private readonly onBinaryMessage: ((frame: Uint8Array) => void) | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private readonly sessionLogger: pino.Logger;
-  private readonly paseoHome: string;
+  private readonly hubcodeHome: string;
 
   // State machine
   private abortController: AbortController;
@@ -918,7 +918,7 @@ export class Session {
       logger,
       downloadTokenStore,
       pushTokenStore,
-      paseoHome,
+      hubcodeHome,
       agentManager,
       agentStorage,
       projectRegistry,
@@ -957,7 +957,7 @@ export class Session {
     this.onLifecycleIntent = onLifecycleIntent ?? null;
     this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
-    this.paseoHome = paseoHome;
+    this.hubcodeHome = hubcodeHome;
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
@@ -1638,7 +1638,7 @@ export class Session {
           currentBranch: null,
           remoteUrl: null,
           worktreeRoot: null,
-          isPaseoOwnedWorktree: false,
+          isHubcodeOwnedWorktree: false,
           mainRepoRoot: null,
         },
       };
@@ -1909,7 +1909,7 @@ export class Session {
       return;
     }
 
-    const result = readPaseoConfigForEdit(repoRoot);
+    const result = readHubcodeConfigForEdit(repoRoot);
     if (!result.ok) {
       this.sessionLogger.warn(
         { repoRoot, requestId: msg.requestId, outcome: result.error.code },
@@ -1954,7 +1954,7 @@ export class Session {
       { repoRoot, requestId: msg.requestId, outcome: "write_attempt" },
       "Writing project config",
     );
-    const result = writePaseoConfigForEdit({
+    const result = writeHubcodeConfigForEdit({
       repoRoot,
       config: msg.config,
       expectedRevision: msg.expectedRevision,
@@ -2068,12 +2068,12 @@ export class Session {
     switch (msg.type) {
       case "fetch_workspaces_request":
         return this.handleFetchWorkspacesRequest(msg);
-      case "paseo_worktree_list_request":
-        return this.handlePaseoWorktreeListRequest(msg);
-      case "paseo_worktree_archive_request":
-        return this.handlePaseoWorktreeArchiveRequest(msg);
-      case "create_paseo_worktree_request":
-        return this.handleCreatePaseoWorktreeRequest(msg);
+      case "hubcode_worktree_list_request":
+        return this.handleHubcodeWorktreeListRequest(msg);
+      case "hubcode_worktree_archive_request":
+        return this.handleHubcodeWorktreeArchiveRequest(msg);
+      case "create_hubcode_worktree_request":
+        return this.handleCreateHubcodeWorktreeRequest(msg);
       case "workspace_setup_status_request":
         return this.handleWorkspaceSetupStatusRequest(msg);
       case "list_available_editors_request":
@@ -3173,7 +3173,7 @@ export class Session {
       cwd: snapshot.cwd,
       initialPrompt: trimmedPrompt,
       explicitTitle: params.explicitTitle,
-      paseoHome: this.paseoHome,
+      hubcodeHome: this.hubcodeHome,
       logger: this.sessionLogger,
       deps: {
         workspaceGitService: this.workspaceGitService,
@@ -3344,11 +3344,11 @@ export class Session {
   }> {
     return buildWorktreeAgentSessionConfig(
       {
-        paseoHome: this.paseoHome,
+        hubcodeHome: this.hubcodeHome,
         sessionLogger: this.sessionLogger,
         workspaceGitService: this.workspaceGitService,
-        createPaseoWorktree: (input, serviceOptions) =>
-          this.createPaseoWorktree(input, serviceOptions),
+        createHubcodeWorktree: (input, serviceOptions) =>
+          this.createHubcodeWorktree(input, serviceOptions),
         checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
         createBranchFromBase: (params) => this.createBranchFromBase(params),
         github: this.github,
@@ -3896,7 +3896,7 @@ export class Session {
       ) {
         return {
           title: "Update changes",
-          body: "Automated PR generated by Paseo.",
+          body: "Automated PR generated by Hubcode.",
         };
       }
       throw error;
@@ -4395,7 +4395,7 @@ export class Session {
           behindOfOrigin: null,
           hasRemote: false,
           remoteUrl: null,
-          isPaseoOwnedWorktree: false,
+          isHubcodeOwnedWorktree: false,
           error: toCheckoutError(error),
           requestId,
         },
@@ -4745,7 +4745,7 @@ export class Session {
         behindOfOrigin: null,
         hasRemote: false,
         remoteUrl: null,
-        isPaseoOwnedWorktree: false,
+        isHubcodeOwnedWorktree: false,
         error: null,
         requestId,
       };
@@ -4755,7 +4755,7 @@ export class Session {
       throw new Error("Workspace git snapshot is missing required checkout status fields");
     }
 
-    if (snapshot.git.isPaseoOwnedWorktree) {
+    if (snapshot.git.isHubcodeOwnedWorktree) {
       if (snapshot.git.mainRepoRoot === null || snapshot.git.baseRef === null) {
         throw new Error("Workspace git snapshot is missing required worktree status fields");
       }
@@ -4773,7 +4773,7 @@ export class Session {
         behindOfOrigin: snapshot.git.behindOfOrigin ?? null,
         hasRemote: snapshot.git.hasRemote,
         remoteUrl: snapshot.git.remoteUrl,
-        isPaseoOwnedWorktree: true,
+        isHubcodeOwnedWorktree: true,
         error: null,
         requestId,
       };
@@ -4792,7 +4792,7 @@ export class Session {
       behindOfOrigin: snapshot.git.behindOfOrigin ?? null,
       hasRemote: snapshot.git.hasRemote,
       remoteUrl: snapshot.git.remoteUrl,
-      isPaseoOwnedWorktree: false,
+      isHubcodeOwnedWorktree: false,
       error: null,
       requestId,
     };
@@ -4889,7 +4889,7 @@ export class Session {
   // Stash handlers
   // ---------------------------------------------------------------------------
 
-  private static readonly PASEO_STASH_PREFIX = "paseo-auto-stash:";
+  private static readonly HUBCODE_STASH_PREFIX = "hubcode-auto-stash:";
 
   private async handleStashSaveRequest(
     msg: Extract<SessionInboundMessage, { type: "stash_save_request" }>,
@@ -4898,8 +4898,8 @@ export class Session {
     try {
       const branchLabel = msg.branch?.trim() ?? "";
       const message = branchLabel
-        ? `${Session.PASEO_STASH_PREFIX} ${branchLabel}`
-        : `${Session.PASEO_STASH_PREFIX} unnamed`;
+        ? `${Session.HUBCODE_STASH_PREFIX} ${branchLabel}`
+        : `${Session.HUBCODE_STASH_PREFIX} unnamed`;
       await execCommand("git", ["stash", "push", "--include-untracked", "-m", message], {
         cwd,
       });
@@ -4943,9 +4943,9 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "stash_list_request" }>,
   ): Promise<void> {
     const { cwd, requestId } = msg;
-    const paseoOnly = msg.paseoOnly !== false;
+    const hubcodeOnly = msg.hubcodeOnly !== false;
     try {
-      const entries = await this.workspaceGitService.listStashes(cwd, { paseoOnly });
+      const entries = await this.workspaceGitService.listStashes(cwd, { hubcodeOnly });
 
       this.emit({
         type: "stash_list_response",
@@ -5033,7 +5033,7 @@ export class Session {
           baseRef,
           mode: msg.strategy === "squash" ? "squash" : "merge",
         },
-        { paseoHome: this.paseoHome },
+        { hubcodeHome: this.hubcodeHome },
       );
       await Promise.all([
         this.notifyGitMutation(mutatedCwd, "merge-to-base", { invalidateGithub: true }),
@@ -5335,25 +5335,25 @@ export class Session {
     }
   }
 
-  private async handlePaseoWorktreeListRequest(
-    msg: Extract<SessionInboundMessage, { type: "paseo_worktree_list_request" }>,
+  private async handleHubcodeWorktreeListRequest(
+    msg: Extract<SessionInboundMessage, { type: "hubcode_worktree_list_request" }>,
   ): Promise<void> {
     return handleWorktreeListRequest(
       {
         emit: (message) => this.emit(message),
-        paseoHome: this.paseoHome,
+        hubcodeHome: this.hubcodeHome,
         workspaceGitService: this.workspaceGitService,
       },
       msg,
     );
   }
 
-  private async handlePaseoWorktreeArchiveRequest(
-    msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
+  private async handleHubcodeWorktreeArchiveRequest(
+    msg: Extract<SessionInboundMessage, { type: "hubcode_worktree_archive_request" }>,
   ): Promise<void> {
     return handleWorktreeArchiveRequest(
       {
-        paseoHome: this.paseoHome,
+        hubcodeHome: this.hubcodeHome,
         github: this.github,
         workspaceGitService: this.workspaceGitService,
         agentManager: this.agentManager,
@@ -6094,7 +6094,7 @@ export class Session {
     return {
       currentBranch: snapshot.git.currentBranch,
       remoteUrl: snapshot.git.remoteUrl,
-      isPaseoOwnedWorktree: snapshot.git.isPaseoOwnedWorktree,
+      isHubcodeOwnedWorktree: snapshot.git.isHubcodeOwnedWorktree,
       isDirty: snapshot.git.isDirty,
       aheadBehind: snapshot.git.aheadBehind,
       aheadOfOrigin: snapshot.git.aheadOfOrigin,
@@ -6135,7 +6135,7 @@ export class Session {
   }
 
   private async describeCreatedWorktreeWorkspace(
-    result: CreatePaseoWorktreeResult,
+    result: CreateHubcodeWorktreeResult,
   ): Promise<WorkspaceDescriptorPayload> {
     const projectRecord = await this.projectRegistry.get(result.workspace.projectId);
     return {
@@ -6154,7 +6154,7 @@ export class Session {
       gitRuntime: {
         currentBranch: result.worktree.branchName || null,
         remoteUrl: null,
-        isPaseoOwnedWorktree: true,
+        isHubcodeOwnedWorktree: true,
         isDirty: false,
         aheadBehind: null,
         aheadOfOrigin: null,
@@ -6698,14 +6698,14 @@ export class Session {
     return unarchivedWorkspace;
   }
 
-  private async createPaseoWorktree(
-    input: CreatePaseoWorktreeInput,
+  private async createHubcodeWorktree(
+    input: CreateHubcodeWorktreeInput,
     options?: {
       resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
     },
-  ): Promise<CreatePaseoWorktreeResult> {
+  ): Promise<CreateHubcodeWorktreeResult> {
     const coreDeps = createWorktreeCoreDeps(this.github);
-    const result = await createPaseoWorktree(input, {
+    const result = await createHubcodeWorktree(input, {
       ...coreDeps,
       ...(options?.resolveDefaultBranch
         ? { resolveDefaultBranch: options.resolveDefaultBranch }
@@ -7281,15 +7281,15 @@ export class Session {
     }
   }
 
-  private async handleCreatePaseoWorktreeRequest(
-    request: Extract<SessionInboundMessage, { type: "create_paseo_worktree_request" }>,
+  private async handleCreateHubcodeWorktreeRequest(
+    request: Extract<SessionInboundMessage, { type: "create_hubcode_worktree_request" }>,
   ): Promise<void> {
     return handleCreateWorktreeRequest(
       {
-        paseoHome: this.paseoHome,
+        hubcodeHome: this.hubcodeHome,
         describeWorkspaceRecord: (result) => this.describeCreatedWorktreeWorkspace(result),
         emit: (message) => this.emit(message),
-        createPaseoWorktree: (input) => this.createPaseoWorktree(input),
+        createHubcodeWorktree: (input) => this.createHubcodeWorktree(input),
         warmWorkspaceGitData: (workspace) => this.warmWorkspaceGitDataForWorkspace(workspace),
         sessionLogger: this.sessionLogger,
         runWorktreeSetupInBackground: (options) => this.runWorktreeSetupInBackground(options),
@@ -7309,7 +7309,7 @@ export class Session {
   }): Promise<void> {
     return runWorktreeSetupInBackgroundSession(
       {
-        paseoHome: this.paseoHome,
+        hubcodeHome: this.hubcodeHome,
         emitWorkspaceUpdateForCwd: (cwd, emitOptions) =>
           this.emitWorkspaceUpdateForCwd(cwd, emitOptions),
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) => {
@@ -7352,7 +7352,7 @@ export class Session {
         throw new Error(`Workspace not found: ${request.workspaceId}`);
       }
       if (existing.kind === "worktree") {
-        throw new Error("Use worktree archive for Paseo worktrees");
+        throw new Error("Use worktree archive for Hubcode worktrees");
       }
       const archivedAt = new Date().toISOString();
       await this.archiveWorkspaceRecord(existing.workspaceId, archivedAt);
@@ -8409,7 +8409,7 @@ export class Session {
     );
     if (
       msg.type === "audio_output" &&
-      (process.env.TTS_DEBUG_AUDIO_DIR || isPaseoDictationDebugEnabled()) &&
+      (process.env.TTS_DEBUG_AUDIO_DIR || isHubcodeDictationDebugEnabled()) &&
       msg.payload.groupId &&
       typeof msg.payload.audio === "string"
     ) {

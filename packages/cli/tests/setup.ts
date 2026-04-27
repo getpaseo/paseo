@@ -1,10 +1,10 @@
 /**
- * Test setup utilities for Paseo CLI E2E tests
+ * Test setup utilities for Hubcode CLI E2E tests
  *
  * Critical rules from design doc:
  * 1. Port: Random port via 10000 + Math.floor(Math.random() * 50000) - NEVER 6767
  * 2. Protocol: WebSocket ONLY - daemon has no HTTP endpoints
- * 3. Temp dirs: Create temp directories for PASEO_HOME and agent --cwd
+ * 3. Temp dirs: Create temp directories for HUBCODE_HOME and agent --cwd
  * 4. Model: Always --provider claude with haiku model for agent tests
  * 5. Cleanup: Kill daemon and remove temp dirs after each test
  */
@@ -15,9 +15,9 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const TEST_ENV_DEFAULTS = {
-  PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD ?? "0",
-  PASEO_DICTATION_ENABLED: process.env.PASEO_DICTATION_ENABLED ?? "0",
-  PASEO_VOICE_MODE_ENABLED: process.env.PASEO_VOICE_MODE_ENABLED ?? "0",
+  HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD: process.env.HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD ?? "0",
+  HUBCODE_DICTATION_ENABLED: process.env.HUBCODE_DICTATION_ENABLED ?? "0",
+  HUBCODE_VOICE_MODE_ENABLED: process.env.HUBCODE_VOICE_MODE_ENABLED ?? "0",
 };
 
 function killPidTree(pid: number, signal: NodeJS.Signals): void {
@@ -50,14 +50,14 @@ function killPidTree(pid: number, signal: NodeJS.Signals): void {
 export interface TestContext {
   /** Random port for test daemon (never 6767) */
   port: number;
-  /** Temp directory for PASEO_HOME */
-  paseoHome: string;
+  /** Temp directory for HUBCODE_HOME */
+  hubcodeHome: string;
   /** Temp directory for agent working directory */
   workDir: string;
   /** Running daemon process */
   daemon: ProcessPromise | null;
-  /** Run a paseo CLI command against the test daemon */
-  paseo: (args: string[]) => ProcessPromise;
+  /** Run a hubcode CLI command against the test daemon */
+  hubcode: (args: string[]) => ProcessPromise;
   /** Clean up all resources */
   cleanup: () => Promise<void>;
 }
@@ -73,19 +73,19 @@ export function getRandomPort(): number {
 /**
  * Create isolated temp directories for testing
  */
-export async function createTempDirs(): Promise<{ paseoHome: string; workDir: string }> {
-  const paseoHome = await mkdtemp(join(tmpdir(), "paseo-test-home-"));
-  const workDir = await mkdtemp(join(tmpdir(), "paseo-test-work-"));
-  return { paseoHome, workDir };
+export async function createTempDirs(): Promise<{ hubcodeHome: string; workDir: string }> {
+  const hubcodeHome = await mkdtemp(join(tmpdir(), "hubcode-test-home-"));
+  const workDir = await mkdtemp(join(tmpdir(), "hubcode-test-work-"));
+  return { hubcodeHome, workDir };
 }
 
 /**
  * Wait for daemon to be ready by testing WebSocket connection
- * Uses `paseo agent ls` which connects via WebSocket
+ * Uses `hubcode agent ls` which connects via WebSocket
  */
 async function probeDaemon(port: number): Promise<boolean> {
   try {
-    const result = await $`PASEO_HOST=localhost:${port} paseo agent ls`.nothrow();
+    const result = await $`HUBCODE_HOST=localhost:${port} hubcode agent ls`.nothrow();
     return result.exitCode === 0;
   } catch {
     return false;
@@ -108,10 +108,10 @@ export async function waitForDaemon(port: number, timeout = 30000): Promise<void
 /**
  * Start an isolated test daemon
  */
-export async function startDaemon(port: number, paseoHome: string): Promise<ProcessPromise> {
+export async function startDaemon(port: number, hubcodeHome: string): Promise<ProcessPromise> {
   $.verbose = false;
   const daemon =
-    $`PASEO_HOME=${paseoHome} PASEO_LISTEN=127.0.0.1:${port} PASEO_RELAY_ENABLED=false PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED} CI=true paseo daemon start --foreground`.nothrow();
+    $`HUBCODE_HOME=${hubcodeHome} HUBCODE_LISTEN=127.0.0.1:${port} HUBCODE_RELAY_ENABLED=false HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD} HUBCODE_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.HUBCODE_DICTATION_ENABLED} HUBCODE_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.HUBCODE_VOICE_MODE_ENABLED} CI=true hubcode daemon start --foreground`.nothrow();
   return daemon;
 }
 
@@ -120,12 +120,12 @@ export async function startDaemon(port: number, paseoHome: string): Promise<Proc
  */
 export async function createTestContext(): Promise<TestContext> {
   const port = getRandomPort();
-  const { paseoHome, workDir } = await createTempDirs();
+  const { hubcodeHome, workDir } = await createTempDirs();
 
   // Helper to run CLI commands against test daemon
-  const paseo = (args: string[]): ProcessPromise => {
+  const hubcode = (args: string[]): ProcessPromise => {
     $.verbose = false;
-    return $`PASEO_HOST=localhost:${port} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.PASEO_VOICE_MODE_ENABLED} paseo ${args}`.nothrow();
+    return $`HUBCODE_HOST=localhost:${port} HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD=${TEST_ENV_DEFAULTS.HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD} HUBCODE_DICTATION_ENABLED=${TEST_ENV_DEFAULTS.HUBCODE_DICTATION_ENABLED} HUBCODE_VOICE_MODE_ENABLED=${TEST_ENV_DEFAULTS.HUBCODE_VOICE_MODE_ENABLED} hubcode ${args}`.nothrow();
   };
 
   // Cleanup function
@@ -139,16 +139,16 @@ export async function createTestContext(): Promise<TestContext> {
         ctx.daemon.kill();
       }
     }
-    await rm(paseoHome, { recursive: true, force: true });
+    await rm(hubcodeHome, { recursive: true, force: true });
     await rm(workDir, { recursive: true, force: true });
   };
 
   const ctx: TestContext = {
     port,
-    paseoHome,
+    hubcodeHome,
     workDir,
     daemon: null,
-    paseo,
+    hubcode,
     cleanup,
   };
 
@@ -161,7 +161,7 @@ export async function createTestContext(): Promise<TestContext> {
  */
 export async function createTestContextWithDaemon(): Promise<TestContext> {
   const ctx = await createTestContext();
-  ctx.daemon = await startDaemon(ctx.port, ctx.paseoHome);
+  ctx.daemon = await startDaemon(ctx.port, ctx.hubcodeHome);
   await waitForDaemon(ctx.port);
   return ctx;
 }

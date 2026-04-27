@@ -115,8 +115,8 @@ describe("terminal-emulator-runtime", () => {
   const originalWindow = (globalThis as { window?: unknown }).window;
 
   beforeEach(() => {
-    (globalThis as { window?: { __paseoTerminal?: unknown } }).window = {
-      __paseoTerminal: undefined,
+    (globalThis as { window?: { __hubcodeTerminal?: unknown } }).window = {
+      __hubcodeTerminal: undefined,
     };
   });
 

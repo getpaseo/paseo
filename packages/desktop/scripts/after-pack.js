@@ -3,7 +3,7 @@ const path = require("path");
 
 const { smokePackagedDesktopApp } = require("./smoke-packaged-desktop-app.js");
 
-const EXECUTABLE_NAME = "Paseo";
+const EXECUTABLE_NAME = "Hubcode";
 const WRAPPER_MODE = 0o755;
 const WRAPPER_SCRIPT = `#!/bin/bash
 exec "$(dirname "$(readlink -f "$0")")/${EXECUTABLE_NAME}.bin" --no-sandbox "$@"
@@ -165,7 +165,7 @@ function prepareLinuxApp(appOutDir) {
 }
 
 async function smokeUnpackedAppIfRequested(appOutDir) {
-  if (process.env.PASEO_DESKTOP_SMOKE !== "1") {
+  if (process.env.HUBCODE_DESKTOP_SMOKE !== "1") {
     return;
   }
 

@@ -3,7 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-const CHANGES_PREFERENCES_STORAGE_KEY = "@paseo:changes-preferences";
+const CHANGES_PREFERENCES_STORAGE_KEY = "@hubcode:changes-preferences";
 const LEGACY_WRAP_LINES_STORAGE_KEY = "diff-wrap-lines";
 const CHANGES_PREFERENCES_QUERY_KEY = ["changes-preferences"];
 

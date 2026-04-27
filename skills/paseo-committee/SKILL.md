@@ -1,5 +1,5 @@
 ---
-name: paseo-committee
+name: hubcode-committee
 description: Form a committee of two high-reasoning agents to step back, do root cause analysis, and produce a plan. Use when stuck, looping, tunnel-visioning, or facing a hard planning problem.
 user-invocable: true
 ---
@@ -14,7 +14,7 @@ You are forming a committee to step back from the current problem and get fresh 
 
 ## Prerequisites
 
-Load the **Paseo skill** first — it contains the CLI reference for all agent commands and waiting guidelines.
+Load the **Hubcode skill** first — it contains the CLI reference for all agent commands and waiting guidelines.
 
 ## What Is a Committee
 
@@ -30,7 +30,7 @@ You drive the full lifecycle: plan → implement → review. You are a middleman
 
 ## No Anxiety
 
-**Once you call `paseo wait`, trust the wait.** Do not poll logs, read output early, send hurry-up messages, interrupt deep analysis, or give up because it's taking long.
+**Once you call `hubcode wait`, trust the wait.** Do not poll logs, read output early, send hurry-up messages, interrupt deep analysis, or give up because it's taking long.
 
 GPT 5.4 can reason for 15–30 minutes. Opus does extended thinking. Long waits mean the agent found something worth thinking about. Let it finish.
 
@@ -77,8 +77,8 @@ $NO_EDITS"
 Same prompt to both, `[Committee]` prefix for identification:
 
 ```bash
-opus_id=$(paseo run -d --mode bypassPermissions --provider claude/opus --thinking on --name "[Committee] Task description" "$prompt" -q)
-gpt_id=$(paseo run -d --mode full-access --provider codex/gpt-5.4 --thinking medium --name "[Committee] Task description" "$prompt" -q)
+opus_id=$(hubcode run -d --mode bypassPermissions --provider claude/opus --thinking on --name "[Committee] Task description" "$prompt" -q)
+gpt_id=$(hubcode run -d --mode full-access --provider codex/gpt-5.4 --thinking medium --name "[Committee] Task description" "$prompt" -q)
 ```
 
 ### Wait for both
@@ -86,15 +86,15 @@ gpt_id=$(paseo run -d --mode full-access --provider codex/gpt-5.4 --thinking med
 Wait for **both** agents — not just the first one that finishes.
 
 ```bash
-paseo wait "$opus_id"
-paseo wait "$gpt_id"
+hubcode wait "$opus_id"
+hubcode wait "$gpt_id"
 ```
 
 ### Read and challenge
 
 ```bash
-paseo logs "$opus_id"
-paseo logs "$gpt_id"
+hubcode logs "$opus_id"
+hubcode logs "$gpt_id"
 ```
 
 **Do not accept output at face value.** Use the **think-harder** framework to challenge their output. Before synthesizing:
@@ -105,9 +105,9 @@ paseo logs "$gpt_id"
 4. **Probe alternatives.** "What did you consider and reject?"
 
 ```bash
-paseo send "$opus_id" "You said [X]. Why does [underlying thing] happen in the first place? Are we patching a symptom? $NO_EDITS"
-paseo wait "$opus_id"
-paseo logs "$opus_id"
+hubcode send "$opus_id" "You said [X]. Why does [underlying thing] happen in the first place? Are we patching a symptom? $NO_EDITS"
+hubcode wait "$opus_id"
+hubcode logs "$opus_id"
 ```
 
 Keep pushing until the plan addresses the root cause.
@@ -120,8 +120,8 @@ Keep pushing until the plan addresses the root cause.
 Send the merged plan back for confirmation. Multi-turn if needed — keep going until consensus.
 
 ```bash
-paseo send "$opus_id" "Merged plan: [plan]. Concerns? $NO_EDITS"
-paseo send "$gpt_id" "Merged plan: [plan]. Concerns? $NO_EDITS"
+hubcode send "$opus_id" "Merged plan: [plan]. Concerns? $NO_EDITS"
+hubcode send "$gpt_id" "Merged plan: [plan]. Concerns? $NO_EDITS"
 ```
 
 ## Phase 2: Implement
@@ -129,8 +129,8 @@ paseo send "$gpt_id" "Merged plan: [plan]. Concerns? $NO_EDITS"
 Implement the plan yourself — unless the user said **"delegate"**, in which case launch an implementer:
 
 ```bash
-impl_id=$(paseo run -d --mode full-access --provider codex/gpt-5.4 --name "[Impl] Task description" "Implement the following plan end-to-end. [plan]" -q)
-paseo wait "$impl_id"
+impl_id=$(hubcode run -d --mode full-access --provider codex/gpt-5.4 --name "[Impl] Task description" "Implement the following plan end-to-end. [plan]" -q)
+hubcode wait "$impl_id"
 ```
 
 Committee agents stay clean — not involved in implementation.
@@ -142,14 +142,14 @@ Send the committee the changes for review. They anchor against the plan and catc
 ```bash
 review_prompt="Implementation is done. Review changes against the plan. Flag drift or missing pieces. $NO_EDITS"
 
-paseo send "$opus_id" "$review_prompt"
-paseo send "$gpt_id" "$review_prompt"
+hubcode send "$opus_id" "$review_prompt"
+hubcode send "$gpt_id" "$review_prompt"
 
-paseo wait "$opus_id"
-paseo wait "$gpt_id"
+hubcode wait "$opus_id"
+hubcode wait "$gpt_id"
 
-paseo logs "$opus_id"
-paseo logs "$gpt_id"
+hubcode logs "$opus_id"
+hubcode logs "$gpt_id"
 ```
 
 ### Iterate

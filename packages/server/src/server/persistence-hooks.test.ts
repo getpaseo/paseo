@@ -37,7 +37,7 @@ describe("persistence hooks", () => {
         thinkingOptionId: "minimal",
         systemPrompt: "Use speak first.",
         mcpServers: {
-          paseo: {
+          hubcode: {
             type: "stdio",
             command: "node",
             args: ["/tmp/bridge.mjs", "--socket", "/tmp/agent.sock"],
@@ -54,7 +54,7 @@ describe("persistence hooks", () => {
       title: "Voice agent (created)",
       systemPrompt: "Use speak first.",
       mcpServers: {
-        paseo: {
+        hubcode: {
           type: "stdio",
           command: "node",
           args: ["/tmp/bridge.mjs", "--socket", "/tmp/agent.sock"],
@@ -73,7 +73,7 @@ describe("persistence hooks", () => {
         model: "gpt-5.4-mini",
         systemPrompt: "Confirm and speak first.",
         mcpServers: {
-          paseo: {
+          hubcode: {
             type: "stdio",
             command: "node",
             args: ["/tmp/bridge.mjs", "--socket", "/tmp/agent.sock"],
@@ -90,7 +90,7 @@ describe("persistence hooks", () => {
       title: "Creation title",
       systemPrompt: "Confirm and speak first.",
       mcpServers: {
-        paseo: {
+        hubcode: {
           type: "stdio",
           command: "node",
           args: ["/tmp/bridge.mjs", "--socket", "/tmp/agent.sock"],

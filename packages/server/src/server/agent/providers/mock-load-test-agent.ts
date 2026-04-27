@@ -656,7 +656,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     const shellDetail = {
       type: "shell" as const,
       command: `printf 'mock load cycle ${iteration}\\n'`,
-      cwd: "/tmp/paseo-mock-load",
+      cwd: "/tmp/hubcode-mock-load",
       output: `mock load cycle ${iteration}\n`,
       exitCode: 0,
     };

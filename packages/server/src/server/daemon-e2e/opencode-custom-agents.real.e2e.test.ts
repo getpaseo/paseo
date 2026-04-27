@@ -5,7 +5,7 @@ import path from "node:path";
 import pino from "pino";
 
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestHubcodeDaemon } from "../test-utils/hubcode-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { isProviderAvailable } from "./agent-configs.js";
 
@@ -15,10 +15,10 @@ function tmpCwd(): string {
 
 async function createHarness(): Promise<{
   client: DaemonClient;
-  daemon: Awaited<ReturnType<typeof createTestPaseoDaemon>>;
+  daemon: Awaited<ReturnType<typeof createTestHubcodeDaemon>>;
 }> {
   const logger = pino({ level: "silent" });
-  const daemon = await createTestPaseoDaemon({
+  const daemon = await createTestHubcodeDaemon({
     agentClients: { opencode: new OpenCodeAgentClient(logger) },
     logger,
   });
@@ -47,8 +47,8 @@ describe("daemon E2E (real opencode) - custom agent discovery", () => {
       path.join(cwd, "opencode.json"),
       JSON.stringify({
         agent: {
-          "paseo-e2e-custom": {
-            description: "Custom agent for Paseo daemon E2E test",
+          "hubcode-e2e-custom": {
+            description: "Custom agent for Hubcode daemon E2E test",
             mode: "primary",
           },
         },
@@ -74,9 +74,9 @@ describe("daemon E2E (real opencode) - custom agent discovery", () => {
       expect(snapshot.availableModes.some((m) => m.id === "build")).toBe(true);
       expect(snapshot.availableModes.some((m) => m.id === "plan")).toBe(true);
 
-      const custom = snapshot.availableModes.find((m) => m.id === "paseo-e2e-custom");
+      const custom = snapshot.availableModes.find((m) => m.id === "hubcode-e2e-custom");
       expect(custom).toBeDefined();
-      expect(custom!.description).toBe("Custom agent for Paseo daemon E2E test");
+      expect(custom!.description).toBe("Custom agent for Hubcode daemon E2E test");
 
       // System agents should not leak through
       expect(snapshot.availableModes.some((m) => m.id === "compaction")).toBe(false);

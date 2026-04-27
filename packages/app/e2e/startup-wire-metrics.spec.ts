@@ -175,8 +175,8 @@ class WireMonitor {
         })),
       providerSnapshotTotals: summarizeProviderSnapshots(this.records),
       fork: {
-        sourceHome: process.env.E2E_FORK_SOURCE_PASEO_HOME ?? null,
-        targetHome: process.env.E2E_FORK_TARGET_PASEO_HOME ?? null,
+        sourceHome: process.env.E2E_FORK_SOURCE_HUBCODE_HOME ?? null,
+        targetHome: process.env.E2E_FORK_TARGET_HUBCODE_HOME ?? null,
         copiedFiles: parseOptionalNumber(process.env.E2E_FORK_COPIED_FILES),
         copiedBytes: parseOptionalNumber(process.env.E2E_FORK_COPIED_BYTES),
       },
@@ -533,9 +533,9 @@ test.describe("ad hoc startup wire metrics", () => {
 
     const summary = monitor.summarize(clickedWorkspaces);
     await attachSummary(testInfo, summary);
-    console.log("PASEO_STARTUP_WIRE_METRICS_BEGIN");
+    console.log("HUBCODE_STARTUP_WIRE_METRICS_BEGIN");
     console.log(JSON.stringify(summary, null, 2));
-    console.log("PASEO_STARTUP_WIRE_METRICS_END");
+    console.log("HUBCODE_STARTUP_WIRE_METRICS_END");
 
     expect(summary.byPhase.startup.byType.length).toBeGreaterThan(0);
     expect(clickedWorkspaces.length).toBeGreaterThan(0);

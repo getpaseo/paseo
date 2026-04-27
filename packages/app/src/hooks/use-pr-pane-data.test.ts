@@ -60,7 +60,7 @@ const serverId = "server-1";
 function status(overrides: Partial<CheckoutPrStatus> = {}): CheckoutPrStatus {
   return {
     number: 42,
-    url: "https://github.com/getpaseo/paseo/pull/42",
+    url: "https://github.com/hubtool/hubcode/pull/42",
     title: "Wire real PR pane data",
     state: "open",
     baseRefName: "main",
@@ -69,8 +69,8 @@ function status(overrides: Partial<CheckoutPrStatus> = {}): CheckoutPrStatus {
     isDraft: false,
     checks: [],
     reviewDecision: null,
-    repoOwner: "getpaseo",
-    repoName: "paseo",
+    repoOwner: "gethubcode",
+    repoName: "hubcode",
     ...overrides,
   };
 }
@@ -110,7 +110,7 @@ async function emitCheckoutStatusUpdatePrStatus(payload: CheckoutPrStatusPayload
           cwd: payload.cwd,
           requestId: `subscription:${payload.cwd}`,
           isGit: true,
-          isPaseoOwnedWorktree: false,
+          isHubcodeOwnedWorktree: false,
           repoRoot: payload.cwd,
           currentBranch: "main",
           isDirty: false,
@@ -119,7 +119,7 @@ async function emitCheckoutStatusUpdatePrStatus(payload: CheckoutPrStatusPayload
           aheadOfOrigin: 0,
           behindOfOrigin: 0,
           hasRemote: true,
-          remoteUrl: "https://github.com/getpaseo/paseo.git",
+          remoteUrl: "https://github.com/hubtool/hubcode.git",
           error: null,
           prStatus: payload,
         },
@@ -340,8 +340,8 @@ describe("usePrPaneData", () => {
       expect(mockClient.pullRequestTimeline).toHaveBeenCalledWith({
         cwd,
         prNumber: 42,
-        repoOwner: "getpaseo",
-        repoName: "paseo",
+        repoOwner: "gethubcode",
+        repoName: "hubcode",
       });
     });
   });
@@ -483,7 +483,7 @@ describe("usePrPaneData", () => {
         status: {
           ...status(),
           repoOwner: "fork-parent",
-          repoName: "paseo",
+          repoName: "hubcode",
         },
       }),
     );
@@ -497,7 +497,7 @@ describe("usePrPaneData", () => {
         cwd,
         prNumber: 42,
         repoOwner: "fork-parent",
-        repoName: "paseo",
+        repoName: "hubcode",
       });
     });
   });
@@ -514,7 +514,7 @@ describe("usePrPaneData", () => {
             author: "octocat",
             body: "This belongs to another PR",
             createdAt: Date.now(),
-            url: "https://github.com/getpaseo/paseo/pull/41#issuecomment-1",
+            url: "https://github.com/hubtool/hubcode/pull/41#issuecomment-1",
           },
         ],
       }),

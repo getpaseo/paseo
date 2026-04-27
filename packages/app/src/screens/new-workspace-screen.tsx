@@ -271,7 +271,7 @@ interface SubmitDraftInput {
 async function createAndMergeWorkspace(input: {
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   createInput: Parameters<
-    NonNullable<ReturnType<typeof useHostRuntimeClient>>["createPaseoWorktree"]
+    NonNullable<ReturnType<typeof useHostRuntimeClient>>["createHubcodeWorktree"]
   >[0];
   mergeWorkspaces: (
     serverId: string,
@@ -279,7 +279,7 @@ async function createAndMergeWorkspace(input: {
   ) => void;
   serverId: string;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
-  const payload = await input.client.createPaseoWorktree(input.createInput);
+  const payload = await input.client.createHubcodeWorktree(input.createInput);
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? "Failed to create worktree");
   }

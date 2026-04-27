@@ -15,8 +15,8 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 function createWorkspaceDescriptor(input: Partial<WorkspaceDescriptor> = {}): WorkspaceDescriptor {
   return {
     id: "/repo/main",
-    projectId: "remote:github.com/getpaseo/paseo",
-    projectDisplayName: "getpaseo/paseo",
+    projectId: "remote:github.com/hubtool/hubcode",
+    projectDisplayName: "gethubcode/hubcode",
     projectRootPath: "/repo/main",
     workspaceDirectory: "/repo/main",
     projectKind: "git",
@@ -40,7 +40,7 @@ describe("workspace source of truth consumption", () => {
     });
 
     expect(header.title).toBe("feat/workspace-sot");
-    expect(header.subtitle).toBe("getpaseo/paseo");
+    expect(header.subtitle).toBe("gethubcode/hubcode");
     expect(sidebarWorkspace.name).toBe(header.title);
     expect(sidebarWorkspace.statusBucket).toBe("running");
   });
@@ -96,7 +96,7 @@ describe("workspace source of truth consumption", () => {
     ).toEqual({
       kind: "ready",
       title: "feat/workspace-sot",
-      subtitle: "getpaseo/paseo",
+      subtitle: "gethubcode/hubcode",
       shouldShowSubtitle: true,
       isGitCheckout: true,
       currentBranchName: "feat/workspace-sot",
@@ -136,7 +136,7 @@ describe("workspace source of truth consumption", () => {
     ).toEqual({
       kind: "ready",
       title: "feat/workspace-sot",
-      subtitle: "getpaseo/paseo",
+      subtitle: "gethubcode/hubcode",
       shouldShowSubtitle: true,
       isGitCheckout: false,
       currentBranchName: null,

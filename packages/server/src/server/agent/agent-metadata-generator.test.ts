@@ -22,7 +22,7 @@ interface LegacyCreateWorktreeTestOptions {
   baseBranch: string;
   worktreeSlug: string;
   runSetup?: boolean;
-  paseoHome?: string;
+  hubcodeHome?: string;
 }
 
 function createLegacyWorktreeForTest(
@@ -41,7 +41,7 @@ function createLegacyWorktreeForTest(
       newBranchName: options.branchName,
     },
     runSetup: options.runSetup ?? true,
-    paseoHome: options.paseoHome,
+    hubcodeHome: options.hubcodeHome,
   });
 }
 
@@ -56,11 +56,11 @@ function tmpCwd(prefix: string): string {
 
 function initGitRepo(repoDir: string): void {
   execSync("git init -b main", { cwd: repoDir, stdio: "pipe" });
-  execSync("git config user.email 'paseo-test@example.com'", {
+  execSync("git config user.email 'hubcode-test@example.com'", {
     cwd: repoDir,
     stdio: "pipe",
   });
-  execSync("git config user.name 'Paseo Test'", {
+  execSync("git config user.name 'Hubcode Test'", {
     cwd: repoDir,
     stdio: "pipe",
   });
@@ -75,7 +75,7 @@ function initGitRepo(repoDir: string): void {
 (shouldRun ? describe : describe.skip)("agent metadata generation (real agents)", () => {
   const logger = pino({ level: "silent" });
   let repoDir: string;
-  let paseoHome: string;
+  let hubcodeHome: string;
   let storagePath: string;
   let manager: AgentManager;
   let storage: AgentStorage;
@@ -85,8 +85,8 @@ function initGitRepo(repoDir: string): void {
   beforeEach(() => {
     repoDir = tmpCwd("metadata-repo-");
     initGitRepo(repoDir);
-    paseoHome = tmpCwd("metadata-paseo-home-");
-    storagePath = path.join(paseoHome, "agents");
+    hubcodeHome = tmpCwd("metadata-hubcode-home-");
+    storagePath = path.join(hubcodeHome, "agents");
     storage = new AgentStorage(storagePath, logger);
     manager = new AgentManager({
       clients: createAllClients(logger),
@@ -102,7 +102,7 @@ function initGitRepo(repoDir: string): void {
     process.env.CODEX_SESSION_DIR = previousCodexSessionDir;
     await shutdownProviders(logger);
     rmSync(repoDir, { recursive: true, force: true });
-    rmSync(paseoHome, { recursive: true, force: true });
+    rmSync(hubcodeHome, { recursive: true, force: true });
     rmSync(codexSessionDir, { recursive: true, force: true });
   }, 60000);
 
@@ -125,7 +125,7 @@ function initGitRepo(repoDir: string): void {
       cwd: repoDir,
       initialPrompt: "Use the exact title 'Metadata Title E2E'.",
       explicitTitle: null,
-      paseoHome,
+      hubcodeHome,
       logger,
     });
 
@@ -143,7 +143,7 @@ function initGitRepo(repoDir: string): void {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug,
-      paseoHome,
+      hubcodeHome,
     });
 
     const agent = await manager.createAgent(
@@ -164,7 +164,7 @@ function initGitRepo(repoDir: string): void {
       cwd: worktree.worktreePath,
       initialPrompt: "Use the exact branch 'feat/metadata-worktree'.",
       explicitTitle: "Explicit Title",
-      paseoHome,
+      hubcodeHome,
       logger,
     });
 

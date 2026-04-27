@@ -4,7 +4,7 @@ import path from "node:path";
 import pino from "pino";
 import { afterEach, describe, expect, test } from "vitest";
 import { ensureAgentLoaded } from "./agent/agent-loading.js";
-import type { PaseoDaemonConfig } from "./bootstrap.js";
+import type { HubcodeDaemonConfig } from "./bootstrap.js";
 
 const originalEnv = {
   PATH: process.env.PATH,
@@ -23,18 +23,18 @@ describe("bootstrap provider availability", () => {
   });
 
   test("loads a persisted Codex record without spawning a missing Codex binary", async () => {
-    const { createPaseoDaemon } = await import("./bootstrap.js");
-    const root = await mkdtemp(path.join(os.tmpdir(), "paseo-bootstrap-provider-"));
+    const { createHubcodeDaemon } = await import("./bootstrap.js");
+    const root = await mkdtemp(path.join(os.tmpdir(), "hubcode-bootstrap-provider-"));
     tempRoots.push(root);
-    const binDir = await mkdtemp(path.join(os.tmpdir(), "paseo-bootstrap-provider-bin-"));
+    const binDir = await mkdtemp(path.join(os.tmpdir(), "hubcode-bootstrap-provider-bin-"));
     tempRoots.push(binDir);
     process.env.PATH = binDir;
     if (process.platform === "win32") {
       process.env.PATHEXT = ".CMD";
     }
-    const paseoHome = path.join(root, ".paseo");
+    const hubcodeHome = path.join(root, ".hubcode");
     const staticDir = path.join(root, "static");
-    const agentStoragePath = path.join(paseoHome, "agents");
+    const agentStoragePath = path.join(hubcodeHome, "agents");
     const now = new Date("2026-04-16T00:00:00.000Z").toISOString();
     const agentId = "11111111-1111-4111-8111-111111111111";
     await mkdir(agentStoragePath, { recursive: true });
@@ -64,9 +64,9 @@ describe("bootstrap provider availability", () => {
       }),
     );
 
-    const config: PaseoDaemonConfig = {
+    const config: HubcodeDaemonConfig = {
       listen: "127.0.0.1:0",
-      paseoHome,
+      hubcodeHome,
       corsAllowedOrigins: [],
       hostnames: true,
       mcpEnabled: false,
@@ -75,7 +75,7 @@ describe("bootstrap provider availability", () => {
       agentClients: {},
       agentStoragePath,
       relayEnabled: false,
-      appBaseUrl: "https://app.paseo.sh",
+      appBaseUrl: "https://app.hubcode.ai",
       openai: undefined,
       speech: undefined,
     };
@@ -89,7 +89,7 @@ describe("bootstrap provider availability", () => {
     process.on("unhandledRejection", onUnhandledRejection);
     process.on("uncaughtException", onUncaughtException);
 
-    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+    const daemon = await createHubcodeDaemon(config, pino({ level: "silent" }));
     try {
       await expect(daemon.agentStorage.list()).resolves.toHaveLength(1);
       await expect(daemon.agentManager.listProviderAvailability()).resolves.toContainEqual({

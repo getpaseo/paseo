@@ -5,17 +5,17 @@ import type { PersistedConfig } from "./persisted-config.js";
 
 describe("resolveLogConfig", () => {
   const originalEnv = process.env;
-  const paseoHome = "/tmp/paseo-logger-tests";
+  const hubcodeHome = "/tmp/hubcode-logger-tests";
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env.PASEO_LOG;
-    delete process.env.PASEO_LOG_FORMAT;
-    delete process.env.PASEO_LOG_CONSOLE_LEVEL;
-    delete process.env.PASEO_LOG_FILE_LEVEL;
-    delete process.env.PASEO_LOG_FILE_PATH;
-    delete process.env.PASEO_LOG_FILE_ROTATE_SIZE;
-    delete process.env.PASEO_LOG_FILE_ROTATE_COUNT;
+    delete process.env.HUBCODE_LOG;
+    delete process.env.HUBCODE_LOG_FORMAT;
+    delete process.env.HUBCODE_LOG_CONSOLE_LEVEL;
+    delete process.env.HUBCODE_LOG_FILE_LEVEL;
+    delete process.env.HUBCODE_LOG_FILE_PATH;
+    delete process.env.HUBCODE_LOG_FILE_ROTATE_SIZE;
+    delete process.env.HUBCODE_LOG_FILE_ROTATE_COUNT;
   });
 
   afterEach(() => {
@@ -23,7 +23,7 @@ describe("resolveLogConfig", () => {
   });
 
   it("returns dual-sink defaults when no config or env vars", () => {
-    const result = resolveLogConfig(undefined, { paseoHome });
+    const result = resolveLogConfig(undefined, { hubcodeHome });
     expect(result).toEqual({
       level: "debug",
       console: {
@@ -32,7 +32,7 @@ describe("resolveLogConfig", () => {
       },
       file: {
         level: "debug",
-        path: path.join(paseoHome, "daemon.log"),
+        path: path.join(hubcodeHome, "daemon.log"),
         rotate: {
           maxSize: "10m",
           maxFiles: 2,
@@ -58,7 +58,7 @@ describe("resolveLogConfig", () => {
         },
       },
     };
-    const result = resolveLogConfig(config, { paseoHome });
+    const result = resolveLogConfig(config, { hubcodeHome });
 
     expect(result).toEqual({
       level: "debug",
@@ -78,12 +78,12 @@ describe("resolveLogConfig", () => {
   });
 
   it("uses env vars over config.json values", () => {
-    process.env.PASEO_LOG_CONSOLE_LEVEL = "error";
-    process.env.PASEO_LOG_FILE_LEVEL = "fatal";
-    process.env.PASEO_LOG_FORMAT = "json";
-    process.env.PASEO_LOG_FILE_PATH = "logs/daemon-custom.log";
-    process.env.PASEO_LOG_FILE_ROTATE_SIZE = "15m";
-    process.env.PASEO_LOG_FILE_ROTATE_COUNT = "4";
+    process.env.HUBCODE_LOG_CONSOLE_LEVEL = "error";
+    process.env.HUBCODE_LOG_FILE_LEVEL = "fatal";
+    process.env.HUBCODE_LOG_FORMAT = "json";
+    process.env.HUBCODE_LOG_FILE_PATH = "logs/daemon-custom.log";
+    process.env.HUBCODE_LOG_FILE_ROTATE_SIZE = "15m";
+    process.env.HUBCODE_LOG_FILE_ROTATE_COUNT = "4";
 
     const config: PersistedConfig = {
       log: {
@@ -102,7 +102,7 @@ describe("resolveLogConfig", () => {
       },
     };
 
-    const result = resolveLogConfig(config, { paseoHome });
+    const result = resolveLogConfig(config, { hubcodeHome });
     expect(result).toEqual({
       level: "error",
       console: {
@@ -111,7 +111,7 @@ describe("resolveLogConfig", () => {
       },
       file: {
         level: "fatal",
-        path: path.resolve(paseoHome, "logs/daemon-custom.log"),
+        path: path.resolve(hubcodeHome, "logs/daemon-custom.log"),
         rotate: {
           maxSize: "15m",
           maxFiles: 4,
@@ -128,7 +128,7 @@ describe("resolveLogConfig", () => {
       },
     };
 
-    const result = resolveLogConfig(config, { paseoHome });
+    const result = resolveLogConfig(config, { hubcodeHome });
     expect(result).toEqual({
       level: "warn",
       console: {
@@ -137,7 +137,7 @@ describe("resolveLogConfig", () => {
       },
       file: {
         level: "warn",
-        path: path.join(paseoHome, "daemon.log"),
+        path: path.join(hubcodeHome, "daemon.log"),
         rotate: {
           maxSize: "10m",
           maxFiles: 2,
@@ -147,10 +147,10 @@ describe("resolveLogConfig", () => {
   });
 
   it("keeps backwards compatibility for legacy env vars", () => {
-    process.env.PASEO_LOG = "error";
-    process.env.PASEO_LOG_FORMAT = "json";
+    process.env.HUBCODE_LOG = "error";
+    process.env.HUBCODE_LOG_FORMAT = "json";
 
-    const result = resolveLogConfig(undefined, { paseoHome });
+    const result = resolveLogConfig(undefined, { hubcodeHome });
     expect(result).toEqual({
       level: "error",
       console: {
@@ -159,7 +159,7 @@ describe("resolveLogConfig", () => {
       },
       file: {
         level: "error",
-        path: path.join(paseoHome, "daemon.log"),
+        path: path.join(hubcodeHome, "daemon.log"),
         rotate: {
           maxSize: "10m",
           maxFiles: 2,
@@ -177,7 +177,7 @@ describe("resolveLogConfig", () => {
       },
     };
 
-    const result = resolveLogConfig(config, { paseoHome });
+    const result = resolveLogConfig(config, { hubcodeHome });
     expect(result).toEqual({
       level: "debug",
       console: {
@@ -186,7 +186,7 @@ describe("resolveLogConfig", () => {
       },
       file: {
         level: "debug",
-        path: path.join(paseoHome, "daemon.log"),
+        path: path.join(hubcodeHome, "daemon.log"),
         rotate: {
           maxSize: "10m",
           maxFiles: 2,
@@ -196,7 +196,7 @@ describe("resolveLogConfig", () => {
   });
 
   it("ignores invalid rotate count env var and falls back to config value", () => {
-    process.env.PASEO_LOG_FILE_ROTATE_COUNT = "0";
+    process.env.HUBCODE_LOG_FILE_ROTATE_COUNT = "0";
     const config: PersistedConfig = {
       log: {
         file: {
@@ -207,7 +207,7 @@ describe("resolveLogConfig", () => {
       },
     };
 
-    const result = resolveLogConfig(config, { paseoHome });
+    const result = resolveLogConfig(config, { hubcodeHome });
     expect(result.file.rotate.maxFiles).toBe(7);
   });
 
@@ -222,9 +222,9 @@ describe("resolveLogConfig", () => {
     ];
 
     for (const level of levels) {
-      process.env.PASEO_LOG_CONSOLE_LEVEL = level;
-      process.env.PASEO_LOG_FILE_LEVEL = level;
-      const result = resolveLogConfig(undefined, { paseoHome });
+      process.env.HUBCODE_LOG_CONSOLE_LEVEL = level;
+      process.env.HUBCODE_LOG_FILE_LEVEL = level;
+      const result = resolveLogConfig(undefined, { hubcodeHome });
       expect(result.console.level).toBe(level);
       expect(result.file.level).toBe(level);
       expect(result.level).toBe(level);

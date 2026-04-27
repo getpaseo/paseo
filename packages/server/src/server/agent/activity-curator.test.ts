@@ -80,7 +80,7 @@ describe("curateAgentActivity", () => {
         name: "terminal",
         detail: {
           type: "plain_text",
-          label: `skills/paseo-chat/bin/chat.sh post --room storage-revamp --body $'first line
+          label: `skills/hubcode-chat/bin/chat.sh post --room storage-revamp --body $'first line
 
 second line'`,
           icon: "square_terminal",
@@ -91,7 +91,7 @@ second line'`,
     const result = curateAgentActivity(timeline);
 
     expect(result).toContain(
-      "[Terminal] skills/paseo-chat/bin/chat.sh post --room storage-revamp --body $'first line second line'",
+      "[Terminal] skills/hubcode-chat/bin/chat.sh post --room storage-revamp --body $'first line second line'",
     );
     expect(result).not.toContain("[Interacted with terminal]");
   });
@@ -132,14 +132,14 @@ second line'`,
     const timeline: AgentTimelineItem[] = [
       toolCallItem({
         callId: "mcp-1",
-        name: "paseo__create_agent",
+        name: "hubcode__create_agent",
         input: { cwd: "/tmp/repo", initialPrompt: "do the thing" },
       }),
     ];
 
     const result = curateAgentActivity(timeline);
 
-    expect(result).toBe('[paseo__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}');
+    expect(result).toBe('[hubcode__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}');
   });
 
   it("collapses repeated tool updates by callId", () => {

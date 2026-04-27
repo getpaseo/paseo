@@ -48,7 +48,7 @@ export async function runStopCommand(
     const error: CommandError = {
       code: "MISSING_ARGUMENT",
       message: "Agent ID required unless --all or --cwd is specified",
-      details: "Usage: paseo agent stop <id> | --all | --cwd <path>",
+      details: "Usage: hubcode agent stop <id> | --all | --cwd <path>",
     };
     throw error;
   }
@@ -61,7 +61,7 @@ export async function runStopCommand(
     const error: CommandError = {
       code: "DAEMON_NOT_RUNNING",
       message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
+      details: "Start the daemon with: hubcode daemon start",
     };
     throw error;
   }
@@ -87,7 +87,7 @@ export async function runStopCommand(
         const error: CommandError = {
           code: "AGENT_NOT_FOUND",
           message: `No agent found matching: ${id}`,
-          details: "Use `paseo ls` to list available agents",
+          details: "Use `hubcode ls` to list available agents",
         };
         throw error;
       }

@@ -25,7 +25,7 @@ describe("use-changes-preferences", () => {
 
     expect(result).toEqual(mod.DEFAULT_CHANGES_PREFERENCES);
     expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
-      "@paseo:changes-preferences",
+      "@hubcode:changes-preferences",
       JSON.stringify(mod.DEFAULT_CHANGES_PREFERENCES),
     );
   });
@@ -51,7 +51,7 @@ describe("use-changes-preferences", () => {
 
   it("loads persisted layout and whitespace preferences", async () => {
     asyncStorageMock.getItem.mockImplementation(async (key: string) => {
-      if (key === "@paseo:changes-preferences") {
+      if (key === "@hubcode:changes-preferences") {
         return JSON.stringify({
           layout: "split",
           hideWhitespace: true,

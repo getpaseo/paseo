@@ -24,14 +24,14 @@ console.log("=== Delete Command Tests ===\n");
 const cliRoot = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(cliRoot, "..", "..", "..");
 const port = 10000 + Math.floor(Math.random() * 50000);
-const paseoHome = await mkdtemp(join(tmpdir(), "paseo-delete-test-home-"));
+const hubcodeHome = await mkdtemp(join(tmpdir(), "hubcode-delete-test-home-"));
 
 async function runCli(args: string[]) {
   return $`npm --prefix ${repoRoot} run cli -- ${args}`.nothrow();
 }
 
 async function runDelete(args: string[]) {
-  return $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm --prefix ${repoRoot} run cli -- delete ${args}`.nothrow();
+  return $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npm --prefix ${repoRoot} run cli -- delete ${args}`.nothrow();
 }
 
 try {
@@ -101,24 +101,24 @@ try {
   }
 
   {
-    console.log("Test 7: paseo --help shows delete command");
+    console.log("Test 7: hubcode --help shows delete command");
     const result = await runCli(["--help"]);
-    assert.strictEqual(result.exitCode, 0, "paseo --help should exit 0");
+    assert.strictEqual(result.exitCode, 0, "hubcode --help should exit 0");
     assert(result.stdout.includes("delete"), "help should mention delete command");
-    console.log("✓ paseo --help shows delete command\n");
+    console.log("✓ hubcode --help shows delete command\n");
   }
 
   {
     console.log("Test 8: -q (quiet) flag is accepted with delete");
     const result =
-      await $`PASEO_HOST=localhost:${port} PASEO_HOME=${paseoHome} npm --prefix ${repoRoot} run cli -- -q delete abc123`.nothrow();
+      await $`HUBCODE_HOST=localhost:${port} HUBCODE_HOME=${hubcodeHome} npm --prefix ${repoRoot} run cli -- -q delete abc123`.nothrow();
     const output = result.stdout + result.stderr;
     assert(!output.includes("unknown option"), "should accept -q flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
     console.log("✓ -q (quiet) flag is accepted with delete\n");
   }
 } finally {
-  await rm(paseoHome, { recursive: true, force: true });
+  await rm(hubcodeHome, { recursive: true, force: true });
 }
 
 console.log("=== All delete tests passed ===");

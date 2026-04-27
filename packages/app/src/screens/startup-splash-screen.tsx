@@ -14,7 +14,7 @@ import * as Clipboard from "expo-clipboard";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { BookOpen, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { PaseoLogo } from "@/components/icons/paseo-logo";
+import { HubcodeLogo } from "@/components/icons/hubcode-logo";
 import { Button } from "@/components/ui/button";
 import { Fonts } from "@/constants/theme";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
@@ -29,8 +29,8 @@ interface StartupSplashScreenProps {
   };
 }
 
-const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
-const DOCS_URL = "https://paseo.sh/docs";
+const GITHUB_ISSUE_URL = "https://github.com/hubtool/hubcode/issues/new";
+const DOCS_URL = "https://hubcode.ai/docs";
 
 const LOGO_SIZE = 96;
 const SHIMMER_PEAK_WIDTH = 120;
@@ -44,8 +44,8 @@ function openDocs(): void {
   void openExternalUrl(DOCS_URL);
 }
 
-const WEB_SPLASH_SHIMMER_KEYFRAME_ID = "paseo-splash-shimmer-keyframes";
-const WEB_SPLASH_SHIMMER_ANIMATION_NAME = "paseo-splash-shimmer";
+const WEB_SPLASH_SHIMMER_KEYFRAME_ID = "hubcode-splash-shimmer-keyframes";
+const WEB_SPLASH_SHIMMER_ANIMATION_NAME = "hubcode-splash-shimmer";
 
 const WEB_SPLASH_SHIMMER_KEYFRAME_CSS = `
   @keyframes ${WEB_SPLASH_SHIMMER_ANIMATION_NAME} {
@@ -150,7 +150,7 @@ function NativeLogoShimmer({ color }: { color: string }) {
   const maskElement = useMemo(
     () => (
       <View style={styles.shimmerMask}>
-        <PaseoLogo size={LOGO_SIZE} color="#000000" />
+        <HubcodeLogo size={LOGO_SIZE} color="#000000" />
       </View>
     ),
     [],
@@ -160,7 +160,7 @@ function NativeLogoShimmer({ color }: { color: string }) {
     <MaskedView style={trackStyle} maskElement={maskElement}>
       <View style={trackStyle}>
         <View style={styles.nativeShimmerBase}>
-          <PaseoLogo size={LOGO_SIZE} color={color} />
+          <HubcodeLogo size={LOGO_SIZE} color={color} />
         </View>
         <Animated.View style={peakCombinedStyle}>
           <Svg width="100%" height="100%" preserveAspectRatio="none">
@@ -408,7 +408,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
       >
         <View style={styles.errorContent}>
           <View style={styles.errorHeader}>
-            <PaseoLogo size={64} />
+            <HubcodeLogo size={64} />
             <Text style={styles.title}>Something went wrong</Text>
           </View>
 

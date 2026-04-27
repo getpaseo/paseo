@@ -74,7 +74,7 @@ test.describe("Workspace cwd correctness", () => {
     const resolvedTmp = realpathSync("/tmp");
     const worktreePath = path.join(
       resolvedTmp,
-      `paseo-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      `hubcode-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     const branchName = `workspace-cwd-${Date.now()}`;
     let worktreeCreated = false;

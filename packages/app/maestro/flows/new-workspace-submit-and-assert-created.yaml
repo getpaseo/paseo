@@ -1,6 +1,6 @@
 # NOTE: Render through the workspace-create shell scripts before running when
-# using ${PASEO_MAESTRO_APP_ID}. Maestro does not substitute environment vars.
-appId: ${PASEO_MAESTRO_APP_ID}
+# using ${HUBCODE_MAESTRO_APP_ID}. Maestro does not substitute environment vars.
+appId: ${HUBCODE_MAESTRO_APP_ID}
 ---
 # Start on the New Workspace screen after model selection. Taps Create and
 # proves the redirect completed into a workspace draft-agent tab.

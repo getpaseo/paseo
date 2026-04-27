@@ -3,14 +3,14 @@ import {
   BranchAlreadyCheckedOutError,
   createWorktree as createWorktreePrimitive,
   deriveWorktreeProjectHash,
-  deletePaseoWorktree,
+  deleteHubcodeWorktree,
   getScriptConfigs,
   getWorktreeSetupCommands,
   getWorktreeTerminalSpecs,
   getWorktreeTeardownCommands,
   isServiceScript,
-  isPaseoOwnedWorktreeCwd,
-  listPaseoWorktrees,
+  isHubcodeOwnedWorktreeCwd,
+  listHubcodeWorktrees,
   resolveWorktreeRuntimeEnv,
   type WorktreeSetupCommandProgressEvent,
   runWorktreeSetupCommands,
@@ -18,7 +18,7 @@ import {
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
-import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
+import { getHubcodeWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
 import {
   mkdtempSync,
@@ -39,7 +39,7 @@ interface LegacyCreateWorktreeTestOptions {
   baseBranch: string;
   worktreeSlug: string;
   runSetup?: boolean;
-  paseoHome?: string;
+  hubcodeHome?: string;
 }
 
 function createLegacyWorktreeForTest(
@@ -58,20 +58,20 @@ function createLegacyWorktreeForTest(
       newBranchName: options.branchName,
     },
     runSetup: options.runSetup ?? true,
-    paseoHome: options.paseoHome,
+    hubcodeHome: options.hubcodeHome,
   });
 }
 
 describe.skipIf(process.platform === "win32")("createWorktree", () => {
   let tempDir: string;
   let repoDir: string;
-  let paseoHome: string;
+  let hubcodeHome: string;
 
   beforeEach(() => {
     // Use realpathSync to resolve symlinks (e.g., /var -> /private/var on macOS)
     tempDir = realpathSync(mkdtempSync(join(tmpdir(), "worktree-test-")));
     repoDir = join(tempDir, "test-repo");
-    paseoHome = join(tempDir, "paseo-home");
+    hubcodeHome = join(tempDir, "hubcode-home");
 
     // Create a git repo with an initial commit
     mkdirSync(repoDir, { recursive: true });
@@ -94,24 +94,24 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "hello-world",
-      paseoHome,
+      hubcodeHome,
     });
 
-    expect(result.worktreePath).toBe(join(paseoHome, "worktrees", projectHash, "hello-world"));
+    expect(result.worktreePath).toBe(join(hubcodeHome, "worktrees", projectHash, "hello-world"));
     expect(existsSync(result.worktreePath)).toBe(true);
     expect(existsSync(join(result.worktreePath, "file.txt"))).toBe(true);
-    const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
+    const metadataPath = getHubcodeWorktreeMetadataPath(result.worktreePath);
     expect(existsSync(metadataPath)).toBe(true);
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
   });
 
-  it.skip("detects paseo-owned worktrees across realpath differences (macOS /var vs /private/var)", async () => {
+  it.skip("detects hubcode-owned worktrees across realpath differences (macOS /var vs /private/var)", async () => {
     // Intentionally create repo using the non-realpath tmpdir() variant (often /var/... on macOS).
     const varTempDir = mkdtempSync(join(tmpdir(), "worktree-realpath-test-"));
     const privateTempDir = realpathSync(varTempDir);
     const varRepoDir = join(varTempDir, "test-repo");
-    const varPaseoHome = join(varTempDir, "paseo-home");
+    const varHubcodeHome = join(varTempDir, "hubcode-home");
     mkdirSync(varRepoDir, { recursive: true });
     execSync("git init -b main", { cwd: varRepoDir });
     execSync('git config user.email "test@test.com"', { cwd: varRepoDir });
@@ -125,37 +125,37 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       cwd: varRepoDir,
       baseBranch: "main",
       worktreeSlug: "realpath-test",
-      paseoHome: varPaseoHome,
+      hubcodeHome: varHubcodeHome,
     });
 
     const projectHash = await deriveWorktreeProjectHash(varRepoDir);
     const privateWorktreePath = join(
       privateTempDir,
-      "paseo-home",
+      "hubcode-home",
       "worktrees",
       projectHash,
       "realpath-test",
     );
     expect(existsSync(privateWorktreePath)).toBe(true);
 
-    const ownership = await isPaseoOwnedWorktreeCwd(privateWorktreePath, {
-      paseoHome: varPaseoHome,
+    const ownership = await isHubcodeOwnedWorktreeCwd(privateWorktreePath, {
+      hubcodeHome: varHubcodeHome,
     });
     expect(ownership.allowed).toBe(true);
 
     rmSync(varTempDir, { recursive: true, force: true });
   });
 
-  it("reports repoRoot as the repository root for paseo-owned worktrees", async () => {
+  it("reports repoRoot as the repository root for hubcode-owned worktrees", async () => {
     const result = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "repo-root-check",
-      paseoHome,
+      hubcodeHome,
     });
 
-    const ownership = await isPaseoOwnedWorktreeCwd(result.worktreePath, { paseoHome });
+    const ownership = await isHubcodeOwnedWorktreeCwd(result.worktreePath, { hubcodeHome });
     expect(ownership.allowed).toBe(true);
     expect(ownership.repoRoot).toBe(repoDir);
   });
@@ -164,7 +164,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     const nonGitDir = join(tempDir, "not-a-repo");
     mkdirSync(nonGitDir, { recursive: true });
 
-    const ownership = await isPaseoOwnedWorktreeCwd(nonGitDir, { paseoHome });
+    const ownership = await isHubcodeOwnedWorktreeCwd(nonGitDir, { hubcodeHome });
 
     expect(ownership.allowed).toBe(false);
     expect(ownership.worktreePath).toBe(realpathSync(nonGitDir));
@@ -177,10 +177,10 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       worktreeSlug: "my-feature",
       source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/x" },
       runSetup: true,
-      paseoHome,
+      hubcodeHome,
     });
 
-    expect(result.worktreePath).toBe(join(paseoHome, "worktrees", projectHash, "my-feature"));
+    expect(result.worktreePath).toBe(join(hubcodeHome, "worktrees", projectHash, "my-feature"));
     expect(existsSync(result.worktreePath)).toBe(true);
 
     const currentBranch = execSync("git branch --show-current", {
@@ -191,7 +191,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     expect(currentBranch).toBe("feature/x");
     execSync("git merge-base --is-ancestor main HEAD", { cwd: result.worktreePath });
 
-    const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
+    const metadataPath = getHubcodeWorktreeMetadataPath(result.worktreePath);
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     expect(metadata).toMatchObject({ version: 1, baseRefName: "main" });
   });
@@ -204,7 +204,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       worktreeSlug: "dev-worktree",
       source: { kind: "checkout-branch", branchName: "dev" },
       runSetup: true,
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(existsSync(result.worktreePath)).toBe(true);
@@ -215,7 +215,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       .trim();
     expect(currentBranch).toBe("dev");
 
-    const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
+    const metadataPath = getHubcodeWorktreeMetadataPath(result.worktreePath);
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     expect(metadata).toMatchObject({ version: 1, baseRefName: "dev" });
   });
@@ -228,7 +228,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
         worktreeSlug: "dev-worktree",
         source: { kind: "checkout-branch", branchName: "main" },
         runSetup: true,
-        paseoHome,
+        hubcodeHome,
       });
     } catch (error) {
       caughtError = error;
@@ -250,7 +250,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     execSync("git checkout -b contributor/feature", { cwd: remoteCloneDir });
     writeFileSync(join(remoteCloneDir, "file.txt"), "from-pr\n");
     writeFileSync(
-      join(remoteCloneDir, "paseo.json"),
+      join(remoteCloneDir, "hubcode.json"),
       JSON.stringify({ worktree: { setup: ['echo "setup ran" > setup.log'] } }),
     );
     execSync("git add .", { cwd: remoteCloneDir });
@@ -269,7 +269,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
         baseRefName: "main",
       },
       runSetup: true,
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-pr\n");
@@ -281,7 +281,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       .trim();
     expect(currentBranch).toBe("user/feature");
 
-    const metadataPath = getPaseoWorktreeMetadataPath(result.worktreePath);
+    const metadataPath = getHubcodeWorktreeMetadataPath(result.worktreePath);
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     expect(metadata).toMatchObject({ baseRefName: "main" });
   });
@@ -316,7 +316,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       baseBranch: "main",
       worktreeSlug: "prefer-origin-feature",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-origin\n");
@@ -333,7 +333,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       baseBranch: "main",
       worktreeSlug: "prefer-local-fallback-feature",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-local-only\n");
@@ -347,7 +347,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
         baseBranch: "does-not-exist",
         worktreeSlug: "missing-base-feature",
         runSetup: false,
-        paseoHome,
+        hubcodeHome,
       }),
     ).rejects.toThrow("Base branch not found: does-not-exist");
   });
@@ -373,11 +373,11 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "hello",
-      paseoHome,
+      hubcodeHome,
     });
 
     // Should create branch "hello-1" since "hello" exists
-    expect(result.worktreePath).toBe(join(paseoHome, "worktrees", projectHash, "hello"));
+    expect(result.worktreePath).toBe(join(hubcodeHome, "worktrees", projectHash, "hello"));
     expect(existsSync(result.worktreePath)).toBe(true);
 
     const branches = execSync("git branch", { cwd: repoDir }).toString();
@@ -394,7 +394,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "hello",
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(existsSync(result.worktreePath)).toBe(true);
@@ -403,21 +403,21 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     expect(branches).toContain("hello-2");
   });
 
-  it("runs setup commands from paseo.json", async () => {
-    // Create paseo.json with setup commands
-    const paseoConfig = {
+  it("runs setup commands from hubcode.json", async () => {
+    // Create hubcode.json with setup commands
+    const hubcodeConfig = {
       worktree: {
         setup: [
-          'echo "source=$PASEO_SOURCE_CHECKOUT_PATH" > setup.log',
-          'echo "root_alias=$PASEO_ROOT_PATH" >> setup.log',
-          'echo "worktree=$PASEO_WORKTREE_PATH" >> setup.log',
-          'echo "branch=$PASEO_BRANCH_NAME" >> setup.log',
-          'echo "port=$PASEO_WORKTREE_PORT" >> setup.log',
+          'echo "source=$HUBCODE_SOURCE_CHECKOUT_PATH" > setup.log',
+          'echo "root_alias=$HUBCODE_ROOT_PATH" >> setup.log',
+          'echo "worktree=$HUBCODE_WORKTREE_PATH" >> setup.log',
+          'echo "branch=$HUBCODE_BRANCH_NAME" >> setup.log',
+          'echo "port=$HUBCODE_WORKTREE_PORT" >> setup.log',
         ],
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add paseo.json"', {
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
+    execSync('git add hubcode.json && git -c commit.gpgsign=false commit -m "add hubcode.json"', {
       cwd: repoDir,
     });
 
@@ -426,7 +426,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "setup-test",
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(existsSync(result.worktreePath)).toBe(true);
@@ -444,14 +444,14 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     expect(portValue).toBeGreaterThan(0);
   });
 
-  it("runs string setup scripts from paseo.json as a single shell command", async () => {
-    const paseoConfig = {
+  it("runs string setup scripts from hubcode.json as a single shell command", async () => {
+    const hubcodeConfig = {
       worktree: {
         setup: 'greeting="hello from string setup"\necho "$greeting" > setup.log',
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add string setup"', {
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
+    execSync('git add hubcode.json && git -c commit.gpgsign=false commit -m "add string setup"', {
       cwd: repoDir,
     });
 
@@ -460,7 +460,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "string-setup-test",
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(getWorktreeSetupCommands(result.worktreePath)).toEqual([
@@ -473,7 +473,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
   it("treats blank lifecycle strings as empty", () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "hubcode.json"),
       JSON.stringify({
         worktree: {
           setup: " \n\t ",
@@ -488,7 +488,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
   it("filters non-string and blank entries from lifecycle arrays", () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "hubcode.json"),
       JSON.stringify({
         worktree: {
           setup: [
@@ -498,10 +498,10 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
             'echo "second" >> setup-array.log',
           ],
           teardown: [
-            'echo "first" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-array.log"',
+            'echo "first" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-array.log"',
             null,
             "",
-            'echo "second" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown-array.log"',
+            'echo "second" >> "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-array.log"',
           ],
         },
       }),
@@ -512,19 +512,19 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       'echo "second" >> setup-array.log',
     ]);
     expect(getWorktreeTeardownCommands(repoDir)).toEqual([
-      'echo "first" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-array.log"',
-      'echo "second" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown-array.log"',
+      'echo "first" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-array.log"',
+      'echo "second" >> "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-array.log"',
     ]);
   });
 
   it("does not run setup commands when runSetup=false", async () => {
-    const paseoConfig = {
+    const hubcodeConfig = {
       worktree: {
         setup: ['echo "setup ran" > setup.log'],
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add paseo.json"', {
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
+    execSync('git add hubcode.json && git -c commit.gpgsign=false commit -m "add hubcode.json"', {
       cwd: repoDir,
     });
 
@@ -534,7 +534,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       baseBranch: "main",
       worktreeSlug: "no-setup-test",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(existsSync(result.worktreePath)).toBe(true);
@@ -542,13 +542,13 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
   });
 
   it("streams setup command progress events while commands are executing", async () => {
-    const paseoConfig = {
+    const hubcodeConfig = {
       worktree: {
         setup: ['echo "first line"; echo "second line" 1>&2'],
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add streaming setup"', {
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
+    execSync('git add hubcode.json && git -c commit.gpgsign=false commit -m "add streaming setup"', {
       cwd: repoDir,
     });
 
@@ -575,7 +575,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       baseBranch: "main",
       worktreeSlug: "runtime-env-port-reuse",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
     const first = await resolveWorktreeRuntimeEnv({
@@ -587,7 +587,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       branchName: result.branchName,
     });
 
-    expect(second.PASEO_WORKTREE_PORT).toBe(first.PASEO_WORKTREE_PORT);
+    expect(second.HUBCODE_WORKTREE_PORT).toBe(first.HUBCODE_WORKTREE_PORT);
   });
 
   it("fails runtime env resolution when persisted port is in use", async () => {
@@ -597,14 +597,14 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       baseBranch: "main",
       worktreeSlug: "runtime-env-port-conflict",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
     const env = await resolveWorktreeRuntimeEnv({
       worktreePath: result.worktreePath,
       branchName: result.branchName,
     });
-    const port = Number(env.PASEO_WORKTREE_PORT);
+    const port = Number(env.HUBCODE_WORKTREE_PORT);
 
     const server = net.createServer();
     await new Promise<void>((resolve, reject) => {
@@ -631,18 +631,18 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
   });
 
   it("cleans up worktree if setup command fails", async () => {
-    // Create paseo.json with failing setup command
-    const paseoConfig = {
+    // Create hubcode.json with failing setup command
+    const hubcodeConfig = {
       worktree: {
         setup: ["exit 1"],
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add paseo.json"', {
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
+    execSync('git add hubcode.json && git -c commit.gpgsign=false commit -m "add hubcode.json"', {
       cwd: repoDir,
     });
 
-    const expectedWorktreePath = join(paseoHome, "worktrees", "test-repo", "fail-test");
+    const expectedWorktreePath = join(hubcodeHome, "worktrees", "test-repo", "fail-test");
 
     await expect(
       createLegacyWorktreeForTest({
@@ -650,7 +650,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
         cwd: repoDir,
         baseBranch: "main",
         worktreeSlug: "fail-test",
-        paseoHome,
+        hubcodeHome,
       }),
     ).rejects.toThrow("Worktree setup command failed");
 
@@ -658,8 +658,8 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     expect(existsSync(expectedWorktreePath)).toBe(false);
   });
 
-  it("reads worktree terminal specs from paseo.json with optional name", async () => {
-    const paseoConfig = {
+  it("reads worktree terminal specs from hubcode.json with optional name", async () => {
+    const hubcodeConfig = {
       worktree: {
         terminals: [
           { name: "Dev Server", command: "npm run dev" },
@@ -667,7 +667,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
         ],
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
 
     expect(getWorktreeTerminalSpecs(repoDir)).toEqual([
       { name: "Dev Server", command: "npm run dev" },
@@ -676,7 +676,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
   });
 
   it("filters invalid worktree terminal specs", async () => {
-    const paseoConfig = {
+    const hubcodeConfig = {
       worktree: {
         terminals: [
           null,
@@ -687,7 +687,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
         ],
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
 
     expect(getWorktreeTerminalSpecs(repoDir)).toEqual([
       { name: "Watch", command: "npm run watch" },
@@ -697,7 +697,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
   it("parses omitted script type as a plain script", async () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "hubcode.json"),
       JSON.stringify({
         scripts: {
           typecheck: {
@@ -719,7 +719,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
   it("parses service scripts and preserves optional port", async () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "hubcode.json"),
       JSON.stringify({
         scripts: {
           server: {
@@ -745,7 +745,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
 
   it("ignores invalid script entries gracefully", async () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "hubcode.json"),
       JSON.stringify({
         scripts: {
           valid: {
@@ -780,9 +780,9 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     );
   });
 
-  it("seeds an uncommitted paseo.json from the main repo into a new worktree", async () => {
+  it("seeds an uncommitted hubcode.json from the main repo into a new worktree", async () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "hubcode.json"),
       JSON.stringify({ scripts: { dev: { command: "echo hi" } } }),
     );
 
@@ -791,26 +791,26 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       worktreeSlug: "seed-uncommitted",
       source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/seed" },
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
-    const worktreeConfigPath = join(result.worktreePath, "paseo.json");
+    const worktreeConfigPath = join(result.worktreePath, "hubcode.json");
     expect(existsSync(worktreeConfigPath)).toBe(true);
     expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
       scripts: { dev: { command: "echo hi" } },
     });
   });
 
-  it("does not overwrite a committed paseo.json with uncommitted edits in the main repo", async () => {
+  it("does not overwrite a committed hubcode.json with uncommitted edits in the main repo", async () => {
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "hubcode.json"),
       JSON.stringify({ scripts: { dev: { command: "committed" } } }),
     );
-    execSync("git add paseo.json", { cwd: repoDir });
-    execSync('git -c commit.gpgsign=false commit -m "add paseo.json"', { cwd: repoDir });
+    execSync("git add hubcode.json", { cwd: repoDir });
+    execSync('git -c commit.gpgsign=false commit -m "add hubcode.json"', { cwd: repoDir });
 
     writeFileSync(
-      join(repoDir, "paseo.json"),
+      join(repoDir, "hubcode.json"),
       JSON.stringify({ scripts: { dev: { command: "uncommitted" } } }),
     );
 
@@ -819,37 +819,37 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       worktreeSlug: "preserve-committed",
       source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/preserve" },
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
-    const worktreeConfigPath = join(result.worktreePath, "paseo.json");
+    const worktreeConfigPath = join(result.worktreePath, "hubcode.json");
     expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
       scripts: { dev: { command: "committed" } },
     });
   });
 
-  it("creates a worktree without error when no paseo.json exists in the main repo", async () => {
+  it("creates a worktree without error when no hubcode.json exists in the main repo", async () => {
     const result = await createLegacyWorktreeForTest({
       cwd: repoDir,
       worktreeSlug: "no-config",
       source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/no-config" },
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
 
-    expect(existsSync(join(result.worktreePath, "paseo.json"))).toBe(false);
+    expect(existsSync(join(result.worktreePath, "hubcode.json"))).toBe(false);
   });
 });
 
-describe("paseo worktree manager", () => {
+describe("hubcode worktree manager", () => {
   let tempDir: string;
   let repoDir: string;
-  let paseoHome: string;
+  let hubcodeHome: string;
 
   beforeEach(() => {
     tempDir = realpathSync(mkdtempSync(join(tmpdir(), "worktree-manager-test-")));
     repoDir = join(tempDir, "test-repo");
-    paseoHome = join(tempDir, "paseo-home");
+    hubcodeHome = join(tempDir, "hubcode-home");
 
     mkdirSync(repoDir, { recursive: true });
     execSync("git init -b main", { cwd: repoDir });
@@ -883,88 +883,88 @@ describe("paseo worktree manager", () => {
       cwd: repoA,
       baseBranch: "main",
       worktreeSlug: "alpha",
-      paseoHome,
+      hubcodeHome,
     });
     const fromRepoB = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoB,
       baseBranch: "main",
       worktreeSlug: "alpha",
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(dirname(fromRepoA.worktreePath)).not.toBe(dirname(fromRepoB.worktreePath));
     expect(fromRepoA.worktreePath.endsWith("alpha-1")).toBe(false);
     expect(fromRepoB.worktreePath.endsWith("alpha-1")).toBe(false);
 
-    const repoAWorktrees = await listPaseoWorktrees({ cwd: repoA, paseoHome });
-    const repoBWorktrees = await listPaseoWorktrees({ cwd: repoB, paseoHome });
+    const repoAWorktrees = await listHubcodeWorktrees({ cwd: repoA, hubcodeHome });
+    const repoBWorktrees = await listHubcodeWorktrees({ cwd: repoB, hubcodeHome });
 
     expect(repoAWorktrees.map((entry) => entry.path)).toEqual([fromRepoA.worktreePath]);
     expect(repoBWorktrees.map((entry) => entry.path)).toEqual([fromRepoB.worktreePath]);
   });
 
-  it("lists and deletes paseo worktrees under ~/.paseo/worktrees/{hash}", async () => {
+  it("lists and deletes hubcode worktrees under ~/.hubcode/worktrees/{hash}", async () => {
     const first = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "alpha",
-      paseoHome,
+      hubcodeHome,
     });
     const second = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "beta",
-      paseoHome,
+      hubcodeHome,
     });
 
-    const worktrees = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+    const worktrees = await listHubcodeWorktrees({ cwd: repoDir, hubcodeHome });
     const paths = worktrees.map((worktree) => worktree.path).sort();
     expect(paths).toEqual([first.worktreePath, second.worktreePath].sort());
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: first.worktreePath, paseoHome });
+    await deleteHubcodeWorktree({ cwd: repoDir, worktreePath: first.worktreePath, hubcodeHome });
     expect(existsSync(first.worktreePath)).toBe(false);
 
-    const remaining = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+    const remaining = await listHubcodeWorktrees({ cwd: repoDir, hubcodeHome });
     expect(remaining.map((worktree) => worktree.path)).toEqual([second.worktreePath]);
   });
 
-  it("deletes a paseo worktree even when given a subdirectory path", async () => {
+  it("deletes a hubcode worktree even when given a subdirectory path", async () => {
     const created = await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "alpha",
-      paseoHome,
+      hubcodeHome,
     });
 
     const nestedDir = join(created.worktreePath, "nested", "dir");
     mkdirSync(nestedDir, { recursive: true });
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: nestedDir, paseoHome });
+    await deleteHubcodeWorktree({ cwd: repoDir, worktreePath: nestedDir, hubcodeHome });
     expect(existsSync(created.worktreePath)).toBe(false);
 
-    const remaining = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+    const remaining = await listHubcodeWorktrees({ cwd: repoDir, hubcodeHome });
     expect(remaining.some((worktree) => worktree.path === created.worktreePath)).toBe(false);
   });
 
-  it("runs teardown commands from paseo.json before deleting a worktree", async () => {
-    const paseoConfig = {
+  it("runs teardown commands from hubcode.json before deleting a worktree", async () => {
+    const hubcodeConfig = {
       worktree: {
         teardown: [
-          'echo "source=$PASEO_SOURCE_CHECKOUT_PATH" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-          'echo "root_alias=$PASEO_ROOT_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-          'echo "worktree=$PASEO_WORKTREE_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-          'echo "branch=$PASEO_BRANCH_NAME" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
-          'echo "port=$PASEO_WORKTREE_PORT" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+          'echo "source=$HUBCODE_SOURCE_CHECKOUT_PATH" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown.log"',
+          'echo "root_alias=$HUBCODE_ROOT_PATH" >> "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown.log"',
+          'echo "worktree=$HUBCODE_WORKTREE_PATH" >> "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown.log"',
+          'echo "branch=$HUBCODE_BRANCH_NAME" >> "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown.log"',
+          'echo "port=$HUBCODE_WORKTREE_PORT" >> "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown.log"',
         ],
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
     execSync(
-      'git add paseo.json && git -c commit.gpgsign=false commit -m "add teardown commands"',
+      'git add hubcode.json && git -c commit.gpgsign=false commit -m "add teardown commands"',
       {
         cwd: repoDir,
       },
@@ -975,14 +975,14 @@ describe("paseo worktree manager", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "teardown-test",
-      paseoHome,
+      hubcodeHome,
     });
     const runtimeEnv = await resolveWorktreeRuntimeEnv({
       worktreePath: created.worktreePath,
       branchName: created.branchName,
     });
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
+    await deleteHubcodeWorktree({ cwd: repoDir, worktreePath: created.worktreePath, hubcodeHome });
     expect(existsSync(created.worktreePath)).toBe(false);
 
     const teardownLog = readFileSync(join(repoDir, "teardown.log"), "utf8");
@@ -990,18 +990,18 @@ describe("paseo worktree manager", () => {
     expect(teardownLog).toContain(`root_alias=${repoDir}`);
     expect(teardownLog).toContain(`worktree=${created.worktreePath}`);
     expect(teardownLog).toContain("branch=teardown-branch");
-    expect(teardownLog).toContain(`port=${runtimeEnv.PASEO_WORKTREE_PORT}`);
+    expect(teardownLog).toContain(`port=${runtimeEnv.HUBCODE_WORKTREE_PORT}`);
   });
 
-  it("runs string teardown scripts from paseo.json as a single shell command", async () => {
-    const paseoConfig = {
+  it("runs string teardown scripts from hubcode.json as a single shell command", async () => {
+    const hubcodeConfig = {
       worktree: {
         teardown:
-          'cleanup_message="teardown string"\necho "$cleanup_message" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+          'cleanup_message="teardown string"\necho "$cleanup_message" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown.log"',
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
-    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add string teardown"', {
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
+    execSync('git add hubcode.json && git -c commit.gpgsign=false commit -m "add string teardown"', {
       cwd: repoDir,
     });
 
@@ -1010,28 +1010,28 @@ describe("paseo worktree manager", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "teardown-string-test",
-      paseoHome,
+      hubcodeHome,
     });
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
+    await deleteHubcodeWorktree({ cwd: repoDir, worktreePath: created.worktreePath, hubcodeHome });
 
     expect(getWorktreeTeardownCommands(repoDir)).toEqual([
-      'cleanup_message="teardown string"\necho "$cleanup_message" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+      'cleanup_message="teardown string"\necho "$cleanup_message" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown.log"',
     ]);
     expect(readFileSync(join(repoDir, "teardown.log"), "utf8").trim()).toBe("teardown string");
   });
 
-  it("omits PASEO_WORKTREE_PORT from teardown env when runtime metadata is missing", async () => {
-    const paseoConfig = {
+  it("omits HUBCODE_WORKTREE_PORT from teardown env when runtime metadata is missing", async () => {
+    const hubcodeConfig = {
       worktree: {
         teardown: [
-          'echo "port=${PASEO_WORKTREE_PORT-unset}" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-port.log"',
+          'echo "port=${HUBCODE_WORKTREE_PORT-unset}" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-port.log"',
         ],
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
     execSync(
-      'git add paseo.json && git -c commit.gpgsign=false commit -m "add teardown port logging"',
+      'git add hubcode.json && git -c commit.gpgsign=false commit -m "add teardown port logging"',
       { cwd: repoDir },
     );
 
@@ -1040,27 +1040,27 @@ describe("paseo worktree manager", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "teardown-port-missing-test",
-      paseoHome,
+      hubcodeHome,
     });
 
-    await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
+    await deleteHubcodeWorktree({ cwd: repoDir, worktreePath: created.worktreePath, hubcodeHome });
 
     expect(readFileSync(join(repoDir, "teardown-port.log"), "utf8").trim()).toBe("port=unset");
     expect(existsSync(created.worktreePath)).toBe(false);
   });
 
   it("does not remove worktree when a teardown command fails", async () => {
-    const paseoConfig = {
+    const hubcodeConfig = {
       worktree: {
         teardown: [
-          'echo "started" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-start.log"',
+          'echo "started" > "$HUBCODE_SOURCE_CHECKOUT_PATH/teardown-start.log"',
           "echo boom 1>&2; exit 9",
         ],
       },
     };
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    writeFileSync(join(repoDir, "hubcode.json"), JSON.stringify(hubcodeConfig));
     execSync(
-      'git add paseo.json && git -c commit.gpgsign=false commit -m "add failing teardown commands"',
+      'git add hubcode.json && git -c commit.gpgsign=false commit -m "add failing teardown commands"',
       { cwd: repoDir },
     );
 
@@ -1069,24 +1069,24 @@ describe("paseo worktree manager", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "teardown-failure-test",
-      paseoHome,
+      hubcodeHome,
     });
 
     await expect(
-      deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome }),
+      deleteHubcodeWorktree({ cwd: repoDir, worktreePath: created.worktreePath, hubcodeHome }),
     ).rejects.toThrow("Worktree teardown command failed");
 
     expect(existsSync(created.worktreePath)).toBe(true);
     expect(existsSync(join(repoDir, "teardown-start.log"))).toBe(true);
   });
 
-  it("treats a worktree as paseo-owned even when its .git admin is missing", async () => {
+  it("treats a worktree as hubcode-owned even when its .git admin is missing", async () => {
     const created = await createLegacyWorktreeForTest({
       branchName: "orphan-admin-branch",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "orphan-admin",
-      paseoHome,
+      hubcodeHome,
     });
 
     // Simulate a previous archive attempt that removed git's admin dir but left
@@ -1097,29 +1097,29 @@ describe("paseo worktree manager", () => {
     });
     expect(existsSync(created.worktreePath)).toBe(true);
 
-    const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, { paseoHome });
+    const ownership = await isHubcodeOwnedWorktreeCwd(created.worktreePath, { hubcodeHome });
     expect(ownership.allowed).toBe(true);
   });
 
-  it("rejects paths that are not under the paseo worktrees root", async () => {
-    const outsidePath = join(tempDir, "outside-paseo-home");
+  it("rejects paths that are not under the hubcode worktrees root", async () => {
+    const outsidePath = join(tempDir, "outside-hubcode-home");
     mkdirSync(outsidePath, { recursive: true });
 
-    const ownership = await isPaseoOwnedWorktreeCwd(outsidePath, { paseoHome });
+    const ownership = await isHubcodeOwnedWorktreeCwd(outsidePath, { hubcodeHome });
 
     expect(ownership.allowed).toBe(false);
   });
 
   it("rejects the worktrees root itself and the per-repo hash dir", async () => {
     const projectHash = await deriveWorktreeProjectHash(repoDir);
-    const worktreesRoot = join(paseoHome, "worktrees");
+    const worktreesRoot = join(hubcodeHome, "worktrees");
     const projectHashDir = join(worktreesRoot, projectHash);
     mkdirSync(projectHashDir, { recursive: true });
 
-    await expect(isPaseoOwnedWorktreeCwd(worktreesRoot, { paseoHome })).resolves.toMatchObject({
+    await expect(isHubcodeOwnedWorktreeCwd(worktreesRoot, { hubcodeHome })).resolves.toMatchObject({
       allowed: false,
     });
-    await expect(isPaseoOwnedWorktreeCwd(projectHashDir, { paseoHome })).resolves.toMatchObject({
+    await expect(isHubcodeOwnedWorktreeCwd(projectHashDir, { hubcodeHome })).resolves.toMatchObject({
       allowed: false,
     });
   });
@@ -1130,7 +1130,7 @@ describe("paseo worktree manager", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "orphan-delete",
-      paseoHome,
+      hubcodeHome,
     });
 
     rmSync(join(repoDir, ".git", "worktrees", "orphan-delete"), {
@@ -1139,10 +1139,10 @@ describe("paseo worktree manager", () => {
     });
     expect(existsSync(created.worktreePath)).toBe(true);
 
-    await deletePaseoWorktree({
+    await deleteHubcodeWorktree({
       cwd: repoDir,
       worktreePath: created.worktreePath,
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(existsSync(created.worktreePath)).toBe(false);
@@ -1154,19 +1154,19 @@ describe("paseo worktree manager", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "idempotent-delete",
-      paseoHome,
+      hubcodeHome,
     });
 
-    await deletePaseoWorktree({
+    await deleteHubcodeWorktree({
       cwd: repoDir,
       worktreePath: created.worktreePath,
-      paseoHome,
+      hubcodeHome,
     });
     expect(existsSync(created.worktreePath)).toBe(false);
 
     // Second call — nothing left on disk and no admin entry — must not throw.
     await expect(
-      deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome }),
+      deleteHubcodeWorktree({ cwd: repoDir, worktreePath: created.worktreePath, hubcodeHome }),
     ).resolves.toBeUndefined();
   });
 
@@ -1176,20 +1176,20 @@ describe("paseo worktree manager", () => {
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "no-cwd",
-      paseoHome,
+      hubcodeHome,
     });
 
-    const ownership = await isPaseoOwnedWorktreeCwd(created.worktreePath, { paseoHome });
+    const ownership = await isHubcodeOwnedWorktreeCwd(created.worktreePath, { hubcodeHome });
     expect(ownership.allowed).toBe(true);
     expect(ownership.worktreeRoot).toBeTruthy();
 
     // Simulate the handler path when git has forgotten about the worktree:
     // caller forwards the path-derived worktreesRoot from the ownership check.
-    await deletePaseoWorktree({
+    await deleteHubcodeWorktree({
       cwd: null,
       worktreePath: created.worktreePath,
       worktreesRoot: ownership.worktreeRoot,
-      paseoHome,
+      hubcodeHome,
     });
 
     expect(existsSync(created.worktreePath)).toBe(false);

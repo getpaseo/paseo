@@ -6,9 +6,9 @@ import { resolveWorkspaceScriptLink } from "./workspace-script-links";
 const runningService: WorkspaceScriptPayload = {
   scriptName: "web",
   type: "service",
-  hostname: "web.feature.paseo.localhost",
+  hostname: "web.feature.hubcode.localhost",
   port: 3000,
-  proxyUrl: "http://web.feature.paseo.localhost:6767",
+  proxyUrl: "http://web.feature.hubcode.localhost:6767",
   lifecycle: "running",
   health: "healthy",
   exitCode: null,
@@ -27,17 +27,17 @@ describe("resolveWorkspaceScriptLink", () => {
     expect(
       resolveLink({ type: "directTcp", endpoint: "localhost:6767", display: "localhost:6767" }),
     ).toEqual({
-      openUrl: "http://web.feature.paseo.localhost:6767",
-      labelUrl: "http://web.feature.paseo.localhost:6767",
+      openUrl: "http://web.feature.hubcode.localhost:6767",
+      labelUrl: "http://web.feature.hubcode.localhost:6767",
     });
   });
 
   it("uses the local proxy URL for socket and pipe connections", () => {
     expect(
-      resolveLink({ type: "directSocket", endpoint: "/tmp/paseo.sock", display: "socket" }),
+      resolveLink({ type: "directSocket", endpoint: "/tmp/hubcode.sock", display: "socket" }),
     ).toEqual({
-      openUrl: "http://web.feature.paseo.localhost:6767",
-      labelUrl: "http://web.feature.paseo.localhost:6767",
+      openUrl: "http://web.feature.hubcode.localhost:6767",
+      labelUrl: "http://web.feature.hubcode.localhost:6767",
     });
   });
 
@@ -56,10 +56,10 @@ describe("resolveWorkspaceScriptLink", () => {
 
   it("shows the local proxy URL but disables opening over relay", () => {
     expect(
-      resolveLink({ type: "relay", endpoint: "relay.paseo.sh:443", display: "relay" }),
+      resolveLink({ type: "relay", endpoint: "relay.hubcode.ai:443", display: "relay" }),
     ).toEqual({
       openUrl: null,
-      labelUrl: "http://web.feature.paseo.localhost:6767",
+      labelUrl: "http://web.feature.hubcode.localhost:6767",
     });
   });
 });

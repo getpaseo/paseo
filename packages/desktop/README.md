@@ -1,3 +1,3 @@
 # desktop
 
-Electron desktop app for Paseo.
+Electron desktop app for Hubcode.

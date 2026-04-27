@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PaseoConfigRaw } from "@server/shared/messages";
+import type { HubcodeConfigRaw } from "@server/shared/messages";
 import { applyDraftToConfig, configToDraft, type ProjectConfigDraft } from "./project-config-form";
 
 function emptyDraft(): ProjectConfigDraft {
@@ -60,7 +60,7 @@ describe("configToDraft", () => {
 
 describe("applyDraftToConfig", () => {
   it("preserves the original string kind when editing an existing setup field", () => {
-    const base: PaseoConfigRaw = { worktree: { setup: "npm install" } };
+    const base: HubcodeConfigRaw = { worktree: { setup: "npm install" } };
     const draft = configToDraft(base);
     draft.setupText = "npm install\nnpm run prepare";
     const next = applyDraftToConfig({ draft, base });
@@ -68,7 +68,7 @@ describe("applyDraftToConfig", () => {
   });
 
   it("preserves the original array kind when editing an existing teardown field", () => {
-    const base: PaseoConfigRaw = {
+    const base: HubcodeConfigRaw = {
       worktree: { teardown: ["docker compose down"] },
     };
     const draft = configToDraft(base);
@@ -78,7 +78,7 @@ describe("applyDraftToConfig", () => {
   });
 
   it("writes a string for a newly added lifecycle field with one non-empty line", () => {
-    const base: PaseoConfigRaw = {};
+    const base: HubcodeConfigRaw = {};
     const draft = configToDraft(base);
     draft.setupText = "npm install";
     const next = applyDraftToConfig({ draft, base });
@@ -86,7 +86,7 @@ describe("applyDraftToConfig", () => {
   });
 
   it("writes an array for a newly added lifecycle field with multiple non-empty lines", () => {
-    const base: PaseoConfigRaw = {};
+    const base: HubcodeConfigRaw = {};
     const draft = configToDraft(base);
     draft.setupText = "npm install\nnpm run prepare";
     const next = applyDraftToConfig({ draft, base });
@@ -94,7 +94,7 @@ describe("applyDraftToConfig", () => {
   });
 
   it("omits a lifecycle field whose draft text is empty", () => {
-    const base: PaseoConfigRaw = { worktree: { setup: "npm install" } };
+    const base: HubcodeConfigRaw = { worktree: { setup: "npm install" } };
     const draft = configToDraft(base);
     draft.setupText = "";
     const next = applyDraftToConfig({ draft, base });
@@ -117,7 +117,7 @@ describe("applyDraftToConfig", () => {
         },
       },
       customTopLevel: "preserved",
-    } as unknown as PaseoConfigRaw;
+    } as unknown as HubcodeConfigRaw;
 
     const draft = configToDraft(base);
     const next = applyDraftToConfig({ draft, base });
@@ -138,7 +138,7 @@ describe("applyDraftToConfig", () => {
         build: { command: ["npm", "run", "build"], customBuildField: { nested: 1 } },
         lint: { command: "npm run lint", type: "task" },
       },
-    } as unknown as PaseoConfigRaw;
+    } as unknown as HubcodeConfigRaw;
 
     const draft = configToDraft(base);
     // Edit only "dev". Leave "build" and "lint" untouched.
@@ -170,7 +170,7 @@ describe("applyDraftToConfig", () => {
       scripts: {
         build: { command: ["npm", "run", "build"] },
       },
-    } as unknown as PaseoConfigRaw;
+    } as unknown as HubcodeConfigRaw;
     const draft = configToDraft(base);
     const buildRow = draft.scripts[0];
     buildRow.commandText = "npm run build";
@@ -180,7 +180,7 @@ describe("applyDraftToConfig", () => {
   });
 
   it("parses script port as a number when numeric and writes string for non-numeric input", () => {
-    const base: PaseoConfigRaw = {};
+    const base: HubcodeConfigRaw = {};
     const draft = configToDraft(base);
     draft.scripts = [
       {
@@ -215,7 +215,7 @@ describe("applyDraftToConfig", () => {
         dev: { command: "npm run dev" },
         build: { command: "npm run build" },
       },
-    } as unknown as PaseoConfigRaw;
+    } as unknown as HubcodeConfigRaw;
     const draft = configToDraft(base);
     // remove build, add a row with empty name.
     draft.scripts = draft.scripts

@@ -288,7 +288,7 @@ describe("WorkspaceScriptsButton", () => {
       script({
         scriptName: "web",
         type: "service",
-        hostname: "web.paseo.localhost",
+        hostname: "web.hubcode.localhost",
         lifecycle: "running",
         health: "healthy",
         port: 3000,
@@ -296,7 +296,7 @@ describe("WorkspaceScriptsButton", () => {
       script({
         scriptName: "api",
         type: "service",
-        hostname: "api.paseo.localhost",
+        hostname: "api.hubcode.localhost",
         lifecycle: "running",
         health: "unhealthy",
         port: 4000,
@@ -304,7 +304,7 @@ describe("WorkspaceScriptsButton", () => {
       script({
         scriptName: "worker",
         type: "service",
-        hostname: "worker.paseo.localhost",
+        hostname: "worker.hubcode.localhost",
         lifecycle: "running",
         health: null,
         port: 5000,
@@ -312,7 +312,7 @@ describe("WorkspaceScriptsButton", () => {
       script({
         scriptName: "old-service",
         type: "service",
-        hostname: "old-service.paseo.localhost",
+        hostname: "old-service.hubcode.localhost",
         lifecycle: "stopped",
         exitCode: 1,
       }),

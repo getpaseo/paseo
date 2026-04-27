@@ -43,26 +43,26 @@ describe("resolveAssistantImageSource", () => {
   it("falls back to filesystem root for absolute paths outside the workspace", () => {
     expect(
       resolveAssistantImageSource({
-        source: "/tmp/paseo-codex-screenshot.png",
+        source: "/tmp/hubcode-codex-screenshot.png",
         workspaceRoot: "/Users/test/project",
       }),
     ).toEqual({
       kind: "file_rpc",
       cwd: "/",
-      path: "/tmp/paseo-codex-screenshot.png",
+      path: "/tmp/hubcode-codex-screenshot.png",
     });
   });
 
   it("normalizes file URIs into file RPC requests", () => {
     expect(
       resolveAssistantImageSource({
-        source: "file:///tmp/paseo-codex-screenshot.png",
+        source: "file:///tmp/hubcode-codex-screenshot.png",
         workspaceRoot: "/Users/test/project",
       }),
     ).toEqual({
       kind: "file_rpc",
       cwd: "/",
-      path: "/tmp/paseo-codex-screenshot.png",
+      path: "/tmp/hubcode-codex-screenshot.png",
     });
   });
 

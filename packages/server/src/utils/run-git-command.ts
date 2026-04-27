@@ -1,12 +1,12 @@
 import pLimit from "p-limit";
-import type { ProcessEnvRecord } from "../server/paseo-env.js";
+import type { ProcessEnvRecord } from "../server/hubcode-env.js";
 import { spawnProcess } from "./spawn.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
 const DEFAULT_STDERR_LIMIT = 2048;
 
-const gitConcurrency = parseInt(process.env.PASEO_GIT_CONCURRENCY ?? "8", 10) || 8;
+const gitConcurrency = parseInt(process.env.HUBCODE_GIT_CONCURRENCY ?? "8", 10) || 8;
 const gitLimit = pLimit(gitConcurrency);
 
 export interface GitCommandOptions {

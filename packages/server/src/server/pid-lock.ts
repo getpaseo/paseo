@@ -31,8 +31,8 @@ function isPidRunning(pid: number): boolean {
   }
 }
 
-function getPidFilePath(paseoHome: string): string {
-  return join(paseoHome, "paseo.pid");
+function getPidFilePath(hubcodeHome: string): string {
+  return join(hubcodeHome, "hubcode.pid");
 }
 
 function resolveOwnerPid(ownerPid?: number): number {
@@ -43,15 +43,15 @@ function resolveOwnerPid(ownerPid?: number): number {
 }
 
 export async function acquirePidLock(
-  paseoHome: string,
+  hubcodeHome: string,
   listen: string | null,
   options?: { ownerPid?: number },
 ): Promise<void> {
-  const pidPath = getPidFilePath(paseoHome);
+  const pidPath = getPidFilePath(hubcodeHome);
 
-  // Ensure paseoHome directory exists
-  if (!existsSync(paseoHome)) {
-    await mkdir(paseoHome, { recursive: true });
+  // Ensure hubcodeHome directory exists
+  if (!existsSync(hubcodeHome)) {
+    await mkdir(hubcodeHome, { recursive: true });
   }
 
   // Try to read existing lock
@@ -72,7 +72,7 @@ export async function acquirePidLock(
       }
 
       throw new PidLockError(
-        `Another Paseo daemon is already running (PID ${existingLock.pid}, started ${existingLock.startedAt})`,
+        `Another Hubcode daemon is already running (PID ${existingLock.pid}, started ${existingLock.startedAt})`,
         existingLock,
       );
     }
@@ -87,7 +87,7 @@ export async function acquirePidLock(
     hostname: hostname(),
     uid: process.getuid?.() ?? 0,
     listen,
-    ...(process.env.PASEO_DESKTOP_MANAGED === "1" ? { desktopManaged: true } : {}),
+    ...(process.env.HUBCODE_DESKTOP_MANAGED === "1" ? { desktopManaged: true } : {}),
   };
 
   let fd;
@@ -102,7 +102,7 @@ export async function acquirePidLock(
         const content = await readFile(pidPath, "utf-8");
         const raceLock = JSON.parse(content) as PidLockInfo;
         throw new PidLockError(
-          `Another Paseo daemon is already running (PID ${raceLock.pid})`,
+          `Another Hubcode daemon is already running (PID ${raceLock.pid})`,
           raceLock,
         );
       } catch (innerErr) {
@@ -117,11 +117,11 @@ export async function acquirePidLock(
 }
 
 export async function updatePidLock(
-  paseoHome: string,
+  hubcodeHome: string,
   patch: { listen: string },
   options?: { ownerPid?: number },
 ): Promise<void> {
-  const pidPath = getPidFilePath(paseoHome);
+  const pidPath = getPidFilePath(hubcodeHome);
   const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
   const content = await readFile(pidPath, "utf-8");
   const existingLock = JSON.parse(content) as PidLockInfo;
@@ -145,10 +145,10 @@ export async function updatePidLock(
 }
 
 export async function releasePidLock(
-  paseoHome: string,
+  hubcodeHome: string,
   options?: { ownerPid?: number },
 ): Promise<void> {
-  const pidPath = getPidFilePath(paseoHome);
+  const pidPath = getPidFilePath(hubcodeHome);
   const lockOwnerPid = resolveOwnerPid(options?.ownerPid);
   try {
     // Only remove if it's our lock
@@ -162,8 +162,8 @@ export async function releasePidLock(
   }
 }
 
-export async function getPidLockInfo(paseoHome: string): Promise<PidLockInfo | null> {
-  const pidPath = getPidFilePath(paseoHome);
+export async function getPidLockInfo(hubcodeHome: string): Promise<PidLockInfo | null> {
+  const pidPath = getPidFilePath(hubcodeHome);
   try {
     const content = await readFile(pidPath, "utf-8");
     return JSON.parse(content) as PidLockInfo;
@@ -173,9 +173,9 @@ export async function getPidLockInfo(paseoHome: string): Promise<PidLockInfo | n
 }
 
 export async function isLocked(
-  paseoHome: string,
+  hubcodeHome: string,
 ): Promise<{ locked: boolean; info?: PidLockInfo }> {
-  const info = await getPidLockInfo(paseoHome);
+  const info = await getPidLockInfo(hubcodeHome);
   if (!info) {
     return { locked: false };
   }

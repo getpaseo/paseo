@@ -42,7 +42,7 @@ type SidebarCalloutEntry = SidebarCalloutOptions & {
   token: number;
 };
 
-const DISMISSED_CALLOUTS_STORAGE_KEY = "@paseo:sidebar-callout-dismissals";
+const DISMISSED_CALLOUTS_STORAGE_KEY = "@hubcode:sidebar-callout-dismissals";
 
 const SidebarCalloutApiContext = createContext<SidebarCalloutsApi | null>(null);
 const SidebarCalloutStateContext = createContext<SidebarCalloutEntry | null>(null);

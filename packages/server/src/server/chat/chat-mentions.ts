@@ -109,6 +109,6 @@ export function buildChatMentionNotification(input: ChatMentionNotificationInput
     `Mentioned agents: ${mentioned}.`,
     "Message:",
     body,
-    `Read the room with: paseo chat read ${input.room} --limit 20`,
+    `Read the room with: hubcode chat read ${input.room} --limit 20`,
   ].join("\n");
 }
