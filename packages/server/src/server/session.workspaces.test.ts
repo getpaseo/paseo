@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, vi } from "vitest";
 import { Session } from "./session.js";
@@ -47,6 +47,10 @@ interface SessionTestAccess {
   getAgentPayloadById(agentId: string): Promise<unknown>;
   buildProjectPlacementForCwd(cwd: string): Promise<unknown>;
   buildProjectPlacement(cwd: string): Promise<unknown>;
+  resolveRegisteredWorkspaceIdForCwd(
+    cwd: string,
+    workspaces: ReturnType<typeof createPersistedWorkspaceRecord>[],
+  ): string;
   buildWorkspaceDescriptorMap(...args: unknown[]): Promise<Map<string, unknown>>;
   describeWorkspaceRecord(...args: unknown[]): Promise<unknown>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<unknown>;
@@ -3041,4 +3045,22 @@ test("subscribed fetch_workspaces includes git enrichment in the initial snapsho
   ) as Array<{ type: "workspace_update"; payload: Record<string, unknown> }>;
   expect(workspaceUpdates).toEqual([]);
   expect(session.describeWorkspaceRecordWithGitData).toHaveBeenCalledWith(gitWorkspace, gitProject);
+});
+
+test("resolveRegisteredWorkspaceIdForCwd does not match home directory as a prefix", () => {
+  const session = createSessionForWorkspaceTests();
+  const home = homedir();
+  const childCwd = path.join(home, "projects/new-app");
+  const homeWorkspace = createPersistedWorkspaceRecord({
+    workspaceId: home,
+    projectId: "proj-home",
+    cwd: home,
+    kind: "directory",
+    displayName: "home",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  expect(session.resolveRegisteredWorkspaceIdForCwd(childCwd, [homeWorkspace])).toBe(childCwd);
+  expect(session.resolveRegisteredWorkspaceIdForCwd(home, [homeWorkspace])).toBe(home);
 });
