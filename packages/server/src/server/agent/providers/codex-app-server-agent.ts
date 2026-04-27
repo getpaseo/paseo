@@ -46,7 +46,6 @@ import {
 import {
   createProviderEnv,
   createProviderEnvSpec,
-  type ProviderEnvSpec,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
@@ -2449,16 +2448,6 @@ export async function codexAppServerTurnInputFromPrompt(
   return output;
 }
 
-function buildCodexAppServerEnvSpec(
-  runtimeSettings?: ProviderRuntimeSettings,
-  launchEnv?: Record<string, string>,
-): ProviderEnvSpec {
-  return createProviderEnvSpec({
-    runtimeSettings,
-    overlays: [launchEnv],
-  });
-}
-
 function buildCodexAppServerEnv(
   runtimeSettings?: ProviderRuntimeSettings,
   launchEnv?: Record<string, string>,
@@ -4219,7 +4208,10 @@ export class CodexAppServerAgentClient implements AgentClient {
     return spawnProcess(launchPrefix.command, [...launchPrefix.args, "app-server"], {
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
-      ...buildCodexAppServerEnvSpec(this.runtimeSettings, launchEnv),
+      ...createProviderEnvSpec({
+        runtimeSettings: this.runtimeSettings,
+        overlays: [launchEnv],
+      }),
     }) as ChildProcessWithoutNullStreams;
   }
 

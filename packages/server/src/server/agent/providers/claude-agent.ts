@@ -292,16 +292,6 @@ function isClaudeThinkingEffort(value: string | null | undefined): value is Clau
   );
 }
 
-function readClaudeEnvOverlay(
-  options: Partial<ClaudeOptions> | undefined,
-): Record<string, string | undefined> | undefined {
-  const env = options?.env;
-  if (!env || typeof env !== "object" || Array.isArray(env)) {
-    return undefined;
-  }
-  return env as Record<string, string | undefined>;
-}
-
 function sanitizeClaudeProjectPath(cwd: string): string {
   return cwd.replace(/[\\/._:]/g, "-");
 }
@@ -2246,7 +2236,7 @@ class ClaudeAgentSession implements AgentSession {
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
       overlays: [
-        readClaudeEnvOverlay(extraClaudeOptions),
+        extraClaudeOptions?.env,
         {
           // Increase MCP timeouts for long-running tool calls (10 minutes)
           MCP_TIMEOUT: "600000",
