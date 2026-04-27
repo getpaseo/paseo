@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { extname } from "node:path";
 import { promisify } from "node:util";
 
 import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/paseo-env.js";
@@ -31,6 +32,23 @@ interface ExecCommandResult {
   stderr: string;
 }
 
+function hasPathSeparator(value: string): boolean {
+  return value.includes("/") || value.includes("\\");
+}
+
+function shouldUseWindowsShell(
+  command: string,
+  requestedShell?: boolean | string,
+): boolean | string {
+  if (isWindowsCommandScript(command)) {
+    return true;
+  }
+  if (requestedShell !== undefined) {
+    return requestedShell;
+  }
+  return process.platform === "win32" && !hasPathSeparator(command) && !extname(command);
+}
+
 export function spawnProcess(
   command: string,
   args: string[],
@@ -39,7 +57,7 @@ export function spawnProcess(
   const { baseEnv, env, envOverlay, ...spawnOptions } = options ?? {};
   const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
-  const shell = isWindowsCommandScript(command) ? true : (spawnOptions.shell ?? isWindows);
+  const shell = shouldUseWindowsShell(command, spawnOptions.shell);
 
   const shouldQuoteForShell = isWindows && shell !== false;
   const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
@@ -69,7 +87,7 @@ export async function execCommand(
   const { baseEnv, env, envOverlay } = options ?? {};
   const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
-  const shell = isWindowsCommandScript(command) ? true : isWindows;
+  const shell = shouldUseWindowsShell(command);
   const shouldQuoteForShell = isWindows && shell !== false;
   const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
   const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
