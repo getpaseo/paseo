@@ -88,7 +88,7 @@ function parseMaxIterations(value: string | undefined): number | undefined {
 }
 
 // oxlint-disable complexity
-function buildLoopRunInput(prompt: string, options: LoopRunOptions): LoopRunInput {
+export function buildLoopRunInput(prompt: string, options: LoopRunOptions): LoopRunInput {
   const verifyPrompt = options.verify?.trim();
   if (options.verify !== undefined && !verifyPrompt) {
     throw {
@@ -106,10 +106,11 @@ function buildLoopRunInput(prompt: string, options: LoopRunOptions): LoopRunInpu
   if (options.provider) {
     const { provider, model } = resolveProviderAndModel({ provider: options.provider });
     if (provider) result.provider = provider;
-    if (model) {
-      result.model = model;
-    } else if (options.model?.trim()) {
+    // Explicit --model takes precedence over parsed model
+    if (options.model?.trim()) {
       result.model = options.model.trim();
+    } else if (model) {
+      result.model = model;
     }
   } else if (options.model?.trim()) {
     result.model = options.model.trim();
@@ -119,10 +120,11 @@ function buildLoopRunInput(prompt: string, options: LoopRunOptions): LoopRunInpu
   if (options.verifyProvider) {
     const { provider, model } = resolveProviderAndModel({ provider: options.verifyProvider });
     if (provider) result.verifierProvider = provider;
-    if (model) {
-      result.verifierModel = model;
-    } else if (options.verifyModel?.trim()) {
+    // Explicit --verify-model takes precedence over parsed model
+    if (options.verifyModel?.trim()) {
       result.verifierModel = options.verifyModel.trim();
+    } else if (model) {
+      result.verifierModel = model;
     }
   } else if (options.verifyModel?.trim()) {
     result.verifierModel = options.verifyModel.trim();
