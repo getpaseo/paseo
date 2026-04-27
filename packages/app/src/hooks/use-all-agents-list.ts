@@ -13,6 +13,7 @@ function toAggregatedAgent(params: {
   source: Agent;
   serverId: string;
   serverLabel: string;
+  isGlobal?: boolean;
 }): AggregatedAgent {
   const source = params.source;
   return {
@@ -31,6 +32,7 @@ function toAggregatedAgent(params: {
     archivedAt: source.archivedAt ?? null,
     createdAt: source.createdAt,
     labels: source.labels,
+    ...(params.isGlobal ? { isGlobal: true } : {}),
   };
 }
 
@@ -45,25 +47,30 @@ function buildAllAgentsList(params: {
   const list: AggregatedAgent[] = [];
 
   for (const agent of params.agents) {
-    const aggregated = toAggregatedAgent({
-      source: agent,
-      serverId: params.serverId,
-      serverLabel: params.serverLabel,
-    });
-    if (!params.includeArchived && aggregated.archivedAt) {
+    if (!params.includeArchived && agent.archivedAt) {
       continue;
     }
-    // Scope strictly by active org. Agents tied to workspaces from other orgs
-    // (or unscoped workspaces while an org is selected) are hidden; this keeps
-    // the sidebar's active-agents list consistent with the org-filtered
-    // project/workspace list.
+    // Decide whether the agent's cwd belongs to the active org. Agents whose
+    // workspace is missing from the org-scoped workspace map (or registered
+    // under a different org) used to be hidden, which made cross-org or
+    // unregistered cwds disappear after auth/org switches even though their
+    // history was on disk. Now we surface them with `isGlobal: true` so the
+    // UI can render a tag, and the user can see/open them.
+    let isGlobal = false;
     if (params.activeOrgId && params.workspaces) {
       const workspace = params.workspaces.get(agent.cwd);
       if (!workspace || workspace.orgId !== params.activeOrgId) {
-        continue;
+        isGlobal = true;
       }
     }
-    list.push(aggregated);
+    list.push(
+      toAggregatedAgent({
+        source: agent,
+        serverId: params.serverId,
+        serverLabel: params.serverLabel,
+        isGlobal,
+      }),
+    );
   }
 
   list.sort((left, right) => {

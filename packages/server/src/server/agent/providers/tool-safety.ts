@@ -19,7 +19,7 @@
 
 const FLAT_NAME_SEPARATOR = "__";
 
-/** Strip the `<server>__` prefix used by `toFlatName` in hubcode-mcp-runtime. */
+/** Strip the `<server>__` prefix MCP servers use to namespace tool names. */
 function bareToolName(flatName: string): string {
   const idx = flatName.indexOf(FLAT_NAME_SEPARATOR);
   if (idx < 0) return flatName;

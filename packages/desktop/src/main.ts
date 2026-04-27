@@ -48,7 +48,15 @@ import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, net, protocol } 
 const HUBCODE_CDP_PORT = Number(process.env.HUBCODE_CDP_PORT ?? "9222");
 app.commandLine.appendSwitch("remote-debugging-port", String(HUBCODE_CDP_PORT));
 app.commandLine.appendSwitch("remote-allow-origins", "*");
-import { registerDaemonManager } from "./daemon/daemon-manager.js";
+import {
+  registerDaemonManager,
+  restartDaemonIfDesktopManaged,
+  broadcastClaudeCodeProgress,
+} from "./daemon/daemon-manager.js";
+import {
+  ensureClaudeCode,
+  getClaudeCodeStatus,
+} from "./integrations/claude-code-binary.js";
 import {
   parseCliPassthroughArgsFromArgv,
   runCliPassthroughCommand,
@@ -242,6 +250,12 @@ async function createMainWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
+      // Dev-only: disable CORS so the Metro renderer (http://localhost:8081)
+      // can hit a remote auth-server (e.g. auth.hubcode.ai) without that
+      // origin being on the server's TRUSTED_ORIGINS allow-list. Packaged
+      // builds load via the app:// scheme, which is whitelisted server-side,
+      // so webSecurity stays on in production.
+      ...(app.isPackaged ? {} : { webSecurity: false }),
     },
   });
 
@@ -437,6 +451,28 @@ async function bootstrap(): Promise<void> {
   registerOpenerHandlers();
   registerBrowserViewIpc();
   await createMainWindow();
+
+  // Provision the bundled Claude Code runtime used by the Hubcode agent.
+  // Best-effort and non-blocking — failures are logged but don't block app
+  // boot, and the user can retry from Settings → Providers → Hubcode.
+  //
+  // Sequencing: the daemon may already be running (renderer can request
+  // start_desktop_daemon during window load). If we install on a daemon
+  // that started without HUBCODE_CLAUDE_BIN, the Hubcode provider stays
+  // "Not installed" until the daemon restarts — so we restart it ourselves
+  // once install completes, but only if (a) it was already running and
+  // (b) this desktop instance owns it.
+  void (async () => {
+    try {
+      const initial = await getClaudeCodeStatus();
+      const result = await ensureClaudeCode({ onProgress: broadcastClaudeCodeProgress });
+      if (!initial.installed && result.installed) {
+        await restartDaemonIfDesktopManaged();
+      }
+    } catch (err) {
+      log.warn("[main] background ensureClaudeCode() failed", err);
+    }
+  })();
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -1,31 +1,23 @@
-// Unit tests for the Hubcode agent client + session.
-// Exercises:
-//   1. SSE frame parsing (delta, [DONE], unknown frames)
-//   2. listModels with and without an upgrade flag
-//   3. startTurn streaming: user_message + assistant_message + turn_completed
-//   4. Auth token passthrough to the backend
-//   5. Cancellation (AbortSignal)
+// Unit tests for HubcodeAgentClient.
 //
-// No real HTTP — a stubbed fetch feeds the client whatever it should receive.
+// The Hubcode agent is a thin wrapper over ClaudeAgentClient — these tests
+// focus on the wrapper-only behavior: env injection, combo→ANTHROPIC_MODEL
+// routing, provider retagging on emitted events, and isAvailable() gating
+// on the bundled binary. The Claude SDK itself is stubbed; we verify what
+// the wrapper passes into it, not that it works.
 
-import { describe, expect, it, vi } from "vitest";
-import type { AgentStreamEvent } from "../agent-sdk-types";
-import {
-  HubcodeAgentClient,
-  HubcodeAgentSession,
-  HubcodeUpgradeRequiredError,
-  parseSseFrame,
-} from "./hubcode-agent";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  AgentLaunchContext,
+  AgentSession,
+  AgentSessionConfig,
+  AgentStreamEvent,
+} from "../agent-sdk-types";
+import { HubcodeAgentClient, HubcodeUpgradeRequiredError } from "./hubcode-agent";
 
-function makeSseStream(chunks: string[]): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
-      controller.close();
-    },
-  });
-}
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
 
 function bundleResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -34,526 +26,382 @@ function bundleResponse(body: unknown): Response {
   });
 }
 
-describe("parseSseFrame", () => {
-  it("parses a tool_call delta with index, id, name and arguments fragment", () => {
-    const frame =
-      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"foo","arguments":"{\\"a"}}]}}]}';
-    const parsed = parseSseFrame(frame);
-    expect(parsed?.toolCallDeltas).toEqual([
-      { index: 0, id: "call_1", name: "foo", arguments: '{"a' },
-    ]);
+interface CreateSessionCall {
+  config: AgentSessionConfig;
+  launchContext: AgentLaunchContext | undefined;
+}
+
+function makeFakeClaudeSession(): AgentSession & { __push: (e: AgentStreamEvent) => void } {
+  const subscribers: ((e: AgentStreamEvent) => void)[] = [];
+  const session = {
+    provider: "claude",
+    id: "claude-session-1",
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    run: vi.fn(async () => ({ runId: "r1", status: "completed" }) as never),
+    startTurn: vi.fn(async () => ({ turnId: "t1" })),
+    subscribe: vi.fn((cb: (e: AgentStreamEvent) => void) => {
+      subscribers.push(cb);
+      return () => {
+        const ix = subscribers.indexOf(cb);
+        if (ix >= 0) subscribers.splice(ix, 1);
+      };
+    }),
+    streamHistory: vi.fn(async function* () {
+      yield {
+        type: "thread_started",
+        provider: "claude",
+        sessionId: "claude-session-1",
+      } as AgentStreamEvent;
+    }),
+    getRuntimeInfo: vi.fn(async () => ({ provider: "claude", model: "x" }) as never),
+    getAvailableModes: vi.fn(async () => []),
+    getCurrentMode: vi.fn(async () => null),
+    setMode: vi.fn(async () => {}),
+    getPendingPermissions: vi.fn(() => []),
+    respondToPermission: vi.fn(async () => {}),
+    describePersistence: vi.fn(() => null),
+    interrupt: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    __push: (e: AgentStreamEvent) => subscribers.forEach((s) => s(e)),
+  };
+  return session as unknown as AgentSession & { __push: (e: AgentStreamEvent) => void };
+}
+
+function makeStubClaudeClient(opts: {
+  onCreate?: (call: CreateSessionCall) => AgentSession;
+} = {}) {
+  const calls: CreateSessionCall[] = [];
+  const stub = {
+    provider: "claude" as const,
+    capabilities: {} as never,
+    isAvailable: vi.fn(async () => true),
+    listModels: vi.fn(async () => []),
+    createSession: vi.fn(
+      async (config: AgentSessionConfig, launchContext?: AgentLaunchContext) => {
+        const call = { config, launchContext };
+        calls.push(call);
+        return opts.onCreate ? opts.onCreate(call) : makeFakeClaudeSession();
+      },
+    ),
+    resumeSession: vi.fn(async () => makeFakeClaudeSession()),
+  };
+  return { stub, calls };
+}
+
+// ---------------------------------------------------------------------------
+// isAvailable / getDiagnostic
+// ---------------------------------------------------------------------------
+
+describe("HubcodeAgentClient.isAvailable", () => {
+  beforeEach(() => {
+    delete process.env.HUBCODE_CLAUDE_BIN;
+  });
+  afterEach(() => {
+    delete process.env.HUBCODE_CLAUDE_BIN;
   });
 
-  it("parses a delta frame", () => {
-    const frame = 'data: {"choices":[{"delta":{"content":"hello"}}]}';
-    expect(parseSseFrame(frame)).toEqual({ delta: "hello" });
+  it("returns false when HUBCODE_CLAUDE_BIN is unset", async () => {
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => makeStubClaudeClient().stub as never,
+    });
+    expect(await client.isAvailable()).toBe(false);
   });
 
-  it("returns done for [DONE]", () => {
-    expect(parseSseFrame("data: [DONE]")).toEqual({ done: true });
+  it("returns false when the env points at a non-existent path", async () => {
+    process.env.HUBCODE_CLAUDE_BIN = "/this/path/definitely/does/not/exist/claude";
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => makeStubClaudeClient().stub as never,
+    });
+    expect(await client.isAvailable()).toBe(false);
   });
 
-  it("ignores comment/ping frames", () => {
-    expect(parseSseFrame(": keep-alive")).toBeNull();
-    expect(parseSseFrame("event: ping")).toBeNull();
-  });
-
-  it("returns null on unparseable JSON", () => {
-    expect(parseSseFrame("data: not-json")).toBeNull();
-  });
-
-  it("returns null when delta has no content", () => {
-    const frame = 'data: {"choices":[{"delta":{"role":"assistant"}}]}';
-    expect(parseSseFrame(frame)).toBeNull();
+  it("returns true when the env points at an existing path", async () => {
+    process.env.HUBCODE_CLAUDE_BIN = __filename;
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => makeStubClaudeClient().stub as never,
+    });
+    expect(await client.isAvailable()).toBe(true);
   });
 });
+
+describe("HubcodeAgentClient.getDiagnostic", () => {
+  beforeEach(() => {
+    delete process.env.HUBCODE_CLAUDE_BIN;
+    delete process.env.HUBCODE_CLAUDE_HOME;
+  });
+  afterEach(() => {
+    delete process.env.HUBCODE_CLAUDE_BIN;
+    delete process.env.HUBCODE_CLAUDE_HOME;
+  });
+
+  it("explains how to recover when the binary is missing", async () => {
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => makeStubClaudeClient().stub as never,
+    });
+    const { diagnostic } = await client.getDiagnostic();
+    expect(diagnostic).toMatch(/HUBCODE_CLAUDE_BIN is not set/);
+  });
+
+  it("reports the resolved binary + isolated CLAUDE_HOME when available", async () => {
+    process.env.HUBCODE_CLAUDE_BIN = __filename;
+    process.env.HUBCODE_CLAUDE_HOME = "/tmp/hubcode-claude-home";
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => makeStubClaudeClient().stub as never,
+    });
+    const { diagnostic } = await client.getDiagnostic();
+    expect(diagnostic).toContain(__filename);
+    expect(diagnostic).toContain("/tmp/hubcode-claude-home");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listModels
+// ---------------------------------------------------------------------------
 
 describe("HubcodeAgentClient.listModels", () => {
-  it("returns combo names when the user is on a paid plan", async () => {
-    process.env.HUBCODE_SESSION_TOKEN = "session-token-abc";
-    const fetchImpl = vi.fn(async (_url, _init) =>
-      bundleResponse({
-        requiresUpgrade: false,
-        planId: "plan_pro",
-        apiKey: "ork_test",
-        baseUrl: "http://backend.test",
-        combos: [
-          { comboId: "c1", comboName: "combo-a" },
-          { comboId: "c2", comboName: "combo-b" },
-        ],
-      }),
-    );
-
-    const client = new HubcodeAgentClient({ fetch: fetchImpl as never });
-    const models = await client.listModels();
-    expect(models.map((m) => m.id)).toEqual(["combo-a", "combo-b"]);
-    // Bearer token must be forwarded unchanged.
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const init = fetchImpl.mock.calls[0][1] as RequestInit;
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer session-token-abc");
+  beforeEach(() => {
+    process.env.HUBCODE_SESSION_TOKEN = "test-token";
+  });
+  afterEach(() => {
+    delete process.env.HUBCODE_SESSION_TOKEN;
   });
 
-  it("returns a single upgrade-placeholder model for free users", async () => {
-    process.env.HUBCODE_SESSION_TOKEN = "tok";
-    const fetchImpl = vi.fn(async () =>
-      bundleResponse({
-        requiresUpgrade: true,
-        planId: "plan_free",
-        apiKey: null,
-        baseUrl: "http://backend.test",
-        combos: [],
-      }),
-    );
-    const client = new HubcodeAgentClient({ fetch: fetchImpl as never });
+  it("returns combos from the bundle", async () => {
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => makeStubClaudeClient().stub as never,
+      fetch: async () =>
+        bundleResponse({
+          requiresUpgrade: false,
+          planId: "plan_pro",
+          apiKey: "or-key",
+          baseUrl: "https://omniroute.example/v1",
+          combos: [
+            { comboId: "1", comboName: "hubcode-pro" },
+            { comboId: "2", comboName: "hubcode-fast" },
+          ],
+        }),
+    });
+    const models = await client.listModels();
+    expect(models.map((m) => m.id)).toEqual(["hubcode-pro", "hubcode-fast"]);
+  });
+
+  it("returns the upgrade placeholder when requiresUpgrade is true", async () => {
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => makeStubClaudeClient().stub as never,
+      fetch: async () =>
+        bundleResponse({
+          requiresUpgrade: true,
+          planId: "plan_free",
+          apiKey: null,
+          baseUrl: "https://omniroute.example/v1",
+          combos: [],
+        }),
+    });
     const models = await client.listModels();
     expect(models).toHaveLength(1);
-    expect(models[0].id).toBe("__upgrade__");
+    expect(models[0]?.id).toBe("__upgrade__");
   });
 
-  it("returns [] when no session token is available", async () => {
+  it("returns [] when no session token is present", async () => {
     delete process.env.HUBCODE_SESSION_TOKEN;
-    const fetchImpl = vi.fn();
-    const client = new HubcodeAgentClient({ fetch: fetchImpl as never });
-    const models = await client.listModels();
-    expect(models).toEqual([]);
-    expect(fetchImpl).not.toHaveBeenCalled();
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => makeStubClaudeClient().stub as never,
+    });
+    expect(await client.listModels()).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// createSession — env injection + Claude binary path
+// ---------------------------------------------------------------------------
 
 describe("HubcodeAgentClient.createSession", () => {
-  it("throws HubcodeUpgradeRequiredError for a free plan", async () => {
-    process.env.HUBCODE_SESSION_TOKEN = "tok";
-    const fetchImpl = vi.fn(async () =>
-      bundleResponse({
-        requiresUpgrade: true,
-        planId: "plan_free",
-        apiKey: null,
-        baseUrl: "http://backend.test",
-        combos: [],
-      }),
-    );
-    const client = new HubcodeAgentClient({ fetch: fetchImpl as never });
+  beforeEach(() => {
+    process.env.HUBCODE_SESSION_TOKEN = "test-token";
+    process.env.HUBCODE_CLAUDE_BIN = __filename;
+    process.env.HUBCODE_CLAUDE_HOME = "/tmp/hubcode-claude-home";
+  });
+  afterEach(() => {
+    delete process.env.HUBCODE_SESSION_TOKEN;
+    delete process.env.HUBCODE_CLAUDE_BIN;
+    delete process.env.HUBCODE_CLAUDE_HOME;
+  });
+
+  function setupClient() {
+    const factory = makeStubClaudeClient();
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => factory.stub as never,
+      fetch: async () =>
+        bundleResponse({
+          requiresUpgrade: false,
+          planId: "plan_pro",
+          apiKey: "or-secret-key",
+          baseUrl: "https://omniroute.example/v1",
+          combos: [
+            { comboId: "1", comboName: "hubcode-pro" },
+            { comboId: "2", comboName: "hubcode-fast" },
+          ],
+        }),
+    });
+    return { client, calls: factory.calls };
+  }
+
+  it("injects ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL and isolated CLAUDE_CONFIG_DIR", async () => {
+    const { client, calls } = setupClient();
+    await client.createSession({
+      provider: "hubcode",
+      cwd: "/tmp",
+      model: "hubcode-pro",
+    });
+    expect(calls).toHaveLength(1);
+    const env = calls[0]!.launchContext?.env ?? {};
+    // baseUrl had `/v1` stripped — Claude Code appends /v1/messages itself.
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://omniroute.example");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("or-secret-key");
+    expect(env.ANTHROPIC_MODEL).toBe("hubcode-pro");
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/tmp/hubcode-claude-home");
+    expect(env.DISABLE_TELEMETRY).toBe("1");
+  });
+
+  it("forces the SDK to spawn the bundled binary, not the user's personal install", async () => {
+    const { client, calls } = setupClient();
+    await client.createSession({ provider: "hubcode", cwd: "/tmp" });
+    expect(calls[0]!.config.extra?.claude?.pathToClaudeCodeExecutable).toBe(__filename);
+  });
+
+  it("rewrites provider:'hubcode' → 'claude' on the inner config (Claude SDK is the runtime)", async () => {
+    const { client, calls } = setupClient();
+    await client.createSession({ provider: "hubcode", cwd: "/tmp" });
+    expect(calls[0]!.config.provider).toBe("claude");
+  });
+
+  it("falls back to the first combo when config.model is omitted", async () => {
+    const { client, calls } = setupClient();
+    await client.createSession({ provider: "hubcode", cwd: "/tmp" });
+    expect(calls[0]!.launchContext?.env?.ANTHROPIC_MODEL).toBe("hubcode-pro");
+  });
+
+  it("throws HubcodeUpgradeRequiredError on free plans", async () => {
+    const factory = makeStubClaudeClient();
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => factory.stub as never,
+      fetch: async () =>
+        bundleResponse({
+          requiresUpgrade: true,
+          planId: "plan_free",
+          apiKey: null,
+          baseUrl: "https://omniroute.example/v1",
+          combos: [],
+        }),
+    });
     await expect(
-      client.createSession({ provider: "hubcode", cwd: "/tmp" }, {}),
+      client.createSession({ provider: "hubcode", cwd: "/tmp" }),
     ).rejects.toBeInstanceOf(HubcodeUpgradeRequiredError);
+  });
+
+  it("throws when the bundled binary is missing", async () => {
+    process.env.HUBCODE_CLAUDE_BIN = "/this/path/does/not/exist/claude";
+    const { client } = setupClient();
+    await expect(
+      client.createSession({ provider: "hubcode", cwd: "/tmp" }),
+    ).rejects.toThrow(/Hubcode requires the bundled Claude Code/);
   });
 });
 
-describe("HubcodeAgentSession.startTurn", () => {
-  function makeChatResponse(chunks: string[]): Response {
-    return new Response(makeSseStream(chunks), {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    });
-  }
+// ---------------------------------------------------------------------------
+// Wrapper retags emitted events from claude → hubcode
+// ---------------------------------------------------------------------------
 
-  it("streams text deltas and emits a final assistant_message", async () => {
-    const fetchImpl = vi.fn(async (_url, init) => {
-      const body = JSON.parse((init?.body as string) ?? "{}");
-      expect(body.model).toBe("combo-a");
-      expect(body.stream).toBe(true);
-      expect(body.messages[body.messages.length - 1]).toEqual({
-        role: "user",
-        content: "hi",
-      });
-      return makeChatResponse([
-        'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
-        'data: {"choices":[{"delta":{"content":"lo "}}]}\n\n',
-        'data: {"choices":[{"delta":{"content":"world"}}]}\n\n',
-        "data: [DONE]\n\n",
-      ]);
-    });
-
-    const session = new HubcodeAgentSession({
-      config: { provider: "hubcode", cwd: "/tmp" },
-      model: "combo-a",
-      baseUrl: "http://backend.test",
-      apiKey: "ork_test",
-      fetchImpl: fetchImpl as never,
-      logger: { warn: () => {}, error: () => {}, debug: () => {}, info: () => {} },
-    });
-
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((e) => events.push(e));
-    await session.startTurn("hi");
-
-    await vi.waitFor(() => {
-      expect(events.some((e) => e.type === "turn_completed")).toBe(true);
-    });
-
-    const messages = events.filter(
-      (e) => e.type === "timeline" && e.item.type === "assistant_message",
-    ) as Array<Extract<AgentStreamEvent, { type: "timeline" }>>;
-    const last = messages.at(-1);
-    expect(last).toBeDefined();
-    if (last && last.item.type === "assistant_message") {
-      expect(last.item.text).toBe("Hello world");
-    }
-
-    expect(events[0]).toMatchObject({ type: "turn_started", provider: "hubcode" });
-    expect(events.at(-1)).toMatchObject({ type: "turn_completed", provider: "hubcode" });
+describe("HubcodeAgentSession event retagging", () => {
+  beforeEach(() => {
+    process.env.HUBCODE_SESSION_TOKEN = "test-token";
+    process.env.HUBCODE_CLAUDE_BIN = __filename;
+  });
+  afterEach(() => {
+    delete process.env.HUBCODE_SESSION_TOKEN;
+    delete process.env.HUBCODE_CLAUDE_BIN;
   });
 
-  it("forwards a systemPrompt as the first message", async () => {
-    const fetchImpl = vi.fn(async (_url, init) => {
-      const body = JSON.parse((init?.body as string) ?? "{}");
-      expect(body.messages[0]).toEqual({ role: "system", content: "be terse" });
-      return makeChatResponse(["data: [DONE]\n\n"]);
-    });
-    const session = new HubcodeAgentSession({
-      config: { provider: "hubcode", cwd: "/tmp", systemPrompt: "be terse" },
-      model: "combo-a",
-      baseUrl: "http://backend.test",
-      apiKey: "k",
-      fetchImpl: fetchImpl as never,
-      logger: { warn: () => {} },
-    });
-    await session.startTurn("hi");
-    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
-  });
-
-  it("emits turn_failed on HTTP error", async () => {
-    const fetchImpl = vi.fn(async () => new Response("boom", { status: 500 }));
-    const session = new HubcodeAgentSession({
-      config: { provider: "hubcode", cwd: "/tmp" },
-      model: "combo-a",
-      baseUrl: "http://backend.test",
-      apiKey: "k",
-      fetchImpl: fetchImpl as never,
-      logger: { warn: () => {} },
-    });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((e) => events.push(e));
-    await session.startTurn("hi");
-    await vi.waitFor(() => {
-      expect(events.some((e) => e.type === "turn_failed")).toBe(true);
-    });
-    const failed = events.find((e) => e.type === "turn_failed") as Extract<
-      AgentStreamEvent,
-      { type: "turn_failed" }
-    >;
-    expect(failed.error).toMatch(/500/);
-  });
-
-  it("runs a full tool loop: tool_calls → mcp invoke → final assistant text", async () => {
-    const { HubcodeMcpRuntime } = await import("./hubcode-mcp-runtime");
-
-    const fakeMcpFactory = vi.fn(async () => ({
-      listTools: async () => ({
-        tools: [
-          {
-            name: "echo",
-            description: "Echoes",
-            inputSchema: { type: "object", properties: { text: { type: "string" } } },
-          },
-        ],
-      }),
-      callTool: async (args: { name: string; arguments?: Record<string, unknown> }) => ({
-        content: [{ type: "text", text: `echoed:${args.arguments?.text}` }],
-      }),
-      close: async () => {},
-    }));
-
-    const mcpRuntime = new HubcodeMcpRuntime({
-      servers: { srv: { type: "http", url: "http://mcp" } },
-      clientFactory: fakeMcpFactory as never,
-    });
-
-    const callsSeen: Array<Record<string, unknown>> = [];
-    const fetchImpl = vi.fn(async (_url, init) => {
-      const body = JSON.parse((init?.body as string) ?? "{}") as Record<string, unknown>;
-      callsSeen.push(body);
-      const isFirst = callsSeen.length === 1;
-      if (isFirst) {
-        // First step: emit a tool_call for srv__echo with text="hello".
-        return makeChatResponse([
-          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"srv__echo","arguments":"{\\"text\\":\\"hello\\"}"}}]}}]}\n\n',
-          "data: [DONE]\n\n",
-        ]);
-      }
-      // Second step: assistant produces final text.
-      return makeChatResponse([
-        'data: {"choices":[{"delta":{"content":"All done."}}]}\n\n',
-        "data: [DONE]\n\n",
-      ]);
-    });
-
-    const session = new HubcodeAgentSession({
-      config: {
-        provider: "hubcode",
-        cwd: "/tmp",
-        mcpServers: { srv: { type: "http", url: "http://mcp" } },
-      },
-      model: "combo-a",
-      baseUrl: "http://backend.test",
-      apiKey: "k",
-      fetchImpl: fetchImpl as never,
-      logger: { warn: () => {}, debug: () => {} },
-      mcpRuntime,
-    });
-
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((e) => events.push(e));
-    await session.startTurn("hi");
-
-    await vi.waitFor(() => {
-      expect(events.some((e) => e.type === "turn_completed")).toBe(true);
-    });
-
-    // Two HTTP round-trips: first triggers the tool, second finishes.
-    expect(callsSeen).toHaveLength(2);
-
-    // First call carried tools[]; second call has tool_calls in messages.
-    expect((callsSeen[0] as { tools?: unknown[] }).tools).toBeDefined();
-    const secondMessages = (callsSeen[1] as { messages: Array<Record<string, unknown>> }).messages;
-    const lastUserOrToolMsg = secondMessages.at(-1);
-    expect(lastUserOrToolMsg).toMatchObject({ role: "tool", content: "echoed:hello" });
-    const assistantWithCall = secondMessages.find(
-      (m) => m.role === "assistant" && Array.isArray(m.tool_calls),
-    );
-    expect(assistantWithCall).toBeDefined();
-
-    // Timeline emitted tool_call running + completed.
-    const toolCalls = events.filter(
-      (e): e is Extract<AgentStreamEvent, { type: "timeline" }> =>
-        e.type === "timeline" && e.item.type === "tool_call",
-    );
-    const statuses = toolCalls
-      .map((e) => (e.item.type === "tool_call" ? e.item.status : null))
-      .filter(Boolean);
-    expect(statuses).toContain("running");
-    expect(statuses).toContain("completed");
-
-    // Final assistant_message is the second-step text.
-    const lastMsg = [...events]
-      .reverse()
-      .find((e) => e.type === "timeline" && e.item.type === "assistant_message") as
-      | Extract<AgentStreamEvent, { type: "timeline" }>
-      | undefined;
-    expect(lastMsg && lastMsg.item.type === "assistant_message" && lastMsg.item.text).toBe(
-      "All done.",
-    );
-  });
-
-  it("forwards reasoning_effort, skills, sessionId and pass-through knobs", async () => {
-    const fetchImpl = vi.fn(async (_url, init) => {
-      const body = JSON.parse((init?.body as string) ?? "{}");
-      expect(body.reasoning_effort).toBe("high");
-      expect(body.skills).toEqual(["s1", "s2"]);
-      expect(body.sessionId).toBe("session-123");
-      expect(body.temperature).toBe(0.4);
-      expect(body.tool_choice).toBe("auto");
-      return makeChatResponse(["data: [DONE]\n\n"]);
-    });
-    const session = new HubcodeAgentSession({
-      config: {
-        provider: "hubcode",
-        cwd: "/tmp",
-        thinkingOptionId: "high",
-        featureValues: {
-          skills: ["s1", "s2"],
-          sessionId: "session-123",
-          temperature: 0.4,
-          tool_choice: "auto",
-        },
-      },
-      model: "combo-a",
-      baseUrl: "http://backend.test",
-      apiKey: "k",
-      fetchImpl: fetchImpl as never,
-      logger: { warn: () => {} },
-    });
-    await session.startTurn("hi");
-    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
-  });
-
-  it("auto-resolves skills:true to 'auto' for backend auto-selection", async () => {
-    const fetchImpl = vi.fn(async (_url, init) => {
-      const body = JSON.parse((init?.body as string) ?? "{}");
-      expect(body.skills).toBe("auto");
-      return makeChatResponse(["data: [DONE]\n\n"]);
-    });
-    const session = new HubcodeAgentSession({
-      config: {
-        provider: "hubcode",
-        cwd: "/tmp",
-        featureValues: { skills: true },
-      },
-      model: "combo-a",
-      baseUrl: "http://backend.test",
-      apiKey: "k",
-      fetchImpl: fetchImpl as never,
-      logger: { warn: () => {} },
-    });
-    await session.startTurn("hi");
-    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled());
-  });
-
-  it("gates tool execution behind respondToPermission when approvalPolicy is 'ask'", async () => {
-    const { HubcodeMcpRuntime } = await import("./hubcode-mcp-runtime");
-
-    const callTool = vi.fn(async (args: { name: string; arguments?: Record<string, unknown> }) => ({
-      content: [{ type: "text", text: `ran:${args.name}` }],
-    }));
-    const mcpRuntime = new HubcodeMcpRuntime({
-      servers: { srv: { type: "http", url: "http://mcp" } },
-      clientFactory: (async () => ({
-        listTools: async () => ({
-          tools: [{ name: "danger", inputSchema: { type: "object", properties: {} } }],
+  it("retags subscribe() callbacks", async () => {
+    const innerSession = makeFakeClaudeSession();
+    const factory = makeStubClaudeClient({ onCreate: () => innerSession });
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => factory.stub as never,
+      fetch: async () =>
+        bundleResponse({
+          requiresUpgrade: false,
+          planId: "plan_pro",
+          apiKey: "k",
+          baseUrl: "https://omniroute.example/v1",
+          combos: [{ comboId: "1", comboName: "hubcode-pro" }],
         }),
-        callTool,
-        close: async () => {},
-      })) as never,
     });
-
-    const callsSeen: Array<Record<string, unknown>> = [];
-    const fetchImpl = vi.fn(async (_url, init) => {
-      callsSeen.push(JSON.parse((init?.body as string) ?? "{}"));
-      const isFirst = callsSeen.length === 1;
-      if (isFirst) {
-        return makeChatResponse([
-          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_42","type":"function","function":{"name":"srv__danger","arguments":"{}"}}]}}]}\n\n',
-          "data: [DONE]\n\n",
-        ]);
-      }
-      return makeChatResponse([
-        'data: {"choices":[{"delta":{"content":"OK"}}]}\n\n',
-        "data: [DONE]\n\n",
-      ]);
-    });
-
-    const session = new HubcodeAgentSession({
-      config: {
-        provider: "hubcode",
-        cwd: "/tmp",
-        approvalPolicy: "ask",
-        mcpServers: { srv: { type: "http", url: "http://mcp" } },
-      },
-      model: "combo-a",
-      baseUrl: "http://backend.test",
-      apiKey: "k",
-      fetchImpl: fetchImpl as never,
-      logger: { warn: () => {} },
-      mcpRuntime,
-    });
-
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((e) => events.push(e));
-    await session.startTurn("hi");
-
-    // Wait for the permission request to surface.
-    await vi.waitFor(() => {
-      const pending = session.getPendingPermissions();
-      expect(pending).toHaveLength(1);
-    });
-    expect(callTool).not.toHaveBeenCalled(); // tool blocked until approval
-
-    const pending = session.getPendingPermissions();
-    expect(pending[0].id).toBe("call_42");
-    expect(pending[0].kind).toBe("tool");
-
-    // Approve.
-    await session.respondToPermission(pending[0].id, { behavior: "allow" });
-
-    await vi.waitFor(() => {
-      expect(events.some((e) => e.type === "turn_completed")).toBe(true);
-    });
-    expect(callTool).toHaveBeenCalledTimes(1);
-    expect(events.some((e) => e.type === "permission_requested")).toBe(true);
-    expect(events.some((e) => e.type === "permission_resolved")).toBe(true);
+    const session = await client.createSession({ provider: "hubcode", cwd: "/tmp" });
+    const received: AgentStreamEvent[] = [];
+    session.subscribe((e) => received.push(e));
+    innerSession.__push({ type: "turn_started", provider: "claude", turnId: "t1" });
+    expect(received).toHaveLength(1);
+    expect(received[0]!.provider).toBe("hubcode");
   });
 
-  it("respects deny+interrupt: cancels turn and never invokes the tool", async () => {
-    const { HubcodeMcpRuntime } = await import("./hubcode-mcp-runtime");
-
-    const callTool = vi.fn();
-    const mcpRuntime = new HubcodeMcpRuntime({
-      servers: { srv: { type: "http", url: "http://mcp" } },
-      clientFactory: (async () => ({
-        listTools: async () => ({
-          tools: [{ name: "danger", inputSchema: { type: "object", properties: {} } }],
+  it("retags streamHistory() generator output", async () => {
+    const factory = makeStubClaudeClient();
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => factory.stub as never,
+      fetch: async () =>
+        bundleResponse({
+          requiresUpgrade: false,
+          planId: "plan_pro",
+          apiKey: "k",
+          baseUrl: "https://omniroute.example/v1",
+          combos: [{ comboId: "1", comboName: "hubcode-pro" }],
         }),
-        callTool: callTool as never,
-        close: async () => {},
-      })) as never,
     });
-
-    const fetchImpl = vi.fn(async () =>
-      makeChatResponse([
-        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_99","type":"function","function":{"name":"srv__danger","arguments":"{}"}}]}}]}\n\n',
-        "data: [DONE]\n\n",
-      ]),
-    );
-
-    const session = new HubcodeAgentSession({
-      config: {
-        provider: "hubcode",
-        cwd: "/tmp",
-        approvalPolicy: "ask",
-        mcpServers: { srv: { type: "http", url: "http://mcp" } },
-      },
-      model: "combo-a",
-      baseUrl: "http://backend.test",
-      apiKey: "k",
-      fetchImpl: fetchImpl as never,
-      logger: { warn: () => {} },
-      mcpRuntime,
-    });
-
+    const session = await client.createSession({ provider: "hubcode", cwd: "/tmp" });
     const events: AgentStreamEvent[] = [];
-    session.subscribe((e) => events.push(e));
-    await session.startTurn("hi");
-
-    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
-    const pending = session.getPendingPermissions();
-    await session.respondToPermission(pending[0].id, {
-      behavior: "deny",
-      interrupt: true,
-      message: "no thanks",
-    });
-
-    await vi.waitFor(() => {
-      expect(events.some((e) => e.type === "turn_canceled")).toBe(true);
-    });
-    expect(callTool).not.toHaveBeenCalled();
+    for await (const e of session.streamHistory()) events.push(e);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.provider).toBe("hubcode");
   });
 
-  it("emits turn_canceled when interrupt() is called mid-stream", async () => {
-    let release: (() => void) | null = null;
-    const fetchImpl = vi.fn(async (_url, init) => {
-      const signal = init?.signal as AbortSignal | undefined;
-      const body = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          const enc = new TextEncoder();
-          controller.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"A"}}]}\n\n'));
-          await new Promise<void>((resolve) => {
-            release = resolve;
-            signal?.addEventListener("abort", resolve, { once: true });
-          });
-          try {
-            controller.error(new DOMException("aborted", "AbortError"));
-          } catch {
-            controller.close();
-          }
-        },
-      });
-      return new Response(body, { status: 200 });
+  it("normalizes nested permission_requested.request.provider too", async () => {
+    const innerSession = makeFakeClaudeSession();
+    const factory = makeStubClaudeClient({ onCreate: () => innerSession });
+    const client = new HubcodeAgentClient({
+      claudeClientFactory: () => factory.stub as never,
+      fetch: async () =>
+        bundleResponse({
+          requiresUpgrade: false,
+          planId: "plan_pro",
+          apiKey: "k",
+          baseUrl: "https://omniroute.example/v1",
+          combos: [{ comboId: "1", comboName: "hubcode-pro" }],
+        }),
     });
-
-    const session = new HubcodeAgentSession({
-      config: { provider: "hubcode", cwd: "/tmp" },
-      model: "combo-a",
-      baseUrl: "http://backend.test",
-      apiKey: "k",
-      fetchImpl: fetchImpl as never,
-      logger: { warn: () => {} },
+    const session = await client.createSession({ provider: "hubcode", cwd: "/tmp" });
+    const received: AgentStreamEvent[] = [];
+    session.subscribe((e) => received.push(e));
+    innerSession.__push({
+      type: "permission_requested",
+      provider: "claude",
+      request: {
+        id: "req-1",
+        provider: "claude",
+        kind: "tool",
+        title: "Run bash",
+        actions: [],
+      } as never,
     });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((e) => events.push(e));
-    await session.startTurn("hi");
-    // Wait until stream is open before interrupting.
-    await vi.waitFor(() => expect(release).not.toBeNull());
-    await session.interrupt();
-    await vi.waitFor(() => expect(events.some((e) => e.type === "turn_canceled")).toBe(true));
+    expect(received[0]!.provider).toBe("hubcode");
+    expect(
+      (received[0] as { request: { provider: string } }).request.provider,
+    ).toBe("hubcode");
   });
 });

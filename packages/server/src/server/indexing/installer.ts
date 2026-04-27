@@ -12,9 +12,17 @@ const execFile = promisify(execFileCb);
 /**
  * Installer for `code-review-graph`.
  *
+ * We install from the Hubtool fork's `main` branch instead of PyPI because
+ * the upstream PyPI release (v2.3.2) was cut from a snapshot that still had
+ * three latent bugs (`'str' object has no attribute 'resolve'` in two MCP
+ * tools and `'sqlite3.Row' object has no attribute 'get'` in
+ * `find_knowledge_gaps`). The fork's `main` already contains the fixes;
+ * tracking it gives Hubcode a stable place to land hotfixes without waiting
+ * for upstream releases. Switch back to PyPI once a release ≥ that ships.
+ *
  * Strategy chain (first viable wins):
- *   1. `pipx` available → `pipx install code-review-graph`
- *   2. macOS + `brew` available → `brew install pipx && pipx install code-review-graph`
+ *   1. `pipx` available → `pipx install git+https://github.com/hubtool/code-review-graph.git`
+ *   2. macOS + `brew` available → `brew install pipx && pipx install <git url>`
  *   3. otherwise → unsupported (UI keeps the copy-command fallback)
  *
  * Auto-sudo on Linux and Python bootstrap on Windows are intentionally
@@ -59,7 +67,7 @@ export function planInstallStrategy(deps: {
   platform: NodeJS.Platform;
 }): InstallStrategy {
   if (deps.pipxAvailable) {
-    return { kind: "pipx", command: "pipx", args: ["install", "code-review-graph"] };
+    return { kind: "pipx", command: "pipx", args: ["install", "git+https://github.com/hubtool/code-review-graph.git"] };
   }
   if (deps.platform === "darwin" && deps.brewAvailable) {
     return {
@@ -67,7 +75,7 @@ export function planInstallStrategy(deps: {
       steps: [
         { command: "brew", args: ["install", "pipx"] },
         { command: "pipx", args: ["ensurepath"] },
-        { command: "pipx", args: ["install", "code-review-graph"] },
+        { command: "pipx", args: ["install", "git+https://github.com/hubtool/code-review-graph.git"] },
       ],
     };
   }
@@ -86,7 +94,7 @@ export function planInstallStrategy(deps: {
           args: ["-m", "pip", "install", "--user", "--break-system-packages", "pipx"],
         },
         { command: "python3", args: ["-m", "pipx", "ensurepath"] },
-        { command: "python3", args: ["-m", "pipx", "install", "code-review-graph"] },
+        { command: "python3", args: ["-m", "pipx", "install", "git+https://github.com/hubtool/code-review-graph.git"] },
       ],
     };
   }

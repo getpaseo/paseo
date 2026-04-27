@@ -21,6 +21,26 @@ import {
   getSkillsInstallStatus,
 } from "../integrations/integrations-manager.js";
 import {
+  ensureClaudeCode,
+  getClaudeCodeStatus,
+  getClaudeHomeDir,
+  wipeClaudeCode,
+  type ClaudeCodeInstallProgress,
+} from "../integrations/claude-code-binary.js";
+
+/**
+ * Broadcast Claude Code install progress to every open window. The Settings
+ * → Providers card and the first-run banner both subscribe to this channel
+ * via host.events.on("claude-code-install-progress", ...).
+ */
+export function broadcastClaudeCodeProgress(progress: ClaudeCodeInstallProgress): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send("hubcode:event:claude-code-install-progress", progress);
+    }
+  }
+}
+import {
   openLocalTransportSession,
   sendLocalTransportMessage,
   closeLocalTransportSession,
@@ -262,9 +282,26 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     args: invocation.args,
   });
 
+  // The Hubcode agent provider (server/agent/providers/hubcode-agent.ts) spawns
+  // the bundled Claude Code binary; surface its path + isolated home so the
+  // daemon can find it without touching the user's personal ~/.claude install.
+  const claudeStatus = await getClaudeCodeStatus();
+  const hubcodeAgentEnv: Record<string, string> = {};
+  if (claudeStatus.installed) {
+    hubcodeAgentEnv.HUBCODE_CLAUDE_BIN = claudeStatus.claudeBinary;
+    hubcodeAgentEnv.HUBCODE_CLAUDE_HOME = getClaudeHomeDir();
+    if (claudeStatus.nodeBinary) {
+      hubcodeAgentEnv.HUBCODE_NODE_BIN = claudeStatus.nodeBinary;
+    }
+  }
+
   const child: ChildProcess = spawnProcess(invocation.command, invocation.args, {
     detached: true,
-    env: { ...invocation.env, HUBCODE_DESKTOP_MANAGED: "1" },
+    env: {
+      ...invocation.env,
+      HUBCODE_DESKTOP_MANAGED: "1",
+      ...hubcodeAgentEnv,
+    },
     stdio: ["ignore", "ignore", "ignore"],
   });
 
@@ -355,6 +392,20 @@ async function stopDaemon(): Promise<DesktopDaemonStatus> {
 async function restartDaemon(): Promise<DesktopDaemonStatus> {
   await stopDaemon();
   return startDaemon();
+}
+
+/**
+ * Restart the daemon if (and only if) it is currently running and was
+ * spawned by this desktop instance. Safe no-op otherwise. Used by the
+ * Hubcode-agent install flow to make a freshly-installed Claude Code
+ * binary visible to the daemon (HUBCODE_CLAUDE_BIN is composed at spawn
+ * time in startDaemon()).
+ */
+export async function restartDaemonIfDesktopManaged(): Promise<void> {
+  const status = await resolveStatus();
+  if (status.status !== "running" || !status.desktopManaged) return;
+  logDesktopDaemonLifecycle("restarting daemon to pick up Claude Code install", {});
+  await restartDaemon();
 }
 
 function getDaemonLogs(): DesktopDaemonLogs {
@@ -496,6 +547,17 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     get_cli_install_status: () => getCliInstallStatus(),
     install_skills: () => installSkills(),
     get_skills_install_status: () => getSkillsInstallStatus(),
+    ensure_claude_code: () => ensureClaudeCode({ onProgress: broadcastClaudeCodeProgress }),
+    get_claude_code_status: () => getClaudeCodeStatus(),
+    reinstall_claude_code: async () => {
+      await wipeClaudeCode();
+      const result = await ensureClaudeCode({ onProgress: broadcastClaudeCodeProgress });
+      // Daemon was already running with the OLD HUBCODE_CLAUDE_BIN that no
+      // longer exists (we just wiped it). Restart so it picks up the fresh
+      // install, otherwise live sessions get spawn errors on the next turn.
+      await restartDaemonIfDesktopManaged();
+      return result;
+    },
     reveal_in_finder: (args) => {
       const { absolutePath } = args as { absolutePath: string };
       shell.showItemInFolder(absolutePath);

@@ -1,6 +1,6 @@
 {
   "name": "@hubcode/highlight",
-  "version": "2.7.1",
+  "version": "2.7.2",
   "description": "Lightweight syntax highlighter used by Hubcode (Lezer-based, multi-language).",
   "type": "module",
   "license": "AGPL-3.0-or-later",

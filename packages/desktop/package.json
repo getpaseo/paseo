@@ -12,14 +12,16 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@hubcode/cli": "2.7.1",
-    "@hubcode/server": "2.7.1",
+    "@hubcode/cli": "2.7.2",
+    "@hubcode/server": "2.7.2",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
+    "tar": "^7.4.3",
     "ws": "^8.14.2"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
+    "@types/tar": "^6.1.13",
     "@types/ws": "^8.5.14",
     "electron": "41.0.3",
     "electron-builder": "26.8.1",

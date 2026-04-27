@@ -1144,15 +1144,27 @@ export class ClaudeAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    return ClaudeAgentClient.listPersistedAgentsFromDir(
+      process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"),
+      options?.limit ?? 20,
+    );
+  }
+
+  /**
+   * Enumerate persisted Claude SDK sessions under an arbitrary CLAUDE_CONFIG_DIR.
+   * Used by `HubcodeAgentClient` so the bundled Claude home (where Hubcode-
+   * scoped sessions live) is discoverable separately from `~/.claude/`.
+   */
+  static async listPersistedAgentsFromDir(
+    configDir: string,
+    limit: number,
+  ): Promise<PersistedAgentDescriptor[]> {
     const projectsRoot = path.join(configDir, "projects");
     if (!(await pathExists(projectsRoot))) {
       return [];
     }
-    const limit = options?.limit ?? 20;
     const candidates = await collectRecentClaudeSessions(projectsRoot, limit * 3);
     const descriptors: PersistedAgentDescriptor[] = [];
-
     for (const candidate of candidates) {
       const descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime);
       if (descriptor) {
@@ -1162,7 +1174,6 @@ export class ClaudeAgentClient implements AgentClient {
         break;
       }
     }
-
     return descriptors;
   }
 
@@ -3360,7 +3371,15 @@ class ClaudeAgentSession implements AgentSession {
     const cwd = this.config.cwd;
     if (!cwd) return null;
     const sanitized = sanitizeClaudeProjectPath(cwd);
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    // Prefer the session's spawn env over the daemon's env. The Hubcode
+    // provider isolates Claude Code by setting CLAUDE_CONFIG_DIR in
+    // launchContext, so persisted JSONLs land in the bundled dir — not
+    // ~/.claude/. Falling through to process.env keeps stand-alone Claude
+    // sessions (which inherit the daemon env) working unchanged.
+    const configDir =
+      this.launchEnv?.CLAUDE_CONFIG_DIR ??
+      process.env.CLAUDE_CONFIG_DIR ??
+      path.join(os.homedir(), ".claude");
     const dir = path.join(configDir, "projects", sanitized);
     return path.join(dir, `${sessionId}.jsonl`);
   }

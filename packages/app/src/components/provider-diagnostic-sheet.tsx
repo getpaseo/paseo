@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, ActivityIndicator, ScrollView } from "react-native";
+import { View, Text, ActivityIndicator, ScrollView, Alert } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { Button } from "@/components/ui/button";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
+import { useHubcodeClaudeInstaller } from "@/desktop/integrations/use-hubcode-claude-installer";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 
 interface ProviderDiagnosticSheetProps {
@@ -75,7 +78,66 @@ export function ProviderDiagnosticSheet({
           </Text>
         </ScrollView>
       ) : null}
+
+      {provider === "hubcode" ? <HubcodeRecoveryActions onClose={onClose} /> : null}
     </AdaptiveModalSheet>
+  );
+}
+
+/**
+ * Footer actions specific to the Hubcode provider in its Diagnostic sheet:
+ * Refresh status, and Reinstall (wipes ${userData}/claude/ and reruns the
+ * download flow). Reinstall is the recovery path when the bundled runtime
+ * gets into a broken state — we keep it tucked behind the Diagnostic CTA
+ * rather than next to the always-visible "Diagnostic" button so users don't
+ * trigger ~150 MB of network traffic on accident.
+ */
+function HubcodeRecoveryActions({ onClose }: { onClose: () => void }) {
+  const installer = useHubcodeClaudeInstaller();
+  const installed = installer.status?.installed === true;
+
+  const handleReinstall = useCallback(async () => {
+    const ok = await confirmDialog({
+      title: "Reinstall Hubcode runtime?",
+      message:
+        "This deletes the bundled Claude Code (~120 MB) and downloads it again. Active Hubcode sessions will be interrupted.",
+      confirmLabel: "Reinstall",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    try {
+      await installer.reinstall();
+      onClose();
+    } catch (err) {
+      Alert.alert("Reinstall failed", err instanceof Error ? err.message : String(err));
+    }
+  }, [installer, onClose]);
+
+  return (
+    <View style={sheetStyles.actionsRow}>
+      <Button variant="outline" size="sm" onPress={() => void installer.refresh()}>
+        Refresh status
+      </Button>
+      {installed ? (
+        <Button
+          variant="outline"
+          size="sm"
+          onPress={handleReinstall}
+          disabled={installer.isInstalling}
+        >
+          {installer.isInstalling ? "Reinstalling…" : "Reinstall runtime"}
+        </Button>
+      ) : (
+        <Button
+          variant="default"
+          size="sm"
+          onPress={() => void installer.install()}
+          disabled={installer.isInstalling}
+        >
+          {installer.isInstalling ? "Installing…" : "Install runtime"}
+        </Button>
+      )}
+    </View>
   );
 }
 
@@ -100,5 +162,12 @@ const sheetStyles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontFamily: "monospace",
     lineHeight: theme.fontSize.sm * 1.6,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    paddingTop: theme.spacing[3],
+    paddingBottom: theme.spacing[2],
+    flexWrap: "wrap",
   },
 }));

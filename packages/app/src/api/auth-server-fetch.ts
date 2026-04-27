@@ -10,11 +10,10 @@
  * raw `Response` so they can handle 4xx bodies however they want.
  */
 
+import { resolveAuthServerUrl } from "@/utils/auth-server-url";
+
 export function authServerBaseUrl(): string {
-  if (typeof __DEV__ !== "undefined" && __DEV__) {
-    return "http://localhost:3002";
-  }
-  return "https://auth.hubcode.ai";
+  return resolveAuthServerUrl();
 }
 
 export interface AuthServerFetchOptions extends RequestInit {

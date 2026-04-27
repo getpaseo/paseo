@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useHostMutations, useHosts } from "@/runtime/host-runtime";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { primeShareScope, setSharedSession } from "@/stores/shared-session-store";
+import { resolveAuthServerUrl } from "@/utils/auth-server-url";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { getIsElectron, isWeb } from "@/constants/platform";
 import type { ColyseusRoom } from "@/hooks/sharing/colyseus-client";
@@ -161,7 +162,7 @@ export function JoinWorkspaceScreen({
     setStep("fetching");
     setError(null);
     try {
-      const authUrl = __DEV__ ? "http://localhost:3002" : "https://auth.hubcode.ai";
+      const authUrl = resolveAuthServerUrl();
       const response = await fetch(
         `${authUrl}/api/workspaces/share/${encodeURIComponent(shareToken)}`,
         {
@@ -239,7 +240,7 @@ export function JoinWorkspaceScreen({
 
   const handleSignIn = () => {
     if (!isWeb) return;
-    const authUrl = __DEV__ ? "http://localhost:3002" : "https://auth.hubcode.ai";
+    const authUrl = resolveAuthServerUrl();
     const returnUrl = encodeURIComponent(window.location.href);
     window.location.href = `${authUrl}/sign-in?callbackURL=${returnUrl}`;
   };

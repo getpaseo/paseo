@@ -341,7 +341,7 @@ function IndexingSectionInner({ routeServerId }: IndexingSectionProps) {
                       fontSize: 11,
                     }}
                   >
-                    {`# If you see "externally-managed-environment" (PEP 668),\n# Apple's system Python blocks --user installs. Use Homebrew:\nbrew install pipx\npipx install code-review-graph\n# Then click Re-check.`}
+                    {`# If you see "externally-managed-environment" (PEP 668),\n# Apple's system Python blocks --user installs. Use Homebrew:\nbrew install pipx\npipx install git+https://github.com/hubtool/code-review-graph.git\n# Then click Re-check.`}
                   </Text>
                 </View>
               ) : null}
@@ -1118,11 +1118,11 @@ function FsTriggerHint({ trigger }: { trigger: FsTriggerInfo }): React.JSX.Eleme
 function describePlan(plan: { kind: string; reason?: string }): string {
   switch (plan.kind) {
     case "pipx":
-      return "pipx install code-review-graph";
+      return "pipx install hubtool/code-review-graph (git)";
     case "brew-then-pipx":
-      return "brew install pipx → pipx install code-review-graph";
+      return "brew install pipx → pipx install hubtool/code-review-graph (git)";
     case "python3-bootstrap-pipx":
-      return "python3 bootstrap → pipx install code-review-graph";
+      return "python3 bootstrap → pipx install hubtool/code-review-graph (git)";
     case "unsupported":
       return `unsupported${plan.reason ? ` — ${plan.reason}` : ""}`;
     default:

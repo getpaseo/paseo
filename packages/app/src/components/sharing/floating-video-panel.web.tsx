@@ -45,9 +45,10 @@ const PANEL_FONT_FAMILY =
   (Fonts as { sans?: string } | undefined)?.sans ??
   "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
+import { resolveAuthServerUrl } from "@/utils/auth-server-url";
+
 function getAuthServerUrl(): string {
-  if (typeof __DEV__ !== "undefined" && __DEV__) return "http://localhost:3002";
-  return "https://auth.hubcode.ai";
+  return resolveAuthServerUrl();
 }
 
 interface FloatingVideoPanelProps {

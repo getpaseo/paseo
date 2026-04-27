@@ -146,6 +146,7 @@ import {
 } from "@/utils/os-notifications";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { getDesktopHost } from "@/desktop/host";
+import { ClaudeCodeInstallBanner } from "@/desktop/integrations/claude-code-install-banner";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
 import { buildNotificationRoute } from "@/utils/notification-routing";
 import {
@@ -1134,6 +1135,7 @@ export default function RootLayout() {
                           <AppWithSidebar>
                             <RootStack />
                           </AppWithSidebar>
+                          <ClaudeCodeInstallBanner />
                         </ToastProvider>
                       </HorizontalScrollProvider>
                     </SidebarAnimationProvider>

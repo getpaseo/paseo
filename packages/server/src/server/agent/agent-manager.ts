@@ -2655,6 +2655,19 @@ export class AgentManager {
     } else if (authServerUrl === null) {
       this.hubcodeAuthServerUrl = null;
     }
+    // Mirror to process.env so the Hubcode provider's listModels() — invoked
+    // outside the agent-launch path (e.g., to populate the model dropdown) —
+    // sees the bearer token. Without this, listModels reads `undefined` and
+    // returns []; the New Agent tab then says "No model is available for the
+    // selected provider" even though the user is signed in.
+    if (this.hubcodeAuthToken) {
+      process.env.HUBCODE_SESSION_TOKEN = this.hubcodeAuthToken;
+    } else {
+      delete process.env.HUBCODE_SESSION_TOKEN;
+    }
+    if (this.hubcodeAuthServerUrl) {
+      process.env.HUBCODE_AUTH_SERVER_URL = this.hubcodeAuthServerUrl;
+    }
   }
 
   getHubcodeAuthSession(): { token: string | null; authServerUrl: string | null } {

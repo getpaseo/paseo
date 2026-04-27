@@ -2,7 +2,7 @@
 
 Hubcode is a mobile app for monitoring and controlling your local AI coding agents from anywhere. Your dev environment, in your pocket. Connects directly to your actual development environment — your code stays on your machine.
 
-**Supported agents:** Claude Code, Codex, and OpenCode.
+**Supported agents:** Claude Code, Codex, OpenCode, and Hubcode (a wrapper over Claude Code routed through OmniRoute — see [docs/PROVIDERS.md](docs/PROVIDERS.md#hubcode-agent-architecture-wrapper-pattern)).
 
 ## Repository map
 

@@ -158,6 +158,7 @@ function SessionRow({
               icon={<Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />}
             />
           ) : null}
+          {agent.isGlobal ? <SessionBadge label="Global" /> : null}
           {(agent.pendingPermissionCount ?? 0) > 0 ? (
             <SessionBadge label={`${agent.pendingPermissionCount} pending`} tone="warning" />
           ) : null}

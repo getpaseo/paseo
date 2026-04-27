@@ -6,6 +6,7 @@
 
 import { useSyncExternalStore } from "react";
 import { clearChatAuthors, pushChatAuthor } from "@/stores/shared-chat-authors-store";
+import { resolveAuthServerUrl } from "@/utils/auth-server-url";
 import {
   clearAllTyping,
   notifyLocalTyping,
@@ -113,10 +114,7 @@ const persisted = loadPersistedState();
     const path = window.location.pathname || "";
     if (path.startsWith("/join-workspace/")) return;
     sessionStorage.removeItem("hubcode_shared_session");
-    const authServerUrl =
-      typeof __DEV__ !== "undefined" && __DEV__
-        ? "http://localhost:3002"
-        : "https://auth.hubcode.ai";
+    const authServerUrl = resolveAuthServerUrl();
     window.location.replace(`${authServerUrl}/join-workspace/${persisted.shareToken}`);
   } catch {
     /* ignore */
@@ -688,10 +686,7 @@ export async function endSharedSessionAndDisconnect(): Promise<void> {
   // they just left, so rejoining is one click away. If we somehow don't have
   // the share token, fall back to home.
   if (shareToken && typeof window !== "undefined") {
-    const authServerUrl =
-      typeof __DEV__ !== "undefined" && __DEV__
-        ? "http://localhost:3002"
-        : "https://auth.hubcode.ai";
+    const authServerUrl = resolveAuthServerUrl();
     window.location.replace(`${authServerUrl}/join-workspace/${shareToken}`);
     return;
   }
@@ -769,8 +764,7 @@ export function resolveShareAuthForServerId(
   // Only attach share credentials when the connection target matches the
   // scoped host — prevents leaking a share token to unrelated daemons.
   if (state.scopedServerId && state.scopedServerId !== serverId) return null;
-  const authServerUrl =
-    typeof __DEV__ !== "undefined" && __DEV__ ? "http://localhost:3002" : "https://auth.hubcode.ai";
+  const authServerUrl = resolveAuthServerUrl();
   return {
     shareToken: state.shareToken,
     shareSessionToken: state.sessionToken,

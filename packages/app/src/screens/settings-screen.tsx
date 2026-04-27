@@ -73,6 +73,11 @@ import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import {
+  useHubcodeClaudeInstaller,
+  describeProgress,
+  progressFraction,
+} from "@/desktop/integrations/use-hubcode-claude-installer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ProviderDiagnosticSheet } from "@/components/provider-diagnostic-sheet";
@@ -561,14 +566,26 @@ function GeneralSection({
 
 interface ProvidersSectionProps {
   routeServerId: string;
+  isDesktopApp: boolean;
 }
 
-function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
+function ProvidersSection({ routeServerId, isDesktopApp }: ProvidersSectionProps) {
   const { theme } = useUnistyles();
   const isConnected = useHostRuntimeIsConnected(routeServerId);
   const { entries, isLoading, isFetching, refresh } = useProvidersSnapshot(routeServerId);
   const [diagnosticProvider, setDiagnosticProvider] = useState<string | null>(null);
   const providerDefinitions = buildProviderDefinitions(entries);
+  const claudeInstaller = useHubcodeClaudeInstaller();
+
+  // After a successful Hubcode install we ask the daemon to re-snapshot so
+  // the badge flips from "Not installed" to "Available" without the user
+  // having to hit Refresh manually.
+  const lastInstalledFlag = claudeInstaller.status?.installed ?? false;
+  useEffect(() => {
+    if (lastInstalledFlag && isDesktopApp) {
+      void refresh();
+    }
+  }, [lastInstalledFlag, isDesktopApp, refresh]);
 
   const hasServer = routeServerId.length > 0;
 
@@ -629,6 +646,30 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
                         {providerError}
                       </Text>
                     ) : null}
+                    {def.id === "hubcode" && isDesktopApp && claudeInstaller.isInstalling ? (
+                      <ClaudeCodeInstallProgressLine
+                        progress={claudeInstaller.progress}
+                      />
+                    ) : null}
+                    {def.id === "hubcode" &&
+                    isDesktopApp &&
+                    !claudeInstaller.isInstalling &&
+                    claudeInstaller.errorMessage ? (
+                      <Text style={styles.aboutErrorText} numberOfLines={3}>
+                        Install failed: {claudeInstaller.errorMessage}
+                      </Text>
+                    ) : null}
+                    {def.id === "hubcode" &&
+                    isDesktopApp &&
+                    !claudeInstaller.isInstalling &&
+                    claudeInstaller.status &&
+                    !claudeInstaller.status.installed &&
+                    !claudeInstaller.errorMessage ? (
+                      <Text style={styles.aboutHintText} numberOfLines={2}>
+                        Bundled Claude Code v{claudeInstaller.status.pinnedVersion} powers this
+                        provider. First-time install downloads ~150 MB (Node.js + Claude Code).
+                      </Text>
+                    ) : null}
                   </View>
                   <View style={styles.providerActions}>
                     <StatusBadge
@@ -639,12 +680,24 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
                             ? "Error"
                             : status === "loading"
                               ? "Loading..."
-                              : "Not installed"
+                              : def.id === "hubcode" && claudeInstaller.isInstalling
+                                ? "Installing..."
+                                : "Not installed"
                       }
                       variant={
                         status === "ready" ? "success" : status === "error" ? "error" : "muted"
                       }
                     />
+                    {def.id === "hubcode" && isDesktopApp && status !== "ready" ? (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onPress={() => void claudeInstaller.install()}
+                        disabled={claudeInstaller.isInstalling}
+                      >
+                        {claudeInstaller.isInstalling ? "Installing..." : "Install"}
+                      </Button>
+                    ) : null}
                     <Button
                       variant="secondary"
                       size="sm"
@@ -670,6 +723,44 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
       ) : null}
     </>
   );
+}
+
+/**
+ * Renders the live install progress under the Hubcode provider row.
+ * Determinate bar during the Node.js download phase (we have Content-Length),
+ * indeterminate label-only for npm install (no granular progress from npm).
+ */
+function ClaudeCodeInstallProgressLine({
+  progress,
+}: {
+  progress: import("@/desktop/integrations/use-hubcode-claude-installer").ClaudeCodeInstallProgress;
+}) {
+  const fraction = progressFraction(progress);
+  const label = describeProgress(progress);
+  const downloaded =
+    progress.bytesDownloaded != null
+      ? `${formatMiB(progress.bytesDownloaded)}${
+          progress.bytesTotal ? ` / ${formatMiB(progress.bytesTotal)}` : ""
+        }`
+      : null;
+  return (
+    <View style={styles.installProgressContainer}>
+      <Text style={styles.installProgressLabel}>
+        {label}
+        {downloaded ? `  •  ${downloaded}` : ""}
+      </Text>
+      {fraction !== null ? (
+        <View style={styles.installProgressTrack}>
+          <View style={[styles.installProgressFill, { width: `${Math.round(fraction * 100)}%` }]} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function formatMiB(bytes: number): string {
+  const mib = bytes / (1024 * 1024);
+  return mib < 10 ? `${mib.toFixed(1)} MiB` : `${Math.round(mib)} MiB`;
 }
 
 interface DiagnosticsSectionProps {
@@ -727,6 +818,33 @@ function AboutSection({ appVersionText, isDesktopApp }: AboutSectionProps) {
           <Text style={styles.aboutValue}>{appVersionText}</Text>
         </View>
         {isDesktopApp ? <DesktopAppUpdateRow /> : null}
+        {isDesktopApp ? <HubcodeRuntimeAttributionRow /> : null}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Surfaces the bundled Claude Code version + path in Settings → About.
+ * Required by Anthropic's Commercial Terms when redistributing/embedding
+ * the runtime — the user must be able to see what's running under the
+ * Hubcode brand. Kept out of the model picker on purpose: brand visibility
+ * belongs in About, not in the chat flow.
+ */
+function HubcodeRuntimeAttributionRow() {
+  const { status } = useHubcodeClaudeInstaller();
+  const versionText = status?.installedVersion
+    ? `Claude Code v${status.installedVersion}`
+    : status?.pinnedVersion
+      ? `Claude Code v${status.pinnedVersion} (not installed)`
+      : "Claude Code (checking…)";
+  return (
+    <View style={[styles.audioRow, styles.audioRowBorder]}>
+      <View style={styles.audioRowContent}>
+        <Text style={styles.audioRowTitle}>Hubcode runtime</Text>
+        <Text style={styles.aboutHintText}>
+          Powered by {versionText}. Installed and isolated by the Hubcode desktop app.
+        </Text>
       </View>
     </View>
   );
@@ -1242,6 +1360,7 @@ export default function SettingsScreen() {
 
   const providersProps: ProvidersSectionProps = {
     routeServerId,
+    isDesktopApp,
   };
 
   const sectionContentProps: Omit<SettingsSectionContentProps, "sectionId"> = {
@@ -2089,6 +2208,25 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginTop: 2,
+  },
+  installProgressContainer: {
+    marginTop: theme.spacing[1],
+    gap: theme.spacing[1],
+  },
+  installProgressLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  installProgressTrack: {
+    height: 4,
+    backgroundColor: theme.colors.muted,
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  installProgressFill: {
+    height: "100%",
+    backgroundColor: theme.colors.primary,
+    borderRadius: 2,
   },
   aboutErrorText: {
     color: theme.colors.palette.red[300],

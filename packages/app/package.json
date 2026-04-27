@@ -1,7 +1,7 @@
 {
   "name": "@hubcode/app",
   "main": "index.ts",
-  "version": "2.7.1",
+  "version": "2.7.2",
   "private": true,
   "scripts": {
     "start": "expo start",
@@ -35,9 +35,9 @@
     "@floating-ui/react-native": "^0.10.7",
     "@gorhom/bottom-sheet": "^5.2.6",
     "@gorhom/portal": "^1.0.14",
-    "@hubcode/expo-two-way-audio": "2.7.1",
-    "@hubcode/highlight": "2.7.1",
-    "@hubcode/server": "2.7.1",
+    "@hubcode/expo-two-way-audio": "2.7.2",
+    "@hubcode/highlight": "2.7.2",
+    "@hubcode/server": "2.7.2",
     "@lexical/history": "^0.23.1",
     "@lexical/link": "^0.23.1",
     "@lexical/list": "^0.23.1",

@@ -19,12 +19,10 @@ import type {
   DesktopUpdateWorkspaceShareParams,
 } from "./desktop-auth";
 
+import { resolveAuthServerUrl } from "@/utils/auth-server-url";
+
 export function authServerBaseUrl(): string {
-  // Dev auth-server runs on 3002; prod lives at auth.hubcode.ai.
-  if (typeof __DEV__ !== "undefined" && __DEV__) {
-    return "http://localhost:3002";
-  }
-  return "https://auth.hubcode.ai";
+  return resolveAuthServerUrl();
 }
 
 async function webFetch(path: string, init: RequestInit = {}): Promise<Response> {
