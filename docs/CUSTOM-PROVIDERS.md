@@ -24,6 +24,7 @@ Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`)
 - [Extending a built-in provider](#extending-a-built-in-provider)
 - [Z.AI (Zhipu) coding plan](#zai-zhipu-coding-plan)
 - [Alibaba Cloud (Qwen) coding plan](#alibaba-cloud-qwen-coding-plan)
+- [Tencent CodeBuddy Code](#tencent-codebuddy-code)
 - [Multiple profiles for the same provider](#multiple-profiles-for-the-same-provider)
 - [Custom binary for a provider](#custom-binary-for-a-provider)
 - [Disabling a provider](#disabling-a-provider)
@@ -177,6 +178,68 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 - The coding plan is for personal use only in interactive coding tools
 - Web search (`WebSearch` tool) is an Anthropic-only server-side feature — third-party endpoints don't support it. Add `"disallowedTools": ["WebSearch"]` to avoid errors.
 - Official docs: [alibabacloud.com/help/en/model-studio/claude-code-coding-plan](https://www.alibabacloud.com/help/en/model-studio/claude-code-coding-plan)
+
+---
+
+## Tencent CodeBuddy Code
+
+<img src="img/codebuddy-icon.svg" alt="CodeBuddy" width="40" height="40" align="left" style="margin-right: 8px;" />
+
+[CodeBuddy Code](https://www.codebuddy.ai/cli) is Tencent's coding agent CLI (npm: `@tencent-ai/codebuddy-code`, internal Tencent mirror: `@tencent/codebuddy-code`). It is shipped as a **built-in provider** (`codebuddy`) and integrated via the Agent Client Protocol (ACP) — Paseo spawns the official `codebuddy` binary with `--acp` and lets it manage models, auth, and plugins.
+
+### Setup
+
+1. Install the CLI globally:
+
+   ```bash
+   # public registry
+   npm install -g @tencent-ai/codebuddy-code
+
+   # or the Tencent internal mirror (installs the same `codebuddy` binary)
+   npm install -g @tencent/codebuddy-code --registry=https://mirrors.tencent.com/npm/
+   ```
+
+2. Authenticate. Either run `codebuddy` once and follow its interactive login, or set your key in `~/.paseo/config.json`:
+
+   ```json
+   {
+     "agents": {
+       "providers": {
+         "codebuddy": {
+           "env": {
+             "CODEBUDDY_API_KEY": "<your-codebuddy-api-key>"
+           }
+         }
+       }
+     }
+   }
+   ```
+
+That's it — `codebuddy` shows up as a provider in the app, and the **set of available models is decided by the CodeBuddy CLI itself** (advertised through ACP at session startup). No model list lives in Paseo's source.
+
+### Custom binary path
+
+If `codebuddy` isn't on `$PATH` (e.g. it lives under an internal Tencent install dir), override the command:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "codebuddy": {
+        "command": ["/opt/tencent/codebuddy", "--acp"]
+      }
+    }
+  }
+}
+```
+
+The first element is the binary; the rest replace the default args. Make sure `--acp` is included — the integration depends on it.
+
+### Notes
+
+- Auth, model routing, plugins, and the `/model` / `/config` slash commands are all handled by the CodeBuddy CLI itself; Paseo treats it as a black-box ACP server.
+- Multiple CodeBuddy accounts or environments? Add config.json profiles that `extends: "codebuddy"`, each with their own `env` or `command` (see [Multiple profiles for the same provider](#multiple-profiles-for-the-same-provider)).
+- To restrict the model dropdown to a curated list, use `models` / `additionalModels` in `config.json` (same fields as ACP providers below).
 
 ---
 
@@ -527,7 +590,7 @@ Use `disallowedTools` to disable unsupported tools:
 
 ### Valid `extends` values
 
-Built-in providers: `claude`, `codex`, `copilot`, `opencode`, `pi`
+Built-in providers: `claude`, `codex`, `copilot`, `opencode`, `pi`, `codebuddy`
 
 Special value: `acp` — creates a generic ACP provider (requires `command`)
 
