@@ -359,7 +359,9 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
 
   const child: ChildProcess = spawnProcess(invocation.command, invocation.args, {
     detached: true,
-    env: { ...invocation.env, PASEO_DESKTOP_MANAGED: "1" },
+    envMode: "internal",
+    env: invocation.env,
+    envOverlay: { PASEO_DESKTOP_MANAGED: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
 

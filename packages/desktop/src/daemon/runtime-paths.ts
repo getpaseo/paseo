@@ -257,6 +257,7 @@ function spawnAsync(
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawnProcess(command, args, {
+      envMode: "internal",
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
     });

@@ -7,6 +7,7 @@ import {
   resolveSherpaLoaderEnv,
   sherpaPlatformPackageName,
 } from "./sherpa-runtime-env.js";
+import { createExternalCommandProcessEnv } from "../../../../paseo-env.js";
 
 export interface SherpaOnnxNodeModule {
   OfflineRecognizer: new (config: unknown) => unknown;
@@ -41,7 +42,9 @@ function maybePatchLinuxAddonRunpath(addonPath: string): void {
   if (process.platform !== "linux") {
     return;
   }
+  const patchelfEnv = createExternalCommandProcessEnv("patchelf", process.env);
   const patchelfCheck = spawnSync("patchelf", ["--version"], {
+    env: patchelfEnv,
     stdio: "ignore",
   });
   if (patchelfCheck.status !== 0) {
@@ -50,6 +53,7 @@ function maybePatchLinuxAddonRunpath(addonPath: string): void {
 
   const currentRpath = spawnSync("patchelf", ["--print-rpath", addonPath], {
     encoding: "utf8",
+    env: patchelfEnv,
   });
   if (currentRpath.status !== 0) {
     return;
@@ -60,6 +64,7 @@ function maybePatchLinuxAddonRunpath(addonPath: string): void {
   }
 
   spawnSync("patchelf", ["--set-rpath", "$ORIGIN", addonPath], {
+    env: patchelfEnv,
     stdio: "ignore",
   });
 }

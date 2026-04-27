@@ -41,7 +41,7 @@ import type {
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
-  applyProviderEnv,
+  createProviderEnvSpec,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
@@ -868,7 +868,7 @@ export class OpenCodeServerManager {
         [...launchPrefix.args, "serve", "--port", String(port)],
         {
           stdio: ["ignore", "pipe", "pipe"],
-          env: applyProviderEnv(process.env, this.runtimeSettings),
+          ...createProviderEnvSpec({ runtimeSettings: this.runtimeSettings }),
         },
       );
 

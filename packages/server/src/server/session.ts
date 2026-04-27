@@ -4900,7 +4900,9 @@ export class Session {
       const message = branchLabel
         ? `${Session.PASEO_STASH_PREFIX} ${branchLabel}`
         : `${Session.PASEO_STASH_PREFIX} unnamed`;
-      await execCommand("git", ["stash", "push", "--include-untracked", "-m", message], { cwd });
+      await execCommand("git", ["stash", "push", "--include-untracked", "-m", message], {
+        cwd,
+      });
       await this.notifyGitMutation(cwd, "stash-push");
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
       this.emit({
@@ -4920,7 +4922,9 @@ export class Session {
   ): Promise<void> {
     const { cwd, stashIndex, requestId } = msg;
     try {
-      await execCommand("git", ["stash", "pop", `stash@{${stashIndex}}`], { cwd });
+      await execCommand("git", ["stash", "pop", `stash@{${stashIndex}}`], {
+        cwd,
+      });
       await this.notifyGitMutation(cwd, "stash-pop");
       this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
       this.emit({

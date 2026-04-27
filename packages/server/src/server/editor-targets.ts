@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import type {
@@ -6,7 +6,9 @@ import type {
   EditorTargetId,
   KnownEditorTargetId,
 } from "../shared/messages.js";
-import { findExecutable, quoteWindowsArgument, quoteWindowsCommand } from "../utils/executable.js";
+import { createExternalProcessEnv } from "./paseo-env.js";
+import { findExecutable } from "../utils/executable.js";
+import { spawnProcess } from "../utils/spawn.js";
 
 interface EditorTargetDefinition {
   id: KnownEditorTargetId;
@@ -23,7 +25,7 @@ interface ListAvailableEditorTargetsDependencies {
 
 type OpenInEditorTargetDependencies = ListAvailableEditorTargetsDependencies & {
   existsSync?: typeof existsSync;
-  spawn?: typeof spawn;
+  spawn?: typeof spawnProcess;
 };
 
 const EDITOR_TARGETS: readonly EditorTargetDefinition[] = [
@@ -127,7 +129,7 @@ export async function openInEditorTarget(
   const pathToOpen = input.path.trim();
   const existsSyncFn = dependencies.existsSync ?? existsSync;
   const findExecutableFn = dependencies.findExecutable ?? findExecutable;
-  const spawnFn = dependencies.spawn ?? spawn;
+  const spawnFn = dependencies.spawn ?? spawnProcess;
 
   if (!pathToOpen || !isAbsolutePath(pathToOpen)) {
     throw new Error("Editor target path must be an absolute local path");
@@ -143,17 +145,12 @@ export async function openInEditorTarget(
     findExecutableFn,
   });
 
-  const command = platform === "win32" ? quoteWindowsCommand(launch.command) : launch.command;
-  const args =
-    platform === "win32"
-      ? launch.args.map((argument) => quoteWindowsArgument(argument))
-      : launch.args;
-
   await new Promise<void>((resolve, reject) => {
     let child: ChildProcess;
     try {
-      child = spawnFn(command, args, {
+      child = spawnFn(launch.command, launch.args, {
         detached: true,
+        env: createExternalProcessEnv(process.env),
         shell: platform === "win32",
         stdio: "ignore",
       });

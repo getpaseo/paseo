@@ -1,8 +1,8 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolvePaseoHome } from "@getpaseo/server";
+import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
 export interface DaemonStartOptions {
@@ -373,16 +373,17 @@ export async function startLocalDaemonDetached(
     throw new Error("Cannot use --listen and --port together");
   }
 
+  const daemonRunnerEntry = resolveDaemonRunnerEntry();
   const childEnv = buildChildEnv(options);
 
   const paseoHome = resolvePaseoHome(childEnv);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
-  const daemonRunnerEntry = resolveDaemonRunnerEntry();
-  const child = spawn(
+  const child = spawnProcess(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
     {
       detached: true,
+      envMode: "internal",
       env: childEnv,
       stdio: ["ignore", "ignore", "ignore"],
     },
@@ -438,8 +439,8 @@ export function startLocalDaemonForeground(options: DaemonStartOptions): number 
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const childEnv = buildChildEnv(options);
   const daemonRunnerEntry = resolveDaemonRunnerEntry();
+  const childEnv = buildChildEnv(options);
   const result = spawnSync(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],

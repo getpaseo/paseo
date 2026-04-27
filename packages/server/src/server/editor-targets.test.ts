@@ -63,6 +63,7 @@ describe("editor-targets", () => {
 
     expect(spawn).toHaveBeenCalledWith("/usr/local/bin/code", ["/tmp/repo"], {
       detached: true,
+      env: expect.any(Object),
       shell: false,
       stdio: "ignore",
     });

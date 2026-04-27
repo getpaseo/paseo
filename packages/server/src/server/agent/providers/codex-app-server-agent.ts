@@ -44,7 +44,8 @@ import {
   mapCodexToolCallFromThreadItem,
 } from "./codex/tool-call-mapper.js";
 import {
-  applyProviderEnv,
+  createProviderEnv,
+  createProviderEnvSpec,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
@@ -2450,15 +2451,11 @@ export async function codexAppServerTurnInputFromPrompt(
 function buildCodexAppServerEnv(
   runtimeSettings?: ProviderRuntimeSettings,
   launchEnv?: Record<string, string>,
-): Record<string, string | undefined> {
-  const env = applyProviderEnv(process.env, runtimeSettings);
-  if (!launchEnv) {
-    return env;
-  }
-  return {
-    ...env,
-    ...launchEnv,
-  };
+): NodeJS.ProcessEnv {
+  return createProviderEnv({
+    runtimeSettings,
+    overlays: [launchEnv],
+  });
 }
 
 function buildCodexAppServerInitializeParams(): {
@@ -4211,7 +4208,10 @@ export class CodexAppServerAgentClient implements AgentClient {
     return spawnProcess(launchPrefix.command, [...launchPrefix.args, "app-server"], {
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
-      env: buildCodexAppServerEnv(this.runtimeSettings, launchEnv),
+      ...createProviderEnvSpec({
+        runtimeSettings: this.runtimeSettings,
+        overlays: [launchEnv],
+      }),
     }) as ChildProcessWithoutNullStreams;
   }
 

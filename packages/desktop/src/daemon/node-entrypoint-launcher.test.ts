@@ -109,7 +109,7 @@ describe("node-entrypoint-launcher", () => {
         env: {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
-          NODE_ENV: "production",
+          PASEO_NODE_ENV: "production",
         },
       });
     });
@@ -150,7 +150,8 @@ describe("node-entrypoint-launcher", () => {
       ).toMatchObject({
         PATH: "/usr/bin",
         ELECTRON_RUN_AS_NODE: "1",
-        NODE_ENV: "production",
+        NODE_ENV: "development",
+        PASEO_NODE_ENV: "production",
       });
     });
 
@@ -178,7 +179,7 @@ describe("node-entrypoint-launcher", () => {
         env: {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
-          NODE_ENV: "production",
+          PASEO_NODE_ENV: "production",
         },
       });
     });

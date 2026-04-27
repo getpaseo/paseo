@@ -1,11 +1,6 @@
 import type { Command } from "commander";
 import { createRequire } from "node:module";
-import {
-  getOrCreateServerId,
-  findExecutable,
-  applyProviderEnv,
-  execCommand,
-} from "@getpaseo/server";
+import { getOrCreateServerId, findExecutable, execCommand } from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
@@ -177,11 +172,9 @@ async function checkProviderBinary(
   if (!binaryPath) {
     return { path: null, version: null };
   }
-  const env = applyProviderEnv(process.env);
   try {
     const { stdout } = await execCommand(binaryPath, ["--version"], {
       timeout: 5000,
-      env,
     });
     return { path: binaryPath, version: stdout.trim() || null };
   } catch {

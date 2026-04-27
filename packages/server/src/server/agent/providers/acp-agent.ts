@@ -81,7 +81,7 @@ import type {
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
-  applyProviderEnv,
+  createProviderEnvSpec,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
@@ -568,13 +568,10 @@ export class ACPAgentClient implements AgentClient {
     const { command, args } = await this.resolveLaunchCommand();
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
-      env: {
-        ...applyProviderEnv(
-          process.env as Record<string, string | undefined>,
-          this.runtimeSettings,
-        ),
-        ...launchEnv,
-      },
+      ...createProviderEnvSpec({
+        runtimeSettings: this.runtimeSettings,
+        overlays: [launchEnv],
+      }),
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
 
@@ -1319,13 +1316,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     );
     const child = spawnProcess(params.command, params.args ?? [], {
       cwd: params.cwd ?? this.config.cwd,
-      env: {
-        ...applyProviderEnv(
-          process.env as Record<string, string | undefined>,
-          this.runtimeSettings,
-        ),
-        ...env,
-      },
+      ...createProviderEnvSpec({
+        runtimeSettings: this.runtimeSettings,
+        overlays: [env],
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -1410,13 +1404,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
     const child = spawnProcess(command, args, {
       cwd: this.config.cwd,
-      env: {
-        ...applyProviderEnv(
-          process.env as Record<string, string | undefined>,
-          this.runtimeSettings,
-        ),
-        ...this.launchEnv,
-      },
+      ...createProviderEnvSpec({
+        runtimeSettings: this.runtimeSettings,
+        overlays: [this.launchEnv],
+      }),
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
 

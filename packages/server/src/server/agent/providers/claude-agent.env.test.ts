@@ -1,10 +1,11 @@
+import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentLaunchContext } from "../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 
-function createQueryMock(events: unknown[]) {
+function createQueryMock(events: unknown[]): Query {
   let index = 0;
   return {
     next: vi.fn(async () =>
@@ -23,10 +24,10 @@ function createQueryMock(events: unknown[]) {
     [Symbol.asyncIterator]() {
       return this;
     },
-  };
+  } as Query;
 }
 
-describe("Claude agent env", () => {
+describe("Claude SDK env", () => {
   test("forwards launch-context env through Claude process env", async () => {
     let capturedEnv: Record<string, string | undefined> | undefined;
     const launchContext: AgentLaunchContext = {
@@ -35,38 +36,36 @@ describe("Claude agent env", () => {
         PASEO_TEST_FLAG: "launch-value",
       },
     };
-    const queryFactory = vi.fn(
-      ({ options }: { options: { env?: Record<string, string | undefined> } }) => {
-        capturedEnv = options.env;
-        return createQueryMock([
-          {
-            type: "system",
-            subtype: "init",
-            session_id: "managed-agent-env-session",
-            permissionMode: "default",
-            model: "opus",
+    const queryFactory = vi.fn(({ options }: Parameters<typeof query>[0]) => {
+      capturedEnv = options.env;
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "managed-agent-env-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        {
+          type: "assistant",
+          message: { content: "done" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: {
+            input_tokens: 1,
+            cache_read_input_tokens: 0,
+            output_tokens: 1,
           },
-          {
-            type: "assistant",
-            message: { content: "done" },
-          },
-          {
-            type: "result",
-            subtype: "success",
-            usage: {
-              input_tokens: 1,
-              cache_read_input_tokens: 0,
-              output_tokens: 1,
-            },
-            total_cost_usd: 0,
-          },
-        ]);
-      },
-    );
+          total_cost_usd: 0,
+        },
+      ]);
+    });
 
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),
-      queryFactory: queryFactory as never,
+      queryFactory,
     });
     const session = await client.createSession(
       {
@@ -94,38 +93,36 @@ describe("Claude agent env", () => {
         PASEO_TEST_FLAG: "resume-launch-value",
       },
     };
-    const queryFactory = vi.fn(
-      ({ options }: { options: { env?: Record<string, string | undefined> } }) => {
-        capturedEnv = options.env;
-        return createQueryMock([
-          {
-            type: "system",
-            subtype: "init",
-            session_id: "persisted-session",
-            permissionMode: "default",
-            model: "opus",
+    const queryFactory = vi.fn(({ options }: Parameters<typeof query>[0]) => {
+      capturedEnv = options.env;
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "persisted-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        {
+          type: "assistant",
+          message: { content: "done" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: {
+            input_tokens: 1,
+            cache_read_input_tokens: 0,
+            output_tokens: 1,
           },
-          {
-            type: "assistant",
-            message: { content: "done" },
-          },
-          {
-            type: "result",
-            subtype: "success",
-            usage: {
-              input_tokens: 1,
-              cache_read_input_tokens: 0,
-              output_tokens: 1,
-            },
-            total_cost_usd: 0,
-          },
-        ]);
-      },
-    );
+          total_cost_usd: 0,
+        },
+      ]);
+    });
 
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),
-      queryFactory: queryFactory as never,
+      queryFactory,
     });
     const session = await client.resumeSession(
       {

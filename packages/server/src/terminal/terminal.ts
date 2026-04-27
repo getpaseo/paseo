@@ -7,6 +7,7 @@ import { basename, dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import stripAnsi from "strip-ansi";
+import { createExternalProcessEnv } from "../server/paseo-env.js";
 import type { TerminalCell, TerminalState } from "../shared/messages.js";
 
 const { Terminal } = xterm;
@@ -214,11 +215,9 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
 export function buildTerminalEnvironment(
   input: BuildTerminalEnvironmentInput,
 ): Record<string, string> {
-  const baseEnv: Record<string, string> = {
-    ...process.env,
-    ...input.env,
+  const baseEnv: Record<string, string> = createExternalProcessEnv(process.env, input.env, {
     TERM: "xterm-256color",
-  };
+  });
 
   if (basename(input.shell) !== "zsh") {
     return baseEnv;

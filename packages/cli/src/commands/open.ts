@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
+import { spawnProcess } from "@getpaseo/server";
 
 function findDesktopApp(): string | null {
   if (process.platform === "darwin") {
@@ -54,11 +54,13 @@ function cleanEnvForDesktopLaunch(): NodeJS.ProcessEnv {
   // desktop process inherits the env directly, so we must strip it or the
   // desktop app would start as a bare Node process instead of Electron.
   delete env.ELECTRON_RUN_AS_NODE;
+  delete env.ELECTRON_NO_ATTACH_CONSOLE;
+  delete env.PASEO_NODE_ENV;
   return env;
 }
 
 function spawnDetached(command: string, args: string[]): void {
-  spawn(command, args, {
+  spawnProcess(command, args, {
     detached: true,
     stdio: "ignore",
     env: cleanEnvForDesktopLaunch(),

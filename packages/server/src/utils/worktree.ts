@@ -1,4 +1,4 @@
-import { execFile, spawn } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
 import { rm, stat } from "fs/promises";
@@ -27,15 +27,16 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
+import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
+import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { ensureNodePtySpawnHelperExecutableForCurrentPlatform } from "../terminal/terminal.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 
 const execFileAsync = promisify(execFile);
-const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
-  ...process.env,
+const READ_ONLY_GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
-};
+} as const;
 
 export interface WorktreeConfig {
   branchName: string;
@@ -451,7 +452,7 @@ async function execSetupCommandStreamed(options: {
 
     const spawnWithPipes = () => {
       const shellInvocation = buildStringCommandShellInvocation({ command: options.command });
-      const child = spawn(shellInvocation.shell, shellInvocation.args, {
+      const child = spawnProcess(shellInvocation.shell, shellInvocation.args, {
         cwd: options.cwd,
         env: options.env,
         stdio: ["ignore", "pipe", "pipe"],
@@ -562,7 +563,7 @@ async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<
     try {
       const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
         cwd: worktreePath,
-        env: READ_ONLY_GIT_ENV,
+        envOverlay: READ_ONLY_GIT_ENV,
       });
       const topLevel = parseGitRevParsePath(stdout);
       if (topLevel) {
@@ -596,10 +597,7 @@ export async function runWorktreeSetupCommands(options: {
       branchName: options.branchName,
       ...(options.repoRootPath ? { repoRootPath: options.repoRootPath } : {}),
     }));
-  const setupEnv = {
-    ...process.env,
-    ...runtimeEnv,
-  };
+  const setupEnv = createExternalProcessEnv(process.env, runtimeEnv);
 
   const results: WorktreeSetupCommandResult[] = [];
   for (const [index, cmd] of setupCommands.entries()) {
@@ -643,7 +641,7 @@ async function resolveBranchNameForWorktreePath(worktreePath: string): Promise<s
   try {
     const { stdout } = await runGitCommand(["branch", "--show-current"], {
       cwd: worktreePath,
-      env: READ_ONLY_GIT_ENV,
+      envOverlay: READ_ONLY_GIT_ENV,
     });
     const branchName = stdout.trim();
     if (branchName.length > 0) {
@@ -707,8 +705,7 @@ export async function runWorktreeTeardownCommands(options: {
     options.branchName ?? (await resolveBranchNameForWorktreePath(options.worktreePath));
   const worktreePort = readPaseoWorktreeRuntimePort(options.worktreePath);
 
-  const teardownEnv: NodeJS.ProcessEnv = {
-    ...process.env,
+  const teardownEnv: NodeJS.ProcessEnv = createExternalProcessEnv(process.env, {
     // Source checkout path is the original git repo root (shared across worktrees), not the
     // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
     // from the source checkout.
@@ -718,7 +715,7 @@ export async function runWorktreeTeardownCommands(options: {
     PASEO_WORKTREE_PATH: options.worktreePath,
     PASEO_BRANCH_NAME: branchName,
     ...(worktreePort !== null ? { PASEO_WORKTREE_PORT: String(worktreePort) } : {}),
-  };
+  });
 
   const results: WorktreeTeardownCommandResult[] = [];
   for (const cmd of teardownCommands) {
@@ -746,7 +743,7 @@ export async function runWorktreeTeardownCommands(options: {
 export async function getGitCommonDir(cwd: string): Promise<string> {
   const { stdout } = await runGitCommand(["rev-parse", "--git-common-dir"], {
     cwd,
-    env: READ_ONLY_GIT_ENV,
+    envOverlay: READ_ONLY_GIT_ENV,
   });
   const commonDir = resolveGitRevParsePath(cwd, stdout);
   if (!commonDir) {
@@ -986,7 +983,7 @@ export async function listPaseoWorktrees({
   const worktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome);
   const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
     cwd,
-    env: READ_ONLY_GIT_ENV,
+    envOverlay: READ_ONLY_GIT_ENV,
   });
 
   const rootPrefix = normalizePathForOwnership(worktreesRoot) + sep;
@@ -1015,7 +1012,7 @@ export async function resolveExistingWorktreeForSlug({
 
   const { stdout } = await runGitCommand(["branch", "--show-current"], {
     cwd: existingWorktree.path,
-    env: READ_ONLY_GIT_ENV,
+    envOverlay: READ_ONLY_GIT_ENV,
   });
   const branchName = stdout.trim();
   if (!branchName) {
@@ -1046,7 +1043,7 @@ export async function resolvePaseoWorktreeRootForCwd(
   try {
     const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
       cwd,
-      env: READ_ONLY_GIT_ENV,
+      envOverlay: READ_ONLY_GIT_ENV,
     });
     worktreeRoot = parseGitRevParsePath(stdout);
   } catch {
@@ -1424,7 +1421,7 @@ async function resolveUniqueLocalBranchName(cwd: string, candidateBranch: string
 async function isBranchCheckedOut(cwd: string, branchName: string): Promise<boolean> {
   const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
     cwd,
-    env: READ_ONLY_GIT_ENV,
+    envOverlay: READ_ONLY_GIT_ENV,
   });
   return parseWorktreeList(stdout).some((entry) => entry.branchName === branchName);
 }

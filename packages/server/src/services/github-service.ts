@@ -7,10 +7,9 @@ const DEFAULT_GITHUB_CACHE_TTL_MS = 30_000;
 export const GITHUB_POLL_FAST_INTERVAL_MS = 20_000;
 export const GITHUB_POLL_SLOW_INTERVAL_MS = 120_000;
 export const GITHUB_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
-const GITHUB_ENV: NodeJS.ProcessEnv = {
-  ...process.env,
+const GITHUB_ENV = {
   GIT_TERMINAL_PROMPT: "0",
-};
+} as const;
 
 const LabelSchema = z.object({
   name: z.string().optional(),
@@ -1165,7 +1164,7 @@ async function runGhCommand(
 ): Promise<GitHubCommandResult> {
   return execCommand("gh", args, {
     cwd: options.cwd,
-    env: GITHUB_ENV,
+    envOverlay: GITHUB_ENV,
     maxBuffer: 10 * 1024 * 1024,
   });
 }

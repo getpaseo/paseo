@@ -1,4 +1,4 @@
-import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
+import { createProviderEnvSpec, type ProviderRuntimeSettings } from "../provider-launch-config.js";
 import { execCommand } from "../../../utils/spawn.js";
 
 interface DiagnosticEntry {
@@ -45,7 +45,10 @@ export function toDiagnosticErrorMessage(error: unknown): string {
 
 export async function resolveBinaryVersion(binaryPath: string): Promise<string> {
   try {
-    const { stdout } = await execCommand(binaryPath, ["--version"], { timeout: 5_000 });
+    const { stdout } = await execCommand(binaryPath, ["--version"], {
+      ...createProviderEnvSpec(),
+      timeout: 5_000,
+    });
     return stdout.trim() || "unknown";
   } catch {
     return "unknown";
