@@ -1060,7 +1060,6 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     color: "transparent",
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-    flexShrink: 1,
   },
   spacer: {
     flex: 1,
