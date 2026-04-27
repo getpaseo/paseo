@@ -104,8 +104,13 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
   return args;
 }
 
-function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
+function resolvePaseoNodeEnvForRunner(daemonRunnerEntry: string): "development" | "production" {
+  return daemonRunnerEntry.endsWith(".ts") ? "development" : "production";
+}
+
+function buildChildEnv(options: DaemonStartOptions, daemonRunnerEntry: string): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  childEnv.PASEO_NODE_ENV = resolvePaseoNodeEnvForRunner(daemonRunnerEntry);
   if (options.home) {
     childEnv.PASEO_HOME = options.home;
   }
@@ -373,11 +378,11 @@ export async function startLocalDaemonDetached(
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const childEnv = buildChildEnv(options);
+  const daemonRunnerEntry = resolveDaemonRunnerEntry();
+  const childEnv = buildChildEnv(options, daemonRunnerEntry);
 
   const paseoHome = resolvePaseoHome(childEnv);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
-  const daemonRunnerEntry = resolveDaemonRunnerEntry();
   const child = spawn(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
@@ -438,8 +443,8 @@ export function startLocalDaemonForeground(options: DaemonStartOptions): number 
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const childEnv = buildChildEnv(options);
   const daemonRunnerEntry = resolveDaemonRunnerEntry();
+  const childEnv = buildChildEnv(options, daemonRunnerEntry);
   const result = spawnSync(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],

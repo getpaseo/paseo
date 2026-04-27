@@ -3,10 +3,10 @@ import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { spawn } from "node:child_process";
 import type pino from "pino";
 
 import { getSherpaOnnxModelSpec, type SherpaOnnxModelId } from "./model-catalog.js";
+import { spawnProcess } from "../../../../../utils/spawn.js";
 
 export interface EnsureSherpaOnnxModelOptions {
   modelsDir: string;
@@ -70,7 +70,9 @@ async function extractTarArchive(archivePath: string, destDir: string): Promise<
   await mkdir(destDir, { recursive: true });
 
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("tar", ["xf", archivePath, "-C", destDir], { stdio: "inherit" });
+    const child = spawnProcess("tar", ["xf", archivePath, "-C", destDir], {
+      stdio: "inherit",
+    });
     child.on("error", reject);
     child.on("exit", (code) => {
       if (code === 0) resolve();

@@ -491,7 +491,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return this.readAuxiliaryCache(this.localBranchCache, key, options, async () => {
       const result = await this.deps.runGitCommand(["rev-parse", "--verify", "--quiet", ref], {
         cwd: normalizedCwd,
-        env: READ_ONLY_GIT_ENV,
+        envOverlay: READ_ONLY_GIT_ENV,
         acceptExitCodes: [0, 1],
       });
       return result.exitCode === 0;
@@ -523,7 +523,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return this.readAuxiliaryCache(this.stashListCache, key, readOptions, async () => {
       const { stdout } = await this.deps.runGitCommand(["stash", "list", "--format=%gd%x00%s"], {
         cwd: normalizedCwd,
-        env: READ_ONLY_GIT_ENV,
+        envOverlay: READ_ONLY_GIT_ENV,
       });
       return parseWorkspaceGitStashList(stdout, { paseoOnly });
     });
@@ -895,7 +895,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     try {
       const { stdout } = await this.deps.runGitCommand(["rev-parse", "--show-toplevel"], {
         cwd,
-        env: READ_ONLY_GIT_ENV,
+        envOverlay: READ_ONLY_GIT_ENV,
       });
       return parseGitRevParsePath(stdout);
     } catch {
@@ -1714,10 +1714,7 @@ function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
 async function runGitFetch(cwd: string): Promise<void> {
   await runGitCommand(["fetch", "origin", "--prune"], {
     cwd,
-    env: {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: "0",
-    },
+    envOverlay: { GIT_TERMINAL_PROMPT: "0" },
     timeout: 120_000,
   });
 }

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { extname } from "node:path";
+import { createExternalCommandProcessEnv } from "../server/paseo-env.js";
 
 type Which = (command: string, options: { all: true }) => Promise<string[]>;
 
@@ -61,6 +62,7 @@ async function probeExecutable(executablePath: string): Promise<boolean> {
     let child: ChildProcess;
     try {
       child = spawn(executablePath, ["--version"], {
+        env: createExternalCommandProcessEnv(executablePath, process.env),
         stdio: "ignore",
         windowsHide: true,
         // Windows batch shims (.cmd/.bat) require cmd.exe; native binaries do not.

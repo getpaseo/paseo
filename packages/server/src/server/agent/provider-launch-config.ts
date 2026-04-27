@@ -3,6 +3,7 @@ import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { isCommandAvailable } from "../../utils/executable.js";
+import { createExternalProcessEnv, type ProcessEnvRecord } from "../paseo-env.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
 
@@ -176,18 +177,41 @@ const PARENT_SESSION_ENV_VARS = [
   "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
 ];
 
-export function applyProviderEnv(
-  baseEnv: Record<string, string | undefined>,
-  runtimeSettings?: ProviderRuntimeSettings,
-): Record<string, string | undefined> {
-  const merged: Record<string, string | undefined> = {
-    ...baseEnv,
-    ...runtimeSettings?.env,
-  };
+export interface ProviderEnvOptions {
+  baseEnv?: ProcessEnvRecord;
+  runtimeSettings?: ProviderRuntimeSettings;
+  overlays?: Array<ProcessEnvRecord | undefined>;
+}
+
+export interface ProviderEnvSpec {
+  baseEnv?: ProcessEnvRecord;
+  envOverlay: ProcessEnvRecord;
+}
+
+function collectProviderEnvOverlays(
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+  overlays: Array<ProcessEnvRecord | undefined>,
+): ProcessEnvRecord[] {
+  return [runtimeSettings?.env, ...overlays].filter(
+    (overlay): overlay is ProcessEnvRecord => !!overlay,
+  );
+}
+
+export function createProviderEnvSpec(options: ProviderEnvOptions = {}): ProviderEnvSpec {
+  const overlays = collectProviderEnvOverlays(options.runtimeSettings, options.overlays ?? []);
+  const envOverlay: ProcessEnvRecord = Object.assign({}, ...overlays);
   for (const key of PARENT_SESSION_ENV_VARS) {
-    delete merged[key];
+    envOverlay[key] = undefined;
   }
-  return merged;
+  return {
+    ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
+    envOverlay,
+  };
+}
+
+export function createProviderEnv(options: ProviderEnvOptions = {}): NodeJS.ProcessEnv {
+  const spec = createProviderEnvSpec(options);
+  return createExternalProcessEnv(spec.baseEnv ?? process.env, spec.envOverlay);
 }
 
 export function findExecutable(name: string): string | null {
@@ -203,7 +227,10 @@ export function findExecutable(name: string): string | null {
   }
   try {
     const cmd = process.platform === "win32" ? "where.exe" : "which";
-    const result = execFileSync(cmd, [trimmed], { encoding: "utf8" }).trim();
+    const result = execFileSync(cmd, [trimmed], {
+      encoding: "utf8",
+      env: createProviderEnv({ baseEnv: process.env }),
+    }).trim();
     const lines = result.split(/\r?\n/).filter((l: string) => l.trim());
     const candidate = lines.at(-1)?.trim() ?? null;
     return candidate && path.isAbsolute(candidate) ? candidate : null;

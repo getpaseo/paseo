@@ -1,8 +1,12 @@
 import type { ChildProcess } from "node:child_process";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { listAvailableEditorTargets, openInEditorTarget } from "./editor-targets.js";
 
 describe("editor-targets", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("lists available editors in deterministic order", async () => {
     const available = new Set(["code", "cursor", "explorer", "webstorm"]);
 
@@ -38,6 +42,12 @@ describe("editor-targets", () => {
   });
 
   it("launches editors as detached processes", async () => {
+    vi.stubEnv("ELECTRON_RUN_AS_NODE", "1");
+    vi.stubEnv("ELECTRON_NO_ATTACH_CONSOLE", "1");
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("PASEO_DESKTOP_MANAGED", "1");
+    vi.stubEnv("PASEO_NODE_ENV", "production");
+    vi.stubEnv("PASEO_SUPERVISED", "1");
     const unref = vi.fn();
     const once = vi.fn((event: string, handler: () => void) => {
       if (event === "spawn") {
@@ -61,11 +71,19 @@ describe("editor-targets", () => {
       },
     );
 
+    const spawnOptions = spawn.mock.calls[0]?.[2];
     expect(spawn).toHaveBeenCalledWith("/usr/local/bin/code", ["/tmp/repo"], {
       detached: true,
+      env: expect.any(Object),
       shell: false,
       stdio: "ignore",
     });
+    expect(spawnOptions?.env).toMatchObject({ NODE_ENV: "development" });
+    expect(spawnOptions?.env).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
+    expect(spawnOptions?.env).not.toHaveProperty("ELECTRON_NO_ATTACH_CONSOLE");
+    expect(spawnOptions?.env).not.toHaveProperty("PASEO_DESKTOP_MANAGED");
+    expect(spawnOptions?.env).not.toHaveProperty("PASEO_NODE_ENV");
+    expect(spawnOptions?.env).not.toHaveProperty("PASEO_SUPERVISED");
     expect(unref).toHaveBeenCalled();
   });
 

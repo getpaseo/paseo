@@ -72,7 +72,11 @@ import type {
   McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
-import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
+import {
+  createProviderEnv,
+  createProviderEnvSpec,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand, spawnProcess } from "../../../utils/spawn.js";
@@ -256,10 +260,11 @@ function applyRuntimeSettingsToClaudeOptions(
       const command = isDefaultRuntime ? process.execPath : resolved.command;
       const child = spawnProcess(command, resolved.args, {
         cwd: spawnOptions.cwd,
-        env: {
-          ...applyProviderEnv(spawnOptions.env, runtimeSettings),
-          ...launchEnv,
-        },
+        ...createProviderEnvSpec({
+          baseEnv: spawnOptions.env,
+          runtimeSettings,
+          overlays: [launchEnv],
+        }),
         signal: spawnOptions.signal,
         stdio: ["pipe", "pipe", "pipe"],
         // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
@@ -285,6 +290,16 @@ function isClaudeThinkingEffort(value: string | null | undefined): value is Clau
     value === "xhigh" ||
     value === "max"
   );
+}
+
+function readClaudeEnvOverlay(
+  options: Partial<ClaudeOptions> | undefined,
+): Record<string, string | undefined> | undefined {
+  const env = options?.env;
+  if (!env || typeof env !== "object" || Array.isArray(env)) {
+    return undefined;
+  }
+  return env as Record<string, string | undefined>;
 }
 
 function sanitizeClaudeProjectPath(cwd: string): string {
@@ -1268,13 +1283,14 @@ async function resolveClaudeVersion(
   runtimeSettings?: ProviderRuntimeSettings,
 ): Promise<string | null> {
   const command = runtimeSettings?.command;
+  const envSpec = createProviderEnvSpec({ runtimeSettings });
 
   try {
     if (command?.mode === "replace") {
       const { stdout } = await execCommand(
         command.argv[0]!,
         [...command.argv.slice(1), "--version"],
-        { timeout: 5_000 },
+        { ...envSpec, timeout: 5_000 },
       );
       return stdout.trim() || null;
     }
@@ -1285,6 +1301,7 @@ async function resolveClaudeVersion(
     }
 
     const { stdout } = await execCommand(executable, ["--version"], {
+      ...envSpec,
       timeout: 5_000,
     });
     return stdout.trim() || null;
@@ -1303,7 +1320,10 @@ async function resolveClaudeAuth(
     args: string[],
   ): Promise<{ stdout: string; stderr: string }> => {
     try {
-      return await execCommand(executable, args, { timeout: 5_000 });
+      return await execCommand(executable, args, {
+        ...createProviderEnvSpec({ runtimeSettings }),
+        timeout: 5_000,
+      });
     } catch (error) {
       const err = error as {
         stdout?: string;
@@ -2221,6 +2241,20 @@ class ClaudeAgentSession implements AgentSession {
   private async buildOptions(): Promise<ClaudeOptions> {
     const { thinking, effort } = this.resolveThinkingConfig();
     const appendedSystemPrompt = this.buildAppendedSystemPrompt();
+    const extraClaudeOptions = this.config.extra?.claude;
+    const sdkEnv = createProviderEnv({
+      baseEnv: process.env,
+      runtimeSettings: this.runtimeSettings,
+      overlays: [
+        readClaudeEnvOverlay(extraClaudeOptions),
+        {
+          // Increase MCP timeouts for long-running tool calls (10 minutes)
+          MCP_TIMEOUT: "600000",
+          MCP_TOOL_TIMEOUT: "600000",
+        },
+        this.launchEnv,
+      ],
+    });
 
     const claudeBinary = await findExecutable("claude");
     this.logger.debug(
@@ -2256,13 +2290,6 @@ class ClaudeAgentSession implements AgentSession {
         this.captureStderr(data);
         this.logger.error({ stderr: data.trim() }, "Claude Agent SDK stderr");
       },
-      env: {
-        ...process.env,
-        // Increase MCP timeouts for long-running tool calls (10 minutes)
-        MCP_TIMEOUT: "600000",
-        MCP_TOOL_TIMEOUT: "600000",
-        ...this.launchEnv,
-      },
       // Required for provider-level /rewind support.
       enableFileCheckpointing: true,
       // If we have a session ID from a previous query (e.g., after interrupt),
@@ -2270,7 +2297,8 @@ class ClaudeAgentSession implements AgentSession {
       ...(this.claudeSessionId ? { resume: this.claudeSessionId } : {}),
       ...(thinking ? { thinking } : {}),
       ...(effort ? { effort } : {}),
-      ...this.config.extra?.claude,
+      ...extraClaudeOptions,
+      env: sdkEnv,
     };
 
     if (this.config.mcpServers) {

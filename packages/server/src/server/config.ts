@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolvePaseoNodeEnv } from "./paseo-env.js";
 import { z } from "zod";
 
 import type { PaseoDaemonConfig } from "./bootstrap.js";
@@ -240,7 +241,7 @@ export function loadConfig(
     mcpEnabled,
     mcpInjectIntoAgents,
     mcpDebug: env.MCP_DEBUG === "1",
-    isDev: env.NODE_ENV === "development",
+    isDev: resolvePaseoNodeEnv(env) === "development",
     agentStoragePath: path.join(paseoHome, "agents"),
     staticDir: "public",
     agentClients: {},

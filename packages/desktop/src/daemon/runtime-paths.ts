@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import { spawnProcess } from "@getpaseo/server";
+import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { app } from "electron";
@@ -256,7 +255,7 @@ function spawnAsync(
   options: { env: NodeJS.ProcessEnv },
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
-    const child = spawnProcess(command, args, {
+    const child = spawn(command, args, {
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
     });

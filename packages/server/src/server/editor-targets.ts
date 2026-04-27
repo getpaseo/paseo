@@ -6,6 +6,7 @@ import type {
   EditorTargetId,
   KnownEditorTargetId,
 } from "../shared/messages.js";
+import { createExternalProcessEnv } from "./paseo-env.js";
 import { findExecutable, quoteWindowsArgument, quoteWindowsCommand } from "../utils/executable.js";
 
 interface EditorTargetDefinition {
@@ -154,6 +155,7 @@ export async function openInEditorTarget(
     try {
       child = spawnFn(command, args, {
         detached: true,
+        env: createExternalProcessEnv(process.env),
         shell: platform === "win32",
         stdio: "ignore",
       });

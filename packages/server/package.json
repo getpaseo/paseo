@@ -28,13 +28,13 @@
     "access": "public"
   },
   "scripts": {
-    "dev": "cross-env NODE_ENV=development node --import tsx scripts/dev-runner.ts",
-    "dev:tsx": "cross-env NODE_ENV=development tsx watch --ignore '**/*.timestamp-*' src/server/index.ts",
+    "dev": "cross-env PASEO_NODE_ENV=development node --import tsx scripts/dev-runner.ts",
+    "dev:tsx": "cross-env PASEO_NODE_ENV=development tsx watch --ignore '**/*.timestamp-*' src/server/index.ts",
     "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && npm run build:lib && npm run build:scripts",
     "build:lib": "tsc -p tsconfig.server.json --incremental false && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true});\"",
     "build:scripts": "tsc -p tsconfig.scripts.json --incremental false && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs');\"",
     "prepack": "npm run build",
-    "start": "cross-env NODE_ENV=production node dist/server/server/index.js",
+    "start": "cross-env PASEO_NODE_ENV=production node dist/server/server/index.js",
     "typecheck": "tsgo -p tsconfig.server.typecheck.json --noEmit",
     "generate:config-schema": "tsx scripts/generate-config-schema.ts",
     "speech:models": "tsx scripts/list-speech-models.ts",

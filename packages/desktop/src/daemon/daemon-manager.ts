@@ -1,9 +1,9 @@
-import { type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
-import { resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import { resolvePaseoHome } from "@getpaseo/server";
 import {
   copyAttachmentFileToManagedStorage,
   deleteManagedAttachmentFile,
@@ -357,7 +357,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     args: invocation.args,
   });
 
-  const child: ChildProcess = spawnProcess(invocation.command, invocation.args, {
+  const child: ChildProcess = spawn(invocation.command, invocation.args, {
     detached: true,
     env: { ...invocation.env, PASEO_DESKTOP_MANAGED: "1" },
     stdio: ["ignore", "pipe", "pipe"],

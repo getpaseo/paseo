@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface FakeSpawnBehavior {
@@ -203,6 +204,31 @@ describe("runGitCommand", () => {
 
     expect(fakeSpawnController.peakActiveCount).toBe(2);
     expect(fakeSpawnController.activeCount).toBe(0);
+  });
+
+  it("scrubs Paseo runtime control vars from git command env", async () => {
+    vi.stubEnv("ELECTRON_RUN_AS_NODE", "1");
+    vi.stubEnv("ELECTRON_NO_ATTACH_CONSOLE", "1");
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("PASEO_DESKTOP_MANAGED", "1");
+    vi.stubEnv("PASEO_NODE_ENV", "production");
+    vi.stubEnv("PASEO_SUPERVISED", "1");
+
+    const { runGitCommand } = await loadRunGitCommand(1);
+
+    enqueueSpawnBehaviors({ delayMs: 0, stdoutData: "ok" });
+
+    await runGitCommand(["status"], {
+      cwd: process.cwd(),
+    });
+
+    const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[2];
+    expect(spawnOptions?.env).toMatchObject({ NODE_ENV: "development" });
+    expect(spawnOptions?.env).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
+    expect(spawnOptions?.env).not.toHaveProperty("ELECTRON_NO_ATTACH_CONSOLE");
+    expect(spawnOptions?.env).not.toHaveProperty("PASEO_DESKTOP_MANAGED");
+    expect(spawnOptions?.env).not.toHaveProperty("PASEO_NODE_ENV");
+    expect(spawnOptions?.env).not.toHaveProperty("PASEO_SUPERVISED");
   });
 
   it("kills timed out processes and releases the limiter slot", async () => {
