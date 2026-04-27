@@ -760,7 +760,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       closed: false,
     };
 
-
     this.workspaceTargets.set(cwd, target);
     return target;
   }
@@ -1419,7 +1418,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     const [diffStat, github] = await Promise.all([
       this.deps.getCheckoutShortstat(cwd, context, { force: request.force }).catch(() => null),
-      loadGitHubSnapshot({ cwd, githubRemote, now, deps: this.deps, force: forceGitHub, reason: request.reason }),
+      loadGitHubSnapshot({
+        cwd,
+        githubRemote,
+        now,
+        deps: this.deps,
+        force: forceGitHub,
+        reason: request.reason,
+      }),
     ]);
 
     target.latestSnapshotLoadedAtMs = now.getTime();
@@ -1683,7 +1689,6 @@ function parseWorkspaceGitStashList(
 
   return entries;
 }
-
 
 function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
