@@ -3,6 +3,12 @@ import { execCommand } from "./spawn.js";
 
 const GITHUB_HOSTS = new Set(["github.com", "ssh.github.com"]);
 
+const TRANSPORT_BY_PROTOCOL: Record<string, GitRemoteLocation["transport"]> = {
+  "https:": "https",
+  "http:": "http",
+  "ssh:": "ssh",
+};
+
 let sshExecutableLookup: Promise<string | null> | null = null;
 const sshHostnameResolutionCache = new Map<string, Promise<string | null>>();
 
@@ -89,7 +95,7 @@ function parseGitRemoteLocation(remoteUrl: string): GitRemoteLocation | null {
   if (scpLike) {
     const host = normalizeHost(scpLike[1] ?? "");
     const path = normalizeRemotePath(scpLike[2] ?? "");
-    if (!host || !path) return null;
+    if (!isValidRemoteHost(host) || !path) return null;
     return { transport: "scp", host, path };
   }
 
@@ -100,8 +106,8 @@ function parseGitRemoteLocation(remoteUrl: string): GitRemoteLocation | null {
     return null;
   }
 
-  const protocol = parsed.protocol.toLowerCase();
-  if (protocol !== "https:" && protocol !== "http:" && protocol !== "ssh:") return null;
+  const transport = TRANSPORT_BY_PROTOCOL[parsed.protocol.toLowerCase()];
+  if (!transport) return null;
 
   const host = normalizeHost(parsed.hostname);
   let path: string;
@@ -111,13 +117,9 @@ function parseGitRemoteLocation(remoteUrl: string): GitRemoteLocation | null {
     return null;
   }
   const normalizedPath = normalizeRemotePath(path);
-  if (!host || !normalizedPath) return null;
+  if (!isValidRemoteHost(host) || !normalizedPath) return null;
 
-  return {
-    transport: protocol === "ssh:" ? "ssh" : protocol === "http:" ? "http" : "https",
-    host,
-    path: normalizedPath,
-  };
+  return { transport, host, path: normalizedPath };
 }
 
 function parseGitHubRemoteIdentity(path: string): GitHubRemoteIdentity | null {
@@ -136,4 +138,8 @@ function normalizeRemotePath(path: string): string | null {
 
 function normalizeHost(host: string): string {
   return host.trim().replace(/\.+$/u, "").toLowerCase();
+}
+
+function isValidRemoteHost(host: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/u.test(host);
 }

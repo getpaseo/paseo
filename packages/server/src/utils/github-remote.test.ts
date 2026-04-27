@@ -38,6 +38,21 @@ describe("resolveGitHubRemote", () => {
     ).resolves.toEqual({ owner: "acme", name: "repo", repo: "acme/repo" });
   });
 
+  it("resolves a dotted SSH alias that maps to github.com", async () => {
+    await expect(
+      resolveGitHubRemote({
+        remoteUrl: "git@mindnexus.github.com:JakubMindNexus/postline.git",
+        resolveSshHostname: createSshHostnameResolver({
+          "mindnexus.github.com": "github.com",
+        }),
+      }),
+    ).resolves.toEqual({
+      owner: "JakubMindNexus",
+      name: "postline",
+      repo: "JakubMindNexus/postline",
+    });
+  });
+
   it("resolves an SSH alias that maps to ssh.github.com", async () => {
     await expect(
       resolveGitHubRemote({
@@ -68,6 +83,26 @@ describe("resolveGitHubRemote", () => {
         },
       }),
     ).resolves.toEqual({ owner: "acme", name: "repo", repo: "acme/repo" });
+
+    expect(resolverCalls).toBe(0);
+  });
+
+  it.each([
+    "git@-oProxyCommand=evil:acme/repo.git",
+    "ssh://git@-oProxyCommand=evil/acme/repo.git",
+    "git@host with space:acme/repo.git",
+  ])("rejects malformed hostnames without invoking the SSH resolver: %s", async (remoteUrl) => {
+    let resolverCalls = 0;
+
+    await expect(
+      resolveGitHubRemote({
+        remoteUrl,
+        resolveSshHostname: async (host) => {
+          resolverCalls += 1;
+          return host;
+        },
+      }),
+    ).resolves.toBeNull();
 
     expect(resolverCalls).toBe(0);
   });
