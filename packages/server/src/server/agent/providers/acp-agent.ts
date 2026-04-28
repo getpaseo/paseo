@@ -574,12 +574,16 @@ export class ACPAgentClient implements AgentClient {
       }
 
       const sessions: PersistedAgentDescriptor[] = [];
+      const excludedSessionIds = new Set(options?.excludeSessionIds ?? []);
       let cursor: string | null | undefined;
       for (;;) {
         const page: ListSessionsResponse = await probe.connection.listSessions(
           cursor ? { cursor } : {},
         );
         for (const session of page.sessions) {
+          if (excludedSessionIds.has(session.sessionId)) {
+            continue;
+          }
           sessions.push({
             provider: this.provider,
             sessionId: session.sessionId,

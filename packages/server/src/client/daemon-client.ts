@@ -420,6 +420,21 @@ export type FetchAgentHistoryOptions = Omit<FetchAgentHistoryRequest, "type" | "
 };
 export type FetchAgentHistoryEntry = FetchAgentHistoryPayload["entries"][number];
 export type FetchAgentHistoryPageInfo = FetchAgentHistoryPayload["pageInfo"];
+type FetchPersistedAgentsPayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_persisted_agents_response" }
+>["payload"];
+type FetchPersistedAgentsRequest = Extract<
+  SessionInboundMessage,
+  { type: "fetch_persisted_agents_request" }
+>;
+export type FetchPersistedAgentsOptions = Omit<
+  FetchPersistedAgentsRequest,
+  "type" | "requestId"
+> & {
+  requestId?: string;
+};
+export type FetchPersistedAgentsEntry = FetchPersistedAgentsPayload["entries"][number];
 type FetchWorkspacesPayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_workspaces_response" }
@@ -1428,10 +1443,38 @@ export class DaemonClient {
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
-      timeout: 10000,
+      timeout: 30000,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "fetch_agent_history_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async fetchPersistedAgents(
+    options?: FetchPersistedAgentsOptions,
+  ): Promise<FetchPersistedAgentsPayload> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "fetch_persisted_agents_request",
+      requestId: resolvedRequestId,
+      ...(options?.provider ? { provider: options.provider } : {}),
+      ...(options?.cwd ? { cwd: options.cwd } : {}),
+      ...(options?.page ? { page: options.page } : {}),
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 30000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "fetch_persisted_agents_response") {
           return null;
         }
         if (msg.payload.requestId !== resolvedRequestId) {

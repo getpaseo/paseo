@@ -5,8 +5,10 @@ import {
   type AssistantMessage as OpenCodeAssistantMessage,
   type Event as OpenCodeEvent,
   type FilePartInput as OpenCodeFilePartInput,
+  type Message as OpenCodeMessage,
   type OpencodeClient,
   type Part as OpenCodePart,
+  type Session as OpenCodeSession,
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
@@ -87,9 +89,31 @@ const DEFAULT_MODES: AgentMode[] = [
     description: "Automatically approves all tool permission prompts for the session",
   },
 ];
+const OPENCODE_PERSISTED_SESSION_TIMELINE_LIMIT = 40;
+const OPENCODE_PERSISTED_SESSION_LIST_TIMEOUT_MS = 10_000;
+const OPENCODE_PERSISTED_SESSION_MESSAGES_TIMEOUT_MS = 5_000;
+const OPENCODE_MODEL_CONTEXT_CACHE_TIMEOUT_MS = 5_000;
+const OPENCODE_CLOSE_BEHAVIOR_METADATA_KEY = "paseoCloseBehavior";
+const OPENCODE_CLOSE_BEHAVIOR_DETACH = "detach";
+type OpenCodeCloseBehavior = "archive" | "detach";
 
 type OpenCodeAgentConfig = AgentSessionConfig & { provider: "opencode" };
 type OpenCodeMessageRole = "user" | "assistant";
+interface OpenCodeSessionMessagesResponse {
+  data?: Array<{ info: OpenCodeMessage; parts: OpenCodePart[] }>;
+  error?: unknown;
+}
+
+interface OpenCodeProviderListResponse {
+  data?: {
+    connected?: string[];
+    all?: Array<{
+      id: string;
+      models?: Record<string, unknown>;
+    }>;
+  };
+  error?: unknown;
+}
 
 type OpenCodeMcpConfig =
   | {
@@ -270,31 +294,39 @@ async function reconcileOpenCodeSessionClose(params: {
   sessionId: string;
   directory: string;
   logger: Logger;
+  abortFirst?: boolean;
+  archive?: boolean;
 }): Promise<void> {
-  const { client, sessionId, directory, logger } = params;
+  const { client, sessionId, directory, logger, abortFirst = true, archive = true } = params;
 
-  try {
-    const response = await client.session.abort({
-      sessionID: sessionId,
-      directory,
-    });
-    if (response.error && !isOpenCodeNotFoundError(response.error)) {
+  if (abortFirst) {
+    try {
+      const response = await client.session.abort({
+        sessionID: sessionId,
+        directory,
+      });
+      if (response.error && !isOpenCodeNotFoundError(response.error)) {
+        logger.warn(
+          {
+            sessionId,
+            error: toDiagnosticErrorMessage(response.error),
+          },
+          "Failed to abort OpenCode session during close",
+        );
+      }
+    } catch (error) {
       logger.warn(
         {
           sessionId,
-          error: toDiagnosticErrorMessage(response.error),
+          error: toDiagnosticErrorMessage(error),
         },
         "Failed to abort OpenCode session during close",
       );
     }
-  } catch (error) {
-    logger.warn(
-      {
-        sessionId,
-        error: toDiagnosticErrorMessage(error),
-      },
-      "Failed to abort OpenCode session during close",
-    );
+  }
+
+  if (!archive) {
+    return;
   }
 
   try {
@@ -321,6 +353,23 @@ async function reconcileOpenCodeSessionClose(params: {
       "Failed to archive OpenCode session during close",
     );
   }
+}
+
+function resolveOpenCodeCloseBehavior(handle?: AgentPersistenceHandle): OpenCodeCloseBehavior {
+  return handle?.metadata?.[OPENCODE_CLOSE_BEHAVIOR_METADATA_KEY] === OPENCODE_CLOSE_BEHAVIOR_DETACH
+    ? "detach"
+    : "archive";
+}
+
+function selectOpenCodePersistedSessions(
+  sessions: OpenCodeSession[],
+  options: { directory: string; limit: number; excludeSessionIds?: readonly string[] },
+): OpenCodeSession[] {
+  const excluded = new Set(options.excludeSessionIds ?? []);
+  return sessions
+    .filter((session) => session.directory === options.directory)
+    .filter((session) => !excluded.has(session.id))
+    .slice(0, options.limit);
 }
 
 function isFatalOpenCodeRetryMessage(message: string | null | undefined): boolean {
@@ -723,11 +772,15 @@ export const __openCodeInternals = {
   buildOpenCodeModelLookupKey,
   extractOpenCodeModelContextWindow,
   hasNormalizedOpenCodeUsage,
+  mapOpenCodePersistedMessagesToTimeline,
   mergeOpenCodeStepFinishUsage,
+  normalizeOpenCodeTimestampMs,
   parseOpenCodeModelLookupKey,
   reconcileOpenCodeSessionClose,
+  resolveOpenCodeCloseBehavior,
   resolveOpenCodeModelLookupKeyFromAssistantMessage,
   resolveOpenCodeSelectedModelContextWindow,
+  selectOpenCodePersistedSessions,
   get OpenCodeAgentSession() {
     return OpenCodeAgentSession;
   },
@@ -1064,6 +1117,7 @@ export class OpenCodeAgentClient implements AgentClient {
         this.logger,
         new Map(this.modelContextWindows),
         acquisition.release,
+        "archive",
       );
     } catch (error) {
       acquisition.release();
@@ -1104,6 +1158,7 @@ export class OpenCodeAgentClient implements AgentClient {
         this.logger,
         new Map(this.modelContextWindows),
         acquisition.release,
+        resolveOpenCodeCloseBehavior(handle),
       );
     } catch (error) {
       acquisition.release();
@@ -1209,10 +1264,48 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async listPersistedAgents(
-    _options?: ListPersistedAgentsOptions,
+    options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    // TODO: Implement by listing sessions from OpenCode
-    return [];
+    const limit = options?.limit ?? 20;
+    const directory = options?.cwd ?? homedir();
+    const acquisition = await this.serverManager.acquire({ force: false });
+    const { url } = acquisition.server;
+    const client = createOpencodeClient({
+      baseUrl: url,
+      directory,
+    });
+
+    try {
+      const response = await withTimeout(
+        client.session.list({
+          directory,
+          roots: true,
+          limit: Math.max(limit, 200),
+        }),
+        OPENCODE_PERSISTED_SESSION_LIST_TIMEOUT_MS,
+        `OpenCode session.list timed out after ${OPENCODE_PERSISTED_SESSION_LIST_TIMEOUT_MS / 1000}s`,
+      );
+      if (response.error || !response.data) {
+        return [];
+      }
+
+      const sessions = selectOpenCodePersistedSessions(response.data, {
+        directory,
+        limit,
+        excludeSessionIds: options?.excludeSessionIds,
+      });
+      return await Promise.all(
+        sessions.map(async (session) =>
+          buildOpenCodePersistedAgentDescriptor({
+            client,
+            session,
+            directory,
+          }),
+        ),
+      );
+    } finally {
+      acquisition.release();
+    }
   }
 
   async isAvailable(): Promise<boolean> {
@@ -1294,7 +1387,18 @@ export class OpenCodeAgentClient implements AgentClient {
     client: OpencodeClient,
     cwd: string,
   ): Promise<void> {
-    const response = await client.provider.list({ directory: cwd });
+    let response: OpenCodeProviderListResponse;
+    try {
+      response = await withTimeout(
+        client.provider.list({ directory: cwd }),
+        OPENCODE_MODEL_CONTEXT_CACHE_TIMEOUT_MS,
+        `OpenCode provider.list timed out after ${OPENCODE_MODEL_CONTEXT_CACHE_TIMEOUT_MS / 1000}s while populating model context windows`,
+      );
+    } catch (error) {
+      this.logger.debug({ err: error, cwd }, "Failed to populate OpenCode model context cache");
+      return;
+    }
+
     if (response.error || !response.data) {
       return;
     }
@@ -1374,6 +1478,133 @@ function createCompactionTimelineItem(
     status,
     ...(trigger ? { trigger } : {}),
   };
+}
+
+async function buildOpenCodePersistedAgentDescriptor(input: {
+  client: OpencodeClient;
+  session: OpenCodeSession;
+  directory: string;
+}): Promise<PersistedAgentDescriptor> {
+  const cwd = input.session.directory || input.directory;
+  const title = readNonEmptyString(input.session.title);
+  const timeline = await readOpenCodePersistedSessionTimeline({
+    client: input.client,
+    sessionId: input.session.id,
+    directory: cwd,
+  });
+
+  return {
+    provider: "opencode",
+    sessionId: input.session.id,
+    cwd,
+    title,
+    lastActivityAt: new Date(normalizeOpenCodeTimestampMs(input.session.time.updated)),
+    persistence: {
+      provider: "opencode",
+      sessionId: input.session.id,
+      nativeHandle: input.session.id,
+      metadata: {
+        provider: "opencode",
+        cwd,
+        title,
+        [OPENCODE_CLOSE_BEHAVIOR_METADATA_KEY]: OPENCODE_CLOSE_BEHAVIOR_DETACH,
+      },
+    },
+    timeline,
+  };
+}
+
+async function readOpenCodePersistedSessionTimeline(input: {
+  client: OpencodeClient;
+  sessionId: string;
+  directory: string;
+}): Promise<AgentTimelineItem[]> {
+  let response: OpenCodeSessionMessagesResponse;
+  try {
+    response = await withTimeout(
+      input.client.session.messages({
+        sessionID: input.sessionId,
+        directory: input.directory,
+        limit: OPENCODE_PERSISTED_SESSION_TIMELINE_LIMIT,
+      }),
+      OPENCODE_PERSISTED_SESSION_MESSAGES_TIMEOUT_MS,
+      `OpenCode session.messages timed out after ${OPENCODE_PERSISTED_SESSION_MESSAGES_TIMEOUT_MS / 1000}s`,
+    );
+  } catch {
+    return [];
+  }
+
+  if (response.error || !response.data) {
+    return [];
+  }
+
+  return mapOpenCodePersistedMessagesToTimeline(response.data);
+}
+
+function mapOpenCodePersistedMessagesToTimeline(
+  messages: Array<{ info: OpenCodeMessage; parts: OpenCodePart[] }>,
+): AgentTimelineItem[] {
+  const timeline: AgentTimelineItem[] = [];
+
+  for (const { info, parts } of messages) {
+    timeline.push(...mapOpenCodePersistedMessageToTimelineItems(info, parts));
+  }
+
+  return timeline;
+}
+
+function mapOpenCodePersistedMessageToTimelineItems(
+  info: OpenCodeMessage,
+  parts: OpenCodePart[],
+): AgentTimelineItem[] {
+  if (info.role === "user") {
+    const text = parts
+      .filter((part): part is Extract<OpenCodePart, { type: "text" }> => part.type === "text")
+      .map((part) => part.text)
+      .join("");
+    return text ? [{ type: "user_message", text }] : [];
+  }
+
+  const timeline: AgentTimelineItem[] = [];
+  let emittedAssistantText = false;
+  for (const part of parts) {
+    if (part.type === "text" && part.text) {
+      emittedAssistantText = true;
+      timeline.push({ type: "assistant_message", text: part.text });
+      continue;
+    }
+    if (part.type === "reasoning" && part.text) {
+      timeline.push({ type: "reasoning", text: part.text });
+      continue;
+    }
+    if (part.type !== "tool") {
+      continue;
+    }
+    const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
+    if (parsedToolPart.success && parsedToolPart.data) {
+      timeline.push(parsedToolPart.data);
+    }
+  }
+
+  if (!emittedAssistantText) {
+    const text = stringifyStructuredAssistantMessage(info.structured);
+    if (text) {
+      timeline.push({ type: "assistant_message", text });
+    }
+  }
+
+  if (timeline.length === 0 && info.time?.completed === undefined) {
+    return [];
+  }
+
+  return timeline;
+}
+
+function normalizeOpenCodeTimestampMs(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return value < 10_000_000_000 ? value * 1000 : value;
 }
 
 const PERMISSION_COMMAND_KEYS = ["command", "cmd", "shellCommand"] as const;
@@ -1913,6 +2144,7 @@ class OpenCodeAgentSession implements AgentSession {
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private selectedModelContextWindowMaxTokens: number | undefined;
   private releaseServer: (() => void) | null;
+  private readonly closeBehavior: OpenCodeCloseBehavior;
   constructor(
     config: OpenCodeAgentConfig,
     client: OpencodeClient,
@@ -1920,6 +2152,7 @@ class OpenCodeAgentSession implements AgentSession {
     logger: Logger,
     modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
     releaseServer?: () => void,
+    closeBehavior: OpenCodeCloseBehavior = "archive",
   ) {
     this.config = config;
     this.client = client;
@@ -1928,6 +2161,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
     this.releaseServer = releaseServer ?? null;
+    this.closeBehavior = closeBehavior;
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       config.model,
     );
@@ -2567,18 +2801,24 @@ class OpenCodeAgentSession implements AgentSession {
       nativeHandle: this.sessionId,
       metadata: {
         cwd: this.config.cwd,
+        ...(this.closeBehavior === "detach"
+          ? { [OPENCODE_CLOSE_BEHAVIOR_METADATA_KEY]: OPENCODE_CLOSE_BEHAVIOR_DETACH }
+          : {}),
       },
     };
   }
 
   async close(): Promise<void> {
     try {
+      const shouldAbort = this.abortController !== null || this.activeForegroundTurnId !== null;
       this.abortController?.abort();
       await reconcileOpenCodeSessionClose({
         client: this.client,
         sessionId: this.sessionId,
         directory: this.config.cwd,
         logger: this.logger,
+        abortFirst: shouldAbort,
+        archive: this.closeBehavior === "archive",
       });
       this.subscribers.clear();
       this.activeForegroundTurnId = null;

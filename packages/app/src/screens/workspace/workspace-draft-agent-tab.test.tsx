@@ -21,10 +21,14 @@ const {
   latestComposerDisabled,
   latestStreamText,
   onCreatedMock,
+  fetchPersistedAgentsMock,
+  resumeAgentMock,
 } = vi.hoisted(() => ({
   createAgentMock: vi.fn(),
   getCheckoutStatusMock: vi.fn(),
   onRuntimeEventMock: vi.fn(() => () => {}),
+  fetchPersistedAgentsMock: vi.fn(async () => ({ entries: [] })),
+  resumeAgentMock: vi.fn(),
   latestComposerText: { current: null as string | null },
   latestComposerDisabled: { current: null as boolean | null },
   latestStreamText: { current: null as string | null },
@@ -33,19 +37,29 @@ const {
 
 vi.mock("react-native-unistyles", () => ({
   StyleSheet: {
-    create: (factory: unknown) =>
-      typeof factory === "function"
-        ? factory({
-            colors: {
-              surface0: "#000",
-              surface2: "#222",
-              destructive: "#f00",
-            },
-            spacing: { 2: 8, 3: 12, 4: 16, 6: 24 },
-            borderRadius: { md: 6 },
-            fontSize: { sm: 13 },
-          })
-        : factory,
+    create: (
+      factory: (theme: {
+        colors: Record<string, string>;
+        spacing: Record<number, number>;
+        borderRadius: Record<string, number>;
+        fontSize: Record<string, number>;
+      }) => unknown,
+    ) =>
+      factory({
+        colors: {
+          surface0: "#000",
+          surface1: "#111",
+          surface2: "#222",
+          border: "#333",
+          foreground: "#fff",
+          foregroundMuted: "#999",
+          destructive: "#f00",
+          accent: "#0a84ff",
+        },
+        spacing: { 1: 4, 2: 8, 3: 12, 4: 16, 6: 24 },
+        borderRadius: { md: 6, lg: 10 },
+        fontSize: { xs: 11, sm: 13, base: 16 },
+      }),
   },
   useUnistyles: () => ({ rt: { breakpoint: "lg" } }),
 }));
@@ -59,11 +73,30 @@ vi.mock("@/constants/platform", () => ({
   isNative: false,
 }));
 
+vi.mock("@/contexts/toast-context", () => ({
+  useToast: () => ({
+    show: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
+vi.mock("lucide-react-native", () => {
+  const Icon = () => null;
+  return new Proxy(
+    { __esModule: true, default: Icon },
+    {
+      get: (target, prop) => (prop in target ? target[prop as keyof typeof target] : Icon),
+    },
+  );
+});
+
 vi.mock("@/runtime/host-runtime", () => ({
   useHostRuntimeClient: () => ({
     createAgent: createAgentMock,
     getCheckoutStatus: getCheckoutStatusMock,
     on: onRuntimeEventMock,
+    fetchPersistedAgents: fetchPersistedAgentsMock,
+    resumeAgent: resumeAgentMock,
   }),
   useHostRuntimeIsConnected: () => true,
 }));
@@ -230,6 +263,9 @@ beforeEach(() => {
     remoteUrl: null,
   });
   onRuntimeEventMock.mockClear();
+  fetchPersistedAgentsMock.mockReset();
+  fetchPersistedAgentsMock.mockResolvedValue({ entries: [] });
+  resumeAgentMock.mockReset();
   onCreatedMock.mockReset();
   latestComposerText.current = null;
   latestComposerDisabled.current = null;

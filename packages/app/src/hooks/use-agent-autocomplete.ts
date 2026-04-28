@@ -24,11 +24,35 @@ interface UseAgentAutocompleteInput {
 
 type AgentAutocompleteOption =
   | (AutocompleteOption & { type: "command" })
+  | (AutocompleteOption & { type: "local_command" })
   | (AutocompleteOption & {
       type: "workspace_entry";
       entryPath: string;
       mention: FileMentionRange;
     });
+
+interface CommandSuggestion {
+  name: string;
+  description: string;
+  argumentHint?: string;
+}
+
+const LOCAL_COMMAND_OPTIONS = [
+  {
+    type: "local_command" as const,
+    id: "q",
+    label: "/q",
+    description: "Detach from Paseo and leave the provider session resumable",
+    kind: "command" as const,
+  },
+  {
+    type: "local_command" as const,
+    id: "exit",
+    label: "/exit",
+    description: "Detach from Paseo and leave the provider session resumable",
+    kind: "command" as const,
+  },
+] satisfies AgentAutocompleteOption[];
 
 interface AgentAutocompleteResult {
   isVisible: boolean;
@@ -161,6 +185,31 @@ function resolveAutocompleteErrorMessage(args: {
   return undefined;
 }
 
+function buildCommandAutocompleteOptions(input: {
+  commands: CommandSuggestion[];
+  query: string;
+}): AgentAutocompleteOption[] {
+  const filterLower = input.query.toLowerCase();
+  const localMatches = LOCAL_COMMAND_OPTIONS.filter((cmd) =>
+    cmd.id.toLowerCase().includes(filterLower),
+  );
+  const providerMatches = input.commands.filter((cmd) =>
+    cmd.name.toLowerCase().includes(filterLower),
+  );
+  const orderedProviderMatches = orderAutocompleteOptions(providerMatches);
+  return [
+    ...localMatches,
+    ...orderedProviderMatches.map((cmd) => ({
+      type: "command" as const,
+      id: cmd.name,
+      label: `/${cmd.name}`,
+      detail: cmd.argumentHint || undefined,
+      description: cmd.description,
+      kind: "command" as const,
+    })),
+  ];
+}
+
 export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAutocompleteResult {
   const {
     userInput,
@@ -276,17 +325,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     }
 
     if (mode === "command") {
-      const filterLower = commandFilterQuery.toLowerCase();
-      const matches = commands.filter((cmd) => cmd.name.toLowerCase().includes(filterLower));
-      const orderedMatches = orderAutocompleteOptions(matches);
-      return orderedMatches.map((cmd) => ({
-        type: "command" as const,
-        id: cmd.name,
-        label: `/${cmd.name}`,
-        detail: cmd.argumentHint || undefined,
-        description: cmd.description,
-        kind: "command",
-      }));
+      return buildCommandAutocompleteOptions({ commands, query: commandFilterQuery });
     }
 
     if (mode === "file" && activeFileMention) {
@@ -307,7 +346,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   const onSelectOption = useCallback(
     (option: AutocompleteOption) => {
       const selected = option as AgentAutocompleteOption;
-      if (selected.type === "command") {
+      if (selected.type === "command" || selected.type === "local_command") {
         setUserInput(`/${selected.id} `);
         onAutocompleteApplied?.();
         return;
@@ -361,3 +400,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onKeyPress,
   };
 }
+
+export const __private__ = {
+  buildCommandAutocompleteOptions,
+};

@@ -1201,12 +1201,17 @@ export class ClaudeAgentClient implements AgentClient {
       return [];
     }
     const limit = options?.limit ?? 20;
-    const candidates = await collectRecentClaudeSessions(projectsRoot, limit * 3);
+    const excludedSessionIds = new Set(options?.excludeSessionIds ?? []);
+    const candidates = await collectRecentClaudeSessions(
+      projectsRoot,
+      (limit + excludedSessionIds.size) * 3,
+    );
     const parsed = await Promise.all(
       candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
     );
     return parsed
       .filter((descriptor): descriptor is PersistedAgentDescriptor => descriptor !== null)
+      .filter((descriptor) => !excludedSessionIds.has(descriptor.sessionId))
       .slice(0, limit);
   }
 

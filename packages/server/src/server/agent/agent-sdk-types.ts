@@ -426,6 +426,8 @@ export interface AgentSlashCommand {
 
 export interface ListPersistedAgentsOptions {
   limit?: number;
+  cwd?: string;
+  excludeSessionIds?: readonly string[];
 }
 
 export interface PersistedAgentDescriptor {

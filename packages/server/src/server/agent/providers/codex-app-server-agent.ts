@@ -4296,61 +4296,70 @@ export class CodexAppServerAgentClient implements AgentClient {
       client.notify("initialized", {});
 
       const limit = options?.limit ?? 20;
-      const response = (await client.request("thread/list", { limit })) as {
+      const excludedSessionIds = new Set(options?.excludeSessionIds ?? []);
+      const response = (await client.request("thread/list", {
+        limit: limit + excludedSessionIds.size,
+      })) as {
         data?: Array<Record<string, unknown>>;
       };
       const threads = Array.isArray(response?.data) ? response.data : [];
       const descriptors: PersistedAgentDescriptor[] = await Promise.all(
-        threads.slice(0, limit).map(async (thread) => {
-          const threadId = typeof thread.id === "string" ? thread.id : "";
-          const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
-          const title = typeof thread.preview === "string" ? thread.preview : null;
-          let timeline: AgentTimelineItem[] = [];
-          try {
-            const [rolloutTimeline, read] = await Promise.all([
-              loadCodexPersistedTimeline(threadId, undefined, this.logger),
-              client.request("thread/read", {
-                threadId,
-                includeTurns: true,
-              }) as Promise<{ thread?: { turns?: Array<{ items?: unknown[] }> } }>,
-            ]);
-            const turns = read.thread?.turns ?? [];
-            const itemsFromThreadRead: AgentTimelineItem[] = [];
-            for (const turn of turns) {
-              for (const item of turn.items ?? []) {
-                const timelineItem = threadItemToTimeline(item, { cwd });
-                if (timelineItem) itemsFromThreadRead.push(timelineItem);
+        threads
+          .filter((thread) => {
+            const threadId = typeof thread.id === "string" ? thread.id : "";
+            return !excludedSessionIds.has(threadId);
+          })
+          .slice(0, limit)
+          .map(async (thread) => {
+            const threadId = typeof thread.id === "string" ? thread.id : "";
+            const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
+            const title = typeof thread.preview === "string" ? thread.preview : null;
+            let timeline: AgentTimelineItem[] = [];
+            try {
+              const [rolloutTimeline, read] = await Promise.all([
+                loadCodexPersistedTimeline(threadId, undefined, this.logger),
+                client.request("thread/read", {
+                  threadId,
+                  includeTurns: true,
+                }) as Promise<{ thread?: { turns?: Array<{ items?: unknown[] }> } }>,
+              ]);
+              const turns = read.thread?.turns ?? [];
+              const itemsFromThreadRead: AgentTimelineItem[] = [];
+              for (const turn of turns) {
+                for (const item of turn.items ?? []) {
+                  const timelineItem = threadItemToTimeline(item, { cwd });
+                  if (timelineItem) itemsFromThreadRead.push(timelineItem);
+                }
               }
+              timeline = rolloutTimeline.length > 0 ? rolloutTimeline : itemsFromThreadRead;
+            } catch {
+              timeline = [];
             }
-            timeline = rolloutTimeline.length > 0 ? rolloutTimeline : itemsFromThreadRead;
-          } catch {
-            timeline = [];
-          }
 
-          return {
-            provider: CODEX_PROVIDER,
-            sessionId: threadId,
-            cwd,
-            title,
-            lastActivityAt: new Date(
-              ((typeof thread.updatedAt === "number" ? thread.updatedAt : undefined) ??
-                (typeof thread.createdAt === "number" ? thread.createdAt : undefined) ??
-                0) * 1000,
-            ),
-            persistence: {
+            return {
               provider: CODEX_PROVIDER,
               sessionId: threadId,
-              nativeHandle: threadId,
-              metadata: {
+              cwd,
+              title,
+              lastActivityAt: new Date(
+                ((typeof thread.updatedAt === "number" ? thread.updatedAt : undefined) ??
+                  (typeof thread.createdAt === "number" ? thread.createdAt : undefined) ??
+                  0) * 1000,
+              ),
+              persistence: {
                 provider: CODEX_PROVIDER,
-                cwd,
-                title,
-                threadId,
+                sessionId: threadId,
+                nativeHandle: threadId,
+                metadata: {
+                  provider: CODEX_PROVIDER,
+                  cwd,
+                  title,
+                  threadId,
+                },
               },
-            },
-            timeline,
-          };
-        }),
+              timeline,
+            };
+          }),
       );
 
       return descriptors;

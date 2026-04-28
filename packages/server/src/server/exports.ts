@@ -23,6 +23,7 @@ export {
   type DaemonClientConfig,
   type ConnectionState,
   type DaemonEvent,
+  type FetchPersistedAgentsEntry,
 } from "../client/daemon-client.js";
 export type { WebSocketFactory, WebSocketLike } from "../client/daemon-client-transport-types.js";
 export {

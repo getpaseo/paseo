@@ -574,12 +574,35 @@ export class AgentManager {
   async listPersistedAgents(
     options?: PersistedAgentQueryOptions,
   ): Promise<PersistedAgentDescriptor[]> {
+    const activeSessionIdsByProvider = new Map<AgentProvider, Set<string>>();
+    for (const agent of this.agents.values()) {
+      const sessionId = agent.persistence?.sessionId ?? agent.runtimeInfo?.sessionId;
+      if (!sessionId) {
+        continue;
+      }
+      const sessionIds = activeSessionIdsByProvider.get(agent.provider) ?? new Set<string>();
+      sessionIds.add(sessionId);
+      activeSessionIdsByProvider.set(agent.provider, sessionIds);
+    }
+
+    const excludeActive = (descriptors: PersistedAgentDescriptor[]) => {
+      return descriptors.filter(
+        (descriptor) =>
+          !activeSessionIdsByProvider.get(descriptor.provider)?.has(descriptor.sessionId),
+      );
+    };
+
     if (options?.provider) {
       const client = this.requireClient(options.provider);
       if (!client.listPersistedAgents) {
         return [];
       }
-      return client.listPersistedAgents({ limit: options.limit });
+      const descriptors = await client.listPersistedAgents({
+        limit: options.limit,
+        cwd: options.cwd,
+        excludeSessionIds: Array.from(activeSessionIdsByProvider.get(options.provider) ?? []),
+      });
+      return excludeActive(descriptors).slice(0, options.limit ?? descriptors.length);
     }
 
     const providerEntries = Array.from(this.clients.entries()).filter(
@@ -588,7 +611,11 @@ export class AgentManager {
     const descriptorLists = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
         try {
-          return await client.listPersistedAgents!({ limit: options?.limit });
+          return await client.listPersistedAgents!({
+            limit: options?.limit,
+            cwd: options?.cwd,
+            excludeSessionIds: Array.from(activeSessionIdsByProvider.get(provider) ?? []),
+          });
         } catch (error) {
           this.logger.warn(
             { err: error, provider },
@@ -598,7 +625,7 @@ export class AgentManager {
         }
       }),
     );
-    const descriptors: PersistedAgentDescriptor[] = descriptorLists.flat();
+    const descriptors: PersistedAgentDescriptor[] = excludeActive(descriptorLists.flat());
 
     const limit = options?.limit ?? 20;
     return descriptors
@@ -794,7 +821,7 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
-    const normalizedConfig = await this.normalizeConfig(mergedConfig);
+    const normalizedConfig = await this.normalizeConfig(mergedConfig, false);
     const resumeOverrides =
       normalizedConfig.model !== mergedConfig.model
         ? { ...overrides, model: normalizedConfig.model }
@@ -3086,7 +3113,10 @@ export class AgentManager {
     }
   }
 
-  private async normalizeConfig(config: AgentSessionConfig): Promise<AgentSessionConfig> {
+  private async normalizeConfig(
+    config: AgentSessionConfig,
+    resolveDefaultModel = true,
+  ): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
 
     // Always resolve cwd to absolute path for consistent history file lookup
@@ -3117,19 +3147,8 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
-    if (!normalized.model) {
-      const client = this.clients.get(normalized.provider);
-      if (client) {
-        try {
-          const models = await client.listModels({ cwd: normalized.cwd, force: false });
-          const defaultModel = models.find((model) => model.isDefault) ?? models[0];
-          if (defaultModel) {
-            normalized.model = defaultModel.id;
-          }
-        } catch {
-          // Provider may not support model listing — leave model undefined
-        }
-      }
+    if (resolveDefaultModel) {
+      await this.populateDefaultModel(normalized);
     }
 
     if (!normalized.modeId) {
@@ -3142,6 +3161,25 @@ export class AgentManager {
     }
 
     return normalized;
+  }
+
+  private async populateDefaultModel(config: AgentSessionConfig): Promise<void> {
+    if (config.model) {
+      return;
+    }
+    const client = this.clients.get(config.provider);
+    if (!client) {
+      return;
+    }
+    try {
+      const models = await client.listModels({ cwd: config.cwd, force: false });
+      const defaultModel = models.find((model) => model.isDefault) ?? models[0];
+      if (defaultModel) {
+        config.model = defaultModel.id;
+      }
+    } catch {
+      // Provider may not support model listing — leave model undefined
+    }
   }
 
   private buildLaunchContext(agentId: string): AgentLaunchContext {

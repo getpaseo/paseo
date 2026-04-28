@@ -110,6 +110,39 @@ describe("workspace message schemas", () => {
     expect(response.type).toBe("fetch_agent_history_response");
   });
 
+  test("parses fetch_persisted_agents_request and response", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "fetch_persisted_agents_request",
+      requestId: "req-persisted",
+      provider: "opencode",
+      cwd: "/tmp/repo",
+      page: { limit: 10 },
+    });
+    const response = SessionOutboundMessageSchema.parse({
+      type: "fetch_persisted_agents_response",
+      payload: {
+        requestId: "req-persisted",
+        entries: [
+          {
+            provider: "opencode",
+            sessionId: "ses_123",
+            cwd: "/tmp/repo",
+            title: "External Session",
+            lastActivityAt: "2026-04-26T18:11:00.000Z",
+            persistence: {
+              provider: "opencode",
+              sessionId: "ses_123",
+            },
+            timeline: [{ type: "user_message", text: "hello" }],
+          },
+        ],
+      },
+    });
+
+    expect(request.type).toBe("fetch_persisted_agents_request");
+    expect(response.type).toBe("fetch_persisted_agents_response");
+  });
+
   test("parses open_project_request", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "open_project_request",
