@@ -110,7 +110,7 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   {
     id: "full-access",
     label: "Full Access",
-    description: "Automatically approves tool permissions allowed by OpenCode config",
+    description: "Automatically approves all tool permission prompts for the session",
     icon: "ShieldAlert",
     colorTier: "dangerous",
   },

@@ -3,13 +3,10 @@ import { homedir } from "node:os";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
-  type Agent as OpenCodeAgent,
   type Event as OpenCodeEvent,
   type FilePartInput as OpenCodeFilePartInput,
   type OpencodeClient,
   type Part as OpenCodePart,
-  type PermissionAction as OpenCodePermissionAction,
-  type PermissionRule as OpenCodePermissionRule,
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
@@ -82,7 +79,7 @@ const DEFAULT_MODES: AgentMode[] = [
   {
     id: OPENCODE_FULL_ACCESS_MODE_ID,
     label: "Full Access",
-    description: "Automatically approves tool permissions allowed by OpenCode config",
+    description: "Automatically approves all tool permission prompts for the session",
   },
   {
     id: "plan",
@@ -429,89 +426,6 @@ function mergeOpenCodeModes(discoveredModes: AgentMode[]): AgentMode[] {
     modesById.set(mode.id, mode);
   }
   return sortOpenCodeModes(Array.from(modesById.values()));
-}
-
-function escapeRegExpLiteral(value: string): string {
-  return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
-}
-
-function expandOpenCodePermissionPattern(pattern: string): string {
-  if (pattern === "~" || pattern === "$HOME") {
-    return homedir();
-  }
-  if (pattern.startsWith("~/")) {
-    return `${homedir()}${pattern.slice(1)}`;
-  }
-  if (pattern.startsWith("$HOME/")) {
-    return `${homedir()}${pattern.slice("$HOME".length)}`;
-  }
-  return pattern;
-}
-
-function matchesOpenCodePermissionPattern(pattern: string, value: string): boolean {
-  const expandedPattern = expandOpenCodePermissionPattern(pattern);
-  const source = expandedPattern
-    .split("")
-    .map((character) => {
-      if (character === "*") {
-        return ".*";
-      }
-      if (character === "?") {
-        return ".";
-      }
-      return escapeRegExpLiteral(character);
-    })
-    .join("");
-  return new RegExp(`^${source}$`).test(value);
-}
-
-function readOpenCodePermissionInputs(request: AgentPermissionRequest): string[] {
-  const input = readOpenCodeRecord(request.input);
-  const command = readNonEmptyString(input?.command);
-  if (request.name === "bash" && command) {
-    return [command];
-  }
-
-  const patterns = Array.isArray(input?.patterns)
-    ? input.patterns.filter((value): value is string => typeof value === "string")
-    : [];
-  if (patterns.length > 0) {
-    return patterns;
-  }
-
-  return [""];
-}
-
-function resolveOpenCodePermissionAction(params: {
-  rules: OpenCodePermissionRule[];
-  permission: string;
-  input: string;
-}): OpenCodePermissionAction | null {
-  const { rules, permission, input } = params;
-  let action: OpenCodePermissionAction | null = null;
-
-  for (const rule of rules) {
-    if (rule.permission !== permission && rule.permission !== "*") {
-      continue;
-    }
-    if (!matchesOpenCodePermissionPattern(rule.pattern, input)) {
-      continue;
-    }
-    action = rule.action;
-  }
-
-  return action;
-}
-
-function isOpenCodePermissionAllowedByRules(
-  rules: OpenCodePermissionRule[],
-  request: AgentPermissionRequest,
-): boolean {
-  const inputs = readOpenCodePermissionInputs(request);
-  return inputs.every(
-    (input) =>
-      resolveOpenCodePermissionAction({ rules, permission: request.name, input }) === "allow",
-  );
 }
 
 function sortOpenCodeModes(modes: AgentMode[]): AgentMode[] {
@@ -1970,7 +1884,6 @@ class OpenCodeAgentSession implements AgentSession {
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   private partTypes = new Map<string, string>();
   private availableModesCache: AgentMode[] | null = null;
-  private availableAgentsCache: OpenCodeAgent[] | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
@@ -2465,7 +2378,10 @@ class OpenCodeAgentSession implements AgentSession {
       return this.availableModesCache;
     }
 
-    const agents = await this.getAvailableOpenCodeAgents();
+    const response = await this.client.app.agents({
+      directory: this.config.cwd,
+    });
+    const agents = response.error || !response.data ? [] : response.data;
 
     const discoveredModes = agents
       .filter((agent) => agent.mode === "primary" && agent.hidden !== true)
@@ -2749,11 +2665,6 @@ class OpenCodeAgentSession implements AgentSession {
       return false;
     }
 
-    const rules = await this.getRuntimeOpenCodePermissionRules();
-    if (!isOpenCodePermissionAllowedByRules(rules, request)) {
-      return false;
-    }
-
     try {
       await this.client.permission.reply({
         requestID: request.id,
@@ -2768,26 +2679,6 @@ class OpenCodeAgentSession implements AgentSession {
       );
       return false;
     }
-  }
-
-  private async getAvailableOpenCodeAgents(options?: {
-    refresh?: boolean;
-  }): Promise<OpenCodeAgent[]> {
-    if (this.availableAgentsCache && options?.refresh !== true) {
-      return this.availableAgentsCache;
-    }
-
-    const response = await this.client.app.agents({
-      directory: this.config.cwd,
-    });
-    this.availableAgentsCache = response.error || !response.data ? [] : response.data;
-    return this.availableAgentsCache;
-  }
-
-  private async getRuntimeOpenCodePermissionRules(): Promise<OpenCodePermissionRule[]> {
-    const runtimeAgentId = resolveOpenCodeRuntimeAgentId(this.currentMode);
-    const agents = await this.getAvailableOpenCodeAgents({ refresh: true });
-    return agents.find((agent) => agent.name === runtimeAgentId)?.permission ?? [];
   }
 
   private resolveSelectedModelContextWindowMaxTokens(): number | undefined {

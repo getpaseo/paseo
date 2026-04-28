@@ -15,12 +15,6 @@ interface MockOpenCodeClientOptions {
   events?: unknown[];
 }
 
-interface MockPermissionRule {
-  permission: string;
-  pattern: string;
-  action: "allow" | "deny" | "ask";
-}
-
 function createEventStream(events: unknown[]): AsyncGenerator<never> {
   return (async function* () {
     for (const event of events) {
@@ -100,16 +94,6 @@ function toolPermissionEvent(): unknown {
   };
 }
 
-function buildAgent(permission: MockPermissionRule[]): unknown {
-  return {
-    name: "build",
-    mode: "primary",
-    hidden: false,
-    description: "Build agent",
-    permission,
-  };
-}
-
 function questionEvent(): unknown {
   return {
     type: "question.asked",
@@ -151,7 +135,7 @@ describe("OpenCode full-access mode", () => {
     expect(modes.map((mode) => mode.id)).toEqual(["build", "full-access", "plan", "paseo-custom"]);
     expect(modes.find((mode) => mode.id === "full-access")).toMatchObject({
       label: "Full Access",
-      description: "Automatically approves tool permissions allowed by OpenCode config",
+      description: "Automatically approves all tool permission prompts for the session",
     });
   });
 
@@ -176,10 +160,9 @@ describe("OpenCode full-access mode", () => {
     await session.close();
   });
 
-  test("auto-approves configured allow rules in full-access without surfacing them", async () => {
+  test("auto-approves tool permissions in full-access without surfacing them", async () => {
     mockServerManager();
     const { permissionReply } = mockOpenCodeClient({
-      agents: [buildAgent([{ permission: "bash", pattern: "npm *", action: "allow" }])],
       events: [toolPermissionEvent(), idleEvent()],
     });
     const receivedEvents: AgentStreamEvent[] = [];
@@ -202,44 +185,6 @@ describe("OpenCode full-access mode", () => {
     });
     expect(receivedEvents.filter((event) => event.type === "permission_requested")).toEqual([]);
     expect(session.getPendingPermissions()).toEqual([]);
-
-    await session.close();
-  });
-
-  test("surfaces tool permissions when OpenCode rules do not allow them", async () => {
-    mockServerManager();
-    const { permissionReply } = mockOpenCodeClient({
-      agents: [
-        buildAgent([
-          { permission: "bash", pattern: "*", action: "allow" },
-          { permission: "bash", pattern: "npm *", action: "deny" },
-        ]),
-      ],
-      events: [toolPermissionEvent(), idleEvent()],
-    });
-    const receivedEvents: AgentStreamEvent[] = [];
-
-    const client = new OpenCodeAgentClient(createTestLogger());
-    const session = await client.createSession({
-      provider: "opencode",
-      cwd: "/tmp/project",
-      modeId: "full-access",
-    });
-    session.subscribe((event) => receivedEvents.push(event));
-
-    await session.run("Run verification");
-
-    expect(permissionReply).not.toHaveBeenCalled();
-    expect(receivedEvents.filter((event) => event.type === "permission_requested")).toEqual([
-      expect.objectContaining({
-        request: expect.objectContaining({
-          id: "permission-1",
-          kind: "tool",
-          name: "bash",
-        }),
-      }),
-    ]);
-    expect(session.getPendingPermissions()).toHaveLength(1);
 
     await session.close();
   });
