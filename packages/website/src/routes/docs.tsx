@@ -23,7 +23,7 @@ function DocsLayout() {
       {/* Mobile header */}
       <header className="md:hidden border-b border-border p-4">
         <Link to="/" className="flex items-center gap-3">
-          <img src="/logo.svg" alt="Hubcode" className="w-6 h-6" />
+          <img src="/logo-icon.png" alt="Hubcode" className="w-6 h-6" />
           <span className="text-lg font-medium">Hubcode</span>
         </Link>
         <nav className="flex gap-4 mt-4">
@@ -45,7 +45,7 @@ function DocsLayout() {
         {/* Desktop sidebar */}
         <aside className="hidden md:block w-56 shrink-0 border-r border-border p-6 sticky top-0 h-screen">
           <Link to="/" className="flex items-center gap-3 mb-8">
-            <img src="/logo.svg" alt="Hubcode" className="w-6 h-6" />
+            <img src="/logo-icon.png" alt="Hubcode" className="w-6 h-6" />
             <span className="text-lg font-medium">Hubcode</span>
           </Link>
           <nav className="space-y-1">
