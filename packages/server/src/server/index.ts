@@ -15,27 +15,27 @@ type SupervisorLifecycleMessage =
       reason?: string;
     };
 
-interface BootstrapResult {
-  hubcodeHome: string;
-  logger: ReturnType<typeof createRootLogger>;
-  config: ReturnType<typeof loadConfig>;
-}
+async function main() {
+  let hubcodeHome: string;
+  let logger: ReturnType<typeof createRootLogger>;
+  let config: ReturnType<typeof loadConfig>;
+  let daemon: Awaited<ReturnType<typeof createHubcodeDaemon>> | null = null;
+  let shutdownPromise: Promise<number> | null = null;
+  let exitHookInstalled = false;
+  const supervised = process.env.HUBCODE_SUPERVISED === "1" && typeof process.send === "function";
+  let pidLockAcquired = false;
 
-function bootstrapFromEnvironment(): BootstrapResult {
   try {
-    const hubcodeHome = resolveHubcodeHome();
+    hubcodeHome = resolveHubcodeHome();
     const persistedConfig = loadPersistedConfig(hubcodeHome);
-    const logger = createRootLogger(persistedConfig, { hubcodeHome });
-    const config = loadConfig(hubcodeHome);
-    return { hubcodeHome, logger, config };
+    logger = createRootLogger(persistedConfig, { hubcodeHome });
+    config = loadConfig(hubcodeHome);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`${message}\n`);
     process.exit(1);
   }
-}
 
-function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
   if (process.argv.includes("--no-relay")) {
     config.relayEnabled = false;
   }
@@ -45,17 +45,6 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
   if (process.argv.includes("--no-inject-mcp")) {
     config.mcpInjectIntoAgents = false;
   }
-}
-
-async function main() {
-  const { hubcodeHome, logger, config } = bootstrapFromEnvironment();
-  let daemon: Awaited<ReturnType<typeof createHubcodeDaemon>> | null = null;
-  let shutdownPromise: Promise<number> | null = null;
-  let exitHookInstalled = false;
-  const supervised = process.env.HUBCODE_SUPERVISED === "1" && typeof process.send === "function";
-  let pidLockAcquired = false;
-
-  applyCliFlagOverrides(config);
 
   const installExitHook = () => {
     if (exitHookInstalled || !shutdownPromise) {

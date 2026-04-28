@@ -6,8 +6,8 @@ import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
   PROTOCOL_VERSION,
+  ndJsonStream,
   type AgentCapabilities as ACPAgentCapabilities,
-  type AnyMessage,
   type Client as ACPClient,
   type ClientCapabilities as ACPClientCapabilities,
   type ConfigOptionUpdate,
@@ -46,7 +46,6 @@ import {
   type UsageUpdate,
   type WaitForTerminalExitRequest,
   type WriteTextFileRequest,
-  type Stream as ACPStream,
 } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 
@@ -81,11 +80,10 @@ import type {
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
-  createProviderEnvSpec,
+  applyProviderEnv,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
-import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { findExecutable } from "../../../utils/executable.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 
@@ -108,86 +106,7 @@ const ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
 
 const COPILOT_AUTOPILOT_MODE = "https://agentclientprotocol.com/protocol/session-modes#autopilot";
 
-// Suppress interactive auth side-effects (e.g. Gemini CLI opening a Google
-// sign-in URL in the browser) when probing an ACP agent for models/modes.
-// NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
-const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
-
-function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
-  return {
-    type: error instanceof Error ? error.name : typeof error,
-    message: "ACP stdout line was not valid JSON",
-  };
-}
-
-export function createLoggedNdJsonStream(
-  output: WritableStream<Uint8Array>,
-  input: ReadableStream<Uint8Array>,
-  options: { logger: Logger; provider: string },
-): ACPStream {
-  const textEncoder = new TextEncoder();
-  const textDecoder = new TextDecoder();
-
-  const readable = new ReadableStream<AnyMessage>({
-    async start(controller) {
-      let content = "";
-      const reader = input.getReader();
-      try {
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) {
-            break;
-          }
-          if (!value) {
-            continue;
-          }
-
-          content += textDecoder.decode(value, { stream: true });
-          const lines = content.split("\n");
-          content = lines.pop() || "";
-
-          for (const line of lines) {
-            const trimmedLine = line.trim();
-            if (!trimmedLine) {
-              continue;
-            }
-
-            try {
-              const message = JSON.parse(trimmedLine) as AnyMessage;
-              controller.enqueue(message);
-            } catch (error) {
-              options.logger.warn(
-                {
-                  err: summarizeMalformedACPStdoutError(error),
-                  provider: options.provider,
-                },
-                "ACP agent emitted non-JSON stdout; ignoring line",
-              );
-            }
-          }
-        }
-      } finally {
-        reader.releaseLock();
-        controller.close();
-      }
-    },
-  });
-
-  const writable = new WritableStream<AnyMessage>({
-    async write(message) {
-      const writer = output.getWriter();
-      try {
-        await writer.write(textEncoder.encode(`${JSON.stringify(message)}\n`));
-      } finally {
-        writer.releaseLock();
-      }
-    },
-  });
-
-  return { readable, writable };
-}
-
-interface ACPAgentClientOptions {
+type ACPAgentClientOptions = {
   provider: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
@@ -204,9 +123,9 @@ interface ACPAgentClientOptions {
   capabilities?: AgentCapabilityFlags;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
-}
+};
 
-interface ACPAgentSessionOptions {
+type ACPAgentSessionOptions = {
   provider: string;
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
@@ -225,15 +144,15 @@ interface ACPAgentSessionOptions {
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
-}
+};
 
-export interface SpawnedACPProcess {
+type SpawnedACPProcess = {
   child: ChildProcessWithoutNullStreams;
   connection: ClientSideConnection;
   initialize: InitializeResponse;
-}
+};
 
-export interface ACPToolSnapshot {
+export type ACPToolSnapshot = {
   toolCallId: string;
   title: string;
   kind?: ToolKind | null;
@@ -242,28 +161,28 @@ export interface ACPToolSnapshot {
   locations?: ToolCallLocation[] | null;
   rawInput?: unknown;
   rawOutput?: unknown;
-}
+};
 
-interface PendingPermission {
+type PendingPermission = {
   request: AgentPermissionRequest;
   options: PermissionOption[];
   resolve: (response: RequestPermissionResponse) => void;
   reject: (error: Error) => void;
   turnId: string | null;
-}
+};
 
-interface MessageAssemblyState {
+type MessageAssemblyState = {
   text: string;
-}
+};
 
 export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
 
-interface TerminalExit {
+type TerminalExit = {
   exitCode?: number | null;
   signal?: string | null;
-}
+};
 
-interface TerminalEntry {
+type TerminalEntry = {
   id: string;
   child: ChildProcess;
   output: string;
@@ -273,15 +192,15 @@ interface TerminalEntry {
   waitForExit: Promise<TerminalExit>;
   resolveExit: (exit: TerminalExit) => void;
   rejectExit: (error: Error) => void;
-}
+};
 
-interface ConfigOptionSelector {
+type ConfigOptionSelector = {
   id: string;
   label: string;
   description?: string;
   isDefault?: boolean;
   metadata?: AgentMetadata;
-}
+};
 
 export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undefined {
   if (!usage) {
@@ -469,9 +388,9 @@ export class ACPAgentClient implements AgentClient {
     return session;
   }
 
-  async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const { cwd } = options;
-    const probe = await this.spawnProcess(PROBE_ENV);
+  async listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    const cwd = options?.cwd ?? process.cwd();
+    const probe = await this.spawnProcess(undefined);
     try {
       const response = await probe.connection.newSession({
         cwd,
@@ -489,9 +408,9 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  async listModes(options: ListModesOptions): Promise<AgentMode[]> {
-    const { cwd } = options;
-    const probe = await this.spawnProcess(PROBE_ENV);
+  async listModes(options?: ListModesOptions): Promise<AgentMode[]> {
+    const cwd = options?.cwd ?? process.cwd();
+    const probe = await this.spawnProcess(undefined);
     try {
       const response = await probe.connection.newSession({
         cwd,
@@ -512,7 +431,7 @@ export class ACPAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    const probe = await this.spawnProcess(PROBE_ENV);
+    const probe = await this.spawnProcess(undefined);
     try {
       if (!probe.initialize.agentCapabilities?.sessionCapabilities?.list) {
         return [];
@@ -520,10 +439,10 @@ export class ACPAgentClient implements AgentClient {
 
       const sessions: PersistedAgentDescriptor[] = [];
       let cursor: string | null | undefined;
-      for (;;) {
-        const page: ListSessionsResponse = await probe.connection.listSessions(
-          cursor ? { cursor } : {},
-        );
+      do {
+        const page: ListSessionsResponse = await probe.connection.listSessions({
+          ...(cursor ? { cursor } : {}),
+        });
         for (const session of page.sessions) {
           sessions.push({
             provider: this.provider,
@@ -545,9 +464,7 @@ export class ACPAgentClient implements AgentClient {
           });
         }
         cursor = page.nextCursor ?? null;
-        if (!cursor) break;
-        if (options?.limit && sessions.length >= options.limit) break;
-      }
+      } while (cursor && (!options?.limit || sessions.length < options.limit));
 
       return typeof options?.limit === "number" ? sessions.slice(0, options.limit) : sessions;
     } finally {
@@ -568,10 +485,13 @@ export class ACPAgentClient implements AgentClient {
     const { command, args } = await this.resolveLaunchCommand();
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [launchEnv],
-      }),
+      env: {
+        ...applyProviderEnv(
+          process.env as Record<string, string | undefined>,
+          this.runtimeSettings,
+        ),
+        ...(launchEnv ?? {}),
+      },
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
 
@@ -591,10 +511,9 @@ export class ACPAgentClient implements AgentClient {
       throw new Error(`${this.provider} ACP process did not expose stdio pipes`);
     }
 
-    const stream = createLoggedNdJsonStream(
+    const stream = ndJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
-      { logger: this.logger, provider: this.provider },
     );
     const connection = new ClientSideConnection(() => this.buildProbeClient(), stream);
     const initialize = (await Promise.race([
@@ -700,6 +619,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private sessionId: string | null = null;
   private currentMode: string | null = null;
   private availableModes: AgentMode[];
+  private availableModels: AgentModelDefinition[] = [];
   private currentModel: string | null = null;
   private thinkingOptionId: string | null = null;
   private currentTitle: string | null = null;
@@ -911,7 +831,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       })
       .then((response) => {
         this.handlePromptResponse(response, turnId);
-        return;
       })
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -1066,6 +985,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!modelId) {
       this.currentModel = null;
       return;
+    }
+
+    const modelExists = this.availableModels.some((model) => model.id === modelId);
+    if (!modelExists && this.availableModels.length > 0) {
+      throw new Error(`Unknown ${this.provider} model '${modelId}'`);
     }
 
     if ("unstable_setSessionModel" in this.connection) {
@@ -1316,10 +1240,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     );
     const child = spawnProcess(params.command, params.args ?? [], {
       cwd: params.cwd ?? this.config.cwd,
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [env],
-      }),
+      env: {
+        ...applyProviderEnv(
+          process.env as Record<string, string | undefined>,
+          this.runtimeSettings,
+        ),
+        ...env,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -1404,10 +1331,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
     const child = spawnProcess(command, args, {
       cwd: this.config.cwd,
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [this.launchEnv],
-      }),
+      env: {
+        ...applyProviderEnv(
+          process.env as Record<string, string | undefined>,
+          this.runtimeSettings,
+        ),
+        ...(this.launchEnv ?? {}),
+      },
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
 
@@ -1435,10 +1365,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`${this.provider} ACP process did not expose stdio pipes`);
     }
 
-    const stream = createLoggedNdJsonStream(
+    const stream = ndJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
-      { logger: this.logger, provider: this.provider },
     );
     const connection = new ClientSideConnection(() => this, stream);
     const initialize = await connection.initialize({
@@ -1459,6 +1388,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
     this.availableModes = modeInfo.modes;
+    this.availableModels = this.deriveAvailableModels(transformed.models);
     this.currentMode = modeInfo.currentModeId ?? this.currentMode;
 
     this.currentModel =
@@ -1504,14 +1434,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         const item = this.createMessageTimelineItem("reasoning", update);
         return item ? [this.wrapTimeline(item)] : [];
       }
-      case "tool_call":
-        return this.handleToolCallUpdate(update.toolCallId, update, undefined);
-      case "tool_call_update":
-        return this.handleToolCallUpdate(
-          update.toolCallId,
-          update,
-          this.toolCalls.get(update.toolCallId),
-        );
+      case "tool_call": {
+        let snapshot = mergeToolSnapshot(update.toolCallId, update);
+        if (this.toolSnapshotTransformer) {
+          snapshot = this.toolSnapshotTransformer(snapshot);
+        }
+        this.toolCalls.set(update.toolCallId, snapshot);
+        return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
+      }
+      case "tool_call_update": {
+        const previous = this.toolCalls.get(update.toolCallId);
+        let snapshot = mergeToolSnapshot(update.toolCallId, update, previous);
+        if (this.toolSnapshotTransformer) {
+          snapshot = this.toolSnapshotTransformer(snapshot);
+        }
+        this.toolCalls.set(update.toolCallId, snapshot);
+        return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
+      }
       case "plan":
         return [this.wrapTimeline(mapPlanToTimeline(update))];
       case "current_mode_update":
@@ -1537,19 +1476,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       default:
         return [];
     }
-  }
-
-  private handleToolCallUpdate(
-    toolCallId: string,
-    update: ToolCall | ToolCallUpdate,
-    previous: ACPToolSnapshot | undefined,
-  ): AgentStreamEvent[] {
-    let snapshot = mergeToolSnapshot(toolCallId, update, previous);
-    if (this.toolSnapshotTransformer) {
-      snapshot = this.toolSnapshotTransformer(snapshot);
-    }
-    this.toolCalls.set(toolCallId, snapshot);
-    return [this.wrapTimeline(mapToolSnapshotToTimeline(snapshot, this.terminalEntries))];
   }
 
   private createMessageTimelineItem(
@@ -1589,10 +1515,22 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.configOptions = update.configOptions;
     const modeInfo = deriveModesFromACP(this.defaultModes, null, this.configOptions);
     this.availableModes = modeInfo.modes;
+    this.availableModels = this.deriveAvailableModels(null);
     this.currentMode = modeInfo.currentModeId ?? this.currentMode;
     this.currentModel = deriveCurrentConfigValue(this.configOptions, "model") ?? this.currentModel;
     this.thinkingOptionId =
       deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
+  }
+
+  private deriveAvailableModels(
+    models: SessionModelState | null | undefined,
+  ): AgentModelDefinition[] {
+    const availableModels = deriveModelDefinitionsFromACP(
+      this.provider,
+      models,
+      this.configOptions,
+    );
+    return this.modelTransformer ? this.modelTransformer(availableModels) : availableModels;
   }
 
   private handleSessionInfoUpdate(update: SessionInfoUpdate): void {
@@ -1821,9 +1759,6 @@ function toACPContentBlocks(prompt: AgentPromptInput): ContentBlock[] {
     if (block.type === "text") {
       return { type: "text", text: block.text };
     }
-    if (block.type === "github_pr" || block.type === "github_issue") {
-      return { type: "text", text: renderPromptAttachmentAsText(block) };
-    }
     return {
       type: "image",
       data: block.data,
@@ -1863,30 +1798,22 @@ function contentBlockToText(content: ContentBlock): string {
   }
 }
 
-function coalesceDefined<T>(next: T | undefined, previous: T | undefined, fallback: T): T {
-  if (next !== undefined) {
-    return next;
-  }
-  if (previous !== undefined) {
-    return previous;
-  }
-  return fallback;
-}
-
 function mergeToolSnapshot(
   toolCallId: string,
   update: ToolCall | ToolCallUpdate,
   previous?: ACPToolSnapshot,
 ): ACPToolSnapshot {
+  const isFull = "title" in update && typeof update.title === "string";
   return {
     toolCallId,
     title: (update.title ?? previous?.title ?? toolCallId) as string,
     kind: update.kind ?? previous?.kind ?? null,
     status: update.status ?? previous?.status ?? null,
-    content: coalesceDefined(update.content, previous?.content, null),
-    locations: coalesceDefined(update.locations, previous?.locations, null),
+    content: update.content !== undefined ? update.content : (previous?.content ?? null),
+    locations: update.locations !== undefined ? update.locations : (previous?.locations ?? null),
     rawInput: update.rawInput !== undefined ? update.rawInput : previous?.rawInput,
     rawOutput: update.rawOutput !== undefined ? update.rawOutput : previous?.rawOutput,
+    ...(isFull ? {} : {}),
   };
 }
 
@@ -1950,147 +1877,106 @@ function mapToolStatus(status: ToolCallStatus | null | undefined): ToolCallTimel
   }
 }
 
-interface MapToolDetailContext {
-  snapshot: ACPToolSnapshot;
-  firstLocation: string | undefined;
-  textContent: string | undefined;
-  diffContent: ReturnType<typeof extractDiffContent>;
-  terminalContent: ReturnType<typeof extractTerminalContent>;
-  rawInput: ReturnType<typeof readRecord>;
-  rawOutput: ReturnType<typeof readRecord>;
-}
-
 function mapToolDetail(
   snapshot: ACPToolSnapshot,
   terminals: Map<string, TerminalEntry>,
 ): ToolCallDetail {
-  const context: MapToolDetailContext = {
-    snapshot,
-    firstLocation: snapshot.locations?.[0]?.path,
-    textContent: extractToolText(snapshot.content),
-    diffContent: extractDiffContent(snapshot.content),
-    terminalContent: extractTerminalContent(snapshot.content, terminals),
-    rawInput: readRecord(snapshot.rawInput),
-    rawOutput: readRecord(snapshot.rawOutput),
-  };
+  const firstLocation = snapshot.locations?.[0]?.path;
+  const textContent = extractToolText(snapshot.content);
+  const diffContent = extractDiffContent(snapshot.content);
+  const terminalContent = extractTerminalContent(snapshot.content, terminals);
+  const rawInput = readRecord(snapshot.rawInput);
+  const rawOutput = readRecord(snapshot.rawOutput);
 
   switch (snapshot.kind) {
     case "read":
-      return buildReadToolDetail(context);
+      return {
+        type: "read",
+        filePath:
+          firstLocation ?? readString(rawInput, ["path", "filePath", "file"]) ?? snapshot.title,
+        content: textContent ?? readString(rawOutput, ["content", "text"]),
+        offset: readNumber(rawInput, ["offset", "line"]),
+        limit: readNumber(rawInput, ["limit"]),
+      };
     case "edit":
     case "delete":
-      return buildEditToolDetail(context);
+      return {
+        type: "edit",
+        filePath:
+          firstLocation ?? readString(rawInput, ["path", "filePath", "file"]) ?? snapshot.title,
+        oldString: diffContent?.oldText ?? readString(rawInput, ["oldText", "oldString"]),
+        newString:
+          snapshot.kind === "delete"
+            ? ""
+            : (diffContent?.newText ?? readString(rawInput, ["newText", "newString"])),
+        unifiedDiff: textContent ?? undefined,
+      };
     case "search":
-      return buildSearchAcpToolDetail(context);
+      return {
+        type: "search",
+        query: readString(rawInput, ["query", "pattern"]) ?? snapshot.title,
+        toolName: "search",
+        content: textContent ?? readString(rawOutput, ["content", "text"]),
+        filePaths: snapshot.locations?.map((location) => location.path),
+      };
     case "execute":
-      return buildShellToolDetail(context);
+      return {
+        type: "shell",
+        command:
+          terminalContent?.command ??
+          buildShellCommand(rawInput) ??
+          readString(rawInput, ["command"]) ??
+          snapshot.title,
+        cwd: terminalContent?.cwd ?? readString(rawInput, ["cwd"]),
+        output: terminalContent?.output ?? textContent ?? readString(rawOutput, ["output", "text"]),
+        exitCode: terminalContent?.exitCode ?? readNumber(rawOutput, ["exitCode"]),
+      };
     case "fetch":
-      return buildFetchToolDetail(context);
+      return {
+        type: "fetch",
+        url: readString(rawInput, ["url"]) ?? snapshot.title,
+        prompt: readString(rawInput, ["prompt"]),
+        result: textContent ?? readString(rawOutput, ["result", "text", "content"]),
+        code: readNumber(rawOutput, ["status", "code"]),
+      };
     case "think":
       return {
         type: "plain_text",
         label: snapshot.title,
         icon: "brain",
-        text: context.textContent ?? stringifyUnknown(snapshot.rawOutput),
+        text: textContent ?? stringifyUnknown(snapshot.rawOutput),
       };
     case "switch_mode":
       return {
         type: "plain_text",
         label: snapshot.title,
         icon: "sparkles",
-        text: context.textContent ?? stringifyUnknown(snapshot.rawInput),
+        text: textContent ?? stringifyUnknown(snapshot.rawInput),
       };
     default:
-      return buildDefaultToolDetail(context);
+      if (terminalContent) {
+        return {
+          type: "shell",
+          command: terminalContent.command ?? snapshot.title,
+          cwd: terminalContent.cwd,
+          output: terminalContent.output,
+          exitCode: terminalContent.exitCode,
+        };
+      }
+      if (textContent) {
+        return {
+          type: "plain_text",
+          label: snapshot.title,
+          text: textContent,
+          icon: "wrench",
+        };
+      }
+      return {
+        type: "unknown",
+        input: snapshot.rawInput ?? null,
+        output: snapshot.rawOutput ?? null,
+      };
   }
-}
-
-function buildReadToolDetail(context: MapToolDetailContext): ToolCallDetail {
-  const { snapshot, firstLocation, textContent, rawInput, rawOutput } = context;
-  return {
-    type: "read",
-    filePath: firstLocation ?? readString(rawInput, ["path", "filePath", "file"]) ?? snapshot.title,
-    content: textContent ?? readString(rawOutput, ["content", "text"]),
-    offset: readNumber(rawInput, ["offset", "line"]),
-    limit: readNumber(rawInput, ["limit"]),
-  };
-}
-
-function buildEditToolDetail(context: MapToolDetailContext): ToolCallDetail {
-  const { snapshot, firstLocation, textContent, diffContent, rawInput } = context;
-  return {
-    type: "edit",
-    filePath: firstLocation ?? readString(rawInput, ["path", "filePath", "file"]) ?? snapshot.title,
-    oldString: diffContent?.oldText ?? readString(rawInput, ["oldText", "oldString"]),
-    newString:
-      snapshot.kind === "delete"
-        ? ""
-        : (diffContent?.newText ?? readString(rawInput, ["newText", "newString"])),
-    unifiedDiff: textContent ?? undefined,
-  };
-}
-
-function buildSearchAcpToolDetail(context: MapToolDetailContext): ToolCallDetail {
-  const { snapshot, textContent, rawInput, rawOutput } = context;
-  return {
-    type: "search",
-    query: readString(rawInput, ["query", "pattern"]) ?? snapshot.title,
-    toolName: "search",
-    content: textContent ?? readString(rawOutput, ["content", "text"]),
-    filePaths: snapshot.locations?.map((location) => location.path),
-  };
-}
-
-function buildShellToolDetail(context: MapToolDetailContext): ToolCallDetail {
-  const { snapshot, textContent, terminalContent, rawInput, rawOutput } = context;
-  return {
-    type: "shell",
-    command:
-      terminalContent?.command ??
-      buildShellCommand(rawInput) ??
-      readString(rawInput, ["command"]) ??
-      snapshot.title,
-    cwd: terminalContent?.cwd ?? readString(rawInput, ["cwd"]),
-    output: terminalContent?.output ?? textContent ?? readString(rawOutput, ["output", "text"]),
-    exitCode: terminalContent?.exitCode ?? readNumber(rawOutput, ["exitCode"]),
-  };
-}
-
-function buildFetchToolDetail(context: MapToolDetailContext): ToolCallDetail {
-  const { snapshot, textContent, rawInput, rawOutput } = context;
-  return {
-    type: "fetch",
-    url: readString(rawInput, ["url"]) ?? snapshot.title,
-    prompt: readString(rawInput, ["prompt"]),
-    result: textContent ?? readString(rawOutput, ["result", "text", "content"]),
-    code: readNumber(rawOutput, ["status", "code"]),
-  };
-}
-
-function buildDefaultToolDetail(context: MapToolDetailContext): ToolCallDetail {
-  const { snapshot, textContent, terminalContent } = context;
-  if (terminalContent) {
-    return {
-      type: "shell",
-      command: terminalContent.command ?? snapshot.title,
-      cwd: terminalContent.cwd,
-      output: terminalContent.output,
-      exitCode: terminalContent.exitCode,
-    };
-  }
-  if (textContent) {
-    return {
-      type: "plain_text",
-      label: snapshot.title,
-      text: textContent,
-      icon: "wrench",
-    };
-  }
-  return {
-    type: "unknown",
-    input: snapshot.rawInput ?? null,
-    output: snapshot.rawOutput ?? null,
-  };
 }
 
 function extractToolText(content: ToolCallContent[] | null | undefined): string | undefined {

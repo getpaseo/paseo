@@ -2,10 +2,10 @@ import os from "node:os";
 
 import { ConnectionOfferV2Schema, type ConnectionOffer } from "../shared/connection-offer.js";
 
-interface BuildOfferEndpointsArgs {
+type BuildOfferEndpointsArgs = {
   listenHost: string;
   port: number;
-}
+};
 
 export function buildOfferEndpoints({ listenHost, port }: BuildOfferEndpointsArgs): string[] {
   const endpoints: string[] = [];

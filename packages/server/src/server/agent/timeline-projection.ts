@@ -3,15 +3,15 @@ import type { AgentTimelineRow } from "./agent-manager.js";
 
 export type TimelineProjectionMode = "canonical" | "projected";
 
-export interface TimelineSeqRange {
+export type TimelineSeqRange = {
   startSeq: number;
   endSeq: number;
-}
+};
 
 export type TimelineProjectionKind = "assistant_merge" | "tool_lifecycle";
 export type TimelineLimitDirection = "tail" | "before" | "after";
 
-export interface TimelineProjectionEntry {
+export type TimelineProjectionEntry = {
   provider: AgentProvider;
   item: AgentTimelineItem;
   timestamp: string;
@@ -19,15 +19,15 @@ export interface TimelineProjectionEntry {
   seqEnd: number;
   sourceSeqRanges: TimelineSeqRange[];
   collapsed: TimelineProjectionKind[];
-}
+};
 
 type WorkingEntry = TimelineProjectionEntry;
-interface ProjectedWindowSelection {
+type ProjectedWindowSelection = {
   projectedEntries: TimelineProjectionEntry[];
   selectedRows: AgentTimelineRow[];
   minSeq: number | null;
   maxSeq: number | null;
-}
+};
 
 function appendSeqToRanges(ranges: TimelineSeqRange[], seq: number): TimelineSeqRange[] {
   if (ranges.length === 0) {
@@ -79,7 +79,7 @@ function mergeToolCallItems(
   const mergedDetail = mergeToolCallDetail(existing.detail, incoming.detail);
   const mergedMetadata =
     existing.metadata || incoming.metadata
-      ? { ...existing.metadata, ...incoming.metadata }
+      ? { ...(existing.metadata ?? {}), ...(incoming.metadata ?? {}) }
       : undefined;
 
   const merged: Extract<AgentTimelineItem, { type: "tool_call" }> = {
@@ -241,14 +241,12 @@ export function selectTimelineWindowByProjectedLimit(input: {
     };
   }
 
-  let projectedEntries: typeof projectedAll;
-  if (limit === 0 || limit >= projectedAll.length) {
-    projectedEntries = projectedAll;
-  } else if (direction === "after") {
-    projectedEntries = projectedAll.slice(0, limit);
-  } else {
-    projectedEntries = projectedAll.slice(projectedAll.length - limit);
-  }
+  const projectedEntries =
+    limit === 0 || limit >= projectedAll.length
+      ? projectedAll
+      : direction === "after"
+        ? projectedAll.slice(0, limit)
+        : projectedAll.slice(projectedAll.length - limit);
 
   if (projectedEntries.length === 0) {
     return {

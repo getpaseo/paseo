@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useQueries } from "@tanstack/react-query";
-import {
+import React, {
   useCallback,
   useMemo,
   useState,
@@ -25,7 +25,7 @@ import {
 } from "react";
 import { router, usePathname, type Href } from "expo-router";
 import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { type GestureType } from "react-native-gesture-handler";
 import * as Clipboard from "expo-clipboard";
@@ -35,6 +35,7 @@ import {
   CircleAlert,
   ChevronDown,
   ChevronRight,
+  Columns3,
   Copy,
   ExternalLink,
   FolderPlus,
@@ -56,7 +57,9 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { projectIconQueryKey } from "@/hooks/use-project-icon-query";
 import {
   buildHostNewWorkspaceRoute,
+  buildHostProjectKanbanRoute,
   buildProjectSettingsRoute,
+  parseHostProjectKanbanRouteFromPathname,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 import {
@@ -81,6 +84,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SyncedLoader } from "@/components/synced-loader";
 import { useToast } from "@/contexts/toast-context";
+import { useKanbanStore } from "@/stores/kanban-store";
 import { useCheckoutGitActionsStore } from "@/stores/checkout-git-actions-store";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { decideLongPressMove } from "@/utils/sidebar-gesture-arbitration";
@@ -128,20 +132,29 @@ const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
 const DEFAULT_STATUS_DOT_OFFSET = 0;
 const EMPHASIZED_STATUS_DOT_OFFSET = -1;
-const ThemedExternalLink = withUnistyles(ExternalLink);
-const ThemedGitPullRequest = withUnistyles(GitPullRequest);
-const ThemedGitHubIcon = withUnistyles(GitHubIcon);
-const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
-const ThemedCircleAlert = withUnistyles(CircleAlert);
-const ThemedSyncedLoader = withUnistyles(SyncedLoader);
-const ThemedMonitor = withUnistyles(Monitor);
-const ThemedFolderGit2 = withUnistyles(FolderGit2);
-const ThemedFolderPlus = withUnistyles(FolderPlus);
-const ThemedGlobe = withUnistyles(Globe);
-const ThemedSquareTerminal = withUnistyles(SquareTerminal);
-const ThemedMoreVertical = withUnistyles(MoreVertical);
-const ThemedTrash2 = withUnistyles(Trash2);
-const ThemedSettings = withUnistyles(Settings);
+// `withUnistyles` (rn-unistyles@3.2.3) forwards `uniProps` to the wrapped
+// component, which then leaks to DOM as an unknown prop. Wrap each icon to
+// strip `uniProps` before reaching the underlying SVG/native component.
+function stripUniProps<P extends object>(Component: React.ComponentType<P>) {
+  return React.forwardRef<unknown, P & { uniProps?: unknown }>((props, ref) => {
+    const { uniProps: _uniProps, ...rest } = props as P & { uniProps?: unknown };
+    return <Component ref={ref as never} {...(rest as P)} />;
+  }) as unknown as React.ComponentType<P>;
+}
+const ThemedExternalLink = withUnistyles(stripUniProps(ExternalLink));
+const ThemedGitPullRequest = withUnistyles(stripUniProps(GitPullRequest));
+const ThemedGitHubIcon = withUnistyles(stripUniProps(GitHubIcon));
+const ThemedActivityIndicator = withUnistyles(stripUniProps(ActivityIndicator));
+const ThemedCircleAlert = withUnistyles(stripUniProps(CircleAlert));
+const ThemedSyncedLoader = withUnistyles(stripUniProps(SyncedLoader));
+const ThemedMonitor = withUnistyles(stripUniProps(Monitor));
+const ThemedFolderGit2 = withUnistyles(stripUniProps(FolderGit2));
+const ThemedFolderPlus = withUnistyles(stripUniProps(FolderPlus));
+const ThemedGlobe = withUnistyles(stripUniProps(Globe));
+const ThemedSquareTerminal = withUnistyles(stripUniProps(SquareTerminal));
+const ThemedMoreVertical = withUnistyles(stripUniProps(MoreVertical));
+const ThemedTrash2 = withUnistyles(stripUniProps(Trash2));
+const ThemedSettings = withUnistyles(stripUniProps(Settings));
 const ThemedCopy = withUnistyles(Copy);
 const ThemedArchive = withUnistyles(Archive);
 
@@ -885,14 +898,19 @@ function NewWorktreeButton({
   );
 
   return (
-    <View style={styles.projectTrailingControlSlot} pointerEvents={visible ? "auto" : "none"}>
+    <View
+      style={[
+        styles.projectTrailingControlSlot,
+        { pointerEvents: visible ? "auto" : "none" } as const,
+      ]}
+    >
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild disabled={!visible}>
           <Pressable
             style={pressableStyle}
             onPress={handlePress}
             disabled={loading}
-            accessibilityRole="button"
+            accessibilityRole="link"
             accessibilityLabel={`Create a new workspace for ${displayName}`}
             testID={testID}
           >
@@ -1265,9 +1283,13 @@ function ProjectHeaderRow({
     );
   }
 
+  // Strip role/tabIndex from dnd-kit so the outer wrapper doesn't become a
+  // <button> (which would nest with our inner Pressable buttons on web).
+  const { role: _dndRole, tabIndex: _dndTabIndex, ...dndAttrs } =
+    dragHandleProps?.attributes ?? {};
   return (
     <View
-      {...dragHandleProps?.attributes}
+      {...dndAttrs}
       {...dragHandleProps?.listeners}
       ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
       onPointerEnter={handlePointerEnter}
@@ -1282,6 +1304,48 @@ function ProjectHeaderRow({
         testID={`sidebar-project-row-${project.projectKey}`}
       >
         {rowChildren}
+      </Pressable>
+    </View>
+  );
+}
+
+interface ProjectKanbanRowProps {
+  selected: boolean;
+  count: number;
+  onPress: () => void;
+}
+
+function ProjectKanbanRow({ selected, count, onPress }: ProjectKanbanRowProps) {
+  const { theme } = useUnistyles();
+  const [isHovered, setIsHovered] = useState(false);
+
+  return (
+    <View onPointerEnter={() => setIsHovered(true)} onPointerLeave={() => setIsHovered(false)}>
+      <Pressable
+        accessibilityRole="link"
+        style={({ pressed }) => [
+          styles.projectKanbanRow,
+          selected && styles.sidebarRowSelected,
+          isHovered && styles.workspaceRowHovered,
+          pressed && styles.workspaceRowPressed,
+        ]}
+        onPress={onPress}
+      >
+        <View style={styles.workspaceRowMain}>
+          <View style={styles.workspaceRowLeft}>
+            <View style={styles.projectKanbanIconSlot}>
+              <Columns3 size={14} color={theme.colors.foregroundMuted} />
+            </View>
+            <Text style={styles.workspaceBranchText} numberOfLines={1}>
+              Tasks
+            </Text>
+          </View>
+          {count > 0 ? (
+            <View style={styles.projectKanbanCountBadge}>
+              <Text style={styles.projectKanbanCountText}>{count}</Text>
+            </View>
+          ) : null}
+        </View>
       </Pressable>
     </View>
   );
@@ -1360,10 +1424,14 @@ function WorkspaceRowInner({
     ],
     [isHovered, isCreating],
   );
+  // Strip role/tabIndex from dnd-kit so the outer wrapper doesn't become a
+  // <button> (which would nest with our inner Pressable buttons on web).
+  const { role: _wsDndRole, tabIndex: _wsDndTabIndex, ...wsDndAttrs } =
+    dragHandleProps?.attributes ?? {};
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
       <View
-        {...dragHandleProps?.attributes}
+        {...wsDndAttrs}
         {...dragHandleProps?.listeners}
         ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
         style={styles.workspaceRowContainer}
@@ -1373,7 +1441,7 @@ function WorkspaceRowInner({
         <Pressable
           disabled={isArchiving}
           aria-selected={selected}
-          accessibilityRole="button"
+          accessibilityRole="link"
           accessibilityState={accessibilityState}
           style={workspaceRowStyle}
           onPressIn={interaction.handlePressIn}
@@ -2032,6 +2100,29 @@ function ProjectBlock({
     enabled: selectionEnabled,
   });
 
+  // Kanban task count = workspaces in this project that show on the kanban
+  // (worktrees or anything explicitly tagged with kanbanStatus). Reads from
+  // session store so it stays in sync with the kanban screen instead of the
+  // legacy persisted kanban-store.
+  const kanbanTasksCount = useSessionStore((state) => {
+    if (!serverId) return 0;
+    const workspaces = state.sessions[serverId]?.workspaces;
+    if (!workspaces) return 0;
+    let count = 0;
+    for (const workspace of workspaces.values()) {
+      if (workspace.projectId !== project.projectKey) continue;
+      if (workspace.kanbanStatus || workspace.workspaceKind === "worktree") {
+        count++;
+      }
+    }
+    return count;
+  });
+  const isProjectKanbanActive = useMemo(() => {
+    if (!currentPathname || !serverId) return false;
+    const parsed = parseHostProjectKanbanRouteFromPathname(currentPathname);
+    return parsed?.serverId === serverId && parsed?.projectId === project.projectKey;
+  }, [currentPathname, serverId, project.projectKey]);
+
   const renderWorkspaceRow = useCallback(
     (
       item: SidebarWorkspaceEntry,
@@ -2203,18 +2294,29 @@ function ProjectBlock({
           />
 
           {!collapsed ? (
-            <DraggableList
-              testID={`sidebar-workspace-list-${project.projectKey}`}
-              data={project.workspaces}
-              keyExtractor={workspaceKeyExtractor}
-              renderItem={renderWorkspace}
-              onDragEnd={handleWorkspaceDragEnd}
-              scrollEnabled={false}
-              useDragHandle
-              nestable={useNestable}
-              simultaneousGestureRef={parentGestureRef}
-              containerStyle={styles.workspaceListContainer}
-            />
+            <>
+              <ProjectKanbanRow
+                selected={isProjectKanbanActive}
+                count={kanbanTasksCount}
+                onPress={() => {
+                  if (!serverId) return;
+                  onWorkspacePress?.();
+                  router.navigate(buildHostProjectKanbanRoute(serverId, project.projectKey));
+                }}
+              />
+              <DraggableList
+                testID={`sidebar-workspace-list-${project.projectKey}`}
+                data={project.workspaces}
+                keyExtractor={workspaceKeyExtractor}
+                renderItem={renderWorkspace}
+                onDragEnd={handleWorkspaceDragEnd}
+                scrollEnabled={false}
+                useDragHandle
+                nestable={useNestable}
+                simultaneousGestureRef={parentGestureRef}
+                containerStyle={styles.workspaceListContainer}
+              />
+            </>
           ) : null}
         </>
       )}
@@ -2563,6 +2665,38 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   workspaceListContainer: {},
+  projectKanbanRow: {
+    minHeight: 32,
+    paddingVertical: 6,
+    paddingLeft: theme.spacing[3] + theme.spacing[3],
+    paddingRight: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    flexDirection: "column" as const,
+    alignItems: "stretch" as const,
+    justifyContent: "center" as const,
+    gap: theme.spacing[1],
+  },
+  projectKanbanIconSlot: {
+    width: WORKSPACE_STATUS_DOT_WIDTH,
+    height: 16,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    flexShrink: 0,
+  },
+  projectKanbanCountBadge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  },
+  projectKanbanCountText: {
+    fontSize: 11,
+    color: theme.colors.foregroundMuted,
+    fontWeight: theme.fontWeight.medium,
+  },
   emptyContainer: {
     marginHorizontal: theme.spacing[2],
     marginTop: theme.spacing[4],

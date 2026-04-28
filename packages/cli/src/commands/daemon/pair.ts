@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { generateLocalPairingOffer, loadConfig, resolveHubcodeHome } from "@gethubcode/server";
+import { generateLocalPairingOffer, loadConfig, resolveHubcodeHome } from "@hubcode/server";
 import { addJsonOption } from "../../utils/command-options.js";
 
 interface PairOptions {

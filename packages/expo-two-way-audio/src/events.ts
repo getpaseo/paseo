@@ -1,20 +1,20 @@
 import ExpoTwoWayAudioModule from "./ExpoTwoWayAudioModule";
 
-export interface MicrophoneDataEvent {
+export type MicrophoneDataEvent = {
   data: Uint8Array;
-}
+};
 
-export interface VolumeLevelEvent {
+export type VolumeLevelEvent = {
   data: number;
-}
+};
 
-export interface RecordingChangeEvent {
+export type RecordingChangeEvent = {
   data: boolean;
-}
+};
 
-export interface AudioInterruptionEvent {
+export type AudioInterruptionEvent = {
   data: string;
-}
+};
 
 export interface ExpoTwoWayAudioEventMap {
   onMicrophoneData: MicrophoneDataEvent;

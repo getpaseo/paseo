@@ -52,9 +52,11 @@ class FakeRealtimeSession extends EventEmitter implements StreamingTranscription
 class FakeSttProvider implements SpeechToTextProvider {
   public readonly id = "fake";
   constructor(private readonly session: FakeRealtimeSession) {}
-  createSession(
-    _params: Parameters<SpeechToTextProvider["createSession"]>[0],
-  ): StreamingTranscriptionSession {
+  createSession(_params: {
+    logger: any;
+    language?: string;
+    prompt?: string;
+  }): StreamingTranscriptionSession {
     return this.session;
   }
 }
@@ -87,7 +89,7 @@ describe("DictationStreamManager (finish buffer-too-small tolerance)", () => {
 
   it("treats buffer-too-small as benign and finalizes with existing transcripts", async () => {
     const session = new FakeRealtimeSession();
-    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const emitted: Array<{ type: string; payload: any }> = [];
     const manager = new DictationStreamManager({
       logger: pino({ level: "silent" }),
       emit: (msg) => emitted.push(msg),
@@ -117,7 +119,7 @@ describe("DictationStreamManager (finish buffer-too-small tolerance)", () => {
     const final = emitted.find((msg) => msg.type === "dictation_stream_final");
     const error = emitted.find((msg) => msg.type === "dictation_stream_error");
     expect(error).toBeUndefined();
-    expect((final?.payload as { text?: string } | undefined)?.text).toBe("hello world");
+    expect(final?.payload.text).toBe("hello world");
     expect(session.closed).toBe(true);
   });
 });
@@ -129,7 +131,7 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
 
     try {
       const session = new FakeRealtimeSession();
-      const emitted: Array<{ type: string; payload: unknown }> = [];
+      const emitted: Array<{ type: string; payload: any }> = [];
       const manager = new DictationStreamManager({
         logger: pino({ level: "silent" }),
         emit: (msg) => emitted.push(msg),
@@ -156,7 +158,7 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
 
     try {
       const session = new FakeRealtimeSession();
-      const emitted: Array<{ type: string; payload: unknown }> = [];
+      const emitted: Array<{ type: string; payload: any }> = [];
       const manager = new DictationStreamManager({
         logger: pino({ level: "silent" }),
         emit: (msg) => emitted.push(msg),
@@ -193,7 +195,7 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
       await tick();
 
       const final = emitted.find((msg) => msg.type === "dictation_stream_final");
-      expect((final?.payload as { text?: string } | undefined)?.text).toBe("hello world");
+      expect(final?.payload.text).toBe("hello world");
     } finally {
       if (originalDebug === undefined) {
         delete process.env.HUBCODE_DICTATION_DEBUG;
@@ -205,7 +207,7 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
 
   it("adapts finish timeout based on pending committed segments", async () => {
     const session = new FakeRealtimeSession();
-    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const emitted: Array<{ type: string; payload: any }> = [];
     const manager = new DictationStreamManager({
       logger: pino({ level: "silent" }),
       emit: (msg) => emitted.push(msg),
@@ -229,14 +231,12 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
 
     const finishAccepted = emitted.find((msg) => msg.type === "dictation_stream_finish_accepted");
     expect(finishAccepted).toBeDefined();
-    expect(
-      (finishAccepted?.payload as { timeoutMs?: number } | undefined)?.timeoutMs,
-    ).toBeGreaterThan(5000);
+    expect(finishAccepted?.payload.timeoutMs).toBeGreaterThan(5000);
   });
 
   it("adapts finish timeout when only uncommitted non-final transcripts are pending", async () => {
     const session = new FakeRealtimeSession();
-    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const emitted: Array<{ type: string; payload: any }> = [];
     const manager = new DictationStreamManager({
       logger: pino({ level: "silent" }),
       emit: (msg) => emitted.push(msg),
@@ -261,18 +261,14 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
 
     const finishAccepted = emitted.find((msg) => msg.type === "dictation_stream_finish_accepted");
     expect(finishAccepted).toBeDefined();
-    expect(
-      (finishAccepted?.payload as { timeoutMs?: number } | undefined)?.timeoutMs,
-    ).toBeGreaterThan(5000);
+    expect(finishAccepted?.payload.timeoutMs).toBeGreaterThan(5000);
   });
 
   it("drops dangling uncommitted non-final transcripts when finishing after silence tail clear", async () => {
     vi.useFakeTimers();
-    const previousDebug = process.env.HUBCODE_DICTATION_DEBUG;
-    process.env.HUBCODE_DICTATION_DEBUG = "false";
     try {
       const session = new FakeRealtimeSession();
-      const emitted: Array<{ type: string; payload: unknown }> = [];
+      const emitted: Array<{ type: string; payload: any }> = [];
       const manager = new DictationStreamManager({
         logger: pino({ level: "silent" }),
         emit: (msg) => emitted.push(msg),
@@ -303,15 +299,13 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
       await manager.handleFinish("d-clear-tail", 1);
       await tick();
       await vi.advanceTimersByTimeAsync(5_100);
-      await tick();
 
       const final = emitted.find((msg) => msg.type === "dictation_stream_final");
       const error = emitted.find((msg) => msg.type === "dictation_stream_error");
       expect(session.clearCalls).toBeGreaterThan(0);
       expect(error).toBeUndefined();
-      expect((final?.payload as { text?: string } | undefined)?.text).toBe("hello");
+      expect(final?.payload.text).toBe("hello");
     } finally {
-      process.env.HUBCODE_DICTATION_DEBUG = previousDebug;
       vi.useRealTimers();
     }
   });

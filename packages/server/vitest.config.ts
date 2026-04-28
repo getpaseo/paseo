@@ -21,6 +21,6 @@ export default defineConfig({
         maxForks: 1,
       },
     },
-    exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/**"],
+    exclude: ["**/node_modules/**", "**/dist/**"],
   },
 });

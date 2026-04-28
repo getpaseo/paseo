@@ -19,7 +19,7 @@ describe("getClaudeModels", () => {
     const models = getClaudeModels();
     const defaults = models.filter((m) => m.isDefault);
     expect(defaults).toHaveLength(1);
-    expect(defaults[0]!.id).toBe("claude-opus-4-6");
+    expect(defaults[0]!.id).toBe("claude-opus-4-7");
   });
 
   it("returns fresh copies each call", () => {

@@ -222,26 +222,21 @@ describe("Codex app-server provider (e2e)", () => {
     "lists models and runs a simple prompt",
     async () => {
       const client = new CodexAppServerAgentClient(createTestLogger());
-      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-e2e-"));
-      const models = await client.listModels({ cwd, force: false });
+      const models = await client.listModels();
       expect(models.some((m) => m.id.includes("gpt-5.1-codex"))).toBe(true);
 
       const session = await client.createSession({
         provider: "codex",
-        cwd,
+        cwd: mkdtempSync(path.join(os.tmpdir(), "codex-app-server-e2e-")),
         modeId: "auto",
         model: CODEX_TEST_MODEL,
         thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
       });
-      try {
-        expect(session.features?.some((feature) => feature.id === "plan_mode")).toBe(true);
+      expect(session.features?.some((feature) => feature.id === "plan_mode")).toBe(true);
 
-        const result = await session.run("Say hello in one sentence.");
-        expect(result.finalText.length).toBeGreaterThan(0);
-      } finally {
-        await session.close();
-        rmSync(cwd, { recursive: true, force: true });
-      }
+      const result = await session.run("Say hello in one sentence.");
+      expect(result.finalText.length).toBeGreaterThan(0);
+      await session.close();
     },
     30000,
   );
@@ -387,7 +382,7 @@ describe("Codex app-server provider (e2e)", () => {
           ).toBe(true);
 
           const finalAssistantMessage = [...events]
-            .toReversed()
+            .reverse()
             .find((event) => event.type === "timeline" && event.item.type === "assistant_message");
           expect(finalAssistantMessage).toBeDefined();
           if (

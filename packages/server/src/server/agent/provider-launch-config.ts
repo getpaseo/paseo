@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import { execFileSync } from "node:child_process";
-import path from "node:path";
 import { isCommandAvailable } from "../../utils/executable.js";
-import { createExternalProcessEnv, type ProcessEnvRecord } from "../hubcode-env.js";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
 
@@ -37,7 +34,6 @@ export const ProviderRuntimeSettingsSchema = z
   .object({
     command: ProviderCommandSchema.optional(),
     env: z.record(z.string()).optional(),
-    disallowedTools: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -68,8 +64,6 @@ export const ProviderOverrideSchema = z
     command: z.array(z.string().min(1)).min(1).optional(),
     env: z.record(z.string()).optional(),
     models: z.array(ProviderProfileModelSchema).optional(),
-    additionalModels: z.array(ProviderProfileModelSchema).optional(),
-    disallowedTools: z.array(z.string()).optional(),
     enabled: z.boolean().optional(),
     order: z.number().optional(),
   })
@@ -88,10 +82,10 @@ export type AgentProviderRuntimeSettingsMap = Partial<
   Record<AgentProvider, ProviderRuntimeSettings>
 >;
 
-export interface ProviderCommandPrefix {
+export type ProviderCommandPrefix = {
   command: string;
   args: string[];
-}
+};
 
 export async function resolveProviderCommandPrefix(
   commandConfig: ProviderCommand | undefined,
@@ -117,16 +111,6 @@ export async function resolveProviderCommandPrefix(
   };
 }
 
-let cachedShellEnv: Record<string, string> | null = null;
-
-export function resolveShellEnv(): Record<string, string> {
-  if (cachedShellEnv) {
-    return cachedShellEnv;
-  }
-  cachedShellEnv = { ...process.env } as Record<string, string>;
-  return cachedShellEnv;
-}
-
 export function migrateProviderSettings(
   raw: Record<string, unknown>,
   builtinProviderIds: string[],
@@ -149,6 +133,9 @@ export function migrateProviderSettings(
     const nextEntry: ProviderOverride = {};
     const command = parsedOld.data.command;
     if (command?.mode === "append") {
+      console.warn(
+        `[Config] Skipping legacy agents.providers.${providerId}.command append mode during provider override migration because it cannot be auto-migrated.`,
+      );
       continue;
     }
     if (command?.mode === "replace") {
@@ -177,66 +164,18 @@ const PARENT_SESSION_ENV_VARS = [
   "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
 ];
 
-export interface ProviderEnvOptions {
-  baseEnv?: ProcessEnvRecord;
-  runtimeSettings?: ProviderRuntimeSettings;
-  overlays?: Array<ProcessEnvRecord | undefined>;
-}
-
-export interface ProviderEnvSpec {
-  baseEnv?: ProcessEnvRecord;
-  envOverlay: ProcessEnvRecord;
-}
-
-function collectProviderEnvOverlays(
-  runtimeSettings: ProviderRuntimeSettings | undefined,
-  overlays: Array<ProcessEnvRecord | undefined>,
-): ProcessEnvRecord[] {
-  return [runtimeSettings?.env, ...overlays].filter(
-    (overlay): overlay is ProcessEnvRecord => !!overlay,
-  );
-}
-
-export function createProviderEnvSpec(options: ProviderEnvOptions = {}): ProviderEnvSpec {
-  const overlays = collectProviderEnvOverlays(options.runtimeSettings, options.overlays ?? []);
-  const envOverlay: ProcessEnvRecord = Object.assign({}, ...overlays);
-  for (const key of PARENT_SESSION_ENV_VARS) {
-    envOverlay[key] = undefined;
-  }
-  return {
-    ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
-    envOverlay,
+export function applyProviderEnv(
+  baseEnv: Record<string, string | undefined>,
+  runtimeSettings?: ProviderRuntimeSettings,
+): Record<string, string | undefined> {
+  const merged: Record<string, string | undefined> = {
+    ...baseEnv,
+    ...(runtimeSettings?.env ?? {}),
   };
-}
-
-export function createProviderEnv(options: ProviderEnvOptions = {}): NodeJS.ProcessEnv {
-  const spec = createProviderEnvSpec(options);
-  return createExternalProcessEnv(spec.baseEnv ?? process.env, spec.envOverlay);
-}
-
-export function findExecutable(name: string): string | null {
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  if (trimmed.includes("/") || trimmed.includes("\\")) {
-    try {
-      const { existsSync } = require("node:fs");
-      return existsSync(trimmed) ? trimmed : null;
-    } catch {
-      return null;
-    }
+  for (const key of PARENT_SESSION_ENV_VARS) {
+    delete merged[key];
   }
-  try {
-    const cmd = process.platform === "win32" ? "where.exe" : "which";
-    const result = execFileSync(cmd, [trimmed], {
-      encoding: "utf8",
-      env: createProviderEnv({ baseEnv: process.env }),
-    }).trim();
-    const lines = result.split(/\r?\n/).filter((l: string) => l.trim());
-    const candidate = lines.at(-1)?.trim() ?? null;
-    return candidate && path.isAbsolute(candidate) ? candidate : null;
-  } catch {
-    return null;
-  }
+  return merged;
 }
 
 export async function isProviderCommandAvailable(

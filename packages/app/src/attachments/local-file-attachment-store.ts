@@ -114,14 +114,12 @@ export function createLocalFileAttachmentStore(params: {
     await ensureDirectory(baseDirectory);
 
     const id = input.id ?? generateAttachmentId();
-    let mimeTypeFromSource: string | undefined;
-    if (input.source.kind === "data_url") {
-      mimeTypeFromSource = parseDataUrl(input.source.dataUrl).mimeType;
-    } else if (input.source.kind === "blob") {
-      mimeTypeFromSource = input.source.blob.type;
-    } else {
-      mimeTypeFromSource = undefined;
-    }
+    const mimeTypeFromSource =
+      input.source.kind === "data_url"
+        ? parseDataUrl(input.source.dataUrl).mimeType
+        : input.source.kind === "blob"
+          ? input.source.blob.type
+          : undefined; // base64 and file_uri: rely on input.mimeType
     const mimeType = normalizeMimeType(input.mimeType ?? mimeTypeFromSource);
     const fileName = input.fileName ?? null;
     const extension = extensionForAttachment({ fileName, mimeType });

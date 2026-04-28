@@ -1,4 +1,4 @@
-interface MarkdownNode {
+type MarkdownNode = {
   type?: string;
   index?: number;
   markup?: string;
@@ -6,7 +6,7 @@ interface MarkdownNode {
     start?: number | string;
   };
   children?: MarkdownNode[];
-}
+};
 
 const LIST_BULLET = "•";
 const DEFAULT_ORDERED_LIST_MARKUP = ".";

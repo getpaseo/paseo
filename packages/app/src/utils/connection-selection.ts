@@ -1,19 +1,19 @@
 import type { HostConnection } from "@/types/host-connection";
 
-export interface ConnectionCandidate {
+export type ConnectionCandidate = {
   connectionId: string;
   connection: HostConnection;
-}
+};
 
 export type ConnectionProbeState =
   | { status: "pending"; latencyMs: null }
   | { status: "unavailable"; latencyMs: null }
   | { status: "available"; latencyMs: number };
 
-export interface SelectBestConnectionInput {
+export type SelectBestConnectionInput = {
   candidates: ConnectionCandidate[];
   probeByConnectionId: Map<string, ConnectionProbeState>;
-}
+};
 
 function getAvailableLatency(input: {
   connectionId: string;

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 
+import { CliProviderOverridesSchema } from "../shared/cli-provider-registry.js";
 import {
   AgentProviderRuntimeSettingsMapSchema,
   migrateProviderSettings,
@@ -228,7 +229,6 @@ export const PersistedConfigSchema = z
     daemon: z
       .object({
         listen: z.string().optional(),
-        hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
         allowedHosts: z.union([z.literal(true), z.array(z.string())]).optional(),
         mcp: z
           .object({
@@ -253,10 +253,6 @@ export const PersistedConfigSchema = z
           .optional(),
       })
       .strict()
-      .transform(({ allowedHosts, ...daemon }) => {
-        const hostnames = daemon.hostnames ?? allowedHosts;
-        return hostnames === undefined ? daemon : { ...daemon, hostnames };
-      })
       .optional(),
 
     app: z
@@ -270,6 +266,7 @@ export const PersistedConfigSchema = z
     agents: z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
+        cliProviders: CliProviderOverridesSchema.optional(),
       })
       .strict()
       .optional(),
@@ -310,10 +307,10 @@ const DEFAULT_PERSISTED_CONFIG = PersistedConfigSchema.parse({
   },
 }) as PersistedConfig;
 
-interface LoggerLike {
+type LoggerLike = {
   child(bindings: Record<string, unknown>): LoggerLike;
-  info(...args: unknown[]): void;
-}
+  info(...args: any[]): void;
+};
 
 function getConfigPath(hubcodeHome: string): string {
   return path.join(hubcodeHome, CONFIG_FILENAME);
@@ -362,7 +359,7 @@ export function loadPersistedConfig(hubcodeHome: string, logger?: LoggerLike): P
       log?.info(`Initialized config file at ${configPath}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`[Config] Failed to initialize ${configPath}: ${message}`, { cause: err });
+      throw new Error(`[Config] Failed to initialize ${configPath}: ${message}`);
     }
   }
 
@@ -371,7 +368,7 @@ export function loadPersistedConfig(hubcodeHome: string, logger?: LoggerLike): P
     raw = readFileSync(configPath, "utf-8");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Failed to read ${configPath}: ${message}`, { cause: err });
+    throw new Error(`[Config] Failed to read ${configPath}: ${message}`);
   }
 
   let parsed: unknown;
@@ -379,7 +376,7 @@ export function loadPersistedConfig(hubcodeHome: string, logger?: LoggerLike): P
     parsed = JSON.parse(raw);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`, { cause: err });
+    throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`);
   }
 
   const migrated = stripDeprecatedLocalSpeechConfigFields(parsed);
@@ -416,6 +413,6 @@ export function savePersistedConfig(
     log?.info(`Saved to ${configPath}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Failed to write ${configPath}: ${message}`, { cause: err });
+    throw new Error(`[Config] Failed to write ${configPath}: ${message}`);
   }
 }

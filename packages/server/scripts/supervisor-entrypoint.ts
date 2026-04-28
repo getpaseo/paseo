@@ -11,10 +11,10 @@ import { resolveHubcodeHome } from "../src/server/hubcode-home.js";
 import { runSupervisor } from "./supervisor.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
-interface DaemonRunnerConfig {
+type DaemonRunnerConfig = {
   devMode: boolean;
   workerArgs: string[];
-}
+};
 
 function parseConfig(argv: string[]): DaemonRunnerConfig {
   let devMode = false;
@@ -61,7 +61,7 @@ function resolveWorkerExecArgv(workerEntry: string): string[] {
 }
 
 function resolvePackagedNodeEntrypointRunnerPath(currentScriptPath: string): string | null {
-  const packageMarker = `${path.sep}node_modules${path.sep}@gethubcode${path.sep}server${path.sep}`;
+  const packageMarker = `${path.sep}node_modules${path.sep}@hubcode${path.sep}server${path.sep}`;
   const markerIndex = currentScriptPath.lastIndexOf(packageMarker);
   if (markerIndex === -1) {
     return null;

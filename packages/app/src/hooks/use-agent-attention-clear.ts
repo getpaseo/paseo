@@ -59,7 +59,7 @@ export function useAgentAttentionClear({
         return;
       }
       deferredFocusEntryClearRef.current = false;
-      client.clearAgentAttention(resolvedAgentId).catch(() => {});
+      client.clearAgentAttention(resolvedAgentId);
     },
     [agentId, attentionReason, client, isConnected, requiresAttention],
   );

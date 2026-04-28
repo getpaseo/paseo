@@ -1,13 +1,7 @@
-import type { QueryClient, QueryKey } from "@tanstack/react-query";
+import type { QueryKey } from "@tanstack/react-query";
 import { create } from "zustand";
-import { queryClient as appQueryClient } from "@/query/query-client";
-import {
-  buildWorkspaceTabPersistenceKey,
-  useWorkspaceLayoutStore,
-} from "@/stores/workspace-layout-store";
-import { useSessionStore } from "@/stores/session-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
-import { useWorkspaceTabsStore } from "@/stores/workspace-tabs-store";
+import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { queryClient } from "@/query/query-client";
 
 const SUCCESS_DISPLAY_MS = 1000;
 
@@ -53,7 +47,7 @@ function setStatus(
       statusByCheckout: {
         ...state.statusByCheckout,
         [key]: {
-          ...state.statusByCheckout[key],
+          ...(state.statusByCheckout[key] ?? {}),
           [actionId]: status,
         },
       },
@@ -61,54 +55,34 @@ function setStatus(
   });
 }
 
-export async function invalidateCheckoutGitQueriesForClient(
-  queryClient: QueryClient,
-  { serverId, cwd }: { serverId: string; cwd: string },
-) {
-  await Promise.all([
-    queryClient.invalidateQueries({
-      queryKey: ["checkoutStatus", serverId, cwd],
-    }),
-    queryClient.invalidateQueries({
-      predicate: (query) => {
-        const key = query.queryKey;
-        return (
-          Array.isArray(key) && key[0] === "checkoutDiff" && key[1] === serverId && key[2] === cwd
-        );
-      },
-    }),
-    queryClient.invalidateQueries({
-      predicate: (query) => {
-        const key = query.queryKey;
-        return (
-          Array.isArray(key) &&
-          key[0] === "checkoutPrStatus" &&
-          key[1] === serverId &&
-          key[2] === cwd
-        );
-      },
-    }),
-    queryClient.invalidateQueries({
-      predicate: (query) => {
-        const key = query.queryKey;
-        return (
-          Array.isArray(key) && key[0] === "prPaneTimeline" && key[1] === serverId && key[2] === cwd
-        );
-      },
-    }),
-  ]);
-}
-
 function invalidateCheckoutGitQueries(serverId: string, cwd: string) {
-  return invalidateCheckoutGitQueriesForClient(appQueryClient, { serverId, cwd });
+  void queryClient.invalidateQueries({
+    queryKey: ["checkoutStatus", serverId, cwd],
+  });
+  void queryClient.invalidateQueries({
+    predicate: (query) => {
+      const key = query.queryKey;
+      return (
+        Array.isArray(key) && key[0] === "checkoutDiff" && key[1] === serverId && key[2] === cwd
+      );
+    },
+  });
+  void queryClient.invalidateQueries({
+    predicate: (query) => {
+      const key = query.queryKey;
+      return (
+        Array.isArray(key) && key[0] === "checkoutPrStatus" && key[1] === serverId && key[2] === cwd
+      );
+    },
+  });
 }
 
 function invalidateWorktreeList() {
-  void appQueryClient.invalidateQueries({
+  void queryClient.invalidateQueries({
     predicate: (query) =>
       Array.isArray(query.queryKey) && query.queryKey[0] === "hubcodeWorktreeList",
   });
-  void appQueryClient.invalidateQueries({
+  void queryClient.invalidateQueries({
     predicate: (query) =>
       Array.isArray(query.queryKey) && query.queryKey[0] === "sidebarHubcodeWorktreeList",
   });
@@ -129,7 +103,7 @@ function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: 
     return filtered.length === current.length ? current : filtered;
   };
 
-  appQueryClient.setQueriesData(
+  queryClient.setQueriesData(
     {
       predicate: (query) =>
         Array.isArray(query.queryKey) &&
@@ -139,7 +113,7 @@ function removeWorktreeFromCachedLists(input: { serverId: string; worktreePath: 
     removeFromList,
   );
 
-  appQueryClient.setQueriesData(
+  queryClient.setQueriesData(
     {
       predicate: (query) =>
         Array.isArray(query.queryKey) &&
@@ -172,7 +146,7 @@ function snapshotWorktreeArchiveState(input: {
     workspace:
       useSessionStore.getState().sessions[input.serverId]?.workspaces.get(input.worktreePath) ??
       null,
-    worktreeLists: appQueryClient.getQueriesData({
+    worktreeLists: queryClient.getQueriesData({
       predicate: (query) =>
         isWorktreeListQuery({ queryKey: query.queryKey, serverId: input.serverId }),
     }),
@@ -196,23 +170,9 @@ function restoreWorktreeArchiveState(input: {
   if (input.snapshot.workspace) {
     useSessionStore.getState().mergeWorkspaces(input.serverId, [input.snapshot.workspace]);
   }
-
   for (const [queryKey, data] of input.snapshot.worktreeLists) {
-    appQueryClient.setQueryData(queryKey, data);
+    queryClient.setQueryData(queryKey, data);
   }
-}
-
-function purgeArchivedWorkspaceState(input: { serverId: string; worktreePath: string }): void {
-  const serverId = input.serverId.trim();
-  const workspaceId = input.worktreePath.trim();
-  if (!serverId || !workspaceId) {
-    return;
-  }
-  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-  if (workspaceKey) {
-    useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
-  }
-  useWorkspaceTabsStore.getState().purgeWorkspace({ serverId, workspaceId });
 }
 
 const successTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -275,7 +235,7 @@ async function runCheckoutAction({
   const promise = (async () => {
     try {
       await run();
-      await invalidateCheckoutGitQueries(serverId, cwd);
+      invalidateCheckoutGitQueries(serverId, cwd);
       setStatus(key, actionId, "success");
       const timer = setTimeout(() => {
         setStatus(key, actionId, "idle");
@@ -406,6 +366,9 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
       actionId: "archive-worktree",
       run: async () => {
         const client = resolveClient(serverId);
+        // Optimistic: snapshot state, remove the worktree from the UI
+        // immediately, then restore if the server call fails. (Paseo 0.1.63
+        // improvement, commit 8010275.)
         const snapshot = snapshotWorktreeArchiveState({ serverId, worktreePath });
         removeWorktreeFromCachedLists({ serverId, worktreePath });
         removeWorktreeFromSessionStore({ serverId, worktreePath });
@@ -419,7 +382,6 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
           throw error;
         }
         invalidateWorktreeList();
-        purgeArchivedWorkspaceState({ serverId, worktreePath });
       },
     });
   },

@@ -1,12 +1,12 @@
 import { BrowserWindow } from "electron";
-import { WebSocket, type RawData } from "ws";
+import WebSocket from "ws";
 
-interface TransportTarget {
+type TransportTarget = {
   transportType: "socket" | "pipe";
   transportPath: string;
-}
+};
 
-interface TransportEventPayload {
+type TransportEventPayload = {
   sessionId: string;
   kind: "open" | "message" | "close" | "error";
   text?: string | null;
@@ -14,13 +14,13 @@ interface TransportEventPayload {
   code?: number | null;
   reason?: string | null;
   error?: string | null;
-}
+};
 
-interface Session {
+type Session = {
   id: string;
   ws: WebSocket;
   state: "opening" | "open" | "closing" | "closed";
-}
+};
 
 const WS_ENDPOINT_PATH = "/ws";
 
@@ -97,7 +97,7 @@ export function openLocalTransportSession(target: TransportTarget): Promise<stri
       emitTransportEvent({ sessionId, kind: "open" });
     });
 
-    ws.on("message", (data: RawData, isBinary: boolean) => {
+    ws.on("message", (data: WebSocket.RawData, isBinary: boolean) => {
       if (isBinary || data instanceof Buffer) {
         const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
         emitTransportEvent({

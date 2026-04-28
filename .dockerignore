@@ -1,0 +1,29 @@
+# Don't ship deps / build artifacts into the build context — the
+# Dockerfile installs fresh via `npm ci`. Without this, the 2.8 GB
+# monorepo crawls through `docker build`.
+**/node_modules
+**/.git
+**/.turbo
+**/.next
+**/dist
+**/build
+**/coverage
+**/*.log
+**/.DS_Store
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Platform builds we never need at container build time
+packages/app/ios
+packages/app/android
+packages/app/.expo
+packages/app/web-build
+packages/desktop/dist
+packages/desktop/release
+packages/server/dist
+packages/cli/dist
+packages/relay/dist
+packages/highlight/dist
+packages/expo-two-way-audio/build
+packages/website

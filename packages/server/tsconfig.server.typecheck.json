@@ -1,6 +1,8 @@
 {
   "extends": "./tsconfig.server.json",
   "compilerOptions": {
-    "rootDir": "../../"
+    "rootDir": "../../",
+    "incremental": true,
+    "tsBuildInfoFile": "./.tsbuildinfo"
   }
 }

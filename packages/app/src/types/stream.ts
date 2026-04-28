@@ -2,7 +2,6 @@ import type { AgentProvider, ToolCallDetail } from "@server/server/agent/agent-s
 import type { AgentStreamEventPayload } from "@server/shared/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 
 /**
  * Simple hash function for deterministic ID generation
@@ -54,12 +53,19 @@ export type StreamItem =
 
 export type UserMessageImageAttachment = AttachmentMetadata;
 
+export interface UserMessageAuthor {
+  userId: string;
+  username: string;
+  avatarUrl: string;
+}
+
 export interface UserMessageItem {
   kind: "user_message";
   id: string;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
+  author?: UserMessageAuthor;
 }
 
 export interface AssistantMessageItem {
@@ -67,8 +73,6 @@ export interface AssistantMessageItem {
   id: string;
   text: string;
   timestamp: Date;
-  blockGroupId?: string;
-  blockIndex?: number;
 }
 
 export type ThoughtStatus = "loading" | "ready";
@@ -142,10 +146,7 @@ export interface CompactionItem {
   preTokens?: number;
 }
 
-export interface TodoEntry {
-  text: string;
-  completed: boolean;
-}
+export type TodoEntry = { text: string; completed: boolean };
 
 export interface TodoListItem {
   kind: "todo_list";
@@ -187,6 +188,7 @@ function appendUserMessage(
   text: string,
   timestamp: Date,
   messageId?: string,
+  author?: UserMessageAuthor,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!hasContent) {
@@ -203,6 +205,9 @@ function appendUserMessage(
       ? state[existingIndex]
       : null;
   const preservedImages = existing?.images;
+  // Prefer the newly-arriving author — a daemon-hydrated replay often carries
+  // richer metadata than the optimistic local entry.
+  const resolvedAuthor = author ?? existing?.author;
 
   const nextItem: UserMessageItem = {
     kind: "user_message",
@@ -210,6 +215,7 @@ function appendUserMessage(
     text: chunk,
     timestamp,
     ...(preservedImages && preservedImages.length > 0 ? { images: preservedImages } : {}),
+    ...(resolvedAuthor ? { author: resolvedAuthor } : {}),
   };
 
   if (existingIndex >= 0) {
@@ -346,32 +352,23 @@ function hasSameIncomingFields<T extends Record<string, unknown>>(
   existing: T,
   incoming: T,
 ): boolean {
-  return Object.entries(incoming).every(([key, value]) => existing[key] === value);
+  for (const key in incoming) {
+    if (existing[key] !== incoming[key]) return false;
+  }
+  return true;
 }
 
 function mergeToolCallMetadata(
   existing: Record<string, unknown> | undefined,
   incoming: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (!incoming) {
-    return existing;
-  }
-
-  if (!existing) {
-    return incoming;
-  }
-
-  if (hasSameIncomingFields(existing, incoming)) {
-    return existing;
-  }
-
+  if (!incoming) return existing;
+  if (!existing) return incoming;
+  if (hasSameIncomingFields(existing, incoming)) return existing;
   return { ...existing, ...incoming };
 }
 
-export function mergeToolCallDetail(
-  existing: ToolCallDetail,
-  incoming: ToolCallDetail,
-): ToolCallDetail {
+function mergeToolCallDetail(existing: ToolCallDetail, incoming: ToolCallDetail): ToolCallDetail {
   if (existing.type === "unknown" && incoming.type !== "unknown") {
     return incoming;
   }
@@ -380,25 +377,23 @@ export function mergeToolCallDetail(
     return existing;
   }
 
+  // Preserve existing references when fields are unchanged — otherwise
+  // every tool_call_update event creates a new object, busts React.memo,
+  // and re-renders the whole tool call subtree. ACP providers can send
+  // 200+ redundant updates per call. (Paseo commit 5a232d8.)
   if (existing.type === "unknown" && incoming.type === "unknown") {
     const input = mergeUnknownValue(existing.input, incoming.input);
     const output = mergeUnknownValue(existing.output, incoming.output);
     if (input === existing.input && output === existing.output) {
       return existing;
     }
-
-    return {
-      type: "unknown",
-      input,
-      output,
-    };
+    return { type: "unknown", input, output };
   }
 
   if (existing.type === incoming.type) {
     if (hasSameIncomingFields(existing, incoming)) {
       return existing;
     }
-
     return { ...existing, ...incoming } as ToolCallDetail;
   }
 
@@ -448,6 +443,9 @@ function appendAgentToolCall(
     const mergedMetadata = mergeToolCallMetadata(existing.payload.data.metadata, data.metadata);
     const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
 
+    // If nothing meaningful changed, preserve the existing state array — this
+    // keeps downstream React.memo subtrees stable through flood updates.
+    // (Paseo commit 5a232d8.)
     if (
       data.provider === existing.payload.data.provider &&
       data.callId === existing.payload.data.callId &&
@@ -546,142 +544,6 @@ function formatErrorMessage(message: string): string {
   return `Agent error\n${message}`;
 }
 
-function reduceTimelineToolCall(
-  state: StreamItem[],
-  event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
-  item: Extract<
-    Extract<AgentStreamEventPayload, { type: "timeline" }>["item"],
-    { type: "tool_call" }
-  >,
-  timestamp: Date,
-): StreamItem[] {
-  const normalizedToolName = item.name
-    .trim()
-    .replace(/[.\s-]+/g, "_")
-    .toLowerCase();
-  if (event.provider === "claude" && normalizedToolName === "exitplanmode") {
-    return state;
-  }
-
-  if (
-    event.provider === "claude" &&
-    (normalizedToolName === "todowrite" || normalizedToolName === "todo_write")
-  ) {
-    const tasks = extractTaskEntriesFromToolCall(item.name, inputFromUnknownDetail(item.detail));
-    if (!tasks) {
-      return state;
-    }
-    return appendTodoList(
-      state,
-      event.provider,
-      tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
-      timestamp,
-    );
-  }
-
-  const tasks = extractTaskEntriesFromToolCall(item.name, inputFromUnknownDetail(item.detail));
-  if (tasks) {
-    return appendTodoList(
-      state,
-      event.provider,
-      tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
-      timestamp,
-    );
-  }
-
-  return appendAgentToolCall(
-    state,
-    {
-      provider: event.provider,
-      callId: item.callId,
-      name: item.name,
-      status: item.status,
-      error: item.error,
-      detail: item.detail,
-      metadata: item.metadata,
-    },
-    timestamp,
-  );
-}
-
-function reduceTimelineCompaction(
-  state: StreamItem[],
-  item: Extract<
-    Extract<AgentStreamEventPayload, { type: "timeline" }>["item"],
-    { type: "compaction" }
-  >,
-  timestamp: Date,
-): StreamItem[] {
-  if (item.status === "completed") {
-    const loadingIdx = state.findIndex((s) => s.kind === "compaction" && s.status === "loading");
-    const existing = loadingIdx >= 0 ? state[loadingIdx] : undefined;
-    if (loadingIdx >= 0 && existing && existing.kind === "compaction") {
-      const updated: CompactionItem = {
-        ...existing,
-        status: "completed",
-        trigger: item.trigger,
-        preTokens: item.preTokens,
-      };
-      return [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
-    }
-    if (loadingIdx >= 0) {
-      return state;
-    }
-  }
-  const compaction: CompactionItem = {
-    kind: "compaction",
-    id: createTimelineId("compaction", item.status, timestamp),
-    timestamp,
-    status: item.status,
-    trigger: item.trigger,
-    preTokens: item.preTokens,
-  };
-  return [...state, compaction];
-}
-
-function reduceTimelineEvent(
-  state: StreamItem[],
-  event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
-  timestamp: Date,
-  source: StreamUpdateSource,
-): StreamItem[] {
-  const item = event.item;
-  switch (item.type) {
-    case "user_message":
-      return finalizeActiveThoughts(appendUserMessage(state, item.text, timestamp, item.messageId));
-    case "assistant_message":
-      return finalizeActiveThoughts(appendAssistantMessage(state, item.text, timestamp, source));
-    case "reasoning":
-      return appendThought(state, item.text, timestamp);
-    case "tool_call":
-      return finalizeActiveThoughts(reduceTimelineToolCall(state, event, item, timestamp));
-    case "todo": {
-      if (event.provider === "claude") {
-        return finalizeActiveThoughts(state);
-      }
-      const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
-        text: todo.text,
-        completed: Boolean(todo.completed),
-      }));
-      return finalizeActiveThoughts(appendTodoList(state, event.provider, items, timestamp));
-    }
-    case "error": {
-      const activity: ActivityLogItem = {
-        kind: "activity_log",
-        id: createTimelineId("error", item.message ?? "", timestamp),
-        timestamp,
-        activityType: "error",
-        message: formatErrorMessage(item.message ?? "Unknown error"),
-      };
-      return finalizeActiveThoughts(appendActivityLog(state, activity));
-    }
-    case "compaction":
-      return finalizeActiveThoughts(reduceTimelineCompaction(state, item, timestamp));
-    default:
-      return state;
-  }
-}
-
 /**
  * Reduce a single AgentManager stream event into the UI timeline
  */
@@ -693,8 +555,145 @@ export function reduceStreamUpdate(
 ): StreamItem[] {
   const source = options?.source ?? "live";
   switch (event.type) {
-    case "timeline":
-      return reduceTimelineEvent(state, event, timestamp, source);
+    case "timeline": {
+      const item = event.item;
+      let nextState = state;
+      switch (item.type) {
+        case "user_message":
+          nextState = appendUserMessage(state, item.text, timestamp, item.messageId, item.author);
+          break;
+        case "assistant_message":
+          nextState = appendAssistantMessage(state, item.text, timestamp, source);
+          break;
+        case "reasoning":
+          return appendThought(state, item.text, timestamp);
+        case "tool_call": {
+          const normalizedToolName = item.name
+            .trim()
+            .replace(/[.\s-]+/g, "_")
+            .toLowerCase();
+          if (event.provider === "claude" && normalizedToolName === "exitplanmode") {
+            // ExitPlanMode is rendered via the plan permission prompt; avoid duplicating it in the timeline.
+            break;
+          }
+
+          if (
+            event.provider === "claude" &&
+            (normalizedToolName === "todowrite" || normalizedToolName === "todo_write")
+          ) {
+            // For Claude: TodoWrite often appears as a tool call that never resolves. Always render it
+            // as Tasks when possible and otherwise hide it to avoid a stuck loading tool call.
+            const tasks = extractTaskEntriesFromToolCall(
+              item.name,
+              inputFromUnknownDetail(item.detail),
+            );
+            if (tasks) {
+              nextState = appendTodoList(
+                state,
+                event.provider,
+                tasks.map((entry) => ({
+                  text: entry.text,
+                  completed: entry.completed,
+                })),
+                timestamp,
+              );
+            }
+            break;
+          }
+
+          const tasks = extractTaskEntriesFromToolCall(
+            item.name,
+            inputFromUnknownDetail(item.detail),
+          );
+          if (tasks) {
+            nextState = appendTodoList(
+              state,
+              event.provider,
+              tasks.map((entry) => ({
+                text: entry.text,
+                completed: entry.completed,
+              })),
+              timestamp,
+            );
+            break;
+          }
+
+          nextState = appendAgentToolCall(
+            state,
+            {
+              provider: event.provider,
+              callId: item.callId,
+              name: item.name,
+              status: item.status,
+              error: item.error,
+              detail: item.detail,
+              metadata: item.metadata,
+            },
+            timestamp,
+          );
+          break;
+        }
+        case "todo": {
+          if (event.provider === "claude") {
+            // Claude plan mode is rendered via permission prompts + TodoWrite tool calls.
+            // Avoid rendering legacy plan-mode todo timeline items as Tasks.
+            break;
+          }
+          const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
+            text: todo.text,
+            completed: Boolean(todo.completed),
+          }));
+          nextState = appendTodoList(state, event.provider, items, timestamp);
+          break;
+        }
+        case "error": {
+          const activity: ActivityLogItem = {
+            kind: "activity_log",
+            id: createTimelineId("error", item.message ?? "", timestamp),
+            timestamp,
+            activityType: "error",
+            message: formatErrorMessage(item.message ?? "Unknown error"),
+          };
+          nextState = appendActivityLog(state, activity);
+          break;
+        }
+        case "compaction": {
+          if (item.status === "completed") {
+            const loadingIdx = state.findIndex(
+              (s) => s.kind === "compaction" && s.status === "loading",
+            );
+            if (loadingIdx >= 0) {
+              const existing = state[loadingIdx];
+              if (!existing || existing.kind !== "compaction") {
+                break;
+              }
+              const updated: CompactionItem = {
+                ...existing,
+                status: "completed",
+                trigger: item.trigger,
+                preTokens: item.preTokens,
+              };
+              nextState = [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
+              break;
+            }
+          }
+          const compaction: CompactionItem = {
+            kind: "compaction",
+            id: createTimelineId("compaction", item.status, timestamp),
+            timestamp,
+            status: item.status,
+            trigger: item.trigger,
+            preTokens: item.preTokens,
+          };
+          nextState = [...state, compaction];
+          break;
+        }
+        default:
+          return state;
+      }
+
+      return finalizeActiveThoughts(nextState);
+    }
     case "thread_started":
     case "turn_started":
     case "turn_completed":
@@ -775,101 +774,14 @@ function finalizeHeadItems(head: StreamItem[]): StreamItem[] {
     if (item.kind === "thought" && item.status !== "ready") {
       return markThoughtReady(item);
     }
-    if (item.kind === "assistant_message" && item.blockGroupId) {
-      return {
-        ...item,
-        id: createAssistantBlockId({
-          groupId: item.blockGroupId,
-          blockIndex: item.blockIndex ?? 0,
-        }),
-      };
-    }
     return item;
   });
-}
-
-function createAssistantBlockId(params: { groupId: string; blockIndex: number }): string {
-  return `${params.groupId}:block:${params.blockIndex}`;
-}
-
-function getActiveAssistantHeadIndex(head: StreamItem[]): number {
-  for (let index = head.length - 1; index >= 0; index -= 1) {
-    if (head[index]?.kind === "assistant_message") {
-      return index;
-    }
-  }
-  return -1;
-}
-
-function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: StreamItem[] }): {
-  tail: StreamItem[];
-  head: StreamItem[];
-  changedTail: boolean;
-  changedHead: boolean;
-} {
-  const assistantIndex = getActiveAssistantHeadIndex(params.head);
-  const activeItem = params.head[assistantIndex];
-  if (assistantIndex < 0 || !activeItem || activeItem.kind !== "assistant_message") {
-    return {
-      tail: params.tail,
-      head: params.head,
-      changedTail: false,
-      changedHead: false,
-    };
-  }
-
-  const blocks = splitMarkdownBlocks(activeItem.text);
-  if (blocks.length < 2) {
-    return {
-      tail: params.tail,
-      head: params.head,
-      changedTail: false,
-      changedHead: false,
-    };
-  }
-
-  const blockGroupId = activeItem.blockGroupId ?? activeItem.id;
-  const firstBlockIndex = activeItem.blockIndex ?? 0;
-  const completedBlocks = blocks.slice(0, -1);
-  const liveBlock = blocks[blocks.length - 1] ?? "";
-  const promotedItems = completedBlocks.map<AssistantMessageItem>((block, offset) => ({
-    kind: "assistant_message",
-    id: createAssistantBlockId({
-      groupId: blockGroupId,
-      blockIndex: firstBlockIndex + offset,
-    }),
-    blockGroupId,
-    blockIndex: firstBlockIndex + offset,
-    text: block,
-    timestamp: activeItem.timestamp,
-  }));
-
-  const nextTail = flushHeadToTail(params.tail, promotedItems);
-  const liveItem: AssistantMessageItem = {
-    ...activeItem,
-    id: `${blockGroupId}:head`,
-    blockGroupId,
-    blockIndex: firstBlockIndex + completedBlocks.length,
-    text: liveBlock,
-  };
-  const nextHead = [
-    ...params.head.slice(0, assistantIndex),
-    liveItem,
-    ...params.head.slice(assistantIndex + 1),
-  ];
-
-  return {
-    tail: nextTail,
-    head: nextHead,
-    changedTail: nextTail !== params.tail,
-    changedHead: true,
-  };
 }
 
 /**
  * Flush head items to tail, avoiding duplicates.
  */
-export function flushHeadToTail(tail: StreamItem[], head: StreamItem[]): StreamItem[] {
+function flushHeadToTail(tail: StreamItem[], head: StreamItem[]): StreamItem[] {
   if (head.length === 0) {
     return tail;
   }
@@ -996,16 +908,6 @@ export function applyStreamEvent(params: {
     if (reduced !== nextHead) {
       nextHead = reduced;
       changedHead = true;
-    }
-    if (incomingKind === "assistant_message") {
-      const promoted = promoteCompletedAssistantBlocks({
-        tail: nextTail,
-        head: nextHead,
-      });
-      nextTail = promoted.tail;
-      nextHead = promoted.head;
-      changedTail = changedTail || promoted.changedTail;
-      changedHead = changedHead || promoted.changedHead;
     }
     return { tail: nextTail, head: nextHead, changedTail, changedHead };
   }

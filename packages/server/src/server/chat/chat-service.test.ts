@@ -3,20 +3,11 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
-import {
-  type ChatServiceError,
-  FileBackedChatService,
-  parseMentionAgentIds,
-  type PostChatMessageInput,
-} from "./chat-service.js";
+import { ChatServiceError, FileBackedChatService, parseMentionAgentIds } from "./chat-service.js";
 
 describe("FileBackedChatService", () => {
   let hubcodeHome: string;
   let service: FileBackedChatService;
-
-  async function sendChatMessage(input: PostChatMessageInput) {
-    return await service.dispatchMessage(input);
-  }
 
   beforeEach(async () => {
     hubcodeHome = await mkdtemp(path.join(tmpdir(), "hubcode-chat-service-"));
@@ -54,12 +45,12 @@ describe("FileBackedChatService", () => {
 
   test("resolves rooms by name or ID, validates replies, and reads filtered messages", async () => {
     const room = await service.createRoom({ name: "auth-refactor" });
-    const first = await sendChatMessage({
+    const first = await service.postMessage({
       room: room.name,
       authorAgentId: "agent-a",
       body: "first message for @agent-b and @agent-c and again @agent-b",
     });
-    await sendChatMessage({
+    await service.postMessage({
       room: room.id,
       authorAgentId: "agent-b",
       body: "reply",
@@ -67,7 +58,7 @@ describe("FileBackedChatService", () => {
     });
 
     await expect(
-      sendChatMessage({
+      service.postMessage({
         room: room.name,
         authorAgentId: "agent-b",
         body: "bad reply",
@@ -96,7 +87,7 @@ describe("FileBackedChatService", () => {
 
   test("waits for new messages after a cursor and times out with an empty result", async () => {
     const room = await service.createRoom({ name: "loop-status" });
-    const first = await sendChatMessage({
+    const first = await service.postMessage({
       room: room.name,
       authorAgentId: "agent-a",
       body: "ready",
@@ -107,7 +98,7 @@ describe("FileBackedChatService", () => {
       afterMessageId: first.id,
       timeoutMs: 1000,
     });
-    await sendChatMessage({
+    await service.postMessage({
       room: room.name,
       authorAgentId: "agent-b",
       body: "new work",
@@ -127,7 +118,7 @@ describe("FileBackedChatService", () => {
 
   test("deletes rooms, removes messages, and rejects pending waiters", async () => {
     const room = await service.createRoom({ name: "schedule-jobs" });
-    await sendChatMessage({
+    await service.postMessage({
       room: room.name,
       authorAgentId: "agent-a",
       body: "hello",

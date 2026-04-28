@@ -1,15 +1,10 @@
-import { Redirect, useLocalSearchParams } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
-import { buildSettingsHostRoute, buildSettingsRoute } from "@/utils/host-routes";
+import SettingsScreen from "@/screens/settings-screen";
 
-export default function LegacyHostSettingsRoute() {
-  const params = useLocalSearchParams<{ serverId?: string }>();
-  const serverId = typeof params.serverId === "string" ? params.serverId.trim() : "";
-  const href = serverId.length > 0 ? buildSettingsHostRoute(serverId) : buildSettingsRoute();
-
+export default function HostSettingsRoute() {
   return (
     <HostRouteBootstrapBoundary>
-      <Redirect href={href} />
+      <SettingsScreen />
     </HostRouteBootstrapBoundary>
   );
 }

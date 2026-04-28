@@ -1,28 +1,15 @@
 import { resolve } from "node:path";
 
+import { getCheckoutStatusLite } from "../utils/checkout-git.js";
 import type { ProjectCheckoutLitePayload, ProjectPlacementPayload } from "../shared/messages.js";
-import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 
 export type PersistedProjectKind = "git" | "non_git";
 export type PersistedWorkspaceKind = "local_checkout" | "worktree" | "directory";
-
-export interface DirectoryProjectMembership {
-  cwd: string;
-  checkout: ProjectCheckoutLitePayload;
-  workspaceId: string;
-  workspaceKind: PersistedWorkspaceKind;
-  workspaceDisplayName: string;
-  projectKey: string;
-  projectName: string;
-  projectRootPath: string;
-  projectKind: PersistedProjectKind;
-}
-
-export interface DetectStaleWorkspacesInput {
+export type DetectStaleWorkspacesInput = {
   activeWorkspaces: PersistedWorkspaceRecord[];
   checkDirectoryExists: (cwd: string) => Promise<boolean>;
-}
+};
 
 export function normalizeWorkspaceId(cwd: string): string {
   const trimmed = cwd.trim();
@@ -33,8 +20,7 @@ export function normalizeWorkspaceId(cwd: string): string {
 }
 
 export function deriveWorkspaceId(cwd: string, checkout: ProjectCheckoutLitePayload): string {
-  const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
-  return worktreeRoot ?? normalizeWorkspaceId(cwd);
+  return checkout.worktreeRoot ?? normalizeWorkspaceId(cwd);
 }
 
 function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
@@ -87,6 +73,7 @@ function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
 export function deriveProjectGroupingKey(options: {
   cwd: string;
   remoteUrl: string | null;
+  isHubcodeOwnedWorktree: boolean;
   mainRepoRoot: string | null;
 }): string {
   const remoteKey = deriveRemoteProjectKey(options.remoteUrl);
@@ -95,7 +82,7 @@ export function deriveProjectGroupingKey(options: {
   }
 
   const mainRepoRoot = options.mainRepoRoot?.trim();
-  if (mainRepoRoot) {
+  if (options.isHubcodeOwnedWorktree && mainRepoRoot) {
     return mainRepoRoot;
   }
 
@@ -133,7 +120,7 @@ export function deriveProjectRootPath(input: {
   cwd: string;
   checkout: ProjectCheckoutLitePayload;
 }): string {
-  if (input.checkout.isGit && input.checkout.mainRepoRoot) {
+  if (input.checkout.isGit && input.checkout.isHubcodeOwnedWorktree) {
     return input.checkout.mainRepoRoot;
   }
   return input.cwd;
@@ -147,51 +134,7 @@ export function deriveWorkspaceKind(checkout: ProjectCheckoutLitePayload): Persi
   if (!checkout.isGit) {
     return "directory";
   }
-  return checkout.mainRepoRoot ? "worktree" : "local_checkout";
-}
-
-export function checkoutLiteFromGitSnapshot(
-  cwd: string,
-  git: {
-    isGit: boolean;
-    currentBranch: string | null;
-    remoteUrl: string | null;
-    repoRoot: string | null;
-    isHubcodeOwnedWorktree: boolean;
-    mainRepoRoot: string | null;
-  },
-): ProjectCheckoutLitePayload {
-  if (!git.isGit) {
-    return {
-      cwd,
-      isGit: false,
-      currentBranch: null,
-      remoteUrl: null,
-      worktreeRoot: null,
-      isHubcodeOwnedWorktree: false,
-      mainRepoRoot: null,
-    };
-  }
-  if (git.isHubcodeOwnedWorktree && git.mainRepoRoot) {
-    return {
-      cwd,
-      isGit: true,
-      currentBranch: git.currentBranch,
-      remoteUrl: git.remoteUrl,
-      worktreeRoot: git.repoRoot ?? cwd,
-      isHubcodeOwnedWorktree: true,
-      mainRepoRoot: git.mainRepoRoot,
-    };
-  }
-  return {
-    cwd,
-    isGit: true,
-    currentBranch: git.currentBranch,
-    remoteUrl: git.remoteUrl,
-    worktreeRoot: git.repoRoot ?? cwd,
-    isHubcodeOwnedWorktree: false,
-    mainRepoRoot: git.mainRepoRoot,
-  };
+  return checkout.isHubcodeOwnedWorktree ? "worktree" : "local_checkout";
 }
 
 export async function detectStaleWorkspaces(
@@ -199,14 +142,9 @@ export async function detectStaleWorkspaces(
 ): Promise<Set<string>> {
   const staleWorkspaceIds = new Set<string>();
 
-  const existenceChecks = await Promise.all(
-    input.activeWorkspaces.map(async (workspace) => ({
-      workspace,
-      exists: await input.checkDirectoryExists(workspace.cwd),
-    })),
-  );
-  for (const { workspace, exists } of existenceChecks) {
-    if (!exists) {
+  for (const workspace of input.activeWorkspaces) {
+    const dirExists = await input.checkDirectoryExists(workspace.cwd);
+    if (!dirExists) {
       staleWorkspaceIds.add(workspace.workspaceId);
     }
   }
@@ -214,49 +152,69 @@ export async function detectStaleWorkspaces(
   return staleWorkspaceIds;
 }
 
-export function buildProjectPlacementForCwd(input: {
+export async function buildProjectPlacementForCwd(input: {
   cwd: string;
-  checkout: ProjectCheckoutLitePayload;
-}): ProjectPlacementPayload {
-  const membership = classifyDirectoryForProjectMembership(input);
-  return {
-    projectKey: membership.projectKey,
-    projectName: membership.projectName,
-    checkout: membership.checkout,
-  };
-}
-
-export function classifyDirectoryForProjectMembership(input: {
-  cwd: string;
-  checkout: ProjectCheckoutLitePayload;
-}): DirectoryProjectMembership {
+  hubcodeHome: string;
+}): Promise<ProjectPlacementPayload> {
   const normalizedCwd = normalizeWorkspaceId(input.cwd);
-  const checkout: ProjectCheckoutLitePayload = {
-    ...input.checkout,
-    cwd: normalizedCwd,
-  };
+  const checkout = await getCheckoutStatusLite(normalizedCwd, { hubcodeHome: input.hubcodeHome })
+    .then((status): ProjectCheckoutLitePayload => {
+      if (!status.isGit) {
+        return {
+          cwd: normalizedCwd,
+          isGit: false,
+          currentBranch: null,
+          remoteUrl: null,
+          worktreeRoot: null,
+          isHubcodeOwnedWorktree: false,
+          mainRepoRoot: null,
+        };
+      }
+
+      if (status.isHubcodeOwnedWorktree && status.mainRepoRoot) {
+        return {
+          cwd: normalizedCwd,
+          isGit: true,
+          currentBranch: status.currentBranch,
+          remoteUrl: status.remoteUrl,
+          worktreeRoot: status.worktreeRoot,
+          isHubcodeOwnedWorktree: true,
+          mainRepoRoot: status.mainRepoRoot,
+        };
+      }
+
+      return {
+        cwd: normalizedCwd,
+        isGit: true,
+        currentBranch: status.currentBranch,
+        remoteUrl: status.remoteUrl,
+        worktreeRoot: status.worktreeRoot,
+        isHubcodeOwnedWorktree: false,
+        mainRepoRoot: null,
+      };
+    })
+    .catch(
+      (): ProjectCheckoutLitePayload => ({
+        cwd: normalizedCwd,
+        isGit: false,
+        currentBranch: null,
+        remoteUrl: null,
+        worktreeRoot: null,
+        isHubcodeOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+    );
 
   const projectKey = deriveProjectGroupingKey({
     cwd: checkout.worktreeRoot ?? normalizedCwd,
     remoteUrl: checkout.remoteUrl,
+    isHubcodeOwnedWorktree: checkout.isHubcodeOwnedWorktree,
     mainRepoRoot: checkout.mainRepoRoot,
   });
 
   return {
-    cwd: normalizedCwd,
-    checkout,
-    workspaceId: deriveWorkspaceId(normalizedCwd, checkout),
-    workspaceKind: deriveWorkspaceKind(checkout),
-    workspaceDisplayName: deriveWorkspaceDisplayName({
-      cwd: normalizedCwd,
-      checkout,
-    }),
     projectKey,
     projectName: deriveProjectGroupingName(projectKey),
-    projectRootPath: deriveProjectRootPath({
-      cwd: normalizedCwd,
-      checkout,
-    }),
-    projectKind: deriveProjectKind(checkout),
+    checkout,
   };
 }

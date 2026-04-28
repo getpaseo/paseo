@@ -4,10 +4,10 @@
 
 Controlled by `APP_VARIANT` in `packages/app/app.config.js` (vanilla Expo, no custom Gradle plugin):
 
-| Variant       | App name    | Package ID       |
-| ------------- | ----------- | ---------------- |
-| `production`  | Hubcode       | `ai.hubcode`       |
-| `development` | Hubcode Debug | `ai.hubcode.debug` |
+| Variant | App name | Package ID |
+|---|---|---|
+| `production` | Hubcode | `sh.hubcode` |
+| `development` | Hubcode Debug | `sh.hubcode.debug` |
 
 EAS profiles: `development`, `production`, and `production-apk` in `packages/app/eas.json`.
 
@@ -51,7 +51,7 @@ Stable tag pushes like `v0.1.0` trigger:
 - `packages/app/.eas/workflows/release-mobile.yml` on Expo servers (iOS + Android build + submit)
 - `.github/workflows/android-apk-release.yml` on GitHub Actions (APK asset on GitHub Release)
 
-Beta tags like `v0.1.1-beta.1` only trigger the GitHub APK workflow. They publish a GitHub prerelease APK for testing and do not submit to the stores.
+Release candidate tags like `v0.1.1-rc.1` only trigger the GitHub APK workflow. They publish a GitHub prerelease APK for testing and do not submit to the stores.
 
 ### Useful commands
 

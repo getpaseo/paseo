@@ -6,7 +6,6 @@ import pino from "pino";
 import { createTestHubcodeDaemon } from "../src/server/test-utils/hubcode-daemon.js";
 import { DaemonClient } from "../src/server/test-utils/daemon-client.js";
 import { OpenAITTS } from "../src/server/speech/providers/openai/tts.js";
-import { withTimeout } from "../src/utils/promise-timeout.js";
 
 async function streamToBuffer(stream: AsyncIterable<unknown>): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -152,8 +151,18 @@ async function main(): Promise<void> {
       );
     }
 
-    await withTimeout(firstAudio, 120000, "Timed out waiting for first audio_output");
-    await withTimeout(lastAudio, 120000, "Timed out waiting for final audio_output");
+    await Promise.race([
+      firstAudio,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Timed out waiting for first audio_output")), 120000),
+      ),
+    ]);
+    await Promise.race([
+      lastAudio,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Timed out waiting for final audio_output")), 120000),
+      ),
+    ]);
 
     console.log("success", { audioChunkCount });
     await client.setVoiceMode(false);

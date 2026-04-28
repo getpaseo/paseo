@@ -65,7 +65,7 @@ type TaskNotificationLifecycle =
   | { status: "failed"; error: unknown }
   | { status: "canceled"; error: null };
 
-export interface TaskNotificationSystemMessageLike {
+export type TaskNotificationSystemMessageLike = {
   type: "system";
   subtype: "task_notification";
   uuid?: string;
@@ -74,17 +74,17 @@ export interface TaskNotificationSystemMessageLike {
   summary?: string;
   output_file?: string;
   content?: string;
-}
+};
 
-interface ReadTaskNotificationTagInput {
+type ReadTaskNotificationTagInput = {
   text: string;
   tagName: string;
-}
+};
 
-interface BuildTaskNotificationStatusInput {
+type BuildTaskNotificationStatusInput = {
   status: string | null;
   summary: string | null;
-}
+};
 
 type TaskNotificationToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
@@ -342,14 +342,12 @@ export function coerceTaskNotificationHistoryRecordToSystemMessage(
   }
 
   const normalizedStatus = parsed.status?.toLowerCase() ?? null;
-  let status: "failed" | "stopped" | "completed";
-  if (normalizedStatus === "failed" || normalizedStatus === "error") {
-    status = "failed";
-  } else if (normalizedStatus === "canceled" || normalizedStatus === "cancelled") {
-    status = "stopped";
-  } else {
-    status = "completed";
-  }
+  const status =
+    normalizedStatus === "failed" || normalizedStatus === "error"
+      ? "failed"
+      : normalizedStatus === "canceled" || normalizedStatus === "cancelled"
+        ? "stopped"
+        : "completed";
 
   return {
     type: "system",

@@ -3,6 +3,10 @@ import { estimateAssistantMessageHeightFromCache } from "@/utils/assistant-messa
 
 export const DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 100;
 export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = 50;
+// Tool calls and thoughts collapse to a single-line summary row by default.
+// A single tight estimate for both prevents virtualization from over-reserving
+// space for rows that are actually tiny — which is what makes the timeline
+// visibly "jump" as real heights arrive. (Paseo commit 0c3d15f.)
 const COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE = 40;
 
 type BottomAnchorE2ETestGlobals = typeof globalThis & {
@@ -32,15 +36,15 @@ export function getWebMountedRecentStreamItems(): number {
   return override ?? DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS;
 }
 
-export interface IndexedStreamItem {
+export type IndexedStreamItem = {
   item: StreamItem;
   index: number;
-}
+};
 
-export interface WebVirtualizedHistoryWindow {
+export type WebVirtualizedHistoryWindow = {
   virtualizedEntries: IndexedStreamItem[];
   mountedEntries: IndexedStreamItem[];
-}
+};
 
 export function estimateStreamItemHeight(item: StreamItem): number {
   switch (item.kind) {

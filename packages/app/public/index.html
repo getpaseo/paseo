@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="%LANG_ISO_CODE%">
   <head>
     <meta charset="utf-8" />
@@ -21,10 +21,18 @@
       }
       /* Prevent white flash before React mounts */
       @media (prefers-color-scheme: dark) {
-        html,
-        body {
-          background-color: #181b1a;
+        html, body {
+          background-color: #181B1A;
         }
+      }
+      /* Base dark scrollbar — replaced by JS once React mounts with exact theme colors */
+      @media (prefers-color-scheme: dark) {
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1A181B; }
+        ::-webkit-scrollbar-thumb { background: rgba(117,113,116,0.45); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(117,113,116,0.85); }
+        ::-webkit-scrollbar-corner { background: #1A181B; }
+        * { scrollbar-width: thin; scrollbar-color: rgba(117,113,116,0.45) #1A181B; }
       }
       /* These styles make the root element full-height */
       #root {
@@ -39,29 +47,18 @@
       input,
       textarea,
       select,
-      [role="button"],
-      [role="link"],
-      [role="textbox"],
-      [role="combobox"],
-      [role="tab"],
-      [role="switch"],
-      [role="checkbox"],
-      [role="slider"],
-      [role="menuitem"],
+      [role='button'],
+      [role='link'],
+      [role='textbox'],
+      [role='combobox'],
+      [role='tab'],
+      [role='switch'],
+      [role='checkbox'],
+      [role='slider'],
+      [role='menuitem'],
       [tabindex],
-      [contenteditable="true"] {
+      [contenteditable='true'] {
         -webkit-app-region: no-drag !important;
-      }
-
-      /* Suppress the browser's default focus outline — it appears on mouse
-         clicks and looks out of place against our themed surfaces. Keep a
-         themed ring for keyboard users via :focus-visible. */
-      *:focus {
-        outline: none;
-      }
-      *:focus-visible {
-        outline: 2px solid #20744a;
-        outline-offset: 2px;
       }
     </style>
   </head>

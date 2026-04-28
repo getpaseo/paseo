@@ -219,20 +219,17 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
 
       await recorder.record();
       attemptGuardRef.current.assertCurrent(attemptId);
-    } catch (error) {
+    } catch (error: any) {
       setRecordingStartTime(null);
       if (error instanceof AttemptCancelledError) {
         return;
       }
-      if ((error as { message?: string })?.message !== "Recording cancelled") {
+      if (error?.message !== "Recording cancelled") {
         console.error("[AudioRecorder] Failed to start recording:", error);
       }
-      throw new Error(
-        `Failed to start audio recording: ${(error as { message?: string })?.message ?? String(error)}`,
-        { cause: error },
-      );
+      throw new Error(`Failed to start audio recording: ${error.message}`);
     }
-  }, []);
+  }, [recordingOptions.sampleRate, recordingOptions.numberOfChannels, recordingOptions.bitRate]);
 
   const stop = useCallback(async (): Promise<Blob> => {
     const recorder = recorderRef.current;
@@ -293,13 +290,10 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
       })();
       startStopMutexRef.current = stopPromise;
       return await stopPromise;
-    } catch (error) {
+    } catch (error: any) {
       setRecordingStartTime(null);
       console.error("[AudioRecorder] Failed to stop recording:", error);
-      throw new Error(
-        `Failed to stop audio recording: ${(error as { message?: string })?.message ?? String(error)}`,
-        { cause: error },
-      );
+      throw new Error(`Failed to stop audio recording: ${error.message}`);
     } finally {
       startStopMutexRef.current = null;
     }

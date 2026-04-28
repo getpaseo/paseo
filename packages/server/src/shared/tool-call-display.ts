@@ -1,5 +1,8 @@
 import type { ToolCallTimelineItem } from "../server/agent/agent-sdk-types.js";
-import { getHubcodeToolLeafName, isHubcodeToolName } from "../server/agent/tool-name-normalization.js";
+import {
+  getHubcodeToolLeafName,
+  isHubcodeToolName,
+} from "../server/agent/tool-name-normalization.js";
 import { stripCwdPrefix } from "./path-utils.js";
 
 export type ToolCallDisplayInput = Pick<
@@ -9,16 +12,16 @@ export type ToolCallDisplayInput = Pick<
   cwd?: string;
 };
 
-export interface ToolCallDisplayModel {
+export type ToolCallDisplayModel = {
   displayName: string;
   summary?: string;
   errorText?: string;
-}
+};
 
-interface DetailDisplay {
+type DetailDisplay = {
   displayName?: string;
   summary?: string;
-}
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

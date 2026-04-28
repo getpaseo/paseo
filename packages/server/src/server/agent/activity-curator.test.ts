@@ -139,7 +139,9 @@ second line'`,
 
     const result = curateAgentActivity(timeline);
 
-    expect(result).toBe('[hubcode__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}');
+    expect(result).toBe(
+      '[hubcode__create_agent] {"cwd":"/tmp/repo","initialPrompt":"do the thing"}',
+    );
   });
 
   it("collapses repeated tool updates by callId", () => {

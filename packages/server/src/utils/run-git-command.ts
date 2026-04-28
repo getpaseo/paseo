@@ -1,5 +1,4 @@
 import pLimit from "p-limit";
-import type { ProcessEnvRecord } from "../server/hubcode-env.js";
 import { spawnProcess } from "./spawn.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -11,8 +10,7 @@ const gitLimit = pLimit(gitConcurrency);
 
 export interface GitCommandOptions {
   cwd: string;
-  env?: ProcessEnvRecord;
-  envOverlay?: ProcessEnvRecord;
+  env?: NodeJS.ProcessEnv;
   timeout?: number;
   maxOutputBytes?: number;
   acceptExitCodes?: number[];
@@ -24,19 +22,6 @@ export interface GitCommandResult {
   truncated: boolean;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
-}
-
-function mergeEnvOverlays(
-  env: ProcessEnvRecord | undefined,
-  envOverlay: ProcessEnvRecord | undefined,
-): ProcessEnvRecord | undefined {
-  if (!env) {
-    return envOverlay;
-  }
-  if (!envOverlay) {
-    return env;
-  }
-  return { ...env, ...envOverlay };
 }
 
 export function runGitCommand(
@@ -53,7 +38,7 @@ export function runGitCommand(
 
         const child = spawnProcess("git", args, {
           cwd: options.cwd,
-          envOverlay: mergeEnvOverlays(options.env, options.envOverlay),
+          env: options.env,
           stdio: ["ignore", "pipe", "pipe"],
         });
 

@@ -105,8 +105,7 @@ describe("crypto", () => {
 
       const ciphertext = await encrypt(correctKey, "secret");
 
-      const tryDecrypt = () => decrypt(wrongKey, ciphertext);
-      expect(tryDecrypt).toThrow();
+      expect(() => decrypt(wrongKey, ciphertext)).toThrow();
     });
 
     it("produces different ciphertext for same plaintext (random IV)", async () => {

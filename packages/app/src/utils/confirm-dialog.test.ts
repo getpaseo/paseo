@@ -10,9 +10,9 @@ const desktopHostState = {
 
 type MockPlatform = "web" | "ios" | "android";
 
-interface AlertButton {
+type AlertButton = {
   onPress?: () => void;
-}
+};
 
 async function loadModuleForPlatform(platform: MockPlatform): Promise<{
   confirmDialog: typeof import("./confirm-dialog").confirmDialog;

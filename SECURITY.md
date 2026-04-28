@@ -55,7 +55,7 @@ Host header validation and CORS origin checks are defense-in-depth controls for 
 
 CORS is not a complete security boundary. It controls which browser origins can make requests, but does not prevent a malicious website from resolving its domain to your local machine (DNS rebinding).
 
-Hubcode validates the `Host` header on incoming requests against configured hostnames. Requests with unrecognized hosts are rejected.
+Hubcode uses a host allowlist to validate the `Host` header on incoming requests. Requests with unrecognized hosts are rejected.
 
 ## Agent authentication
 
@@ -63,4 +63,4 @@ Hubcode wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage thei
 
 ## Reporting vulnerabilities
 
-If you discover a security vulnerability, please report it privately by emailing hello@moboudra.com. Do not open a public issue.
+If you discover a security vulnerability, please report it privately by emailing ceo@hubcode.ai. Do not open a public issue.

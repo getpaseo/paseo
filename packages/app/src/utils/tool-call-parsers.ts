@@ -1,15 +1,15 @@
 import { z } from "zod";
 
-export interface DiffSegment {
+export type DiffSegment = {
   text: string;
   changed: boolean;
-}
+};
 
-export interface DiffLine {
+export type DiffLine = {
   type: "add" | "remove" | "context" | "header";
   content: string;
   segments?: DiffSegment[];
-}
+};
 
 function splitIntoLines(text: string): string[] {
   if (!text) {
@@ -257,11 +257,11 @@ export function parseUnifiedDiff(diffText?: string): DiffLine[] {
 
 export type TaskStatus = "pending" | "in_progress" | "completed";
 
-export interface TaskEntry {
+export type TaskEntry = {
   text: string;
   status: TaskStatus;
   completed: boolean;
-}
+};
 
 const TaskStatusSchema = z.enum(["pending", "in_progress", "completed"]);
 

@@ -122,6 +122,16 @@ export interface WorkspaceDescriptor {
   gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
   githubRuntime?: WorkspaceDescriptorPayload["githubRuntime"];
   project?: ProjectPlacementPayload;
+  // Issue/integration data (optional — populated when workspace has linked issue)
+  issueContext?: WorkspaceDescriptorPayload["issueContext"];
+  issueMetadata?: Record<string, unknown>;
+  prompt?: string;
+  autoApprove?: boolean;
+  kanbanStatus?: "todo" | "in-progress" | "done";
+  agentProvider?: string;
+  agentMode?: "native" | "cli";
+  orgId?: string;
+  gitRemoteUrl?: string | null;
 }
 
 export function normalizeWorkspaceDescriptor(
@@ -142,6 +152,30 @@ export function normalizeWorkspaceDescriptor(
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
     project: payload.project,
+    issueContext: payload.issueContext,
+    issueMetadata: payload.issueMetadata,
+    prompt: payload.prompt,
+    autoApprove: payload.autoApprove,
+    kanbanStatus: payload.kanbanStatus,
+    agentProvider: payload.agentProvider,
+    agentMode: payload.agentMode,
+    orgId: payload.orgId,
+    gitRemoteUrl: payload.gitRuntime?.remoteUrl ?? null,
+  };
+}
+
+export function mergeWorkspaceSnapshotWithExisting(input: {
+  incoming: WorkspaceDescriptor;
+  existing?: WorkspaceDescriptor | null;
+}): WorkspaceDescriptor {
+  const { incoming, existing } = input;
+  if (!existing || existing.id !== incoming.id) {
+    return incoming;
+  }
+
+  return {
+    ...incoming,
+    diffStat: incoming.diffStat ?? existing.diffStat,
   };
 }
 

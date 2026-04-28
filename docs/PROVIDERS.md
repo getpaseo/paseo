@@ -1,8 +1,8 @@
 # Adding a New Provider to Hubcode
 
-This guide walks through adding a new agent provider end-to-end. There are two integration patterns, and this doc covers both.
+This guide walks through adding a new agent provider end-to-end. There are three integration patterns, and this doc covers all of them.
 
-## Two Integration Patterns
+## Three Integration Patterns
 
 ### ACP (Agent Client Protocol) -- recommended
 
@@ -15,6 +15,10 @@ Existing ACP providers: `claude-acp`, `copilot`.
 Implement the `AgentClient` and `AgentSession` interfaces yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
 
 Existing direct providers: `claude`, `codex`, `opencode`.
+
+### Wrapper
+
+Compose an existing provider, inject env/config overrides, and retag emitted events. Use when you want the runtime of provider X but UI-side branding + routing of provider Y. Existing wrapper provider: `hubcode` (delegates to `claude` with `ANTHROPIC_BASE_URL` pointed at OmniRoute; see [Hubcode agent architecture](#hubcode-agent-architecture-wrapper-pattern) below).
 
 ---
 
@@ -58,10 +62,10 @@ type MyProviderClientOptions = {
 export class MyProviderACPAgentClient extends ACPAgentClient {
   constructor(options: MyProviderClientOptions) {
     super({
-      provider: "my-provider", // Must match the ID used everywhere else
+      provider: "my-provider",        // Must match the ID used everywhere else
       logger: options.logger,
       runtimeSettings: options.runtimeSettings,
-      defaultCommand: ["my-agent-binary", "--acp"], // CLI command to spawn
+      defaultCommand: ["my-agent-binary", "--acp"],  // CLI command to spawn
       defaultModes: MY_PROVIDER_MODES,
       capabilities: MY_PROVIDER_CAPABILITIES,
     });
@@ -70,7 +74,7 @@ export class MyProviderACPAgentClient extends ACPAgentClient {
   // Override isAvailable() if the provider needs specific auth/env vars
   override async isAvailable(): Promise<boolean> {
     if (!(await super.isAvailable())) {
-      return false; // Binary not found
+      return false;  // Binary not found
     }
     return Boolean(process.env["MY_PROVIDER_API_KEY"]);
   }
@@ -212,8 +216,8 @@ export const agentConfigs = {
     provider: "my-provider",
     model: "default-model-id",
     modes: {
-      full: "autonomous", // Mode with no permission prompts
-      ask: "default", // Mode that requires permission approval
+      full: "autonomous",   // Mode with no permission prompts
+      ask: "default",       // Mode that requires permission approval
     },
   },
 } as const satisfies Record<string, AgentTestConfig>;
@@ -264,15 +268,8 @@ If your agent does not speak ACP, implement the interfaces from `agent-sdk-types
 interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
-  createSession(
-    config: AgentSessionConfig,
-    launchContext?: AgentLaunchContext,
-  ): Promise<AgentSession>;
-  resumeSession(
-    handle: AgentPersistenceHandle,
-    overrides?: Partial<AgentSessionConfig>,
-    launchContext?: AgentLaunchContext,
-  ): Promise<AgentSession>;
+  createSession(config: AgentSessionConfig, launchContext?: AgentLaunchContext): Promise<AgentSession>;
+  resumeSession(handle: AgentPersistenceHandle, overrides?: Partial<AgentSessionConfig>, launchContext?: AgentLaunchContext): Promise<AgentSession>;
   listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]>;
   isAvailable(): Promise<boolean>;
   // Optional:
@@ -364,3 +361,44 @@ Tests use `isProviderAvailable(provider)` to skip when the binary or credentials
 **`defaultCommand` is a tuple.** The first element is the binary name, the rest are default arguments. The base class uses this to find the executable and spawn the process.
 
 **Runtime settings can override the command.** Users can configure custom binary paths or environment variables per provider via `ProviderRuntimeSettings`. Your factory in the registry should pass `runtimeSettings?.["your-provider"]` through to the constructor.
+
+---
+
+## Hubcode agent architecture (wrapper pattern)
+
+The `hubcode` provider is a thin wrapper over `ClaudeAgentClient`. It exists because:
+
+1. **Backend reuse.** OmniRoute already exposes `/v1/messages` (Anthropic Messages format) with full translation from any upstream provider. We don't need to build a parallel agent runtime — the Claude Code CLI already handles tools, MCP, sub-agents, plan mode, hooks, skills, permissions, and persistence.
+2. **Officially supported pattern.** Anthropic documents this gateway pattern at [code.claude.com/docs/en/llm-gateway](https://code.claude.com/docs/en/llm-gateway). LiteLLM, Ollama, and vLLM use the same pattern.
+3. **UX preservation.** Users see "Hubcode > combo" in the model picker; "Claude Code" never appears in the picker, only in Settings → Providers (where the install lives).
+
+### How it works
+
+`HubcodeAgentClient` (`packages/server/src/server/agent/providers/hubcode-agent.ts`) holds an inner `ClaudeAgentClient` and:
+
+- **`isAvailable()`** checks `process.env.HUBCODE_CLAUDE_BIN` exists on disk. Set by the desktop app at daemon spawn time.
+- **`listModels()`** fetches `/api/me/hubcode-models` from the auth server and returns the user's combos (unchanged from the legacy implementation).
+- **`createSession()`** decorates the launch context and config with:
+  - `env.ANTHROPIC_BASE_URL` = OmniRoute base (with trailing `/v1` stripped — Claude Code appends `/v1/messages` itself).
+  - `env.ANTHROPIC_AUTH_TOKEN` = user's OmniRoute key from the bundle.
+  - `env.ANTHROPIC_MODEL` = combo name.
+  - `env.CLAUDE_CONFIG_DIR` = isolated path under `${userData}/claude-home/` (separates the bundled agent from the user's personal `~/.claude`).
+  - `env.DISABLE_TELEMETRY=1` (no Anthropic telemetry — traffic goes to OmniRoute).
+  - `config.extra.claude.pathToClaudeCodeExecutable` = bundled binary path (so the SDK doesn't fall back to `findExecutable("claude")` and pick up the user's personal install).
+- **`HubcodeAgentSession`** wraps the inner Claude session and rewrites every emitted `AgentStreamEvent.provider` from `"claude"` → `"hubcode"` so timeline projection, persistence handles, and the Providers panel all see Hubcode.
+
+### Desktop ↔ daemon env contract
+
+The desktop app provisions Claude Code at `${userData}/claude/node_modules/@anthropic-ai/claude-code/` and Node.js at `${userData}/runtime/node-vXX/` on first run (see `packages/desktop/src/integrations/claude-code-binary.ts`). When it spawns the daemon (`startDaemon()` in `daemon-manager.ts`), it injects:
+
+| Env var | Purpose |
+|---|---|
+| `HUBCODE_CLAUDE_BIN` | Absolute path to the bundled `claude` binary. Read by the Hubcode provider's `isAvailable()` and forced as `pathToClaudeCodeExecutable`. |
+| `HUBCODE_CLAUDE_HOME` | Isolated `CLAUDE_CONFIG_DIR` so the bundled agent doesn't read the user's personal settings, MCP servers, or API key. |
+| `HUBCODE_NODE_BIN` | Optional; surfaced for diagnostics. |
+
+If these envs are unset (e.g. daemon launched standalone outside the desktop), the Hubcode provider's badge flips to "Not installed" but the daemon still boots — other providers continue to work.
+
+### Why not just clone `claude-agent.ts`?
+
+We considered subclassing `ClaudeAgentClient` and overriding `provider`. TypeScript's literal type `provider: "claude" = "claude"` doesn't allow that without changing the parent type. Composition + retagging events at the boundary keeps both providers independent and lets the Claude provider track its upstream SDK without our wrapper interfering.

@@ -28,9 +28,9 @@ function lastUpsertFor(
   updates: AgentUpdatePayload[],
   agentId: string,
 ): AgentUpsertPayload | undefined {
-  return updates.findLast(
-    (u): u is AgentUpsertPayload => u.kind === "upsert" && u.agent.id === agentId,
-  );
+  return updates
+    .filter((u): u is AgentUpsertPayload => u.kind === "upsert" && u.agent.id === agentId)
+    .at(-1);
 }
 
 describe("mode-switch update propagation", () => {

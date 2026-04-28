@@ -16,7 +16,7 @@ type DraftFeatureConfig = Pick<
 
 export function useDraftAgentFeatures(input: {
   serverId: string | null | undefined;
-  provider: AgentProvider | null;
+  provider: AgentProvider;
   cwd: string | null | undefined;
   modeId: string | null | undefined;
   modelId: string | null | undefined;
@@ -28,31 +28,30 @@ export function useDraftAgentFeatures(input: {
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
-  const normalizedProvider = provider ?? null;
   const persistedFeatureValues = useMemo(
-    () => (provider ? (preferences.providerPreferences?.[provider]?.featureValues ?? {}) : {}),
+    () => preferences.providerPreferences?.[provider]?.featureValues ?? {},
     [preferences.providerPreferences, provider],
   );
 
   const draftConfig = useMemo<DraftFeatureConfig | null>(() => {
-    if (!normalizedProvider || !normalizedCwd) {
+    if (!normalizedCwd) {
       return null;
     }
 
     return {
-      provider: normalizedProvider,
+      provider,
       cwd: normalizedCwd,
       ...(modeId ? { modeId } : {}),
       ...(modelId ? { model: modelId } : {}),
       ...(thinkingOptionId ? { thinkingOptionId } : {}),
     };
-  }, [modeId, modelId, normalizedCwd, normalizedProvider, thinkingOptionId]);
+  }, [modeId, modelId, normalizedCwd, provider, thinkingOptionId]);
 
   const featuresQuery = useQuery({
     queryKey: [
       "providerFeatures",
       serverId ?? null,
-      normalizedProvider,
+      provider,
       normalizedCwd || null,
       modeId ?? null,
       modelId ?? null,
@@ -71,8 +70,7 @@ export function useDraftAgentFeatures(input: {
       return payload.features ?? [];
     },
   });
-  const availableFeaturesRaw = featuresQuery.data;
-  const availableFeatures = useMemo(() => availableFeaturesRaw ?? [], [availableFeaturesRaw]);
+  const availableFeatures = featuresQuery.data ?? [];
   const featureValues = useMemo(
     () =>
       resolveFeatureValues({
@@ -108,9 +106,6 @@ export function useDraftAgentFeatures(input: {
 
         return { ...current, [featureId]: value };
       });
-      if (!provider) {
-        return;
-      }
       void updatePreferences((current) =>
         mergeProviderPreferences({
           preferences: current,

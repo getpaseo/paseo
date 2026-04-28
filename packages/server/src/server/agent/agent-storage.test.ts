@@ -10,7 +10,6 @@ import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.j
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
   AgentPermissionRequest,
-  AgentProvider,
   AgentSession,
   AgentSessionConfig,
 } from "./agent-sdk-types.js";
@@ -27,11 +26,12 @@ type ManagedAgentOverrides = Omit<
   attention?: ManagedAgent["attention"];
 };
 
-function buildManagedAgentConfig(
-  provider: AgentProvider,
-  cwd: string,
-  configOverrides: Partial<AgentSessionConfig>,
-): AgentSessionConfig {
+function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent {
+  const now = overrides.updatedAt ?? new Date("2025-01-01T00:00:00.000Z");
+  const provider = overrides.provider ?? "claude";
+  const cwd = overrides.cwd ?? "/tmp/project";
+  const lifecycle = overrides.lifecycle ?? "idle";
+  const configOverrides = overrides.config ?? {};
   const config: AgentSessionConfig = {
     provider,
     cwd,
@@ -45,88 +45,49 @@ function buildManagedAgentConfig(
   if (Object.prototype.hasOwnProperty.call(configOverrides, "featureValues")) {
     config.featureValues = configOverrides.featureValues;
   }
-  return config;
-}
-
-function buildDefaultCapabilities() {
-  return {
-    supportsStreaming: true,
-    supportsSessionPersistence: true,
-    supportsDynamicModes: true,
-    supportsMcpServers: true,
-    supportsReasoningStream: true,
-    supportsToolInvocations: true,
-  };
-}
-
-function buildDefaultRuntimeInfo(params: {
-  provider: AgentProvider;
-  config: AgentSessionConfig;
-  sessionId: string;
-}) {
-  return {
-    provider: params.provider,
-    sessionId: params.sessionId,
-    model: params.config.model ?? null,
-    modeId: params.config.modeId ?? null,
-  };
-}
-
-interface ManagedAgentCore {
-  provider: AgentProvider;
-  cwd: string;
-  lifecycle: ManagedAgent["lifecycle"];
-  config: AgentSessionConfig;
-  session: AgentSession | null;
-  activeForegroundTurnId: string | null;
-  now: Date;
-}
-
-function resolveManagedAgentCore(overrides: ManagedAgentOverrides): ManagedAgentCore {
-  const now = overrides.updatedAt ?? new Date("2025-01-01T00:00:00.000Z");
-  const provider = overrides.provider ?? "claude";
-  const cwd = overrides.cwd ?? "/tmp/project";
-  const lifecycle = overrides.lifecycle ?? "idle";
-  const config = buildManagedAgentConfig(provider, cwd, overrides.config ?? {});
   const session = lifecycle === "closed" ? null : (overrides.session ?? ({} as AgentSession));
   const activeForegroundTurnId =
     overrides.activeForegroundTurnId ?? (lifecycle === "running" ? "test-turn-id" : null);
-  return { provider, cwd, lifecycle, config, session, activeForegroundTurnId, now };
-}
 
-function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent {
-  const core = resolveManagedAgentCore(overrides);
-  return {
+  const agent: ManagedAgent = {
     id: overrides.id ?? "agent-test",
-    provider: core.provider,
-    cwd: core.cwd,
-    session: core.session,
-    capabilities: overrides.capabilities ?? buildDefaultCapabilities(),
-    config: core.config,
-    lifecycle: core.lifecycle,
-    createdAt: overrides.createdAt ?? core.now,
-    updatedAt: overrides.updatedAt ?? core.now,
+    provider,
+    cwd,
+    session,
+    capabilities: overrides.capabilities ?? {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    config,
+    lifecycle,
+    createdAt: overrides.createdAt ?? now,
+    updatedAt: overrides.updatedAt ?? now,
     availableModes: overrides.availableModes ?? [],
-    currentModeId: overrides.currentModeId ?? core.config.modeId ?? null,
+    currentModeId: overrides.currentModeId ?? config.modeId ?? null,
     pendingPermissions: overrides.pendingPermissions ?? new Map<string, AgentPermissionRequest>(),
-    activeForegroundTurnId: core.activeForegroundTurnId,
+    activeForegroundTurnId,
     foregroundTurnWaiters: new Set(),
     unsubscribeSession: null,
     timeline: overrides.timeline ?? [],
     attention: overrides.attention ?? { requiresAttention: false },
-    runtimeInfo:
-      overrides.runtimeInfo ??
-      buildDefaultRuntimeInfo({
-        provider: core.provider,
-        config: core.config,
-        sessionId: overrides.sessionId ?? "session-123",
-      }),
+    runtimeInfo: overrides.runtimeInfo ?? {
+      provider,
+      sessionId: overrides.sessionId ?? "session-123",
+      model: config.model ?? null,
+      modeId: config.modeId ?? null,
+    },
     persistence: overrides.persistence ?? null,
     historyPrimed: overrides.historyPrimed ?? true,
-    lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
+    lastUserMessageAt: overrides.lastUserMessageAt ?? now,
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,
   };
+
+  return agent;
 }
 
 describe("AgentStorage", () => {
@@ -368,7 +329,7 @@ describe("AgentStorage", () => {
 
     const storageInternals = storage as unknown as {
       pendingWrites: Map<string, Promise<void>>;
-      cache: Map<string, unknown>;
+      cache: Map<string, any>;
     };
     storageInternals.pendingWrites.set(agentId, pendingWrite);
 
@@ -505,23 +466,24 @@ describe("AgentStorage", () => {
     await reloaded.remove(agentId);
 
     const hasAnyRecordFile = async () => {
-      const projects = await fs
-        .readdir(storagePath, { withFileTypes: true })
-        .catch(() => [] as Awaited<ReturnType<typeof fs.readdir>>);
-      const exists = await Promise.all(
-        projects
-          .filter((project) => project.isDirectory())
-          .map(async (project) => {
-            const candidate = path.join(storagePath, project.name, `${agentId}.json`);
-            try {
-              await fs.access(candidate);
-              return true;
-            } catch {
-              return false;
-            }
-          }),
-      );
-      return exists.some((present) => present);
+      try {
+        const projects = await fs.readdir(storagePath, { withFileTypes: true });
+        for (const project of projects) {
+          if (!project.isDirectory()) {
+            continue;
+          }
+          const candidate = path.join(storagePath, project.name, `${agentId}.json`);
+          try {
+            await fs.access(candidate);
+            return true;
+          } catch {
+            // not here
+          }
+        }
+      } catch {
+        // ignore
+      }
+      return false;
     };
 
     expect(await hasAnyRecordFile()).toBe(false);

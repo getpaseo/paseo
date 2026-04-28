@@ -1,10 +1,10 @@
-interface FocusWithRetriesOptions {
+type FocusWithRetriesOptions = {
   focus: () => void;
   isFocused: () => boolean;
   timeoutMs?: number;
   onSuccess?: () => void;
   onTimeout?: () => void;
-}
+};
 
 export function focusWithRetries({
   focus,

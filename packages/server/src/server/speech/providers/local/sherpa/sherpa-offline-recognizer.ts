@@ -9,15 +9,15 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
-export interface SherpaOfflineRecognizerModel {
+export type SherpaOfflineRecognizerModel = {
   kind: "nemo_transducer";
   encoder: string;
   decoder: string;
   joiner: string;
   tokens: string;
-}
+};
 
-export interface SherpaOfflineRecognizerConfig {
+export type SherpaOfflineRecognizerConfig = {
   model: SherpaOfflineRecognizerModel;
   numThreads?: number;
   provider?: "cpu";
@@ -26,24 +26,10 @@ export interface SherpaOfflineRecognizerConfig {
   featureDim?: number;
   decodingMethod?: "greedy_search";
   maxActivePaths?: number;
-}
-
-interface SherpaOfflineRecognizerNative {
-  config?: { featConfig?: { sampleRate?: number } };
-  createStream: () => unknown;
-  decode: (stream: unknown) => void;
-  getResult: (stream: unknown) => { text?: string } | string | undefined;
-  free?: () => void;
-}
-
-interface SherpaOfflineStreamNative {
-  acceptWaveform: ((arg: { samples: Float32Array; sampleRate: number }) => void) &
-    ((sampleRate: number, samples: Float32Array) => void);
-  free?: () => void;
-}
+};
 
 export class SherpaOfflineRecognizerEngine {
-  public readonly recognizer: SherpaOfflineRecognizerNative;
+  public readonly recognizer: any;
   public readonly sampleRate: number;
   private readonly logger: pino.Logger;
 
@@ -82,11 +68,7 @@ export class SherpaOfflineRecognizerEngine {
       maxActivePaths: config.maxActivePaths ?? 4,
     };
 
-    this.recognizer = new (
-      sherpa as unknown as {
-        OfflineRecognizer: new (config: unknown) => SherpaOfflineRecognizerNative;
-      }
-    ).OfflineRecognizer(recognizerConfig);
+    this.recognizer = new sherpa.OfflineRecognizer(recognizerConfig);
     const sr = this.recognizer?.config?.featConfig?.sampleRate;
     this.sampleRate =
       typeof sr === "number" && Number.isFinite(sr) && sr > 0
@@ -99,15 +81,11 @@ export class SherpaOfflineRecognizerEngine {
     );
   }
 
-  createStream(): SherpaOfflineStreamNative {
-    return this.recognizer.createStream() as SherpaOfflineStreamNative;
+  createStream(): any {
+    return this.recognizer.createStream();
   }
 
-  acceptWaveform(
-    stream: SherpaOfflineStreamNative,
-    sampleRate: number,
-    samples: Float32Array,
-  ): void {
+  acceptWaveform(stream: any, sampleRate: number, samples: Float32Array): void {
     if (!stream || typeof stream.acceptWaveform !== "function") {
       throw new Error("Unexpected sherpa offline stream: missing acceptWaveform()");
     }

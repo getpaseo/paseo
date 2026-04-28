@@ -12,7 +12,7 @@ import {
 import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
 
-interface TestHubcodeDaemonOptions {
+type TestHubcodeDaemonOptions = {
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
@@ -29,16 +29,16 @@ interface TestHubcodeDaemonOptions {
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
-}
+};
 
-export interface TestHubcodeDaemon {
+export type TestHubcodeDaemon = {
   config: HubcodeDaemonConfig;
   daemon: Awaited<ReturnType<typeof createHubcodeDaemon>>;
   port: number;
   hubcodeHome: string;
   staticDir: string;
   close: () => Promise<void>;
-}
+};
 
 const TEST_DAEMON_START_TIMEOUT_MS = 20_000;
 
@@ -59,7 +59,6 @@ async function startDaemonWithTimeout(
       () => {
         clearTimeout(timeoutHandle);
         resolve();
-        return;
       },
       (error) => {
         clearTimeout(timeoutHandle);
@@ -76,7 +75,35 @@ export async function createTestHubcodeDaemon(
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const { config, hubcodeHomeRoot, hubcodeHome, staticDir } = await prepareTestDaemonConfig(options);
+    const hubcodeHomeRoot =
+      options.hubcodeHomeRoot ?? (await mkdtemp(path.join(os.tmpdir(), "hubcode-home-")));
+    const hubcodeHome = path.join(hubcodeHomeRoot, ".hubcode");
+    await mkdir(hubcodeHome, { recursive: true });
+    const staticDir =
+      options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "hubcode-static-")));
+    const listenHost = options.listen ?? "127.0.0.1";
+    const config: HubcodeDaemonConfig = {
+      listen: `${listenHost}:0`,
+      hubcodeHome,
+      corsAllowedOrigins: options.corsAllowedOrigins ?? [],
+      allowedHosts: true,
+      mcpEnabled: true,
+      staticDir,
+      mcpDebug: false,
+      agentClients: options.agentClients ?? createTestAgentClients(),
+      agentStoragePath: path.join(hubcodeHome, "agents"),
+      relayEnabled: options.relayEnabled ?? false,
+      relayEndpoint: options.relayEndpoint ?? "relay.hubcode.ai:443",
+      appBaseUrl: "https://app.hubcode.ai",
+      openai: options.openai,
+      speech: options.speech,
+      voiceLlmProvider: options.voiceLlmProvider ?? null,
+      voiceLlmProviderExplicit: options.voiceLlmProviderExplicit ?? false,
+      voiceLlmModel: options.voiceLlmModel ?? null,
+      dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
+      downloadTokenTtlMs: options.downloadTokenTtlMs,
+    };
+
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createHubcodeDaemon(config, logger);
     try {
@@ -91,10 +118,13 @@ export async function createTestHubcodeDaemon(
         await daemon.agentManager.flush().catch(() => undefined);
         if (options.cleanup ?? true) {
           await new Promise((r) => setTimeout(r, 50));
-          await Promise.all([
-            rm(hubcodeHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-            rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-          ]);
+          await rm(hubcodeHomeRoot, {
+            recursive: true,
+            force: true,
+            maxRetries: 3,
+            retryDelay: 100,
+          });
+          await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
         }
       };
 
@@ -109,10 +139,8 @@ export async function createTestHubcodeDaemon(
     } catch (error) {
       lastError = error;
       await daemon.stop().catch(() => undefined);
-      await Promise.all([
-        rm(hubcodeHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-        rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-      ]);
+      await rm(hubcodeHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      await rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 
       if (
         (!isAddressInUseError(error) && !isStartupTimeoutError(error)) ||
@@ -124,46 +152,6 @@ export async function createTestHubcodeDaemon(
   }
 
   throw lastError ?? new Error("Failed to start test daemon");
-}
-
-interface PreparedTestDaemonConfig {
-  config: HubcodeDaemonConfig;
-  hubcodeHomeRoot: string;
-  hubcodeHome: string;
-  staticDir: string;
-}
-
-async function prepareTestDaemonConfig(
-  options: TestHubcodeDaemonOptions,
-): Promise<PreparedTestDaemonConfig> {
-  const hubcodeHomeRoot =
-    options.hubcodeHomeRoot ?? (await mkdtemp(path.join(os.tmpdir(), "hubcode-home-")));
-  const hubcodeHome = path.join(hubcodeHomeRoot, ".hubcode");
-  await mkdir(hubcodeHome, { recursive: true });
-  const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "hubcode-static-")));
-  const listenHost = options.listen ?? "127.0.0.1";
-  const config: HubcodeDaemonConfig = {
-    listen: `${listenHost}:0`,
-    hubcodeHome,
-    corsAllowedOrigins: options.corsAllowedOrigins ?? [],
-    hostnames: true,
-    mcpEnabled: true,
-    staticDir,
-    mcpDebug: false,
-    agentClients: options.agentClients ?? createTestAgentClients(),
-    agentStoragePath: path.join(hubcodeHome, "agents"),
-    relayEnabled: options.relayEnabled ?? false,
-    relayEndpoint: options.relayEndpoint ?? "relay.hubcode.ai:443",
-    appBaseUrl: "https://app.hubcode.ai",
-    openai: options.openai,
-    speech: options.speech,
-    voiceLlmProvider: options.voiceLlmProvider ?? null,
-    voiceLlmProviderExplicit: options.voiceLlmProviderExplicit ?? false,
-    voiceLlmModel: options.voiceLlmModel ?? null,
-    dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
-    downloadTokenTtlMs: options.downloadTokenTtlMs,
-  };
-  return { config, hubcodeHomeRoot, hubcodeHome, staticDir };
 }
 
 function isAddressInUseError(error: unknown): boolean {

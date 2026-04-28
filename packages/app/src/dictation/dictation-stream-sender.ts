@@ -1,16 +1,13 @@
 import { generateMessageId } from "@/types/stream";
 import type { DaemonClient } from "@server/client/daemon-client";
 
-export interface DictationStreamSenderParams {
+export type DictationStreamSenderParams = {
   client: DaemonClient | null;
   format: string;
   createDictationId?: () => string;
-}
+};
 
-interface DictationFinishResult {
-  dictationId: string;
-  text: string;
-}
+type DictationFinishResult = { dictationId: string; text: string };
 
 /**
  * Small, non-React state machine for dictation streaming.

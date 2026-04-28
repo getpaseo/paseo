@@ -20,7 +20,7 @@ function resolveSecretFile(params) {
 const variants = {
   production: {
     name: "Hubcode",
-    packageId: "ai.hubcode",
+    packageId: "sh.hubcode",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
       fallbackRelativePath: "./.secrets/google-services.prod.json",
@@ -32,7 +32,7 @@ const variants = {
   },
   development: {
     name: "Hubcode Debug",
-    packageId: "ai.hubcode.debug",
+    packageId: "sh.hubcode.debug",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_DEBUG",
       fallbackRelativePath: "./.secrets/google-services.debug.json",
@@ -124,7 +124,7 @@ export default {
         "expo-notifications",
         {
           icon: "./assets/images/notification-icon.png",
-          color: "#20744A",
+          color: "#C4198B",
         },
       ],
       "expo-audio",
@@ -142,7 +142,14 @@ export default {
     ],
     experiments: {
       typedRoutes: true,
-      reactCompiler: true,
+      // React Compiler was generating internal assertions like
+      // "Internal React error: Expected static flag was missing" +
+      // "Uncaught TypeError: Oc is not a function" when browser tabs
+      // mounted / unmounted rapidly. `"use no memo"` directives in
+      // individual files didn't suppress it reliably. Turn it off
+      // globally until the compiler's static-flag analysis stops
+      // conflicting with our imperative DOM/IPC patterns.
+      reactCompiler: false,
       autolinkingModuleResolution: true,
     },
     extra: {
@@ -151,6 +158,6 @@ export default {
         projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
       },
     },
-    owner: "gethubcode",
+    owner: "hubtool",
   },
 };

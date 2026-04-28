@@ -1,10 +1,14 @@
-import { Command, Option } from "commander";
+import { Command } from "commander";
+import { createRequire } from "node:module";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
 import { createChatCommand } from "./commands/chat/index.js";
 import { createLoopCommand } from "./commands/loop/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
+import { createMcpCommand } from "./commands/mcp/index.js";
+import { createSkillsCommand } from "./commands/skills/index.js";
+import { createLibraryCommand } from "./commands/library/index.js";
 import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
 import { createTerminalCommand } from "./commands/terminal/index.js";
@@ -29,15 +33,22 @@ import {
   addJsonAndDaemonHostOptions,
   addJsonOption,
 } from "./utils/command-options.js";
-import { resolveCliVersion } from "./version.js";
+
+const require = createRequire(import.meta.url);
+
+type CliPackageJson = {
+  version?: unknown;
+};
+
+function resolveCliVersion(): string {
+  const packageJson = require("../package.json") as CliPackageJson;
+  if (typeof packageJson.version === "string" && packageJson.version.trim().length > 0) {
+    return packageJson.version.trim();
+  }
+  throw new Error("Unable to resolve @hubcode/cli version from package.json.");
+}
 
 const VERSION = resolveCliVersion();
-
-function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
-  if (typeof hostnames === "string") return hostnames;
-  if (typeof allowedHosts === "string") return allowedHosts;
-  return undefined;
-}
 
 export function createCli(): Command {
   const program = new Command();
@@ -116,22 +127,10 @@ export function createCli(): Command {
     .option("--no-relay", "Disable relay on restarted daemon")
     .option("--no-mcp", "Disable Agent MCP on restarted daemon")
     .option(
-      "--hostnames <hosts>",
-      'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',
+      "--allowed-hosts <hosts>",
+      'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")',
     )
-    .addOption(new Option("--allowed-hosts <hosts>").hideHelp())
-    .action(
-      withOutput((...args) => {
-        const [options, command] = args.slice(-2) as [(typeof args)[number], Command];
-        return runDaemonRestartCommand(
-          {
-            ...options,
-            hostnames: resolveHostnamesOption(options.hostnames, options.allowedHosts),
-          },
-          command,
-        );
-      }),
-    );
+    .action(withOutput(runDaemonRestartCommand));
 
   // Advanced agent commands (less common operations)
   program.addCommand(createAgentCommand());
@@ -156,6 +155,11 @@ export function createCli(): Command {
 
   // Provider commands
   program.addCommand(createProviderCommand());
+
+  // Library commands (MCP servers + Skills)
+  program.addCommand(createMcpCommand());
+  program.addCommand(createSkillsCommand());
+  program.addCommand(createLibraryCommand());
 
   // Speech model commands
   program.addCommand(createSpeechCommand());

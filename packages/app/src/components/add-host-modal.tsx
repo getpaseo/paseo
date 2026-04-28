@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Alert, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -9,8 +9,6 @@ import { normalizeHostPort } from "@/utils/daemon-endpoints";
 import { DaemonConnectionTestError, connectToDaemon } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-
-const FLEX_ONE_STYLE = { flex: 1 } as const;
 
 const styles = StyleSheet.create((theme) => ({
   field: {
@@ -134,6 +132,7 @@ function buildConnectionFailureCopy(
 export interface AddHostModalProps {
   visible: boolean;
   onClose: () => void;
+  targetServerId?: string;
   onCancel?: () => void;
   onSaved?: (result: {
     profile: HostProfile;
@@ -143,46 +142,42 @@ export interface AddHostModalProps {
   }) => void;
 }
 
-export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostModalProps) {
+export function AddHostModal({
+  visible,
+  onClose,
+  onCancel,
+  onSaved,
+  targetServerId,
+}: AddHostModalProps) {
   const { theme } = useUnistyles();
   const daemons = useHosts();
   const { upsertDirectConnection } = useHostMutations();
   const isMobile = useIsCompactFormFactor();
 
   const hostInputRef = useRef<TextInput>(null);
-  const endpointRawRef = useRef("");
 
+  const [endpointRaw, setEndpointRaw] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const clearInput = useCallback(() => {
-    endpointRawRef.current = "";
-    hostInputRef.current?.clear();
-  }, []);
-
-  const connectIcon = useMemo(
-    () => <Link2 size={16} color={theme.colors.palette.white} />,
-    [theme.colors.palette.white],
-  );
-
   const handleClose = useCallback(() => {
     if (isSaving) return;
-    clearInput();
+    setEndpointRaw("");
     setErrorMessage("");
     onClose();
-  }, [isSaving, clearInput, onClose]);
+  }, [isSaving, onClose]);
 
   const handleCancel = useCallback(() => {
     if (isSaving) return;
-    clearInput();
+    setEndpointRaw("");
     setErrorMessage("");
     (onCancel ?? onClose)();
-  }, [isSaving, clearInput, onCancel, onClose]);
+  }, [isSaving, onCancel, onClose]);
 
   const handleSave = useCallback(async () => {
     if (isSaving) return;
 
-    const raw = endpointRawRef.current.trim();
+    const raw = endpointRaw.trim();
     if (!raw) {
       setErrorMessage("Host is required");
       return;
@@ -211,6 +206,15 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
         endpoint,
       });
       await client.close().catch(() => undefined);
+      if (targetServerId && serverId !== targetServerId) {
+        const message = `That endpoint belongs to ${serverId}, not ${targetServerId}.`;
+        setErrorMessage(message);
+        if (!isMobile) {
+          Alert.alert("Wrong daemon", message);
+        }
+        return;
+      }
+
       const isNewHost = !daemons.some((daemon) => daemon.serverId === serverId);
       const profile = await upsertDirectConnection({
         serverId,
@@ -221,15 +225,13 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       onSaved?.({ profile, serverId, hostname, isNewHost });
       handleClose();
     } catch (error) {
-      const { title, detail, raw: rawDetail } = buildConnectionFailureCopy(endpoint, error);
-      let combined: string;
-      if (rawDetail && detail && rawDetail !== detail) {
-        combined = `${title}\n${detail}\nDetails: ${rawDetail}`;
-      } else if (detail) {
-        combined = `${title}\n${detail}`;
-      } else {
-        combined = title;
-      }
+      const { title, detail, raw } = buildConnectionFailureCopy(endpoint, error);
+      const combined =
+        raw && detail && raw !== detail
+          ? `${title}\n${detail}\nDetails: ${raw}`
+          : detail
+            ? `${title}\n${detail}`
+            : title;
       setErrorMessage(combined);
       if (!isMobile) {
         // Desktop/web: also surface it as a dialog for quick visibility.
@@ -238,19 +240,16 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     } finally {
       setIsSaving(false);
     }
-  }, [daemons, handleClose, isMobile, isSaving, onSaved, upsertDirectConnection]);
-
-  const handleChangeEndpoint = useCallback((next: string) => {
-    endpointRawRef.current = next;
-  }, []);
-
-  const handleSubmitEditing = useCallback(() => {
-    void handleSave();
-  }, [handleSave]);
-
-  const handleSavePress = useCallback(() => {
-    void handleSave();
-  }, [handleSave]);
+  }, [
+    daemons,
+    endpointRaw,
+    handleClose,
+    isMobile,
+    isSaving,
+    onSaved,
+    targetServerId,
+    upsertDirectConnection,
+  ]);
 
   return (
     <AdaptiveModalSheet
@@ -265,10 +264,8 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
         <Text style={styles.label}>Host</Text>
         <AdaptiveTextInput
           ref={hostInputRef}
-          testID="direct-host-input"
-          nativeID="direct-host-input"
-          accessibilityLabel="direct-host-input"
-          onChangeText={handleChangeEndpoint}
+          value={endpointRaw}
+          onChangeText={setEndpointRaw}
           placeholder="hostname:port"
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
@@ -277,27 +274,21 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           keyboardType="url"
           editable={!isSaving}
           returnKeyType="done"
-          onSubmitEditing={handleSubmitEditing}
+          onSubmitEditing={() => void handleSave()}
         />
         {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
       </View>
 
       <View style={styles.actions}>
-        <Button
-          style={FLEX_ONE_STYLE}
-          variant="secondary"
-          onPress={handleCancel}
-          disabled={isSaving}
-        >
+        <Button style={{ flex: 1 }} variant="secondary" onPress={handleCancel} disabled={isSaving}>
           Cancel
         </Button>
         <Button
-          style={FLEX_ONE_STYLE}
+          style={{ flex: 1 }}
           variant="default"
-          onPress={handleSavePress}
+          onPress={() => void handleSave()}
           disabled={isSaving}
-          leftIcon={connectIcon}
-          testID="direct-host-submit"
+          leftIcon={<Link2 size={16} color={theme.colors.palette.white} />}
         >
           {isSaving ? "Connecting..." : "Connect"}
         </Button>

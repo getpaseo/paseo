@@ -13,10 +13,6 @@ export function resolveCliInstallSourcePath(input: {
     return input.shimPath;
   }
 
-  if (input.platform === "darwin") {
-    return input.shimPath;
-  }
-
   if (input.platform === "linux") {
     const appImagePath = input.appImagePath?.trim();
     if (appImagePath) {

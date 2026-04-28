@@ -101,7 +101,6 @@ Useful commands:
 npm run dev:server
 npm run dev:app
 npm run dev:desktop
-npm run dev:website
 npm run cli -- ls -a -g
 ```
 

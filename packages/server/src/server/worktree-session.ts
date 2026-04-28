@@ -1,139 +1,159 @@
 import type { Logger } from "pino";
-import { basename } from "node:path";
+import { v4 as uuidv4 } from "uuid";
 
 import type { AgentSessionConfig } from "./agent/agent-sdk-types.js";
+import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentStorage } from "./agent/agent-storage.js";
 import {
-  type AgentAttachment,
   type GitSetupOptions,
+  type ProjectPlacementPayload,
   type SessionInboundMessage,
   type SessionOutboundMessage,
-  type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
-import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
-import type { WorkspaceGitService } from "./workspace-git-service.js";
-import {
-  applyWorktreeSetupProgressEvent,
-  buildWorktreeSetupDetail,
-  createWorktreeSetupProgressAccumulator,
-  getWorktreeSetupProgressResults,
-} from "./worktree-bootstrap.js";
+import type {
+  PersistedProjectRecord,
+  PersistedWorkspaceRecord,
+  ProjectRegistry,
+  WorkspaceRegistry,
+} from "./workspace-registry.js";
+import { normalizeWorkspaceId as normalizePersistedWorkspaceId } from "./workspace-registry-model.js";
+import { createAgentWorktree } from "./worktree-bootstrap.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
-import type { ScriptRouteStore } from "./script-proxy.js";
-import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
-import type { GitHubService } from "../services/github-service.js";
-import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
+import { getCheckoutStatusLite, resolveRepositoryDefaultBranch } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
+  computeWorktreePath,
+  deleteHubcodeWorktree,
   getWorktreeSetupCommands,
   isHubcodeOwnedWorktreeCwd,
+  listHubcodeWorktrees,
+  resolveHubcodeWorktreeRootForCwd,
   resolveWorktreeRuntimeEnv,
-  runWorktreeSetupCommands,
   slugify,
   validateBranchSlug,
   type WorktreeConfig,
-  type WorktreeSetupCommandResult,
-  WorktreeSetupError,
 } from "../utils/worktree.js";
-import { toCheckoutError } from "./checkout-git-utils.js";
-import type {
-  CreateHubcodeWorktreeInput,
-  CreateHubcodeWorktreeResult,
-} from "./hubcode-worktree-service.js";
-import {
-  archiveHubcodeWorktree,
-  type ArchiveHubcodeWorktreeDependencies,
-} from "./hubcode-worktree-archive-service.js";
-import { toWorktreeWireError } from "./worktree-errors.js";
+import { runGitCommand } from "../utils/run-git-command.js";
+import { READ_ONLY_GIT_ENV, toCheckoutError } from "./checkout-git-utils.js";
+const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._\/-]+$/;
 
-const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
-
-export interface NormalizedGitOptions {
+export type NormalizedGitOptions = {
   baseBranch?: string;
   createNewBranch: boolean;
   newBranchName?: string;
   createWorktree: boolean;
   worktreeSlug?: string;
-  requestedWorktreeSlug?: string;
-  refName?: string;
-  action?: "branch-off" | "checkout";
-  githubPrNumber?: number;
-}
+};
 
 type EmitSessionMessage = (message: SessionOutboundMessage) => void;
 
-interface BuildAgentSessionConfigDependencies {
+type BuildAgentSessionConfigDependencies = {
   hubcodeHome?: string;
   sessionLogger: Logger;
-  workspaceGitService?: WorkspaceGitService;
-  createHubcodeWorktree: (
-    input: CreateHubcodeWorktreeInput,
-    options?: {
-      resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
-    },
-  ) => Promise<CreateHubcodeWorktreeResult>;
-  checkoutExistingBranch: (cwd: string, branch: string) => Promise<CheckoutExistingBranchResult>;
+  checkoutExistingBranch: (cwd: string, branch: string) => Promise<void>;
   createBranchFromBase: (params: {
     cwd: string;
     baseBranch: string;
     newBranchName: string;
   }) => Promise<void>;
-  github?: Pick<GitHubService, "invalidate">;
-}
+};
 
-interface CreateHubcodeWorktreeInBackgroundDependencies {
+type ArchiveHubcodeWorktreeDependencies = {
   hubcodeHome?: string;
-  emitWorkspaceUpdateForCwd: (cwd: string, options?: { dedupeGitState?: boolean }) => Promise<void>;
-  cacheWorkspaceSetupSnapshot: (workspaceId: string, snapshot: WorkspaceSetupSnapshot) => void;
+  agentManager: Pick<AgentManager, "listAgents" | "closeAgent">;
+  agentStorage: Pick<AgentStorage, "list" | "remove">;
+  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   emit: EmitSessionMessage;
+  emitWorkspaceUpdatesForCwds: (cwds: Iterable<string>) => Promise<void>;
+  isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
+  killTerminalsUnderPath: (rootPath: string) => Promise<void>;
+};
+
+type RegisterPendingWorktreeWorkspaceDependencies = {
+  buildPersistedProjectRecord: (input: {
+    workspaceId: string;
+    placement: ProjectPlacementPayload;
+    createdAt: string;
+    updatedAt: string;
+  }) => PersistedProjectRecord;
+  buildPersistedWorkspaceRecord: (input: {
+    workspaceId: string;
+    placement: ProjectPlacementPayload;
+    createdAt: string;
+    updatedAt: string;
+    workspaceDisplayName?: string;
+    issueContext?: PersistedWorkspaceRecord["issueContext"];
+    issueMetadata?: PersistedWorkspaceRecord["issueMetadata"];
+    prompt?: string;
+    autoApprove?: boolean;
+    kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
+    agentProvider?: string;
+    agentMode?: PersistedWorkspaceRecord["agentMode"];
+    orgId?: string;
+  }) => PersistedWorkspaceRecord;
+  buildProjectPlacement: (cwd: string) => Promise<ProjectPlacementPayload>;
+  projectRegistry: Pick<ProjectRegistry, "get" | "upsert">;
+  syncWorkspaceGitWatchTarget: (cwd: string, options: { isGit: boolean }) => Promise<void>;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "upsert">;
+  archiveProjectRecordIfEmpty: (projectId: string, archivedAt: string) => Promise<void>;
+  /** Optional — when present, new workspaces get indexing auto-enabled. */
+  autoEnableIndexing?: (workspaceId: string) => void;
+};
+
+type CreateHubcodeWorktreeInBackgroundDependencies = {
+  hubcodeHome?: string;
+  emitWorkspaceUpdateForCwd: (cwd: string) => Promise<void>;
   sessionLogger: Logger;
   terminalManager: TerminalManager | null;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
-  scriptRouteStore: ScriptRouteStore | null;
-  scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
-  getDaemonTcpPort: (() => number | null) | null;
-  getDaemonTcpHost: (() => string | null) | null;
-  onScriptsChanged: ((workspaceId: string, workspaceDirectory: string) => void) | null;
-}
+};
 
-interface HandleWorkspaceSetupStatusRequestDependencies {
-  emit: EmitSessionMessage;
-  workspaceSetupSnapshots: ReadonlyMap<string, WorkspaceSetupSnapshot>;
-}
-
-interface HandleCreateHubcodeWorktreeRequestDependencies {
+type HandleCreateHubcodeWorktreeRequestDependencies = {
   hubcodeHome?: string;
   describeWorkspaceRecord: (
-    result: CreateHubcodeWorktreeResult,
+    workspace: PersistedWorkspaceRecord,
   ) => Promise<WorkspaceDescriptorPayload>;
   emit: EmitSessionMessage;
-  createHubcodeWorktree: (input: CreateHubcodeWorktreeInput) => Promise<CreateHubcodeWorktreeResult>;
-  warmWorkspaceGitData: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  registerPendingWorktreeWorkspace: (options: {
+    repoRoot: string;
+    worktreePath: string;
+    branchName: string;
+    workspaceName?: string;
+    issueContext?: PersistedWorkspaceRecord["issueContext"];
+    issueMetadata?: PersistedWorkspaceRecord["issueMetadata"];
+    prompt?: string;
+    autoApprove?: boolean;
+    kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
+    agentProvider?: string;
+    agentMode?: PersistedWorkspaceRecord["agentMode"];
+    orgId?: string;
+  }) => Promise<PersistedWorkspaceRecord>;
   sessionLogger: Logger;
   runWorktreeSetupInBackground: (options: {
     requestCwd: string;
     repoRoot: string;
-    workspaceId: string;
-    worktree: WorktreeConfig;
-    shouldBootstrap: boolean;
     slug: string;
     worktreePath: string;
   }) => Promise<void>;
-}
+};
+
+type KillTerminalsUnderPathDependencies = {
+  isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
+  killTrackedTerminal: (terminalId: string, options?: { emitExit: boolean }) => void;
+  sessionLogger: Logger;
+  terminalManager: TerminalManager | null;
+};
 
 export async function buildAgentSessionConfig(
   dependencies: BuildAgentSessionConfigDependencies,
   config: AgentSessionConfig,
   gitOptions?: GitSetupOptions,
   legacyWorktreeName?: string,
-  attachments?: AgentAttachment[],
-): Promise<{
-  sessionConfig: AgentSessionConfig;
-  worktreeBootstrap?: { worktree: WorktreeConfig; shouldBootstrap: boolean };
-}> {
+  _labels?: Record<string, string>,
+): Promise<{ sessionConfig: AgentSessionConfig; worktreeConfig?: WorktreeConfig }> {
   let cwd = expandTilde(config.cwd);
   const normalized = normalizeGitOptions(gitOptions, legacyWorktreeName);
-  let worktreeBootstrap: { worktree: WorktreeConfig; shouldBootstrap: boolean } | undefined;
+  let worktreeConfig: WorktreeConfig | undefined;
 
   if (!normalized) {
     return {
@@ -145,55 +165,48 @@ export async function buildAgentSessionConfig(
   }
 
   if (normalized.createWorktree) {
+    let targetBranch: string;
+
+    if (normalized.createNewBranch) {
+      targetBranch = normalized.newBranchName!;
+    } else {
+      const { stdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd,
+        env: READ_ONLY_GIT_ENV,
+      });
+      targetBranch = stdout.trim();
+    }
+
+    if (!targetBranch) {
+      throw new Error("A branch name is required when creating a worktree.");
+    }
+
     dependencies.sessionLogger.info(
-      { worktreeSlug: normalized.requestedWorktreeSlug },
-      "Creating worktree through createWorktreeCore",
+      { worktreeSlug: normalized.worktreeSlug ?? targetBranch, branch: targetBranch },
+      `Creating worktree '${normalized.worktreeSlug ?? targetBranch}' for branch ${targetBranch}`,
     );
 
-    const createdWorktree = await dependencies.createHubcodeWorktree(
-      {
-        cwd,
-        worktreeSlug: normalized.worktreeSlug,
-        refName: normalized.refName,
-        action: normalized.action,
-        githubPrNumber: normalized.githubPrNumber,
-        attachments,
-        runSetup: false,
-        hubcodeHome: dependencies.hubcodeHome,
-      },
-      {
-        resolveDefaultBranch: normalized.baseBranch
-          ? async () => normalized.baseBranch!
-          : (repoRoot) =>
-              resolveGitCreateBaseBranch(
-                repoRoot,
-                dependencies.workspaceGitService,
-                dependencies.hubcodeHome,
-              ),
-      },
-    );
-    cwd = createdWorktree.worktree.worktreePath;
-    worktreeBootstrap = {
-      worktree: createdWorktree.worktree,
-      shouldBootstrap: createdWorktree.created,
-    };
+    const baseBranch =
+      normalized.baseBranch ?? (await resolveGitCreateBaseBranch(cwd, dependencies.hubcodeHome));
+    const createdWorktree = await createAgentWorktree({
+      branchName: targetBranch,
+      cwd,
+      baseBranch,
+      worktreeSlug: normalized.worktreeSlug ?? targetBranch,
+      hubcodeHome: dependencies.hubcodeHome,
+    });
+    cwd = createdWorktree.worktreePath;
+    worktreeConfig = createdWorktree;
   } else if (normalized.createNewBranch) {
     const baseBranch =
-      normalized.baseBranch ??
-      (await resolveGitCreateBaseBranch(
-        cwd,
-        dependencies.workspaceGitService,
-        dependencies.hubcodeHome,
-      ));
+      normalized.baseBranch ?? (await resolveGitCreateBaseBranch(cwd, dependencies.hubcodeHome));
     await dependencies.createBranchFromBase({
       cwd,
       baseBranch,
       newBranchName: normalized.newBranchName!,
     });
-    dependencies.github?.invalidate({ cwd });
   } else if (normalized.baseBranch) {
     await dependencies.checkoutExistingBranch(cwd, normalized.baseBranch);
-    dependencies.github?.invalidate({ cwd });
   }
 
   return {
@@ -201,38 +214,8 @@ export async function buildAgentSessionConfig(
       ...config,
       cwd,
     },
-    worktreeBootstrap,
+    worktreeConfig,
   };
-}
-
-interface ValidateNormalizedGitOptionsInput {
-  baseBranch: string | undefined;
-  createNewBranch: boolean;
-  normalizedBranchName: string | undefined;
-  normalizedWorktreeSlug: string | undefined;
-}
-
-function validateNormalizedGitOptions(input: ValidateNormalizedGitOptionsInput): void {
-  if (input.baseBranch) {
-    assertSafeGitRef(input.baseBranch, "base branch");
-  }
-
-  if (input.createNewBranch) {
-    if (!input.normalizedBranchName) {
-      throw new Error("New branch name is required");
-    }
-    const validation = validateBranchSlug(input.normalizedBranchName);
-    if (!validation.valid) {
-      throw new Error(`Invalid branch name: ${validation.error}`);
-    }
-  }
-
-  if (input.normalizedWorktreeSlug) {
-    const validation = validateBranchSlug(input.normalizedWorktreeSlug);
-    if (!validation.valid) {
-      throw new Error(`Invalid worktree name: ${validation.error}`);
-    }
-  }
 }
 
 export function normalizeGitOptions(
@@ -257,29 +240,34 @@ export function normalizeGitOptions(
   const createWorktree = Boolean(merged.createWorktree);
   const createNewBranch = Boolean(merged.createNewBranch);
   const normalizedBranchName = merged.newBranchName ? slugify(merged.newBranchName) : undefined;
-  const requestedWorktreeSlug = merged.worktreeSlug ? slugify(merged.worktreeSlug) : undefined;
-  const normalizedWorktreeSlug = requestedWorktreeSlug ?? normalizedBranchName;
-  const refName = merged.refName?.trim() || undefined;
-  const action = merged.action;
-  const githubPrNumber = merged.githubPrNumber;
+  const normalizedWorktreeSlug = merged.worktreeSlug
+    ? slugify(merged.worktreeSlug)
+    : normalizedBranchName;
 
-  if (
-    !createWorktree &&
-    !createNewBranch &&
-    !baseBranch &&
-    !refName &&
-    !action &&
-    !githubPrNumber
-  ) {
+  if (!createWorktree && !createNewBranch && !baseBranch) {
     return null;
   }
 
-  validateNormalizedGitOptions({
-    baseBranch,
-    createNewBranch,
-    normalizedBranchName,
-    normalizedWorktreeSlug,
-  });
+  if (baseBranch) {
+    assertSafeGitRef(baseBranch, "base branch");
+  }
+
+  if (createNewBranch) {
+    if (!normalizedBranchName) {
+      throw new Error("New branch name is required");
+    }
+    const validation = validateBranchSlug(normalizedBranchName);
+    if (!validation.valid) {
+      throw new Error(`Invalid branch name: ${validation.error}`);
+    }
+  }
+
+  if (normalizedWorktreeSlug) {
+    const validation = validateBranchSlug(normalizedWorktreeSlug);
+    if (!validation.valid) {
+      throw new Error(`Invalid worktree name: ${validation.error}`);
+    }
+  }
 
   return {
     baseBranch,
@@ -287,10 +275,6 @@ export function normalizeGitOptions(
     newBranchName: normalizedBranchName,
     createWorktree,
     worktreeSlug: normalizedWorktreeSlug,
-    requestedWorktreeSlug,
-    refName,
-    action,
-    githubPrNumber,
   };
 }
 
@@ -302,22 +286,23 @@ export function assertSafeGitRef(ref: string, label: string): void {
 
 export async function resolveGitCreateBaseBranch(
   cwd: string,
-  workspaceGitService?: WorkspaceGitService,
-  _hubcodeHome?: string,
+  hubcodeHome?: string,
 ): Promise<string> {
-  if (!workspaceGitService) {
-    throw new Error("WorkspaceGitService is required to resolve the repository root");
+  const checkout = await getCheckoutStatusLite(cwd, { hubcodeHome });
+  if (!checkout.isGit) {
+    throw new Error("Cannot create a worktree outside a git repository");
   }
 
-  return workspaceGitService.resolveDefaultBranch(cwd);
+  const repoRoot = checkout.isHubcodeOwnedWorktree ? checkout.mainRepoRoot : cwd;
+  const baseBranch = await resolveRepositoryDefaultBranch(repoRoot);
+  if (!baseBranch) {
+    throw new Error("Unable to resolve repository default branch");
+  }
+  return baseBranch;
 }
 
 export async function handleHubcodeWorktreeListRequest(
-  dependencies: {
-    emit: EmitSessionMessage;
-    hubcodeHome?: string;
-    workspaceGitService: WorkspaceGitService;
-  },
+  dependencies: { emit: EmitSessionMessage; hubcodeHome?: string },
   msg: Extract<SessionInboundMessage, { type: "hubcode_worktree_list_request" }>,
 ): Promise<void> {
   const { requestId } = msg;
@@ -335,7 +320,7 @@ export async function handleHubcodeWorktreeListRequest(
   }
 
   try {
-    const worktrees = await dependencies.workspaceGitService.listWorktrees(cwd);
+    const worktrees = await listHubcodeWorktrees({ cwd, hubcodeHome: dependencies.hubcodeHome });
     dependencies.emit({
       type: "hubcode_worktree_list_response",
       payload: {
@@ -361,13 +346,92 @@ export async function handleHubcodeWorktreeListRequest(
   }
 }
 
+export async function archiveHubcodeWorktree(
+  dependencies: ArchiveHubcodeWorktreeDependencies,
+  options: {
+    targetPath: string;
+    repoRoot: string;
+    requestId: string;
+  },
+): Promise<string[]> {
+  let targetPath = options.targetPath;
+  const resolvedWorktree = await resolveHubcodeWorktreeRootForCwd(targetPath, {
+    hubcodeHome: dependencies.hubcodeHome,
+  });
+  if (resolvedWorktree) {
+    targetPath = resolvedWorktree.worktreePath;
+  }
+
+  const removedAgents = new Set<string>();
+  const affectedWorkspaceCwds = new Set<string>([targetPath]);
+  const affectedWorkspaceIds = new Set<string>([normalizePersistedWorkspaceId(targetPath)]);
+  const agents = dependencies.agentManager.listAgents();
+  for (const agent of agents) {
+    if (!dependencies.isPathWithinRoot(targetPath, agent.cwd)) {
+      continue;
+    }
+
+    removedAgents.add(agent.id);
+    affectedWorkspaceCwds.add(agent.cwd);
+    affectedWorkspaceIds.add(normalizePersistedWorkspaceId(agent.cwd));
+    try {
+      await dependencies.agentManager.closeAgent(agent.id);
+    } catch {
+      // ignore cleanup errors
+    }
+    try {
+      await dependencies.agentStorage.remove(agent.id);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+
+  const registryRecords = await dependencies.agentStorage.list();
+  for (const record of registryRecords) {
+    if (!dependencies.isPathWithinRoot(targetPath, record.cwd)) {
+      continue;
+    }
+
+    removedAgents.add(record.id);
+    affectedWorkspaceCwds.add(record.cwd);
+    affectedWorkspaceIds.add(normalizePersistedWorkspaceId(record.cwd));
+    try {
+      await dependencies.agentStorage.remove(record.id);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+
+  await dependencies.killTerminalsUnderPath(targetPath);
+
+  await deleteHubcodeWorktree({
+    cwd: options.repoRoot,
+    worktreePath: targetPath,
+    hubcodeHome: dependencies.hubcodeHome,
+  });
+
+  for (const workspaceId of affectedWorkspaceIds) {
+    await dependencies.archiveWorkspaceRecord(workspaceId);
+  }
+
+  for (const agentId of removedAgents) {
+    dependencies.emit({
+      type: "agent_deleted",
+      payload: {
+        agentId,
+        requestId: options.requestId,
+      },
+    });
+  }
+
+  await dependencies.emitWorkspaceUpdatesForCwds(affectedWorkspaceCwds);
+
+  return Array.from(removedAgents);
+}
+
 export async function handleHubcodeWorktreeArchiveRequest(
-  dependencies: Omit<
-    ArchiveHubcodeWorktreeDependencies,
-    "emitWorkspaceUpdatesForCwds" | "workspaceGitService"
-  > & {
+  dependencies: Omit<ArchiveHubcodeWorktreeDependencies, "emitWorkspaceUpdatesForCwds"> & {
     emit: EmitSessionMessage;
-    workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
     emitWorkspaceUpdatesForCwds: (cwds: Iterable<string>) => Promise<void>;
   },
   msg: Extract<SessionInboundMessage, { type: "hubcode_worktree_archive_request" }>,
@@ -381,15 +445,15 @@ export async function handleHubcodeWorktreeArchiveRequest(
       if (!repoRoot || !msg.branchName) {
         throw new Error("worktreePath or repoRoot+branchName is required");
       }
-      const worktrees = await dependencies.workspaceGitService.listWorktrees(repoRoot);
+      const worktrees = await listHubcodeWorktrees({
+        cwd: repoRoot,
+        hubcodeHome: dependencies.hubcodeHome,
+      });
       const match = worktrees.find((entry) => entry.branchName === msg.branchName);
       if (!match) {
         throw new Error(`Hubcode worktree not found for branch ${msg.branchName}`);
       }
       targetPath = match.path;
-    }
-    if (!targetPath) {
-      throw new Error("worktreePath could not be resolved");
     }
 
     const ownership = await isHubcodeOwnedWorktreeCwd(targetPath, {
@@ -411,15 +475,14 @@ export async function handleHubcodeWorktreeArchiveRequest(
       return;
     }
 
-    // repoRoot is best-effort: if git has forgotten about the worktree we
-    // still proceed using the path-derived worktreesRoot, since the ownership
-    // check already proved the path lives under $HUBCODE_HOME/worktrees.
     repoRoot = ownership.repoRoot ?? repoRoot ?? null;
+    if (!repoRoot) {
+      throw new Error("Unable to resolve repo root for worktree");
+    }
 
     const removedAgents = await archiveHubcodeWorktree(dependencies, {
       targetPath,
       repoRoot,
-      worktreesRoot: ownership.worktreeRoot,
       requestId,
     });
 
@@ -445,25 +508,154 @@ export async function handleHubcodeWorktreeArchiveRequest(
   }
 }
 
+export async function registerPendingWorktreeWorkspace(
+  dependencies: RegisterPendingWorktreeWorkspaceDependencies,
+  options: {
+    repoRoot: string;
+    worktreePath: string;
+    branchName: string;
+    workspaceName?: string;
+    issueContext?: PersistedWorkspaceRecord["issueContext"];
+    issueMetadata?: PersistedWorkspaceRecord["issueMetadata"];
+    prompt?: string;
+    autoApprove?: boolean;
+    kanbanStatus?: PersistedWorkspaceRecord["kanbanStatus"];
+    agentProvider?: string;
+    agentMode?: PersistedWorkspaceRecord["agentMode"];
+    orgId?: string;
+  },
+): Promise<PersistedWorkspaceRecord> {
+  const workspaceId = normalizePersistedWorkspaceId(options.worktreePath);
+  const basePlacement = await dependencies.buildProjectPlacement(options.repoRoot);
+  const placement: ProjectPlacementPayload = {
+    ...basePlacement,
+    checkout: {
+      cwd: workspaceId,
+      isGit: true,
+      currentBranch: options.branchName,
+      remoteUrl: basePlacement.checkout.remoteUrl,
+      worktreeRoot: options.worktreePath,
+      isHubcodeOwnedWorktree: true,
+      mainRepoRoot: options.repoRoot,
+    },
+  };
+  const now = new Date().toISOString();
+  const existingWorkspace = await dependencies.workspaceRegistry.get(workspaceId);
+  const existingProject = await dependencies.projectRegistry.get(placement.projectKey);
+  const nextProjectRecord = dependencies.buildPersistedProjectRecord({
+    workspaceId,
+    placement,
+    createdAt: existingProject?.createdAt ?? now,
+    updatedAt: now,
+  });
+  const nextWorkspaceRecord = dependencies.buildPersistedWorkspaceRecord({
+    workspaceId,
+    placement,
+    createdAt: existingWorkspace?.createdAt ?? now,
+    updatedAt: now,
+    workspaceDisplayName: options.workspaceName,
+    issueContext: options.issueContext,
+    issueMetadata: options.issueMetadata,
+    prompt: options.prompt,
+    autoApprove: options.autoApprove,
+    kanbanStatus: options.kanbanStatus,
+    agentProvider: options.agentProvider,
+    agentMode: options.agentMode,
+    orgId: options.orgId,
+  });
+
+  await dependencies.projectRegistry.upsert(nextProjectRecord);
+  await dependencies.workspaceRegistry.upsert(nextWorkspaceRecord);
+  if (!existingWorkspace || existingWorkspace.archivedAt) {
+    dependencies.autoEnableIndexing?.(nextWorkspaceRecord.workspaceId);
+  }
+  await dependencies.syncWorkspaceGitWatchTarget(workspaceId, {
+    isGit: placement.checkout.isGit,
+  });
+
+  if (
+    existingWorkspace &&
+    !existingWorkspace.archivedAt &&
+    existingWorkspace.projectId !== nextWorkspaceRecord.projectId
+  ) {
+    await dependencies.archiveProjectRecordIfEmpty(existingWorkspace.projectId, now);
+  }
+
+  return nextWorkspaceRecord;
+}
+
 export async function handleCreateHubcodeWorktreeRequest(
   dependencies: HandleCreateHubcodeWorktreeRequestDependencies,
   request: Extract<SessionInboundMessage, { type: "create_hubcode_worktree_request" }>,
 ): Promise<void> {
   try {
-    const createdWorktree = await dependencies.createHubcodeWorktree({
-      cwd: request.cwd,
-      worktreeSlug: request.worktreeSlug,
-      refName: request.refName,
-      action: request.action,
-      githubPrNumber: request.githubPrNumber,
-      attachments: request.attachments,
-      runSetup: false,
+    const checkout = await getCheckoutStatusLite(request.cwd, {
       hubcodeHome: dependencies.hubcodeHome,
     });
-    const slug = basename(createdWorktree.worktree.worktreePath);
-    const workspace = createdWorktree.workspace;
+    if (!checkout.isGit) {
+      throw new Error("Create worktree requires a git repository");
+    }
 
-    const descriptor = await dependencies.describeWorkspaceRecord(createdWorktree);
+    const repoRoot = checkout.isHubcodeOwnedWorktree ? checkout.mainRepoRoot : request.cwd;
+    const baseBranch = await resolveRepositoryDefaultBranch(repoRoot);
+    if (!baseBranch) {
+      throw new Error("Unable to resolve repository default branch");
+    }
+
+    const requestedWorkspaceName = request.workspaceName?.trim() || undefined;
+    const normalizedSlug = request.worktreeSlug
+      ? slugify(request.worktreeSlug)
+      : requestedWorkspaceName
+        ? slugify(requestedWorkspaceName)
+        : uuidv4();
+    const validation = validateBranchSlug(normalizedSlug);
+    if (!validation.valid) {
+      throw new Error(`Invalid worktree name: ${validation.error}`);
+    }
+
+    const worktreePath = await computeWorktreePath(
+      repoRoot,
+      normalizedSlug,
+      dependencies.hubcodeHome,
+    );
+    dependencies.sessionLogger.info(
+      {
+        hasIssueContext: !!request.issueContext,
+        hasIssueMetadata: !!request.issueMetadata,
+        kanbanStatus: request.kanbanStatus,
+        issueContextKeys: request.issueContext ? Object.keys(request.issueContext) : [],
+      },
+      "create_hubcode_worktree: issue data from request",
+    );
+    // Create the worktree on disk BEFORE registering the workspace, since
+    // registerPendingWorktreeWorkspace auto-enables indexing — and indexing
+    // (crg build_or_update_graph) immediately reads from `worktreePath`. If
+    // the directory hasn't been created yet, the tool fails with
+    // "repo_root is not an existing directory".
+    await createAgentWorktree({
+      cwd: repoRoot,
+      branchName: normalizedSlug,
+      baseBranch,
+      worktreeSlug: normalizedSlug,
+      hubcodeHome: dependencies.hubcodeHome,
+    });
+
+    const workspace = await dependencies.registerPendingWorktreeWorkspace({
+      repoRoot,
+      worktreePath,
+      branchName: normalizedSlug,
+      workspaceName: requestedWorkspaceName,
+      issueContext: request.issueContext,
+      issueMetadata: request.issueMetadata,
+      prompt: request.prompt,
+      autoApprove: request.autoApprove,
+      kanbanStatus: request.kanbanStatus,
+      agentProvider: request.agentProvider,
+      agentMode: request.agentMode,
+      orgId: request.orgId,
+    });
+
+    const descriptor = await dependencies.describeWorkspaceRecord(workspace);
     dependencies.emit({
       type: "create_hubcode_worktree_response",
       payload: {
@@ -473,31 +665,15 @@ export async function handleCreateHubcodeWorktreeRequest(
         requestId: request.requestId,
       },
     });
-    dependencies.emit({
-      type: "workspace_update",
-      payload: {
-        kind: "upsert",
-        workspace: descriptor,
-      },
-    });
 
-    void dependencies.warmWorkspaceGitData(workspace).catch((error) => {
-      dependencies.sessionLogger.warn(
-        { err: error, workspaceId: workspace.workspaceId },
-        "Failed to warm workspace git data after creating worktree",
-      );
-    });
     void dependencies.runWorktreeSetupInBackground({
       requestCwd: request.cwd,
-      repoRoot: createdWorktree.repoRoot,
-      workspaceId: workspace.workspaceId,
-      worktree: createdWorktree.worktree,
-      shouldBootstrap: createdWorktree.created,
-      slug,
-      worktreePath: createdWorktree.worktree.worktreePath,
+      repoRoot,
+      slug: normalizedSlug,
+      worktreePath,
     });
   } catch (error) {
-    const wireError = toWorktreeWireError(error);
+    const message = error instanceof Error ? error.message : "Failed to create worktree";
     dependencies.sessionLogger.error(
       { err: error, cwd: request.cwd, worktreeSlug: request.worktreeSlug },
       "Failed to create worktree",
@@ -506,8 +682,7 @@ export async function handleCreateHubcodeWorktreeRequest(
       type: "create_hubcode_worktree_response",
       payload: {
         workspace: null,
-        error: wireError.message,
-        errorCode: wireError.code,
+        error: message,
         setupTerminalId: null,
         requestId: request.requestId,
       },
@@ -515,125 +690,92 @@ export async function handleCreateHubcodeWorktreeRequest(
   }
 }
 
-export async function handleWorkspaceSetupStatusRequest(
-  dependencies: HandleWorkspaceSetupStatusRequestDependencies,
-  request: Extract<SessionInboundMessage, { type: "workspace_setup_status_request" }>,
-): Promise<void> {
-  const workspaceId = request.workspaceId;
-  const snapshot = dependencies.workspaceSetupSnapshots.get(workspaceId) ?? null;
-
-  dependencies.emit({
-    type: "workspace_setup_status_response",
-    payload: {
-      requestId: request.requestId,
-      workspaceId,
-      snapshot,
-    },
-  });
-}
-
 export async function runWorktreeSetupInBackground(
   dependencies: CreateHubcodeWorktreeInBackgroundDependencies,
   options: {
     requestCwd: string;
     repoRoot: string;
-    workspaceId: string;
-    worktree: WorktreeConfig;
-    shouldBootstrap: boolean;
     slug: string;
     worktreePath: string;
   },
 ): Promise<void> {
-  let worktree: WorktreeConfig = options.worktree;
-  let setupResults: WorktreeSetupCommandResult[] = [];
-  let setupStarted = false;
-  const progressAccumulator = createWorktreeSetupProgressAccumulator();
-  const workspaceId = String(options.workspaceId);
-
-  const emitSetupProgress = (status: "running" | "completed" | "failed", error: string | null) => {
-    const snapshot: WorkspaceSetupSnapshot = {
-      status,
-      detail: buildWorktreeSetupDetail({
-        worktree,
-        results:
-          status === "running"
-            ? getWorktreeSetupProgressResults(progressAccumulator)
-            : setupResults,
-        outputAccumulatorsByIndex: progressAccumulator.outputAccumulatorsByIndex,
-      }),
-      error,
-    };
-    dependencies.cacheWorkspaceSetupSnapshot(workspaceId, snapshot);
-    dependencies.emit({
-      type: "workspace_setup_progress",
-      payload: {
-        workspaceId,
-        ...snapshot,
-      },
-    });
-  };
+  let setupTerminalId: string | null = null;
 
   try {
-    try {
-      emitSetupProgress("running", null);
+    const setupCommands = getWorktreeSetupCommands(options.worktreePath);
+    if (setupCommands.length > 0 && dependencies.terminalManager) {
+      const runtimeEnv = await resolveWorktreeRuntimeEnv({
+        worktreePath: options.worktreePath,
+        branchName: options.slug,
+        repoRootPath: options.repoRoot,
+      });
+      dependencies.terminalManager.registerCwdEnv({
+        cwd: options.worktreePath,
+        env: runtimeEnv,
+      });
+      const terminal = await dependencies.terminalManager.createTerminal({
+        cwd: options.worktreePath,
+        name: `setup-${options.slug}`,
+        env: runtimeEnv,
+      });
+      setupTerminalId = terminal.id;
 
-      if (!options.shouldBootstrap) {
-        emitSetupProgress("completed", null);
-      } else {
-        const setupCommands = getWorktreeSetupCommands(worktree.worktreePath);
-        if (setupCommands.length === 0) {
-          setupStarted = true;
-          emitSetupProgress("completed", null);
-        } else {
-          const runtimeEnv = await resolveWorktreeRuntimeEnv({
-            worktreePath: worktree.worktreePath,
-            branchName: worktree.branchName,
-            repoRootPath: options.repoRoot,
-          });
-          dependencies.terminalManager?.registerCwdEnv({
-            cwd: worktree.worktreePath,
-            env: runtimeEnv,
-          });
-          setupStarted = true;
-          setupResults = await runWorktreeSetupCommands({
-            worktreePath: worktree.worktreePath,
-            branchName: worktree.branchName,
-            cleanupOnFailure: false,
-            repoRootPath: options.repoRoot,
-            runtimeEnv,
-            onEvent: (event) => {
-              applyWorktreeSetupProgressEvent(progressAccumulator, event);
-              emitSetupProgress("running", null);
-            },
-          });
-          emitSetupProgress("completed", null);
-        }
+      for (const command of setupCommands) {
+        terminal.send({
+          type: "input",
+          data: `${command}\r`,
+        });
+      }
+    }
+  } catch (error) {
+    dependencies.sessionLogger.error(
+      {
+        err: error,
+        cwd: options.requestCwd,
+        repoRoot: options.repoRoot,
+        worktreeSlug: options.slug,
+        worktreePath: options.worktreePath,
+        setupTerminalId,
+      },
+      "Background worktree setup failed",
+    );
+  } finally {
+    await dependencies.emitWorkspaceUpdateForCwd(options.worktreePath);
+  }
+}
+
+export async function killTerminalsUnderPath(
+  dependencies: KillTerminalsUnderPathDependencies,
+  rootPath: string,
+): Promise<void> {
+  if (!dependencies.terminalManager) {
+    return;
+  }
+
+  const cleanupErrors: Array<{ cwd: string; message: string }> = [];
+  const terminalDirectories = [...dependencies.terminalManager.listDirectories()];
+  for (const terminalCwd of terminalDirectories) {
+    if (!dependencies.isPathWithinRoot(rootPath, terminalCwd)) {
+      continue;
+    }
+
+    try {
+      const terminals = await dependencies.terminalManager.getTerminals(terminalCwd);
+      for (const terminal of [...terminals]) {
+        dependencies.killTrackedTerminal(terminal.id, { emitExit: true });
       }
     } catch (error) {
-      if (error instanceof WorktreeSetupError) {
-        setupResults = error.results;
-      }
       const message = error instanceof Error ? error.message : String(error);
-      emitSetupProgress("failed", message);
-
-      if (!setupStarted) {
-        await dependencies.archiveWorkspaceRecord(options.workspaceId);
-      }
-
-      dependencies.sessionLogger.error(
-        {
-          err: error,
-          cwd: options.requestCwd,
-          repoRoot: options.repoRoot,
-          worktreeSlug: worktree.branchName,
-          worktreePath: worktree.worktreePath,
-          setupStarted,
-        },
-        "Background worktree setup failed",
+      cleanupErrors.push({ cwd: terminalCwd, message });
+      dependencies.sessionLogger.warn(
+        { err: error, cwd: terminalCwd },
+        "Failed to clean up worktree terminals during archive",
       );
-      return;
     }
-  } finally {
-    await dependencies.emitWorkspaceUpdateForCwd(worktree.worktreePath);
+  }
+
+  if (cleanupErrors.length > 0) {
+    const details = cleanupErrors.map((entry) => `${entry.cwd}: ${entry.message}`).join("; ");
+    throw new Error(`Failed to clean up worktree terminals during archive (${details})`);
   }
 }

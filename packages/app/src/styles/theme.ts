@@ -83,7 +83,6 @@ export const baseColors = {
   // Amber scale
   amber: {
     500: "#f59e0b",
-    700: "#b45309",
   },
 
   // Yellow scale
@@ -117,23 +116,6 @@ const darkDiffColors = {
   diffDeletion: "#ef4444", // red-500
 };
 
-// Status colors — semantic signals for success/danger/warning/merged. Used by
-// check statuses, PR states, and review decisions. Kept a step darker than the
-// raw palette so they read as signals, not neon.
-const lightStatusColors = {
-  statusSuccess: "#15803d", // green-700
-  statusDanger: "#b91c1c", // red-700
-  statusWarning: "#d97706", // amber-600
-  statusMerged: "#7c3aed", // purple-600
-};
-
-const darkStatusColors = {
-  statusSuccess: "#16a34a", // green-600
-  statusDanger: "#dc2626", // red-600
-  statusWarning: "#f59e0b", // amber-500
-  statusMerged: "#9333ea", // purple-600
-};
-
 // Semantic color tokens - Layer-based system
 const lightSemanticColors = {
   // Surfaces (layers) - shifted one step lighter
@@ -159,14 +141,23 @@ const lightSemanticColors = {
   borderAccent: "#ececf1", // Softer accent border for low-emphasis outlines
 
   // Brand
-  accent: "#20744A",
-  accentBright: "#239956",
+  accent: "#C4198B",
+  accentBright: "#D93BA5",
   accentForeground: "#ffffff",
 
+  // Interactive row states — applied consistently across every list row
+  // (channels, DMs, sessions, shared workspaces, nav items). Avoids each
+  // component reinventing "what does hover look like here".
+  rowHover: "#f4f4f5",
+  rowSelected: "#e4e4e7", // noticeably darker than hover so selection pops
+  rowPressed: "#d4d4d8",
+  rowSelectedAccent: "#C4198B",
+  focusRing: "#C4198B",
+
   // Semantic
-  destructive: "#b04138", // dark warm red on white — calm but unambiguously red
+  destructive: "#dc2626",
   destructiveForeground: "#ffffff",
-  success: "#20744A",
+  success: "#22c55e",
   successForeground: "#ffffff",
 
   // Legacy aliases (for gradual migration)
@@ -182,9 +173,10 @@ const lightSemanticColors = {
   accentBorder: "#ececf1",
   input: "#f4f4f5",
   ring: "#18181b",
+  brandMagenta: "#C4198B",
+  brandMagentaHover: "#a8137a",
 
   ...lightDiffColors,
-  ...lightStatusColors,
 
   terminal: {
     background: "#ffffff",
@@ -233,7 +225,6 @@ interface DarkThemeConfig {
   borderAccent: string;
   accent: string;
   accentBright: string;
-  destructive: string;
 }
 
 const darkTerminalAnsi = {
@@ -277,7 +268,15 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     accentBright: tint.accentBright,
     accentForeground: "#ffffff",
 
-    destructive: tint.destructive,
+    // Interactive row states. Selected uses surface3 (noticeably brighter
+    // than hover surface1) so the active row clearly pops in dense sidebars.
+    rowHover: tint.surface1,
+    rowSelected: tint.surface3,
+    rowPressed: tint.surface4,
+    rowSelectedAccent: tint.accent,
+    focusRing: tint.accent,
+
+    destructive: "#ef4444",
     destructiveForeground: "#ffffff",
     success: tint.accent,
     successForeground: "#ffffff",
@@ -295,9 +294,10 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
     accentBorder: tint.borderAccent,
     input: tint.surface2,
     ring: "#d4d4d8",
+    brandMagenta: "#C4198B",
+    brandMagentaHover: "#a8137a",
 
     ...darkDiffColors,
-    ...darkStatusColors,
 
     terminal: {
       background: tint.surface0,
@@ -317,23 +317,22 @@ function buildDarkSemanticColors(tint: DarkThemeConfig) {
 // Dark tint definitions
 // ---------------------------------------------------------------------------
 
-// Hubcode — subtle teal-green tint (default)
+// Hubcode — subtle magenta tint (default)
 const hubcodeDarkColors = buildDarkSemanticColors({
-  surface0: "#181B1A",
-  surface1: "#1E2120",
-  surface2: "#272A29",
-  surface3: "#434645",
-  surface4: "#595B5B",
-  surfaceDiffEmpty: "#252827",
-  surfaceSidebar: "#141716",
-  surfaceSidebarHover: "#1c1f1e",
-  foregroundMuted: "#A1A5A4",
-  scrollbarHandle: "#717574",
-  border: "#252B2A",
-  borderAccent: "#2F3534",
-  accent: "#20744A",
-  accentBright: "#7ccba0",
-  destructive: "#c64f43", // warm red, hue ~7 — reads as red (not pink) against the green tint
+  surface0: "#1A181B",
+  surface1: "#201E21",
+  surface2: "#2A272B",
+  surface3: "#454346",
+  surface4: "#5B595C",
+  surfaceDiffEmpty: "#282527",
+  surfaceSidebar: "#161416",
+  surfaceSidebarHover: "#1E1C1F",
+  foregroundMuted: "#A5A1A6",
+  scrollbarHandle: "#757174",
+  border: "#2B252B",
+  borderAccent: "#352F35",
+  accent: "#C4198B",
+  accentBright: "#E86CB5",
 });
 
 // Zinc — neutral gray, no tint
@@ -350,9 +349,8 @@ const zincDarkColors = buildDarkSemanticColors({
   scrollbarHandle: "#71717a",
   border: "#27272a",
   borderAccent: "#303036",
-  accent: "#20744A",
-  accentBright: "#7ccba0",
-  destructive: "#c44a4a", // neutral red, hue 0 — clearly red without screaming
+  accent: "#C4198B",
+  accentBright: "#E86CB5",
 });
 
 // Midnight — subtle blue tint
@@ -371,7 +369,6 @@ const midnightDarkColors = buildDarkSemanticColors({
   borderAccent: "#2e3040",
   accent: "#3b6fcf",
   accentBright: "#7eaaeb",
-  destructive: "#c44a52", // red with a hint of cool lean against the blue tint
 });
 
 // Claude — warm neutral with subtle orange undertone
@@ -390,7 +387,6 @@ const claudeDarkColors = buildDarkSemanticColors({
   borderAccent: "#36332f",
   accent: "#d97757",
   accentBright: "#e89a7f",
-  destructive: "#cf513e", // warm orange-red, hue ~10 — sits with the Claude orange accent
 });
 
 // Ghostty — blue-tinted dark based on Ghostty default background
@@ -409,86 +405,75 @@ const ghosttyDarkColors = buildDarkSemanticColors({
   borderAccent: "#3f4454",
   accent: "#89b4fa",
   accentBright: "#b4d0fc",
-  destructive: "#c44a55", // red with slight cool lean against the slate-blue surfaces
 });
 
-export const SPACING = {
-  0: 0,
-  1: 4,
-  1.5: 6,
-  2: 8,
-  3: 12,
-  4: 16,
-  6: 24,
-  8: 32,
-  12: 48,
-  16: 64,
-  20: 80,
-  24: 96,
-  32: 128,
-} as const;
-
-export const FONT_SIZE = {
-  xs: 12,
-  sm: 14,
-  base: 16,
-  lg: 18,
-  xl: 20,
-  "2xl": 22,
-  "3xl": 26,
-  "4xl": 34,
-} as const;
-
-export const LINE_HEIGHT = {
-  diff: 22,
-} as const;
-
-export const ICON_SIZE = {
-  xs: 12,
-  sm: 14,
-  md: 16,
-  lg: 20,
-} as const;
-
-export const FONT_WEIGHT = {
-  normal: "normal" as const,
-  medium: "500" as const,
-  semibold: "600" as const,
-  bold: "bold" as const,
-} as const;
-
-export const BORDER_RADIUS = {
-  none: 0,
-  sm: 2,
-  base: 4,
-  md: 6,
-  lg: 8,
-  xl: 12,
-  "2xl": 16,
-  full: 9999,
-} as const;
-
-export const BORDER_WIDTH = {
-  0: 0,
-  1: 1,
-  2: 2,
-} as const;
-
-export const OPACITY = {
-  0: 0,
-  50: 0.5,
-  100: 1,
-} as const;
-
 const commonTheme = {
-  spacing: SPACING,
-  fontSize: FONT_SIZE,
-  lineHeight: LINE_HEIGHT,
-  iconSize: ICON_SIZE,
-  fontWeight: FONT_WEIGHT,
-  borderRadius: BORDER_RADIUS,
-  borderWidth: BORDER_WIDTH,
-  opacity: OPACITY,
+  spacing: {
+    0: 0,
+    1: 4,
+    2: 8,
+    3: 12,
+    4: 16,
+    6: 24,
+    8: 32,
+    12: 48,
+    16: 64,
+    20: 80,
+    24: 96,
+    32: 128,
+  },
+
+  fontSize: {
+    xs: 12,
+    sm: 14,
+    base: 16,
+    lg: 18,
+    xl: 20,
+    "2xl": 22,
+    "3xl": 26,
+    "4xl": 34,
+  },
+
+  lineHeight: {
+    diff: 22,
+  },
+
+  iconSize: {
+    xs: 12,
+    sm: 14,
+    md: 16,
+    lg: 20,
+  },
+
+  fontWeight: {
+    normal: "normal" as const,
+    medium: "500" as const,
+    semibold: "600" as const,
+    bold: "bold" as const,
+  },
+
+  borderRadius: {
+    none: 0,
+    sm: 2,
+    base: 4,
+    md: 6,
+    lg: 8,
+    xl: 12,
+    "2xl": 16,
+    full: 9999,
+  },
+
+  borderWidth: {
+    0: 0,
+    1: 1,
+    2: 2,
+  },
+
+  opacity: {
+    0: 0,
+    50: 0.5,
+    100: 1,
+  },
 } as const;
 
 const darkShadow = {
@@ -559,6 +544,13 @@ export const lightTheme = {
   ...commonTheme,
 } as const;
 
+export const ICON_SIZE = {
+  xs: 12,
+  sm: 14,
+  md: 16,
+  lg: 20,
+} as const;
+
 // Keep compatibility with existing code
 export const theme = darkTheme;
 
@@ -584,7 +576,7 @@ export const THEME_TO_UNISTYLES: Record<ThemeName, UnistylesThemeKey> = {
 
 export const THEME_SWATCHES: Record<ThemeName, string> = {
   light: "#ffffff",
-  dark: "#2D8B62",
+  dark: "#C4198B",
   zinc: "#808080",
   midnight: "#4A6BA8",
   claude: "#D97757",

@@ -54,15 +54,15 @@ function makeAgent(input: {
 
 describe("workspace agent visibility", () => {
   it("keeps archived agents out of activeAgentIds but present in knownAgentIds", () => {
-    const workspaceDirectory = "/repo/worktree";
+    const workspaceId = "/repo/worktree";
     const visible = makeAgent({
       id: "visible-agent",
-      cwd: workspaceDirectory,
+      cwd: workspaceId,
       createdAt: new Date("2026-03-04T00:00:00.000Z"),
     });
     const archived = makeAgent({
       id: "archived-agent",
-      cwd: workspaceDirectory,
+      cwd: workspaceId,
       archivedAt: new Date("2026-03-04T00:01:00.000Z"),
       createdAt: new Date("2026-03-04T00:01:00.000Z"),
     });
@@ -79,32 +79,13 @@ describe("workspace agent visibility", () => {
 
     const result = deriveWorkspaceAgentVisibility({
       sessionAgents,
-      workspaceDirectory,
+      workspaceId,
     });
 
     expect(result.activeAgentIds).toEqual(new Set(["visible-agent"]));
     expect(result.knownAgentIds.has("visible-agent")).toBe(true);
     expect(result.knownAgentIds.has("archived-agent")).toBe(true);
     expect(result.knownAgentIds.has("other-workspace-agent")).toBe(false);
-  });
-
-  it("treats lazy historical details as known without making them active", () => {
-    const workspaceDirectory = "/repo/worktree";
-    const active = makeAgent({ id: "active-agent", cwd: workspaceDirectory });
-    const historicalDetail = makeAgent({
-      id: "historical-agent",
-      cwd: workspaceDirectory,
-      archivedAt: new Date("2026-03-04T00:01:00.000Z"),
-    });
-
-    const result = deriveWorkspaceAgentVisibility({
-      sessionAgents: new Map([[active.id, active]]),
-      agentDetails: new Map([[historicalDetail.id, historicalDetail]]),
-      workspaceDirectory,
-    });
-
-    expect(result.activeAgentIds).toEqual(new Set(["active-agent"]));
-    expect(result.knownAgentIds).toEqual(new Set(["active-agent", "historical-agent"]));
   });
 
   it("prunes archived agent tabs so archiving on one client closes tabs on all clients", () => {
@@ -163,38 +144,18 @@ describe("workspace agent visibility", () => {
         "slash-agent",
         makeAgent({
           id: "slash-agent",
-          cwd: "/Users/moboudra/.hubcode/worktrees/1luy0po7/normal-squid/",
+          cwd: "/tmp/.hubcode/worktrees/abc123/normal-squid/",
         }),
       ],
     ]);
 
     const result = deriveWorkspaceAgentVisibility({
       sessionAgents,
-      workspaceDirectory: "/Users/moboudra/.hubcode/worktrees/1luy0po7/normal-squid",
+      workspaceId: "/tmp/.hubcode/worktrees/abc123/normal-squid",
     });
 
     expect(result.activeAgentIds).toEqual(new Set(["slash-agent"]));
     expect(result.knownAgentIds.has("slash-agent")).toBe(true);
-  });
-
-  it("matches workspace agents using the workspace directory even when the route uses a numeric workspace id", () => {
-    const sessionAgents = new Map<string, Agent>([
-      [
-        "recent-agent",
-        makeAgent({
-          id: "recent-agent",
-          cwd: "/tmp/workspace-lifecycle-main",
-        }),
-      ],
-    ]);
-
-    const result = deriveWorkspaceAgentVisibility({
-      sessionAgents,
-      workspaceDirectory: "/tmp/workspace-lifecycle-main",
-    });
-
-    expect(result.activeAgentIds).toEqual(new Set(["recent-agent"]));
-    expect(result.knownAgentIds).toEqual(new Set(["recent-agent"]));
   });
 
   describe("workspaceAgentVisibilityEqual", () => {

@@ -167,11 +167,10 @@ export function createDesktopAttachmentStore(): AttachmentStore {
       }
 
       if (input.source.kind === "base64") {
-        const mimeType = normalizeMimeType(input.mimeType);
         return await saveDesktopAttachmentFromBase64({
           id,
           base64: input.source.base64,
-          mimeType,
+          mimeType: normalizeMimeType(input.mimeType),
           fileName,
         });
       }

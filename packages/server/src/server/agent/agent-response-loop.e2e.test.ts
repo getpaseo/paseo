@@ -23,10 +23,10 @@ const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
 const shouldRun = !process.env.CI && (hasOpenAICredentials || hasClaudeCredentials);
 
-interface AgentMcpServerHandle {
+type AgentMcpServerHandle = {
   url: string;
   close: () => Promise<void>;
-}
+};
 
 async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerHandle> {
   const app = express();
@@ -42,7 +42,7 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
     logger,
   });
 
-  let mcpAllowedHosts: string[] | undefined;
+  let allowedHosts: string[] | undefined;
   const agentMcpTransports = new Map<string, StreamableHTTPServerTransport>();
 
   const createAgentMcpTransport = async (callerAgentId?: string) => {
@@ -62,25 +62,23 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
         agentMcpTransports.delete(sessionId);
       },
       enableDnsRebindingProtection: true,
-      ...(mcpAllowedHosts ? { allowedHosts: mcpAllowedHosts } : {}),
+      ...(allowedHosts ? { allowedHosts } : {}),
     });
 
-    Object.assign(transport, {
-      onclose: () => {
-        if (transport.sessionId) {
-          agentMcpTransports.delete(transport.sessionId);
-        }
-      },
-      onerror: () => {
-        // Ignore errors in test
-      },
-    });
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        agentMcpTransports.delete(transport.sessionId);
+      }
+    };
+    transport.onerror = () => {
+      // Ignore errors in test
+    };
 
     await mcpServer.connect(transport);
     return transport;
   };
 
-  const runAgentMcpRequest = async (req: express.Request, res: express.Response): Promise<void> => {
+  const handleAgentMcpRequest: express.RequestHandler = async (req, res) => {
     try {
       const sessionId = req.header("mcp-session-id");
       let transport = sessionId ? agentMcpTransports.get(sessionId) : undefined;
@@ -109,7 +107,7 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
       }
 
       await transport.handleRequest(req, res, req.body);
-    } catch {
+    } catch (error) {
       if (!res.headersSent) {
         res.status(500).json({
           jsonrpc: "2.0",
@@ -118,10 +116,6 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
         });
       }
     }
-  };
-
-  const handleAgentMcpRequest: express.RequestHandler = (req, res) => {
-    void runAgentMcpRequest(req, res);
   };
 
   app.post("/mcp/agents", handleAgentMcpRequest);
@@ -135,7 +129,7 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
     });
   });
 
-  mcpAllowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+  allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
   const url = `http://127.0.0.1:${port}/mcp/agents`;
 
   return {

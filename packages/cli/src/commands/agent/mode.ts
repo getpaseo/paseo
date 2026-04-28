@@ -6,7 +6,7 @@ import type {
   CommandError,
   AnyCommandResult,
 } from "../../output/index.js";
-import type { AgentMode } from "@gethubcode/server";
+import type { AgentMode } from "@hubcode/server";
 
 /** Result for setting mode */
 export interface SetModeResult {

@@ -1,38 +1,37 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { AttachmentMetadata, ComposerAttachment } from "@/attachments/types";
-import { GitHubSearchItemSchema } from "@server/shared/messages";
+import type { AttachmentMetadata } from "@/attachments/types";
 import {
   garbageCollectAttachments,
   persistAttachmentFromDataUrl,
   persistAttachmentFromFileUri,
 } from "@/attachments/service";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import { useSessionStore, type SessionState } from "@/stores/session-store";
+import { useSessionStore } from "@/stores/session-store";
 
-const DRAFT_STORE_VERSION = 4;
+const DRAFT_STORE_VERSION = 2;
 const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
-interface LegacyDraftImage {
+type LegacyDraftImage = {
   uri: string;
   mimeType?: string;
-}
+};
 
 type PersistedDraftImage = AttachmentMetadata | LegacyDraftImage;
 
 export interface DraftInput {
   text: string;
-  attachments: ComposerAttachment[];
-  cwd: string;
+  images: AttachmentMetadata[];
 }
 
 export type DraftLifecycleState = "active" | "abandoned" | "sent";
 
-type CanonicalDraftInput = DraftInput;
-
 interface DraftRecord {
-  input: CanonicalDraftInput;
+  input: {
+    text: string;
+    images: PersistedDraftImage[];
+  };
   lifecycle: DraftLifecycleState;
   updatedAt: number;
   version: number;
@@ -45,10 +44,7 @@ interface DraftStoreState {
 
 interface DraftStoreActions {
   getDraftInput: (draftKey: string) => DraftInput | undefined;
-  hydrateDraftInput: (input: {
-    draftKey: string;
-    initialCwd?: string;
-  }) => Promise<DraftInput | undefined>;
+  hydrateDraftInput: (draftKey: string) => Promise<DraftInput | undefined>;
   saveDraftInput: (input: { draftKey: string; draft: DraftInput }) => void;
   markDraftLifecycle: (input: { draftKey: string; lifecycle: DraftLifecycleState }) => void;
   clearDraftInput: (input: {
@@ -68,15 +64,20 @@ const draftGenerations = new Map<string, number>();
 let gcScheduled = false;
 
 function createDraftRecord(input: {
-  draft: DraftInput;
+  draft: { text: string; images: PersistedDraftImage[] };
   lifecycle: DraftLifecycleState;
   previousVersion?: number;
 }): DraftRecord {
+  const normalizedImages = input.draft.images.map((image) => {
+    if (isAttachmentMetadata(image)) {
+      return normalizeAttachmentMetadata(image);
+    }
+    return image;
+  });
   return {
     input: {
       text: input.draft.text,
-      attachments: input.draft.attachments.map(normalizeComposerAttachment),
-      cwd: input.draft.cwd,
+      images: normalizedImages,
     },
     lifecycle: input.lifecycle,
     updatedAt: Date.now(),
@@ -135,56 +136,8 @@ function normalizePersistedImage(value: unknown): PersistedDraftImage | null {
   return null;
 }
 
-function isComposerAttachment(value: unknown): value is ComposerAttachment {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  if (record.kind === "image") {
-    const metadata = record.metadata;
-    return isAttachmentMetadata(metadata);
-  }
-  if (record.kind !== "github_issue" && record.kind !== "github_pr") {
-    return false;
-  }
-  return GitHubSearchItemSchema.safeParse(record.item).success;
-}
-
-function normalizeComposerAttachment(attachment: ComposerAttachment): ComposerAttachment {
-  if (attachment.kind === "image") {
-    return {
-      kind: "image",
-      metadata: normalizeAttachmentMetadata(attachment.metadata),
-    };
-  }
-  return attachment;
-}
-
-function normalizePersistedComposerAttachment(value: unknown): ComposerAttachment | null {
-  if (!isComposerAttachment(value)) {
-    return null;
-  }
-  return normalizeComposerAttachment(value);
-}
-
-function legacyImagesToAttachments(images: readonly AttachmentMetadata[]): ComposerAttachment[] {
-  return images.map((metadata) => ({
-    kind: "image",
-    metadata,
-  }));
-}
-
-function isCanonicalDraftInput(value: unknown): value is CanonicalDraftInput {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const input = value as Record<string, unknown>;
-  return (
-    typeof input.text === "string" &&
-    Array.isArray(input.attachments) &&
-    input.attachments.every(isComposerAttachment) &&
-    typeof input.cwd === "string"
-  );
+function hasLegacyImages(images: readonly PersistedDraftImage[]): boolean {
+  return images.some((entry) => !isAttachmentMetadata(entry));
 }
 
 function toDraftInputIfReady(record: DraftRecord | null | undefined): DraftInput | undefined {
@@ -194,13 +147,12 @@ function toDraftInputIfReady(record: DraftRecord | null | undefined): DraftInput
   if (record.lifecycle !== "active") {
     return undefined;
   }
-  if (!isCanonicalDraftInput(record.input)) {
+  if (hasLegacyImages(record.input.images)) {
     return undefined;
   }
   return {
     text: record.input.text,
-    attachments: record.input.attachments.map(normalizeComposerAttachment),
-    cwd: record.input.cwd,
+    images: (record.input.images as AttachmentMetadata[]).map(normalizeAttachmentMetadata),
   };
 }
 
@@ -211,21 +163,18 @@ function collectReferencedAttachmentIdsFromState(state: DraftStoreState): Set<st
     if (draftRecord.lifecycle !== "active") {
       continue;
     }
-    if (!isCanonicalDraftInput(draftRecord.input)) {
-      continue;
-    }
-    for (const attachment of draftRecord.input.attachments) {
-      if (attachment.kind === "image") {
-        referencedIds.add(attachment.metadata.id);
+    for (const image of draftRecord.input.images) {
+      if (isAttachmentMetadata(image)) {
+        referencedIds.add(image.id);
       }
     }
   }
 
   const modalRecord = state.createModalDraft;
-  if (modalRecord?.lifecycle === "active" && isCanonicalDraftInput(modalRecord.input)) {
-    for (const attachment of modalRecord.input.attachments) {
-      if (attachment.kind === "image") {
-        referencedIds.add(attachment.metadata.id);
+  if (modalRecord?.lifecycle === "active") {
+    for (const image of modalRecord.input.images) {
+      if (isAttachmentMetadata(image)) {
+        referencedIds.add(image.id);
       }
     }
   }
@@ -260,7 +209,7 @@ function applyClearDraftRecord(input: {
 
   return {
     ...input.record,
-    input: { text: "", attachments: [], cwd: "" },
+    input: { text: "", images: [] },
     lifecycle: input.lifecycle,
     updatedAt: input.nowMs,
     version: input.record.version + 1,
@@ -299,44 +248,41 @@ async function runAttachmentGc(): Promise<void> {
 
   const sessions = useSessionStore.getState().sessions;
   for (const session of Object.values(sessions)) {
-    collectQueuedMessageAttachmentIds(session, referencedIds);
-    collectStreamUserImageIds(session.agentStreamTail, referencedIds);
-    collectStreamUserImageIds(session.agentStreamHead, referencedIds);
+    for (const queue of session.queuedMessages.values()) {
+      for (const queuedMessage of queue) {
+        for (const image of queuedMessage.images ?? []) {
+          referencedIds.add(image.id);
+        }
+      }
+    }
+
+    for (const stream of session.agentStreamTail.values()) {
+      for (const item of stream) {
+        if (item.kind !== "user_message") {
+          continue;
+        }
+        for (const image of item.images ?? []) {
+          referencedIds.add(image.id);
+        }
+      }
+    }
+
+    for (const stream of session.agentStreamHead.values()) {
+      for (const item of stream) {
+        if (item.kind !== "user_message") {
+          continue;
+        }
+        for (const image of item.images ?? []) {
+          referencedIds.add(image.id);
+        }
+      }
+    }
   }
 
   try {
     await garbageCollectAttachments({ referencedIds });
   } catch (error) {
     console.warn("[DraftStore] Attachment garbage collection failed", error);
-  }
-}
-
-function collectQueuedMessageAttachmentIds(
-  session: SessionState,
-  referencedIds: Set<string>,
-): void {
-  for (const queue of session.queuedMessages.values()) {
-    for (const queuedMessage of queue) {
-      for (const attachment of queuedMessage.attachments) {
-        if (attachment.kind === "image") {
-          referencedIds.add(attachment.metadata.id);
-        }
-      }
-    }
-  }
-}
-
-function collectStreamUserImageIds(
-  streams: SessionState["agentStreamTail"],
-  referencedIds: Set<string>,
-): void {
-  for (const stream of streams.values()) {
-    for (const item of stream) {
-      if (item.kind !== "user_message") continue;
-      for (const image of item.images ?? []) {
-        referencedIds.add(image.id);
-      }
-    }
   }
 }
 
@@ -359,12 +305,12 @@ function scheduleAttachmentGc(): void {
 async function migrateAllLegacyDrafts(): Promise<void> {
   const state = useDraftStore.getState();
   const keys = Object.entries(state.drafts)
-    .filter(([, record]) => record.lifecycle === "active" && !isCanonicalDraftInput(record.input))
+    .filter(([, record]) => hasLegacyImages(record.input.images))
     .map(([draftKey]) => draftKey);
 
   for (const draftKey of keys) {
     try {
-      await state.hydrateDraftInput({ draftKey });
+      await state.hydrateDraftInput(draftKey);
     } catch (error) {
       console.warn("[DraftStore] Failed to migrate draft during startup", {
         draftKey,
@@ -415,57 +361,7 @@ async function migrateLegacyImages(
   return migrated.filter((entry): entry is AttachmentMetadata => entry !== null);
 }
 
-async function migrateDraftInput(input: {
-  rawInput: unknown;
-  initialCwd?: string;
-}): Promise<CanonicalDraftInput> {
-  const rawInput =
-    input.rawInput && typeof input.rawInput === "object"
-      ? (input.rawInput as Record<string, unknown>)
-      : {};
-  const attachments = Array.isArray(rawInput.attachments)
-    ? rawInput.attachments
-        .map((entry) => normalizePersistedComposerAttachment(entry))
-        .filter((entry): entry is ComposerAttachment => entry !== null)
-    : [];
-  const legacyImages = Array.isArray(rawInput.images)
-    ? rawInput.images
-        .map((entry) => normalizePersistedImage(entry))
-        .filter((entry): entry is PersistedDraftImage => entry !== null)
-    : [];
-  const migratedImages = await migrateLegacyImages(legacyImages);
-
-  return {
-    text: typeof rawInput.text === "string" ? rawInput.text : "",
-    attachments: [...attachments, ...legacyImagesToAttachments(migratedImages)],
-    cwd: typeof rawInput.cwd === "string" ? rawInput.cwd : (input.initialCwd ?? ""),
-  };
-}
-
-function resolvePersistedLifecycle(lifecycle: unknown): DraftLifecycleState {
-  if (lifecycle === "sent" || lifecycle === "abandoned") {
-    return lifecycle as DraftLifecycleState;
-  }
-  return "active";
-}
-
-function extractRawInput(record: Record<string, unknown>): unknown {
-  if ("input" in record && record.input && typeof record.input === "object") {
-    return record.input;
-  }
-  return record;
-}
-
-async function buildMigratedDraftRecord(parsed: Record<string, unknown>): Promise<DraftRecord> {
-  return {
-    input: await migrateDraftInput({ rawInput: extractRawInput(parsed) }),
-    lifecycle: resolvePersistedLifecycle(parsed.lifecycle),
-    updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
-    version: typeof parsed.version === "number" ? parsed.version : 1,
-  };
-}
-
-async function migratePersistedState(state: unknown): Promise<DraftStoreState> {
+function migratePersistedState(state: unknown): DraftStoreState {
   const input = (state ?? {}) as {
     drafts?: Record<string, unknown>;
     createModalDraft?: unknown;
@@ -476,14 +372,83 @@ async function migratePersistedState(state: unknown): Promise<DraftStoreState> {
     if (!rawRecord || typeof rawRecord !== "object") {
       continue;
     }
-    nextDrafts[draftKey] = await buildMigratedDraftRecord(rawRecord as Record<string, unknown>);
+    const parsed = rawRecord as Record<string, unknown>;
+
+    if ("input" in parsed && parsed.input && typeof parsed.input === "object") {
+      const recordInput = parsed.input as Record<string, unknown>;
+      nextDrafts[draftKey] = {
+        input: {
+          text: typeof recordInput.text === "string" ? recordInput.text : "",
+          images: Array.isArray(recordInput.images)
+            ? recordInput.images
+                .map((entry) => normalizePersistedImage(entry))
+                .filter((entry): entry is PersistedDraftImage => entry !== null)
+            : [],
+        },
+        lifecycle:
+          parsed.lifecycle === "sent" || parsed.lifecycle === "abandoned"
+            ? (parsed.lifecycle as DraftLifecycleState)
+            : "active",
+        updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
+        version: typeof parsed.version === "number" ? parsed.version : 1,
+      };
+      continue;
+    }
+
+    // Legacy shape: { text, images }.
+    const legacy = parsed as { text?: unknown; images?: unknown };
+    nextDrafts[draftKey] = {
+      input: {
+        text: typeof legacy.text === "string" ? legacy.text : "",
+        images: Array.isArray(legacy.images)
+          ? legacy.images
+              .map((entry) => normalizePersistedImage(entry))
+              .filter((entry): entry is PersistedDraftImage => entry !== null)
+          : [],
+      },
+      lifecycle: "active",
+      updatedAt: Date.now(),
+      version: 1,
+    };
   }
 
   let createModalDraft: DraftRecord | null = null;
   if (input.createModalDraft && typeof input.createModalDraft === "object") {
-    createModalDraft = await buildMigratedDraftRecord(
-      input.createModalDraft as Record<string, unknown>,
-    );
+    const record = input.createModalDraft as Record<string, unknown>;
+    if (record.input && typeof record.input === "object") {
+      const recordInput = record.input as Record<string, unknown>;
+      createModalDraft = {
+        input: {
+          text: typeof recordInput.text === "string" ? recordInput.text : "",
+          images: Array.isArray(recordInput.images)
+            ? recordInput.images
+                .map((entry) => normalizePersistedImage(entry))
+                .filter((entry): entry is PersistedDraftImage => entry !== null)
+            : [],
+        },
+        lifecycle:
+          record.lifecycle === "sent" || record.lifecycle === "abandoned"
+            ? (record.lifecycle as DraftLifecycleState)
+            : "active",
+        updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now(),
+        version: typeof record.version === "number" ? record.version : 1,
+      };
+    } else {
+      const legacy = record as { text?: unknown; images?: unknown };
+      createModalDraft = {
+        input: {
+          text: typeof legacy.text === "string" ? legacy.text : "",
+          images: Array.isArray(legacy.images)
+            ? legacy.images
+                .map((entry) => normalizePersistedImage(entry))
+                .filter((entry): entry is PersistedDraftImage => entry !== null)
+            : [],
+        },
+        lifecycle: "active",
+        updatedAt: Date.now(),
+        version: 1,
+      };
+    }
   }
 
   return {
@@ -503,7 +468,7 @@ export const useDraftStore = create<DraftStore>()(
         return toDraftInputIfReady(record);
       },
 
-      hydrateDraftInput: async ({ draftKey, initialCwd }) => {
+      hydrateDraftInput: async (draftKey) => {
         const current = get().drafts[draftKey];
         if (!current) {
           return undefined;
@@ -516,10 +481,11 @@ export const useDraftStore = create<DraftStore>()(
           return ready;
         }
 
-        const migratedDraft = await migrateDraftInput({
-          rawInput: current.input,
-          initialCwd,
-        });
+        const migratedImages = await migrateLegacyImages(current.input.images);
+        const migratedDraft: DraftInput = {
+          text: current.input.text,
+          images: migratedImages,
+        };
 
         set((state) => {
           const existing = state.drafts[draftKey];
@@ -661,7 +627,6 @@ export const useDraftStore = create<DraftStore>()(
 );
 
 export const __draftStoreTestUtils = {
-  migrateDraftInput,
   migratePersistedState,
   normalizeAttachmentMetadata,
   pruneFinalizedDraftRecords,

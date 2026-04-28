@@ -17,26 +17,6 @@ import { isNative } from "@/constants/platform";
  * On macOS, Electron handles edge resize natively.
  */
 
-const DRAG_OVERLAY_STYLE: React.CSSProperties = {
-  top: 0,
-  left: 0,
-  display: "block",
-  position: "absolute",
-  width: "100%",
-  height: "100%",
-  // @ts-expect-error — WebkitAppRegion is not in CSSProperties
-  WebkitAppRegion: "drag",
-};
-
-const TOP_RESIZER_STYLE: React.CSSProperties = {
-  position: "absolute",
-  top: 0,
-  width: "100%",
-  height: 4,
-  // @ts-expect-error — WebkitAppRegion is not in CSSProperties
-  WebkitAppRegion: "no-drag",
-};
-
 /**
  * Static drag overlay and top-edge resizer. Returns null on non-Electron.
  * Place as FIRST child of any positioned container that should be draggable.
@@ -49,9 +29,29 @@ export function TitlebarDragRegion() {
   return (
     <>
       {/* Drag overlay — VS Code .titlebar-drag-region (titlebarpart.css:57-64) */}
-      <div style={DRAG_OVERLAY_STYLE} />
+      <div
+        style={{
+          top: 0,
+          left: 0,
+          display: "block",
+          position: "absolute",
+          width: "100%",
+          height: "100%",
+          // @ts-expect-error — WebkitAppRegion is not in CSSProperties
+          WebkitAppRegion: "drag",
+        }}
+      />
       {/* Top-edge resizer — VS Code .resizer (titlebarpart.css:249-256) */}
-      <div style={TOP_RESIZER_STYLE} />
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          width: "100%",
+          height: 4,
+          // @ts-expect-error — WebkitAppRegion is not in CSSProperties
+          WebkitAppRegion: "no-drag",
+        }}
+      />
     </>
   );
 }

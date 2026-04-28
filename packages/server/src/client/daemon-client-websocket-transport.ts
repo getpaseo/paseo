@@ -8,7 +8,7 @@ export function defaultWebSocketFactory(
   url: string,
   _options?: { headers?: Record<string, string> },
 ): WebSocketLike {
-  const globalWs = (globalThis as { WebSocket?: new (url: string) => WebSocketLike }).WebSocket;
+  const globalWs = (globalThis as { WebSocket?: any }).WebSocket;
   if (!globalWs) {
     throw new Error("WebSocket is not available in this runtime");
   }
@@ -102,7 +102,7 @@ function bindTemporaryEarlyCloseErrorHandler(ws: WebSocketLike): () => void {
 export function bindWsHandler(
   ws: WebSocketLike,
   event: "open" | "close" | "error" | "message",
-  handler: (...args: unknown[]) => void,
+  handler: (...args: any[]) => void,
 ): () => void {
   if (typeof ws.addEventListener === "function") {
     ws.addEventListener(event, handler);
@@ -125,12 +125,11 @@ export function bindWsHandler(
     };
   }
   const prop = `on${event}` as "onopen" | "onclose" | "onerror" | "onmessage";
-  const wsRecord = ws as unknown as Record<string, unknown>;
-  const previous = wsRecord[prop];
-  wsRecord[prop] = handler;
+  const previous = (ws as any)[prop];
+  (ws as any)[prop] = handler;
   return () => {
-    if (wsRecord[prop] === handler) {
-      wsRecord[prop] = previous ?? null;
+    if ((ws as any)[prop] === handler) {
+      (ws as any)[prop] = previous ?? null;
     }
   };
 }

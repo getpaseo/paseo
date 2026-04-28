@@ -50,18 +50,4 @@ describe("terminal-list", () => {
       { id: "term-2", name: "Renamed Terminal" },
     ]);
   });
-
-  it("preserves terminal titles from create responses", () => {
-    const result = upsertTerminalListEntry({
-      terminals: [],
-      terminal: {
-        id: "term-3",
-        name: "Terminal 3",
-        title: "Build Output",
-        cwd: "/tmp/project",
-      },
-    });
-
-    expect(result).toEqual([{ id: "term-3", name: "Terminal 3", title: "Build Output" }]);
-  });
 });

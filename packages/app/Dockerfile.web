@@ -1,0 +1,85 @@
+# Static web build of the Hubcode app, served by nginx.
+#
+# `expo export --platform web` with `web.output: "single"` produces an
+# SPA: dist/index.html + dist/_expo/static/. We bake those into a slim
+# nginx image with a tweaked config that:
+#   - serves index.html for any unknown path (SPA fallback)
+#   - sets long Cache-Control on hashed assets, no-cache on index
+#   - drops the default server tokens for hardening
+#
+# The auth-server URL is injected at BUILD time via EXPO_PUBLIC_AUTH_URL
+# (Expo bakes EXPO_PUBLIC_* into the bundle). Per-environment image
+# means switching prod hosts requires a rebuild — fine for now.
+
+# ---------- builder ----------
+FROM node:20-bookworm-slim AS build
+WORKDIR /work
+
+# We're inside a workspace, so build context is the monorepo root. The
+# build-push script must `docker build` with that context.
+ARG EXPO_PUBLIC_AUTH_URL=https://auth.hubcode.ai
+ARG EXPO_PUBLIC_LOCAL_DAEMON=127.0.0.1:6767
+ENV EXPO_PUBLIC_AUTH_URL=$EXPO_PUBLIC_AUTH_URL \
+    EXPO_PUBLIC_LOCAL_DAEMON=$EXPO_PUBLIC_LOCAL_DAEMON \
+    NODE_ENV=production \
+    EXPO_NO_TELEMETRY=1
+
+# Workspace deps. Copy the whole monorepo once so npm workspaces resolve;
+# this is bigger than ideal but Expo's build pulls workspace packages.
+COPY . .
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --include=dev --workspaces --include-workspace-root
+
+# Build only the workspace-deps the app needs, then export web.
+RUN npm run build --workspace=@hubcode/highlight \
+ && npm run build --workspace=@hubcode/expo-two-way-audio \
+ && npm --prefix packages/app run build:web
+
+# ---------- runtime ----------
+FROM nginx:1.27-alpine AS runtime
+
+# nginx config: SPA fallback, sane caching, no version disclosure.
+COPY <<'NGINX' /etc/nginx/conf.d/default.conf
+server {
+    listen 8080 default_server;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    server_tokens off;
+
+    # Hashed assets: cache forever (filename changes on rebuild).
+    location ~* ^/_expo/static/.*\.(js|css|woff2?|svg|png|jpg|jpeg|webp|ico)$ {
+        access_log off;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # SPA fallback — every other path serves index.html so the
+    # client-side router takes over.
+    location / {
+        add_header Cache-Control "no-store" always;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Light hardening
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+}
+NGINX
+
+COPY --from=build /work/packages/app/dist /usr/share/nginx/html
+
+# Run nginx as non-root. The official image still binds 80 by default
+# which needs root; we point it at 8080 instead and let the k8s Service
+# remap.
+RUN sed -i 's/listen       80;/listen       8080;/' /etc/nginx/conf.d/default.conf 2>/dev/null || true \
+ && touch /var/run/nginx.pid \
+ && chown -R nginx:nginx /var/run/nginx.pid /var/cache/nginx /usr/share/nginx/html
+
+USER nginx
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=2 \
+  CMD wget -q -O - http://127.0.0.1:8080/ >/dev/null || exit 1

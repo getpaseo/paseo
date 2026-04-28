@@ -43,7 +43,7 @@ for (const workspacePath of workspacePaths) {
     changed = true;
   }
 
-  if (pkg.name === "@gethubcode/desktop") {
+  if (pkg.name === "@hubcode/desktop") {
     for (const [field, value] of Object.entries(sharedMetadata)) {
       const currentValue = JSON.stringify(pkg[field]);
       const nextValue = JSON.stringify(value);
@@ -54,11 +54,6 @@ for (const workspacePath of workspacePaths) {
     }
   }
 
-  // Private workspaces (app, desktop) keep "*" for internal deps so npm always
-  // resolves the local sibling, never a registry artifact. Publishable workspaces
-  // get the root version so their published tarballs reference real npm versions.
-  const internalDepRange = pkg.private === true ? "*" : rootVersion;
-
   for (const section of dependencySections) {
     const deps = pkg[section];
     if (!deps || typeof deps !== "object") {
@@ -66,14 +61,14 @@ for (const workspacePath of workspacePaths) {
     }
 
     for (const name of Object.keys(deps)) {
-      if (!name.startsWith("@gethubcode/")) {
+      if (!name.startsWith("@hubcode/")) {
         continue;
       }
       if (name === pkg.name) {
         continue;
       }
-      if (deps[name] !== internalDepRange) {
-        deps[name] = internalDepRange;
+      if (deps[name] !== rootVersion) {
+        deps[name] = rootVersion;
         changed = true;
       }
     }

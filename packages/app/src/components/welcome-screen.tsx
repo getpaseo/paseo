@@ -1,40 +1,39 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Pressable, Text, View, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { QrCode, Link2, ClipboardPaste, ExternalLink, Settings } from "lucide-react-native";
+import { QrCode, Link2, ClipboardPaste, ExternalLink, Zap } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { HostProfile } from "@/types/host-connection";
-import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  isHostRuntimeConnected,
+  useHostRuntimeSnapshot,
+  useHosts,
+} from "@/runtime/host-runtime";
 import { AddHostModal } from "./add-host-modal";
 import { PairLinkModal } from "./pair-link-modal";
-import { Button } from "@/components/ui/button";
 import { resolveAppVersion } from "@/utils/app-version";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { buildHostRootRoute } from "@/utils/host-routes";
 import { HubcodeLogo } from "@/components/icons/hubcode-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { isWeb, isNative } from "@/constants/platform";
+import { isWeb, isNative, getIsElectron } from "@/constants/platform";
+import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 
-interface WelcomeAction {
+type WelcomeAction = {
   key: "scan-qr" | "direct-connection" | "paste-pairing-link";
   label: string;
   testID: string;
   primary: boolean;
   icon: typeof QrCode;
   onPress: () => void;
-}
+};
 
 const styles = StyleSheet.create((theme) => ({
-  root: {
-    flex: 1,
-    backgroundColor: theme.colors.surface0,
-  },
-  scrollView: {
-    flex: 1,
-  },
   container: {
     flexGrow: 1,
+    backgroundColor: theme.colors.surface0,
     padding: theme.spacing[6],
     paddingBottom: 0,
     alignItems: "center",
@@ -45,25 +44,95 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     alignItems: "center",
   },
-  title: {
+  // WhatsApp-Web-style centered card
+  heroCard: {
+    width: "100%",
+    maxWidth: 960,
+    backgroundColor: theme.colors.surface1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.xl,
+    overflow: "hidden",
+  },
+  heroHeader: {
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[6],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    alignItems: "center",
+    flexDirection: "row",
+    gap: theme.spacing[3],
+  },
+  heroTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xl,
     fontWeight: theme.fontWeight.medium,
-    textAlign: "center",
+  },
+  heroBody: {
+    padding: theme.spacing[6],
+    flexDirection: "row",
+    gap: theme.spacing[6],
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+  },
+  heroStepsColumn: {
+    flex: 1,
+    minWidth: 260,
+    gap: theme.spacing[4],
+  },
+  heroStepsHeading: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.medium,
+  },
+  stepRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[3],
+  },
+  stepBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: theme.colors.surface2,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  stepBadgeText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+  },
+  stepText: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.5,
+  },
+  stepTextMuted: {
+    color: theme.colors.foregroundMuted,
+  },
+  heroActionsColumn: {
+    flex: 1,
+    minWidth: 260,
+    gap: theme.spacing[3],
+  },
+  heroActionsHeading: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: theme.spacing[1],
   },
   subtitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
-    textAlign: "center",
-  },
-  copyBlock: {
-    alignItems: "center",
-    gap: theme.spacing[2],
-    marginBottom: theme.spacing[12],
+    lineHeight: theme.fontSize.sm * 1.5,
   },
   actions: {
     width: "100%",
-    maxWidth: 420,
     gap: theme.spacing[3],
   },
   actionButton: {
@@ -89,26 +158,89 @@ const styles = StyleSheet.create((theme) => ({
   actionTextPrimary: {
     color: theme.colors.accentForeground,
   },
+  hostList: {
+    width: "100%",
+    marginTop: theme.spacing[4],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    paddingTop: theme.spacing[4],
+    gap: theme.spacing[2],
+  },
+  hostRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  hostLabel: {
+    flex: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  hostStatus: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  hostStatusError: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+  },
+  setupHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
+    marginBottom: theme.spacing[6],
+    lineHeight: theme.fontSize.sm * 1.5,
+  },
   setupLink: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
+    marginBottom: theme.spacing[6],
   },
   setupLinkText: {
     color: theme.colors.accent,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
+  signInLink: {
+    marginTop: theme.spacing[4],
+    alignItems: "center",
+  },
+  signInLinkText: {
+    color: theme.colors.accent,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  signedInHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    textAlign: "center",
+    marginTop: theme.spacing[4],
+  },
+  proLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    marginTop: theme.spacing[6],
+  },
+  proLinkText: {
+    color: theme.colors.accent,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+  },
   versionLabel: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     textAlign: "center",
-    marginTop: theme.spacing[6],
-  },
-  settingsButton: {
-    alignSelf: "center",
-    marginTop: theme.spacing[6],
+    marginTop: theme.spacing[2],
   },
 }));
 
@@ -151,6 +283,50 @@ function useAnyHostOnline(serverIds: string[]): string | null {
   );
 }
 
+function HostStatusRow({ serverId, label }: { serverId: string; label: string }) {
+  const { theme } = useUnistyles();
+  const snapshot = useHostRuntimeSnapshot(serverId);
+  const status = snapshot?.connectionStatus ?? "connecting";
+  const lastError = snapshot?.lastError ?? null;
+
+  let dotColor: string;
+  let statusText: string;
+  let isError = false;
+
+  switch (status) {
+    case "online":
+      dotColor = theme.colors.success;
+      statusText = "Online";
+      break;
+    case "connecting":
+    case "idle":
+      dotColor = theme.colors.foregroundMuted;
+      statusText = "Connecting…";
+      break;
+    case "offline":
+      dotColor = theme.colors.foregroundMuted;
+      statusText = "Offline";
+      break;
+    case "error":
+      dotColor = theme.colors.destructive;
+      statusText = lastError ? lastError.slice(0, 40) : "Connection error";
+      isError = true;
+      break;
+  }
+
+  return (
+    <View style={styles.hostRow}>
+      <View style={[styles.statusDot, { backgroundColor: dotColor }]} />
+      <Text style={styles.hostLabel} numberOfLines={1}>
+        {label}
+      </Text>
+      <Text style={isError ? styles.hostStatusError : styles.hostStatus} numberOfLines={1}>
+        {statusText}
+      </Text>
+    </View>
+  );
+}
+
 export interface WelcomeScreenProps {
   onHostAdded?: (profile: HostProfile) => void;
 }
@@ -163,11 +339,15 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   const appVersionText = formatVersionWithPrefix(appVersion);
   const [isDirectOpen, setIsDirectOpen] = useState(false);
   const [isPasteLinkOpen, setIsPasteLinkOpen] = useState(false);
+  const isElectron = getIsElectron();
+  const { user, isAuthenticated, signIn, isSigningIn } = useAuthSession();
   const hosts = useHosts();
   const anyOnlineServerId = useAnyHostOnline(hosts.map((h) => h.serverId));
 
   useEffect(() => {
-    if (!anyOnlineServerId) return;
+    if (!anyOnlineServerId) {
+      return;
+    }
     router.replace(buildHostRootRoute(anyOnlineServerId));
   }, [anyOnlineServerId, router]);
 
@@ -178,30 +358,6 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
     [router],
   );
 
-  const handleOpenHubcodeSite = useCallback(() => {
-    void openExternalUrl("https://hubcode.ai");
-  }, []);
-
-  const handleOpenSettings = useCallback(() => {
-    router.push("/settings");
-  }, [router]);
-
-  const handleOpenDirect = useCallback(() => setIsDirectOpen(true), []);
-  const handleCloseDirect = useCallback(() => setIsDirectOpen(false), []);
-  const handleOpenPasteLink = useCallback(() => setIsPasteLinkOpen(true), []);
-  const handleClosePasteLink = useCallback(() => setIsPasteLinkOpen(false), []);
-  const handleScanQr = useCallback(() => {
-    router.push("/pair-scan?source=onboarding");
-  }, [router]);
-
-  const handleHostSaved = useCallback(
-    ({ profile, serverId }: { profile: HostProfile; serverId: string }) => {
-      onHostAdded?.(profile);
-      finishOnboarding(serverId);
-    },
-    [onHostAdded, finishOnboarding],
-  );
-
   const actions: WelcomeAction[] = isWeb
     ? [
         {
@@ -210,7 +366,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-direct-connection",
           primary: true,
           icon: Link2,
-          onPress: handleOpenDirect,
+          onPress: () => setIsDirectOpen(true),
         },
         {
           key: "paste-pairing-link",
@@ -218,7 +374,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-paste-pairing-link",
           primary: false,
           icon: ClipboardPaste,
-          onPress: handleOpenPasteLink,
+          onPress: () => setIsPasteLinkOpen(true),
         },
       ]
     : [
@@ -228,7 +384,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-scan-qr",
           primary: true,
           icon: QrCode,
-          onPress: handleScanQr,
+          onPress: () => router.push("/pair-scan?source=onboarding"),
         },
         {
           key: "direct-connection",
@@ -236,7 +392,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-direct-connection",
           primary: false,
           icon: Link2,
-          onPress: handleOpenDirect,
+          onPress: () => setIsDirectOpen(true),
         },
         {
           key: "paste-pairing-link",
@@ -244,101 +400,178 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-paste-pairing-link",
           primary: false,
           icon: ClipboardPaste,
-          onPress: handleOpenPasteLink,
+          onPress: () => setIsPasteLinkOpen(true),
         },
       ];
 
-  const isConnectingToSavedHosts = hosts.length > 0 && !anyOnlineServerId;
-
-  const scrollContentContainerStyle = useMemo(
-    () => [styles.container, { paddingBottom: theme.spacing[6] + insets.bottom }],
-    [theme.spacing, insets.bottom],
-  );
+  const showHostList = hosts.length > 0 && !anyOnlineServerId;
 
   return (
-    <View style={styles.root}>
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={scrollContentContainerStyle}
-        showsVerticalScrollIndicator={false}
-        testID="welcome-screen"
-      >
-        <View style={styles.content}>
-          <HubcodeLogo size={96} />
-          <View style={styles.copyBlock}>
-            {isConnectingToSavedHosts ? (
-              <Text style={styles.subtitle}>Connecting…</Text>
-            ) : (
-              <>
-                <Text style={styles.title}>Welcome to Hubcode</Text>
-                <Text style={styles.subtitle}>Connect your computer to get started</Text>
-                {isNative ? (
-                  <Pressable style={styles.setupLink} onPress={handleOpenHubcodeSite}>
-                    <Text style={styles.setupLinkText}>hubcode.ai</Text>
-                    <ExternalLink size={14} color={theme.colors.accent} />
-                  </Pressable>
-                ) : null}
-              </>
-            )}
+    <ScrollView
+      style={{ flex: 1, backgroundColor: theme.colors.surface0 }}
+      contentContainerStyle={[
+        styles.container,
+        { paddingBottom: theme.spacing[6] + insets.bottom },
+      ]}
+      showsVerticalScrollIndicator={false}
+      testID="welcome-screen"
+    >
+      <View style={styles.content}>
+        <View style={styles.heroCard}>
+          <View style={styles.heroHeader}>
+            <HubcodeLogo size={36} />
+            <Text style={styles.heroTitle}>Use Hubcode on your computer</Text>
           </View>
 
-          <View style={styles.actions}>
-            {actions.map((action) => (
-              <WelcomeActionButton key={action.key} action={action} />
-            ))}
-          </View>
+          <View style={styles.heroBody}>
+            <View style={styles.heroStepsColumn}>
+              <Text style={styles.heroStepsHeading}>To get started</Text>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            leftIcon={Settings}
-            onPress={handleOpenSettings}
-            style={styles.settingsButton}
-            testID="welcome-open-settings"
-          >
-            Settings
-          </Button>
+              <View style={styles.stepRow}>
+                <View style={styles.stepBadge}>
+                  <Text style={styles.stepBadgeText}>1</Text>
+                </View>
+                <Text style={styles.stepText}>
+                  Install and open the Hubcode{" "}
+                  <Text style={styles.stepTextMuted}>daemon or desktop app</Text> on the computer
+                  you want to control.
+                </Text>
+              </View>
+
+              <View style={styles.stepRow}>
+                <View style={styles.stepBadge}>
+                  <Text style={styles.stepBadgeText}>2</Text>
+                </View>
+                <Text style={styles.stepText}>
+                  Copy the <Text style={styles.stepTextMuted}>pairing link</Text> shown there, or
+                  have a direct host URL ready.
+                </Text>
+              </View>
+
+              <View style={styles.stepRow}>
+                <View style={styles.stepBadge}>
+                  <Text style={styles.stepBadgeText}>3</Text>
+                </View>
+                <Text style={styles.stepText}>
+                  Use one of the options on the right to connect — the link stays active until you
+                  sign out.
+                </Text>
+              </View>
+
+              {isNative && (
+                <Pressable
+                  style={styles.setupLink}
+                  onPress={() => openExternalUrl("https://hubcode.ai")}
+                >
+                  <Text style={styles.setupLinkText}>Get started at hubcode.ai</Text>
+                  <ExternalLink size={14} color={theme.colors.accent} />
+                </Pressable>
+              )}
+            </View>
+
+            <View style={styles.heroActionsColumn}>
+              <Text style={styles.heroActionsHeading}>Connect a host</Text>
+              <Text style={styles.subtitle}>
+                {showHostList
+                  ? "Connecting to your hosts…"
+                  : "Paste a pairing link or connect directly."}
+              </Text>
+
+              <View style={styles.actions}>
+                {actions.map((action) => {
+                  const Icon = action.icon;
+                  return (
+                    <Pressable
+                      key={action.key}
+                      style={[
+                        styles.actionButton,
+                        action.primary ? styles.actionButtonPrimary : null,
+                      ]}
+                      onPress={action.onPress}
+                      testID={action.testID}
+                    >
+                      <Icon
+                        size={18}
+                        color={
+                          action.primary ? theme.colors.accentForeground : theme.colors.foreground
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.actionText,
+                          action.primary ? styles.actionTextPrimary : null,
+                        ]}
+                      >
+                        {action.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {isElectron && !isAuthenticated && (
+                <Pressable
+                  style={styles.signInLink}
+                  onPress={() => void signIn(undefined)}
+                  disabled={isSigningIn}
+                >
+                  <Text style={styles.signInLinkText}>
+                    {isSigningIn ? "Signing in…" : "Sign in to your account"}
+                  </Text>
+                </Pressable>
+              )}
+
+              {isElectron && isAuthenticated && user && (
+                <Text style={styles.signedInHint}>Signed in as {user.username || user.email}</Text>
+              )}
+
+              {showHostList && (
+                <View style={styles.hostList}>
+                  {hosts.map((host) => (
+                    <HostStatusRow
+                      key={host.serverId}
+                      serverId={host.serverId}
+                      label={host.label}
+                    />
+                  ))}
+                </View>
+              )}
+            </View>
+          </View>
         </View>
-        <Text style={styles.versionLabel}>{appVersionText}</Text>
+      </View>
+      <Pressable
+        style={styles.proLink}
+        onPress={() =>
+          openExternalUrl(
+            __DEV__
+              ? "http://localhost:3002/dashboard/billing"
+              : "https://auth.hubcode.ai/dashboard/billing",
+          )
+        }
+      >
+        <Zap size={12} color={theme.colors.accent} />
+        <Text style={styles.proLinkText}>Get Hubcode Pro</Text>
+      </Pressable>
+      <Text style={styles.versionLabel}>{appVersionText}</Text>
 
-        <AddHostModal
-          visible={isDirectOpen}
-          onClose={handleCloseDirect}
-          onSaved={handleHostSaved}
-        />
-
-        <PairLinkModal
-          visible={isPasteLinkOpen}
-          onClose={handleClosePasteLink}
-          onSaved={handleHostSaved}
-        />
-      </ScrollView>
-    </View>
-  );
-}
-
-interface WelcomeActionButtonProps {
-  action: WelcomeAction;
-}
-
-function WelcomeActionButton({ action }: WelcomeActionButtonProps) {
-  const { theme } = useUnistyles();
-  const Icon = action.icon;
-  const buttonStyle = useMemo(
-    () => [styles.actionButton, action.primary ? styles.actionButtonPrimary : null],
-    [action.primary],
-  );
-  const textStyle = useMemo(
-    () => [styles.actionText, action.primary ? styles.actionTextPrimary : null],
-    [action.primary],
-  );
-  return (
-    <Pressable style={buttonStyle} onPress={action.onPress} testID={action.testID}>
-      <Icon
-        size={18}
-        color={action.primary ? theme.colors.accentForeground : theme.colors.foreground}
+      <AddHostModal
+        visible={isDirectOpen}
+        onClose={() => setIsDirectOpen(false)}
+        onSaved={({ profile, serverId }) => {
+          onHostAdded?.(profile);
+          finishOnboarding(serverId);
+        }}
       />
-      <Text style={textStyle}>{action.label}</Text>
-    </Pressable>
+
+      <PairLinkModal
+        visible={isPasteLinkOpen}
+        onClose={() => setIsPasteLinkOpen(false)}
+        onSaved={({ profile, serverId }) => {
+          onHostAdded?.(profile);
+          finishOnboarding(serverId);
+        }}
+      />
+    </ScrollView>
   );
 }

@@ -17,21 +17,21 @@ type NewWorkspaceDaemonClient = Pick<
   | "openProject"
 >;
 
-interface NewWorkspaceDaemonClientConfig {
+type NewWorkspaceDaemonClientConfig = {
   url: string;
   clientId: string;
   clientType: "cli";
   webSocketFactory?: NodeWebSocketFactory;
-}
+};
 
 type OpenProjectPayload = Awaited<ReturnType<NewWorkspaceDaemonClient["openProject"]>>;
 
-export interface OpenedProject {
+export type OpenedProject = {
   workspaceId: string;
   projectKey: string;
   projectDisplayName: string;
   workspaceName: string;
-}
+};
 
 function getDaemonPort(): string {
   const daemonPort = process.env.E2E_DAEMON_PORT;
@@ -49,7 +49,9 @@ function getDaemonWsUrl(): string {
 }
 
 async function loadDaemonClientConstructor(): Promise<
-  new (config: NewWorkspaceDaemonClientConfig) => NewWorkspaceDaemonClient
+  new (
+    config: NewWorkspaceDaemonClientConfig,
+  ) => NewWorkspaceDaemonClient
 > {
   const repoRoot = path.resolve(__dirname, "../../../../");
   const moduleUrl = pathToFileURL(
@@ -80,6 +82,21 @@ function parseWorkspaceIdFromPageUrl(page: Page, serverId: string): string | nul
     return null;
   }
   return decodeWorkspaceIdFromPathSegment(match[1]);
+}
+
+function parseWorkspaceIdFromSidebarRowTestId(
+  testId: string,
+  input: { serverId: string; previousWorkspaceId: string },
+): string | null {
+  const prefix = `sidebar-workspace-row-${input.serverId}:`;
+  if (!testId.startsWith(prefix)) {
+    return null;
+  }
+  const workspaceId = testId.slice(prefix.length).trim();
+  if (!workspaceId || workspaceId === input.previousWorkspaceId) {
+    return null;
+  }
+  return workspaceId;
 }
 
 export async function connectNewWorkspaceDaemonClient(): Promise<NewWorkspaceDaemonClient> {
@@ -151,7 +168,7 @@ export async function createWorktreeViaDaemon(
   };
 }
 
-export async function openNewWorkspaceComposer(
+export async function clickNewWorkspaceButton(
   page: Page,
   input: { projectKey: string; projectDisplayName: string },
 ): Promise<void> {
@@ -162,80 +179,42 @@ export async function openNewWorkspaceComposer(
   const button = page.getByTestId(`sidebar-project-new-worktree-${input.projectKey}`).first();
   await expect(button).toBeVisible({ timeout: 30_000 });
   await button.click();
-
-  await expect(page).toHaveURL(/\/h\/[^/]+\/new(?:\?.*)?$/, {
-    timeout: 30_000,
-  });
-}
-
-export async function clickNewWorkspaceButton(
-  page: Page,
-  input: { projectKey: string; projectDisplayName: string },
-): Promise<void> {
-  await openNewWorkspaceComposer(page, input);
-  const createButton = page
-    .getByTestId("message-input-root")
-    .getByRole("button", { name: "Create" });
-  await expect(createButton).toBeVisible({ timeout: 30_000 });
-  await createButton.click();
-}
-
-export async function openStartingRefPicker(page: Page): Promise<void> {
-  const trigger = page.getByTestId("new-workspace-ref-picker-trigger");
-  await expect(trigger).toBeVisible({ timeout: 30_000 });
-  await trigger.click();
-}
-
-export async function selectBranchInPicker(page: Page, name: string): Promise<void> {
-  const branchRow = page.getByTestId(`new-workspace-ref-picker-branch-${name}`);
-  await expect(branchRow).toBeVisible({ timeout: 30_000 });
-  await branchRow.click();
-}
-
-export async function selectGitHubPrInPicker(page: Page, number: number): Promise<void> {
-  const prRow = page.getByTestId(`new-workspace-ref-picker-pr-${number}`);
-  await expect(prRow).toBeVisible({ timeout: 30_000 });
-  await prRow.click();
-}
-
-export async function expectStartingRefPickerTriggerPr(
-  page: Page,
-  input: { number: number; title: string; headRef: string },
-): Promise<void> {
-  const trigger = page.getByTestId("new-workspace-ref-picker-trigger");
-  await expect(trigger).toContainText(`#${input.number}`);
-  await expect(trigger).toContainText(input.title);
-  await expect(trigger).not.toContainText(input.headRef);
-}
-
-export async function expectComposerGithubAttachmentPill(
-  page: Page,
-  input: { number: number; title: string },
-): Promise<void> {
-  const pills = page.getByTestId("composer-github-attachment-pill");
-  await expect(pills).toHaveCount(1);
-  await expect(pills.first()).toContainText(`#${input.number}`);
-  await expect(pills.first()).toContainText(input.title);
 }
 
 export async function assertNewWorkspaceSidebarAndHeader(
   page: Page,
   input: { serverId: string; previousWorkspaceId: string; projectDisplayName: string },
 ): Promise<{ workspaceId: string }> {
-  // Wait for URL to redirect to the newly created workspace.
-  // Uses URL as source of truth to avoid picking up sidebar rows from concurrent tests.
   let workspaceId: string | null = null;
-  const deadline = Date.now() + 60_000;
+  const sidebarWorkspaceRows = page.locator(
+    `[data-testid^="sidebar-workspace-row-${input.serverId}:"]`,
+  );
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    workspaceId = parseWorkspaceIdFromPageUrl(page, input.serverId);
-    if (workspaceId && workspaceId !== input.previousWorkspaceId) {
+    const sidebarRowTestIds = await sidebarWorkspaceRows.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("data-testid") ?? ""),
+    );
+    workspaceId =
+      sidebarRowTestIds
+        .map((testId) => parseWorkspaceIdFromSidebarRowTestId(testId, input))
+        .find((id) => id !== null) ?? null;
+    if (workspaceId) {
       break;
     }
     await page.waitForTimeout(250);
   }
 
   if (!workspaceId || workspaceId === input.previousWorkspaceId) {
-    throw new Error(`Expected URL to redirect to a new workspace.\nCurrent URL: ${page.url()}`);
+    const sidebarWorkspaceRowIds = await sidebarWorkspaceRows.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute("data-testid") ?? "<missing-testid>"),
+    );
+    throw new Error(
+      [
+        "Expected a newly created workspace to load.",
+        `Current URL: ${page.url()}`,
+        `Sidebar rows: ${sidebarWorkspaceRowIds.join(", ") || "<none>"}`,
+      ].join("\n"),
+    );
   }
 
   const createdWorkspaceRow = page.getByTestId(

@@ -11,7 +11,7 @@ import { useWindowDimensions } from "react-native";
 import { useSharedValue, withTiming, Easing, type SharedValue } from "react-native-reanimated";
 import { type GestureType } from "react-native-gesture-handler";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
+import { usePanelStore } from "@/stores/panel-store";
 import {
   getRightSidebarAnimationTargets,
   shouldSyncSidebarAnimation,
@@ -38,9 +38,11 @@ const ExplorerSidebarAnimationContext = createContext<ExplorerSidebarAnimationCo
 export function ExplorerSidebarAnimationProvider({ children }: { children: ReactNode }) {
   const { width: windowWidth } = useWindowDimensions();
   const isCompactLayout = useIsCompactFormFactor();
-  const isOpen = usePanelStore((state) =>
-    selectIsFileExplorerOpen(state, { isCompact: isCompactLayout }),
-  );
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
+
+  // Derive isOpen from the unified panel state
+  const isOpen = isCompactLayout ? mobileView === "file-explorer" : desktopFileExplorerOpen;
 
   // Right sidebar: closed = +windowWidth (off-screen right), open = 0
   const initialTargets = getRightSidebarAnimationTargets({ isOpen, windowWidth });
@@ -123,6 +125,8 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
     });
   }, [translateX, backdropOpacity, windowWidth]);
 
+  // Memoize the provider value so consumers don't re-render on every parent
+  // render. (Paseo commit 67eddbd.)
   const value = useMemo<ExplorerSidebarAnimationContextValue>(
     () => ({
       translateX,
@@ -135,7 +139,7 @@ export function ExplorerSidebarAnimationProvider({ children }: { children: React
       openGestureRef,
       closeGestureRef,
     }),
-    [translateX, backdropOpacity, windowWidth, animateToOpen, animateToClose, isGesturing],
+    [animateToClose, animateToOpen, backdropOpacity, isGesturing, translateX, windowWidth],
   );
 
   return (
@@ -153,8 +157,4 @@ export function useExplorerSidebarAnimation() {
     );
   }
   return context;
-}
-
-export function useExplorerSidebarAnimationOptional() {
-  return useContext(ExplorerSidebarAnimationContext);
 }

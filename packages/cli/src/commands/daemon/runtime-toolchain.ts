@@ -1,5 +1,5 @@
 import { platform } from "node:os";
-import { execCommand } from "@gethubcode/server";
+import { execCommand } from "@hubcode/server";
 
 export interface NodePathFromPidResult {
   nodePath: string | null;
@@ -76,27 +76,25 @@ async function resolveNodePathFromPidWindows(pid: number): Promise<NodePathFromP
   ];
 
   const errors: string[] = [];
-
-  async function tryProbe(index: number): Promise<NodePathFromPidResult> {
-    if (index >= probes.length) {
-      return {
-        nodePath: null,
-        error: errors.join("; ") || "could not resolve executable path from PID",
-      };
-    }
-    const probe = probes[index] as (typeof probes)[number];
+  for (const probe of probes) {
     const result = await runProcessProbe(probe.command, probe.args);
     if (result.resolved) {
       const resolved = probe.parseValue ? probe.parseValue(result.resolved) : result.resolved;
-      if (resolved) return { nodePath: resolved };
+      if (resolved) {
+        return { nodePath: resolved };
+      }
       errors.push(`${probe.label} returned no executable path`);
-    } else if (result.error) {
+      continue;
+    }
+    if (result.error) {
       errors.push(`${probe.label}: ${result.error}`);
     }
-    return tryProbe(index + 1);
   }
 
-  return tryProbe(0);
+  return {
+    nodePath: null,
+    error: errors.join("; ") || "could not resolve executable path from PID",
+  };
 }
 
 export async function resolveNodePathFromPid(pid: number): Promise<NodePathFromPidResult> {

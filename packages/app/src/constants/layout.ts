@@ -14,6 +14,13 @@ export const HEADER_TOP_PADDING_MOBILE = 8;
 // Max width for chat content (stream view, input area, new agent form)
 export const MAX_CONTENT_WIDTH = 820;
 
+// Sidebar widths — single source of truth across chat, left-sidebar, and any
+// other pane that can collapse to icon-only.
+export const SIDEBAR_EXPANDED_WIDTH = 260;
+export const SIDEBAR_COLLAPSED_WIDTH = 56;
+// Thread panel on the right side of the chat.
+export const THREAD_PANE_WIDTH = 380;
+
 // Desktop app constants for macOS traffic light buttons
 // These buttons (close/minimize/maximize) overlay the top-left corner
 export const DESKTOP_TRAFFIC_LIGHT_WIDTH = 78;

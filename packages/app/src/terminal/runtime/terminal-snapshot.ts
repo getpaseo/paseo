@@ -1,6 +1,6 @@
 import type { TerminalCell, TerminalState } from "@server/shared/messages";
 
-interface TerminalStyle {
+type TerminalStyle = {
   fg: number | undefined;
   bg: number | undefined;
   fgMode: number | undefined;
@@ -11,7 +11,7 @@ interface TerminalStyle {
   dim: boolean;
   inverse: boolean;
   strikethrough: boolean;
-}
+};
 
 const DEFAULT_STYLE: TerminalStyle = {
   fg: undefined,

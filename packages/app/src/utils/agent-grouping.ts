@@ -262,52 +262,54 @@ const MAX_INACTIVE_PER_PROJECT = 5;
  * - All truly active agents (running/needs input/requires attention) are always shown
  * - Recently active (within grace period but not truly active) are limited to MAX_INACTIVE_PER_PROJECT
  */
-function isAgentTrulyActive(agent: AggregatedAgent): boolean {
-  return (
-    agent.status === "running" || agent.requiresAttention || (agent.pendingPermissionCount ?? 0) > 0
-  );
-}
-
-function partitionAgentsByActivity(
+export function groupAgents(
   agents: AggregatedAgent[],
-  now: number,
-): { activeAgents: AggregatedAgent[]; inactiveAgents: AggregatedAgent[] } {
+  options?: GroupAgentsOptions,
+): GroupedAgents {
   const activeAgents: AggregatedAgent[] = [];
   const inactiveAgents: AggregatedAgent[] = [];
+  const now = Date.now();
 
   for (const agent of agents) {
+    // Archived agents are always inactive (hidden from sidebar)
     if (agent.archivedAt) {
       inactiveAgents.push(agent);
       continue;
     }
 
-    const isRecentlyActive = now - agent.lastActivityAt.getTime() < ACTIVE_GRACE_PERIOD_MS;
-    if (isAgentTrulyActive(agent) || isRecentlyActive) {
+    const isRunningOrAttention =
+      agent.status === "running" ||
+      agent.requiresAttention ||
+      (agent.pendingPermissionCount ?? 0) > 0;
+    const ageDiff = now - agent.lastActivityAt.getTime();
+    const isRecentlyActive = ageDiff < ACTIVE_GRACE_PERIOD_MS;
+    const isActive = isRunningOrAttention || isRecentlyActive;
+
+    if (isActive) {
       activeAgents.push(agent);
     } else {
       inactiveAgents.push(agent);
     }
   }
 
-  return { activeAgents, inactiveAgents };
-}
-
-interface ProjectActivityBucket {
-  trulyActive: AggregatedAgent[];
-  recentlyActive: AggregatedAgent[];
-}
-
-function buildProjectActivityMap(
-  activeAgents: AggregatedAgent[],
-  options: GroupAgentsOptions | undefined,
-): Map<string, ProjectActivityBucket> {
-  const projectMap = new Map<string, ProjectActivityBucket>();
+  // Group active agents by project, tracking truly active vs recently active
+  const projectMap = new Map<
+    string,
+    { trulyActive: AggregatedAgent[]; recentlyActive: AggregatedAgent[] }
+  >();
   for (const agent of activeAgents) {
     const remoteKey = deriveRemoteProjectKey(options?.getRemoteUrl?.(agent) ?? null);
     const projectKey = remoteKey ?? deriveProjectKey(agent.cwd);
-    const existing = projectMap.get(projectKey) || { trulyActive: [], recentlyActive: [] };
+    const existing = projectMap.get(projectKey) || {
+      trulyActive: [],
+      recentlyActive: [],
+    };
 
-    if (isAgentTrulyActive(agent)) {
+    const isTrulyActive =
+      agent.status === "running" ||
+      agent.requiresAttention ||
+      (agent.pendingPermissionCount ?? 0) > 0;
+    if (isTrulyActive) {
       existing.trulyActive.push(agent);
     } else {
       existing.recentlyActive.push(agent);
@@ -315,22 +317,20 @@ function buildProjectActivityMap(
 
     projectMap.set(projectKey, existing);
   }
-  return projectMap;
-}
 
-function byLastActivityDescending(a: AggregatedAgent, b: AggregatedAgent): number {
-  return b.lastActivityAt.getTime() - a.lastActivityAt.getTime();
-}
-
-function buildActiveProjectGroups(projectMap: Map<string, ProjectActivityBucket>): ProjectGroup[] {
+  // Build project groups with limits applied
   const activeGroups: ProjectGroup[] = [];
   for (const [projectKey, { trulyActive, recentlyActive }] of projectMap) {
-    trulyActive.sort(byLastActivityDescending);
-    recentlyActive.sort(byLastActivityDescending);
+    // Sort both arrays by lastActivityAt (newest first)
+    trulyActive.sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
+    recentlyActive.sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
 
+    // All truly active agents shown, limit recently active to MAX_INACTIVE_PER_PROJECT
     const limitedRecentlyActive = recentlyActive.slice(0, MAX_INACTIVE_PER_PROJECT);
     const combinedAgents = [...trulyActive, ...limitedRecentlyActive];
-    combinedAgents.sort(byLastActivityDescending);
+
+    // Re-sort combined list by lastActivityAt
+    combinedAgents.sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
 
     activeGroups.push({
       projectKey,
@@ -341,16 +341,14 @@ function buildActiveProjectGroups(projectMap: Map<string, ProjectActivityBucket>
     });
   }
 
+  // Sort project groups by most recent activity
   activeGroups.sort((a, b) => {
     const aRecent = a.agents[0]?.lastActivityAt.getTime() ?? 0;
     const bRecent = b.agents[0]?.lastActivityAt.getTime() ?? 0;
     return bRecent - aRecent;
   });
 
-  return activeGroups;
-}
-
-function buildInactiveDateGroups(inactiveAgents: AggregatedAgent[]): DateGroup[] {
+  // Group inactive agents by date
   const dateMap = new Map<string, AggregatedAgent[]>();
   for (const agent of inactiveAgents) {
     const dateLabel = deriveDateGroup(agent.lastActivityAt);
@@ -359,25 +357,16 @@ function buildInactiveDateGroups(inactiveAgents: AggregatedAgent[]): DateGroup[]
     dateMap.set(dateLabel, existing);
   }
 
+  // Sort agents within each date group by lastActivityAt (newest first)
   const dateOrder = ["Recent", "Yesterday", "This week", "This month", "Older"];
   const inactiveGroups: DateGroup[] = [];
   for (const label of dateOrder) {
     const dateAgents = dateMap.get(label);
     if (dateAgents && dateAgents.length > 0) {
-      dateAgents.sort(byLastActivityDescending);
+      dateAgents.sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
       inactiveGroups.push({ label, agents: dateAgents });
     }
   }
-  return inactiveGroups;
-}
 
-export function groupAgents(
-  agents: AggregatedAgent[],
-  options?: GroupAgentsOptions,
-): GroupedAgents {
-  const { activeAgents, inactiveAgents } = partitionAgentsByActivity(agents, Date.now());
-  const projectMap = buildProjectActivityMap(activeAgents, options);
-  const activeGroups = buildActiveProjectGroups(projectMap);
-  const inactiveGroups = buildInactiveDateGroups(inactiveAgents);
   return { activeGroups, inactiveGroups };
 }

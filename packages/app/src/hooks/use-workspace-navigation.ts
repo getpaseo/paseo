@@ -1,51 +1,29 @@
 import { useCallback } from "react";
 import { router } from "expo-router";
-import {
-  activateNavigationWorkspaceSelection,
-  getNavigationActiveWorkspaceSelection,
-} from "@/stores/navigation-active-workspace-store";
-import { buildHostWorkspaceRoute, parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
-
-interface NavigateToWorkspaceOptions {
-  currentPathname?: string | null;
-}
-
-function shouldUseRetainedWorkspaceSwitch(input: {
-  hasActiveWorkspace: boolean;
-  currentPathname?: string | null;
-}): boolean {
-  if (!input.hasActiveWorkspace) {
-    return false;
-  }
-
-  if (input.currentPathname == null) {
-    return true;
-  }
-
-  return parseHostWorkspaceRouteFromPathname(input.currentPathname) !== null;
-}
+import { buildHostWorkspaceRoute, buildHostAgentDetailRoute } from "@/utils/host-routes";
+import { useSessionStore } from "@/stores/session-store";
 
 /**
- * Open a workspace. Once the workspace shell is mounted, switching workspaces
- * is app-level state so native-stack does not rebuild every retained screen.
+ * Navigate to a workspace screen. Uses router.navigate() which,
+ * combined with getId on the workspace Stack.Screen, ensures:
+ * - Only one instance of each workspace exists in the stack
+ * - History is preserved (back button works)
+ * - No duplicate workspace screens
+ *
+ * If there is already an active (non-archived) agent running in the workspace,
+ * navigates directly to that agent instead of showing the blank "New Agent" state.
  */
-export function navigateToWorkspace(
-  serverId: string,
-  workspaceId: string,
-  options: NavigateToWorkspaceOptions = {},
-) {
-  const activeWorkspace = getNavigationActiveWorkspaceSelection();
-  if (
-    shouldUseRetainedWorkspaceSwitch({
-      hasActiveWorkspace: activeWorkspace !== null,
-      currentPathname: options.currentPathname,
-    })
-  ) {
-    activateNavigationWorkspaceSelection(
-      { serverId, workspaceId },
-      { updateBrowserHistory: true, historyMode: "push" },
+export function navigateToWorkspace(serverId: string, workspaceId: string) {
+  // If there's already an active agent in this workspace, navigate to it directly
+  const agents = useSessionStore.getState().sessions[serverId]?.agents;
+  if (agents) {
+    const activeAgent = Array.from(agents.values()).find(
+      (a) => a.cwd === workspaceId && a.archivedAt == null,
     );
-    return;
+    if (activeAgent) {
+      router.navigate(buildHostAgentDetailRoute(serverId, activeAgent.id, workspaceId) as any);
+      return;
+    }
   }
 
   const href = buildHostWorkspaceRoute(serverId, workspaceId);
@@ -54,11 +32,8 @@ export function navigateToWorkspace(
 
 export function useWorkspaceNavigation() {
   return {
-    navigateToWorkspace: useCallback(
-      (serverId: string, workspaceId: string, options?: NavigateToWorkspaceOptions) => {
-        navigateToWorkspace(serverId, workspaceId, options);
-      },
-      [],
-    ),
+    navigateToWorkspace: useCallback((serverId: string, workspaceId: string) => {
+      navigateToWorkspace(serverId, workspaceId);
+    }, []),
   };
 }

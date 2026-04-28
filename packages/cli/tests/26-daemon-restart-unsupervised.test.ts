@@ -44,20 +44,20 @@ async function waitFor(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
-  async function poll(): Promise<void> {
-    if (await check()) return;
-    if (Date.now() >= deadline) throw new Error(message);
+  while (Date.now() < deadline) {
+    if (await check()) {
+      return;
+    }
     await sleep(pollIntervalMs);
-    return poll();
   }
 
-  return poll();
+  throw new Error(message);
 }
 
-interface ExitResult {
+type ExitResult = {
   code: number | null;
   signal: NodeJS.Signals | null;
-}
+};
 
 function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): Promise<ExitResult> {
   return new Promise((resolve, reject) => {
@@ -75,18 +75,16 @@ function waitForProcessExit(processRef: ChildProcess, timeoutMs: number): Promis
 async function canConnectToDaemon(host: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 
-  async function poll(): Promise<boolean> {
+  while (Date.now() < deadline) {
     const client = await tryConnectToDaemon({ host, timeout: 500 }).catch(() => null);
     if (client) {
       await client.close().catch(() => undefined);
       return true;
     }
-    if (Date.now() >= deadline) return false;
     await sleep(pollIntervalMs);
-    return poll();
   }
 
-  return poll();
+  return false;
 }
 
 async function readPidLockPid(hubcodeHome: string): Promise<number | null> {

@@ -1,10 +1,4 @@
-import { router, type Href } from "expo-router";
-import { isNative } from "@/constants/platform";
-import {
-  activateNavigationWorkspaceSelection,
-  getLastNavigationWorkspaceRouteSelection,
-  overrideNextNavigationWorkspaceRouteSelection,
-} from "@/stores/navigation-active-workspace-store";
+import { router } from "expo-router";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { generateDraftId } from "@/stores/draft-keys";
 import {
@@ -18,10 +12,6 @@ interface PrepareWorkspaceTabInput {
   workspaceId: string;
   target: WorkspaceTabTarget;
   pin?: boolean;
-}
-
-interface NavigateToPreparedWorkspaceTabInput extends PrepareWorkspaceTabInput {
-  navigationMethod?: "navigate" | "replace";
 }
 
 function getPreparedTarget(target: WorkspaceTabTarget): WorkspaceTabTarget {
@@ -39,7 +29,11 @@ export function prepareWorkspaceTab(input: PrepareWorkspaceTabInput) {
       workspaceId: input.workspaceId,
     }) ?? "";
 
-  useWorkspaceLayoutStore.getState().openTabFocused(key, target);
+  const tabId = useWorkspaceLayoutStore.getState().openTab(key, target);
+
+  if (tabId) {
+    useWorkspaceLayoutStore.getState().focusTab(key, tabId);
+  }
 
   if (input.pin && target.kind === "agent") {
     useWorkspaceLayoutStore.getState().pinAgent(key, target.agentId);
@@ -48,26 +42,17 @@ export function prepareWorkspaceTab(input: PrepareWorkspaceTabInput) {
   return buildHostWorkspaceRoute(input.serverId, input.workspaceId);
 }
 
+interface NavigateToPreparedWorkspaceTabInput extends PrepareWorkspaceTabInput {
+  /** "push" pushes a new history entry; "replace" overwrites current. Default "push". */
+  navigationMethod?: "push" | "replace";
+}
+
 export function navigateToPreparedWorkspaceTab(input: NavigateToPreparedWorkspaceTabInput): string {
   const route = prepareWorkspaceTab(input);
   if (input.navigationMethod === "replace") {
-    const canReturnToWorkspaceShell =
-      isNative && getLastNavigationWorkspaceRouteSelection() !== null && router.canGoBack();
-    if (canReturnToWorkspaceShell) {
-      const nextSelection = {
-        serverId: input.serverId,
-        workspaceId: input.workspaceId,
-      };
-      overrideNextNavigationWorkspaceRouteSelection(nextSelection);
-      router.back();
-      setTimeout(() => {
-        activateNavigationWorkspaceSelection(nextSelection);
-      }, 0);
-      return route;
-    }
-    router.replace(route as Href);
+    router.replace(route as never);
   } else {
-    router.navigate(route as Href);
+    router.push(route as never);
   }
   return route;
 }

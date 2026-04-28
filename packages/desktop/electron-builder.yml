@@ -1,16 +1,14 @@
 npmRebuild: false
-appId: ai.hubcode.desktop
+appId: sh.hubcode.desktop
 productName: Hubcode
 executableName: Hubcode
 afterPack: ./scripts/after-pack.js
-afterSign: ./scripts/after-sign.js
 directories:
   output: release
 files:
   - dist/**/*
 asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
-  - node_modules/@gethubcode/server/dist/server/terminal/shell-integration/**/*
 extraResources:
   - from: ../app/dist
     to: app-dist
@@ -18,14 +16,23 @@ extraResources:
     to: skills
 publish:
   provider: github
-  owner: gethubcode
+  owner: hubtool
   repo: hubcode
 mac:
   artifactName: "Hubcode-${version}-${arch}.${ext}"
   category: public.app-category.developer-tools
   icon: assets/icon.icns
   hardenedRuntime: true
-  notarize: true
+  # notarize requires a valid Apple Developer team. Set teamId here
+  # AFTER enrolling Hubcode in the Apple Developer Program and
+  # generating a "Developer ID Application" cert under that team.
+  # Set to true once configured; until then, builds run unsigned.
+  notarize: false
+  # identity: null forces unsigned builds. Without it, electron-builder
+  # silently picks up the FIRST "Developer ID Application" cert in the
+  # operator's Keychain — which has burned us before by accidentally
+  # signing Hubcode with an unrelated company's cert (PATUBANK LTDA).
+  identity: null
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extraResources:
@@ -38,7 +45,7 @@ linux:
   category: Development
   icon: assets
   artifactName: "Hubcode-${version}-${arch}.${ext}"
-  maintainer: "Mohamed Boudra <hello@moboudra.com>"
+  maintainer: "Gustavo Junior <ceo@hubcode.ai>"
   vendor: "Hubcode"
   extraResources:
     - from: bin/hubcode

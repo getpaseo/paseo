@@ -1,37 +1,48 @@
 export type AgentInputSubmitResult = "noop" | "queued" | "submitted" | "failed";
 
-export interface AgentInputSubmitActionInput<TAttachment> {
+export interface AgentInputSubmitActionInput<TImage> {
   message: string;
-  attachments: TAttachment[];
+  /** Legacy name kept for the older agent-input-area caller. */
+  imageAttachments?: TImage[];
+  /** New composer API name. Either field is accepted. */
+  attachments?: TImage[];
+  /** Composer-only flags (ignored by legacy callers). */
   hasExternalContent?: boolean;
   allowEmptySubmit?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
   forceSend?: boolean;
   isAgentRunning: boolean;
   canSubmit: boolean;
-  queueMessage: (input: { message: string; attachments: TAttachment[] }) => void;
-  submitMessage: (input: { message: string; attachments: TAttachment[] }) => Promise<void>;
+  queueMessage: (input: {
+    message: string;
+    imageAttachments?: TImage[];
+    attachments?: TImage[];
+  }) => void;
+  submitMessage: (input: {
+    message: string;
+    imageAttachments?: TImage[];
+    attachments?: TImage[];
+  }) => Promise<void>;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   setUserInput: (text: string) => void;
-  setAttachments: (attachments: TAttachment[]) => void;
+  /** Legacy name. */
+  setSelectedImages?: (images: TImage[]) => void;
+  /** New composer API name. Either is accepted. */
+  setAttachments?: (images: TImage[]) => void;
   setSendError: (message: string | null) => void;
   setIsProcessing: (isProcessing: boolean) => void;
   onSubmitError?: (error: unknown) => void;
 }
 
-export async function submitAgentInput<TAttachment>(
-  input: AgentInputSubmitActionInput<TAttachment>,
+export async function submitAgentInput<TImage>(
+  input: AgentInputSubmitActionInput<TImage>,
 ): Promise<AgentInputSubmitResult> {
   const trimmedMessage = input.message.trim();
-  const attachments = input.attachments;
-  const shouldClearOnSubmit = input.submitBehavior !== "preserve-and-lock";
+  const attachments = input.attachments ?? input.imageAttachments;
+  const setAttachments = input.setAttachments ?? input.setSelectedImages ?? (() => {});
+  const allowEmpty = input.allowEmptySubmit ?? false;
 
-  if (
-    !trimmedMessage &&
-    attachments.length === 0 &&
-    !input.hasExternalContent &&
-    !input.allowEmptySubmit
-  ) {
+  if (!trimmedMessage && !attachments?.length && !allowEmpty && !input.hasExternalContent) {
     return "noop";
   }
 
@@ -39,33 +50,41 @@ export async function submitAgentInput<TAttachment>(
     return "noop";
   }
 
+  const preserveOnSubmit = input.submitBehavior === "preserve-and-lock";
+
   if (input.isAgentRunning && !input.forceSend) {
-    input.queueMessage({ message: trimmedMessage, attachments });
-    if (shouldClearOnSubmit) {
+    input.queueMessage({ message: trimmedMessage, attachments, imageAttachments: attachments });
+    if (!preserveOnSubmit) {
       input.setUserInput("");
-      input.setAttachments([]);
+      setAttachments([]);
     }
+    // Queueing counts as "sent" for draft lifecycle — the text has left the
+    // composer and is now owned by the queue.
+    input.clearDraft("sent");
     return "queued";
   }
 
-  // Clear immediately so optimistic stream updates and composer state stay in sync.
-  if (shouldClearOnSubmit) {
+  if (!preserveOnSubmit) {
     input.setUserInput("");
-    input.setAttachments([]);
+    setAttachments([]);
   }
   input.setSendError(null);
   input.setIsProcessing(true);
 
   try {
-    await input.submitMessage({ message: trimmedMessage, attachments });
+    await input.submitMessage({
+      message: trimmedMessage,
+      attachments,
+      imageAttachments: attachments,
+    });
     input.clearDraft("sent");
     input.setIsProcessing(false);
     return "submitted";
   } catch (error) {
     input.onSubmitError?.(error);
-    if (shouldClearOnSubmit) {
+    if (!preserveOnSubmit) {
       input.setUserInput(trimmedMessage);
-      input.setAttachments(attachments);
+      setAttachments(attachments ?? []);
     }
     input.setSendError(error instanceof Error ? error.message : "Failed to send message");
     input.setIsProcessing(false);

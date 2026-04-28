@@ -9,12 +9,11 @@ export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/me
 
 type MutableDaemonConfig = import("../shared/messages.js").MutableDaemonConfig;
 type MutableDaemonConfigPatch = import("../shared/messages.js").MutableDaemonConfigPatch;
-type ProviderOverride = import("./agent/provider-launch-config.js").ProviderOverride;
 
-interface LoggerLike {
+type LoggerLike = {
   child(bindings: Record<string, unknown>): LoggerLike;
-  info(...args: unknown[]): void;
-}
+  info(...args: any[]): void;
+};
 
 type ConfigListener = (config: MutableDaemonConfig) => void;
 type FieldChangeHandler = (value: unknown) => void;
@@ -27,9 +26,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const REPLACE_PATHS = new Set(["agents.cliProviders"]);
+
 function deepMerge<T extends Record<string, unknown>>(
   current: T,
   patch: Record<string, unknown>,
+  path: string[] = [],
 ): T {
   const next: Record<string, unknown> = { ...current };
 
@@ -37,9 +39,15 @@ function deepMerge<T extends Record<string, unknown>>(
     if (patchValue === undefined) {
       continue;
     }
+    const nextPath = [...path, key];
+    const nextPathKey = nextPath.join(".");
     const currentValue = next[key];
+    if (REPLACE_PATHS.has(nextPathKey) && isRecord(patchValue)) {
+      next[key] = { ...patchValue };
+      continue;
+    }
     if (isRecord(currentValue) && isRecord(patchValue)) {
-      next[key] = deepMerge(currentValue, patchValue);
+      next[key] = deepMerge(currentValue, patchValue, nextPath);
       continue;
     }
     next[key] = patchValue;
@@ -56,30 +64,6 @@ function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {
 
 function isEqualValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
-}
-
-export function applyMutableProviderConfigToOverrides(
-  baseOverrides: Record<string, ProviderOverride> | undefined,
-  mutableProviders: MutableDaemonConfig["providers"] | undefined,
-): Record<string, ProviderOverride> | undefined {
-  if (!baseOverrides && (!mutableProviders || Object.keys(mutableProviders).length === 0)) {
-    return undefined;
-  }
-
-  const nextOverrides: Record<string, ProviderOverride> = { ...baseOverrides };
-  for (const [providerId, providerConfig] of Object.entries(mutableProviders ?? {})) {
-    nextOverrides[providerId] = {
-      ...nextOverrides[providerId],
-    };
-    if (providerConfig.enabled !== undefined) {
-      nextOverrides[providerId].enabled = providerConfig.enabled;
-    }
-    if (providerConfig.additionalModels !== undefined) {
-      nextOverrides[providerId].additionalModels = providerConfig.additionalModels;
-    }
-  }
-
-  return nextOverrides;
 }
 
 export class DaemonConfigStore {
@@ -173,14 +157,6 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   mutable: MutableDaemonConfig;
 }): PersistedConfig {
   const { persisted, mutable } = params;
-  const providerOverrides = applyMutableProviderConfigToOverrides(
-    persisted.agents?.providers as Record<string, ProviderOverride> | undefined,
-    mutable.providers,
-  );
-  const persistedAgents = persisted.agents as
-    | ({ providers?: Record<string, ProviderOverride> } & Record<string, unknown>)
-    | undefined;
-
   return {
     ...persisted,
     daemon: {
@@ -191,11 +167,14 @@ function mergeMutableConfigIntoPersistedConfig(params: {
       },
     },
     agents:
-      providerOverrides && Object.keys(providerOverrides).length > 0
+      mutable.agents?.cliProviders !== undefined
         ? {
-            ...persistedAgents,
-            providers: providerOverrides,
+            ...persisted.agents,
+            cliProviders:
+              Object.keys(mutable.agents.cliProviders).length > 0
+                ? mutable.agents.cliProviders
+                : undefined,
           }
         : persisted.agents,
-  } as PersistedConfig;
+  };
 }

@@ -9,17 +9,17 @@ export function readBadgeCount(input: unknown): number {
 }
 
 export type WindowTheme = "light" | "dark";
-export interface WindowControlsOverlayUpdate {
+export type WindowControlsOverlayUpdate = {
   height?: number;
   backgroundColor?: string;
   foregroundColor?: string;
-}
+};
 
-export interface WindowControlsOverlayState {
+export type WindowControlsOverlayState = {
   height: number;
   backgroundColor?: string;
   foregroundColor?: string;
-}
+};
 
 export function readWindowTheme(input: unknown): WindowTheme | null {
   if (input === "light" || input === "dark") {
@@ -216,59 +216,6 @@ export function setupWindowResizeEvents(win: BrowserWindow): void {
 
   win.on("leave-full-screen", () => {
     win.webContents.send("hubcode:window:resized", {});
-  });
-}
-
-function refreshChromiumSurface(win: BrowserWindow): void {
-  if (win.isDestroyed()) {
-    return;
-  }
-
-  win.webContents.invalidate();
-  if (win.isMaximized() || win.isFullScreen()) {
-    return;
-  }
-
-  const [width, height] = win.getSize();
-  win.setSize(width + 1, height);
-  setTimeout(() => {
-    if (!win.isDestroyed()) {
-      win.setSize(width, height);
-    }
-  }, 32);
-}
-
-export function setupDarwinPaintRefresh(win: BrowserWindow): void {
-  if (process.platform !== "darwin") {
-    return;
-  }
-
-  win.webContents.setBackgroundThrottling(false);
-
-  const requestSurfaceRefresh = () => {
-    if (!win.isDestroyed()) {
-      win.webContents.invalidate();
-    }
-  };
-  const handleChildProcessGone = (
-    _event: Electron.Event,
-    details: { type?: string; reason?: string },
-  ) => {
-    if (details.type !== "GPU") {
-      return;
-    }
-
-    console.warn("[window] GPU process gone:", details.reason);
-    refreshChromiumSurface(win);
-  };
-
-  win.on("restore", requestSurfaceRefresh);
-  win.on("show", requestSurfaceRefresh);
-  app.on("child-process-gone", handleChildProcessGone);
-  win.once("closed", () => {
-    win.off("restore", requestSurfaceRefresh);
-    win.off("show", requestSurfaceRefresh);
-    app.off("child-process-gone", handleChildProcessGone);
   });
 }
 

@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
@@ -42,12 +41,7 @@ export function AgentStatusDot({
     return null;
   }
 
-  return <AgentStatusDotView color={color} />;
-}
-
-function AgentStatusDotView({ color }: { color: string }) {
-  const dotStyle = useMemo(() => [styles.dot, { backgroundColor: color }], [color]);
-  return <View style={dotStyle} />;
+  return <View style={[styles.dot, { backgroundColor: color }]} />;
 }
 
 function isAgentLifecycleStatus(value: string): value is AgentLifecycleStatus {

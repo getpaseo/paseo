@@ -36,10 +36,7 @@ for (let i = 0; i < args.length; i++) {
 
 $.verbose = false;
 
-interface Failure {
-  test: string;
-  error: string;
-}
+type Failure = { test: string; error: string };
 
 async function runCommand(label: string, command: string): Promise<void> {
   console.log(`\n${"─".repeat(50)}`);
@@ -73,7 +70,7 @@ async function writeJsonSummary({
     JSON.stringify(
       {
         suite: "cli-local",
-        command: "npm run test:local --workspace=@gethubcode/cli",
+        command: "npm run test:local --workspace=@hubcode/cli",
         counts: {
           passed,
           failed,
@@ -114,13 +111,11 @@ let passed = 0;
 let failed = 0;
 const failures: Failure[] = [];
 
-await runCommand("Building relay", "npm run build --workspace=@gethubcode/relay");
-await runCommand("Building server", "npm run build --workspace=@gethubcode/server");
-await runCommand("Building CLI", "npm run build --workspace=@gethubcode/cli");
+await runCommand("Building relay", "npm run build --workspace=@hubcode/relay");
+await runCommand("Building server", "npm run build --workspace=@hubcode/server");
+await runCommand("Building CLI", "npm run build --workspace=@hubcode/cli");
 
-type TestOutcome = { status: "passed" } | { status: "failed"; failure: Failure };
-
-async function runSingleTest(testFile: string): Promise<TestOutcome> {
+for (const testFile of testFiles) {
   const testPath = join(__dirname, testFile);
   const testName = testFile.replace(/\.test\.ts$/, "");
 
@@ -133,37 +128,25 @@ async function runSingleTest(testFile: string): Promise<TestOutcome> {
       await $`HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnvDefaults.HUBCODE_LOCAL_SPEECH_AUTO_DOWNLOAD} HUBCODE_DICTATION_ENABLED=${testEnvDefaults.HUBCODE_DICTATION_ENABLED} HUBCODE_VOICE_MODE_ENABLED=${testEnvDefaults.HUBCODE_VOICE_MODE_ENABLED} npx tsx ${testPath}`.nothrow();
     if (result.exitCode === 0) {
       console.log(`\n✅ ${testName} PASSED`);
-      return { status: "passed" };
+      passed++;
+    } else {
+      console.log(`\n❌ ${testName} FAILED (exit code: ${result.exitCode})`);
+      if (result.stderr) {
+        console.log("stderr:", result.stderr);
+      }
+      failed++;
+      failures.push({ test: testName, error: result.stderr || `Exit code: ${result.exitCode}` });
+      break;
     }
-    console.log(`\n❌ ${testName} FAILED (exit code: ${result.exitCode})`);
-    if (result.stderr) {
-      console.log("stderr:", result.stderr);
-    }
-    return {
-      status: "failed",
-      failure: { test: testName, error: result.stderr || `Exit code: ${result.exitCode}` },
-    };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     console.log(`\n❌ ${testName} FAILED`);
     console.log("Error:", error);
-    return { status: "failed", failure: { test: testName, error } };
+    failed++;
+    failures.push({ test: testName, error });
+    break;
   }
 }
-
-async function runRemainingTests(index: number): Promise<void> {
-  if (index >= testFiles.length) return;
-  const testFile = testFiles[index] as string;
-  const outcome = await runSingleTest(testFile);
-  if (outcome.status === "passed") {
-    passed++;
-    return runRemainingTests(index + 1);
-  }
-  failed++;
-  failures.push(outcome.failure);
-}
-
-await runRemainingTests(0);
 
 // Summary
 console.log("\n" + "=".repeat(50));

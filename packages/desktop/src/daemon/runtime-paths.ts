@@ -1,10 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { spawnProcess } from "@gethubcode/server";
+import { spawnProcess } from "@hubcode/server";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { app } from "electron";
-import log from "electron-log/main";
 import {
   DESKTOP_CLI_ENV,
   createNodeEntrypointInvocation as createSharedNodeEntrypointInvocation,
@@ -14,13 +13,13 @@ import {
   type NodeEntrypointSpec,
 } from "./node-entrypoint-launcher.js";
 
-const CLI_PACKAGE_NAME = "@gethubcode/cli";
-const SERVER_PACKAGE_NAME = "@gethubcode/server";
+const CLI_PACKAGE_NAME = "@hubcode/cli";
+const SERVER_PACKAGE_NAME = "@hubcode/server";
 const CLI_BIN_ENTRY = `${CLI_PACKAGE_NAME}/bin/hubcode`;
 
-interface PackageInfo {
+type PackageInfo = {
   root: string;
-}
+};
 
 const esmRequire = createRequire(__filename);
 
@@ -103,6 +102,13 @@ export function parseCliPassthroughArgsFromArgv(argv: string[]): string[] | null
   });
 }
 
+// `--expose-gc` lets the in-process Hubcode Local embedding pipeline trigger
+// a synchronous GC every N batches (see `hubcode-local-inference.ts`). Without
+// it, the @xenova/transformers extractor's tensor caches grow monotonically
+// across thousands of batches and OOM-kill the daemon. Always pass it so the
+// fallback is available; the cost when not used is essentially zero.
+const DAEMON_BASE_EXEC_ARGV = ["--expose-gc"] as const;
+
 export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
   if (app.isPackaged) {
     return {
@@ -111,14 +117,14 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
         filePath: path.join(
           resolvePackagedAsarPath(),
           "node_modules",
-          "@gethubcode",
+          "@hubcode",
           "server",
           "dist",
           "scripts",
           "supervisor-entrypoint.js",
         ),
       }),
-      execArgv: [],
+      execArgv: [...DAEMON_BASE_EXEC_ARGV],
     };
   }
 
@@ -127,7 +133,7 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
   if (existsSync(distRunner)) {
     return {
       entryPath: distRunner,
-      execArgv: [],
+      execArgv: [...DAEMON_BASE_EXEC_ARGV],
     };
   }
 
@@ -136,7 +142,7 @@ export function resolveDaemonRunnerEntrypoint(): NodeEntrypointSpec {
       label: "Daemon runner source",
       filePath: path.join(serverPackage.root, "scripts", "supervisor-entrypoint.ts"),
     }),
-    execArgv: ["--import", "tsx"],
+    execArgv: [...DAEMON_BASE_EXEC_ARGV, "--import", "tsx"],
   };
 }
 
@@ -148,7 +154,7 @@ export function resolveCliEntrypoint(): NodeEntrypointSpec {
         filePath: path.join(
           resolvePackagedAsarPath(),
           "node_modules",
-          "@gethubcode",
+          "@hubcode",
           "cli",
           "dist",
           "index.js",
@@ -257,7 +263,6 @@ function spawnAsync(
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawnProcess(command, args, {
-      envMode: "internal",
       env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -287,17 +292,8 @@ export async function runCliTextCommand(args: string[]): Promise<string> {
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
-    const stdout = result.stdout.trim();
-    log.warn("[desktop cli]", `CLI text command failed`, {
-      args,
-      exitCode: result.exitCode,
-      stdout: stdout.slice(0, 500),
-      stderr: stderr.slice(0, 500),
-    });
     throw new Error(
-      stderr.length > 0
-        ? stderr
-        : `CLI command failed with exit code ${result.exitCode}${stdout.length > 0 ? `\nstdout: ${stdout.slice(0, 200)}` : ""}`,
+      stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`,
     );
   }
 
@@ -312,24 +308,13 @@ export async function runCliJsonCommand(args: string[]): Promise<unknown> {
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
-    const stdout = result.stdout.trim();
-    log.warn("[desktop cli]", `CLI command failed`, {
-      args,
-      exitCode: result.exitCode,
-      stdout: stdout.slice(0, 500),
-      stderr: stderr.slice(0, 500),
-      command: invocation.command,
-    });
     throw new Error(
-      stderr.length > 0
-        ? stderr
-        : `CLI command failed with exit code ${result.exitCode}${stdout.length > 0 ? `\nstdout: ${stdout.slice(0, 200)}` : ""}`,
+      stderr.length > 0 ? stderr : `CLI command failed with exit code ${result.exitCode}`,
     );
   }
 
   const stdout = result.stdout.trim();
   if (stdout.length === 0) {
-    log.warn("[desktop cli]", `CLI command produced no output`, { args });
     throw new Error("CLI command did not produce JSON output.");
   }
 
@@ -337,11 +322,7 @@ export async function runCliJsonCommand(args: string[]): Promise<unknown> {
   // Extract the first valid JSON object or array from the output.
   const jsonStart = stdout.search(/[{[]/);
   if (jsonStart < 0) {
-    log.warn("[desktop cli]", `CLI command output contained no JSON`, {
-      args,
-      stdout: stdout.slice(0, 500),
-    });
-    throw new Error(`CLI command output contained no JSON. Output: ${stdout.slice(0, 200)}`);
+    throw new Error("CLI command output contained no JSON.");
   }
   const jsonText = stdout.slice(jsonStart);
 
@@ -350,7 +331,6 @@ export async function runCliJsonCommand(args: string[]): Promise<unknown> {
   } catch (error) {
     throw new Error(
       `CLI command returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
     );
   }
 }

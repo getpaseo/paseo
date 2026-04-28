@@ -1,5 +1,4 @@
 import type { Logger } from "pino";
-import { homedir } from "node:os";
 
 import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
 import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
@@ -40,10 +39,10 @@ const COPILOT_MODES: AgentMode[] = [
   },
 ];
 
-interface CopilotACPAgentClientOptions {
+type CopilotACPAgentClientOptions = {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
-}
+};
 
 export class CopilotACPAgentClient extends ACPAgentClient {
   constructor(options: CopilotACPAgentClientOptions) {
@@ -70,7 +69,7 @@ export class CopilotACPAgentClient extends ACPAgentClient {
 
       if (available) {
         try {
-          const models = await this.listModels({ cwd: homedir(), force: false });
+          const models = await this.listModels();
           modelsValue = String(models.length);
         } catch (error) {
           modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
@@ -82,7 +81,7 @@ export class CopilotACPAgentClient extends ACPAgentClient {
 
         if (!modelsValue.startsWith("Error -")) {
           try {
-            await this.listModes({ cwd: homedir(), force: false });
+            await this.listModes();
           } catch (error) {
             status = formatDiagnosticStatus(available, {
               source: "mode fetch",

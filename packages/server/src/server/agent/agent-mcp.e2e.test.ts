@@ -8,22 +8,39 @@ import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import pino from "pino";
 
-import { withTimeout } from "../../utils/promise-timeout.js";
 import { createHubcodeDaemon, type HubcodeDaemonConfig } from "../bootstrap.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
-interface StructuredContent {
-  [key: string]: unknown;
-}
+type StructuredContent = { [key: string]: unknown };
 
-interface McpToolResult {
+type McpToolResult = {
   structuredContent?: StructuredContent;
   content?: Array<{ structuredContent?: StructuredContent } | StructuredContent>;
-}
+};
 
-interface McpClient {
+type McpClient = {
   callTool: (input: { name: string; args?: StructuredContent }) => Promise<unknown>;
   close: () => Promise<void>;
+};
+
+async function withTimeout<T>(options: {
+  promise: Promise<T>;
+  timeoutMs: number;
+  label: string;
+}): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`Timed out after ${options.timeoutMs}ms (${options.label})`));
+    }, options.timeoutMs);
+  });
+  try {
+    return await Promise.race([options.promise, timeout]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 async function waitForPathExists(options: {
@@ -102,7 +119,7 @@ describe("agent MCP end-to-end (offline)", () => {
       listen: `127.0.0.1:${port}`,
       hubcodeHome,
       corsAllowedOrigins: [],
-      hostnames: true,
+      allowedHosts: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
@@ -134,7 +151,7 @@ describe("agent MCP end-to-end (offline)", () => {
         args: {
           cwd: agentCwd,
           title: "MCP e2e smoke",
-          provider: "claude/claude-test-model",
+          provider: "claude",
           mode: "bypassPermissions",
           initialPrompt,
           background: false,
@@ -175,7 +192,7 @@ describe("agent MCP end-to-end (offline)", () => {
       listen: `127.0.0.1:${port}`,
       hubcodeHome,
       corsAllowedOrigins: [],
-      hostnames: true,
+      allowedHosts: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
@@ -199,7 +216,7 @@ describe("agent MCP end-to-end (offline)", () => {
       listen: `127.0.0.1:${disabledPort}`,
       hubcodeHome: disabledHubcodeHome,
       corsAllowedOrigins: [],
-      hostnames: true,
+      allowedHosts: true,
       mcpEnabled: true,
       mcpInjectIntoAgents: false,
       staticDir: disabledStaticDir,
@@ -207,7 +224,10 @@ describe("agent MCP end-to-end (offline)", () => {
       agentClients: createTestAgentClients(),
       agentStoragePath: path.join(disabledHubcodeHome, "agents"),
     };
-    const disabledDaemon = await createHubcodeDaemon(disabledDaemonConfig, pino({ level: "silent" }));
+    const disabledDaemon = await createHubcodeDaemon(
+      disabledDaemonConfig,
+      pino({ level: "silent" }),
+    );
     await disabledDaemon.start();
 
     const disabledTransport = new StreamableHTTPClientTransport(
@@ -225,7 +245,7 @@ describe("agent MCP end-to-end (offline)", () => {
         args: {
           cwd: agentCwd,
           title: "Injected MCP",
-          provider: "claude/claude-test-model",
+          provider: "claude",
           mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
           background: true,
@@ -248,7 +268,7 @@ describe("agent MCP end-to-end (offline)", () => {
         args: {
           cwd: disabledAgentCwd,
           title: "No injected MCP",
-          provider: "claude/claude-test-model",
+          provider: "claude",
           mode: "bypassPermissions",
           initialPrompt: "reply with done and stop",
           background: true,
@@ -290,7 +310,7 @@ describe("agent MCP end-to-end (offline)", () => {
       listen: `127.0.0.1:${port}`,
       hubcodeHome,
       corsAllowedOrigins: [],
-      hostnames: true,
+      allowedHosts: true,
       mcpEnabled: true,
       staticDir,
       mcpDebug: false,
@@ -345,7 +365,7 @@ describe("agent MCP end-to-end (offline)", () => {
           args: {
             cwd: repoRoot,
             title: "MCP worktree setup terminals",
-            provider: "claude/claude-test-model",
+            provider: "claude",
             mode: "bypassPermissions",
             initialPrompt: "say done and stop",
             worktreeName: "mcp-worktree-setup-test",

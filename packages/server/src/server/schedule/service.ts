@@ -2,10 +2,15 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { AgentManager } from "../agent/agent-manager.js";
-import type { AgentStorage } from "../agent/agent-storage.js";
+import type { ManagedAgent } from "../agent/agent-manager.js";
+import { AgentStorage } from "../agent/agent-storage.js";
 import type { AgentPromptInput, AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
-import { ensureAgentLoaded } from "../agent/agent-loading.js";
+import {
+  buildConfigOverrides,
+  buildSessionConfig,
+  extractTimestamps,
+} from "../persistence-hooks.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
@@ -16,6 +21,7 @@ import type {
 } from "./types.js";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
+const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 
 function trimOptionalName(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -244,45 +250,43 @@ export class ScheduleService {
   private async recoverInterruptedRuns(): Promise<void> {
     const schedules = await this.store.list();
     const now = this.now();
-    await Promise.all(
-      schedules.map(async (schedule) => {
-        let updated = { ...schedule };
-        let dirty = false;
+    for (const schedule of schedules) {
+      let updated = { ...schedule };
+      let dirty = false;
 
-        // Mark any in-flight runs as failed
-        const runningIndex = updated.runs.findIndex((run) => run.status === "running");
-        if (runningIndex !== -1) {
-          const runs = [...updated.runs];
-          runs[runningIndex] = {
-            ...runs[runningIndex],
-            status: "failed",
-            endedAt: now.toISOString(),
-            error: "Daemon restarted before the scheduled run completed",
-          };
-          updated = { ...updated, runs };
-          dirty = true;
-        }
+      // Mark any in-flight runs as failed
+      const runningIndex = updated.runs.findIndex((run) => run.status === "running");
+      if (runningIndex !== -1) {
+        const runs = [...updated.runs];
+        runs[runningIndex] = {
+          ...runs[runningIndex],
+          status: "failed",
+          endedAt: now.toISOString(),
+          error: "Daemon restarted before the scheduled run completed",
+        };
+        updated = { ...updated, runs };
+        dirty = true;
+      }
 
-        // Advance stale nextRunAt for active schedules
-        if (
-          updated.status === "active" &&
-          updated.nextRunAt &&
-          new Date(updated.nextRunAt).getTime() <= now.getTime()
-        ) {
-          let nextRunAt = computeNextRunAt(updated.cadence, new Date(updated.nextRunAt));
-          while (nextRunAt.getTime() <= now.getTime()) {
-            nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
-          }
-          updated = { ...updated, nextRunAt: nextRunAt.toISOString() };
-          dirty = true;
+      // Advance stale nextRunAt for active schedules
+      if (
+        updated.status === "active" &&
+        updated.nextRunAt &&
+        new Date(updated.nextRunAt).getTime() <= now.getTime()
+      ) {
+        let nextRunAt = computeNextRunAt(updated.cadence, new Date(updated.nextRunAt));
+        while (nextRunAt.getTime() <= now.getTime()) {
+          nextRunAt = computeNextRunAt(updated.cadence, nextRunAt);
         }
+        updated = { ...updated, nextRunAt: nextRunAt.toISOString() };
+        dirty = true;
+      }
 
-        if (dirty) {
-          updated = { ...updated, updatedAt: now.toISOString() };
-          await this.store.put(updated);
-        }
-      }),
-    );
+      if (dirty) {
+        updated = { ...updated, updatedAt: now.toISOString() };
+        await this.store.put(updated);
+      }
+    }
   }
 
   private async runSchedule(schedule: StoredSchedule, now: Date): Promise<void> {
@@ -382,16 +386,7 @@ export class ScheduleService {
 
   private async executeSchedule(schedule: StoredSchedule): Promise<ScheduleExecutionResult> {
     if (schedule.target.type === "agent") {
-      const record = await this.agentStorage.get(schedule.target.agentId);
-      if (record?.archivedAt) {
-        throw new Error(`Agent ${schedule.target.agentId} is archived`);
-      }
-
-      const agent = await ensureAgentLoaded(schedule.target.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.logger,
-      });
+      const agent = await this.ensureAgentLoaded(schedule.target.agentId);
       if (this.agentManager.hasInFlightRun(agent.id)) {
         throw new Error(`Agent ${agent.id} already has an active run`);
       }
@@ -439,5 +434,65 @@ export class ScheduleService {
         finalText: result.finalText,
       }),
     };
+  }
+
+  private async ensureAgentLoaded(agentId: string): Promise<ManagedAgent> {
+    const existing = this.agentManager.getAgent(agentId);
+    if (existing) {
+      return existing;
+    }
+
+    const inflight = pendingAgentInitializations.get(agentId);
+    if (inflight) {
+      return inflight;
+    }
+
+    const initPromise = (async () => {
+      const record = await this.agentStorage.get(agentId);
+      if (!record) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
+      if (record.archivedAt) {
+        throw new Error(`Agent ${agentId} is archived`);
+      }
+
+      let snapshot: ManagedAgent;
+      if (record.persistence?.provider && record.persistence?.sessionId) {
+        snapshot = await this.agentManager.resumeAgentFromPersistence(
+          {
+            provider: record.persistence.provider as AgentSessionConfig["provider"],
+            sessionId: record.persistence.sessionId,
+            nativeHandle: record.persistence.nativeHandle,
+            metadata: record.persistence.metadata,
+          },
+          buildConfigOverrides(record),
+          agentId,
+          extractTimestamps(record),
+        );
+      } else {
+        const config = buildSessionConfig(record, {
+          validProviders: this.agentManager.getRegisteredProviderIds(),
+          logger: this.logger,
+        });
+        if (!config) {
+          throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
+        }
+        snapshot = await this.agentManager.createAgent(config, agentId, {
+          labels: record.labels,
+        });
+      }
+
+      await this.agentManager.hydrateTimelineFromProvider(agentId);
+      return this.agentManager.getAgent(agentId) ?? snapshot;
+    })();
+
+    pendingAgentInitializations.set(agentId, initPromise);
+    try {
+      return await initPromise;
+    } finally {
+      if (pendingAgentInitializations.get(agentId) === initPromise) {
+        pendingAgentInitializations.delete(agentId);
+      }
+    }
   }
 }

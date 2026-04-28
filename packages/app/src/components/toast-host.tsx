@@ -4,7 +4,7 @@ import { Animated, Easing, Platform, Text, ToastAndroid, View } from "react-nati
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { AlertTriangle, CheckCircle2 } from "lucide-react-native";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
@@ -15,15 +15,15 @@ import {
 
 export type ToastVariant = "default" | "success" | "error";
 
-export interface ToastShowOptions {
+export type ToastShowOptions = {
   icon?: ReactNode;
   variant?: ToastVariant;
   durationMs?: number;
   nativeAndroid?: boolean;
   testID?: string;
-}
+};
 
-export interface ToastState {
+export type ToastState = {
   id: number;
   content: ReactNode;
   nativeMessage: string | null;
@@ -31,13 +31,13 @@ export interface ToastState {
   variant: ToastVariant;
   durationMs: number;
   testID?: string;
-}
+};
 
-export interface ToastApi {
+export type ToastApi = {
   show: (content: ReactNode, options?: ToastShowOptions) => void;
   copied: (label?: string) => void;
   error: (message: string) => void;
-}
+};
 
 type ToastViewportPlacement = "app-shell" | "panel";
 
@@ -132,13 +132,13 @@ export function ToastViewport({
         toValue: 0,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: isNative,
       }),
       Animated.timing(translateY, {
         toValue: -8,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: isNative,
       }),
     ]).start(({ finished }) => {
       if (finished) {
@@ -194,13 +194,13 @@ export function ToastViewport({
         toValue: 1,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: isNative,
       }),
       Animated.timing(translateY, {
         toValue: 0,
         duration: 140,
         easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
+        useNativeDriver: isNative,
       }),
     ]).start();
 
@@ -212,6 +212,10 @@ export function ToastViewport({
     };
   }, [clearTimer, opacity, scheduleDismiss, toast, translateY]);
 
+  if (!toast) {
+    return null;
+  }
+
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
   const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const topOffset =
@@ -219,49 +223,38 @@ export function ToastViewport({
       ? insets.top + headerTopPadding + headerHeight + theme.spacing[2]
       : theme.spacing[3];
 
-  const toastVariant = toast?.variant;
-  const toastAnimatedStyle = useMemo(
-    () => [
-      styles.toast,
-      toastVariant === "success" ? styles.toastSuccess : null,
-      toastVariant === "error" ? styles.toastError : null,
-      {
-        marginTop: topOffset,
-        opacity,
-        transform: [{ translateY }],
-      },
-    ],
-    [toastVariant, topOffset, opacity, translateY],
-  );
-  const toastMessageStyle = useMemo(
-    () => [styles.message, toastVariant === "error" ? styles.messageError : null],
-    [toastVariant],
-  );
-
-  if (!toast) {
-    return null;
-  }
-
-  let defaultIcon: ReactNode = null;
-  if (toast.variant === "success") {
-    defaultIcon = <CheckCircle2 size={18} color={theme.colors.primary} />;
-  } else if (toast.variant === "error") {
-    defaultIcon = <AlertTriangle size={18} color={theme.colors.destructive} />;
-  }
-  const icon = toast.icon ?? defaultIcon;
+  const icon =
+    toast.icon ??
+    (toast.variant === "success" ? (
+      <CheckCircle2 size={18} color={theme.colors.primary} />
+    ) : toast.variant === "error" ? (
+      <AlertTriangle size={18} color={theme.colors.destructive} />
+    ) : null);
 
   const content = (
-    <View style={styles.container} pointerEvents="box-none">
+    <View style={[styles.container, { pointerEvents: "box-none" }]}>
       <Animated.View
         testID={toast.testID ?? "app-toast"}
         onPointerEnter={isWeb ? pauseDismiss : undefined}
         onPointerLeave={isWeb ? resumeDismiss : undefined}
-        style={toastAnimatedStyle}
+        style={[
+          styles.toast,
+          toast.variant === "success" ? styles.toastSuccess : null,
+          toast.variant === "error" ? styles.toastError : null,
+          {
+            marginTop: topOffset,
+            opacity,
+            transform: [{ translateY }],
+          },
+        ]}
         accessibilityRole="alert"
       >
         {icon ? <View style={styles.iconSlot}>{icon}</View> : null}
         {typeof toast.content === "string" ? (
-          <Text testID="app-toast-message" style={toastMessageStyle}>
+          <Text
+            testID="app-toast-message"
+            style={[styles.message, toast.variant === "error" ? styles.messageError : null]}
+          >
             {toast.content}
           </Text>
         ) : (

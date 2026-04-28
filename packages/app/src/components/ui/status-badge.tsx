@@ -1,6 +1,5 @@
-import { useMemo } from "react";
 import { View, Text } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 type StatusBadgeVariant = "success" | "error" | "muted";
 
@@ -10,26 +9,25 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ label, variant = "muted" }: StatusBadgeProps) {
-  const pillStyle = useMemo(
-    () => [
-      styles.pill,
-      variant === "success" && styles.pillSuccess,
-      variant === "error" && styles.pillError,
-    ],
-    [variant],
-  );
-  const textStyle = useMemo(
-    () => [
-      styles.pillText,
-      variant === "success" && styles.pillTextSuccess,
-      variant === "error" && styles.pillTextError,
-    ],
-    [variant],
-  );
+  const { theme } = useUnistyles();
 
   return (
-    <View style={pillStyle}>
-      <Text style={textStyle}>{label}</Text>
+    <View
+      style={[
+        styles.pill,
+        variant === "success" && styles.pillSuccess,
+        variant === "error" && styles.pillError,
+      ]}
+    >
+      <Text
+        style={[
+          styles.pillText,
+          variant === "success" && styles.pillTextSuccess,
+          variant === "error" && styles.pillTextError,
+        ]}
+      >
+        {label}
+      </Text>
     </View>
   );
 }

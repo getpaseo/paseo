@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveCliInstallSourcePath } from "./cli-install-path";
 
 describe("cli-install-path", () => {
-  it("uses the bundled shim for packaged macOS installs", () => {
+  it("uses the packaged executable on supported unix platforms", () => {
     expect(
       resolveCliInstallSourcePath({
         platform: "darwin",
@@ -10,7 +10,7 @@ describe("cli-install-path", () => {
         executablePath: "/Applications/Hubcode.app/Contents/MacOS/Hubcode",
         shimPath: "/Applications/Hubcode.app/Contents/Resources/bin/hubcode",
       }),
-    ).toBe("/Applications/Hubcode.app/Contents/Resources/bin/hubcode");
+    ).toBe("/Applications/Hubcode.app/Contents/MacOS/Hubcode");
   });
 
   it("prefers the original AppImage path on linux", () => {

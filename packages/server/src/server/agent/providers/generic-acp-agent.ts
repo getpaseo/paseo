@@ -3,11 +3,11 @@ import type { Logger } from "pino";
 import { isCommandAvailable } from "../../../utils/executable.js";
 import { ACPAgentClient } from "./acp-agent.js";
 
-interface GenericACPAgentClientOptions {
+type GenericACPAgentClientOptions = {
   logger: Logger;
   command: string[];
   env?: Record<string, string>;
-}
+};
 
 export class GenericACPAgentClient extends ACPAgentClient {
   private readonly command: [string, ...string[]];
@@ -21,6 +21,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
       provider: "acp",
       logger: options.logger,
       runtimeSettings: {
+        command: {
+          mode: "replace",
+          argv: options.command,
+        },
         env: options.env,
       },
       defaultCommand: options.command as [string, ...string[]],

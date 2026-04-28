@@ -1,4 +1,4 @@
-appId: ai.hubcode
+appId: sh.hubcode
 ---
 # Ensure sidebar is closed: if sidebar-sessions is visible, close it via swipe left
 - runFlow:

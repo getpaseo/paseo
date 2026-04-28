@@ -1,11 +1,5 @@
-import { useCallback, useMemo } from "react";
-import {
-  View,
-  Text,
-  ActivityIndicator,
-  Pressable,
-  type PressableStateCallbackType,
-} from "react-native";
+import { useCallback } from "react";
+import { View, Text, ActivityIndicator, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown, Info, MoreVertical } from "lucide-react-native";
 import {
@@ -17,62 +11,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
-import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useToast } from "@/contexts/toast-context";
 import type { GitAction, GitActions } from "@/components/git-actions-policy";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
-  hideLabels?: boolean;
 }
 
-interface GitActionMenuItemProps {
-  action: GitAction;
-  onSelect: (action: GitAction) => void;
-  archiveShortcutKeys?: ShortcutKey[][] | null;
-  needsSeparator?: boolean;
-  showSeparator?: boolean;
-  closeOnSelect?: boolean;
-}
-
-function GitActionMenuItem({
-  action,
-  onSelect,
-  archiveShortcutKeys,
-  needsSeparator,
-  showSeparator,
-  closeOnSelect,
-}: GitActionMenuItemProps) {
-  const handleSelect = useCallback(() => onSelect(action), [onSelect, action]);
-  const trailing = useMemo(
-    () =>
-      action.id === "archive-worktree" && archiveShortcutKeys ? (
-        <Shortcut chord={archiveShortcutKeys} />
-      ) : undefined,
-    [action.id, archiveShortcutKeys],
-  );
-  return (
-    <View>
-      {needsSeparator && showSeparator ? <DropdownMenuSeparator /> : null}
-      <DropdownMenuItem
-        testID={`changes-menu-${action.id}`}
-        leading={action.icon}
-        trailing={trailing}
-        disabled={action.disabled}
-        muted={Boolean(action.unavailableMessage)}
-        status={action.status}
-        pendingLabel={action.pendingLabel}
-        successLabel={action.successLabel}
-        closeOnSelect={closeOnSelect}
-        onSelect={handleSelect}
-      >
-        {action.label}
-      </DropdownMenuItem>
-    </View>
-  );
-}
-
-export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSplitButtonProps) {
+export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps) {
   const { theme } = useUnistyles();
   const toast = useToast();
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
@@ -97,33 +43,17 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
     [theme.colors.foreground, toast],
   );
 
-  const overflowMenuButtonStyle = useMemo(() => [styles.iconButton, styles.overflowMenuButton], []);
-
-  const primaryDisabled = gitActions.primary?.disabled;
-  const primaryPressableStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.splitButtonPrimary,
-      (Boolean(hovered) || pressed) && styles.splitButtonPrimaryHovered,
-      primaryDisabled && styles.splitButtonPrimaryDisabled,
-    ],
-    [primaryDisabled],
-  );
-
-  const caretTriggerStyle = useCallback(
-    ({ hovered, pressed, open }: { hovered: boolean; pressed: boolean; open: boolean }) => [
-      styles.splitButtonCaret,
-      (hovered || pressed || open) && styles.splitButtonCaretHovered,
-    ],
-    [],
-  );
-
   return (
     <View style={styles.row}>
       {gitActions.primary ? (
         <View style={styles.splitButton}>
           <Pressable
             testID="changes-primary-cta"
-            style={primaryPressableStyle}
+            style={({ hovered, pressed }) => [
+              styles.splitButtonPrimary,
+              (hovered || pressed) && styles.splitButtonPrimaryHovered,
+              gitActions.primary!.disabled && styles.splitButtonPrimaryDisabled,
+            ]}
             onPress={gitActions.primary.handler}
             disabled={gitActions.primary.disabled}
             accessibilityRole="button"
@@ -138,11 +68,9 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
             ) : (
               <View style={styles.splitButtonContent}>
                 {gitActions.primary.icon}
-                {!hideLabels && (
-                  <Text style={styles.splitButtonText}>
-                    {getActionDisplayLabel(gitActions.primary)}
-                  </Text>
-                )}
+                <Text style={styles.splitButtonText}>
+                  {getActionDisplayLabel(gitActions.primary)}
+                </Text>
               </View>
             )}
           </Pressable>
@@ -150,28 +78,47 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
             <DropdownMenu>
               <DropdownMenuTrigger
                 testID="changes-primary-cta-caret"
-                style={caretTriggerStyle}
+                style={({ hovered, pressed, open }) => [
+                  styles.splitButtonCaret,
+                  (hovered || pressed || open) && styles.splitButtonCaretHovered,
+                ]}
                 accessibilityRole="button"
                 accessibilityLabel="More options"
               >
                 <ChevronDown size={16} color={theme.colors.foregroundMuted} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" testID="changes-primary-cta-menu">
-                {gitActions.secondary.map((action, index) => (
-                  <GitActionMenuItem
-                    key={action.id}
-                    action={action}
-                    onSelect={handleActionSelect}
-                    archiveShortcutKeys={archiveShortcutKeys}
-                    needsSeparator={
-                      action.id === "merge-from-base" || action.id === "archive-worktree"
-                    }
-                    showSeparator={index > 0}
-                    closeOnSelect={
-                      action.status === "idle" && action.id === "pr" && action.label === "View PR"
-                    }
-                  />
-                ))}
+                {gitActions.secondary.map((action, index) => {
+                  const needsSeparator =
+                    action.id === "merge-from-base" || action.id === "archive-worktree";
+                  return (
+                    <View key={action.id}>
+                      {needsSeparator && index > 0 ? <DropdownMenuSeparator /> : null}
+                      <DropdownMenuItem
+                        testID={`changes-menu-${action.id}`}
+                        leading={action.icon}
+                        trailing={
+                          action.id === "archive-worktree" && archiveShortcutKeys ? (
+                            <Shortcut chord={archiveShortcutKeys} />
+                          ) : undefined
+                        }
+                        disabled={action.disabled}
+                        muted={Boolean(action.unavailableMessage)}
+                        status={action.status}
+                        pendingLabel={action.pendingLabel}
+                        successLabel={action.successLabel}
+                        closeOnSelect={
+                          action.status === "idle" &&
+                          action.id === "pr" &&
+                          action.label === "View PR"
+                        }
+                        onSelect={() => handleActionSelect(action)}
+                      >
+                        {action.label}
+                      </DropdownMenuItem>
+                    </View>
+                  );
+                })}
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
@@ -182,7 +129,7 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
           <DropdownMenuTrigger
             testID="changes-overflow-menu"
             hitSlop={8}
-            style={overflowMenuButtonStyle}
+            style={[styles.iconButton, styles.overflowMenuButton]}
             accessibilityRole="button"
             accessibilityLabel="More actions"
           >
@@ -190,12 +137,20 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" width={220} testID="changes-overflow-content">
             {gitActions.menu.map((action) => (
-              <GitActionMenuItem
+              <DropdownMenuItem
                 key={action.id}
-                action={action}
-                onSelect={handleActionSelect}
+                testID={`changes-menu-${action.id}`}
+                leading={action.icon}
+                disabled={action.disabled}
+                muted={Boolean(action.unavailableMessage)}
+                status={action.status}
+                pendingLabel={action.pendingLabel}
+                successLabel={action.successLabel}
                 closeOnSelect={false}
-              />
+                onSelect={() => handleActionSelect(action)}
+              >
+                {action.label}
+              </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
         </DropdownMenu>

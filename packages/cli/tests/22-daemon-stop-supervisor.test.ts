@@ -39,9 +39,9 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
-interface PidLockState {
+type PidLockState = {
   pid: number | null;
-}
+};
 
 async function readPidLockState(hubcodeHome: string): Promise<PidLockState> {
   const pidPath = join(hubcodeHome, "hubcode.pid");
@@ -68,10 +68,10 @@ function readProcessCommand(pid: number): string | null {
   return command.length > 0 ? command : null;
 }
 
-interface DaemonStatus {
+type DaemonStatus = {
   localDaemon: string | null;
   pid: number | null;
-}
+};
 
 async function readDaemonStatus(hubcodeHome: string): Promise<DaemonStatus> {
   const result =
@@ -100,14 +100,14 @@ async function waitFor(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
-  async function poll(): Promise<void> {
-    if (await check()) return;
-    if (Date.now() >= deadline) throw new Error(message);
+  while (Date.now() < deadline) {
+    if (await check()) {
+      return;
+    }
     await sleep(pollIntervalMs);
-    return poll();
   }
 
-  return poll();
+  throw new Error(message);
 }
 
 console.log("=== Daemon Stop (supervisor regression) ===\n");

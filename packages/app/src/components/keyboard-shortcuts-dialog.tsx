@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { getIsElectronRuntime } from "@/constants/layout";
@@ -7,8 +7,6 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { buildKeyboardShortcutHelpSections } from "@/keyboard/keyboard-shortcuts";
-
-const SNAP_POINTS: string[] = ["70%", "92%"];
 
 export function KeyboardShortcutsDialog() {
   const open = useKeyboardShortcutsStore((s) => s.shortcutsDialogOpen);
@@ -21,15 +19,13 @@ export function KeyboardShortcutsDialog() {
     [isDesktopApp, isMac],
   );
 
-  const handleClose = useCallback(() => setOpen(false), [setOpen]);
-
   return (
     <AdaptiveModalSheet
       title="Shortcuts"
       visible={open}
-      onClose={handleClose}
+      onClose={() => setOpen(false)}
       testID="keyboard-shortcuts-dialog"
-      snapPoints={SNAP_POINTS}
+      snapPoints={["70%", "92%"]}
     >
       <View testID="keyboard-shortcuts-dialog-content" style={styles.content}>
         {sections.map((section) => (

@@ -2,15 +2,61 @@ import log from "electron-log/main";
 log.transports.console.level = "info";
 log.initialize({ spyRendererConsole: true });
 
+// Suppress harmless upstream Electron/Chromium/DevTools chatter.
+const NOISE_PATTERNS = [
+  /sandboxed_renderer\.bundle\.js script failed to run/i,
+  /object null is not iterable \(cannot read property Symbol\(Symbol\.iterator\)\)/i,
+  /Request Autofill\.(enable|setAddresses) failed/i,
+  /simulcast_encoder_adapter\.cc.*StreamContext ctor parent is null/i,
+  /stun_port\.cc.*Binding request timed out/i,
+  /p2p\/base\/port\.cc.*Role Conflict/i,
+  /Failed to resolve address for .*\.local\./i,
+];
+type WriteFnArg = { message?: { data?: unknown[] } };
+type WriteFn = (opts: WriteFnArg) => void;
+type Transport = { writeFn: WriteFn };
+for (const t of [log.transports.console, log.transports.file] as unknown as Transport[]) {
+  const original = t.writeFn;
+  t.writeFn = (opts: WriteFnArg) => {
+    const line = opts.message?.data?.map?.((d: unknown) => String(d)).join(" ") ?? "";
+    if (NOISE_PATTERNS.some((re) => re.test(line))) return;
+    original.call(t, opts);
+  };
+}
+
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 inheritLoginShellEnv();
+
+// Silence Electron's "Insecure Content-Security-Policy" / "unsafe-eval"
+// dev-mode warnings — they spam the log on every webview load and
+// Electron already gates them to non-packaged builds (so this is a
+// no-op in production). Must be set before `app` initializes.
+process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { app, BrowserWindow, ipcMain, nativeImage, net, protocol } from "electron";
-import { createDaemonCommandHandlers, registerDaemonManager } from "./daemon/daemon-manager.js";
+import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, net, protocol } from "electron";
+
+// Enable Chrome DevTools Protocol so the Hubcode daemon can drive our
+// <webview> panes with Playwright via `chromium.connectOverCDP`. The
+// port is fixed (not 0/random) because the daemon runs in a separate
+// process and has no easy way to ask us for the port mid-bootstrap —
+// using a known port keeps the wiring trivial. Bound to 127.0.0.1 by
+// Electron default, so remote machines can't attack it.
+const HUBCODE_CDP_PORT = Number(process.env.HUBCODE_CDP_PORT ?? "9222");
+app.commandLine.appendSwitch("remote-debugging-port", String(HUBCODE_CDP_PORT));
+app.commandLine.appendSwitch("remote-allow-origins", "*");
+import {
+  registerDaemonManager,
+  restartDaemonIfDesktopManaged,
+  broadcastClaudeCodeProgress,
+} from "./daemon/daemon-manager.js";
+import {
+  ensureClaudeCode,
+  getClaudeCodeStatus,
+} from "./integrations/claude-code-binary.js";
 import {
   parseCliPassthroughArgsFromArgv,
   runCliPassthroughCommand,
@@ -21,12 +67,12 @@ import {
   getMainWindowChromeOptions,
   getWindowBackgroundColor,
   resolveSystemWindowTheme,
-  setupDarwinPaintRefresh,
   setupWindowResizeEvents,
   setupDefaultContextMenu,
   setupDragDropPrevention,
 } from "./window/window-manager.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
+import { registerBrowserViewIpc } from "./features/browser-views.js";
 import {
   registerNotificationHandlers,
   ensureNotificationCenterRegistration,
@@ -34,31 +80,18 @@ import {
 import { registerOpenerHandlers } from "./features/opener.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
-import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
-import {
-  isDesktopManagedDaemonRunningSync,
-  stopDesktopDaemonViaCli,
-} from "./daemon/daemon-manager.js";
-import {
-  createBeforeQuitHandler,
-  stopDesktopManagedDaemonOnQuitIfNeeded,
-} from "./daemon/quit-lifecycle.js";
+import { findDeepLinkInArgv, parseDeepLinkUrl, type DeepLink } from "./deep-link-routing.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "hubcode";
 const OPEN_PROJECT_EVENT = "hubcode:event:open-project";
-const DESKTOP_SMOKE_ENV = "HUBCODE_DESKTOP_SMOKE";
-const DESKTOP_SMOKE_STOP_REQUEST = "hubcode-smoke-stop";
+const DEEP_LINK_EVENT = "hubcode:event:deep-link";
 app.setName("Hubcode");
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
 let devWorktreeName: string | null = null;
-const forcedUserDataDir = process.env.HUBCODE_ELECTRON_USER_DATA_DIR?.trim();
-if (forcedUserDataDir) {
-  app.setPath("userData", forcedUserDataDir);
-  log.info("[dev-user-data] forced userData dir:", forcedUserDataDir);
-} else if (!app.isPackaged) {
+if (!app.isPackaged) {
   try {
     const topLevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
@@ -86,6 +119,15 @@ if (forcedUserDataDir) {
   }
 }
 
+// Expose real local IPs in WebRTC candidates instead of unresolvable mDNS
+// hostnames (Electron's networking process can't resolve xxx.local.).
+app.commandLine.appendSwitch("disable-features", "WebRtcHideLocalIpsWithMdns");
+
+// Silence Chromium's native WebRTC stderr spam (simulcast encoder init,
+// IPv6 STUN binding timeouts). These bypass electron-log's writeFn filter.
+app.commandLine.appendSwitch("log-level", "3");
+app.commandLine.appendSwitch("vmodule", "*/webrtc/*=0,*/third_party/webrtc/*=0");
+
 // Allow users to pass Chromium flags via HUBCODE_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
 // Must run before app.whenReady().
@@ -103,6 +145,15 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   isDefaultApp: process.defaultApp,
 });
 
+// Hold the initial deep link (e.g. `hubcode://join-workspace/TOKEN`) until the
+// renderer signals readiness via `hubcode:get-pending-deep-link`. Also updated
+// by `second-instance` / `open-url` while the app is already running.
+let pendingDeepLink: DeepLink | null = findDeepLinkInArgv(process.argv);
+
+function sendDeepLinkEvent(win: BrowserWindow, link: DeepLink): void {
+  win.webContents.send(DEEP_LINK_EVENT, link);
+}
+
 log.info("[open-project] argv:", process.argv);
 log.info("[open-project] isDefaultApp:", process.defaultApp);
 log.info("[open-project] pendingOpenProjectPath:", pendingOpenProjectPath);
@@ -113,6 +164,13 @@ ipcMain.handle("hubcode:get-pending-open-project", () => {
   log.info("[open-project] renderer requested pending path:", pendingOpenProjectPath);
   const result = pendingOpenProjectPath;
   pendingOpenProjectPath = null;
+  return result;
+});
+
+ipcMain.handle("hubcode:get-pending-deep-link", () => {
+  log.info("[deep-link] renderer requested pending link:", pendingDeepLink);
+  const result = pendingDeepLink;
+  pendingDeepLink = null;
   return result;
 });
 
@@ -136,27 +194,20 @@ function getAppDistDir(): string {
   return path.resolve(__dirname, "../../app/dist");
 }
 
-function getWindowIconCandidates(): string[] {
-  if (app.isPackaged) {
-    if (process.platform === "win32") {
-      return [
-        path.join(process.resourcesPath, "icon.ico"),
-        path.join(process.resourcesPath, "icon.png"),
-      ];
-    }
-    return [path.join(process.resourcesPath, "icon.png")];
-  }
-  if (process.platform === "win32") {
-    return [
-      path.resolve(__dirname, "../assets/icon.ico"),
-      path.resolve(__dirname, "../assets/icon.png"),
-    ];
-  }
-  return [path.resolve(__dirname, "../assets/icon.png")];
-}
-
 function getWindowIconPath(): string | null {
-  const candidates = getWindowIconCandidates();
+  const candidates = app.isPackaged
+    ? process.platform === "win32"
+      ? [path.join(process.resourcesPath, "icon.ico"), path.join(process.resourcesPath, "icon.png")]
+      : [path.join(process.resourcesPath, "icon.png")]
+    : process.platform === "darwin"
+      ? [path.resolve(__dirname, "../assets/icon.png")]
+      : process.platform === "win32"
+        ? [
+            path.resolve(__dirname, "../assets/icon.ico"),
+            path.resolve(__dirname, "../assets/icon.png"),
+          ]
+        : [path.resolve(__dirname, "../assets/icon.png")];
+
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
@@ -198,6 +249,13 @@ async function createMainWindow(): Promise<void> {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
+      // Dev-only: disable CORS so the Metro renderer (http://localhost:8081)
+      // can hit a remote auth-server (e.g. auth.hubcode.ai) without that
+      // origin being on the server's TRUSTED_ORIGINS allow-list. Packaged
+      // builds load via the app:// scheme, which is whitelisted server-side,
+      // so webSecurity stays on in production.
+      ...(app.isPackaged ? {} : { webSecurity: false }),
     },
   });
 
@@ -205,7 +263,6 @@ async function createMainWindow(): Promise<void> {
     app.dock?.setBadge(devWorktreeName);
   }
 
-  setupDarwinPaintRefresh(mainWindow);
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
@@ -215,9 +272,20 @@ async function createMainWindow(): Promise<void> {
   });
 
   if (!app.isPackaged) {
-    const { loadReactDevTools } = await import("./features/react-devtools.js");
-    await loadReactDevTools();
+    // React DevTools Extension DISABLED — it's been generating
+    // "Internal React error: Expected static flag was missing. Please
+    // notify the React team." + "Uncaught TypeError: Oc is not a
+    // function" whenever browser panes mount/unmount. Those `Oc` calls
+    // come from React DevTools' minified internal hook instrumenter,
+    // which isn't compatible with React 19's new static-flag model
+    // when combined with rapid remounts. Re-enable via env var when
+    // needed for a specific debug session.
+    if (process.env.HUBCODE_ENABLE_REACT_DEVTOOLS === "true") {
+      const { loadReactDevTools } = await import("./features/react-devtools.js");
+      await loadReactDevTools();
+    }
     await mainWindow.loadURL(DEV_SERVER_URL);
+    mainWindow.webContents.openDevTools({ mode: "detach" });
     return;
   }
 
@@ -257,6 +325,8 @@ function setupSingleInstanceLock(): boolean {
       isDefaultApp: false,
     });
     log.info("[open-project] second-instance openProjectPath:", openProjectPath);
+    const deepLink = findDeepLinkInArgv(commandLine);
+    log.info("[deep-link] second-instance deepLink:", deepLink);
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {
       win.show();
@@ -265,8 +335,42 @@ function setupSingleInstanceLock(): boolean {
       if (openProjectPath) {
         sendOpenProjectEvent(win, openProjectPath);
       }
+      if (deepLink) {
+        sendDeepLinkEvent(win, deepLink);
+      }
+    } else if (deepLink) {
+      pendingDeepLink = deepLink;
     }
   });
+
+  // macOS delivers `hubcode://...` clicks via open-url instead of argv.
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    const parsed = parseDeepLinkUrl(url);
+    if (!parsed) return;
+    log.info("[deep-link] open-url:", url);
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      win.show();
+      if (win.isMinimized()) win.restore();
+      win.focus();
+      sendDeepLinkEvent(win, parsed);
+    } else {
+      pendingDeepLink = parsed;
+    }
+  });
+
+  // Register the custom scheme with the OS so `hubcode://` links in external
+  // apps (browsers, chat clients) launch Hubcode Desktop.
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(APP_SCHEME, process.execPath, [
+        path.resolve(process.argv[1] ?? ""),
+      ]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient(APP_SCHEME);
+  }
 
   return true;
 }
@@ -289,53 +393,6 @@ async function runCliPassthroughIfRequested(): Promise<boolean> {
   return true;
 }
 
-async function runDesktopSmokeIfRequested(): Promise<boolean> {
-  if (process.env[DESKTOP_SMOKE_ENV] !== "1") {
-    return false;
-  }
-
-  const handlers = createDaemonCommandHandlers();
-  const startStatus = await handlers.start_desktop_daemon();
-  process.stdout.write(
-    `[hubcode-smoke] ${JSON.stringify({
-      type: "desktop-daemon-smoke-started",
-      status: startStatus,
-    })}\n`,
-  );
-
-  await waitForDesktopSmokeStopRequest();
-
-  const stopStatus = await handlers.stop_desktop_daemon();
-  process.stdout.write(
-    `[hubcode-smoke] ${JSON.stringify({
-      type: "desktop-daemon-smoke-stopped",
-      stopStatus,
-    })}\n`,
-  );
-
-  app.exit(0);
-  return true;
-}
-
-function waitForDesktopSmokeStopRequest(): Promise<void> {
-  return new Promise((resolve) => {
-    let buffer = "";
-    const stop = () => {
-      process.stdin.off("data", onData);
-      resolve();
-    };
-    const onData = (chunk: Buffer | string) => {
-      buffer += chunk.toString();
-      if (buffer.includes(DESKTOP_SMOKE_STOP_REQUEST)) {
-        stop();
-      }
-    };
-
-    process.stdin.on("data", onData);
-    process.stdin.resume();
-  });
-}
-
 async function bootstrap(): Promise<void> {
   if (!pendingOpenProjectPath && (await runCliPassthroughIfRequested())) {
     return;
@@ -346,6 +403,16 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.whenReady();
+
+  // Pin Chromium's color scheme so DevTools + every webContents keep
+  // a consistent theme. Without this, a fresh `WebContentsView`
+  // loading `about:blank` (which has no <meta color-scheme>) makes
+  // Chromium think a light-mode context appeared, and Electron's
+  // DevTools panel — which follows the theme of the most-recent
+  // attached webContents — flips from dark to light. Mirror whatever
+  // the OS was at launch; the app UI is dark-first so default to dark
+  // if the system doesn't express a preference.
+  nativeTheme.themeSource = nativeTheme.shouldUseDarkColors ? "dark" : "light";
 
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, (request) => {
@@ -377,15 +444,35 @@ async function bootstrap(): Promise<void> {
   applyAppIcon();
   setupApplicationMenu();
   ensureNotificationCenterRegistration();
-  if (await runDesktopSmokeIfRequested()) {
-    return;
-  }
   registerDaemonManager();
   registerWindowManager();
   registerDialogHandlers();
   registerNotificationHandlers();
   registerOpenerHandlers();
+  registerBrowserViewIpc();
   await createMainWindow();
+
+  // Provision the bundled Claude Code runtime used by the Hubcode agent.
+  // Best-effort and non-blocking — failures are logged but don't block app
+  // boot, and the user can retry from Settings → Providers → Hubcode.
+  //
+  // Sequencing: the daemon may already be running (renderer can request
+  // start_desktop_daemon during window load). If we install on a daemon
+  // that started without HUBCODE_CLAUDE_BIN, the Hubcode provider stays
+  // "Not installed" until the daemon restarts — so we restart it ourselves
+  // once install completes, but only if (a) it was already running and
+  // (b) this desktop instance owns it.
+  void (async () => {
+    try {
+      const initial = await getClaudeCodeStatus();
+      const result = await ensureClaudeCode({ onProgress: broadcastClaudeCodeProgress });
+      if (!initial.installed && result.installed) {
+        await restartDaemonIfDesktopManaged();
+      }
+    } catch (err) {
+      log.warn("[main] background ensureClaudeCode() failed", err);
+    }
+  })();
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -400,29 +487,9 @@ void bootstrap().catch((error) => {
   process.exit(1);
 });
 
-function showDaemonShutdownDialog(): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send("hubcode:event:quitting", {});
-  }
-}
-
-app.on(
-  "before-quit",
-  createBeforeQuitHandler({
-    app,
-    closeTransportSessions: closeAllTransportSessions,
-    stopDesktopManagedDaemonIfNeeded: () =>
-      stopDesktopManagedDaemonOnQuitIfNeeded({
-        settingsStore: getDesktopSettingsStore(),
-        isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
-        stopDaemon: stopDesktopDaemonViaCli,
-        showShutdownFeedback: showDaemonShutdownDialog,
-      }),
-    onStopError: (error) => {
-      log.error("[desktop daemon] failed to stop managed daemon on quit", error);
-    },
-  }),
-);
+app.on("before-quit", () => {
+  closeAllTransportSessions();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

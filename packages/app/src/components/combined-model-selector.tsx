@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Ref } from "react";
 import {
   View,
   Text,
@@ -7,7 +6,6 @@ import {
   Pressable,
   ActivityIndicator,
   type GestureResponderEvent,
-  type PressableStateCallbackType,
 } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -18,42 +16,13 @@ import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/a
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 const IS_WEB = platformIsWeb;
 
-import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
-
-const EMPTY_COMBOBOX_OPTIONS: ReadonlyArray<ComboboxOption> = [];
-
-function noop() {}
-
-function favoriteButtonStyle({
-  hovered,
-  pressed,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [
-    styles.favoriteButton,
-    Boolean(hovered) && styles.favoriteButtonHovered,
-    pressed && styles.favoriteButtonPressed,
-  ];
-}
-
-function drillDownRowStyle({
-  hovered,
-  pressed,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [
-    styles.drillDownRow,
-    Boolean(hovered) && styles.drillDownRowHovered,
-    pressed && styles.drillDownRowPressed,
-  ];
-}
-
-function backButtonStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
-  return [
-    styles.backButton,
-    Boolean(hovered) && styles.backButtonHovered,
-    pressed && styles.backButtonPressed,
-  ];
-}
+import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import { getProviderIcon } from "@/components/provider-icons";
+import type { FavoriteModelRow } from "@/hooks/use-form-preferences";
+import { useHubcodeModels } from "@/hooks/use-hubcode-models";
+import { Alert } from "react-native";
+import { authServerBaseUrl } from "@/desktop/auth/web-auth-api";
+import { openExternalUrl } from "@/utils/open-external-url";
 import {
   buildModelRows,
   buildSelectedTriggerLabel,
@@ -88,6 +57,10 @@ interface CombinedModelSelectorProps {
   onOpen?: () => void;
   onClose?: () => void;
   disabled?: boolean;
+  /** Render only the provider icon + chevron (no label), for compact
+   * toolbars where horizontal space is tight. Full label still reaches
+   * screen readers via accessibilityLabel. */
+  compact?: boolean;
 }
 
 interface SelectorContentProps {
@@ -103,6 +76,7 @@ interface SelectorContentProps {
   canSelectProvider: (provider: string) => boolean;
   onToggleFavorite?: (provider: string, modelId: string) => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
+  providerCountOverride?: (providerId: string, count: number) => string | null;
 }
 
 function resolveDefaultModelLabel(models: AgentModelDefinition[] | undefined): string {
@@ -203,49 +177,6 @@ function ModelRow({
     [onToggleFavorite, row.modelId, row.provider],
   );
 
-  const leadingSlot = useMemo(
-    () => <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
-    [ProviderIcon, theme.iconSize.sm, theme.colors.foregroundMuted],
-  );
-  const trailingSlot = useMemo(
-    () =>
-      onToggleFavorite && !disabled ? (
-        <Pressable
-          onPress={handleToggleFavorite}
-          hitSlop={8}
-          style={favoriteButtonStyle}
-          accessibilityRole="button"
-          accessibilityLabel={isFavorite ? "Unfavorite model" : "Favorite model"}
-          testID={`favorite-model-${row.provider}-${row.modelId}`}
-        >
-          {({ hovered }) => {
-            let starColor: string;
-            if (isFavorite) starColor = theme.colors.palette.amber[500];
-            else if (hovered) starColor = theme.colors.foregroundMuted;
-            else starColor = theme.colors.border;
-            return (
-              <Star
-                size={16}
-                color={starColor}
-                fill={isFavorite ? theme.colors.palette.amber[500] : "transparent"}
-              />
-            );
-          }}
-        </Pressable>
-      ) : null,
-    [
-      onToggleFavorite,
-      disabled,
-      handleToggleFavorite,
-      isFavorite,
-      row.provider,
-      row.modelId,
-      theme.colors.palette.amber,
-      theme.colors.foregroundMuted,
-      theme.colors.border,
-    ],
-  );
-
   const showDescription = row.description && PROVIDERS_WITH_MODEL_DESCRIPTIONS.has(row.provider);
 
   return (
@@ -256,43 +187,37 @@ function ModelRow({
       disabled={disabled}
       elevated={elevated}
       onPress={onPress}
-      leadingSlot={leadingSlot}
-      trailingSlot={trailingSlot}
-    />
-  );
-}
-
-interface SelectableModelRowProps {
-  row: SelectorModelRow;
-  isSelected: boolean;
-  isFavorite: boolean;
-  disabled?: boolean;
-  elevated?: boolean;
-  onSelect: (provider: string, modelId: string) => void;
-  onToggleFavorite?: (provider: string, modelId: string) => void;
-}
-
-function SelectableModelRow({
-  row,
-  isSelected,
-  isFavorite,
-  disabled,
-  elevated,
-  onSelect,
-  onToggleFavorite,
-}: SelectableModelRowProps) {
-  const handlePress = useCallback(() => {
-    onSelect(row.provider, row.modelId);
-  }, [onSelect, row.provider, row.modelId]);
-  return (
-    <ModelRow
-      row={row}
-      isSelected={isSelected}
-      isFavorite={isFavorite}
-      disabled={disabled}
-      elevated={elevated}
-      onPress={handlePress}
-      onToggleFavorite={onToggleFavorite}
+      leadingSlot={<ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
+      trailingSlot={
+        onToggleFavorite && !disabled ? (
+          <Pressable
+            onPress={handleToggleFavorite}
+            hitSlop={8}
+            style={({ pressed, hovered }) => [
+              styles.favoriteButton,
+              hovered && styles.favoriteButtonHovered,
+              pressed && styles.favoriteButtonPressed,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={isFavorite ? "Unfavorite model" : "Favorite model"}
+            testID={`favorite-model-${row.provider}-${row.modelId}`}
+          >
+            {({ hovered }) => (
+              <Star
+                size={16}
+                color={
+                  isFavorite
+                    ? theme.colors.palette.amber[500]
+                    : hovered
+                      ? theme.colors.foregroundMuted
+                      : theme.colors.border
+                }
+                fill={isFavorite ? theme.colors.palette.amber[500] : "transparent"}
+              />
+            )}
+          </Pressable>
+        ) : null
+      }
     />
   );
 }
@@ -314,7 +239,7 @@ function FavoritesSection({
   canSelectProvider: (provider: string) => boolean;
   onToggleFavorite?: (provider: string, modelId: string) => void;
 }) {
-  const { theme: _theme } = useUnistyles();
+  const { theme } = useUnistyles();
 
   if (favoriteRows.length === 0) {
     return null;
@@ -326,14 +251,14 @@ function FavoritesSection({
         <Text style={styles.sectionHeadingText}>Favorites</Text>
       </View>
       {favoriteRows.map((row) => (
-        <SelectableModelRow
+        <ModelRow
           key={row.favoriteKey}
           row={row}
           isSelected={row.provider === selectedProvider && row.modelId === selectedModel}
           isFavorite={favoriteKeys.has(row.favoriteKey)}
           disabled={!canSelectProvider(row.provider)}
           elevated
-          onSelect={onSelect}
+          onPress={() => onSelect(row.provider, row.modelId)}
           onToggleFavorite={onToggleFavorite}
         />
       ))}
@@ -341,39 +266,8 @@ function FavoritesSection({
   );
 }
 
-interface GroupProviderButtonProps {
-  providerId: string;
-  providerLabel: string;
-  rowCount: number;
-  onDrillDown: (providerId: string, providerLabel: string) => void;
-}
-
-function GroupProviderButton({
-  providerId,
-  providerLabel,
-  rowCount,
-  onDrillDown,
-}: GroupProviderButtonProps) {
-  const { theme } = useUnistyles();
-  const ProvIcon = getProviderIcon(providerId);
-  const handlePress = useCallback(() => {
-    onDrillDown(providerId, providerLabel);
-  }, [onDrillDown, providerId, providerLabel]);
-  return (
-    <Pressable onPress={handlePress} style={drillDownRowStyle}>
-      <ProvIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-      <Text style={styles.drillDownText}>{providerLabel}</Text>
-      <View style={styles.drillDownTrailing}>
-        <Text style={styles.drillDownCount}>
-          {rowCount} {rowCount === 1 ? "model" : "models"}
-        </Text>
-        <ChevronRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-      </View>
-    </Pressable>
-  );
-}
-
 function GroupedProviderRows({
+  providerDefinitions,
   groupedRows,
   selectedProvider,
   selectedModel,
@@ -383,7 +277,9 @@ function GroupedProviderRows({
   onToggleFavorite,
   onDrillDown,
   viewKind,
+  providerCountOverride,
 }: {
+  providerDefinitions: AgentProviderDefinition[];
   groupedRows: Array<{ providerId: string; providerLabel: string; rows: SelectorModelRow[] }>;
   selectedProvider: string;
   selectedModel: string;
@@ -393,10 +289,18 @@ function GroupedProviderRows({
   onToggleFavorite?: (provider: string, modelId: string) => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   viewKind: SelectorView["kind"];
+  /** Override the trailing count text per provider (e.g. "Upgrade"). */
+  providerCountOverride?: (providerId: string, count: number) => string | null;
 }) {
+  const { theme } = useUnistyles();
+
   return (
     <View>
       {groupedRows.map((group, index) => {
+        const providerDefinition = providerDefinitions.find(
+          (definition) => definition.id === group.providerId,
+        );
+        const ProvIcon = getProviderIcon(group.providerId);
         const isInline = viewKind === "provider";
 
         return (
@@ -405,24 +309,36 @@ function GroupedProviderRows({
             {isInline ? (
               <>
                 {sortFavoritesFirst(group.rows, favoriteKeys).map((row) => (
-                  <SelectableModelRow
+                  <ModelRow
                     key={row.favoriteKey}
                     row={row}
                     isSelected={row.provider === selectedProvider && row.modelId === selectedModel}
                     isFavorite={favoriteKeys.has(row.favoriteKey)}
                     disabled={!canSelectProvider(row.provider)}
-                    onSelect={onSelect}
+                    onPress={() => onSelect(row.provider, row.modelId)}
                     onToggleFavorite={onToggleFavorite}
                   />
                 ))}
               </>
             ) : (
-              <GroupProviderButton
-                providerId={group.providerId}
-                providerLabel={group.providerLabel}
-                rowCount={group.rows.length}
-                onDrillDown={onDrillDown}
-              />
+              <Pressable
+                onPress={() => onDrillDown(group.providerId, group.providerLabel)}
+                style={({ pressed, hovered }) => [
+                  styles.drillDownRow,
+                  hovered && styles.drillDownRowHovered,
+                  pressed && styles.drillDownRowPressed,
+                ]}
+              >
+                <ProvIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                <Text style={styles.drillDownText}>{group.providerLabel}</Text>
+                <View style={styles.drillDownTrailing}>
+                  <Text style={styles.drillDownCount}>
+                    {providerCountOverride?.(group.providerId, group.rows.length) ??
+                      `${group.rows.length} ${group.rows.length === 1 ? "model" : "models"}`}
+                  </Text>
+                  <ChevronRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                </View>
+              </Pressable>
             )}
           </View>
         );
@@ -454,18 +370,13 @@ function ProviderSearchInput({
     }
   }, [autoFocus]);
 
-  const inputStyle = useMemo(
-    () => [styles.providerSearchInput, platformIsWeb && { outlineStyle: "none" }],
-    [],
-  );
-
   return (
     <View style={styles.providerSearchContainer}>
       <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
       <InputComponent
-        ref={inputRef as unknown as Ref<never>}
+        ref={inputRef as any}
         // @ts-expect-error - outlineStyle is web-only
-        style={inputStyle}
+        style={[styles.providerSearchInput, platformIsWeb && { outlineStyle: "none" }]}
         placeholder="Search models..."
         placeholderTextColor={theme.colors.foregroundMuted}
         value={value}
@@ -484,12 +395,13 @@ function SelectorContent({
   selectedProvider,
   selectedModel,
   searchQuery,
-  onSearchChange: _onSearchChange,
+  onSearchChange,
   favoriteKeys,
   onSelect,
   canSelectProvider,
   onToggleFavorite,
   onDrillDown,
+  providerCountOverride,
 }: SelectorContentProps) {
   const { theme } = useUnistyles();
   const allRows = useMemo(
@@ -511,7 +423,7 @@ function SelectorContent({
     [normalizedQuery, scopedRows],
   );
 
-  const { favoriteRows, regularRows: _regularRows } = useMemo(
+  const { favoriteRows, regularRows } = useMemo(
     () => partitionRows(visibleRows, favoriteKeys),
     [favoriteKeys, visibleRows],
   );
@@ -549,6 +461,7 @@ function SelectorContent({
 
       {filteredGroupedRows.length > 0 ? (
         <GroupedProviderRows
+          providerDefinitions={providerDefinitions}
           groupedRows={filteredGroupedRows}
           selectedProvider={selectedProvider}
           selectedModel={selectedModel}
@@ -558,6 +471,7 @@ function SelectorContent({
           onToggleFavorite={onToggleFavorite}
           onDrillDown={onDrillDown}
           viewKind={view.kind}
+          providerCountOverride={providerCountOverride}
         />
       ) : null}
 
@@ -588,7 +502,14 @@ function ProviderBackButton({
   }
 
   return (
-    <Pressable onPress={onBack} style={backButtonStyle}>
+    <Pressable
+      onPress={onBack}
+      style={({ pressed, hovered }) => [
+        styles.backButton,
+        hovered && styles.backButtonHovered,
+        pressed && styles.backButtonPressed,
+      ]}
+    >
       <ArrowLeft size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
       <Text style={styles.backButtonText}>{providerLabel}</Text>
@@ -610,6 +531,7 @@ export function CombinedModelSelector({
   onOpen,
   onClose,
   disabled = false,
+  compact = false,
 }: CombinedModelSelectorProps) {
   const { theme } = useUnistyles();
   const anchorRef = useRef<View>(null);
@@ -617,6 +539,106 @@ export function CombinedModelSelector({
   const [isContentReady, setIsContentReady] = useState(platformIsWeb);
   const [view, setView] = useState<SelectorView>({ kind: "all" });
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Inject the "Hubcode" virtual provider — combos served by the user's
+  // backend account, gated by the user's plan on auth-server. Free users
+  // see the entry but get an upgrade CTA on selection. The daemon's
+  // provider snapshot already registers the hubcode entry; we only ever
+  // augment models so we never produce duplicate keys.
+  const { bundle: hubcodeBundle, requiresSignIn: hubcodeRequiresSignIn } = useHubcodeModels();
+
+  // Three Hubcode states the picker has to handle gracefully:
+  //   1. requiresSignIn — user has no auth-server session. We keep the
+  //      Hubcode entry visible so users learn it exists, but its only
+  //      "model" is a `__signin__` row that opens the sign-in flow.
+  //   2. bundle.requiresUpgrade — user is signed in but on Free. One
+  //      `__upgrade__` row that opens the upgrade modal.
+  //   3. bundle has combos — list them.
+  // Other agents (Claude/Codex/OpenCode/Copilot/Pi) are completely
+  // independent of auth-server and remain pickable in all three states.
+  const providerDefinitionsWithHubcode = useMemo(() => {
+    if (providerDefinitions.some((d) => d.id === "hubcode")) {
+      return providerDefinitions;
+    }
+    if (!hubcodeBundle && !hubcodeRequiresSignIn) return providerDefinitions;
+    const description = hubcodeRequiresSignIn
+      ? "Sign in to unlock curated combos"
+      : hubcodeBundle?.requiresUpgrade
+        ? "Upgrade to unlock curated combos"
+        : "Your plan's curated combos";
+    const hubcodeDef: AgentProviderDefinition = {
+      id: "hubcode" as AgentProvider,
+      label: "Hubcode",
+      description,
+    } as AgentProviderDefinition;
+    return [hubcodeDef, ...providerDefinitions];
+  }, [hubcodeBundle, hubcodeRequiresSignIn, providerDefinitions]);
+
+  const allProviderModelsWithHubcode = useMemo(() => {
+    const next = new Map(allProviderModels);
+    if (hubcodeRequiresSignIn) {
+      next.set("hubcode", [
+        {
+          id: "__signin__",
+          label: "Sign in to Hubcode",
+          description: "Open auth-server to sign in",
+        } as AgentModelDefinition,
+      ]);
+      return next;
+    }
+    if (!hubcodeBundle) return allProviderModels;
+    const existing = next.get("hubcode") ?? [];
+    const models: AgentModelDefinition[] = hubcodeBundle.requiresUpgrade
+      ? [
+          {
+            id: "__upgrade__",
+            label: "Upgrade to Pro to use Hubcode",
+            description: "Click to upgrade",
+          } as AgentModelDefinition,
+        ]
+      : hubcodeBundle.combos.map(
+          (c) =>
+            ({
+              id: c.comboName,
+              label: c.comboName,
+              description: undefined,
+            }) as AgentModelDefinition,
+        );
+    // Merge: prefer fresh client-side data, then append any daemon-provided
+    // models we didn't already see (keyed by id) so we never duplicate.
+    const seen = new Set(models.map((m) => m.id));
+    for (const m of existing) {
+      if (!seen.has(m.id)) {
+        models.push(m);
+        seen.add(m.id);
+      }
+    }
+    if (models.length > 0) next.set("hubcode", models);
+    return next;
+  }, [hubcodeBundle, hubcodeRequiresSignIn, allProviderModels]);
+
+  const handleHubcodeSelection = useCallback(
+    (modelId: string): boolean => {
+      if (modelId === "__signin__" || (hubcodeRequiresSignIn && !hubcodeBundle)) {
+        // Open auth-server sign-in. The hook's React Query auto-refetches
+        // on window focus, so coming back to the app after signing in
+        // restores combos without a reload.
+        void openExternalUrl(`${authServerBaseUrl()}/sign-in/web`).catch(() => {});
+        return true;
+      }
+      if (!hubcodeBundle) return false;
+      if (hubcodeBundle.requiresUpgrade || modelId === "__upgrade__") {
+        Alert.alert(
+          "Upgrade required",
+          "Hubcode combos are available on Pro and Enterprise plans. Upgrade your plan to unlock curated multi-model routing.",
+          [{ text: "OK" }],
+        );
+        return true; // handled — don't forward to onSelect
+      }
+      return false;
+    },
+    [hubcodeBundle, hubcodeRequiresSignIn],
+  );
 
   // Single-provider mode: only one provider with models → skip Level 1 entirely
   const singleProviderView = useMemo<SelectorView | null>(() => {
@@ -627,22 +649,10 @@ export function CombinedModelSelector({
     return { kind: "provider", providerId, providerLabel: label };
   }, [allProviderModels, providerDefinitions]);
 
-  const computeInitialView = useCallback((): SelectorView => {
-    if (singleProviderView) return singleProviderView;
-
-    const selectedFavoriteKey = `${selectedProvider}:${selectedModel}`;
-    if (selectedProvider && selectedModel && !favoriteKeys.has(selectedFavoriteKey)) {
-      const label = resolveProviderLabel(providerDefinitions, selectedProvider);
-      return { kind: "provider", providerId: selectedProvider, providerLabel: label };
-    }
-
-    return { kind: "all" };
-  }, [singleProviderView, selectedProvider, selectedModel, favoriteKeys, providerDefinitions]);
-
   const handleOpenChange = useCallback(
     (open: boolean) => {
       setIsOpen(open);
-      setView(computeInitialView());
+      setView(singleProviderView ?? { kind: "all" });
       if (open) {
         onOpen?.();
       } else {
@@ -650,52 +660,61 @@ export function CombinedModelSelector({
         onClose?.();
       }
     },
-    [onOpen, onClose, computeInitialView],
+    [onOpen, onClose, singleProviderView],
   );
 
   const handleSelect = useCallback(
     (provider: string, modelId: string) => {
+      if (provider === "hubcode" && handleHubcodeSelection(modelId)) {
+        setIsOpen(false);
+        return;
+      }
       onSelect(provider as AgentProvider, modelId);
       setIsOpen(false);
+      setView(singleProviderView ?? { kind: "all" });
       setSearchQuery("");
     },
-    [onSelect],
+    [onSelect, singleProviderView, handleHubcodeSelection],
   );
 
-  const hasSelectedProvider = selectedProvider.trim().length > 0;
-  const ProviderIcon = hasSelectedProvider ? getProviderIcon(selectedProvider) : null;
+  const ProviderIcon = getProviderIcon(selectedProvider);
+  const selectedProviderLabel = useMemo(
+    () => resolveProviderLabel(providerDefinitions, selectedProvider),
+    [providerDefinitions, selectedProvider],
+  );
 
   const selectedModelLabel = useMemo(() => {
-    if (!selectedModel) {
-      if (!hasSelectedProvider) {
-        return "Select model";
-      }
-      return isLoading ? "Loading..." : "Select model";
-    }
-    const models = allProviderModels.get(selectedProvider);
+    // Same reason as `desktopFixedHeight` below — daemon's `hubcode` entry
+    // has no models, so we must read from the bundle-augmented map or the
+    // trigger renders "Select model" even after the user picked a combo.
+    const models = allProviderModelsWithHubcode.get(selectedProvider);
     if (!models) {
       return isLoading ? "Loading..." : "Select model";
     }
     const model = models.find((entry) => entry.id === selectedModel);
     return model?.label ?? resolveDefaultModelLabel(models);
-  }, [allProviderModels, hasSelectedProvider, isLoading, selectedModel, selectedProvider]);
+  }, [allProviderModelsWithHubcode, isLoading, selectedModel, selectedProvider]);
 
   const desktopFixedHeight = useMemo(() => {
     if (view.kind !== "provider") {
       return undefined;
     }
-    const models = allProviderModels.get(view.providerId);
+    // Must read the hubcode-augmented map — the raw `allProviderModels` from
+    // the daemon registers `hubcode` with zero models (combos come from
+    // auth-server), so using it here collapses the dropdown to just the
+    // search input and clips the merged combo rows out of view.
+    const models = allProviderModelsWithHubcode.get(view.providerId);
     const modelCount = models?.length ?? 0;
     return Math.min(80 + modelCount * 40, 400);
-  }, [allProviderModels, view]);
+  }, [allProviderModelsWithHubcode, view]);
 
   const triggerLabel = useMemo(() => {
     if (selectedModelLabel === "Loading..." || selectedModelLabel === "Select model") {
       return selectedModelLabel;
     }
 
-    return buildSelectedTriggerLabel(selectedModelLabel);
-  }, [selectedModelLabel]);
+    return buildSelectedTriggerLabel(selectedProviderLabel, selectedModelLabel);
+  }, [selectedModelLabel, selectedProviderLabel]);
 
   useEffect(() => {
     if (platformIsWeb) {
@@ -712,52 +731,7 @@ export function CombinedModelSelector({
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [isOpen]);
-
-  const handleTriggerPress = useCallback(() => {
-    handleOpenChange(!isOpen);
-  }, [handleOpenChange, isOpen]);
-
-  const triggerStyle = useCallback(
-    ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.trigger,
-      Boolean(hovered) && styles.triggerHovered,
-      (pressed || isOpen) && styles.triggerPressed,
-      disabled && styles.triggerDisabled,
-      renderTrigger ? styles.customTriggerWrapper : null,
-    ],
-    [disabled, isOpen, renderTrigger],
-  );
-
-  const handleBackToAll = useCallback(() => {
-    setView({ kind: "all" });
-    setSearchQuery("");
-  }, []);
-
-  const handleDrillDown = useCallback((providerId: string, providerLabel: string) => {
-    setView({ kind: "provider", providerId, providerLabel });
-  }, []);
-
-  const stickyHeader = useMemo(
-    () =>
-      view.kind === "provider" ? (
-        <View style={styles.level2Header}>
-          {!singleProviderView ? (
-            <ProviderBackButton
-              providerId={view.providerId}
-              providerLabel={view.providerLabel}
-              onBack={handleBackToAll}
-            />
-          ) : null}
-          <ProviderSearchInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoFocus={platformIsWeb}
-          />
-        </View>
-      ) : undefined,
-    [view, singleProviderView, handleBackToAll, searchQuery],
-  );
+  }, [isOpen, platformIsWeb]);
 
   return (
     <>
@@ -765,8 +739,14 @@ export function CombinedModelSelector({
         ref={anchorRef}
         collapsable={false}
         disabled={disabled}
-        onPress={handleTriggerPress}
-        style={triggerStyle}
+        onPress={() => handleOpenChange(!isOpen)}
+        style={({ pressed, hovered }) => [
+          styles.trigger,
+          hovered && styles.triggerHovered,
+          (pressed || isOpen) && styles.triggerPressed,
+          disabled && styles.triggerDisabled,
+          renderTrigger ? styles.customTriggerWrapper : null,
+        ]}
         accessibilityRole="button"
         accessibilityLabel={`Select model (${selectedModelLabel})`}
         testID="combined-model-selector"
@@ -774,40 +754,57 @@ export function CombinedModelSelector({
         {renderTrigger ? (
           renderTrigger({
             selectedModelLabel: triggerLabel,
-            onPress: handleTriggerPress,
+            onPress: () => handleOpenChange(!isOpen),
             disabled,
             isOpen,
           })
         ) : (
           <>
-            {ProviderIcon ? (
-              <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-            ) : null}
-            <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
-              {triggerLabel}
-            </Text>
+            <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+            {!compact ? <Text style={styles.triggerText}>{triggerLabel}</Text> : null}
             <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           </>
         )}
       </Pressable>
       <Combobox
-        options={EMPTY_COMBOBOX_OPTIONS as ComboboxOption[]}
+        options={[]}
         value=""
-        onSelect={noop}
+        onSelect={() => {}}
         open={isOpen}
         onOpenChange={handleOpenChange}
+        stackBehavior="push"
         anchorRef={anchorRef}
         desktopPlacement="top-start"
         desktopMinWidth={360}
         desktopFixedHeight={desktopFixedHeight}
         title="Select model"
-        stickyHeader={stickyHeader}
+        stickyHeader={
+          view.kind === "provider" ? (
+            <View style={styles.level2Header}>
+              {!singleProviderView ? (
+                <ProviderBackButton
+                  providerId={view.providerId}
+                  providerLabel={view.providerLabel}
+                  onBack={() => {
+                    setView({ kind: "all" });
+                    setSearchQuery("");
+                  }}
+                />
+              ) : null}
+              <ProviderSearchInput
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus={platformIsWeb}
+              />
+            </View>
+          ) : undefined
+        }
       >
         {isContentReady ? (
           <SelectorContent
             view={view}
-            providerDefinitions={providerDefinitions}
-            allProviderModels={allProviderModels}
+            providerDefinitions={providerDefinitionsWithHubcode}
+            allProviderModels={allProviderModelsWithHubcode}
             selectedProvider={selectedProvider}
             selectedModel={selectedModel}
             searchQuery={searchQuery}
@@ -816,7 +813,20 @@ export function CombinedModelSelector({
             onSelect={handleSelect}
             canSelectProvider={canSelectProvider}
             onToggleFavorite={onToggleFavorite}
-            onDrillDown={handleDrillDown}
+            onDrillDown={(providerId, providerLabel) => {
+              if (providerId === "hubcode" && hubcodeBundle?.requiresUpgrade) {
+                handleHubcodeSelection("__upgrade__");
+                setIsOpen(false);
+                return;
+              }
+              setView({ kind: "provider", providerId, providerLabel });
+            }}
+            providerCountOverride={(providerId) => {
+              if (providerId === "hubcode" && hubcodeBundle?.requiresUpgrade) {
+                return "Upgrade";
+              }
+              return null;
+            }}
           />
         ) : (
           <View style={styles.sheetLoadingState}>
@@ -832,8 +842,6 @@ export function CombinedModelSelector({
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     height: 28,
-    minWidth: 0,
-    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
@@ -851,8 +859,6 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.5,
   },
   triggerText: {
-    minWidth: 0,
-    flexShrink: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
@@ -914,7 +920,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
-  level2Header: {},
+  level2Header: {
+    backgroundColor: theme.colors.surface1,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
   backButton: {
     flexDirection: "row",
     alignItems: "center",

@@ -1,27 +1,38 @@
 {
-  "name": "@gethubcode/highlight",
-  "version": "0.1.63-beta.4",
-  "files": [
-    "dist"
-  ],
+  "name": "@hubcode/highlight",
+  "version": "2.7.2",
+  "description": "Lightweight syntax highlighter used by Hubcode (Lezer-based, multi-language).",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "source": "./src/index.ts",
-      "default": "./dist/index.js"
-    }
+  "license": "AGPL-3.0-or-later",
+  "author": "Hubtool Inc. <ceo@hubtool.ai>",
+  "homepage": "https://hubcode.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hubtool/hubcode.git",
+    "directory": "packages/highlight"
   },
+  "bugs": {
+    "url": "https://github.com/hubtool/hubcode/issues"
+  },
+  "keywords": [
+    "hubcode",
+    "syntax-highlighting",
+    "lezer",
+    "highlighter"
+  ],
   "publishConfig": {
     "access": "public"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{ recursive: true, force: true })\" && tsc -p tsconfig.json --incremental false",
     "prepack": "npm run build",
     "test": "vitest run",
-    "typecheck": "tsgo --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@lezer/common": "^1.5.0",

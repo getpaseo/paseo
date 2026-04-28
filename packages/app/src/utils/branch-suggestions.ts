@@ -1,7 +1,7 @@
-export interface BranchComboOption {
+export type BranchComboOption = {
   id: string;
   label: string;
-}
+};
 
 export function normalizeBranchOptionName(input: string | null | undefined): string | null {
   const trimmed = input?.trim();

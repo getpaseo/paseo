@@ -39,15 +39,13 @@ function isProcessRunning(pid: number): boolean {
 
 async function waitForRunning(pid: number, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  async function poll(): Promise<void> {
-    if (isProcessRunning(pid)) return;
-    if (Date.now() >= deadline) {
-      throw new Error(`Process ${pid} did not become running in time`);
+  while (Date.now() < deadline) {
+    if (isProcessRunning(pid)) {
+      return;
     }
     await sleep(50);
-    return poll();
   }
-  return poll();
+  throw new Error(`Process ${pid} did not become running in time`);
 }
 
 console.log("=== Daemon Stop Ownership Regression ===\n");

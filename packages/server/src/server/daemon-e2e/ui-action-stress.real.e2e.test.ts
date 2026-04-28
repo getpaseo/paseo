@@ -71,15 +71,15 @@ type UiAction =
       label: string;
     };
 
-interface UiScenario {
+type UiScenario = {
   name: string;
   actions: UiAction[];
-}
+};
 
-interface QueuedPrompt {
+type QueuedPrompt = {
   id: string;
   prompt: string;
-}
+};
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-ui-action-stress-"));
@@ -289,6 +289,7 @@ async function resolveLatestAssistantMessage(
     const timeline = await client.fetchAgentTimeline(agentId, {
       direction: "tail",
       limit: 300,
+      projection: "canonical",
     });
     for (let idx = timeline.entries.length - 1; idx >= 0; idx -= 1) {
       const entry = timeline.entries[idx];

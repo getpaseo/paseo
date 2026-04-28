@@ -1,42 +1,42 @@
 {
-  "name": "@gethubcode/desktop",
-  "version": "0.1.63-beta.4",
+  "name": "@hubcode/desktop",
+  "version": "2.7.2",
   "private": true,
   "description": "Hubcode desktop app (Electron wrapper)",
-  "homepage": "https://hubcode.ai",
-  "license": "AGPL-3.0-or-later",
-  "author": {
-    "name": "Mohamed Boudra",
-    "email": "hello@moboudra.com"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/hubtool/hubcode.git"
-  },
   "main": "dist/main.js",
   "scripts": {
     "build": "npm --prefix ../.. run build:daemon && npm run build:main && electron-builder --config electron-builder.yml",
     "build:main": "tsc -p tsconfig.json",
     "dev": "./scripts/dev.sh",
-    "dev:win": "powershell ./scripts/dev.ps1",
     "test": "vitest run",
-    "typecheck": "tsgo --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@gethubcode/cli": "*",
-    "@gethubcode/server": "*",
+    "@hubcode/cli": "2.7.2",
+    "@hubcode/server": "2.7.2",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
+    "tar": "^7.4.3",
     "ws": "^8.14.2"
   },
   "devDependencies": {
-    "@types/node": "24.6.0",
+    "@types/node": "^24.6.0",
+    "@types/tar": "^6.1.13",
     "@types/ws": "^8.5.14",
     "electron": "41.0.3",
     "electron-builder": "26.8.1",
     "typescript": "5.9.3",
     "unzip-crx-3": "^0.2.0",
-    "vitest": "^3.2.4",
     "wait-on": "8.0.5"
-  }
+  },
+  "homepage": "https://hubcode.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hubtool/hubcode.git"
+  },
+  "author": {
+    "name": "Gustavo Junior",
+    "email": "ceo@hubcode.ai"
+  },
+  "license": "AGPL-3.0-or-later"
 }

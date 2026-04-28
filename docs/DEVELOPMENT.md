@@ -22,16 +22,10 @@ HUBCODE_HOME=~/.hubcode-blue npm run dev
 ```
 
 - `HUBCODE_HOME` — path for runtime state (agents, sockets, etc.). Defaults to `~/.hubcode`.
-- In git worktrees, `npm run dev` derives a stable home like `~/.hubcode-<worktree-name>`.
-  On first run, it seeds that home from `~/.hubcode` by copying agent/project JSON metadata
-  and `config.json`; actual checkout/worktree directories are not copied.
-- `HUBCODE_DEV_SEED_HOME=/path/to/home npm run dev` seeds from a different source home.
-- `HUBCODE_DEV_RESET_HOME=1 npm run dev` clears and reseeds the derived worktree home.
 
 ### Default ports
 
 In the main checkout:
-
 - Daemon: `localhost:6767`
 - Expo app: `localhost:8081`
 
@@ -41,64 +35,6 @@ In worktrees or with `npm run dev`, ports may differ. Never assume defaults.
 
 Check `$HUBCODE_HOME/daemon.log` for trace-level logs.
 
-### Database queries
-
-Run arbitrary SQL against the SQLite database:
-
-```bash
-# Show table row counts
-npm run db:query
-
-# Run any SQL
-npm run db:query -- "SELECT agent_id, title, last_status FROM agent_snapshots"
-npm run db:query -- "SELECT agent_id, seq, item_kind FROM agent_timeline_rows ORDER BY committed_at DESC LIMIT 10"
-
-# Point at a specific DB directory
-npm run db:query -- --db /path/to/db "SELECT ..."
-```
-
-Auto-detects the running dev daemon's database from `/tmp/hubcode-dev.*`, `HUBCODE_HOME`, or `~/.hubcode/db`.
-Pass either a DB directory or a `hubcode.sqlite` file to `--db`. The script opens the database directly in read-only mode.
-
-## hubcode.json service scripts
-
-`worktree.setup` and `worktree.teardown` accept either a multiline shell script or an array
-of commands. Both run sequentially.
-
-```json
-{
-  "worktree": {
-    "setup": "npm ci\ncp \"$HUBCODE_SOURCE_CHECKOUT_PATH/.env\" .env\nnpm run db:migrate",
-    "teardown": "npm run db:drop || true"
-  }
-}
-```
-
-Every `scripts` entry with `"type": "service"` receives these environment variables:
-
-| Variable                    | Value                                                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `HUBCODE_SERVICE_<NAME>_URL`  | Proxied daemon URL for a declared peer service. Prefer this for peer discovery; it survives peer restarts.                |
-| `HUBCODE_SERVICE_<NAME>_PORT` | Raw ephemeral port for a declared peer service. Use only as a bypass escape hatch; it can go stale if that peer restarts. |
-| `HUBCODE_URL`                 | Self alias for `HUBCODE_SERVICE_<SELF>_URL`.                                                                                |
-| `HUBCODE_PORT`                | Self alias for `HUBCODE_SERVICE_<SELF>_PORT`.                                                                               |
-| `HOST`                      | Bind host for the service process.                                                                                        |
-
-`<NAME>` is normalized from the script name by uppercasing it, replacing each run of non-`A-Z0-9` characters with `_`, and trimming leading or trailing `_`. For example, `app-server` and `app.server` both normalize to `APP_SERVER`; that collision fails at spawn time with an actionable error.
-
-`PORT` is not injected by default. If a framework requires `PORT`, set it in the command:
-
-```json
-{
-  "scripts": {
-    "web": {
-      "type": "service",
-      "command": "PORT=$HUBCODE_PORT npm run dev:web"
-    }
-  }
-}
-```
-
 ## Build sync gotchas
 
 ### Relay → Daemon
@@ -106,20 +42,20 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
 When changing `packages/relay/src/*`, rebuild before running the daemon:
 
 ```bash
-npm run build --workspace=@gethubcode/relay
+npm run build --workspace=@hubcode/relay
 ```
 
-The Node daemon imports `@gethubcode/relay` from `packages/relay/dist/*`, not `src/*`.
+The Node daemon imports `@hubcode/relay` from `packages/relay/dist/*`, not `src/*`.
 
 ### Server → CLI
 
 When changing `packages/server/src/client/*` (especially `daemon-client.ts`) or shared WS protocol types, rebuild before running CLI commands:
 
 ```bash
-npm run build --workspace=@gethubcode/server
+npm run build --workspace=@hubcode/server
 ```
 
-The CLI imports `@gethubcode/server` via package exports resolving to `dist/*`. Stale `dist` means the CLI speaks an old protocol and fails with handshake warnings or timeouts.
+The CLI imports `@hubcode/server` via package exports resolving to `dist/*`. Stale `dist` means the CLI speaks an old protocol and fails with handshake warnings or timeouts.
 
 ## CLI reference
 
@@ -148,13 +84,11 @@ $HUBCODE_HOME/agents/{cwd-with-dashes}/{agent-id}.json
 ```
 
 Find an agent by ID:
-
 ```bash
 find $HUBCODE_HOME/agents -name "{agent-id}.json"
 ```
 
 Find by content:
-
 ```bash
 rg -l "some title text" $HUBCODE_HOME/agents/
 ```
@@ -164,13 +98,11 @@ rg -l "some title text" $HUBCODE_HOME/agents/
 Get the session ID from the agent JSON (`persistence.sessionId`), then:
 
 **Claude:**
-
 ```
 ~/.claude/projects/{cwd-with-dashes}/{session-id}.jsonl
 ```
 
 **Codex:**
-
 ```
 ~/.codex/sessions/{YYYY}/{MM}/{DD}/rollout-{timestamp}-{session-id}.jsonl
 ```

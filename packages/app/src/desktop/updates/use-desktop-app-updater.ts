@@ -7,7 +7,6 @@ import {
   type DesktopAppUpdateCheckResult,
   type DesktopAppUpdateInstallResult,
 } from "@/desktop/updates/desktop-updates";
-import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 
 export type DesktopAppUpdateStatus =
   | "idle"
@@ -84,8 +83,6 @@ function formatStatusText(input: {
 
 export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
   const isDesktopApp = shouldShowDesktopUpdateSection();
-  const { settings: desktopSettings } = useDesktopSettings();
-  const releaseChannel = desktopSettings.releaseChannel;
   const requestVersionRef = useRef(0);
   const [status, setStatus] = useState<DesktopAppUpdateStatus>("idle");
   const [availableUpdate, setAvailableUpdate] = useState<DesktopAppUpdateCheckResult | null>(null);
@@ -108,7 +105,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
       setErrorMessage(null);
 
       try {
-        const result = await checkDesktopAppUpdate({ releaseChannel });
+        const result = await checkDesktopAppUpdate();
         if (requestVersion !== requestVersionRef.current) {
           return result;
         }
@@ -143,16 +140,8 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
         return null;
       }
     },
-    [isDesktopApp, releaseChannel],
+    [isDesktopApp],
   );
-
-  useEffect(() => {
-    if (!isDesktopApp) {
-      return;
-    }
-
-    void checkForUpdates({ silent: true });
-  }, [checkForUpdates, isDesktopApp]);
 
   useEffect(() => {
     if (!isDesktopApp || status !== "pending") {
@@ -177,7 +166,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     setErrorMessage(null);
 
     try {
-      const result = await installDesktopAppUpdate({ releaseChannel });
+      const result = await installDesktopAppUpdate();
       setLastCheckedAt(Date.now());
 
       if (result.installed) {
@@ -197,7 +186,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
       setErrorMessage(message);
       return null;
     }
-  }, [isDesktopApp, releaseChannel]);
+  }, [isDesktopApp]);
 
   return {
     isDesktopApp,

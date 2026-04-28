@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
+import { isWeb } from "@/constants/platform";
 import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -31,6 +32,14 @@ import type { ImageAttachment, MessagePayload } from "@/components/message-input
 import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
+import { defaultAgentSelection, type AgentSelection } from "@/components/kanban/agent-selector";
+import { useCliAgents } from "@/hooks/use-cli-agents";
+import type { IntegrationId } from "@/types/kanban";
+import { useActiveOrgId } from "@/stores/active-org-store";
+import { useCliAgentLaunch } from "@/hooks/use-cli-agent-launch";
+import type { CliProviderId } from "@server/shared/cli-provider-registry";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
+import { router } from "expo-router";
 
 interface NewWorkspaceScreenProps {
   serverId: string;
@@ -294,6 +303,8 @@ interface CreateChatAgentInput {
   ensureWorkspace: (input: {
     cwd: string;
     attachments: AgentAttachment[];
+    composerAttachments: ComposerAttachment[];
+    promptText: string;
   }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
   serverId: string;
   draftKey: string;
@@ -301,7 +312,12 @@ interface CreateChatAgentInput {
 
 async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
   const { payload, composerState, ensureWorkspace, serverId, draftKey } = input;
-  const { text, attachments, cwd } = payload;
+  const text = payload.text;
+  const cwd = payload.cwd ?? "";
+  // Composer flows put attachments on payload; plain MessageInput callers don't.
+  const attachments: ComposerAttachment[] = Array.isArray(payload.attachments)
+    ? (payload.attachments as ComposerAttachment[])
+    : [];
   if (!composerState) {
     throw new Error("Composer state is required");
   }
@@ -310,7 +326,12 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     throw new Error("Select a model");
   }
   const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments);
-  const ensuredWorkspace = await ensureWorkspace({ cwd, attachments: reviewAttachments });
+  const ensuredWorkspace = await ensureWorkspace({
+    cwd,
+    attachments: reviewAttachments,
+    composerAttachments: attachments,
+    promptText: text,
+  });
   submitWorkspaceDraft({
     serverId,
     draftKey,
@@ -365,6 +386,13 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     composerState,
   } = input;
   const draftId = generateDraftId();
+  // The DraftInput store still uses the legacy `images` shape; extract image
+  // attachments from the upstream-style composer attachments.
+  const images = (attachments ?? [])
+    .filter((attachment): attachment is Extract<ComposerAttachment, { kind: "image" }> =>
+      attachment.kind === "image",
+    )
+    .map((attachment) => attachment.metadata);
   useDraftStore.getState().saveDraftInput({
     draftKey: buildDraftStoreKey({
       serverId,
@@ -373,8 +401,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     }),
     draft: {
       text,
-      attachments,
-      cwd: workspaceDirectory,
+      images,
     },
   });
   useWorkspaceDraftSubmissionStore.getState().setPending({
@@ -427,6 +454,20 @@ export function NewWorkspaceScreen({
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
   const pickerAnchorRef = useRef<View>(null);
+  const [agentSelection, setAgentSelection] = useState<AgentSelection>(defaultAgentSelection);
+  const { agents: cliAgentsList } = useCliAgents(serverId ?? null);
+  const activeOrgId = useActiveOrgId();
+  const { launch: launchCliAgent } = useCliAgentLaunch(serverId ?? null);
+  const [branchName, setBranchName] = useState<string>(() => createNameId());
+  const [selectedIntegrationItems, setSelectedIntegrationItems] = useState<
+    Partial<Record<IntegrationId, Record<string, unknown>>>
+  >({});
+  const handleSelectIntegrationItem = useCallback(
+    (input: { integrationId: IntegrationId; item: Record<string, unknown> }) => {
+      setSelectedIntegrationItems((prev) => ({ ...prev, [input.integrationId]: input.item }));
+    },
+    [],
+  );
 
   useEffect(() => {
     const trimmed = pickerSearchQuery.trim();
@@ -586,21 +627,77 @@ export function NewWorkspaceScreen({
   }, []);
 
   const buildCreateWorktreeInput = useCallback(
-    (input: { cwd: string; attachments: AgentAttachment[] }) => {
+    (input: {
+      cwd: string;
+      attachments: AgentAttachment[];
+      composerAttachments?: ComposerAttachment[];
+      promptText?: string;
+    }) => {
       const checkoutRequest = pickerItemToCheckoutRequest(selectedItem);
+
+      const trimmedBranch = branchName.trim();
+
+      // Derive issueContext / issueMetadata from composer attachments (GitHub
+      // pills) and from non-GitHub integration picks tracked separately.
+      const issueContext: Record<string, string> = {};
+      const issueMetadata: Record<string, unknown> = {};
+      for (const attachment of input.composerAttachments ?? []) {
+        if (attachment.kind === "github_issue") {
+          issueContext.githubIssueId = String(attachment.item.number);
+          issueMetadata.githubIssue = {
+            number: attachment.item.number,
+            title: attachment.item.title,
+            url: attachment.item.url,
+            state: attachment.item.state,
+          };
+        } else if (attachment.kind === "github_pr") {
+          issueContext.githubIssueId = String(attachment.item.number);
+          issueMetadata.githubPr = {
+            number: attachment.item.number,
+            title: attachment.item.title,
+            url: attachment.item.url,
+            state: attachment.item.state,
+          };
+        }
+      }
+      for (const [integrationId, item] of Object.entries(selectedIntegrationItems)) {
+        if (!item) continue;
+        const identifier = String(item.identifier ?? item.key ?? item.number ?? item.id ?? "");
+        if (!identifier) continue;
+        const contextKey =
+          integrationId === "plain" ? "plainThreadId" : `${integrationId}IssueId`;
+        issueContext[contextKey] = identifier;
+        const metadataKey =
+          integrationId === "plain" ? "plainThread" : `${integrationId}Issue`;
+        issueMetadata[metadataKey] = item;
+      }
 
       return {
         cwd: input.cwd,
-        worktreeSlug: createNameId(),
+        worktreeSlug: trimmedBranch.length > 0 ? trimmedBranch : createNameId(),
+        agentProvider: agentSelection.id,
+        agentMode: agentSelection.mode === "cli" ? ("cli" as const) : ("native" as const),
+        kanbanStatus: "todo" as const,
+        ...(activeOrgId ? { orgId: activeOrgId } : {}),
+        ...(input.promptText && input.promptText.trim().length > 0
+          ? { prompt: input.promptText }
+          : {}),
+        ...(Object.keys(issueContext).length > 0 ? { issueContext } : {}),
+        ...(Object.keys(issueMetadata).length > 0 ? { issueMetadata } : {}),
         ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         ...checkoutRequest,
       };
     },
-    [selectedItem],
+    [selectedItem, agentSelection, branchName, selectedIntegrationItems, activeOrgId],
   );
 
   const ensureWorkspace = useCallback(
-    async (input: { cwd: string; attachments: AgentAttachment[] }) => {
+    async (input: {
+      cwd: string;
+      attachments: AgentAttachment[];
+      composerAttachments: ComposerAttachment[];
+      promptText: string;
+    }) => {
       if (createdWorkspace) {
         return createdWorkspace;
       }
@@ -621,6 +718,34 @@ export function NewWorkspaceScreen({
       try {
         setPendingAction("chat");
         setErrorMessage(null);
+
+        // CLI agent path — skip the GUI draft submission and spawn a terminal
+        // running the picked CLI agent in the new worktree's directory.
+        if (agentSelection.mode === "cli") {
+          const text = payload.text ?? "";
+          const cwd = payload.cwd ?? "";
+          const composerAttachments: ComposerAttachment[] = Array.isArray(payload.attachments)
+            ? (payload.attachments as ComposerAttachment[])
+            : [];
+          const { attachments: reviewAttachments } =
+            splitComposerAttachmentsForSubmit(composerAttachments);
+          const ensuredWorkspace = await ensureWorkspace({
+            cwd,
+            attachments: reviewAttachments,
+            composerAttachments,
+            promptText: text,
+          });
+          await launchCliAgent({
+            providerId: agentSelection.id as CliProviderId,
+            cwd: ensuredWorkspace.workspaceDirectory || cwd,
+            initialPrompt: text || undefined,
+            name: ensuredWorkspace.name,
+          });
+          useDraftStore.getState().clearDraftInput({ draftKey, lifecycle: "sent" });
+          router.replace(buildHostWorkspaceRoute(serverId, ensuredWorkspace.id) as never);
+          return;
+        }
+
         await runCreateChatAgent({
           payload,
           composerState,
@@ -635,7 +760,15 @@ export function NewWorkspaceScreen({
         toast.error(message);
       }
     },
-    [composerState, draftKey, ensureWorkspace, serverId, toast],
+    [
+      agentSelection,
+      composerState,
+      draftKey,
+      ensureWorkspace,
+      launchCliAgent,
+      serverId,
+      toast,
+    ],
   );
 
   const workspaceTitle = computeWorkspaceTitle(workspace, displayName, sourceDirectory);
@@ -707,9 +840,12 @@ export function NewWorkspaceScreen({
         ? {
             ...composerState.statusControls,
             disabled: isPending,
+            cliAgents: cliAgentsList,
+            agentSelection,
+            onAgentSelectionChange: setAgentSelection,
           }
         : undefined,
-    [composerState, isPending],
+    [composerState, isPending, cliAgentsList, agentSelection],
   );
 
   const pickerEmptyText =
@@ -760,8 +896,27 @@ export function NewWorkspaceScreen({
             commandDraftConfig={composerState?.commandDraftConfig}
             statusControls={statusControlsWithDisabled}
             onAddImages={handleAddImagesCallback}
+            onSelectIntegrationItem={handleSelectIntegrationItem}
           />
           <Animated.View testID="new-workspace-ref-picker-row" style={optionsRowStyle}>
+            <View style={styles.branchNameWrap}>
+              <GitBranch
+                size={theme.iconSize.sm}
+                color={theme.colors.foregroundMuted}
+              />
+              <TextInput
+                value={branchName}
+                onChangeText={setBranchName}
+                editable={!isPending}
+                placeholder="branch-name"
+                placeholderTextColor={theme.colors.foregroundMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
+                // @ts-expect-error - outlineStyle is web-only
+                style={[styles.branchNameInput, isWeb && { outlineStyle: "none" }]}
+              />
+            </View>
             <View>
               <RefPickerTrigger
                 pickerAnchorRef={pickerAnchorRef}
@@ -855,6 +1010,23 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[4] + theme.spacing[4] - 6,
     marginTop: -theme.spacing[2],
+  },
+  branchNameWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1] + 2,
+    borderRadius: theme.borderRadius["2xl"],
+    backgroundColor: theme.colors.surface0,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  branchNameInput: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    minWidth: 120,
+    padding: 0,
   },
   badge: {
     flexDirection: "row",

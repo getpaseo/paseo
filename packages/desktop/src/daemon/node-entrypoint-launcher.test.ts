@@ -65,7 +65,11 @@ describe("node-entrypoint-launcher", () => {
     it("passes --open-project through as a normal CLI arg", () => {
       expect(
         parseCliPassthroughArgsFromArgv({
-          argv: ["/Applications/Hubcode.app/Contents/MacOS/Hubcode", "--open-project", "/tmp/project"],
+          argv: [
+            "/Applications/Hubcode.app/Contents/MacOS/Hubcode",
+            "--open-project",
+            "/tmp/project",
+          ],
           isDefaultApp: false,
           forceCli: false,
         }),
@@ -109,7 +113,6 @@ describe("node-entrypoint-launcher", () => {
         env: {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
-          HUBCODE_NODE_ENV: "production",
         },
       });
     });
@@ -132,26 +135,6 @@ describe("node-entrypoint-launcher", () => {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
         },
-      });
-    });
-
-    it("forces packaged launches to production even when NODE_ENV is inherited as development", () => {
-      expect(
-        createNodeEntrypointInvocation({
-          execPath: "/Applications/Hubcode.app/Contents/MacOS/Hubcode",
-          isPackaged: true,
-          packagedRunnerPath:
-            "/Applications/Hubcode.app/Contents/Resources/app.asar/dist/daemon/node-entrypoint-runner.js",
-          entrypoint: CLI_ENTRYPOINT,
-          argvMode: "node-script",
-          args: [],
-          baseEnv: { PATH: "/usr/bin", NODE_ENV: "development" },
-        }).env,
-      ).toMatchObject({
-        PATH: "/usr/bin",
-        ELECTRON_RUN_AS_NODE: "1",
-        NODE_ENV: "development",
-        HUBCODE_NODE_ENV: "production",
       });
     });
 
@@ -179,7 +162,6 @@ describe("node-entrypoint-launcher", () => {
         env: {
           PATH: "/usr/bin",
           ELECTRON_RUN_AS_NODE: "1",
-          HUBCODE_NODE_ENV: "production",
         },
       });
     });

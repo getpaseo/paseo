@@ -6,11 +6,10 @@ import {
   RefreshControl,
   FlatList,
   type ListRenderItem,
-  type PressableStateCallbackType,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallback, useMemo, useState, type ReactElement } from "react";
-import { router, type Href } from "expo-router";
+import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
@@ -18,12 +17,7 @@ import { shortenPath } from "@/utils/shorten-path";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { Archive } from "lucide-react-native";
-import { getProviderIcon } from "@/components/provider-icons";
-import { buildHostAgentDetailRoute } from "@/utils/host-routes";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
-import type { Agent } from "@/stores/session-store";
-import { useArchiveAgent } from "@/hooks/use-archive-agent";
 
 interface AgentListProps {
   agents: AggregatedAgent[];
@@ -39,62 +33,6 @@ interface AgentListProps {
 type FlatListItem =
   | { type: "header"; key: string; title: string }
   | { type: "agent"; key: string; agent: AggregatedAgent };
-
-function buildHistoricalAgentDetail(agent: AggregatedAgent): Agent {
-  return {
-    serverId: agent.serverId,
-    id: agent.id,
-    provider: agent.provider,
-    status: agent.status,
-    createdAt: agent.createdAt,
-    updatedAt: agent.lastActivityAt,
-    lastUserMessageAt: null,
-    lastActivityAt: agent.lastActivityAt,
-    capabilities: {
-      supportsStreaming: false,
-      supportsSessionPersistence: false,
-      supportsDynamicModes: false,
-      supportsMcpServers: false,
-      supportsReasoningStream: false,
-      supportsToolInvocations: false,
-    },
-    currentModeId: null,
-    availableModes: [],
-    pendingPermissions: [],
-    persistence: null,
-    runtimeInfo: {
-      provider: agent.provider,
-      sessionId: null,
-    },
-    title: agent.title,
-    cwd: agent.cwd,
-    model: null,
-    thinkingOptionId: null,
-    requiresAttention: agent.requiresAttention,
-    attentionReason: agent.attentionReason,
-    attentionTimestamp: agent.attentionTimestamp,
-    archivedAt: agent.archivedAt,
-    labels: agent.labels,
-  };
-}
-
-function rememberArchivedAgentDetail(agent: AggregatedAgent) {
-  if (!agent.archivedAt) {
-    return;
-  }
-
-  useSessionStore.getState().setAgentDetails(agent.serverId, (previous) => {
-    const existing = previous.get(agent.id);
-    const next = new Map(previous);
-    next.set(agent.id, {
-      ...buildHistoricalAgentDetail(agent),
-      ...existing,
-      archivedAt: existing?.archivedAt ?? agent.archivedAt,
-      cwd: existing?.cwd ?? agent.cwd,
-    });
-    return next;
-  });
-}
 
 function deriveDateSectionLabel(lastActivityAt: Date): string {
   const now = new Date();
@@ -150,26 +88,24 @@ function SessionBadge({
   icon?: ReactElement;
   tone?: "neutral" | "warning" | "danger";
 }) {
-  const badgeStyle = useMemo(
-    () => [
-      styles.badge,
-      tone === "warning" && styles.badgeWarning,
-      tone === "danger" && styles.badgeDanger,
-    ],
-    [tone],
-  );
-  const badgeTextStyle = useMemo(
-    () => [
-      styles.badgeText,
-      tone === "warning" && styles.badgeTextWarning,
-      tone === "danger" && styles.badgeTextDanger,
-    ],
-    [tone],
-  );
   return (
-    <View style={badgeStyle}>
+    <View
+      style={[
+        styles.badge,
+        tone === "warning" && styles.badgeWarning,
+        tone === "danger" && styles.badgeDanger,
+      ]}
+    >
       {icon}
-      <Text style={badgeTextStyle}>{label}</Text>
+      <Text
+        style={[
+          styles.badgeText,
+          tone === "warning" && styles.badgeTextWarning,
+          tone === "danger" && styles.badgeTextDanger,
+        ]}
+      >
+        {label}
+      </Text>
     </View>
   );
 }
@@ -195,47 +131,34 @@ function SessionRow({
   const isSelected = selectedAgentId === agentKey;
   const statusLabel = formatStatusLabel(agent.status);
   const projectPath = shortenPath(agent.cwd);
-  const ProviderIcon = getProviderIcon(agent.provider);
-
-  const pressableStyle = useCallback(
-    ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.row,
-      isSelected && styles.rowSelected,
-      Boolean(hovered) && styles.rowHovered,
-      pressed && styles.rowPressed,
-    ],
-    [isSelected],
-  );
-
-  const handlePress = useCallback(() => onPress(agent), [onPress, agent]);
-  const handleLongPress = useCallback(() => onLongPress(agent), [onLongPress, agent]);
-
-  const sessionTitleStyle = useMemo(
-    () => [styles.sessionTitle, isSelected && styles.sessionTitleHighlighted],
-    [isSelected],
-  );
-
-  const archivedIcon = useMemo(
-    () => <Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />,
-    [theme.fontSize.xs, theme.colors.foregroundMuted],
-  );
 
   return (
     <Pressable
-      style={pressableStyle}
-      onPress={handlePress}
-      onLongPress={handleLongPress}
+      style={({ pressed, hovered }) => [
+        styles.row,
+        isSelected && styles.rowSelected,
+        hovered && styles.rowHovered,
+        pressed && styles.rowPressed,
+      ]}
+      onPress={() => onPress(agent)}
+      onLongPress={() => onLongPress(agent)}
       testID={`agent-row-${agent.serverId}-${agent.id}`}
     >
       <View style={styles.rowContent}>
         <View style={styles.rowTitleRow}>
-          <View style={styles.providerIconWrap}>
-            <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </View>
-          <Text style={sessionTitleStyle} numberOfLines={1}>
+          <Text
+            style={[styles.sessionTitle, isSelected && styles.sessionTitleHighlighted]}
+            numberOfLines={1}
+          >
             {agent.title || "New session"}
           </Text>
-          {agent.archivedAt ? <SessionBadge label="Archived" icon={archivedIcon} /> : null}
+          {agent.archivedAt ? (
+            <SessionBadge
+              label="Archived"
+              icon={<Archive size={theme.fontSize.xs} color={theme.colors.foregroundMuted} />}
+            />
+          ) : null}
+          {agent.isGlobal ? <SessionBadge label="Global" /> : null}
           {(agent.pendingPermissionCount ?? 0) > 0 ? (
             <SessionBadge label={`${agent.pendingPermissionCount} pending`} tone="warning" />
           ) : null}
@@ -294,7 +217,6 @@ export function AgentList({
   const insets = useSafeAreaInsets();
   const [actionAgent, setActionAgent] = useState<AggregatedAgent | null>(null);
   const isMobile = useIsCompactFormFactor();
-  const { archiveAgent } = useArchiveAgent();
 
   const actionClient = useSessionStore((state) =>
     actionAgent?.serverId ? (state.sessions[actionAgent.serverId]?.client ?? null) : null,
@@ -311,22 +233,12 @@ export function AgentList({
 
       const serverId = agent.serverId;
       const agentId = agent.id;
-      const workspaceId = resolveWorkspaceIdByExecutionDirectory({
-        workspaces: useSessionStore.getState().sessions[serverId]?.workspaces?.values(),
-        workspaceDirectory: agent.cwd,
-      });
 
       onAgentSelect?.();
 
-      if (!workspaceId) {
-        router.navigate(buildHostAgentDetailRoute(serverId, agentId) as Href);
-        return;
-      }
-
-      rememberArchivedAgentDetail(agent);
       const route = prepareWorkspaceTab({
         serverId,
-        workspaceId,
+        workspaceId: agent.cwd,
         target: { kind: "agent", agentId },
         pin: Boolean(agent.archivedAt),
       });
@@ -335,23 +247,9 @@ export function AgentList({
     [isActionSheetVisible, onAgentSelect],
   );
 
-  const handleAgentLongPress = useCallback(
-    (agent: AggregatedAgent) => {
-      const isRunning = agent.status === "running" || agent.status === "initializing";
-      if (isRunning) {
-        setActionAgent(agent);
-        return;
-      }
-
-      const client = useSessionStore.getState().sessions[agent.serverId]?.client ?? null;
-      if (!client) {
-        setActionAgent(agent);
-        return;
-      }
-      void archiveAgent({ serverId: agent.serverId, agentId: agent.id }).catch(() => {});
-    },
-    [archiveAgent],
-  );
+  const handleAgentLongPress = useCallback((agent: AggregatedAgent) => {
+    setActionAgent(agent);
+  }, []);
 
   const handleCloseActionSheet = useCallback(() => {
     setActionAgent(null);
@@ -362,9 +260,9 @@ export function AgentList({
       return;
     }
     // Timeout errors are swallowed — the daemon will still process the archive
-    void archiveAgent({ serverId: actionAgent.serverId, agentId: actionAgent.id }).catch(() => {});
+    void actionClient.archiveAgent(actionAgent.id).catch(() => {});
     setActionAgent(null);
-  }, [actionAgent, actionClient, archiveAgent]);
+  }, [actionAgent, actionClient]);
 
   const flatItems = useMemo((): FlatListItem[] => {
     const order = ["Today", "Yesterday", "This week", "This month", "Older"] as const;
@@ -415,32 +313,6 @@ export function AgentList({
 
   const keyExtractor = useCallback((item: FlatListItem) => item.key, []);
 
-  const refreshColors = useMemo(
-    () => [theme.colors.foregroundMuted],
-    [theme.colors.foregroundMuted],
-  );
-  const sheetContainerStyle = useMemo(
-    () => [styles.sheetContainer, { paddingBottom: Math.max(insets.bottom, theme.spacing[6]) }],
-    [insets.bottom, theme.spacing],
-  );
-  const sheetArchiveTextStyle = useMemo(
-    () => [styles.sheetArchiveText, isActionDaemonUnavailable && styles.sheetArchiveTextDisabled],
-    [isActionDaemonUnavailable],
-  );
-
-  const refreshControl = useMemo(
-    () =>
-      onRefresh ? (
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={onRefresh}
-          tintColor={theme.colors.foregroundMuted}
-          colors={refreshColors}
-        />
-      ) : undefined,
-    [onRefresh, isRefreshing, theme.colors.foregroundMuted, refreshColors],
-  );
-
   return (
     <>
       <FlatList
@@ -452,7 +324,16 @@ export function AgentList({
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         ListFooterComponent={listFooterComponent}
-        refreshControl={refreshControl}
+        refreshControl={
+          onRefresh ? (
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.foregroundMuted}
+              colors={[theme.colors.foregroundMuted]}
+            />
+          ) : undefined
+        }
       />
 
       <Modal
@@ -463,16 +344,19 @@ export function AgentList({
       >
         <View style={styles.sheetOverlay}>
           <Pressable style={styles.sheetBackdrop} onPress={handleCloseActionSheet} />
-          <View style={sheetContainerStyle}>
+          <View
+            style={[
+              styles.sheetContainer,
+              { paddingBottom: Math.max(insets.bottom, theme.spacing[6]) },
+            ]}
+          >
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>
-              {isActionDaemonUnavailable
-                ? "Host offline"
-                : "This agent is still running. Archiving it will stop the agent."}
+              {isActionDaemonUnavailable ? "Host offline" : "Archive this session?"}
             </Text>
             <View style={styles.sheetButtonRow}>
               <Pressable
-                style={SHEET_CANCEL_BUTTON_STYLE}
+                style={[styles.sheetButton, styles.sheetCancelButton]}
                 onPress={handleCloseActionSheet}
                 testID="agent-action-cancel"
               >
@@ -480,11 +364,18 @@ export function AgentList({
               </Pressable>
               <Pressable
                 disabled={isActionDaemonUnavailable}
-                style={SHEET_ARCHIVE_BUTTON_STYLE}
+                style={[styles.sheetButton, styles.sheetArchiveButton]}
                 onPress={handleArchiveAgent}
                 testID="agent-action-archive"
               >
-                <Text style={sheetArchiveTextStyle}>Archive</Text>
+                <Text
+                  style={[
+                    styles.sheetArchiveText,
+                    isActionDaemonUnavailable && styles.sheetArchiveTextDisabled,
+                  ]}
+                >
+                  Archive
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -544,11 +435,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     flexWrap: "wrap",
     gap: theme.spacing[2],
-  },
-  providerIconWrap: {
-    width: theme.iconSize.md,
-    alignItems: "center",
-    justifyContent: "center",
   },
   rowMetaRow: {
     flexDirection: "row",
@@ -695,6 +581,3 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
 }));
-
-const SHEET_CANCEL_BUTTON_STYLE = [styles.sheetButton, styles.sheetCancelButton];
-const SHEET_ARCHIVE_BUTTON_STYLE = [styles.sheetButton, styles.sheetArchiveButton];

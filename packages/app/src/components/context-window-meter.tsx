@@ -2,13 +2,14 @@ import { Pressable, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { isNative } from "@/constants/platform";
 
-interface ContextWindowMeterProps {
+type ContextWindowMeterProps = {
   maxTokens: number;
   usedTokens: number;
-}
+};
 
-const SVG_SIZE = 16;
+const SVG_SIZE = 20;
 const CENTER = SVG_SIZE / 2;
 const RADIUS = 7;
 const STROKE_WIDTH = 2.25;
@@ -83,8 +84,12 @@ export function ContextWindowMeter({ maxTokens, usedTokens }: ContextWindowMeter
             height={SVG_SIZE}
             viewBox={`0 0 ${SVG_SIZE} ${SVG_SIZE}`}
             style={styles.svg}
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
+            {...(isNative
+              ? {
+                  accessibilityElementsHidden: true,
+                  importantForAccessibility: "no-hide-descendants" as const,
+                }
+              : { "aria-hidden": true })}
           >
             <Circle
               cx={CENTER}

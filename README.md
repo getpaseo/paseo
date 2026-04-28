@@ -4,21 +4,6 @@
 
 <h1 align="center">Hubcode</h1>
 
-<p align="center">
-  <a href="https://github.com/hubtool/hubcode/stargazers">
-    <img src="https://img.shields.io/github/stars/gethubcode/hubcode?style=flat&logo=github" alt="GitHub stars">
-  </a>
-  <a href="https://github.com/hubtool/hubcode/releases">
-    <img src="https://img.shields.io/github/v/release/gethubcode/hubcode?style=flat&logo=github" alt="GitHub release">
-  </a>
-  <a href="https://x.com/moboudra">
-    <img src="https://img.shields.io/badge/%40moboudra-555?logo=x" alt="X">
-  </a>
-  <a href="https://discord.gg/jz8T2uahpH">
-    <img src="https://img.shields.io/badge/Discord-555?logo=discord" alt="Discord">
-  </a>
-</p>
-
 <p align="center">One interface for all your Claude Code, Codex and OpenCode agents.</p>
 
 <p align="center">
@@ -62,14 +47,13 @@ To connect from your phone, scan the QR code shown in Settings.
 Install the CLI and start Hubcode:
 
 ```bash
-npm install -g @gethubcode/cli
+npm install -g @hubcode/cli
 hubcode
 ```
 
 This shows a QR code in the terminal. Connect from any client. This path is useful for servers and remote machines.
 
 For full setup and configuration, see:
-
 - [Docs](https://hubcode.ai/docs)
 - [Configuration reference](https://hubcode.ai/docs/configuration)
 
@@ -96,7 +80,7 @@ See the [full CLI reference](https://hubcode.ai/docs/cli) for more.
 Experimental skills that teach agents how to use the Hubcode CLI to orchestrate other agents. I am updating these very frequently as I learn new things, expect changes without notice, might be coupled to my own setup, use at your own risk.
 
 ```bash
-npx skills add gethubcode/hubcode
+npx skills add hubtool/hubcode
 ```
 
 Then use them in any agent conversation:
@@ -117,7 +101,6 @@ Then use them in any agent conversation:
 ## Development
 
 Quick monorepo package map:
-
 - `packages/server`: Hubcode daemon (agent process orchestration, WebSocket API, MCP server)
 - `packages/app`: Expo client (iOS, Android, web)
 - `packages/cli`: `hubcode` CLI for daemon and agent workflows
@@ -135,7 +118,6 @@ npm run dev
 npm run dev:server
 npm run dev:app
 npm run dev:desktop
-npm run dev:website
 
 # build the daemon
 npm run build:daemon

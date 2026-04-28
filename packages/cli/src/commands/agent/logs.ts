@@ -2,8 +2,8 @@ import { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandOptions } from "../../output/index.js";
 import { fetchProjectedTimelineItems } from "../../utils/timeline.js";
-import type { DaemonClient, AgentStreamMessage, AgentTimelineItem } from "@gethubcode/server";
-import { curateAgentActivity } from "@gethubcode/server";
+import type { DaemonClient, AgentStreamMessage, AgentTimelineItem } from "@hubcode/server";
+import { curateAgentActivity } from "@hubcode/server";
 
 export function addLogsOptions(cmd: Command): Command {
   return cmd

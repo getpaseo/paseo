@@ -1,11 +1,6 @@
-import React, { useMemo, type ComponentType } from "react";
+import type { ComponentType } from "react";
 import invariant from "tiny-invariant";
-import {
-  createPaneFocusContextValue,
-  PaneFocusProvider,
-  PaneProvider,
-  type PaneContextValue,
-} from "@/panels/pane-context";
+import { PaneProvider, type PaneContextValue } from "@/panels/pane-context";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
@@ -20,6 +15,7 @@ export interface BuildWorkspacePaneContentModelInput {
   tab: WorkspaceTabDescriptor;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  isPaneFocused: boolean;
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
@@ -30,6 +26,7 @@ export function buildWorkspacePaneContentModel({
   tab,
   normalizedServerId,
   normalizedWorkspaceId,
+  isPaneFocused,
   onOpenTab,
   onCloseCurrentTab,
   onRetargetCurrentTab,
@@ -39,12 +36,13 @@ export function buildWorkspacePaneContentModel({
   const registration = getPanelRegistration(tab.kind);
   invariant(registration, `No panel registration for kind: ${tab.kind}`);
   return {
-    key: `${normalizedServerId}:${normalizedWorkspaceId}:${tab.tabId}:${tab.kind}`,
+    key: `${normalizedServerId}:${normalizedWorkspaceId}:${tab.tabId}`,
     Component: registration.component,
     paneContextValue: {
       serverId: normalizedServerId,
       workspaceId: normalizedWorkspaceId,
       tabId: tab.tabId,
+      isPaneFocused,
       target: tab.target,
       openTab: onOpenTab,
       closeCurrentTab: onCloseCurrentTab,
@@ -56,30 +54,14 @@ export function buildWorkspacePaneContentModel({
 
 export interface WorkspacePaneContentProps {
   content: WorkspacePaneContentModel;
-  isWorkspaceFocused: boolean;
-  isPaneFocused: boolean;
 }
 
-export function WorkspacePaneContent({
-  content,
-  isWorkspaceFocused,
-  isPaneFocused,
-}: WorkspacePaneContentProps) {
+export function WorkspacePaneContent({ content }: WorkspacePaneContentProps) {
   const { Component, key, paneContextValue } = content;
-  const paneFocusValue = useMemo(
-    () =>
-      createPaneFocusContextValue({
-        isWorkspaceFocused,
-        isPaneFocused,
-      }),
-    [isPaneFocused, isWorkspaceFocused],
-  );
 
   return (
     <PaneProvider value={paneContextValue}>
-      <PaneFocusProvider value={paneFocusValue}>
-        <Component key={key} />
-      </PaneFocusProvider>
+      <Component key={key} />
     </PaneProvider>
   );
 }

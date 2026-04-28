@@ -21,7 +21,7 @@ const SKILL_NAMES = [
   "hubcode",
   "hubcode-loop",
   "hubcode-handoff",
-  "hubcode-orchestrator",
+  "hubcode-orchestrate",
   "hubcode-chat",
   "hubcode-committee",
 ];
@@ -75,7 +75,9 @@ function getBundledSkillsDir(): string {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, "skills");
   }
-  return path.join(__dirname, "..", "..", "..", "..", "skills");
+  // dev: __dirname = packages/desktop/dist → walk back to packages/desktop/..
+  // → packages/.. → hubcode. Adding `skills` lands at hubcode/skills.
+  return path.join(__dirname, "..", "..", "..", "skills");
 }
 
 function getAgentsSkillsDir(): string {
@@ -280,27 +282,25 @@ export async function installSkills(): Promise<InstallStatus> {
 
   log.info("[integrations] installSkills", { sourceDir, agentsDir, claudeDir, codexDir });
 
-  await Promise.all(
-    SKILL_NAMES.map(async (skillName) => {
-      const sourceFile = path.join(sourceDir, skillName, "SKILL.md");
-      await copySkillFile(sourceFile, agentsDir, skillName);
-      await symlinkSkillDir(skillName, agentsDir, claudeDir);
-      await copySkillFile(sourceFile, codexDir, skillName);
-    }),
-  );
+  for (const skillName of SKILL_NAMES) {
+    const sourceFile = path.join(sourceDir, skillName, "SKILL.md");
+    await copySkillFile(sourceFile, agentsDir, skillName);
+    await symlinkSkillDir(skillName, agentsDir, claudeDir);
+    await copySkillFile(sourceFile, codexDir, skillName);
+  }
 
   return getSkillsInstallStatus();
 }
 
 export async function getSkillsInstallStatus(): Promise<InstallStatus> {
   const claudeDir = getClaudeSkillsDir();
-  const accessResults = await Promise.all(
-    SKILL_NAMES.map((skillName) =>
-      fs
-        .access(path.join(claudeDir, skillName, "SKILL.md"))
-        .then(() => true)
-        .catch(() => false),
-    ),
-  );
-  return { installed: accessResults.every(Boolean) };
+  for (const skillName of SKILL_NAMES) {
+    const skillFile = path.join(claudeDir, skillName, "SKILL.md");
+    try {
+      await fs.access(skillFile);
+    } catch {
+      return { installed: false };
+    }
+  }
+  return { installed: true };
 }

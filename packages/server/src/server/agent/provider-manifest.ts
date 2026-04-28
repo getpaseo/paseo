@@ -27,6 +27,37 @@ export interface AgentProviderDefinition {
   };
 }
 
+const HUBCODE_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "default",
+    label: "Always Ask",
+    description: "Prompts for permission before each tool call",
+    icon: "ShieldCheck",
+    colorTier: "safe",
+  },
+  {
+    id: "acceptEdits",
+    label: "Accept File Edits",
+    description: "Auto-approves edit-focused tools without prompting",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "plan",
+    label: "Plan Mode",
+    description: "Read-only analysis — agent proposes steps but won't run modifying tools",
+    icon: "ShieldCheck",
+    colorTier: "planning",
+  },
+  {
+    id: "bypassPermissions",
+    label: "Bypass",
+    description: "Skip all permission prompts (use with caution)",
+    icon: "ShieldAlert",
+    colorTier: "dangerous",
+  },
+];
+
 const CLAUDE_MODES: AgentProviderModeDefinition[] = [
   {
     id: "default",
@@ -116,16 +147,6 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
-const MOCK_LOAD_TEST_MODES: AgentProviderModeDefinition[] = [
-  {
-    id: "load-test",
-    label: "Load Test",
-    description: "Streams repeated markdown, reasoning, and tool calls for app stress testing",
-    icon: "ShieldOff",
-    colorTier: "dangerous",
-  },
-];
-
 export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   {
     id: "claude",
@@ -176,25 +197,20 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     defaultModeId: null,
     modes: [],
   },
-];
-
-export const DEV_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
   {
-    id: "mock",
-    label: "Mock Load Test",
-    description:
-      "Development-only provider that emits synthetic agent traffic for performance tests",
-    defaultModeId: "load-test",
-    modes: MOCK_LOAD_TEST_MODES,
+    id: "hubcode",
+    label: "Hubcode",
+    description: "Hubcode curated combos — gated by your plan",
+    defaultModeId: "default",
+    // Mirror Claude's permission tiers so users get the same mental model
+    // (Always Ask / Accept Edits / Plan / Bypass) across both providers.
+    modes: HUBCODE_MODES,
   },
 ];
 
 export function getAgentProviderDefinition(
   provider: string,
-  definitions: AgentProviderDefinition[] = [
-    ...AGENT_PROVIDER_DEFINITIONS,
-    ...DEV_AGENT_PROVIDER_DEFINITIONS,
-  ],
+  definitions: AgentProviderDefinition[] = AGENT_PROVIDER_DEFINITIONS,
 ): AgentProviderDefinition {
   const definition = definitions.find((entry) => entry.id === provider);
   if (!definition) {

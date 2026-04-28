@@ -7,22 +7,22 @@ import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
 const NEAR_BOTTOM_THRESHOLD_PX = 72;
 
-export interface ScrollMetrics {
+export type ScrollMetrics = {
   offsetY: number;
   contentHeight: number;
   viewportHeight: number;
   distanceFromBottom: number;
-}
+};
 
-export interface SeededAgent {
+export type SeededAgent = {
   id: string;
   title: string;
   expectedTailText: string;
   url: string;
   workspaceUrl: string;
-}
+};
 
-export interface DaemonClientInstance {
+export type DaemonClientInstance = {
   connect(): Promise<void>;
   close(): Promise<void>;
   createAgent(options: {
@@ -36,7 +36,7 @@ export interface DaemonClientInstance {
   }): Promise<{ id: string }>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
   waitForFinish(agentId: string, timeout?: number): Promise<{ status: string }>;
-}
+};
 
 function getDaemonWsUrl(): string {
   const daemonPort = process.env.E2E_DAEMON_PORT;
@@ -84,15 +84,17 @@ export function createReplyTurn(label: string): {
   };
 }
 
-interface DaemonClientConfig {
+type DaemonClientConfig = {
   url: string;
   clientId: string;
   clientType: "cli";
   webSocketFactory?: NodeWebSocketFactory;
-}
+};
 
 async function loadDaemonClientConstructor(): Promise<
-  new (config: DaemonClientConfig) => DaemonClientInstance
+  new (
+    config: DaemonClientConfig,
+  ) => DaemonClientInstance
 > {
   const repoRoot = path.resolve(__dirname, "../../../../");
   const moduleUrl = pathToFileURL(

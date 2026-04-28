@@ -30,22 +30,22 @@ StyleSheet.configure({
 });
 
 // Type augmentation for TypeScript
-interface AppThemes {
+type AppThemes = {
   light: typeof lightTheme;
   dark: typeof darkTheme;
   darkZinc: typeof darkZincTheme;
   darkMidnight: typeof darkMidnightTheme;
   darkClaude: typeof darkClaudeTheme;
   darkGhostty: typeof darkGhosttyTheme;
-}
+};
 
-interface AppBreakpoints {
+type AppBreakpoints = {
   xs: number;
   sm: number;
   md: number;
   lg: number;
   xl: number;
-}
+};
 
 declare module "react-native-unistyles" {
   export interface UnistylesThemes extends AppThemes {}

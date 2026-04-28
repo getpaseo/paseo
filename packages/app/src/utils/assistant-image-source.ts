@@ -71,6 +71,18 @@ export function resolveAssistantImageSource(input: {
     return null;
   }
 
+  // Tilde-prefixed paths (`~/foo.png`, `~`) are absolute from the user's
+  // perspective — the daemon expands `~` to `$HOME` when reading. Treat
+  // them as file_rpc with `~` as the cwd so the server-side resolver knows
+  // to expand. Otherwise these images spun forever on load. (Paseo 0.1.60.)
+  if (sourcePath === "~" || sourcePath.startsWith("~/")) {
+    return {
+      kind: "file_rpc",
+      cwd: "~",
+      path: sourcePath,
+    };
+  }
+
   if (!isAbsolutePath(sourcePath)) {
     const workspaceRoot = input.workspaceRoot?.trim();
     if (!workspaceRoot || !isAbsolutePath(workspaceRoot)) {

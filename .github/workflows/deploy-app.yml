@@ -3,10 +3,10 @@ name: Deploy App
 on:
   push:
     tags:
-      - "v*"
-      - "!v*-beta.*"
-      - "app-v*"
-      - "!app-v*-beta.*"
+      - 'v*'
+      - '!v*-rc.*'
+      - 'app-v*'
+      - '!app-v*-rc.*'
   workflow_dispatch:
 
 jobs:
@@ -18,24 +18,24 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          cache: "npm"
-          registry-url: "https://npm.pkg.github.com"
-          scope: "@boudra"
+          node-version: '22'
+          cache: 'npm'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@boudra'
 
       - name: Install dependencies
-        run: npm install --workspace=@gethubcode/app --include-workspace-root
+        run: npm install --workspace=@hubcode/app --include-workspace-root
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build highlight dependency
-        run: npm run build --workspace=@gethubcode/highlight
+        run: npm run build --workspace=@hubcode/highlight
 
       - name: Typecheck
-        run: npm run typecheck --workspace=@gethubcode/app
+        run: npm run typecheck --workspace=@hubcode/app
 
       - name: Build and deploy to Cloudflare Pages
-        run: npm run deploy:web --workspace=@gethubcode/app
+        run: npm run deploy:web --workspace=@hubcode/app
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 10ed39a1dbf316e30abd0c409bed40d6

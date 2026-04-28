@@ -77,6 +77,7 @@ export interface DesktopHostBridge {
   platform?: string;
   invoke?: DesktopInvokeBridge["invoke"];
   getPendingOpenProject?: () => Promise<string | null>;
+  getPendingDeepLink?: () => Promise<{ path: string; query: string } | null>;
   events?: DesktopEventsBridge;
   window?: DesktopWindowModuleBridge;
   dialog?: DesktopDialogBridge;

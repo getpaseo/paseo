@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
+import { Platform } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { isElectronRuntime } from "@/desktop/host";
 import {

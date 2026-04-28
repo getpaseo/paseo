@@ -96,7 +96,6 @@ describe("tool-call-display", () => {
             index: 1,
             command: "npm install",
             cwd: "/tmp/repo/.hubcode/worktrees/repo/branch",
-            log: "",
             status: "running",
             exitCode: null,
           },

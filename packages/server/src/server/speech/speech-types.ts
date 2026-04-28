@@ -10,9 +10,9 @@ export const RequestedSpeechProviderSchema = z.object({
 });
 export type RequestedSpeechProvider = z.infer<typeof RequestedSpeechProviderSchema>;
 
-export interface RequestedSpeechProviders {
+export type RequestedSpeechProviders = {
   dictationStt: RequestedSpeechProvider;
   voiceTurnDetection: RequestedSpeechProvider;
   voiceStt: RequestedSpeechProvider;
   voiceTts: RequestedSpeechProvider;
-}
+};

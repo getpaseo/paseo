@@ -148,30 +148,6 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
   };
 }
 
-function parseAssistantInlinePathLink(
-  value: string,
-  options: AssistantHrefParseOptions,
-): InlinePathTarget | null {
-  const inlinePathTarget = parseInlinePathToken(value);
-  if (!inlinePathTarget) {
-    return null;
-  }
-
-  const normalizedPath = normalizePathToken(inlinePathTarget.path);
-  if (!normalizedPath || !isAbsolutePath(normalizedPath)) {
-    return null;
-  }
-
-  if (!isAllowedAbsolutePath(normalizedPath, options.workspaceRoot)) {
-    return null;
-  }
-
-  return {
-    ...inlinePathTarget,
-    path: normalizedPath,
-  };
-}
-
 export function parseAssistantFileLink(
   value: string,
   options: AssistantHrefParseOptions = {},
@@ -190,21 +166,36 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  const inlinePathTarget = parseAssistantInlinePathLink(trimmed, {
-    workspaceRoot: options.workspaceRoot,
-  });
-  if (inlinePathTarget) {
-    return inlinePathTarget;
+  // Assistants commonly emit `foo.ts:42` or `foo.ts:42-45` style hrefs
+  // (VSCode-compatible), not `foo.ts#L42`. Strip the trailing `:line[-end]`
+  // BEFORE URL parsing so the colon doesn't end up baked into the path.
+  // (Paseo 0.1.63 fix.)
+  let linesFromColonSuffix: Pick<InlinePathTarget, "lineStart" | "lineEnd"> | null = null;
+  let stripped = trimmed;
+  const colonMatch = trimmed.match(/^(.+?):([0-9]+)(?:-([0-9]+))?$/);
+  if (colonMatch && !/^[A-Za-z]:[\\/]/.test(colonMatch[1] ?? "")) {
+    // Don't confuse `C:\path` (Windows drive) with a line suffix — only treat
+    // trailing colon+digits as line numbers when the prefix isn't a drive.
+    const lineStart = parseInt(colonMatch[2]!, 10);
+    const lineEnd = colonMatch[3] ? parseInt(colonMatch[3], 10) : undefined;
+    if (
+      Number.isFinite(lineStart) &&
+      lineStart > 0 &&
+      (lineEnd === undefined || (Number.isFinite(lineEnd) && lineEnd >= lineStart))
+    ) {
+      linesFromColonSuffix = { lineStart, lineEnd };
+      stripped = colonMatch[1] ?? trimmed;
+    }
   }
 
-  const windowsPathMatch = trimmed.match(/^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$/);
+  const windowsPathMatch = stripped.match(/^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$/);
   if (windowsPathMatch) {
     const normalizedPath = normalizePathToken(windowsPathMatch[1] ?? "");
     if (!normalizedPath || !isAllowedAbsolutePath(normalizedPath, options.workspaceRoot)) {
       return null;
     }
 
-    const lines = parseLineFragment(windowsPathMatch[2] ?? "");
+    const lines = linesFromColonSuffix ?? parseLineFragment(windowsPathMatch[2] ?? "");
     if (!lines) {
       return null;
     }
@@ -216,13 +207,13 @@ export function parseAssistantFileLink(
     };
   }
 
-  if (!isAbsolutePath(trimmed)) {
+  if (!isAbsolutePath(stripped)) {
     return null;
   }
 
   let parsedUrl: URL;
   try {
-    parsedUrl = new URL(trimmed, "http://hubcode.invalid");
+    parsedUrl = new URL(stripped, "http://hubcode.invalid");
   } catch {
     return null;
   }
@@ -236,7 +227,7 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  const lines = parseLineFragment(parsedUrl.hash);
+  const lines = linesFromColonSuffix ?? parseLineFragment(parsedUrl.hash);
   if (!lines) {
     return null;
   }

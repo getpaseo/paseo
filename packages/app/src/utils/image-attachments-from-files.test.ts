@@ -28,10 +28,10 @@ function createTestStore(): AttachmentStore {
         byteSize = input.source.blob.size;
       } else if (input.source.kind === "data_url") {
         byteSize = input.source.dataUrl.length;
-      } else if (input.source.kind === "file_uri") {
-        byteSize = input.source.uri.length;
-      } else {
+      } else if (input.source.kind === "base64") {
         byteSize = input.source.base64.length;
+      } else {
+        byteSize = input.source.uri.length;
       }
       return {
         id,

@@ -1,11 +1,10 @@
-import { useCallback, useMemo, type ReactNode } from "react";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import type { ReactNode } from "react";
+import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PanelLeft } from "lucide-react-native";
 import { ScreenHeader } from "./screen-header";
-import { ScreenTitle } from "./screen-title";
 import { HeaderToggleButton } from "./header-toggle-button";
-import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 
@@ -27,16 +26,13 @@ const MOBILE_MENU_LINE_SHORT_WIDTH = 8;
 const MOBILE_MENU_LINE_HEIGHT = 2;
 
 function MobileMenuIcon({ color }: { color: string }) {
-  const lineStyle = useMemo(() => [styles.mobileMenuLine, { backgroundColor: color }], [color]);
-  const shortLineStyle = useMemo(
-    () => [styles.mobileMenuLine, styles.mobileMenuLineShort, { backgroundColor: color }],
-    [color],
-  );
   return (
-    <View style={styles.mobileMenuIcon} pointerEvents="none">
-      <View style={lineStyle} />
-      <View style={lineStyle} />
-      <View style={shortLineStyle} />
+    <View style={[styles.mobileMenuIcon, { pointerEvents: "none" }]}>
+      <View style={[styles.mobileMenuLine, { backgroundColor: color }]} />
+      <View style={[styles.mobileMenuLine, { backgroundColor: color }]} />
+      <View
+        style={[styles.mobileMenuLine, styles.mobileMenuLineShort, { backgroundColor: color }]}
+      />
     </View>
   );
 }
@@ -49,21 +45,40 @@ export function SidebarMenuToggle({
 }: SidebarMenuToggleProps = {}) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
-  const isOpen = usePanelStore((state) => selectIsAgentListOpen(state, { isCompact: isMobile }));
-  const toggleAgentListForLayout = usePanelStore((state) => state.toggleAgentListForLayout);
-  const toggleShortcutKeys = useMemo(
-    () => (getShortcutOs() === "mac" ? ["mod", "B"] : ["mod", "."]),
-    [],
-  );
+  const mobileView = usePanelStore((state) => state.mobileView);
+  const desktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
+  const desktopAgentListCollapsed = usePanelStore((state) => state.desktop.agentListCollapsed);
+  const toggleAgentList = usePanelStore((state) => state.toggleAgentList);
+  const toggleAgentListCollapsed = usePanelStore((state) => state.toggleAgentListCollapsed);
+  const toggleShortcutKeys = getShortcutOs() === "mac" ? ["mod", "B"] : ["mod", "."];
 
+  const isOpen = isMobile ? mobileView === "agent-list" : desktopAgentListOpen;
   const menuIconColor =
     !isMobile && isOpen ? theme.colors.foreground : theme.colors.foregroundMuted;
 
-  const handlePress = useCallback(() => {
-    toggleAgentListForLayout({ isCompact: isMobile });
-  }, [toggleAgentListForLayout, isMobile]);
+  // When the desktop sidebar is already showing as a collapsed icon rail, it
+  // has its own expand button at the top of the rail. Don't duplicate the
+  // toggle in every screen header — that created two identical sidebar icons
+  // side-by-side in Sessions, Settings, etc.
+  if (!isMobile && desktopAgentListOpen && desktopAgentListCollapsed) {
+    return null;
+  }
 
-  const accessibilityState = useMemo(() => ({ expanded: isOpen }), [isOpen]);
+  // On desktop, prefer the collapse-to-icons toggle — hiding the whole pane
+  // felt too drastic (users lost navigation entirely). Mobile keeps the
+  // show/hide behavior since there's no room for an icon rail there.
+  const handlePress = () => {
+    if (isMobile) {
+      toggleAgentList();
+      return;
+    }
+    // If the user closed the sidebar entirely, re-open it expanded.
+    if (!desktopAgentListOpen) {
+      toggleAgentList();
+      return;
+    }
+    toggleAgentListCollapsed();
+  };
 
   return (
     <HeaderToggleButton
@@ -76,8 +91,8 @@ export function SidebarMenuToggle({
       style={style}
       accessible
       accessibilityRole="button"
-      accessibilityLabel={isOpen ? "Close menu" : "Open menu"}
-      accessibilityState={accessibilityState}
+      accessibilityLabel={isOpen ? "Collapse menu" : "Open menu"}
+      accessibilityState={{ expanded: isOpen && !desktopAgentListCollapsed }}
     >
       {isMobile ? (
         <MobileMenuIcon color={menuIconColor} />
@@ -94,7 +109,11 @@ export function MenuHeader({ title, rightContent, borderless }: MenuHeaderProps)
       left={
         <>
           <SidebarMenuToggle />
-          {title && <ScreenTitle>{title}</ScreenTitle>}
+          {title && (
+            <Text style={styles.title} numberOfLines={1}>
+              {title}
+            </Text>
+          )}
         </>
       }
       right={rightContent}
@@ -107,6 +126,15 @@ export function MenuHeader({ title, rightContent, borderless }: MenuHeaderProps)
 const styles = StyleSheet.create((theme) => ({
   left: {
     gap: theme.spacing[2],
+  },
+  title: {
+    flex: 1,
+    fontSize: theme.fontSize.base,
+    fontWeight: {
+      xs: "400",
+      md: "300",
+    },
+    color: theme.colors.foreground,
   },
   mobileMenuIcon: {
     width: MOBILE_MENU_LINE_WIDTH,

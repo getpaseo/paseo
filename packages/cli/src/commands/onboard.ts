@@ -1,5 +1,5 @@
 import { cancel, confirm, intro, isCancel, log, note, outro, spinner } from "@clack/prompts";
-import { Command, Option } from "commander";
+import { Command } from "commander";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -8,7 +8,7 @@ import {
   loadPersistedConfig,
   type CliConfigOverrides,
   type PersistedConfig,
-} from "@gethubcode/server";
+} from "@hubcode/server";
 import {
   resolveLocalHubcodeHome,
   resolveLocalDaemonState,
@@ -23,10 +23,6 @@ interface OnboardOptions extends DaemonStartOptions {
   timeout?: string;
   voice?: "ask" | "enable" | "disable";
 }
-
-type RawOnboardOptions = OnboardOptions & {
-  allowedHosts?: string;
-};
 
 type OnboardPersistedConfig = PersistedConfig & {
   features?: PersistedConfig["features"] & {
@@ -68,7 +64,7 @@ function parseTimeoutMs(raw: string | undefined): number {
   return Math.ceil(seconds * 1000);
 }
 
-function toCliOverrides(options: OnboardOptions): CliConfigOverrides {
+function toCliOverrides(options: DaemonStartOptions): CliConfigOverrides {
   const cliOverrides: CliConfigOverrides = {};
 
   if (options.listen) {
@@ -81,9 +77,9 @@ function toCliOverrides(options: OnboardOptions): CliConfigOverrides {
     cliOverrides.relayEnabled = false;
   }
 
-  if (options.hostnames) {
-    const raw = options.hostnames.trim();
-    cliOverrides.hostnames =
+  if (options.allowedHosts) {
+    const raw = options.allowedHosts.trim();
+    cliOverrides.allowedHosts =
       raw.toLowerCase() === "true"
         ? true
         : raw
@@ -165,10 +161,10 @@ async function resolveVoiceSelection(mode: OnboardOptions["voice"]): Promise<boo
   return answer;
 }
 
-interface DownloadProgress {
+type DownloadProgress = {
   modelId: string | null;
   pct: number | null;
-}
+};
 
 function parseDownloadProgress(logTail: string): DownloadProgress | null {
   const lines = logTail.split("\n").filter(Boolean);
@@ -199,85 +195,60 @@ function renderProgressLine(progress: DownloadProgress): string {
   return `Downloading speech model${modelSuffix}: ${progress.pct}%`;
 }
 
-type ProbeResult = { kind: "ready"; listen: string; host: string | null } | { kind: "pending" };
-
-async function probeDaemonReady(home: string): Promise<ProbeResult> {
-  const state = resolveLocalDaemonState({ home });
-  const host = resolveTcpHostFromListen(state.listen);
-
-  if (state.running && host) {
-    const client = await tryConnectToDaemon({ host, timeout: 1200 });
-    if (client) {
-      try {
-        await client.fetchAgents();
-        return { kind: "ready", listen: state.listen, host };
-      } catch {
-        // Daemon process is alive but not API-ready yet.
-      } finally {
-        await client.close().catch(() => {});
-      }
-    }
-  } else if (state.running && !host) {
-    return { kind: "ready", listen: state.listen, host: null };
-  }
-
-  return { kind: "pending" };
-}
-
-interface ProgressState {
-  lastStatus: string;
-  lastPrintedAt: number;
-}
-
-function announceProgress(
-  home: string,
-  state: ProgressState,
-  onStatus: ((message: string) => void) | undefined,
-): ProgressState {
-  const progress = parseDownloadProgress(tailDaemonLog(home, 120) ?? "");
-  const progressLine = progress ? renderProgressLine(progress) : null;
-  const statusMessage = progressLine ?? "Waiting for daemon to become ready...";
-
-  if (statusMessage !== state.lastStatus) {
-    onStatus?.(statusMessage);
-    return { lastStatus: statusMessage, lastPrintedAt: Date.now() };
-  }
-  if (!onStatus && Date.now() - state.lastPrintedAt >= 3000) {
-    console.log(statusMessage);
-    return { lastStatus: state.lastStatus, lastPrintedAt: Date.now() };
-  }
-  return state;
-}
-
 async function waitForDaemonReady(args: {
   home: string;
   timeoutMs: number;
   onStatus?: (message: string) => void;
 }): Promise<{ listen: string; host: string | null }> {
   const deadline = Date.now() + args.timeoutMs;
+  let lastStatus = "";
+  let lastPrintedAt = 0;
 
-  async function poll(state: ProgressState): Promise<{ listen: string; host: string | null }> {
-    const probe = await probeDaemonReady(args.home);
-    if (probe.kind === "ready") {
-      return { listen: probe.listen, host: probe.host };
+  while (Date.now() < deadline) {
+    const state = resolveLocalDaemonState({ home: args.home });
+    const host = resolveTcpHostFromListen(state.listen);
+
+    if (state.running && host) {
+      const client = await tryConnectToDaemon({ host, timeout: 1200 });
+      if (client) {
+        try {
+          await client.fetchAgents();
+          return { listen: state.listen, host };
+        } catch {
+          // Daemon process is alive but not API-ready yet.
+        } finally {
+          await client.close().catch(() => {});
+        }
+      }
+    } else if (state.running && !host) {
+      return { listen: state.listen, host: null };
     }
-    const nextState = announceProgress(args.home, state, args.onStatus);
-    if (Date.now() >= deadline) {
-      const recentLogs = tailDaemonLog(args.home, 60);
-      throw new Error(
-        [
-          `Timed out after ${Math.ceil(args.timeoutMs / 1000)}s waiting for daemon readiness.`,
-          recentLogs ? `Recent daemon logs:\n${recentLogs}` : null,
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-      );
+
+    const progress = parseDownloadProgress(tailDaemonLog(args.home, 120) ?? "");
+    const progressLine = progress ? renderProgressLine(progress) : null;
+    const statusMessage = progressLine ?? "Waiting for daemon to become ready...";
+
+    if (statusMessage !== lastStatus) {
+      args.onStatus?.(statusMessage);
+      lastStatus = statusMessage;
+      lastPrintedAt = Date.now();
+    } else if (!args.onStatus && Date.now() - lastPrintedAt >= 3000) {
+      console.log(statusMessage);
+      lastPrintedAt = Date.now();
     }
+
     await sleep(200);
-    return poll(nextState);
   }
 
-  return poll({ lastStatus: "", lastPrintedAt: 0 });
+  const recentLogs = tailDaemonLog(args.home, 60);
+  throw new Error(
+    [
+      `Timed out after ${Math.ceil(args.timeoutMs / 1000)}s waiting for daemon readiness.`,
+      recentLogs ? `Recent daemon logs:\n${recentLogs}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  );
 }
 
 function printNextSteps(pairingUrl: string | null, hubcodeHome: string, richUi: boolean): void {
@@ -326,114 +297,14 @@ export function onboardCommand(): Command {
     .option("--no-relay", "Disable relay connection")
     .option("--no-mcp", "Disable the Agent MCP HTTP endpoint")
     .option(
-      "--hostnames <hosts>",
-      'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',
+      "--allowed-hosts <hosts>",
+      'Comma-separated Host allowlist values (example: "localhost,.example.com" or "true")',
     )
-    .addOption(new Option("--allowed-hosts <hosts>").hideHelp())
     .option("--timeout <seconds>", "Max time to wait for daemon readiness (default: 600)")
     .option("--voice <mode>", "Voice setup mode: ask, enable, disable", "ask")
-    .action(async (options: RawOnboardOptions) => {
-      await runOnboard({
-        ...options,
-        hostnames: options.hostnames ?? options.allowedHosts,
-      });
+    .action(async (options: OnboardOptions) => {
+      await runOnboard(options);
     });
-}
-
-async function resolveAndPersistVoice(
-  hubcodeHome: string,
-  options: OnboardOptions,
-): Promise<boolean> {
-  let persisted = loadPersistedConfig(hubcodeHome) as OnboardPersistedConfig;
-  const persistedVoiceSelection = resolvePersistedVoiceSelection(persisted);
-  const shouldPrompt = options.voice === "ask" || options.voice === undefined;
-  let voiceEnabled: boolean;
-  try {
-    voiceEnabled =
-      shouldPrompt && persistedVoiceSelection !== null
-        ? persistedVoiceSelection
-        : await resolveVoiceSelection(options.voice);
-  } catch (error) {
-    if (error instanceof OnboardCancelledError) {
-      cancel("Onboarding cancelled.");
-      process.exit(0);
-    }
-    throw error;
-  }
-
-  if (shouldPrompt && persistedVoiceSelection !== null) {
-    log.message(`Using saved voice setup from config (${voiceEnabled ? "enabled" : "disabled"}).`);
-  }
-
-  persisted = applyVoiceSelection(persisted, voiceEnabled);
-  savePersistedConfig(hubcodeHome, persisted);
-  return voiceEnabled;
-}
-
-async function ensureDaemonStarted(options: OnboardOptions, richUi: boolean): Promise<void> {
-  const stateBeforeStart = resolveLocalDaemonState({ home: options.home });
-  if (stateBeforeStart.running) {
-    log.message(`Daemon already running (PID ${stateBeforeStart.pidInfo?.pid ?? "unknown"}).`);
-    return;
-  }
-
-  const startSpinner = richUi ? spinner() : null;
-  try {
-    if (startSpinner) {
-      startSpinner.start("Starting daemon...");
-    } else {
-      log.message("Starting daemon...");
-    }
-    const startup = await startLocalDaemonDetached(options);
-    if (startSpinner) {
-      startSpinner.stop(`Daemon started (PID ${startup.pid ?? "unknown"})`);
-    } else {
-      log.message(`Daemon started (PID ${startup.pid ?? "unknown"})`);
-    }
-    log.message(`Logs: ${startup.logPath}`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (startSpinner) {
-      startSpinner.error(message);
-    } else {
-      log.error(message);
-    }
-    process.exit(1);
-  }
-}
-
-async function waitForDaemonReadyWithUi(args: {
-  home: string;
-  timeoutMs: number;
-  richUi: boolean;
-}): Promise<{ listen: string; host: string | null }> {
-  const readySpinner = args.richUi ? spinner() : null;
-  try {
-    if (readySpinner) {
-      readySpinner.start("Waiting for daemon to become ready...");
-    } else {
-      log.message("Waiting for daemon to become ready...");
-    }
-    const readyState = await waitForDaemonReady({
-      home: args.home,
-      timeoutMs: args.timeoutMs,
-      onStatus: readySpinner ? (message) => readySpinner.message(message) : undefined,
-    });
-    if (readySpinner) {
-      readySpinner.stop(`Daemon ready on ${readyState.listen}`);
-    } else {
-      log.message(`Daemon ready on ${readyState.listen}`);
-    }
-    return readyState;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (readySpinner) {
-      readySpinner.error(message);
-    } else {
-      log.error(message);
-    }
-    process.exit(1);
-  }
 }
 
 export async function runOnboard(options: OnboardOptions): Promise<void> {
@@ -461,21 +332,96 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
     renderNote(hubcodeHome, "Hubcode home");
   }
 
-  const voiceEnabled = await resolveAndPersistVoice(hubcodeHome, options);
+  let persisted = loadPersistedConfig(hubcodeHome) as OnboardPersistedConfig;
+  const persistedVoiceSelection = resolvePersistedVoiceSelection(persisted);
+  const shouldPrompt = options.voice === "ask" || options.voice === undefined;
+  let voiceEnabled: boolean;
+  try {
+    voiceEnabled =
+      shouldPrompt && persistedVoiceSelection !== null
+        ? persistedVoiceSelection
+        : await resolveVoiceSelection(options.voice);
+  } catch (error) {
+    if (error instanceof OnboardCancelledError) {
+      cancel("Onboarding cancelled.");
+      process.exit(0);
+      return;
+    }
+    throw error;
+  }
+
+  if (shouldPrompt && persistedVoiceSelection !== null) {
+    log.message(`Using saved voice setup from config (${voiceEnabled ? "enabled" : "disabled"}).`);
+  }
+
+  persisted = applyVoiceSelection(persisted, voiceEnabled);
+  savePersistedConfig(hubcodeHome, persisted);
+
   const config = loadConfig(hubcodeHome, { cli: toCliOverrides(options) });
 
-  log.message(
-    voiceEnabled
-      ? "Voice features enabled. Local speech models will be downloaded automatically if missing."
-      : "Voice features disabled. Local speech models will not be downloaded.",
-  );
+  const voiceStatus = voiceEnabled
+    ? "Voice features enabled. Local speech models will be downloaded automatically if missing."
+    : "Voice features disabled. Local speech models will not be downloaded.";
+  log.message(voiceStatus);
 
-  await ensureDaemonStarted(options, richUi);
-  await waitForDaemonReadyWithUi({
-    home: options.home ?? hubcodeHome,
-    timeoutMs,
-    richUi,
-  });
+  const stateBeforeStart = resolveLocalDaemonState({ home: options.home });
+  const startSpinner = richUi ? spinner() : null;
+
+  if (!stateBeforeStart.running) {
+    try {
+      if (startSpinner) {
+        startSpinner.start("Starting daemon...");
+      } else {
+        log.message("Starting daemon...");
+      }
+      const startup = await startLocalDaemonDetached(options);
+      if (startSpinner) {
+        startSpinner.stop(`Daemon started (PID ${startup.pid ?? "unknown"})`);
+      } else {
+        log.message(`Daemon started (PID ${startup.pid ?? "unknown"})`);
+      }
+      log.message(`Logs: ${startup.logPath}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (startSpinner) {
+        startSpinner.error(message);
+      } else {
+        log.error(message);
+      }
+      process.exit(1);
+    }
+  } else {
+    log.message(`Daemon already running (PID ${stateBeforeStart.pidInfo?.pid ?? "unknown"}).`);
+  }
+
+  let readyState: { listen: string; host: string | null };
+  const readySpinner = richUi ? spinner() : null;
+  try {
+    if (readySpinner) {
+      readySpinner.start("Waiting for daemon to become ready...");
+    } else {
+      log.message("Waiting for daemon to become ready...");
+    }
+    readyState = await waitForDaemonReady({
+      home: options.home ?? hubcodeHome,
+      timeoutMs,
+      onStatus: readySpinner ? (message) => readySpinner.message(message) : undefined,
+    });
+    if (readySpinner) {
+      readySpinner.stop(`Daemon ready on ${readyState.listen}`);
+    } else {
+      log.message(`Daemon ready on ${readyState.listen}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (readySpinner) {
+      readySpinner.error(message);
+    } else {
+      log.error(message);
+    }
+    process.exit(1);
+    return;
+  }
 
   if (config.relayEnabled === false) {
     log.warn("Relay is disabled; pairing offer is unavailable for this daemon.");

@@ -9,7 +9,6 @@ import type {
   ScheduleTarget,
 } from "./types.js";
 import { parseDuration } from "../../utils/duration.js";
-import { resolveProviderAndModel } from "../../utils/provider-model.js";
 
 export interface ScheduleCommandOptions extends CommandOptions {
   host?: string;
@@ -59,8 +58,7 @@ export function formatTarget(target: ScheduleTarget | ScheduleListItem["target"]
   if (target.type === "agent") {
     return `agent:${target.agentId.slice(0, 7)}`;
   }
-  const modelSuffix = target.config.model ? `/${target.config.model}` : "";
-  return `new-agent:${target.config.provider}${modelSuffix}`;
+  return `new-agent:${target.config.provider}`;
 }
 
 export function formatDurationMs(durationMs: number): string {
@@ -83,53 +81,12 @@ export function formatDurationMs(durationMs: number): string {
   return parts.join("");
 }
 
-function resolveScheduleTarget(args: {
-  targetValue: string | undefined;
-  hasExplicitProviderSelection: boolean;
-  createNewAgentTarget: () => ScheduleTarget;
-}): ScheduleTarget {
-  const { targetValue, hasExplicitProviderSelection, createNewAgentTarget } = args;
-  const currentAgentId = process.env.HUBCODE_AGENT_ID?.trim();
-
-  if (!targetValue) {
-    if (currentAgentId && !hasExplicitProviderSelection) {
-      return { type: "self", agentId: currentAgentId };
-    }
-    return createNewAgentTarget();
-  }
-
-  if (targetValue === "new-agent") {
-    return createNewAgentTarget();
-  }
-
-  if (hasExplicitProviderSelection) {
-    throw {
-      code: "INVALID_TARGET",
-      message: "--provider can only be used with a new-agent target",
-      details: "Use --target new-agent or omit --target to create a new agent schedule",
-    } satisfies CommandError;
-  }
-
-  if (targetValue === "self") {
-    if (!currentAgentId) {
-      throw {
-        code: "INVALID_TARGET",
-        message: "--target self requires running inside a Hubcode agent",
-      } satisfies CommandError;
-    }
-    return { type: "self", agentId: currentAgentId };
-  }
-
-  return { type: "agent", agentId: targetValue };
-}
-
 export function parseScheduleCreateInput(options: {
   prompt: string;
   every?: string;
   cron?: string;
   name?: string;
   target?: string;
-  provider?: string;
   maxRuns?: string;
   expiresIn?: string;
 }): CreateScheduleInput {
@@ -154,25 +111,34 @@ export function parseScheduleCreateInput(options: {
     : { type: "cron", expression: options.cron!.trim() };
 
   const targetValue = options.target?.trim();
-  const hasExplicitProviderSelection = options.provider !== undefined;
-  const createNewAgentTarget = (): ScheduleTarget => {
-    const resolvedProviderModel = resolveProviderAndModel({
-      provider: options.provider,
-    });
-    return {
+  let target: ScheduleTarget;
+  if (!targetValue || targetValue === "self") {
+    const currentAgentId = process.env.HUBCODE_AGENT_ID?.trim();
+    if (currentAgentId) {
+      target = { type: "self", agentId: currentAgentId };
+    } else {
+      target = {
+        type: "new-agent",
+        config: {
+          provider: "claude",
+          cwd: process.cwd(),
+        },
+      };
+    }
+  } else if (targetValue === "new-agent") {
+    target = {
       type: "new-agent",
       config: {
-        provider: resolvedProviderModel.provider,
+        provider: "claude",
         cwd: process.cwd(),
-        ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
       },
     };
-  };
-  const target = resolveScheduleTarget({
-    targetValue,
-    hasExplicitProviderSelection,
-    createNewAgentTarget,
-  });
+  } else {
+    target = {
+      type: "agent",
+      agentId: targetValue,
+    };
+  }
 
   const maxRuns =
     options.maxRuns === undefined ? undefined : parsePositiveInt(options.maxRuns, "--max-runs");

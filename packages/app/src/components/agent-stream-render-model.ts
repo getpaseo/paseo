@@ -8,40 +8,40 @@ import {
 import {
   orderHeadForStreamRenderStrategy,
   orderTailForStreamRenderStrategy,
+  resolveStreamRenderStrategy,
 } from "./stream-strategy";
-import { resolveStreamRenderStrategy } from "./stream-strategy-resolver";
 
-export interface StreamRenderSegments {
+export type StreamRenderSegments = {
   historyVirtualized: StreamItem[];
   historyMounted: StreamItem[];
   liveHead: StreamItem[];
-}
+};
 
-export interface StreamHistoryBoundary {
+export type StreamHistoryBoundary = {
   hasVirtualizedHistory: boolean;
   hasMountedHistory: boolean;
   hasLiveHead: boolean;
   historyToHeadGap: number;
-}
+};
 
-export interface StreamRenderAuxiliary {
+export type StreamRenderAuxiliary = {
   pendingPermissions: ReactNode;
   workingIndicator: ReactNode;
-}
+};
 
-export interface AgentStreamRenderModel {
+export type AgentStreamRenderModel = {
   history: StreamItem[];
   segments: StreamRenderSegments;
   boundary: StreamHistoryBoundary;
   auxiliary: StreamRenderAuxiliary;
-}
+};
 
-export interface BuildAgentStreamRenderModelInput {
+export type BuildAgentStreamRenderModelInput = {
   tail: StreamItem[];
   head: StreamItem[];
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
-}
+};
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 const EMPTY_AUXILIARY: StreamRenderAuxiliary = {

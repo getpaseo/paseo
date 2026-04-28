@@ -2,11 +2,11 @@ import path from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
-interface LoggerLike {
+type LoggerLike = {
   child(bindings: Record<string, unknown>): LoggerLike;
-  info(...args: unknown[]): void;
-  warn(...args: unknown[]): void;
-}
+  info(...args: any[]): void;
+  warn(...args: any[]): void;
+};
 
 const SERVER_ID_FILENAME = "server-id";
 

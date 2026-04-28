@@ -5,22 +5,23 @@ import {
 } from "../utils/checkout-git.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 
-export const READ_ONLY_GIT_ENV = {
+export const READ_ONLY_GIT_ENV: NodeJS.ProcessEnv = {
+  ...process.env,
   GIT_OPTIONAL_LOCKS: "0",
-} as const;
+};
 
 export type CheckoutErrorCode = "NOT_GIT_REPO" | "NOT_ALLOWED" | "MERGE_CONFLICT" | "UNKNOWN";
 
-export interface CheckoutErrorPayload {
+export type CheckoutErrorPayload = {
   code: CheckoutErrorCode;
   message: string;
-}
+};
 
 export async function resolveCheckoutGitDir(cwd: string): Promise<string | null> {
   try {
     const { stdout } = await runGitCommand(["rev-parse", "--absolute-git-dir"], {
       cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
+      env: READ_ONLY_GIT_ENV,
     });
     const gitDir = stdout.trim();
     return gitDir.length > 0 ? gitDir : null;

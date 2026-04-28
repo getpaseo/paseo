@@ -1,10 +1,13 @@
 // EventTarget polyfill is required for the Flow SDK to work in React Native
 import "event-target-polyfill";
+import { Buffer } from "buffer";
 import { Button, StyleSheet, Text, View } from "react-native";
+import { Platform } from "react-native";
 
 import {
   type MicrophoneDataCallback,
   type VolumeLevelCallback,
+  getMicrophoneModeIOS,
   initialize,
   playPCMData,
   toggleRecording,
@@ -19,27 +22,10 @@ import {
   useFlow,
   useFlowEventListener,
 } from "@speechmatics/flow-client-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useSharedValue } from "react-native-reanimated";
 import { getFlowAPIJwt } from "./auth";
 import VolumeDisplay from "./volume-display";
-
-function resolveFlowStatusText({
-  isConnectedToFlow,
-  isRecording,
-  isConnectingToFlow,
-}: {
-  isConnectedToFlow: boolean;
-  isRecording: boolean;
-  isConnectingToFlow: boolean;
-}): string {
-  if (isConnectedToFlow) {
-    return isRecording
-      ? "I'm ready to listen. Try saying something!"
-      : "Muted. Unmute to start a conversation";
-  }
-  return isConnectingToFlow ? "Connecting..." : "Disconnected";
-}
 
 export default function App() {
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
@@ -220,7 +206,15 @@ export function FlowTest() {
         </View>
       </View>
       <View>
-        <Text>{resolveFlowStatusText({ isConnectedToFlow, isRecording, isConnectingToFlow })}</Text>
+        <Text>
+          {isConnectedToFlow
+            ? isRecording
+              ? "I'm ready to listen. Try saying something!"
+              : "Muted. Unmute to start a conversation"
+            : isConnectingToFlow
+              ? "Connecting..."
+              : "Disconnected"}
+        </Text>
       </View>
       <View style={styles.bottomBar}>
         <View style={styles.buttonContainer}>

@@ -67,6 +67,9 @@ function parseAssistantImageMarkdown(markdown: string): {
 }
 
 function createSourceAliasKey(source: string): string {
+  // Use a compact cache key for data: URLs so the cache doesn't store the
+  // full base64 payload twice (once as key, once as value). (Paseo commit
+  // 4140e64.)
   return `source:${createImageSourceCacheKey(source)}`;
 }
 
@@ -158,6 +161,8 @@ export function setAssistantImageMetadata(
 }
 
 export function extractAssistantImageSources(markdown: string): string[] {
+  // Inline data:image/... URLs are 1-of-a-kind (one per message) — caching
+  // them blows up memory without hit rate to justify. (Paseo commit 4140e64.)
   const shouldCacheParse = !/data:image\//i.test(markdown);
   const cachedParse = shouldCacheParse ? assistantImageParseCache.get(markdown) : undefined;
   if (cachedParse) {

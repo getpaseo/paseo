@@ -15,7 +15,6 @@ export interface ScheduleCreateOptions extends ScheduleCommandOptions {
   cron?: string;
   name?: string;
   target?: string;
-  provider?: string;
   maxRuns?: string;
   expiresIn?: string;
 }
@@ -31,7 +30,6 @@ export async function runCreateCommand(
     cron: options.cron,
     name: options.name,
     target: options.target,
-    provider: options.provider,
     maxRuns: options.maxRuns,
     expiresIn: options.expiresIn,
   });

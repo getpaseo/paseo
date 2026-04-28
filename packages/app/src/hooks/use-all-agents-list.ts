@@ -1,17 +1,19 @@
 import { useCallback, useMemo } from "react";
 import { useHosts } from "@/runtime/host-runtime";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   getHostRuntimeStore,
   useHostRuntimeConnectionStatus,
   useHostRuntimeIsDirectoryLoading,
 } from "@/runtime/host-runtime";
+import { useActiveOrgId } from "@/stores/active-org-store";
 import type { AggregatedAgent, AggregatedAgentsResult } from "@/hooks/use-aggregated-agents";
 
 function toAggregatedAgent(params: {
   source: Agent;
   serverId: string;
   serverLabel: string;
+  isGlobal?: boolean;
 }): AggregatedAgent {
   const source = params.source;
   return {
@@ -30,6 +32,7 @@ function toAggregatedAgent(params: {
     archivedAt: source.archivedAt ?? null,
     createdAt: source.createdAt,
     labels: source.labels,
+    ...(params.isGlobal ? { isGlobal: true } : {}),
   };
 }
 
@@ -38,19 +41,36 @@ function buildAllAgentsList(params: {
   serverId: string;
   serverLabel: string;
   includeArchived: boolean;
+  workspaces?: Map<string, WorkspaceDescriptor> | null;
+  activeOrgId?: string | null;
 }): AggregatedAgent[] {
   const list: AggregatedAgent[] = [];
 
   for (const agent of params.agents) {
-    const aggregated = toAggregatedAgent({
-      source: agent,
-      serverId: params.serverId,
-      serverLabel: params.serverLabel,
-    });
-    if (!params.includeArchived && aggregated.archivedAt) {
+    if (!params.includeArchived && agent.archivedAt) {
       continue;
     }
-    list.push(aggregated);
+    // Decide whether the agent's cwd belongs to the active org. Agents whose
+    // workspace is missing from the org-scoped workspace map (or registered
+    // under a different org) used to be hidden, which made cross-org or
+    // unregistered cwds disappear after auth/org switches even though their
+    // history was on disk. Now we surface them with `isGlobal: true` so the
+    // UI can render a tag, and the user can see/open them.
+    let isGlobal = false;
+    if (params.activeOrgId && params.workspaces) {
+      const workspace = params.workspaces.get(agent.cwd);
+      if (!workspace || workspace.orgId !== params.activeOrgId) {
+        isGlobal = true;
+      }
+    }
+    list.push(
+      toAggregatedAgent({
+        source: agent,
+        serverId: params.serverId,
+        serverLabel: params.serverLabel,
+        isGlobal,
+      }),
+    );
   }
 
   list.sort((left, right) => {
@@ -84,6 +104,10 @@ export function useAllAgentsList(options?: {
   const liveAgents = useSessionStore((state) =>
     serverId ? (state.sessions[serverId]?.agents ?? null) : null,
   );
+  const sessionWorkspaces = useSessionStore((state) =>
+    serverId ? (state.sessions[serverId]?.workspaces ?? null) : null,
+  );
+  const activeOrgId = useActiveOrgId();
   const connectionStatus = useHostRuntimeConnectionStatus(serverId ?? "");
 
   const refreshAll = useCallback(() => {
@@ -103,8 +127,10 @@ export function useAllAgentsList(options?: {
       serverId,
       serverLabel,
       includeArchived,
+      workspaces: sessionWorkspaces,
+      activeOrgId,
     });
-  }, [daemons, includeArchived, liveAgents, serverId]);
+  }, [daemons, includeArchived, liveAgents, serverId, sessionWorkspaces, activeOrgId]);
 
   const isDirectoryLoading = useHostRuntimeIsDirectoryLoading(serverId ?? "");
   const isInitialLoad = isDirectoryLoading && agents.length === 0;

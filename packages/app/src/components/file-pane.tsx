@@ -1,6 +1,5 @@
-import React, { useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
-import Markdown, { MarkdownIt } from "react-native-markdown-display";
+import React, { useCallback, useMemo, useRef } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Image as RNImage,
@@ -13,18 +12,18 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
-import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import {
   highlightCode,
   darkHighlightColors,
   lightHighlightColors,
   type HighlightToken,
   type HighlightStyle,
-} from "@gethubcode/highlight";
+} from "@hubcode/highlight";
 import { lineNumberGutterWidth } from "@/components/code-insets";
-import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
-import { isWeb } from "@/constants/platform";
-import { createMarkdownStyles } from "@/styles/markdown-styles";
+import { getIsElectron, isWeb } from "@/constants/platform";
+import { MonacoFileEditor } from "@/components/monaco-file-editor";
+import { makeDirtyKey, useFileEditorStore } from "@/stores/file-editor-store";
+import { useToast } from "@/contexts/toast-context";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBase64 } from "@/attachments/service";
@@ -44,7 +43,36 @@ interface FilePreviewBodyProps {
   showDesktopWebScrollbar: boolean;
   isMobile: boolean;
   filePath: string;
+  isElectron: boolean;
+  onSave: (content: string) => void;
+  onDirtyChange: (isDirty: boolean) => void;
   imagePreviewUri: string | null;
+}
+
+async function createFilePanePreview(file: ExplorerFile | null): Promise<{
+  file: ExplorerFile | null;
+  imageAttachment: AttachmentMetadata | null;
+}> {
+  if (!file || file.kind !== "image" || !file.content) {
+    return { file, imageAttachment: null };
+  }
+
+  const { content: _content, ...imageFile } = file;
+  const imageAttachment = await persistAttachmentFromBase64({
+    id: createPreviewAttachmentId({
+      base64: file.content,
+      mimeType: file.mimeType ?? "image/png",
+      path: file.path,
+    }),
+    base64: file.content,
+    mimeType: file.mimeType,
+    fileName: getFileNameFromPath(file.path),
+  });
+
+  return {
+    file: imageFile,
+    imageAttachment,
+  };
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -65,34 +93,6 @@ function formatFileSize({ size }: { size: number }): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-async function createFilePanePreview(file: ExplorerFile | null): Promise<{
-  file: ExplorerFile | null;
-  imageAttachment: AttachmentMetadata | null;
-}> {
-  if (!file || file.kind !== "image" || !file.content) {
-    return { file, imageAttachment: null };
-  }
-
-  const { content: _content, ...imageFile } = file;
-  const imageAttachment = await persistAttachmentFromBase64({
-    id: createPreviewAttachmentId({
-      mimeType: file.mimeType ?? "image/png",
-      path: file.path,
-      size: file.size,
-      modifiedAt: file.modifiedAt,
-      contentLength: file.content.length,
-    }),
-    base64: file.content,
-    mimeType: file.mimeType,
-    fileName: getFileNameFromPath(file.path),
-  });
-
-  return {
-    file: imageFile,
-    imageAttachment,
-  };
-}
-
 const CodeLine = React.memo(function CodeLine({
   tokens,
   lineNumber,
@@ -100,42 +100,24 @@ const CodeLine = React.memo(function CodeLine({
   colorMap,
   baseColor,
 }: CodeLineProps) {
-  const gutterStyle = useMemo(() => [codeLineStyles.gutter, { width: gutterWidth }], [gutterWidth]);
-  const gutterTextStyle = useMemo(
-    () => [codeLineStyles.gutterText, { color: baseColor }],
-    [baseColor],
-  );
-  const keyedTokens = useMemo(
-    () => tokens.map((token, index) => ({ key: `${index}-${token.text}`, token })),
-    [tokens],
-  );
   return (
     <View style={codeLineStyles.line}>
-      <View style={gutterStyle}>
-        <Text style={gutterTextStyle}>{String(lineNumber)}</Text>
+      <View style={[codeLineStyles.gutter, { width: gutterWidth }]}>
+        <Text style={[codeLineStyles.gutterText, { color: baseColor }]}>{String(lineNumber)}</Text>
       </View>
-      <Text selectable style={codeLineStyles.lineText}>
-        {keyedTokens.map(({ key, token }) => (
-          <CodeLineToken
-            key={key}
-            color={token.style ? (colorMap[token.style] ?? baseColor) : baseColor}
-            text={token.text}
-          />
+      <Text style={codeLineStyles.lineText}>
+        {tokens.map((token, index) => (
+          <Text
+            key={index}
+            style={{ color: token.style ? (colorMap[token.style] ?? baseColor) : baseColor }}
+          >
+            {token.text}
+          </Text>
         ))}
       </Text>
     </View>
   );
 });
-
-interface CodeLineTokenProps {
-  color: string;
-  text: string;
-}
-
-function CodeLineToken({ color, text }: CodeLineTokenProps) {
-  const style = useMemo(() => ({ color }), [color]);
-  return <Text style={style}>{text}</Text>;
-}
 
 const codeLineStyles = StyleSheet.create((theme) => ({
   line: {
@@ -167,39 +149,33 @@ function FilePreviewBody({
   showDesktopWebScrollbar,
   isMobile,
   filePath,
+  isElectron,
+  onSave,
+  onDirtyChange,
   imagePreviewUri,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
   const isDark = theme.colorScheme === "dark";
   const colorMap = isDark ? darkHighlightColors : lightHighlightColors;
   const baseColor = isDark ? "#c9d1d9" : "#24292f";
-  const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
-  const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
-  const isMarkdownFile = preview?.kind === "text" && isRenderedMarkdownFile(filePath);
 
   const previewScrollRef = useRef<RNScrollView>(null);
-  const webScrollbarStyle = useWebScrollbarStyle();
   const scrollbar = useWebScrollViewScrollbar(previewScrollRef, {
     enabled: showDesktopWebScrollbar,
   });
 
   const highlightedLines = useMemo(() => {
-    if (!preview || preview.kind !== "text" || isMarkdownFile) {
+    if (!preview || preview.kind !== "text") {
       return null;
     }
 
     return highlightCode(preview.content ?? "", filePath);
-  }, [isMarkdownFile, preview, filePath]);
+  }, [preview?.kind, preview?.content, filePath]);
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
     return lineNumberGutterWidth(highlightedLines.length);
   }, [highlightedLines]);
-
-  const imageSource = useMemo(
-    () => (imagePreviewUri ? { uri: imagePreviewUri } : null),
-    [imagePreviewUri],
-  );
 
   if (isLoading && !preview) {
     return (
@@ -218,42 +194,29 @@ function FilePreviewBody({
     );
   }
 
-  if (preview.kind === "text") {
-    if (isMarkdownFile) {
-      return (
-        <View style={styles.previewScrollContainer}>
-          <RNScrollView
-            ref={previewScrollRef}
-            style={styles.previewContent}
-            contentContainerStyle={styles.previewMarkdownScrollContent}
-            onLayout={scrollbar.onLayout}
-            onScroll={scrollbar.onScroll}
-            onContentSizeChange={scrollbar.onContentSizeChange}
-            scrollEventThrottle={16}
-            showsVerticalScrollIndicator={!showDesktopWebScrollbar}
-          >
-            <Markdown style={markdownStyles} markdownit={markdownParser}>
-              {preview.content ?? ""}
-            </Markdown>
-          </RNScrollView>
-          {scrollbar.overlay}
-        </View>
-      );
-    }
+  if (preview.kind === "text" && isElectron) {
+    return (
+      <View style={styles.previewScrollContainer}>
+        <MonacoFileEditor
+          value={preview.content ?? ""}
+          filePath={filePath}
+          isDark={isDark}
+          onSave={onSave}
+          onDirtyChange={onDirtyChange}
+        />
+      </View>
+    );
+  }
 
+  if (preview.kind === "text") {
     const lines = highlightedLines ?? [[{ text: preview.content ?? "", style: null }]];
-    const keyedLines = lines.map((tokens, index) => ({
-      key: `line-${index}`,
-      tokens,
-      lineNumber: index + 1,
-    }));
     const codeLines = (
       <View>
-        {keyedLines.map(({ key, tokens, lineNumber }) => (
+        {lines.map((tokens, index) => (
           <CodeLine
-            key={key}
+            key={index}
             tokens={tokens}
-            lineNumber={lineNumber}
+            lineNumber={index + 1}
             gutterWidth={gutterWidth}
             colorMap={colorMap}
             baseColor={baseColor}
@@ -280,7 +243,6 @@ function FilePreviewBody({
               horizontal
               nestedScrollEnabled
               showsHorizontalScrollIndicator
-              style={webScrollbarStyle}
               contentContainerStyle={styles.previewCodeScrollContent}
             >
               {codeLines}
@@ -301,7 +263,6 @@ function FilePreviewBody({
         </View>
       );
     }
-
     return (
       <View style={styles.previewScrollContainer}>
         <RNScrollView
@@ -315,7 +276,7 @@ function FilePreviewBody({
           showsVerticalScrollIndicator={!showDesktopWebScrollbar}
         >
           <RNImage
-            source={imageSource ?? undefined}
+            source={{ uri: imagePreviewUri }}
             style={styles.previewImage}
             resizeMode="contain"
           />
@@ -344,23 +305,46 @@ export function FilePane({
 }) {
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
+  const isElectron = getIsElectron();
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(filePath), [filePath]);
+  const queryClient = useQueryClient();
+  const setDirty = useFileEditorStore((s) => s.setDirty);
+  const dirtyKey = useMemo(
+    () =>
+      normalizedWorkspaceRoot && normalizedFilePath
+        ? makeDirtyKey(serverId, normalizedWorkspaceRoot, normalizedFilePath)
+        : null,
+    [serverId, normalizedWorkspaceRoot, normalizedFilePath],
+  );
+  const handleDirtyChange = useCallback(
+    (isDirty: boolean) => {
+      if (dirtyKey) setDirty(dirtyKey, isDirty);
+    },
+    [dirtyKey, setDirty],
+  );
 
   const query = useQuery({
     queryKey: ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
     enabled: Boolean(client && normalizedWorkspaceRoot && normalizedFilePath),
     queryFn: async () => {
       if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
-        return { file: null as ExplorerFile | null, error: "Host is not connected" };
+        return {
+          file: null as ExplorerFile | null,
+          imageAttachment: null as AttachmentMetadata | null,
+          error: "Host is not connected",
+        };
       }
       const payload = await client.exploreFileSystem(
         normalizedWorkspaceRoot,
         normalizedFilePath,
         "file",
       );
+      // Persist image file previews as attachments so the renderer reads from
+      // a stable URL (object-URL or file://) instead of holding a huge base64
+      // string in memory. (Paseo commit 4140e64.)
       const preview = await createFilePanePreview(payload.file ?? null);
       return {
         file: preview.file,
@@ -368,9 +352,34 @@ export function FilePane({
         error: payload.error ?? null,
       };
     },
-    staleTime: 5_000,
-    refetchOnMount: true,
+    // Always refetch when the pane mounts with a new file path — cached
+    // content from a previous open was showing stale data when the file had
+    // changed externally (agent edits, git checkout, etc.). (Paseo 0.1.58 fix.)
+    staleTime: 0,
+    refetchOnMount: "always",
   });
+
+  const toast = useToast();
+
+  const writeMutation = useMutation({
+    mutationFn: async (content: string) => {
+      if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
+        throw new Error("Not connected");
+      }
+      const result = await client.writeFile(normalizedWorkspaceRoot, normalizedFilePath, content);
+      if (result.error) throw new Error(result.error);
+    },
+    onSuccess: () => {
+      if (dirtyKey) setDirty(dirtyKey, false);
+      void queryClient.invalidateQueries({
+        queryKey: ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
+      });
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to save: ${error.message}`);
+    },
+  });
+
   const imagePreviewUri = useAttachmentPreviewUrl(query.data?.imageAttachment ?? null);
 
   return (
@@ -387,6 +396,9 @@ export function FilePane({
         showDesktopWebScrollbar={showDesktopWebScrollbar}
         isMobile={isMobile}
         filePath={filePath}
+        isElectron={isElectron}
+        onSave={writeMutation.mutate}
+        onDirtyChange={handleDirtyChange}
         imagePreviewUri={imagePreviewUri}
       />
     </View>
@@ -434,9 +446,6 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   previewCodeScrollContent: {
-    padding: theme.spacing[4],
-  },
-  previewMarkdownScrollContent: {
     padding: theme.spacing[4],
   },
   previewImageScrollContent: {

@@ -94,7 +94,7 @@ function expectNoShortcutResolution(input: {
   expect(result.nextChordState).toEqual(initialChordState());
 }
 
-interface MatchingShortcutCase {
+type MatchingShortcutCase = {
   name: string;
   event: Partial<KeyboardEvent>;
   context?: Partial<KeyboardShortcutContext>;
@@ -102,22 +102,22 @@ interface MatchingShortcutCase {
   payload?: unknown;
   preventDefault?: boolean;
   stopPropagation?: boolean;
-}
+};
 
-interface NonMatchingShortcutCase {
+type NonMatchingShortcutCase = {
   name: string;
   event: Partial<KeyboardEvent>;
   context?: Partial<KeyboardShortcutContext>;
-}
+};
 
-interface HelpSectionCase {
+type HelpSectionCase = {
   name: string;
   context: {
     isMac: boolean;
     isDesktop: boolean;
   };
   expectedKeys: Record<string, string[]>;
-}
+};
 
 describe("keyboard-shortcuts", () => {
   const matchingCases: MatchingShortcutCase[] = [
@@ -280,28 +280,33 @@ describe("keyboard-shortcuts", () => {
       payload: { kind: "voice-mute-toggle" },
     },
     {
-      name: "routes Escape to agent interrupt outside terminal focus",
+      name: "lets Escape continue to local handlers while routing dictation cancel",
       event: { key: "Escape", code: "Escape" },
       context: { focusScope: "message-input" },
-      action: "agent.interrupt",
+      action: "message-input.action",
+      payload: { kind: "dictation-cancel" },
       preventDefault: false,
       stopPropagation: false,
     },
   ];
 
-  it.each(matchingCases)(
-    "$name",
-    ({ event, context, action, payload, preventDefault, stopPropagation }) => {
-      expectShortcutResolution({
-        event,
-        context,
-        action,
-        ...(payload !== undefined ? { payload } : {}),
-        ...(preventDefault !== undefined ? { preventDefault } : {}),
-        ...(stopPropagation !== undefined ? { stopPropagation } : {}),
-      });
-    },
-  );
+  it.each(matchingCases)("$name", ({
+    event,
+    context,
+    action,
+    payload,
+    preventDefault,
+    stopPropagation,
+  }) => {
+    expectShortcutResolution({
+      event,
+      context,
+      action,
+      ...(payload !== undefined ? { payload } : {}),
+      ...(preventDefault !== undefined ? { preventDefault } : {}),
+      ...(stopPropagation !== undefined ? { stopPropagation } : {}),
+    });
+  });
 
   const nonMatchingCases: NonMatchingShortcutCase[] = [
     {
@@ -347,16 +352,6 @@ describe("keyboard-shortcuts", () => {
       name: "does not route message-input actions when terminal is focused",
       event: { key: "d", code: "KeyD", metaKey: true },
       context: { isMac: true, focusScope: "terminal" },
-    },
-    {
-      name: "does not interrupt agent when terminal is focused",
-      event: { key: "Escape", code: "Escape" },
-      context: { focusScope: "terminal" },
-    },
-    {
-      name: "does not interrupt agent when command center is open",
-      event: { key: "Escape", code: "Escape" },
-      context: { commandCenterOpen: true },
     },
     {
       name: "does not bind pane shortcuts on non-mac platforms",
@@ -481,11 +476,10 @@ describe("keyboard-shortcut help sections", () => {
       },
     },
     {
-      name: "uses mod+b for the left sidebar and mod+period for both sidebars on non-mac",
+      name: "uses mod+b as non-mac left sidebar shortcut",
       context: { isMac: false, isDesktop: false },
       expectedKeys: {
         "toggle-left-sidebar": ["mod", "B"],
-        "toggle-both-sidebars": ["mod", "."],
       },
     },
   ];

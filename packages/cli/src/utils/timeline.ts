@@ -1,9 +1,9 @@
-import type { AgentTimelineItem, DaemonClient } from "@gethubcode/server";
+import type { AgentTimelineItem, DaemonClient } from "@hubcode/server";
 
-interface FetchProjectedTimelineItemsInput {
+type FetchProjectedTimelineItemsInput = {
   client: DaemonClient;
   agentId: string;
-}
+};
 
 export async function fetchProjectedTimelineItems(
   input: FetchProjectedTimelineItemsInput,

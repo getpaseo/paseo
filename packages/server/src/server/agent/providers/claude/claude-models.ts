@@ -7,28 +7,21 @@ const CLAUDE_THINKING_OPTIONS = [
   { id: "max", label: "Max" },
 ] as const;
 
-const CLAUDE_OPUS_4_7_THINKING_OPTIONS = [
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "Extra High" },
-  { id: "max", label: "Max" },
-] as const;
-
 const CLAUDE_MODELS: AgentModelDefinition[] = [
   {
     provider: "claude",
     id: "claude-opus-4-7[1m]",
     label: "Opus 4.7 1M",
     description: "Opus 4.7 with 1M context window",
-    thinkingOptions: [...CLAUDE_OPUS_4_7_THINKING_OPTIONS],
+    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
   },
   {
     provider: "claude",
     id: "claude-opus-4-7",
     label: "Opus 4.7",
-    description: "Opus 4.7 · Latest release",
-    thinkingOptions: [...CLAUDE_OPUS_4_7_THINKING_OPTIONS],
+    description: "Opus 4.7 · Latest Opus, most capable for complex work",
+    isDefault: true,
+    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
   },
   {
     provider: "claude",
@@ -41,8 +34,7 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
     provider: "claude",
     id: "claude-opus-4-6",
     label: "Opus 4.6",
-    description: "Opus 4.6 · Most capable for complex work",
-    isDefault: true,
+    description: "Opus 4.6 · Previous Opus generation",
     thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
   },
   {

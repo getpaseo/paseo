@@ -1,6 +1,18 @@
 import { promises as fs } from "fs";
+import os from "node:os";
 import path from "path";
-import { resolvePathFromBase } from "../path-utils.js";
+
+/**
+ * Expand a leading `~` to the user's home directory. Node's `path.resolve`
+ * does NOT expand tildes, so a client-provided `~/foo.png` gets resolved
+ * against CWD and fails. Used to make assistant-authored image paths with
+ * tilde prefixes load on the desktop daemon. (Paseo 0.1.60 fix.)
+ */
+function expandTilde(value: string): string {
+  if (value === "~") return os.homedir();
+  if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
+  return value;
+}
 
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
@@ -14,6 +26,12 @@ export interface ListDirectoryParams {
 export interface ReadFileParams {
   root: string;
   relativePath: string;
+}
+
+export interface WriteFileParams {
+  root: string;
+  relativePath: string;
+  content: string;
 }
 
 export interface FileExplorerEntry {
@@ -164,6 +182,40 @@ export async function readExplorerFile({
   };
 }
 
+export async function writeExplorerFile({
+  root,
+  relativePath,
+  content,
+}: WriteFileParams): Promise<void> {
+  const filePath = await resolveScopedPath({ root, relativePath });
+  await fs.writeFile(filePath, content, "utf-8");
+}
+
+export async function renameExplorerEntry({
+  root,
+  oldRelativePath,
+  newRelativePath,
+}: {
+  root: string;
+  oldRelativePath: string;
+  newRelativePath: string;
+}): Promise<void> {
+  const oldPath = await resolveScopedPath({ root, relativePath: oldRelativePath });
+  const newPath = await resolveScopedPath({ root, relativePath: newRelativePath });
+  await fs.rename(oldPath, newPath);
+}
+
+export async function deleteExplorerEntry({
+  root,
+  relativePath,
+}: {
+  root: string;
+  relativePath: string;
+}): Promise<void> {
+  const targetPath = await resolveScopedPath({ root, relativePath });
+  await fs.rm(targetPath, { recursive: true, force: true });
+}
+
 export async function getDownloadableFileInfo({ root, relativePath }: ReadFileParams): Promise<{
   path: string;
   absolutePath: string;
@@ -207,8 +259,8 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
 }
 
 async function resolveScopedPath({ root, relativePath = "." }: ScopedPathParams): Promise<string> {
-  const normalizedRoot = path.resolve(root);
-  const requestedPath = resolvePathFromBase(normalizedRoot, relativePath);
+  const normalizedRoot = path.resolve(expandTilde(root));
+  const requestedPath = path.resolve(normalizedRoot, expandTilde(relativePath));
   const relative = path.relative(normalizedRoot, requestedPath);
 
   if (relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative))) {

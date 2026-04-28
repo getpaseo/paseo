@@ -9,10 +9,6 @@ let
   cfg = config.services.hubcode;
 in
 {
-  imports = [
-    (lib.mkRenamedOptionModule [ "services" "hubcode" "allowedHosts" ] [ "services" "hubcode" "hostnames" ])
-  ];
-
   options.services.hubcode = {
     enable = lib.mkEnableOption "Hubcode, a self-hosted daemon for AI coding agents";
 
@@ -62,12 +58,12 @@ in
       description = "Whether to open the firewall for the Hubcode daemon port.";
     };
 
-    hostnames = lib.mkOption {
+    allowedHosts = lib.mkOption {
       type = lib.types.either (lib.types.enum [ true ]) (lib.types.listOf lib.types.str);
       default = [ ];
       example = [ ".example.com" "myhost.local" ];
       description = ''
-        Hostnames the Hubcode daemon accepts in the Host header (DNS rebinding protection).
+        Hosts allowed to connect to the Hubcode daemon (DNS rebinding protection).
         Localhost and IP addresses are always allowed by default.
 
         Use a leading dot to match a domain and all its subdomains
@@ -145,10 +141,10 @@ in
           "/run/wrappers/bin"
           "/nix/var/nix/profiles/default/bin"
         ]);
-      } // lib.optionalAttrs (cfg.hostnames == true) {
-        HUBCODE_HOSTNAMES = "true";
-      } // lib.optionalAttrs (lib.isList cfg.hostnames && cfg.hostnames != [ ]) {
-        HUBCODE_HOSTNAMES = lib.concatStringsSep "," cfg.hostnames;
+      } // lib.optionalAttrs (cfg.allowedHosts == true) {
+        HUBCODE_ALLOWED_HOSTS = "true";
+      } // lib.optionalAttrs (lib.isList cfg.allowedHosts && cfg.allowedHosts != [ ]) {
+        HUBCODE_ALLOWED_HOSTS = lib.concatStringsSep "," cfg.allowedHosts;
       } // cfg.environment;
 
       serviceConfig = {

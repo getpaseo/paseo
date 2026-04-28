@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 
@@ -8,48 +8,40 @@ dotenv.config({
 });
 
 const daemonRunnerEntry = fileURLToPath(new URL("./supervisor-entrypoint.ts", import.meta.url));
-const inspectArg = process.env.HUBCODE_NODE_INSPECT ?? "--inspect";
-const inspectArgs =
-  inspectArg === "0" || inspectArg === "false" || inspectArg === "off" ? [] : [inspectArg];
 
-const supervisorArgs = [
-  ...inspectArgs,
-  "--heapsnapshot-near-heap-limit=3",
-  "--max-old-space-size=3072",
-  "--report-on-fatalerror",
-  "--report-directory=/tmp/hubcode-reports",
-  ...process.execArgv,
-  daemonRunnerEntry,
-  "--dev",
-  ...process.argv.slice(2),
-];
+// Default heap is 3GB; large repos with the in-process Hubcode Local
+// embedding model (Xenova/BGE) easily push past that and get OOM-killed.
+// Override via HUBCODE_NODE_HEAP_MB (default raised to 6GB).
+const heapMb = (() => {
+  const env = Number.parseInt(process.env.HUBCODE_NODE_HEAP_MB ?? "", 10);
+  return Number.isFinite(env) && env > 0 ? env : 6144;
+})();
 
-const supervisor = spawn(process.execPath, supervisorArgs, {
-  stdio: "inherit",
-  env: process.env,
-});
+const result = spawnSync(
+  process.execPath,
+  [
+    "--inspect",
+    "--heapsnapshot-near-heap-limit=3",
+    `--max-old-space-size=${heapMb}`,
+    // Lets `hubcode-local-inference` trigger periodic synchronous GC to keep
+    // RSS flat across thousands of embedding batches (extractor caches grow
+    // monotonically without it).
+    "--expose-gc",
+    "--report-on-fatalerror",
+    "--report-directory=/tmp/hubcode-reports",
+    ...process.execArgv,
+    daemonRunnerEntry,
+    "--dev",
+    ...process.argv.slice(2),
+  ],
+  {
+    stdio: "inherit",
+    env: process.env,
+  },
+);
 
-function exitCodeForSignal(signal: NodeJS.Signals): number {
-  return signal === "SIGINT" ? 130 : 1;
+if (result.error) {
+  throw result.error;
 }
 
-function forwardSignal(signal: NodeJS.Signals): void {
-  if (supervisor.exitCode !== null || supervisor.signalCode !== null || supervisor.killed) {
-    return;
-  }
-  supervisor.kill(signal);
-}
-
-// The supervisor handles SIGINT/SIGTERM itself and needs time to drain the
-// worker gracefully. Keep this wrapper alive until the supervisor exits so npm
-// does not release the shell while the daemon is still logging final shutdown.
-process.on("SIGINT", () => forwardSignal("SIGINT"));
-process.on("SIGTERM", () => forwardSignal("SIGTERM"));
-
-supervisor.on("error", (error) => {
-  throw error;
-});
-
-supervisor.on("exit", (code, signal) => {
-  process.exit(code ?? (signal ? exitCodeForSignal(signal) : 1));
-});
+process.exit(result.status ?? 1);

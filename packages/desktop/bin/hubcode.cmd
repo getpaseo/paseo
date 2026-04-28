@@ -10,6 +10,5 @@ if not exist "%APP_EXECUTABLE%" (
 )
 
 set "ELECTRON_RUN_AS_NODE=1"
-set "HUBCODE_NODE_ENV=production"
-"%APP_EXECUTABLE%" --disable-warning=DEP0040 "%RESOURCES_DIR%\app.asar.unpacked\dist\daemon\node-entrypoint-runner.js" node-script "%RESOURCES_DIR%\app.asar\node_modules\@gethubcode\cli\dist\index.js" %*
+"%APP_EXECUTABLE%" --disable-warning=DEP0040 "%RESOURCES_DIR%\app.asar.unpacked\dist\daemon\node-entrypoint-runner.js" node-script "%RESOURCES_DIR%\app.asar\node_modules\@hubcode\cli\dist\index.js" %*
 exit /b %errorlevel%

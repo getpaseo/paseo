@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { vi } from "vitest";
 
-const globalWithTestShims = globalThis as typeof globalThis & Record<string, unknown>;
+const globalWithTestShims = globalThis as typeof globalThis & Record<string, any>;
 
 globalWithTestShims.__DEV__ = false;
 
@@ -64,9 +64,7 @@ vi.mock("react-native-unistyles", () => ({
 }));
 
 vi.mock("@xterm/addon-ligatures", () => ({
-  LigaturesAddon: class LigaturesAddon {
-    dispose(): void {}
-  },
+  LigaturesAddon: class LigaturesAddon {},
 }));
 
 vi.mock("react-native-svg", () => {

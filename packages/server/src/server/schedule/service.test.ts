@@ -7,11 +7,6 @@ import { AgentStorage } from "../agent/agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ScheduleService } from "./service.js";
-import type { StoredSchedule, ScheduleExecutionResult } from "./types.js";
-
-interface ScheduleServiceInternals {
-  executeSchedule(schedule: StoredSchedule): Promise<ScheduleExecutionResult>;
-}
 
 describe("ScheduleService", () => {
   let tempDir: string;
@@ -269,63 +264,5 @@ describe("ScheduleService", () => {
     expect(inspected.nextRunAt).toBeNull();
     expect(inspected.runs).toHaveLength(1);
     expect(inspected.runs[0]?.status).toBe("succeeded");
-  });
-
-  test("rejects archived target agents before loading them", async () => {
-    const manager = new AgentManager({ logger: createTestLogger() });
-    const service = new ScheduleService({
-      hubcodeHome: tempDir,
-      logger: createTestLogger(),
-      agentManager: manager,
-      agentStorage,
-      now: () => now,
-    });
-
-    await agentStorage.upsert({
-      id: "archived-agent",
-      provider: "claude",
-      cwd: tempDir,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      lastActivityAt: now.toISOString(),
-      lastUserMessageAt: null,
-      title: "Archived Agent",
-      labels: {},
-      lastStatus: "closed",
-      lastModeId: "default",
-      config: {
-        modeId: "default",
-      },
-      runtimeInfo: null,
-      features: [],
-      persistence: null,
-      requiresAttention: false,
-      attentionReason: null,
-      attentionTimestamp: null,
-      internal: false,
-      archivedAt: "2026-01-02T00:00:00.000Z",
-    });
-
-    await expect(
-      (service as unknown as ScheduleServiceInternals).executeSchedule({
-        id: "schedule-1",
-        name: null,
-        prompt: "Check archived agent",
-        cadence: { type: "every", everyMs: 60_000 },
-        target: {
-          type: "agent",
-          agentId: "archived-agent",
-        },
-        status: "active",
-        createdAt: now.toISOString(),
-        updatedAt: now.toISOString(),
-        nextRunAt: now.toISOString(),
-        lastRunAt: null,
-        pausedAt: null,
-        expiresAt: null,
-        maxRuns: null,
-        runs: [],
-      }),
-    ).rejects.toThrow("Agent archived-agent is archived");
   });
 });

@@ -280,7 +280,7 @@ describe("claude tool-call mapper", () => {
         name: "Grep",
         input: {
           pattern: '\\\\\\"cli\\\\\\""',
-          path: "/Users/moboudra/dev/hubcode/packages/desktop/src",
+          path: "/tmp/hubcode/packages/desktop/src",
           output_mode: "content",
           "-n": true,
         },
@@ -307,25 +307,6 @@ describe("claude tool-call mapper", () => {
       numFiles: 1,
       numMatches: 1,
       mode: "content",
-    });
-  });
-
-  it("maps Grep calls when output arrives as the claude-agent string wrapper", () => {
-    const item = expectMapped(
-      mapClaudeCompletedToolCall({
-        callId: "claude-grep-string-1",
-        name: "Grep",
-        input: { pattern: "MaskedView", output_mode: "files_with_matches" },
-        output: { output: "Found 2 files\nsrc/foo.tsx\nsrc/bar.tsx" },
-      }),
-    );
-
-    expect(item.detail).toEqual({
-      type: "search",
-      query: "MaskedView",
-      toolName: "grep",
-      content: "Found 2 files\nsrc/foo.tsx\nsrc/bar.tsx",
-      numFiles: 0,
     });
   });
 
