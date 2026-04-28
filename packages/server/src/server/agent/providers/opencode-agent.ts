@@ -99,6 +99,10 @@ type OpenCodeMcpConfig =
 
 const MCP_ALREADY_PRESENT_ERROR_TOKENS = ["already", "exists", "connected"] as const;
 const OPENCODE_PROVIDER_LIST_TIMEOUT_MS = 30_000;
+const OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS: AgentSlashCommand[] = [
+  { name: "compact", description: "Compact the current session", argumentHint: "" },
+  { name: "summarize", description: "Compact the current session", argumentHint: "" },
+];
 const OPENCODE_FATAL_RETRY_MESSAGE_TOKENS = [
   "insufficient balance",
   "no resource package",
@@ -2035,6 +2039,44 @@ class OpenCodeAgentSession implements AgentSession {
 
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (slashCommand) {
+      if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
+        void this.client.session
+          .summarize({
+            sessionID: this.sessionId,
+            directory: this.config.cwd,
+            ...(model ? { providerID: model.providerID, modelID: model.modelID } : {}),
+          })
+          .then((response) => {
+            if (response.error) {
+              this.finishForegroundTurn(
+                {
+                  type: "turn_failed",
+                  provider: "opencode",
+                  error: toDiagnosticErrorMessage(response.error),
+                },
+                turnId,
+              );
+            } else {
+              this.finishForegroundTurn(
+                { type: "turn_completed", provider: "opencode", usage: undefined },
+                turnId,
+              );
+            }
+            return;
+          })
+          .catch((error) => {
+            this.finishForegroundTurn(
+              {
+                type: "turn_failed",
+                provider: "opencode",
+                error: toDiagnosticErrorMessage(error),
+              },
+              turnId,
+            );
+          });
+        return { turnId };
+      }
+
       // command() blocks until the server finishes processing. OpenCode's SSE
       // endpoint does NOT replay past events, so if the command completes before
       // our SSE reader connects, we miss `session.idle` and the turn hangs.
@@ -2386,14 +2428,22 @@ class OpenCodeAgentSession implements AgentSession {
     const result = await this.client.command.list({
       directory: this.config.cwd,
     });
+
+    const commandsByName = new Map(
+      OPENCODE_HANDLED_BUILTIN_SLASH_COMMANDS.map((command) => [command.name, command]),
+    );
     if (result.error || !result.data) {
-      return [];
+      return Array.from(commandsByName.values());
     }
-    return result.data.map((cmd) => ({
-      name: cmd.name,
-      description: cmd.description ?? "",
-      argumentHint: cmd.hints?.length ? cmd.hints.join(" ") : "",
-    }));
+
+    for (const cmd of result.data) {
+      commandsByName.set(cmd.name, {
+        name: cmd.name,
+        description: cmd.description ?? "",
+        argumentHint: cmd.hints?.length ? cmd.hints.join(" ") : "",
+      });
+    }
+    return Array.from(commandsByName.values());
   }
 
   async setMode(modeId: string): Promise<void> {

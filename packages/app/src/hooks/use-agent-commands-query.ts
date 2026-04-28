@@ -58,7 +58,7 @@ export function useAgentCommandsQuery({
       const response = await client.listCommands(agentId, { draftConfig });
       return response.commands as AgentSlashCommand[];
     },
-    enabled: enabled && !!client && isConnected && !!agentId,
+    enabled: enabled && !!client && isConnected && (!!agentId || !!draftConfig),
     staleTime: COMMANDS_STALE_TIME,
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
