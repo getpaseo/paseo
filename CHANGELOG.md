@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.64 - 2026-04-28
+
+### Added
+
+- OpenCode now has a Full Access mode that auto-approves tool calls. ([#595](https://github.com/getpaseo/paseo/pull/595) by [@tmih06](https://github.com/tmih06))
+- OpenCode supports executable slash commands. ([#597](https://github.com/getpaseo/paseo/pull/597) by [@tmih06](https://github.com/tmih06))
+
+### Improved
+
+- `@`-mention stays responsive on very large projects. ([#600](https://github.com/getpaseo/paseo/pull/600) by [@yuruiz](https://github.com/yuruiz))
+
+### Fixed
+
+- Workspaces still load when `paseo.json` has a parse error.
+
 ## 0.1.63 - 2026-04-28
 
 ### Added

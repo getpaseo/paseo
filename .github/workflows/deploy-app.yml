@@ -24,7 +24,7 @@ jobs:
           scope: "@boudra"
 
       - name: Install dependencies
-        run: npm install --workspace=@getpaseo/app --include-workspace-root
+        run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

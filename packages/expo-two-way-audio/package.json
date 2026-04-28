@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/expo-two-way-audio",
-  "version": "0.1.63",
+  "version": "0.1.64",
   "description": "Native module for two way audio streaming",
   "keywords": [
     "ExpoTwoWayAudio",

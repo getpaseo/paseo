@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import * as pty from "node-pty";
 import stripAnsi from "strip-ansi";
 import { buildStringCommandShellInvocation } from "./string-command-shell.js";
-import { readPaseoConfigJson } from "./paseo-config-file.js";
+import { readPaseoConfigJson, resolvePaseoConfigPath } from "./paseo-config-file.js";
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -197,31 +197,35 @@ export class UnknownBranchError extends Error {
   }
 }
 
-export function readPaseoConfig(repoRoot: string): PaseoConfig | null {
+export type ReadPaseoConfigResult =
+  | { ok: true; config: PaseoConfig | null }
+  | { ok: false; configPath: string; error: unknown };
+
+export function readPaseoConfig(repoRoot: string): ReadPaseoConfigResult {
   try {
     const json = readPaseoConfigJson(repoRoot);
     if (json === null) {
-      return null;
+      return { ok: true, config: null };
     }
-    return PaseoConfigSchema.parse(json);
-  } catch {
-    throw new Error(`Failed to parse paseo.json`);
+    return { ok: true, config: PaseoConfigSchema.parse(json) };
+  } catch (error) {
+    return { ok: false, configPath: resolvePaseoConfigPath(repoRoot), error };
   }
 }
 
 export function getWorktreeSetupCommands(repoRoot: string): string[] {
-  const config = readPaseoConfig(repoRoot);
-  return config?.worktree?.setup ?? [];
+  const result = readPaseoConfig(repoRoot);
+  return result.ok ? (result.config?.worktree?.setup ?? []) : [];
 }
 
 export function getWorktreeTeardownCommands(repoRoot: string): string[] {
-  const config = readPaseoConfig(repoRoot);
-  return config?.worktree?.teardown ?? [];
+  const result = readPaseoConfig(repoRoot);
+  return result.ok ? (result.config?.worktree?.teardown ?? []) : [];
 }
 
 export function getWorktreeTerminalSpecs(repoRoot: string): WorktreeTerminalConfig[] {
-  const config = readPaseoConfig(repoRoot);
-  const terminals = config?.worktree?.terminals;
+  const result = readPaseoConfig(repoRoot);
+  const terminals = result.ok ? result.config?.worktree?.terminals : undefined;
   if (!Array.isArray(terminals) || terminals.length === 0) {
     return [];
   }
@@ -254,8 +258,7 @@ export function getWorktreeTerminalSpecs(repoRoot: string): WorktreeTerminalConf
   return specs;
 }
 
-export function getScriptConfigs(repoRoot: string): Map<string, ScriptConfig> {
-  const config = readPaseoConfig(repoRoot);
+export function getScriptConfigs(config: PaseoConfig | null): Map<string, ScriptConfig> {
   const scripts = config?.scripts;
   if (!scripts || typeof scripts !== "object") {
     return new Map();

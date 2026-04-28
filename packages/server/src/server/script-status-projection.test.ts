@@ -11,6 +11,9 @@ import {
 import { WorkspaceScriptPayloadSchema } from "../shared/messages.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import { readPaseoConfig } from "../utils/worktree.js";
+import type { PaseoConfig } from "../utils/paseo-config-schema.js";
+import { createTestLogger } from "../test-utils/test-logger.js";
 
 function createWorkspaceRepo(options?: {
   branchName?: string;
@@ -41,13 +44,21 @@ function createWorkspaceRepo(options?: {
 function buildPayloads(input: {
   workspaceId: string;
   workspaceDirectory: string;
+  paseoConfig?: PaseoConfig | null;
   routeStore: ScriptRouteStore;
   runtimeStore: WorkspaceScriptRuntimeStore;
   daemonPort: number | null;
   gitMetadata?: { projectSlug: string; currentBranch: string | null };
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
 }) {
-  return buildWorkspaceScriptPayloads(input);
+  const paseoConfig =
+    input.paseoConfig !== undefined ? input.paseoConfig : loadConfig(input.workspaceDirectory);
+  return buildWorkspaceScriptPayloads({ ...input, paseoConfig });
+}
+
+function loadConfig(repoRoot: string): PaseoConfig | null {
+  const result = readPaseoConfig(repoRoot);
+  return result.ok ? result.config : null;
 }
 
 describe("script-status-projection", () => {
@@ -369,6 +380,67 @@ describe("script-status-projection", () => {
     }
   });
 
+  it("readPaseoConfig fails with configPath and error when paseo.json is malformed", () => {
+    const workspace = createWorkspaceRepo();
+    const configPath = path.join(workspace.repoDir, "paseo.json");
+    writeFileSync(
+      configPath,
+      '{\n<<<<<<< HEAD\n  "scripts": {}\n=======\n  "scripts": {}\n>>>>>>> origin/main\n}\n',
+    );
+
+    try {
+      const result = readPaseoConfig(workspace.repoDir);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.configPath).toBe(configPath);
+      expect(result.error).toBeInstanceOf(SyntaxError);
+    } finally {
+      workspace.cleanup();
+    }
+  });
+
+  it("buildWorkspaceScriptPayloads given paseoConfig=null still surfaces orphaned runtime scripts", () => {
+    const workspaceId = "workspace-null-config";
+    const workspace = createWorkspaceRepo();
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    runtimeStore.set({
+      workspaceId,
+      scriptName: "typecheck",
+      type: "script",
+      lifecycle: "running",
+      terminalId: "term-typecheck",
+      exitCode: null,
+    });
+
+    try {
+      expect(
+        buildPayloads({
+          workspaceId,
+          workspaceDirectory: workspace.repoDir,
+          paseoConfig: null,
+          routeStore,
+          runtimeStore,
+          daemonPort: 6767,
+        }),
+      ).toEqual([
+        {
+          scriptName: "typecheck",
+          type: "script",
+          hostname: "typecheck",
+          port: null,
+          proxyUrl: null,
+          lifecycle: "running",
+          health: null,
+          exitCode: null,
+          terminalId: "term-typecheck",
+        },
+      ]);
+    } finally {
+      workspace.cleanup();
+    }
+  });
+
   it("createScriptStatusEmitter overlays health onto the projected workspace script list", async () => {
     const workspaceId = "workspace-emitter";
     const workspace = createWorkspaceRepo({
@@ -405,6 +477,7 @@ describe("script-status-projection", () => {
       daemonPort: 6767,
       resolveWorkspaceDirectory: async (requestedWorkspaceId) =>
         requestedWorkspaceId === "workspace-emitter" ? workspace.repoDir : null,
+      logger: createTestLogger(),
     });
 
     try {

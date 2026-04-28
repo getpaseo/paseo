@@ -8,6 +8,7 @@ import {
   getWorktreeTerminalSpecs,
   isServiceScript,
   processCarriageReturns,
+  readPaseoConfig,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   WorktreeSetupError,
@@ -832,7 +833,13 @@ export async function spawnWorkspaceScript(
     logger,
     onLifecycleChanged,
   } = options;
-  const scriptConfigs = getScriptConfigs(repoRoot);
+  const configResult = readPaseoConfig(repoRoot);
+  if (!configResult.ok) {
+    throw new Error(`Failed to parse ${configResult.configPath}`, {
+      cause: configResult.error,
+    });
+  }
+  const scriptConfigs = getScriptConfigs(configResult.config);
   const config = scriptConfigs.get(scriptName);
   if (!config) {
     throw new Error(`Script '${scriptName}' is not configured in paseo.json`);

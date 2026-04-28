@@ -69,11 +69,31 @@ The rollout is driven by a `rolloutHours` field stamped into the GitHub Release 
 
 `npm run release:patch` → tag push → 24h ramp. No extra action needed.
 
+The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 24. To get any other rollout duration on a fresh release, use the post-publish flip below.
+
+### Instant-admit release (rollout_hours=0 from publish)
+
+For a fresh release that should admit everyone immediately (low-risk change, doc-only, hotfix, or just a release you want out fast), cut the release normally and queue the rollout flip immediately after:
+
+```bash
+# 1. Cut and publish (default 24h ramp from tag push).
+npm run release:patch
+
+# 2. Immediately queue the flip — runs as soon as finalize-rollout completes.
+gh workflow run desktop-rollout.yml \
+  -f tag=v0.1.64 \
+  -f rollout_hours=0
+```
+
+**Why this is gap-free:** `desktop-release.yml`'s `finalize-rollout` job and `desktop-rollout.yml` share the concurrency group `desktop-rollout-<tag>`. Dispatching `desktop-rollout.yml` while the tag-push pipeline is still running queues it safely behind `finalize-rollout`. The release manifest goes from `rolloutHours=24` to `rolloutHours=0` within ~30s of publish, and the renderer polls every 30 minutes — so no stable user can admit during the gap.
+
+Run the dispatch right after `release:patch` returns. Don't wait for the tag-push CI to finish.
+
 ### Adjusting an already-published release
 
 To change the rollout duration on a release that's already shipped — e.g. flip a hotfix to instant admit, or slow a release down — use the dedicated `desktop-rollout.yml` workflow. It edits the manifests in place on the GitHub release without rebuilding anything. It only rewrites `rolloutHours`; `releaseDate` is preserved, so the rollout clock keeps ticking from the original publish time.
 
-**Hotfix (instant admit):**
+**Hotfix (instant admit) on an already-shipped release:**
 
 ```bash
 gh workflow run desktop-rollout.yml \
@@ -93,17 +113,19 @@ gh workflow run desktop-rollout.yml \
 
 `rollout_hours` is **total duration since the original release date**, not "extend by N more hours from now." If `v0.1.42` was published 2h ago and you set `rollout_hours=72`, the ramp finishes 70h from now.
 
-The dispatch is idempotent and shares a concurrency group with `desktop-release.yml`'s `finalize-rollout` job keyed on the tag, so it serializes safely against an in-flight tag-push pipeline targeting the same release.
+The dispatch is idempotent and shares the `desktop-rollout-<tag>` concurrency group with `desktop-release.yml`'s `finalize-rollout` job, so it serializes safely against an in-flight tag-push pipeline targeting the same release.
 
-### Faster ramp at release time
+### Custom ramp on a manually-dispatched build
 
-For low-risk changes (doc-only, dependency bumps with no behavior change), trigger `desktop-release.yml` manually with a shorter rollout window so the build itself stamps a smaller `rolloutHours`:
+`desktop-release.yml` accepts `rollout_hours` only on `workflow_dispatch`, which is the path used to **rebuild an existing tag** (retry a failed release, force a rebuild on a different ref). When you go that route, you can stamp a non-default ramp directly:
 
 ```bash
 gh workflow run desktop-release.yml \
   -f tag=v0.1.43 \
   -f rollout_hours=6
 ```
+
+This does **not** apply to fresh releases cut via `npm run release:patch` — that path always tag-pushes and stamps 24. For a fresh release with a custom ramp, cut normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
 
 ### Releasing during an active rollout
 

@@ -269,6 +269,7 @@ export async function createPaseoDaemon(
       daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
       resolveWorkspaceDirectory: async (workspaceId) =>
         (await workspaceRegistry?.get(workspaceId))?.cwd ?? null,
+      logger,
     }),
   });
   const handleBranchChange = createBranchChangeRouteHandler({

@@ -11,6 +11,7 @@ import {
   isServiceScript,
   isPaseoOwnedWorktreeCwd,
   listPaseoWorktrees,
+  readPaseoConfig,
   resolveWorktreeRuntimeEnv,
   type WorktreeSetupCommandProgressEvent,
   runWorktreeSetupCommands,
@@ -18,6 +19,12 @@ import {
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
+import type { PaseoConfig } from "./paseo-config-schema.js";
+
+function loadConfigForTest(repoRoot: string): PaseoConfig | null {
+  const result = readPaseoConfig(repoRoot);
+  return result.ok ? result.config : null;
+}
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execSync } from "child_process";
 import {
@@ -707,7 +714,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       }),
     );
 
-    const scriptConfigs = getScriptConfigs(repoDir);
+    const scriptConfigs = getScriptConfigs(loadConfigForTest(repoDir));
     const typecheck = scriptConfigs.get("typecheck");
 
     expect(typecheck).toEqual({
@@ -731,7 +738,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       }),
     );
 
-    const scriptConfigs = getScriptConfigs(repoDir);
+    const scriptConfigs = getScriptConfigs(loadConfigForTest(repoDir));
     const server = scriptConfigs.get("server");
 
     expect(server).toEqual({
@@ -771,7 +778,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       }),
     );
 
-    expect(getScriptConfigs(repoDir)).toEqual(
+    expect(getScriptConfigs(loadConfigForTest(repoDir))).toEqual(
       new Map([
         ["valid", { command: "npm run valid" }],
         ["invalidType", { command: "npm run worker" }],
