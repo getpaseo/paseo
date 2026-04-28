@@ -108,6 +108,13 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
     colorTier: "moderate",
   },
   {
+    id: "full-access",
+    label: "Full Access",
+    description: "Automatically approves tool permissions allowed by OpenCode config",
+    icon: "ShieldAlert",
+    colorTier: "dangerous",
+  },
+  {
     id: "plan",
     label: "Plan",
     description: "Read-only planning mode that avoids file edits",

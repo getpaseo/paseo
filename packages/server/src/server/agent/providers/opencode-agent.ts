@@ -3,10 +3,13 @@ import { homedir } from "node:os";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
+  type Agent as OpenCodeAgent,
   type Event as OpenCodeEvent,
   type FilePartInput as OpenCodeFilePartInput,
   type OpencodeClient,
   type Part as OpenCodePart,
+  type PermissionAction as OpenCodePermissionAction,
+  type PermissionRule as OpenCodePermissionRule,
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import net from "node:net";
@@ -67,11 +70,19 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsToolInvocations: true,
 };
 
+const OPENCODE_BUILD_MODE_ID = "build";
+const OPENCODE_FULL_ACCESS_MODE_ID = "full-access";
+
 const DEFAULT_MODES: AgentMode[] = [
   {
-    id: "build",
+    id: OPENCODE_BUILD_MODE_ID,
     label: "Build",
     description: "Allows edits and tool execution for implementation work",
+  },
+  {
+    id: OPENCODE_FULL_ACCESS_MODE_ID,
+    label: "Full Access",
+    description: "Automatically approves tool permissions allowed by OpenCode config",
   },
   {
     id: "plan",
@@ -416,9 +427,107 @@ function resolvePartDedupeKey(
 function normalizeOpenCodeModeId(modeId: string | null | undefined): string {
   const trimmed = typeof modeId === "string" ? modeId.trim() : "";
   if (!trimmed || trimmed === "default") {
-    return "build";
+    return OPENCODE_BUILD_MODE_ID;
   }
   return trimmed;
+}
+
+function resolveOpenCodeRuntimeAgentId(modeId: string | null | undefined): string {
+  const normalizedModeId = normalizeOpenCodeModeId(modeId);
+  return normalizedModeId === OPENCODE_FULL_ACCESS_MODE_ID
+    ? OPENCODE_BUILD_MODE_ID
+    : normalizedModeId;
+}
+
+function mergeOpenCodeModes(discoveredModes: AgentMode[]): AgentMode[] {
+  const modesById = new Map(DEFAULT_MODES.map((mode) => [mode.id, mode]));
+  for (const mode of discoveredModes) {
+    modesById.set(mode.id, mode);
+  }
+  return sortOpenCodeModes(Array.from(modesById.values()));
+}
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+}
+
+function expandOpenCodePermissionPattern(pattern: string): string {
+  if (pattern === "~" || pattern === "$HOME") {
+    return homedir();
+  }
+  if (pattern.startsWith("~/")) {
+    return `${homedir()}${pattern.slice(1)}`;
+  }
+  if (pattern.startsWith("$HOME/")) {
+    return `${homedir()}${pattern.slice("$HOME".length)}`;
+  }
+  return pattern;
+}
+
+function matchesOpenCodePermissionPattern(pattern: string, value: string): boolean {
+  const expandedPattern = expandOpenCodePermissionPattern(pattern);
+  const source = expandedPattern
+    .split("")
+    .map((character) => {
+      if (character === "*") {
+        return ".*";
+      }
+      if (character === "?") {
+        return ".";
+      }
+      return escapeRegExpLiteral(character);
+    })
+    .join("");
+  return new RegExp(`^${source}$`).test(value);
+}
+
+function readOpenCodePermissionInputs(request: AgentPermissionRequest): string[] {
+  const input = readOpenCodeRecord(request.input);
+  const command = readNonEmptyString(input?.command);
+  if (request.name === "bash" && command) {
+    return [command];
+  }
+
+  const patterns = Array.isArray(input?.patterns)
+    ? input.patterns.filter((value): value is string => typeof value === "string")
+    : [];
+  if (patterns.length > 0) {
+    return patterns;
+  }
+
+  return [""];
+}
+
+function resolveOpenCodePermissionAction(params: {
+  rules: OpenCodePermissionRule[];
+  permission: string;
+  input: string;
+}): OpenCodePermissionAction | null {
+  const { rules, permission, input } = params;
+  let action: OpenCodePermissionAction | null = null;
+
+  for (const rule of rules) {
+    if (rule.permission !== permission && rule.permission !== "*") {
+      continue;
+    }
+    if (!matchesOpenCodePermissionPattern(rule.pattern, input)) {
+      continue;
+    }
+    action = rule.action;
+  }
+
+  return action;
+}
+
+function isOpenCodePermissionAllowedByRules(
+  rules: OpenCodePermissionRule[],
+  request: AgentPermissionRequest,
+): boolean {
+  const inputs = readOpenCodePermissionInputs(request);
+  return inputs.every(
+    (input) =>
+      resolveOpenCodePermissionAction({ rules, permission: request.name, input }) === "allow",
+  );
 }
 
 function sortOpenCodeModes(modes: AgentMode[]): AgentMode[] {
@@ -1162,7 +1271,7 @@ export class OpenCodeAgentClient implements AgentClient {
               : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
         }));
 
-      return discovered.length > 0 ? sortOpenCodeModes(discovered) : DEFAULT_MODES;
+      return mergeOpenCodeModes(discovered);
     } finally {
       acquisition.release();
     }
@@ -1851,6 +1960,7 @@ class OpenCodeAgentSession implements AgentSession {
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   private partTypes = new Map<string, string>();
   private availableModesCache: AgentMode[] | null = null;
+  private availableAgentsCache: OpenCodeAgent[] | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
@@ -2017,7 +2127,7 @@ class OpenCodeAgentSession implements AgentSession {
     const model = this.parseModel(this.config.model);
     const thinkingOptionId = this.config.thinkingOptionId;
     const effectiveVariant = thinkingOptionId ?? undefined;
-    const effectiveMode = normalizeOpenCodeModeId(this.currentMode);
+    const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
     const turnId = this.createTurnId();
     this.activeForegroundTurnId = turnId;
@@ -2153,7 +2263,7 @@ class OpenCodeAgentSession implements AgentSession {
           break;
         }
 
-        const translated = this.translateEvent(event);
+        const translated = await this.translateEvent(event);
         for (const e of translated) {
           if (this.activeForegroundTurnId !== turnId) {
             return;
@@ -2345,26 +2455,20 @@ class OpenCodeAgentSession implements AgentSession {
       return this.availableModesCache;
     }
 
-    const response = await this.client.app.agents({
-      directory: this.config.cwd,
-    });
+    const agents = await this.getAvailableOpenCodeAgents();
 
-    const discoveredModes =
-      response.error || !response.data
-        ? []
-        : response.data
-            .filter((agent) => agent.mode === "primary" && agent.hidden !== true)
-            .map((agent) => ({
-              id: agent.name,
-              label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
-              description:
-                typeof agent.description === "string" && agent.description.trim().length > 0
-                  ? agent.description.trim()
-                  : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
-            }));
+    const discoveredModes = agents
+      .filter((agent) => agent.mode === "primary" && agent.hidden !== true)
+      .map((agent) => ({
+        id: agent.name,
+        label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+        description:
+          typeof agent.description === "string" && agent.description.trim().length > 0
+            ? agent.description.trim()
+            : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
+      }));
 
-    this.availableModesCache =
-      discoveredModes.length > 0 ? sortOpenCodeModes(discoveredModes) : DEFAULT_MODES;
+    this.availableModesCache = mergeOpenCodeModes(discoveredModes);
     return this.availableModesCache;
   }
 
@@ -2589,7 +2693,7 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
-  private translateEvent(event: OpenCodeEvent): AgentStreamEvent[] {
+  private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {
     const translated = translateOpenCodeEvent(event, {
       sessionId: this.sessionId,
       messageRoles: this.messageRoles,
@@ -2606,8 +2710,14 @@ class OpenCodeAgentSession implements AgentSession {
       },
     });
 
+    const events: AgentStreamEvent[] = [];
+
     for (const translatedEvent of translated) {
       if (translatedEvent.type === "permission_requested") {
+        const autoApproved = await this.tryAutoApproveToolPermission(translatedEvent.request);
+        if (autoApproved) {
+          continue;
+        }
         this.pendingPermissions.set(translatedEvent.request.id, translatedEvent.request);
       }
       if (translatedEvent.type === "turn_completed") {
@@ -2618,9 +2728,56 @@ class OpenCodeAgentSession implements AgentSession {
         this.accumulatedUsage =
           contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
       }
+      events.push(translatedEvent);
     }
 
-    return translated;
+    return events;
+  }
+
+  private async tryAutoApproveToolPermission(request: AgentPermissionRequest): Promise<boolean> {
+    if (this.currentMode !== OPENCODE_FULL_ACCESS_MODE_ID || request.kind !== "tool") {
+      return false;
+    }
+
+    const rules = await this.getRuntimeOpenCodePermissionRules();
+    if (!isOpenCodePermissionAllowedByRules(rules, request)) {
+      return false;
+    }
+
+    try {
+      await this.client.permission.reply({
+        requestID: request.id,
+        directory: this.config.cwd,
+        reply: "once",
+      });
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, requestId: request.id },
+        "Failed to auto-approve OpenCode tool permission",
+      );
+      return false;
+    }
+  }
+
+  private async getAvailableOpenCodeAgents(options?: {
+    refresh?: boolean;
+  }): Promise<OpenCodeAgent[]> {
+    if (this.availableAgentsCache && options?.refresh !== true) {
+      return this.availableAgentsCache;
+    }
+
+    const response = await this.client.app.agents({
+      directory: this.config.cwd,
+    });
+    this.availableAgentsCache = response.error || !response.data ? [] : response.data;
+    return this.availableAgentsCache;
+  }
+
+  private async getRuntimeOpenCodePermissionRules(): Promise<OpenCodePermissionRule[]> {
+    const runtimeAgentId = resolveOpenCodeRuntimeAgentId(this.currentMode);
+    const agents = await this.getAvailableOpenCodeAgents({ refresh: true });
+    return agents.find((agent) => agent.name === runtimeAgentId)?.permission ?? [];
   }
 
   private resolveSelectedModelContextWindowMaxTokens(): number | undefined {
