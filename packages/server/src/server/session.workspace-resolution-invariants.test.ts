@@ -443,3 +443,26 @@ test("S12: findWorkspaceByDirectory does not return archived ancestor via prefix
   ).findWorkspaceByDirectory("/parent/child");
   expect(found).toBeNull();
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S13. Open a subfolder of an archived git repo when that subfolder is not
+//      itself a separate git project: the new workspace is a plain directory.
+//
+// Archive is sticky (S9). The archived parent is out of scope, so there is
+// no git project that owns the subfolder. Reviving the parent or inventing
+// a second git project pointing at the same repo would both be worse than
+// being explicit. To get git features back the user unarchives the parent
+// (S6/S11).
+// ─────────────────────────────────────────────────────────────────────────────
+test("S13: subfolder of an archived git repo opens as a directory workspace", async () => {
+  const archivedAt = "2026-04-22T13:08:05.400Z";
+  const h = createHarness({
+    workspaces: [gitWorkspace("/toolbox", archivedAt)],
+    projects: [gitProject("/toolbox", archivedAt)],
+    gitRoots: ["/toolbox"],
+  });
+  await openProject(h.session, "/toolbox/flomo-cli");
+  const resp = getOpenResponse(h.emitted, "req-1");
+  expect(resp?.error).toBeNull();
+  expect(resp?.workspace?.workspaceKind).toBe("directory");
+});
