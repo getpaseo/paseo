@@ -77,14 +77,14 @@ const DEFAULT_MODES: AgentMode[] = [
     description: "Allows edits and tool execution for implementation work",
   },
   {
-    id: OPENCODE_FULL_ACCESS_MODE_ID,
-    label: "Full Access",
-    description: "Automatically approves all tool permission prompts for the session",
-  },
-  {
     id: "plan",
     label: "Plan",
     description: "Read-only planning mode that avoids file edits",
+  },
+  {
+    id: OPENCODE_FULL_ACCESS_MODE_ID,
+    label: "Full Access",
+    description: "Automatically approves all tool permission prompts for the session",
   },
 ];
 
