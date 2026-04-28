@@ -554,6 +554,15 @@ describe("OpenCode adapter context-window normalization", () => {
       },
     ]);
   });
+
+  test("treats primary and all OpenCode agents as selectable modes", () => {
+    expect(__openCodeInternals.isSelectableOpenCodeAgent({ mode: "primary" })).toBe(true);
+    expect(__openCodeInternals.isSelectableOpenCodeAgent({ mode: "all" })).toBe(true);
+    expect(__openCodeInternals.isSelectableOpenCodeAgent({ mode: "subagent" })).toBe(false);
+    expect(__openCodeInternals.isSelectableOpenCodeAgent({ mode: "all", hidden: true })).toBe(
+      false,
+    );
+  });
 });
 
 describe("OpenCode adapter startTurn error handling", () => {

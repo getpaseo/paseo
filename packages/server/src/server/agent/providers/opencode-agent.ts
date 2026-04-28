@@ -424,6 +424,10 @@ function resolveOpenCodeRuntimeAgentId(modeId: string | null | undefined): strin
     : normalizedModeId;
 }
 
+function isSelectableOpenCodeAgent(agent: { mode?: string; hidden?: boolean }): boolean {
+  return (agent.mode === "primary" || agent.mode === "all") && agent.hidden !== true;
+}
+
 function mergeOpenCodeModes(discoveredModes: AgentMode[]): AgentMode[] {
   const modesById = new Map(DEFAULT_MODES.map((mode) => [mode.id, mode]));
   for (const mode of discoveredModes) {
@@ -728,6 +732,7 @@ export const __openCodeInternals = {
   reconcileOpenCodeSessionClose,
   resolveOpenCodeModelLookupKeyFromAssistantMessage,
   resolveOpenCodeSelectedModelContextWindow,
+  isSelectableOpenCodeAgent,
   get OpenCodeAgentSession() {
     return OpenCodeAgentSession;
   },
@@ -1191,16 +1196,14 @@ export class OpenCodeAgentClient implements AgentClient {
         return DEFAULT_MODES;
       }
 
-      const discovered = response.data
-        .filter((agent) => agent.mode === "primary" && agent.hidden !== true)
-        .map((agent) => ({
-          id: agent.name,
-          label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
-          description:
-            typeof agent.description === "string" && agent.description.trim().length > 0
-              ? agent.description.trim()
-              : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
-        }));
+      const discovered = response.data.filter(isSelectableOpenCodeAgent).map((agent) => ({
+        id: agent.name,
+        label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+        description:
+          typeof agent.description === "string" && agent.description.trim().length > 0
+            ? agent.description.trim()
+            : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
+      }));
 
       return mergeOpenCodeModes(discovered);
     } finally {
@@ -2462,16 +2465,14 @@ class OpenCodeAgentSession implements AgentSession {
     });
     const agents = response.error || !response.data ? [] : response.data;
 
-    const discoveredModes = agents
-      .filter((agent) => agent.mode === "primary" && agent.hidden !== true)
-      .map((agent) => ({
-        id: agent.name,
-        label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
-        description:
-          typeof agent.description === "string" && agent.description.trim().length > 0
-            ? agent.description.trim()
-            : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
-      }));
+    const discoveredModes = agents.filter(isSelectableOpenCodeAgent).map((agent) => ({
+      id: agent.name,
+      label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+      description:
+        typeof agent.description === "string" && agent.description.trim().length > 0
+          ? agent.description.trim()
+          : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
+    }));
 
     this.availableModesCache = mergeOpenCodeModes(discoveredModes);
     return this.availableModesCache;
