@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useMemo, useSyncExternalStore } from "react";
 import { useSyncExternalStoreWithSelector } from "use-sync-external-store/shim/with-selector";
 import {
@@ -17,15 +18,15 @@ interface ActivateWorkspaceSelectionOptions {
   historyMode?: "push" | "replace";
 }
 
-type NavigationRouteParams = {
+interface NavigationRouteParams {
   serverId?: string | string[];
   workspaceId?: string | string[];
-};
+}
 
-type NavigationRouteLike = {
+interface NavigationRouteLike {
   params?: NavigationRouteParams | null;
   path?: string | null;
-};
+}
 
 type NavigationWorkspaceRouteState =
   | { kind: "workspace"; selection: ActiveWorkspaceSelection }
@@ -38,8 +39,13 @@ interface NavigationObserverRef {
   } | null;
 }
 
+const LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-selection";
+
 let snapshot: ActiveWorkspaceSelection | null = null;
 let lastWorkspaceRouteSelection: ActiveWorkspaceSelection | null = null;
+let isLastWorkspaceRouteSelectionLoaded = false;
+let lastWorkspaceRouteSelectionRevision = 0;
+let lastWorkspaceRouteSelectionHydrationPromise: Promise<void> | null = null;
 let nextWorkspaceRouteSelectionOverride: ActiveWorkspaceSelection | null = null;
 const listeners = new Set<() => void>();
 
@@ -54,13 +60,87 @@ function getSnapshot(): ActiveWorkspaceSelection | null {
   return snapshot;
 }
 
+function notifyListeners() {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
 function emitIfChanged(next: ActiveWorkspaceSelection | null) {
   if (snapshot?.serverId === next?.serverId && snapshot?.workspaceId === next?.workspaceId) {
     return;
   }
   snapshot = next;
-  for (const listener of listeners) {
-    listener();
+  notifyListeners();
+}
+
+function parseStoredLastWorkspaceRouteSelection(
+  stored: string | null,
+): ActiveWorkspaceSelection | null {
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    return normalizeActiveWorkspaceSelection(JSON.parse(stored));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeActiveWorkspaceSelection(input: unknown): ActiveWorkspaceSelection | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return null;
+  }
+
+  const selection = input as Record<string, unknown>;
+  const serverId = typeof selection.serverId === "string" ? selection.serverId.trim() : "";
+  const workspaceId = typeof selection.workspaceId === "string" ? selection.workspaceId.trim() : "";
+
+  if (!serverId || !workspaceId) {
+    return null;
+  }
+
+  return { serverId, workspaceId };
+}
+
+function persistLastWorkspaceRouteSelection(next: ActiveWorkspaceSelection) {
+  void AsyncStorage.setItem(LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY, JSON.stringify(next)).catch(
+    () => {},
+  );
+}
+
+function setLastWorkspaceRouteSelection(next: ActiveWorkspaceSelection) {
+  const normalized = normalizeActiveWorkspaceSelection(next);
+  if (!normalized) {
+    return;
+  }
+
+  if (
+    lastWorkspaceRouteSelection?.serverId === normalized.serverId &&
+    lastWorkspaceRouteSelection.workspaceId === normalized.workspaceId
+  ) {
+    return;
+  }
+
+  lastWorkspaceRouteSelectionRevision += 1;
+  lastWorkspaceRouteSelection = normalized;
+  persistLastWorkspaceRouteSelection(normalized);
+}
+
+async function readLastWorkspaceRouteSelectionFromStorage(hydrationRevision: number) {
+  try {
+    const stored = await AsyncStorage.getItem(LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY);
+    if (lastWorkspaceRouteSelectionRevision === hydrationRevision) {
+      lastWorkspaceRouteSelection = parseStoredLastWorkspaceRouteSelection(stored);
+    }
+  } catch {
+    if (lastWorkspaceRouteSelectionRevision === hydrationRevision) {
+      lastWorkspaceRouteSelection = null;
+    }
+  } finally {
+    isLastWorkspaceRouteSelectionLoaded = true;
+    notifyListeners();
   }
 }
 
@@ -170,7 +250,7 @@ export function syncNavigationActiveWorkspace(navigationRef: NavigationObserverR
   const route = navigationRef.current?.getCurrentRoute();
   const routeState = classifyNavigationWorkspaceRoute(route);
   if (routeState.kind === "workspace") {
-    lastWorkspaceRouteSelection = routeState.selection;
+    setLastWorkspaceRouteSelection(routeState.selection);
     if (nextWorkspaceRouteSelectionOverride) {
       const overrideSelection = nextWorkspaceRouteSelectionOverride;
       nextWorkspaceRouteSelectionOverride = null;
@@ -195,6 +275,22 @@ export function getNavigationActiveWorkspaceSelection(): ActiveWorkspaceSelectio
 
 export function getLastNavigationWorkspaceRouteSelection(): ActiveWorkspaceSelection | null {
   return lastWorkspaceRouteSelection;
+}
+
+export function getIsLastNavigationWorkspaceRouteSelectionLoaded(): boolean {
+  return isLastWorkspaceRouteSelectionLoaded;
+}
+
+export function hydrateLastNavigationWorkspaceRouteSelection(): Promise<void> {
+  if (lastWorkspaceRouteSelectionHydrationPromise) {
+    return lastWorkspaceRouteSelectionHydrationPromise;
+  }
+
+  const hydrationRevision = lastWorkspaceRouteSelectionRevision;
+  lastWorkspaceRouteSelectionHydrationPromise =
+    readLastWorkspaceRouteSelectionFromStorage(hydrationRevision);
+
+  return lastWorkspaceRouteSelectionHydrationPromise;
 }
 
 export function overrideNextNavigationWorkspaceRouteSelection(next: ActiveWorkspaceSelection) {
@@ -223,6 +319,14 @@ export function useNavigationActiveWorkspaceSelection(): ActiveWorkspaceSelectio
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
+export function useIsLastNavigationWorkspaceRouteSelectionLoaded(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    getIsLastNavigationWorkspaceRouteSelectionLoaded,
+    getIsLastNavigationWorkspaceRouteSelectionLoaded,
+  );
+}
+
 export function useIsNavigationWorkspaceSelected(input: {
   serverId: string | null;
   workspaceId: string | null;
@@ -243,6 +347,8 @@ export function useIsNavigationWorkspaceSelected(input: {
   );
 }
 
+void hydrateLastNavigationWorkspaceRouteSelection();
+
 export function useIsNavigationProjectActive(input: {
   serverId: string | null;
   workspaceIds: readonly string[];
@@ -250,7 +356,10 @@ export function useIsNavigationProjectActive(input: {
 }): boolean {
   const enabled = input.enabled !== false;
   const workspaceIdsKey = input.workspaceIds.join("\0");
-  const workspaceIdSet = useMemo(() => new Set(input.workspaceIds), [workspaceIdsKey]);
+  const workspaceIdSet = useMemo(() => {
+    void workspaceIdsKey;
+    return new Set(input.workspaceIds);
+  }, [input.workspaceIds, workspaceIdsKey]);
 
   return useSyncExternalStoreWithSelector(
     subscribe,

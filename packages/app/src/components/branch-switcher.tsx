@@ -1,9 +1,10 @@
-import { useRef } from "react";
-import { Pressable, View } from "react-native";
+import { useCallback, useMemo, useRef } from "react";
+import { Pressable, View, type PressableStateCallbackType } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, GitBranch } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import { Combobox, ComboboxItem } from "@/components/ui/combobox";
+import type { ComboboxProps } from "@/components/ui/combobox";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
@@ -51,6 +52,34 @@ export function BranchSwitcher({
     </View>
   );
 
+  const handleOpen = useCallback(() => setIsOpen(true), [setIsOpen]);
+
+  const triggerStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.branchSwitcherTrigger,
+      (Boolean(hovered) || pressed) && styles.branchSwitcherTriggerHovered,
+    ],
+    [],
+  );
+
+  const branchLeadingSlot = useMemo(
+    () => <GitBranch size={14} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
+
+  const renderBranchOption = useCallback<NonNullable<ComboboxProps["renderOption"]>>(
+    ({ option, selected, active, onPress }) => (
+      <ComboboxItem
+        label={option.label}
+        selected={selected}
+        active={active}
+        onPress={onPress}
+        leadingSlot={branchLeadingSlot}
+      />
+    ),
+    [branchLeadingSlot],
+  );
+
   if (!currentBranchName) {
     return <View style={styles.branchSwitcherTrigger}>{titleContent}</View>;
   }
@@ -59,11 +88,8 @@ export function BranchSwitcher({
     <View ref={anchorRef} collapsable={false}>
       <Pressable
         testID="workspace-header-branch-switcher"
-        onPress={() => setIsOpen(true)}
-        style={({ hovered, pressed }) => [
-          styles.branchSwitcherTrigger,
-          (hovered || pressed) && styles.branchSwitcherTriggerHovered,
-        ]}
+        onPress={handleOpen}
+        style={triggerStyle}
         accessibilityRole="button"
         accessibilityLabel={`Current branch: ${currentBranchName}. Press to switch branch.`}
       >
@@ -85,16 +111,7 @@ export function BranchSwitcher({
         desktopPlacement="bottom-start"
         desktopPreventInitialFlash
         desktopMinWidth={280}
-        renderOption={({ option, selected, active, onPress }) => (
-          <ComboboxItem
-            key={option.id}
-            label={option.label}
-            selected={selected}
-            active={active}
-            onPress={onPress}
-            leadingSlot={<GitBranch size={14} color={theme.colors.foregroundMuted} />}
-          />
-        )}
+        renderOption={renderBranchOption}
       />
     </View>
   );

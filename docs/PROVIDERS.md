@@ -58,10 +58,10 @@ type MyProviderClientOptions = {
 export class MyProviderACPAgentClient extends ACPAgentClient {
   constructor(options: MyProviderClientOptions) {
     super({
-      provider: "my-provider",        // Must match the ID used everywhere else
+      provider: "my-provider", // Must match the ID used everywhere else
       logger: options.logger,
       runtimeSettings: options.runtimeSettings,
-      defaultCommand: ["my-agent-binary", "--acp"],  // CLI command to spawn
+      defaultCommand: ["my-agent-binary", "--acp"], // CLI command to spawn
       defaultModes: MY_PROVIDER_MODES,
       capabilities: MY_PROVIDER_CAPABILITIES,
     });
@@ -70,7 +70,7 @@ export class MyProviderACPAgentClient extends ACPAgentClient {
   // Override isAvailable() if the provider needs specific auth/env vars
   override async isAvailable(): Promise<boolean> {
     if (!(await super.isAvailable())) {
-      return false;  // Binary not found
+      return false; // Binary not found
     }
     return Boolean(process.env["MY_PROVIDER_API_KEY"]);
   }
@@ -212,8 +212,8 @@ export const agentConfigs = {
     provider: "my-provider",
     model: "default-model-id",
     modes: {
-      full: "autonomous",   // Mode with no permission prompts
-      ask: "default",       // Mode that requires permission approval
+      full: "autonomous", // Mode with no permission prompts
+      ask: "default", // Mode that requires permission approval
     },
   },
 } as const satisfies Record<string, AgentTestConfig>;
@@ -264,8 +264,15 @@ If your agent does not speak ACP, implement the interfaces from `agent-sdk-types
 interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
-  createSession(config: AgentSessionConfig, launchContext?: AgentLaunchContext): Promise<AgentSession>;
-  resumeSession(handle: AgentPersistenceHandle, overrides?: Partial<AgentSessionConfig>, launchContext?: AgentLaunchContext): Promise<AgentSession>;
+  createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession>;
+  resumeSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession>;
   listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]>;
   isAvailable(): Promise<boolean>;
   // Optional:

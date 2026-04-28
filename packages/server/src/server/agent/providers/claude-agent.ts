@@ -72,7 +72,11 @@ import type {
   McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
-import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
+import {
+  createProviderEnv,
+  createProviderEnvSpec,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand, spawnProcess } from "../../../utils/spawn.js";
@@ -83,21 +87,21 @@ const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", 
 
 type TurnState = "idle" | "foreground" | "autonomous";
 
-type EventIdentifiers = {
+interface EventIdentifiers {
   taskId: string | null;
   parentMessageId: string | null;
   messageId: string | null;
-};
+}
 
-type AutonomousTurnState = {
+interface AutonomousTurnState {
   id: string;
-};
+}
 
-type AsyncMessageInput<T> = {
+interface AsyncMessageInput<T> {
   push: (item: T) => void;
   end: () => void;
   iterable: AsyncIterable<T>;
-};
+}
 
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -144,36 +148,74 @@ const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type SlashCommandInvocation = {
+interface SlashCommandInvocation {
   commandName: string;
   args?: string;
   rawInput: string;
-};
+}
 
 // Orchestrator instructions moved to shared module.
 type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
 
-export type ClaudeContentChunk = { type: string; [key: string]: any };
+export interface ClaudeContentChunk {
+  type: string;
+  [key: string]: unknown;
+}
 
 type ClaudeOptions = Options;
 
-type ClaudeAgentClientOptions = {
+interface ClaudeAgentClientOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   queryFactory?: typeof query;
-};
+}
 
-type ClaudeAgentSessionOptions = {
+interface ClaudeAgentSessionOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
   handle?: AgentPersistenceHandle;
   launchEnv?: Record<string, string>;
   logger: Logger;
   queryFactory?: typeof query;
-};
+}
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+function resolvePathEnvKey(): "Path" | "PATH" | null {
+  if (process.env["Path"] !== undefined) return "Path";
+  if (process.env["PATH"] !== undefined) return "PATH";
+  return null;
+}
+
+function errorToMessageString(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return "";
+}
+
+function firstStringField(
+  input: Record<string, unknown>,
+  primaryKey: string,
+  secondaryKey: string,
+): string | undefined {
+  const primary = input[primaryKey];
+  if (typeof primary === "string") return primary;
+  const secondary = input[secondaryKey];
+  if (typeof secondary === "string") return secondary;
+  return undefined;
+}
+
+function extractSessionIdRaw(msg: {
+  session_id?: unknown;
+  sessionId?: unknown;
+  session?: { id?: unknown } | null;
+}): string {
+  if (typeof msg.session_id === "string") return msg.session_id;
+  if (typeof msg.sessionId === "string") return msg.sessionId;
+  if (typeof msg.session?.id === "string") return msg.session.id;
+  return "";
+}
 
 function resolveClaudeSpawnCommand(
   spawnOptions: SpawnOptions,
@@ -218,10 +260,11 @@ function applyRuntimeSettingsToClaudeOptions(
       const command = isDefaultRuntime ? process.execPath : resolved.command;
       const child = spawnProcess(command, resolved.args, {
         cwd: spawnOptions.cwd,
-        env: {
-          ...applyProviderEnv(spawnOptions.env, runtimeSettings),
-          ...(launchEnv ?? {}),
-        },
+        ...createProviderEnvSpec({
+          baseEnv: spawnOptions.env,
+          runtimeSettings,
+          overlays: [launchEnv],
+        }),
         signal: spawnOptions.signal,
         stdio: ["pipe", "pipe", "pipe"],
         // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
@@ -253,7 +296,7 @@ function sanitizeClaudeProjectPath(cwd: string): string {
   return cwd.replace(/[\\/._:]/g, "-");
 }
 
-type ClaudeOptionsLogSummary = {
+interface ClaudeOptionsLogSummary {
   cwd: string | null;
   permissionMode: string | null;
   model: string | null;
@@ -272,7 +315,7 @@ type ClaudeOptionsLogSummary = {
   hasSpawnOverride: boolean;
   hasStderrHandler: boolean;
   pathToClaudeCodeExecutable: string | null;
-};
+}
 
 const MAX_RECENT_STDERR_CHARS = 4000;
 const STDERR_FLUSH_WAIT_MS = 150;
@@ -511,15 +554,15 @@ export function extractUserMessageText(content: unknown): string | null {
   return combined.length > 0 ? combined : null;
 }
 
-type PendingPermission = {
+interface PendingPermission {
   request: AgentPermissionRequest;
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
   cleanup?: () => void;
-};
+}
 
 type ToolUseClassification = "generic" | "command" | "file_change";
-type ToolUseCacheEntry = {
+interface ToolUseCacheEntry {
   id: string;
   name: string;
   server: string;
@@ -528,9 +571,29 @@ type ToolUseCacheEntry = {
   commandText?: string;
   files?: { path: string; kind: string }[];
   input?: AgentMetadata | null;
-};
+}
 function isMetadata(value: unknown): value is AgentMetadata {
   return typeof value === "object" && value !== null;
+}
+
+function createDefaultToolUseCacheEntry(id: string, block: ClaudeContentChunk): ToolUseCacheEntry {
+  const nameFromBlock =
+    typeof block.name === "string" && block.name.length > 0 ? block.name : "tool";
+  let server: string;
+  if (typeof block.server === "string" && block.server.length > 0) {
+    server = block.server;
+  } else if (typeof block.name === "string" && block.name.length > 0) {
+    server = block.name;
+  } else {
+    server = "tool";
+  }
+  return {
+    id,
+    name: nameFromBlock,
+    server,
+    classification: "generic",
+    started: false,
+  };
 }
 
 function readTrimmedString(value: unknown): string | undefined {
@@ -720,19 +783,19 @@ function buildClaudePlanPermissionActions(
   return actions;
 }
 
-type TimelineFragment = {
+interface TimelineFragment {
   kind: "assistant" | "reasoning";
   text: string;
-};
+}
 
-type TimelineMessageState = {
+interface TimelineMessageState {
   id: string;
   assistantText: string;
   reasoningText: string;
   emittedAssistantLength: number;
   emittedReasoningLength: number;
   stopped: boolean;
-};
+}
 
 class TimelineAssembler {
   private readonly messages = new Map<string, TimelineMessageState>();
@@ -1022,6 +1085,16 @@ function isSyntheticUserEntry(entry: unknown): boolean {
   return candidate.isSynthetic === true || candidate.isMeta === true;
 }
 
+function firstTrimmedString(sources: readonly unknown[]): string | null {
+  for (const source of sources) {
+    const value = readTrimmedString(source);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
 export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   const root = message as unknown as Record<string, unknown>;
   const messageType = readTrimmedString(root.type);
@@ -1029,35 +1102,37 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   const streamEventMessage = streamEvent?.message as Record<string, unknown> | undefined;
   const messageContainer = root.message as Record<string, unknown> | undefined;
 
+  const messageIdFromUuid = messageType === "user" ? root.uuid : undefined;
+
   return {
-    taskId:
-      readTrimmedString(root.task_id) ??
-      readTrimmedString(streamEvent?.task_id) ??
-      readTrimmedString(streamEventMessage?.task_id) ??
-      readTrimmedString(messageContainer?.task_id) ??
-      null,
-    parentMessageId:
-      readTrimmedString(root.parent_message_id) ??
-      readTrimmedString(streamEvent?.parent_message_id) ??
-      readTrimmedString(streamEventMessage?.parent_message_id) ??
-      readTrimmedString(messageContainer?.parent_message_id) ??
-      null,
-    messageId:
-      readTrimmedString(root.message_id) ??
-      readTrimmedString(streamEvent?.message_id) ??
-      readTrimmedString(streamEventMessage?.id) ??
-      readTrimmedString(streamEventMessage?.message_id) ??
-      readTrimmedString(messageContainer?.id) ??
-      readTrimmedString(messageContainer?.message_id) ??
-      (messageType === "user" ? readTrimmedString(root.uuid) : null) ??
-      null,
+    taskId: firstTrimmedString([
+      root.task_id,
+      streamEvent?.task_id,
+      streamEventMessage?.task_id,
+      messageContainer?.task_id,
+    ]),
+    parentMessageId: firstTrimmedString([
+      root.parent_message_id,
+      streamEvent?.parent_message_id,
+      streamEventMessage?.parent_message_id,
+      messageContainer?.parent_message_id,
+    ]),
+    messageId: firstTrimmedString([
+      root.message_id,
+      streamEvent?.message_id,
+      streamEventMessage?.id,
+      streamEventMessage?.message_id,
+      messageContainer?.id,
+      messageContainer?.message_id,
+      messageIdFromUuid,
+    ]),
   };
 }
 
 const claudeDebug = process.env.PASEO_CLAUDE_DEBUG === "1";
 
 export class ClaudeAgentClient implements AgentClient {
-  readonly provider: "claude" = "claude";
+  readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
 
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
@@ -1096,7 +1171,11 @@ export class ClaudeAgentClient implements AgentClient {
     if (!merged.cwd) {
       throw new Error("Claude resume requires the original working directory in metadata");
     }
-    const mergedConfig: AgentSessionConfig = { ...merged, provider: "claude", cwd: merged.cwd };
+    const mergedConfig: AgentSessionConfig = {
+      ...merged,
+      provider: "claude",
+      cwd: merged.cwd,
+    };
     const claudeConfig = this.assertConfig(mergedConfig);
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
@@ -1123,19 +1202,12 @@ export class ClaudeAgentClient implements AgentClient {
     }
     const limit = options?.limit ?? 20;
     const candidates = await collectRecentClaudeSessions(projectsRoot, limit * 3);
-    const descriptors: PersistedAgentDescriptor[] = [];
-
-    for (const candidate of candidates) {
-      const descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime);
-      if (descriptor) {
-        descriptors.push(descriptor);
-      }
-      if (descriptors.length >= limit) {
-        break;
-      }
-    }
-
-    return descriptors;
+    const parsed = await Promise.all(
+      candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
+    );
+    return parsed
+      .filter((descriptor): descriptor is PersistedAgentDescriptor => descriptor !== null)
+      .slice(0, limit);
   }
 
   async isAvailable(): Promise<boolean> {
@@ -1159,7 +1231,10 @@ export class ClaudeAgentClient implements AgentClient {
 
       if (available) {
         try {
-          const models = await this.listModels({ cwd: os.homedir(), force: false });
+          const models = await this.listModels({
+            cwd: os.homedir(),
+            force: false,
+          });
           modelsValue = String(models.length);
         } catch (error) {
           modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
@@ -1198,13 +1273,14 @@ async function resolveClaudeVersion(
   runtimeSettings?: ProviderRuntimeSettings,
 ): Promise<string | null> {
   const command = runtimeSettings?.command;
+  const envSpec = createProviderEnvSpec({ runtimeSettings });
 
   try {
     if (command?.mode === "replace") {
       const { stdout } = await execCommand(
         command.argv[0]!,
         [...command.argv.slice(1), "--version"],
-        { timeout: 5_000 },
+        { ...envSpec, timeout: 5_000 },
       );
       return stdout.trim() || null;
     }
@@ -1214,7 +1290,10 @@ async function resolveClaudeVersion(
       return null;
     }
 
-    const { stdout } = await execCommand(executable, ["--version"], { timeout: 5_000 });
+    const { stdout } = await execCommand(executable, ["--version"], {
+      ...envSpec,
+      timeout: 5_000,
+    });
     return stdout.trim() || null;
   } catch {
     return null;
@@ -1231,9 +1310,16 @@ async function resolveClaudeAuth(
     args: string[],
   ): Promise<{ stdout: string; stderr: string }> => {
     try {
-      return await execCommand(executable, args, { timeout: 5_000 });
+      return await execCommand(executable, args, {
+        ...createProviderEnvSpec({ runtimeSettings }),
+        timeout: 5_000,
+      });
     } catch (error) {
-      const err = error as { stdout?: string; stderr?: string; message?: string };
+      const err = error as {
+        stdout?: string;
+        stderr?: string;
+        message?: string;
+      };
       return {
         stdout: err.stdout ?? "",
         stderr: err.stderr ?? err.message ?? "",
@@ -1347,7 +1433,7 @@ function readStreamRequestOutputTokens(event: Record<string, unknown>): number |
 }
 
 class ClaudeAgentSession implements AgentSession {
-  readonly provider: "claude" = "claude";
+  readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
 
   private readonly config: ClaudeAgentConfig;
@@ -1671,8 +1757,8 @@ class ClaudeAgentSession implements AgentSession {
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
     const previousMode = this.currentMode;
-    const query = await this.ensureQuery();
-    await query.setPermissionMode(normalized);
+    const activeQuery = await this.ensureQuery();
+    await activeQuery.setPermissionMode(normalized);
     if (normalized === "plan") {
       if (previousMode !== "plan") {
         this.planResumeMode = previousMode;
@@ -1686,8 +1772,8 @@ class ClaudeAgentSession implements AgentSession {
   async setModel(modelId: string | null): Promise<void> {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
-    const query = await this.ensureQuery();
-    await query.setModel(normalizedModelId ?? undefined);
+    const activeQuery = await this.ensureQuery();
+    await activeQuery.setModel(normalizedModelId ?? undefined);
     this.config.model = normalizedModelId ?? undefined;
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
@@ -1881,7 +1967,11 @@ class ClaudeAgentSession implements AgentSession {
 
   private buildRewindSuccessMessage(
     targetUserMessageId: string,
-    rewindResult: { filesChanged?: string[]; insertions?: number; deletions?: number },
+    rewindResult: {
+      filesChanged?: string[];
+      insertions?: number;
+      deletions?: number;
+    },
   ): string {
     const fileCount = Array.isArray(rewindResult.filesChanged)
       ? rewindResult.filesChanged.length
@@ -1904,7 +1994,11 @@ class ClaudeAgentSession implements AgentSession {
 
   private async attemptRewind(args: string | undefined): Promise<{
     messageId: string | null;
-    result?: { filesChanged?: string[]; insertions?: number; deletions?: number };
+    result?: {
+      filesChanged?: string[];
+      insertions?: number;
+      deletions?: number;
+    };
     error?: string;
   }> {
     if (typeof args === "string" && args.trim().length > 0) {
@@ -1962,8 +2056,8 @@ class ClaudeAgentSession implements AgentSession {
     deletions?: number;
   }> {
     try {
-      const query = await this.ensureFreshQuery();
-      return await query.rewindFiles(messageId, { dryRun: false });
+      const activeQuery = await this.ensureFreshQuery();
+      return await activeQuery.rewindFiles(messageId, { dryRun: false });
     } catch (error) {
       // The Claude SDK transport can close after a rewind call.
       // If that happens, mark the query stale so a follow-up attempt uses a fresh query.
@@ -2109,37 +2203,54 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private async buildOptions(): Promise<ClaudeOptions> {
+  private resolveThinkingConfig(): {
+    thinking: ClaudeOptions["thinking"];
+    effort: ClaudeOptions["effort"];
+  } {
     const thinkingOptionId =
       this.config.thinkingOptionId && this.config.thinkingOptionId !== "default"
         ? this.config.thinkingOptionId
         : undefined;
-    let thinking: ClaudeOptions["thinking"];
-    let effort: ClaudeOptions["effort"];
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
-      thinking = { type: "adaptive" };
       // SDK 0.2.71 types `effort` as 'low' | 'medium' | 'high' | 'max'; Opus 4.7
       // adds 'xhigh' which the binary accepts but the typings don't yet expose.
-      effort = thinkingOptionId as ClaudeOptions["effort"];
+      return {
+        thinking: { type: "adaptive" },
+        effort: thinkingOptionId as ClaudeOptions["effort"],
+      };
     }
+    return { thinking: undefined, effort: undefined };
+  }
 
-    const appendedSystemPrompt = [
-      getOrchestratorModeInstructions(),
-      this.config.systemPrompt?.trim(),
-    ]
+  private buildAppendedSystemPrompt(): string {
+    return [getOrchestratorModeInstructions(), this.config.systemPrompt?.trim()]
       .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
       .join("\n\n");
+  }
+
+  private async buildOptions(): Promise<ClaudeOptions> {
+    const { thinking, effort } = this.resolveThinkingConfig();
+    const appendedSystemPrompt = this.buildAppendedSystemPrompt();
+    const extraClaudeOptions = this.config.extra?.claude;
+    const sdkEnv = createProviderEnv({
+      baseEnv: process.env,
+      runtimeSettings: this.runtimeSettings,
+      overlays: [
+        extraClaudeOptions?.env,
+        {
+          // Increase MCP timeouts for long-running tool calls (10 minutes)
+          MCP_TIMEOUT: "600000",
+          MCP_TOOL_TIMEOUT: "600000",
+        },
+        this.launchEnv,
+      ],
+    });
 
     const claudeBinary = await findExecutable("claude");
     this.logger.debug(
       {
         claudeBinary,
-        pathEnvKey:
-          process.env["Path"] !== undefined
-            ? "Path"
-            : process.env["PATH"] !== undefined
-              ? "PATH"
-              : null,
+        pathEnvKey: resolvePathEnvKey(),
         pathIncludesClaudeLocalBin: (process.env["Path"] ?? process.env["PATH"] ?? "")
           .toLowerCase()
           .includes("\\.local\\bin"),
@@ -2169,13 +2280,6 @@ class ClaudeAgentSession implements AgentSession {
         this.captureStderr(data);
         this.logger.error({ stderr: data.trim() }, "Claude Agent SDK stderr");
       },
-      env: {
-        ...process.env,
-        // Increase MCP timeouts for long-running tool calls (10 minutes)
-        MCP_TIMEOUT: "600000",
-        MCP_TOOL_TIMEOUT: "600000",
-        ...(this.launchEnv ?? {}),
-      },
       // Required for provider-level /rewind support.
       enableFileCheckpointing: true,
       // If we have a session ID from a previous query (e.g., after interrupt),
@@ -2183,7 +2287,8 @@ class ClaudeAgentSession implements AgentSession {
       ...(this.claudeSessionId ? { resume: this.claudeSessionId } : {}),
       ...(thinking ? { thinking } : {}),
       ...(effort ? { effort } : {}),
-      ...this.config.extra?.claude,
+      ...extraClaudeOptions,
+      env: sdkEnv,
     };
 
     if (this.config.mcpServers) {
@@ -2246,7 +2351,10 @@ class ClaudeAgentSession implements AgentSession {
             },
           });
         } else if (chunk.type === "github_pr" || chunk.type === "github_issue") {
-          content.push({ type: "text", text: renderPromptAttachmentAsText(chunk) });
+          content.push({
+            type: "text",
+            text: renderPromptAttachmentAsText(chunk),
+          });
         }
       }
     } else {
@@ -2330,7 +2438,7 @@ class ClaudeAgentSession implements AgentSession {
     if (this.getRecentStderrDiagnostic()) {
       return;
     }
-    const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+    const message = errorToMessageString(error);
     if (
       !/\bprocess exited with code\b/i.test(message) &&
       !/\bterminated by signal\b/i.test(message)
@@ -2411,12 +2519,14 @@ class ClaudeAgentSession implements AgentSession {
     if (consecutiveRecoveries >= 3) {
       return false;
     }
-    const message =
-      typeof error === "string"
-        ? error
-        : error instanceof Error
-          ? `${error.message}\n${error.stack ?? ""}`
-          : JSON.stringify(error);
+    let message: string;
+    if (typeof error === "string") {
+      message = error;
+    } else if (error instanceof Error) {
+      message = `${error.message}\n${error.stack ?? ""}`;
+    } else {
+      message = JSON.stringify(error);
+    }
     return message.toLowerCase().includes("request was aborted");
   }
 
@@ -2513,26 +2623,42 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     let consecutiveInterruptAbortRecoveries = 0;
+    const logRawMessage = (message: SDKMessage): void => {
+      if (!claudeDebug) {
+        return;
+      }
+      this.logger.trace(
+        {
+          claudeSessionId: this.claudeSessionId,
+          messageType: message.type,
+          messageSubtype: "subtype" in message ? message.subtype : undefined,
+          messageUuid: "uuid" in message ? message.uuid : undefined,
+        },
+        "Claude query pump: raw SDK message",
+      );
+    };
+    const handlePumpedMessage = async (message: SDKMessage): Promise<boolean> => {
+      logRawMessage(message);
+      consecutiveInterruptAbortRecoveries = 0;
+      if (await this.handleMissingResumedConversation(message, activeQuery)) {
+        return true;
+      }
+      this.routeSdkMessageFromPump(message);
+      return false;
+    };
+    const drainActiveQuery = async (): Promise<boolean> => {
+      for await (const message of activeQuery) {
+        if (await handlePumpedMessage(message)) {
+          return true;
+        }
+      }
+      return false;
+    };
     try {
       while (!this.closed && this.query === activeQuery) {
         try {
-          for await (const message of activeQuery) {
-            if (claudeDebug) {
-              this.logger.trace(
-                {
-                  claudeSessionId: this.claudeSessionId,
-                  messageType: message.type,
-                  messageSubtype: "subtype" in message ? message.subtype : undefined,
-                  messageUuid: "uuid" in message ? message.uuid : undefined,
-                },
-                "Claude query pump: raw SDK message",
-              );
-            }
-            consecutiveInterruptAbortRecoveries = 0;
-            if (await this.handleMissingResumedConversation(message, activeQuery)) {
-              return;
-            }
-            this.routeSdkMessageFromPump(message);
+          if (await drainActiveQuery()) {
+            return;
           }
           if (!this.closed && this.query === activeQuery) {
             this.failActiveTurns("Claude stream ended before terminal result");
@@ -2566,7 +2692,19 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private routeSdkMessageFromPump(message: SDKMessage): void {
+  private isEchoedForegroundUserMessage(event: AgentStreamEvent): boolean {
+    if (
+      event.type !== "timeline" ||
+      event.item.type !== "user_message" ||
+      !this.activeForegroundTurnId ||
+      !this.lastForegroundPromptText
+    ) {
+      return false;
+    }
+    return event.item.text.trim() === this.lastForegroundPromptText.trim();
+  }
+
+  private shouldSuppressStaleResult(message: SDKMessage): boolean {
     // Suppress stale results from interrupted requests. The cancel path already
     // emitted the terminal event; this result is leftover from the killed API
     // request. Consume the flag on ANY result so it doesn't linger.
@@ -2574,22 +2712,32 @@ class ClaudeAgentSession implements AgentSession {
       this.pendingInterruptAbort = false;
       if (message.subtype !== "success") {
         this.logger.debug("Suppressing stale non-success result from interrupted request");
-        return;
+        return true;
       }
     }
     if (message.type === "result" && message.subtype !== "success" && this.isAbortError(message)) {
       this.logger.debug("Suppressing abort result by content");
+      return true;
+    }
+    return false;
+  }
+
+  private isAssistantishMessage(message: SDKMessage): boolean {
+    return (
+      message.type === "assistant" ||
+      message.type === "stream_event" ||
+      message.type === "tool_progress" ||
+      (message.type === "system" && message.subtype === "task_notification")
+    );
+  }
+
+  private routeSdkMessageFromPump(message: SDKMessage): void {
+    if (this.shouldSuppressStaleResult(message)) {
       return;
     }
 
     const isForeground = Boolean(this.activeForegroundTurnId);
-    const assistantishMessage =
-      message.type === "assistant" ||
-      message.type === "stream_event" ||
-      message.type === "tool_progress" ||
-      (message.type === "system" && message.subtype === "task_notification");
-
-    if (!isForeground && assistantishMessage) {
+    if (!isForeground && this.isAssistantishMessage(message)) {
       this.startAutonomousTurn();
     }
     if (!isForeground && !this.autonomousTurn && message.type === "result") {
@@ -2630,19 +2778,9 @@ class ClaudeAgentSession implements AgentSession {
       );
 
     // User message dedup: suppress echoed user messages that match the foreground prompt
-    const filteredMessageEvents = messageEvents.filter((event) => {
-      if (
-        event.type === "timeline" &&
-        event.item.type === "user_message" &&
-        this.activeForegroundTurnId &&
-        this.lastForegroundPromptText
-      ) {
-        if (event.item.text.trim() === this.lastForegroundPromptText.trim()) {
-          return false;
-        }
-      }
-      return true;
-    });
+    const filteredMessageEvents = messageEvents.filter(
+      (event) => !this.isEchoedForegroundUserMessage(event),
+    );
 
     const events = [...filteredMessageEvents, ...assistantTimelineEvents];
 
@@ -2677,7 +2815,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private async handleMissingResumedConversation(
     message: SDKMessage,
-    query: Query,
+    activeQuery: Query,
   ): Promise<boolean> {
     const staleResumeError = this.readMissingResumedConversationError(message);
     if (!staleResumeError) {
@@ -2695,10 +2833,10 @@ class ClaudeAgentSession implements AgentSession {
     this.failActiveTurns(staleResumeError);
     this.input?.end();
     await this.awaitWithTimeout(
-      query.return?.(),
+      activeQuery.return?.(),
       "query pump return on missing resumed conversation",
     );
-    if (this.query === query) {
+    if (this.query === activeQuery) {
       this.query = null;
       this.input = null;
     }
@@ -2758,114 +2896,11 @@ class ClaudeAgentSession implements AgentSession {
 
     switch (message.type) {
       case "system":
-        if (message.subtype === "init") {
-          const threadSessionId = this.handleSystemMessage(message);
-          if (threadSessionId) {
-            events.push({
-              type: "thread_started",
-              provider: "claude",
-              sessionId: threadSessionId,
-            });
-          }
-        } else if (message.subtype === "status") {
-          const status = (message as { status?: string }).status;
-          if (status === "compacting") {
-            this.compacting = true;
-            events.push({
-              type: "timeline",
-              item: { type: "compaction", status: "loading" },
-              provider: "claude",
-            });
-          }
-        } else if (message.subtype === "compact_boundary") {
-          const compactMetadata = readCompactionMetadata(message as Record<string, unknown>);
-          events.push({
-            type: "timeline",
-            item: {
-              type: "compaction",
-              status: "completed",
-              trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
-              preTokens: compactMetadata?.preTokens,
-            },
-            provider: "claude",
-          });
-        } else if (message.subtype === "task_notification") {
-          const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(message);
-          if (taskNotificationItem) {
-            events.push({
-              type: "timeline",
-              item: taskNotificationItem,
-              provider: "claude",
-            });
-          }
-          const usage = readUsageFromTaskNotification(message);
-          if (typeof usage === "number") {
-            this.lastContextWindowUsedTokens = usage;
-            events.push(this.createUsageUpdatedEvent(usage));
-          }
-        } else if (message.subtype === "task_progress") {
-          this.lastContextWindowUsedTokens =
-            readContextWindowUsedTokensFromTaskProgress(message) ??
-            this.lastContextWindowUsedTokens;
-          if (typeof this.lastContextWindowUsedTokens === "number") {
-            events.push(this.createUsageUpdatedEvent(this.lastContextWindowUsedTokens));
-          }
-        }
+        this.appendSystemMessageEvents(message, events);
         break;
-      case "user": {
-        if (isSyntheticUserEntry(message)) {
-          break;
-        }
-        if (this.compacting) {
-          this.compacting = false;
-          break;
-        }
-        const messageId =
-          typeof message.uuid === "string" && message.uuid.length > 0 ? message.uuid : undefined;
-        this.rememberUserMessageId(messageId);
-        const content = message.message?.content;
-        const taskNotificationItem = mapTaskNotificationUserContentToToolCall({
-          content,
-          messageId,
-        });
-        if (taskNotificationItem) {
-          events.push({
-            type: "timeline",
-            item: taskNotificationItem,
-            provider: "claude",
-          });
-          break;
-        }
-        if (typeof content === "string" && content.length > 0) {
-          if (!isClaudeTranscriptNoiseText(content)) {
-            events.push({
-              type: "timeline",
-              item: {
-                type: "user_message",
-                text: content,
-                ...(messageId ? { messageId } : {}),
-              },
-              provider: "claude",
-            });
-          }
-        } else if (Array.isArray(content)) {
-          const timelineItems = this.mapBlocksToTimeline(content, {
-            textMessageType: "user_message",
-          });
-          for (const item of timelineItems) {
-            if (item.type === "user_message" && messageId && !item.messageId) {
-              events.push({
-                type: "timeline",
-                item: { ...item, messageId },
-                provider: "claude",
-              });
-              continue;
-            }
-            events.push({ type: "timeline", item, provider: "claude" });
-          }
-        }
+      case "user":
+        this.appendUserMessageEvents(message, events);
         break;
-      }
       case "assistant": {
         const timelineItems = this.mapBlocksToTimeline(message.message.content, {
           suppressAssistantText: options?.suppressAssistantText ?? false,
@@ -2876,38 +2911,184 @@ class ClaudeAgentSession implements AgentSession {
         }
         break;
       }
-      case "stream_event": {
-        const usageUpdatedEvent = this.trackStreamEventUsage(message.event);
-        if (usageUpdatedEvent) {
-          events.push(usageUpdatedEvent);
-        }
-        const timelineItems = this.mapPartialEvent(message.event, {
-          suppressAssistantText: options?.suppressAssistantText ?? false,
-          suppressReasoning: options?.suppressReasoning ?? false,
-        });
-        for (const item of timelineItems) {
-          events.push({ type: "timeline", item, provider: "claude" });
-        }
+      case "stream_event":
+        this.appendStreamEventEvents(message, events, options);
         break;
-      }
-      case "result": {
-        const usage = this.convertUsage(message, message.modelUsage);
-        if (message.subtype === "success") {
-          events.push({ type: "turn_completed", provider: "claude", usage });
-        } else {
-          const errorMessage =
-            "errors" in message && Array.isArray(message.errors) && message.errors.length > 0
-              ? message.errors.join("\n")
-              : "Claude run failed";
-          events.push(this.buildTurnFailedEvent(errorMessage));
-        }
+      case "result":
+        this.appendResultEvents(message, events);
         break;
-      }
       default:
         break;
     }
 
     return events;
+  }
+
+  private appendSystemMessageEvents(
+    message: Extract<SDKMessage, { type: "system" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    if (message.subtype === "init") {
+      const threadSessionId = this.handleSystemMessage(message);
+      if (threadSessionId) {
+        events.push({
+          type: "thread_started",
+          provider: "claude",
+          sessionId: threadSessionId,
+        });
+      }
+      return;
+    }
+    if (message.subtype === "status") {
+      const status = (message as { status?: string }).status;
+      if (status === "compacting") {
+        this.compacting = true;
+        events.push({
+          type: "timeline",
+          item: { type: "compaction", status: "loading" },
+          provider: "claude",
+        });
+      }
+      return;
+    }
+    if (message.subtype === "compact_boundary") {
+      const compactMetadata = readCompactionMetadata(message as Record<string, unknown>);
+      events.push({
+        type: "timeline",
+        item: {
+          type: "compaction",
+          status: "completed",
+          trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
+          preTokens: compactMetadata?.preTokens,
+        },
+        provider: "claude",
+      });
+      return;
+    }
+    if (message.subtype === "task_notification") {
+      const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(message);
+      if (taskNotificationItem) {
+        events.push({
+          type: "timeline",
+          item: taskNotificationItem,
+          provider: "claude",
+        });
+      }
+      const usage = readUsageFromTaskNotification(message);
+      if (typeof usage === "number") {
+        this.lastContextWindowUsedTokens = usage;
+        events.push(this.createUsageUpdatedEvent(usage));
+      }
+      return;
+    }
+    if (message.subtype === "task_progress") {
+      this.lastContextWindowUsedTokens =
+        readContextWindowUsedTokensFromTaskProgress(message) ?? this.lastContextWindowUsedTokens;
+      if (typeof this.lastContextWindowUsedTokens === "number") {
+        events.push(this.createUsageUpdatedEvent(this.lastContextWindowUsedTokens));
+      }
+    }
+  }
+
+  private appendUserMessageEvents(
+    message: Extract<SDKMessage, { type: "user" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    if (isSyntheticUserEntry(message)) {
+      return;
+    }
+    if (this.compacting) {
+      this.compacting = false;
+      return;
+    }
+    const messageId =
+      typeof message.uuid === "string" && message.uuid.length > 0 ? message.uuid : undefined;
+    this.rememberUserMessageId(messageId);
+    const content = message.message?.content;
+    const taskNotificationItem = mapTaskNotificationUserContentToToolCall({
+      content,
+      messageId,
+    });
+    if (taskNotificationItem) {
+      events.push({
+        type: "timeline",
+        item: taskNotificationItem,
+        provider: "claude",
+      });
+      return;
+    }
+    if (typeof content === "string" && content.length > 0) {
+      if (!isClaudeTranscriptNoiseText(content)) {
+        events.push({
+          type: "timeline",
+          item: {
+            type: "user_message",
+            text: content,
+            ...(messageId ? { messageId } : {}),
+          },
+          provider: "claude",
+        });
+      }
+      return;
+    }
+    if (Array.isArray(content)) {
+      this.appendUserContentArrayEvents(content, messageId, events);
+    }
+  }
+
+  private appendUserContentArrayEvents(
+    content: ReadonlyArray<unknown>,
+    messageId: string | undefined,
+    events: AgentStreamEvent[],
+  ): void {
+    const timelineItems = this.mapBlocksToTimeline(content, {
+      textMessageType: "user_message",
+    });
+    for (const item of timelineItems) {
+      if (item.type === "user_message" && messageId && !item.messageId) {
+        events.push({
+          type: "timeline",
+          item: { ...item, messageId },
+          provider: "claude",
+        });
+        continue;
+      }
+      events.push({ type: "timeline", item, provider: "claude" });
+    }
+  }
+
+  private appendStreamEventEvents(
+    message: Extract<SDKMessage, { type: "stream_event" }>,
+    events: AgentStreamEvent[],
+    options: { suppressAssistantText?: boolean; suppressReasoning?: boolean } | undefined,
+  ): void {
+    const usageUpdatedEvent = this.trackStreamEventUsage(message.event);
+    if (usageUpdatedEvent) {
+      events.push(usageUpdatedEvent);
+    }
+    const timelineItems = this.mapPartialEvent(message.event, {
+      suppressAssistantText: options?.suppressAssistantText ?? false,
+      suppressReasoning: options?.suppressReasoning ?? false,
+    });
+    for (const item of timelineItems) {
+      events.push({ type: "timeline", item, provider: "claude" });
+    }
+  }
+
+  private appendResultEvents(
+    message: Extract<SDKMessage, { type: "result" }>,
+    events: AgentStreamEvent[],
+  ): void {
+    const usage = this.convertUsage(message, message.modelUsage);
+    if (message.subtype === "success") {
+      events.push({ type: "turn_completed", provider: "claude", usage });
+      return;
+    }
+    const errorMessage =
+      "errors" in message && Array.isArray(message.errors) && message.errors.length > 0
+        ? message.errors.join("\n")
+        : "Claude run failed";
+    events.push(this.buildTurnFailedEvent(errorMessage));
   }
 
   private captureSessionIdFromMessage(message: SDKMessage): string | null {
@@ -2916,15 +3097,7 @@ class ClaudeAgentSession implements AgentSession {
       sessionId?: unknown;
       session?: { id?: unknown } | null;
     };
-    const sessionIdRaw =
-      typeof msg.session_id === "string"
-        ? msg.session_id
-        : typeof msg.sessionId === "string"
-          ? msg.sessionId
-          : typeof msg.session?.id === "string"
-            ? msg.session.id
-            : "";
-    const sessionId = sessionIdRaw.trim();
+    const sessionId = extractSessionIdRaw(msg).trim();
     if (!sessionId) {
       return null;
     }
@@ -2958,15 +3131,7 @@ class ClaudeAgentSession implements AgentSession {
       sessionId?: unknown;
       session?: { id?: unknown } | null;
     };
-    const newSessionIdRaw =
-      typeof msg.session_id === "string"
-        ? msg.session_id
-        : typeof msg.sessionId === "string"
-          ? msg.sessionId
-          : typeof msg.session?.id === "string"
-            ? msg.session.id
-            : "";
-    const newSessionId = newSessionIdRaw.trim();
+    const newSessionId = extractSessionIdRaw(msg).trim();
     if (!newSessionId) {
       return null;
     }
@@ -3161,12 +3326,18 @@ class ClaudeAgentSession implements AgentSession {
       kind,
       input,
       detail: toolDetail,
-      suggestions: options.suggestions?.map((suggestion) => ({ ...suggestion })),
+      suggestions: options.suggestions?.map((suggestion) => ({
+        ...suggestion,
+      })),
       actions: kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 
-    this.pushEvent({ type: "permission_requested", provider: "claude", request });
+    this.pushEvent({
+      type: "permission_requested",
+      provider: "claude",
+      request,
+    });
 
     return await new Promise<PermissionResult>((resolve, reject) => {
       const cleanupFns: Array<() => void> = [];
@@ -3281,7 +3452,7 @@ class ClaudeAgentSession implements AgentSession {
         return;
       }
       this.ingestPersistedHistory(fs.readFileSync(historyPath, "utf8"));
-    } catch (error) {
+    } catch {
       // ignore history load failures
     }
   }
@@ -3337,7 +3508,7 @@ class ClaudeAgentSession implements AgentSession {
     return path.join(dir, `${sessionId}.jsonl`);
   }
 
-  private convertHistoryEntry(entry: any): AgentTimelineItem[] {
+  private convertHistoryEntry(entry: ClaudeHistoryEntry): AgentTimelineItem[] {
     return convertClaudeHistoryEntry(entry, (content) => this.mapBlocksToTimeline(content));
   }
 
@@ -3354,7 +3525,7 @@ class ClaudeAgentSession implements AgentSession {
   // NOTE: convertClaudeHistoryEntry uses extractUserMessageText directly instead of this function
   // for user entries. Both paths must produce equivalent user_message items.
   private mapBlocksToTimeline(
-    content: string | ClaudeContentChunk[],
+    content: string | ReadonlyArray<unknown>,
     options?: {
       textMessageType?: "assistant_message" | "user_message";
       suppressAssistantText?: boolean;
@@ -3384,51 +3555,16 @@ class ClaudeAgentSession implements AgentSession {
     // User SDK entries can arrive as multiple text blocks, but Paseo treats them as one message.
     const userTextParts: string[] = [];
     for (const block of content) {
-      switch (block.type) {
-        case "text":
-        case "text_delta":
-          if (
-            block.text &&
-            block.text !== INTERRUPT_TOOL_USE_PLACEHOLDER &&
-            !isClaudeTranscriptNoiseText(block.text)
-          ) {
-            if (textMessageType === "user_message") {
-              const trimmed = block.text.trim();
-              if (trimmed) {
-                userTextParts.push(trimmed);
-              }
-            } else if (!suppressText) {
-              items.push({ type: "assistant_message", text: block.text });
-            }
-          }
-          break;
-        case "thinking":
-        case "thinking_delta":
-          if (block.thinking) {
-            if (!suppressReasoning) {
-              items.push({ type: "reasoning", text: block.thinking });
-            }
-          }
-          break;
-        case "tool_use":
-        case "server_tool_use":
-        case "mcp_tool_use": {
-          this.handleToolUseStart(block, items);
-          break;
-        }
-        case "tool_result":
-        case "mcp_tool_result":
-        case "web_fetch_tool_result":
-        case "web_search_tool_result":
-        case "code_execution_tool_result":
-        case "bash_code_execution_tool_result":
-        case "text_editor_code_execution_tool_result": {
-          this.handleToolResult(block, items);
-          break;
-        }
-        default:
-          break;
+      if (!isClaudeContentChunk(block)) {
+        continue;
       }
+      this.mapBlockToTimeline(block, {
+        items,
+        userTextParts,
+        textMessageType,
+        suppressText,
+        suppressReasoning,
+      });
     }
 
     if (textMessageType === "user_message" && userTextParts.length > 0) {
@@ -3439,6 +3575,72 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     return items;
+  }
+
+  private appendTextBlockToTimeline(
+    block: ClaudeContentChunk,
+    context: {
+      items: AgentTimelineItem[];
+      userTextParts: string[];
+      textMessageType: "assistant_message" | "user_message";
+      suppressText: boolean;
+    },
+  ): void {
+    const { items, userTextParts, textMessageType, suppressText } = context;
+    const text = typeof block.text === "string" ? block.text : "";
+    if (!text || text === INTERRUPT_TOOL_USE_PLACEHOLDER || isClaudeTranscriptNoiseText(text)) {
+      return;
+    }
+    if (textMessageType === "user_message") {
+      const trimmed = text.trim();
+      if (trimmed) {
+        userTextParts.push(trimmed);
+      }
+      return;
+    }
+    if (!suppressText) {
+      items.push({ type: "assistant_message", text });
+    }
+  }
+
+  private mapBlockToTimeline(
+    block: ClaudeContentChunk,
+    context: {
+      items: AgentTimelineItem[];
+      userTextParts: string[];
+      textMessageType: "assistant_message" | "user_message";
+      suppressText: boolean;
+      suppressReasoning: boolean;
+    },
+  ): void {
+    switch (block.type) {
+      case "text":
+      case "text_delta":
+        this.appendTextBlockToTimeline(block, context);
+        break;
+      case "thinking":
+      case "thinking_delta":
+        if (typeof block.thinking === "string" && block.thinking && !context.suppressReasoning) {
+          context.items.push({ type: "reasoning", text: block.thinking });
+        }
+        break;
+      case "tool_use":
+      case "server_tool_use":
+      case "mcp_tool_use":
+        this.handleToolUseStart(block, context.items);
+        break;
+      case "tool_result":
+      case "mcp_tool_result":
+      case "web_fetch_tool_result":
+      case "web_search_tool_result":
+      case "code_execution_tool_result":
+      case "bash_code_execution_tool_result":
+      case "text_editor_code_execution_tool_result":
+        this.handleToolResult(block, context.items);
+        break;
+      default:
+        break;
+    }
   }
 
   private handleToolUseStart(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
@@ -3465,7 +3667,8 @@ class ClaudeAgentSession implements AgentSession {
   private handleToolResult(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
     const entry =
       typeof block.tool_use_id === "string" ? this.toolUseCache.get(block.tool_use_id) : undefined;
-    const toolName = entry?.name ?? block.tool_name ?? "tool";
+    const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
+    const toolName = entry?.name ?? blockToolName ?? "tool";
     const callId =
       typeof block.tool_use_id === "string" && block.tool_use_id.length > 0
         ? block.tool_use_id
@@ -3511,8 +3714,10 @@ class ClaudeAgentSession implements AgentSession {
       return undefined;
     }
 
-    const server = entry?.server ?? block.server ?? "tool";
-    const tool = entry?.name ?? block.tool_name ?? "tool";
+    const blockServer = typeof block.server === "string" ? block.server : undefined;
+    const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
+    const server = entry?.server ?? blockServer ?? "tool";
+    const tool = entry?.name ?? blockToolName ?? "tool";
     const content = coerceToolResultContentToString(block.content);
     const input = entry?.input;
 
@@ -3544,6 +3749,53 @@ class ClaudeAgentSession implements AgentSession {
     return Object.keys(result).length > 0 ? result : undefined;
   }
 
+  private isCommandExecutionTool(
+    normalizedServer: string,
+    normalizedTool: string,
+    input: AgentMetadata | null | undefined,
+  ): boolean {
+    if (
+      normalizedServer.includes("bash") ||
+      normalizedServer.includes("shell") ||
+      normalizedServer.includes("command")
+    ) {
+      return true;
+    }
+    if (
+      normalizedTool.includes("bash") ||
+      normalizedTool.includes("shell") ||
+      normalizedTool.includes("command")
+    ) {
+      return true;
+    }
+    return Boolean(input && (typeof input.command === "string" || Array.isArray(input.command)));
+  }
+
+  private static isFileWriteTool(normalizedTool: string): boolean {
+    return (
+      normalizedTool.includes("write") ||
+      normalizedTool === "write_file" ||
+      normalizedTool === "create_file"
+    );
+  }
+
+  private static isFileEditTool(normalizedTool: string): boolean {
+    return (
+      normalizedTool.includes("edit") ||
+      normalizedTool.includes("patch") ||
+      normalizedTool === "apply_patch" ||
+      normalizedTool === "apply_diff"
+    );
+  }
+
+  private static isFileReadTool(normalizedTool: string): boolean {
+    return (
+      normalizedTool.includes("read") ||
+      normalizedTool === "read_file" ||
+      normalizedTool === "view_file"
+    );
+  }
+
   private buildStructuredToolResult(
     server: string,
     tool: string,
@@ -3553,16 +3805,7 @@ class ClaudeAgentSession implements AgentSession {
     const normalizedServer = server.toLowerCase();
     const normalizedTool = tool.toLowerCase();
 
-    // Command execution tools
-    if (
-      normalizedServer.includes("bash") ||
-      normalizedServer.includes("shell") ||
-      normalizedServer.includes("command") ||
-      normalizedTool.includes("bash") ||
-      normalizedTool.includes("shell") ||
-      normalizedTool.includes("command") ||
-      (input && (typeof input.command === "string" || Array.isArray(input.command)))
-    ) {
+    if (this.isCommandExecutionTool(normalizedServer, normalizedTool, input)) {
       const command = this.extractCommandText(input ?? {}) ?? "command";
       return {
         type: "command",
@@ -3572,83 +3815,53 @@ class ClaudeAgentSession implements AgentSession {
       };
     }
 
-    // File write tools (new files or complete replacements)
     if (
-      normalizedTool.includes("write") ||
-      normalizedTool === "write_file" ||
-      normalizedTool === "create_file"
+      ClaudeAgentSession.isFileWriteTool(normalizedTool) &&
+      input &&
+      typeof input.file_path === "string"
     ) {
-      if (input && typeof input.file_path === "string") {
-        return {
-          type: "file_write",
-          filePath: input.file_path,
-          oldContent: "",
-          newContent: typeof input.content === "string" ? input.content : output,
-        };
-      }
+      return {
+        type: "file_write",
+        filePath: input.file_path,
+        oldContent: "",
+        newContent: typeof input.content === "string" ? input.content : output,
+      };
     }
 
-    // File edit/patch tools
     if (
-      normalizedTool.includes("edit") ||
-      normalizedTool.includes("patch") ||
-      normalizedTool === "apply_patch" ||
-      normalizedTool === "apply_diff"
+      ClaudeAgentSession.isFileEditTool(normalizedTool) &&
+      input &&
+      typeof input.file_path === "string"
     ) {
-      if (input && typeof input.file_path === "string") {
-        // Support both old_str/new_str and old_string/new_string parameter names
-        const oldContent =
-          typeof input.old_str === "string"
-            ? input.old_str
-            : typeof input.old_string === "string"
-              ? input.old_string
-              : undefined;
-        const newContent =
-          typeof input.new_str === "string"
-            ? input.new_str
-            : typeof input.new_string === "string"
-              ? input.new_string
-              : undefined;
-        return {
-          type: "file_edit",
-          filePath: input.file_path,
-          diff:
-            typeof input.patch === "string"
-              ? input.patch
-              : typeof input.diff === "string"
-                ? input.diff
-                : undefined,
-          oldContent,
-          newContent,
-        };
-      }
+      // Support both old_str/new_str and old_string/new_string parameter names
+      const oldContent = firstStringField(input, "old_str", "old_string");
+      const newContent = firstStringField(input, "new_str", "new_string");
+      const diff = firstStringField(input, "patch", "diff");
+      return {
+        type: "file_edit",
+        filePath: input.file_path,
+        diff,
+        oldContent,
+        newContent,
+      };
     }
 
-    // File read tools
     if (
-      normalizedTool.includes("read") ||
-      normalizedTool === "read_file" ||
-      normalizedTool === "view_file"
+      ClaudeAgentSession.isFileReadTool(normalizedTool) &&
+      input &&
+      typeof input.file_path === "string"
     ) {
-      if (input && typeof input.file_path === "string") {
-        return {
-          type: "file_read",
-          filePath: input.file_path,
-          content: output,
-        };
-      }
+      return {
+        type: "file_read",
+        filePath: input.file_path,
+        content: output,
+      };
     }
 
     return undefined;
   }
 
-  private mapPartialEvent(
-    event: SDKPartialAssistantMessage["event"],
-    options?: {
-      suppressAssistantText?: boolean;
-      suppressReasoning?: boolean;
-    },
-  ): AgentTimelineItem[] {
+  private updatePartialEventToolState(event: SDKPartialAssistantMessage["event"]): boolean {
     if (event.type === "content_block_start") {
       const block = isClaudeContentChunk(event.content_block) ? event.content_block : null;
       if (
@@ -3659,19 +3872,36 @@ class ClaudeAgentSession implements AgentSession {
         this.toolUseIndexToId.set(event.index, block.id);
         this.toolUseInputBuffers.delete(block.id);
       }
-    } else if (event.type === "content_block_delta") {
+      return false;
+    }
+    if (event.type === "content_block_delta") {
       const delta = isClaudeContentChunk(event.delta) ? event.delta : null;
       if (delta?.type === "input_json_delta") {
         const partialJson = typeof delta.partial_json === "string" ? delta.partial_json : undefined;
         this.handleToolInputDelta(event.index, partialJson);
-        return [];
+        return true;
       }
-    } else if (event.type === "content_block_stop" && typeof event.index === "number") {
+      return false;
+    }
+    if (event.type === "content_block_stop" && typeof event.index === "number") {
       const toolId = this.toolUseIndexToId.get(event.index);
       if (toolId) {
         this.toolUseIndexToId.delete(event.index);
         this.toolUseInputBuffers.delete(toolId);
       }
+    }
+    return false;
+  }
+
+  private mapPartialEvent(
+    event: SDKPartialAssistantMessage["event"],
+    options?: {
+      suppressAssistantText?: boolean;
+      suppressReasoning?: boolean;
+    },
+  ): AgentTimelineItem[] {
+    if (this.updatePartialEventToolState(event)) {
+      return [];
     }
 
     switch (event.type) {
@@ -3699,20 +3929,7 @@ class ClaudeAgentSession implements AgentSession {
     if (!id) {
       return null;
     }
-    const existing =
-      this.toolUseCache.get(id) ??
-      ({
-        id,
-        name: typeof block.name === "string" && block.name.length > 0 ? block.name : "tool",
-        server:
-          typeof block.server === "string" && block.server.length > 0
-            ? block.server
-            : typeof block.name === "string" && block.name.length > 0
-              ? block.name
-              : "tool",
-        classification: "generic",
-        started: false,
-      } satisfies ToolUseCacheEntry);
+    const existing = this.toolUseCache.get(id) ?? createDefaultToolUseCacheEntry(id, block);
 
     if (typeof block.name === "string" && block.name.length > 0) {
       existing.name = block.name;
@@ -3956,37 +4173,48 @@ function normalizeHistoryBlocks(content: unknown): ClaudeContentChunk[] | null {
   return null;
 }
 
-export function convertClaudeHistoryEntry(
-  entry: any,
-  mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
-): AgentTimelineItem[] {
+interface ClaudeHistoryEntry {
+  type?: unknown;
+  subtype?: unknown;
+  isCompactSummary?: unknown;
+  isSidechain?: unknown;
+  uuid?: unknown;
+  message?: { content?: unknown; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+function convertClaudeHistoryEntryPreamble(
+  entry: ClaudeHistoryEntry,
+): { shortCircuit: AgentTimelineItem[] } | { proceed: { content: unknown } } {
   if (entry.type === "system" && entry.subtype === "compact_boundary") {
     const compactMetadata = readCompactionMetadata(entry as Record<string, unknown>);
-    return [
-      {
-        type: "compaction",
-        status: "completed",
-        trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
-        preTokens: compactMetadata?.preTokens,
-      },
-    ];
+    return {
+      shortCircuit: [
+        {
+          type: "compaction",
+          status: "completed",
+          trigger: compactMetadata?.trigger === "manual" ? "manual" : "auto",
+          preTokens: compactMetadata?.preTokens,
+        },
+      ],
+    };
   }
 
   const taskNotificationItem = mapTaskNotificationSystemRecordToToolCall(entry);
   if (taskNotificationItem) {
-    return [taskNotificationItem];
+    return { shortCircuit: [taskNotificationItem] };
   }
 
   if (entry.isCompactSummary) {
-    return [];
+    return { shortCircuit: [] };
   }
   if (entry.type === "user" && isSyntheticUserEntry(entry)) {
-    return [];
+    return { shortCircuit: [] };
   }
 
   const message = entry?.message;
   if (!message || !("content" in message)) {
-    return [];
+    return { shortCircuit: [] };
   }
 
   const content = message.content;
@@ -3994,8 +4222,21 @@ export function convertClaudeHistoryEntry(
     (entry.type === "user" || entry.type === "assistant") &&
     isClaudeTranscriptNoiseContent(content)
   ) {
-    return [];
+    return { shortCircuit: [] };
   }
+
+  return { proceed: { content } };
+}
+
+export function convertClaudeHistoryEntry(
+  entry: ClaudeHistoryEntry,
+  mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
+): AgentTimelineItem[] {
+  const preamble = convertClaudeHistoryEntryPreamble(entry);
+  if ("shortCircuit" in preamble) {
+    return preamble.shortCircuit;
+  }
+  const { content } = preamble.proceed;
   const normalizedBlocks = normalizeHistoryBlocks(content);
   const contentValue = typeof content === "string" ? content : normalizedBlocks;
   const hasToolBlock = normalizedBlocks?.some((block) => hasToolLikeBlock(block)) ?? false;
@@ -4005,12 +4246,12 @@ export function convertClaudeHistoryEntry(
       : null;
 
   if (entry.type === "user") {
-    const taskNotificationItem = mapTaskNotificationUserContentToToolCall({
+    const userTaskNotificationItem = mapTaskNotificationUserContentToToolCall({
       content,
       messageId: userMessageId,
     });
-    if (taskNotificationItem) {
-      return [taskNotificationItem];
+    if (userTaskNotificationItem) {
+      return [userTaskNotificationItem];
     }
   }
 
@@ -4090,10 +4331,10 @@ function createAsyncMessageInput<T>(): AsyncMessageInput<T> {
   };
 }
 
-type ClaudeSessionCandidate = {
+interface ClaudeSessionCandidate {
   path: string;
   mtime: Date;
-};
+}
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -4114,38 +4355,85 @@ async function collectRecentClaudeSessions(
   } catch {
     return [];
   }
-  const candidates: ClaudeSessionCandidate[] = [];
-  for (const dirName of projectDirs) {
-    const projectPath = path.join(root, dirName);
-    let stats: fs.Stats;
-    try {
-      stats = await fsPromises.stat(projectPath);
-    } catch {
-      continue;
-    }
-    if (!stats.isDirectory()) {
-      continue;
-    }
-    let files: string[];
-    try {
-      files = await fsPromises.readdir(projectPath);
-    } catch {
-      continue;
-    }
-    for (const file of files) {
-      if (!file.endsWith(".jsonl")) {
-        continue;
+  const projectFileLists = await Promise.all(
+    projectDirs.map(async (dirName) => {
+      const projectPath = path.join(root, dirName);
+      try {
+        const stats = await fsPromises.stat(projectPath);
+        if (!stats.isDirectory()) return { projectPath, files: [] as string[] };
+        const files = await fsPromises.readdir(projectPath);
+        return { projectPath, files };
+      } catch {
+        return { projectPath, files: [] as string[] };
       }
-      const fullPath = path.join(projectPath, file);
+    }),
+  );
+  const fileEntries = projectFileLists.flatMap(({ projectPath, files }) =>
+    files.filter((f) => f.endsWith(".jsonl")).map((f) => path.join(projectPath, f)),
+  );
+  const statResults = await Promise.all(
+    fileEntries.map(async (fullPath) => {
       try {
         const fileStats = await fsPromises.stat(fullPath);
-        candidates.push({ path: fullPath, mtime: fileStats.mtime });
+        return { path: fullPath, mtime: fileStats.mtime };
       } catch {
-        // ignore stat errors for individual files
+        return null;
       }
+    }),
+  );
+  const candidates: ClaudeSessionCandidate[] = statResults.filter(
+    (entry): entry is ClaudeSessionCandidate => entry !== null,
+  );
+  return candidates.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
+}
+
+interface ClaudeSessionDescriptorAccumulator {
+  sessionId: string | null;
+  cwd: string | null;
+  title: string | null;
+  timeline: AgentTimelineItem[];
+}
+
+function isFinishedAccumulator(acc: ClaudeSessionDescriptorAccumulator): boolean {
+  return Boolean(acc.sessionId && acc.cwd && acc.title);
+}
+
+function applyClaudeSessionEntryToAccumulator(
+  entryRaw: unknown,
+  acc: ClaudeSessionDescriptorAccumulator,
+): void {
+  if (!entryRaw || typeof entryRaw !== "object") {
+    return;
+  }
+  const entry = entryRaw as Record<string, unknown> & { message?: unknown };
+  if (entry.isSidechain) {
+    return;
+  }
+  if (entry.type === "user" && isSyntheticUserEntry(entry)) {
+    return;
+  }
+  if (!acc.sessionId && typeof entry.sessionId === "string") {
+    acc.sessionId = entry.sessionId;
+  }
+  if (!acc.cwd && typeof entry.cwd === "string") {
+    acc.cwd = entry.cwd;
+  }
+  if (entry.type === "user" && entry.message) {
+    const text = extractClaudeUserText(entry.message);
+    if (text) {
+      if (!acc.title) {
+        acc.title = text;
+      }
+      acc.timeline.push({ type: "user_message", text });
+    }
+    return;
+  }
+  if (entry.type === "assistant" && entry.message) {
+    const text = extractClaudeUserText(entry.message);
+    if (text) {
+      acc.timeline.push({ type: "assistant_message", text });
     }
   }
-  return candidates.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
 }
 
 async function parseClaudeSessionDescriptor(
@@ -4159,50 +4447,29 @@ async function parseClaudeSessionDescriptor(
     return null;
   }
 
-  let sessionId: string | null = null;
-  let cwd: string | null = null;
-  let title: string | null = null;
-  const timeline: AgentTimelineItem[] = [];
+  const acc: ClaudeSessionDescriptorAccumulator = {
+    sessionId: null,
+    cwd: null,
+    title: null,
+    timeline: [],
+  };
 
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
-    let entry: any;
+    let entry: unknown;
     try {
       entry = JSON.parse(line);
     } catch {
       continue;
     }
-    if (entry?.isSidechain) {
-      continue;
-    }
-    if (entry?.type === "user" && isSyntheticUserEntry(entry)) {
-      continue;
-    }
-    if (!sessionId && typeof entry.sessionId === "string") {
-      sessionId = entry.sessionId;
-    }
-    if (!cwd && typeof entry.cwd === "string") {
-      cwd = entry.cwd;
-    }
-    if (entry.type === "user" && entry.message) {
-      const text = extractClaudeUserText(entry.message);
-      if (text) {
-        if (!title) {
-          title = text;
-        }
-        timeline.push({ type: "user_message", text });
-      }
-    } else if (entry.type === "assistant" && entry.message) {
-      const text = extractClaudeUserText(entry.message);
-      if (text) {
-        timeline.push({ type: "assistant_message", text });
-      }
-    }
-    if (sessionId && cwd && title) {
+    applyClaudeSessionEntryToAccumulator(entry, acc);
+    if (isFinishedAccumulator(acc)) {
       break;
     }
   }
+
+  const { sessionId, cwd, title, timeline } = acc;
 
   if (!sessionId || !cwd) {
     return null;
@@ -4229,10 +4496,11 @@ async function parseClaudeSessionDescriptor(
   };
 }
 
-function extractClaudeUserText(message: any): string | null {
-  if (!message) {
+function extractClaudeUserText(messageRaw: unknown): string | null {
+  if (!messageRaw || typeof messageRaw !== "object") {
     return null;
   }
+  const message = messageRaw as Record<string, unknown>;
   if (typeof message.content === "string") {
     const normalized = message.content.trim();
     return normalized && !isClaudeTranscriptNoiseText(normalized) ? normalized : null;
@@ -4243,8 +4511,12 @@ function extractClaudeUserText(message: any): string | null {
   }
   if (Array.isArray(message.content)) {
     for (const block of message.content) {
-      if (block && typeof block.text === "string") {
-        const normalized = block.text.trim();
+      if (
+        block &&
+        typeof block === "object" &&
+        typeof (block as { text?: unknown }).text === "string"
+      ) {
+        const normalized = (block as { text: string }).text.trim();
         if (normalized && !isClaudeTranscriptNoiseText(normalized)) {
           return normalized;
         }

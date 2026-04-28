@@ -51,18 +51,18 @@ const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const WORKTREE_SETUP_TRUNCATION_MARKER = "\n...<output truncated in the middle>...\n";
 const WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS = 1_500;
 
-type MiddleTruncationAccumulator = {
+interface MiddleTruncationAccumulator {
   totalBytes: number;
   head: string;
   tail: string;
   truncated: boolean;
-};
+}
 
 export type WorktreeSetupOutputAccumulator = MiddleTruncationAccumulator;
-export type WorktreeSetupProgressAccumulator = {
+export interface WorktreeSetupProgressAccumulator {
   resultsByIndex: Map<number, WorktreeSetupCommandResult>;
   outputAccumulatorsByIndex: Map<number, WorktreeSetupOutputAccumulator>;
-};
+}
 
 function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
@@ -447,15 +447,16 @@ async function waitForTerminalBootstrapReadiness(
   }
 
   await new Promise<void>((resolve) => {
-    let settled = false;
+    let pendingResolve: (() => void) | null = resolve;
     let timeout: ReturnType<typeof setTimeout> | null = null;
     let unsubscribe: (() => void) | null = null;
 
     const finish = () => {
-      if (settled) {
+      if (!pendingResolve) {
         return;
       }
-      settled = true;
+      const fn = pendingResolve;
+      pendingResolve = null;
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;
@@ -464,7 +465,7 @@ async function waitForTerminalBootstrapReadiness(
         unsubscribe();
         unsubscribe = null;
       }
-      resolve();
+      fn();
     };
 
     unsubscribe = terminal.subscribe((message) => {
@@ -530,41 +531,43 @@ async function runWorktreeTerminalBootstrap(
     return;
   }
 
-  const results: WorktreeBootstrapTerminalResult[] = [];
-  for (const spec of terminalSpecs) {
-    try {
-      const terminal = await options.terminalManager.createTerminal({
-        cwd: options.worktree.worktreePath,
-        name: spec.name,
-        env: runtimeEnv,
-      });
-      await waitForTerminalBootstrapReadiness(terminal);
-      terminal.send({
-        type: "input",
-        data: `${spec.command}\r`,
-      });
-      results.push({
-        name: terminal.name ?? spec.name ?? null,
-        command: spec.command,
-        status: "started",
-        terminalId: terminal.id,
-        error: null,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      options.logger?.warn(
-        { agentId: options.agentId, command: spec.command, err: error },
-        "Failed to bootstrap worktree terminal",
-      );
-      results.push({
-        name: spec.name ?? null,
-        command: spec.command,
-        status: "failed",
-        terminalId: null,
-        error: message,
-      });
-    }
-  }
+  const terminalManager = options.terminalManager;
+  const results = await Promise.all(
+    terminalSpecs.map(async (spec): Promise<WorktreeBootstrapTerminalResult> => {
+      try {
+        const terminal = await terminalManager.createTerminal({
+          cwd: options.worktree.worktreePath,
+          name: spec.name,
+          env: runtimeEnv,
+        });
+        await waitForTerminalBootstrapReadiness(terminal);
+        terminal.send({
+          type: "input",
+          data: `${spec.command}\r`,
+        });
+        return {
+          name: terminal.name ?? spec.name ?? null,
+          command: spec.command,
+          status: "started",
+          terminalId: terminal.id,
+          error: null,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        options.logger?.warn(
+          { agentId: options.agentId, command: spec.command, err: error },
+          "Failed to bootstrap worktree terminal",
+        );
+        return {
+          name: spec.name ?? null,
+          command: spec.command,
+          status: "failed",
+          terminalId: null,
+          error: message,
+        };
+      }
+    }),
+  );
 
   await options.appendTimelineItem(
     buildTerminalTimelineItem({
@@ -614,6 +617,7 @@ export async function runAsyncWorktreeBootstrap(
           "Failed to emit live worktree setup timeline update",
         );
       }
+      return;
     });
   };
 
@@ -700,6 +704,117 @@ interface SpawnWorkspaceScriptOptions {
   onLifecycleChanged?: () => void;
 }
 
+interface ServiceScriptSetupResult {
+  hostname: string;
+  port: number;
+  env: Record<string, string>;
+}
+
+async function setupServiceScriptRoute(params: {
+  scriptConfigs: ReturnType<typeof getScriptConfigs>;
+  config: { port?: number };
+  scriptName: string;
+  projectSlug: string;
+  branchName: string | null;
+  workspaceId: string;
+  daemonPort: number | null | undefined;
+  daemonListenHost: string | null | undefined;
+  existingRuntimeEntry: ReturnType<WorkspaceScriptRuntimeStore["get"]>;
+  routeStore: ScriptRouteStore;
+}): Promise<ServiceScriptSetupResult> {
+  const {
+    scriptConfigs,
+    config,
+    scriptName,
+    projectSlug,
+    branchName,
+    workspaceId,
+    daemonPort,
+    daemonListenHost,
+    existingRuntimeEntry,
+    routeStore,
+  } = params;
+  const hostname = buildScriptHostname({ projectSlug, branchName, scriptName });
+
+  const serviceDeclarations: Array<{ scriptName: string; port?: number }> = [];
+  for (const [configuredScriptName, scriptConfig] of scriptConfigs) {
+    if (isServiceScript(scriptConfig)) {
+      serviceDeclarations.push({
+        scriptName: configuredScriptName,
+        port: scriptConfig.port,
+      });
+    }
+  }
+  assertNoServiceEnvNameCollisions(
+    serviceDeclarations.map((serviceDeclaration) => serviceDeclaration.scriptName),
+  );
+
+  const plannedPorts = await ensureWorkspaceServicePortPlan({
+    workspaceId,
+    services: serviceDeclarations,
+    allocatePort: findFreePort,
+  });
+  const port =
+    existingRuntimeEntry?.lifecycle === "stopped"
+      ? await refreshWorkspaceServicePort({
+          workspaceId,
+          service: { scriptName, port: config.port },
+          allocatePort: findFreePort,
+        })
+      : requirePlannedWorkspaceServicePort(plannedPorts, scriptName);
+
+  const peers: WorkspaceServicePeer[] = [];
+  for (const [peerScriptName, peerPort] of plannedPorts) {
+    peers.push({
+      scriptName: peerScriptName,
+      port: peerScriptName === scriptName ? port : peerPort,
+    });
+  }
+
+  const env = buildWorkspaceServiceEnv({
+    scriptName,
+    projectSlug,
+    branchName,
+    daemonPort,
+    daemonListenHost,
+    peers,
+  });
+
+  routeStore.registerRoute({
+    hostname,
+    port,
+    workspaceId,
+    projectSlug,
+    scriptName,
+  });
+  return { hostname, port, env };
+}
+
+async function acquireWorkspaceScriptTerminal(params: {
+  serviceScript: boolean;
+  existingRuntimeEntry: ReturnType<WorkspaceScriptRuntimeStore["get"]>;
+  terminalManager: TerminalManager;
+  repoRoot: string;
+  scriptName: string;
+  env: Record<string, string> | undefined;
+}): Promise<{ terminal: TerminalSession; reusableTerminal: TerminalSession | null }> {
+  const { serviceScript, existingRuntimeEntry, terminalManager, repoRoot, scriptName, env } =
+    params;
+  let reusableTerminal: TerminalSession | null = null;
+  if (!serviceScript && existingRuntimeEntry?.terminalId) {
+    reusableTerminal = terminalManager.getTerminal(existingRuntimeEntry.terminalId) ?? null;
+  }
+  const terminal =
+    reusableTerminal ??
+    (await terminalManager.createTerminal({
+      cwd: repoRoot,
+      name: scriptName,
+      title: scriptName,
+      env,
+    }));
+  return { terminal, reusableTerminal };
+}
+
 export async function spawnWorkspaceScript(
   options: SpawnWorkspaceScriptOptions,
 ): Promise<WorktreeScriptResult> {
@@ -739,78 +854,32 @@ export async function spawnWorkspaceScript(
     const existingRuntimeEntry = runtimeStore.get({ workspaceId, scriptName });
     let env: Record<string, string> | undefined;
     if (serviceScript) {
-      hostname = buildScriptHostname({
+      const serviceSetup = await setupServiceScriptRoute({
+        scriptConfigs,
+        config,
+        scriptName,
         projectSlug,
         branchName,
-        scriptName,
-      });
-
-      const serviceDeclarations: Array<{ scriptName: string; port?: number }> = [];
-      for (const [configuredScriptName, scriptConfig] of scriptConfigs) {
-        if (isServiceScript(scriptConfig)) {
-          serviceDeclarations.push({
-            scriptName: configuredScriptName,
-            port: scriptConfig.port,
-          });
-        }
-      }
-      assertNoServiceEnvNameCollisions(
-        serviceDeclarations.map((serviceDeclaration) => serviceDeclaration.scriptName),
-      );
-
-      const plannedPorts = await ensureWorkspaceServicePortPlan({
         workspaceId,
-        services: serviceDeclarations,
-        allocatePort: findFreePort,
-      });
-      port =
-        existingRuntimeEntry?.lifecycle === "stopped"
-          ? await refreshWorkspaceServicePort({
-              workspaceId,
-              service: { scriptName, port: config.port },
-              allocatePort: findFreePort,
-            })
-          : requirePlannedWorkspaceServicePort(plannedPorts, scriptName);
-
-      const peers: WorkspaceServicePeer[] = [];
-      for (const [peerScriptName, peerPort] of plannedPorts) {
-        peers.push({
-          scriptName: peerScriptName,
-          port: peerScriptName === scriptName ? port : peerPort,
-        });
-      }
-
-      env = buildWorkspaceServiceEnv({
-        scriptName,
-        projectSlug,
-        branchName,
         daemonPort,
         daemonListenHost,
-        peers,
+        existingRuntimeEntry,
+        routeStore,
       });
-
-      routeStore.registerRoute({
-        hostname,
-        port,
-        workspaceId,
-        projectSlug,
-        scriptName,
-      });
+      hostname = serviceSetup.hostname;
+      port = serviceSetup.port;
+      env = serviceSetup.env;
       routeRegistered = true;
     }
 
-    let reusableTerminal: TerminalSession | null = null;
-    if (!serviceScript && existingRuntimeEntry?.terminalId) {
-      reusableTerminal = terminalManager.getTerminal(existingRuntimeEntry.terminalId) ?? null;
-    }
-    const terminal =
-      reusableTerminal ??
-      (await terminalManager.createTerminal({
-        cwd: repoRoot,
-        name: scriptName,
-        title: scriptName,
-        env,
-      }));
+    const { terminal, reusableTerminal } = await acquireWorkspaceScriptTerminal({
+      serviceScript,
+      existingRuntimeEntry,
+      terminalManager,
+      repoRoot,
+      scriptName,
+      env,
+    });
 
     runtimeStore.set({
       workspaceId,

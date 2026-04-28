@@ -18,11 +18,13 @@ function userMessage(index: number): StreamItem {
   };
 }
 
+const VIRTUAL_ROW_STYLE = { height: 24 };
+
 function createRenderers(onRowRender: () => void): StreamSegmentRenderers {
   return {
     renderHistoryVirtualizedRow: (item) => {
       onRowRender();
-      return <div style={{ height: 24 }}>{item.id}</div>;
+      return <div style={VIRTUAL_ROW_STYLE}>{item.id}</div>;
     },
     renderHistoryMountedRow: (item) => <div>{item.id}</div>,
     renderLiveHeadRow: (item) => <div>{item.id}</div>,

@@ -58,6 +58,7 @@ await rm(staticDir, { recursive: true, force: true });
 ```
 
 Run with:
+
 ```bash
 npx tsx packages/server/src/server/your-script.ts
 ```
@@ -107,6 +108,7 @@ const updated = await client.waitForAgentUpsert(agent.id, (s) => s.status === "i
 The daemon hides non-legacy providers (anything other than claude, codex, opencode) from clients that don't send an `appVersion >= 0.1.45`. The `DaemonClient` sends no version by default, so custom providers like ACP-based ones will be invisible in snapshot responses.
 
 Always pass `appVersion`:
+
 ```typescript
 const client = new DaemonClient({
   url: `ws://127.0.0.1:${port}/ws`,

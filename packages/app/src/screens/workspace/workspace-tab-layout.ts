@@ -1,6 +1,6 @@
 export type WorkspaceTabCloseButtonPolicy = "all";
 
-export type WorkspaceTabLayoutInput = {
+export interface WorkspaceTabLayoutInput {
   viewportWidth: number;
   tabLabelLengths: number[];
   metrics: {
@@ -14,19 +14,19 @@ export type WorkspaceTabLayoutInput = {
     estimatedCharWidth: number;
     closeButtonWidth: number;
   };
-};
+}
 
-export type WorkspaceTabLayoutItem = {
+export interface WorkspaceTabLayoutItem {
   width: number;
   showLabel: boolean;
   labelCharCap: number;
-};
+}
 
-export type WorkspaceTabLayoutResult = {
+export interface WorkspaceTabLayoutResult {
   items: WorkspaceTabLayoutItem[];
   closeButtonPolicy: WorkspaceTabCloseButtonPolicy;
   requiresHorizontalScrollFallback: boolean;
-};
+}
 
 function clamp(value: number, min: number, max: number): number {
   if (value < min) {
@@ -63,11 +63,10 @@ export function computeWorkspaceTabLayout(
     input.metrics.closeButtonWidth;
   const iconOnlyTotalTabsWidth = iconOnlyTabWidth * tabCount;
   const requiresHorizontalScrollFallback = availableTabsWidth < iconOnlyTotalTabsWidth;
-  const resolvedWidths = new Array(tabCount).fill(
-    requiresHorizontalScrollFallback
-      ? iconOnlyTabWidth
-      : clamp(availableTabsWidth / tabCount, iconOnlyTabWidth, input.metrics.maxTabWidth),
-  );
+  const resolvedWidth = requiresHorizontalScrollFallback
+    ? iconOnlyTabWidth
+    : clamp(availableTabsWidth / tabCount, iconOnlyTabWidth, input.metrics.maxTabWidth);
+  const resolvedWidths = Array.from({ length: tabCount }, () => resolvedWidth);
 
   const roundedWidths = resolvedWidths.map((width) =>
     Math.round(clamp(width, iconOnlyTabWidth, input.metrics.maxTabWidth)),

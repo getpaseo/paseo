@@ -1,9 +1,6 @@
 import type { DaemonClient } from "@server/client/daemon-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  buildWorkspaceArchiveRedirectRoute,
-  resolveWorkspaceArchiveRedirectWorkspaceId,
-} from "@/utils/workspace-archive-navigation";
+import { buildWorkspaceArchiveRedirectRoute } from "@/utils/workspace-archive-navigation";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import {
@@ -40,22 +37,23 @@ function workspace(
   };
 }
 
-describe("resolveWorkspaceArchiveRedirectWorkspaceId", () => {
-  it("redirects an archived worktree to the visible local checkout for the same project", () => {
+describe("buildWorkspaceArchiveRedirectRoute", () => {
+  it("redirects an archived worktree to the new workspace screen for the same project", () => {
     const workspaces = [
       workspace({ id: "/repo", workspaceKind: "checkout", name: "main" }),
       workspace({ id: "/repo/.paseo/worktrees/feature", name: "feature" }),
     ];
 
     expect(
-      resolveWorkspaceArchiveRedirectWorkspaceId({
+      buildWorkspaceArchiveRedirectRoute({
+        serverId: "server-1",
         archivedWorkspaceId: "/repo/.paseo/worktrees/feature",
         workspaces,
       }),
-    ).toBe("/repo");
+    ).toBe("/h/server-1/new?dir=%2Frepo&name=Project");
   });
 
-  it("falls back to the host root route when no sibling workspace target exists", () => {
+  it("redirects to the new workspace route when no sibling workspace target exists", () => {
     const workspaces = [
       workspace({
         id: "/repo/.paseo/worktrees/feature",
@@ -70,10 +68,10 @@ describe("resolveWorkspaceArchiveRedirectWorkspaceId", () => {
         archivedWorkspaceId: "/repo/.paseo/worktrees/feature",
         workspaces,
       }),
-    ).toBe("/h/server-1");
+    ).toBe("/h/server-1/new?dir=%2Frepo&name=Project");
   });
 
-  it("falls back to the host root route when no alternate workspace target exists", () => {
+  it("redirects to the new workspace route instead of another workspace", () => {
     const workspaces = [
       workspace({
         id: "/notes",
@@ -90,7 +88,7 @@ describe("resolveWorkspaceArchiveRedirectWorkspaceId", () => {
         archivedWorkspaceId: "/notes",
         workspaces,
       }),
-    ).toBe("/h/server-1");
+    ).toBe("/h/server-1/new?dir=%2Fnotes&name=Project");
   });
 });
 
@@ -140,6 +138,6 @@ describe("redirectIfArchivingActiveWorkspace", () => {
       }),
     ).toBe(true);
 
-    expect(replaceMock).toHaveBeenCalledWith("/h/server-1/workspace/main");
+    expect(replaceMock).toHaveBeenCalledWith("/h/server-1/new?dir=%2Frepo&name=Project");
   });
 });

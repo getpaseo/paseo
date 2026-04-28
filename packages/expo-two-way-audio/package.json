@@ -1,7 +1,20 @@
 {
   "name": "@getpaseo/expo-two-way-audio",
-  "version": "0.1.60-beta.2",
+  "version": "0.1.63",
   "description": "Native module for two way audio streaming",
+  "keywords": [
+    "ExpoTwoWayAudio",
+    "expo",
+    "expo-two-way-audio",
+    "react-native"
+  ],
+  "homepage": "https://github.com/boudra/expo-two-way-audio",
+  "bugs": {
+    "url": "https://github.com/speechmatics/expo-two-way-audio/issues"
+  },
+  "license": "MIT",
+  "author": "Speechmatics <devrel@speechmatics.com> (https://github.com/speechmatics)",
+  "repository": "https://github.com/boudra/expo-two-way-audio",
   "main": "build/index.js",
   "types": "build/index.d.ts",
   "scripts": {
@@ -10,28 +23,14 @@
     "dev": "expo-module build",
     "lint": "expo-module lint",
     "test": "expo-module test",
-    "format": "biome check .",
-    "format:fix": "biome check --write .",
-    "typecheck": "tsc",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "typecheck": "tsgo --noEmit",
     "expo-module": "expo-module",
     "open:ios": "xed examples/basic-usage/ios",
     "open:android": "open -a \"Android Studio\" examples/basic-usage/android"
   },
-  "keywords": [
-    "react-native",
-    "expo",
-    "expo-two-way-audio",
-    "ExpoTwoWayAudio"
-  ],
-  "repository": "https://github.com/boudra/expo-two-way-audio",
-  "bugs": {
-    "url": "https://github.com/speechmatics/expo-two-way-audio/issues"
-  },
-  "author": "Speechmatics <devrel@speechmatics.com> (https://github.com/speechmatics)",
-  "license": "MIT",
-  "homepage": "https://github.com/boudra/expo-two-way-audio",
   "devDependencies": {
-    "@biomejs/biome": "1.9.4",
     "@types/react": "^18.0.25",
     "expo-module-scripts": "^3.5.2",
     "expo-modules-core": "^2.0.4"

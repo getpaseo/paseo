@@ -78,6 +78,7 @@ describe("useAgentFormState live preference hydration", () => {
       {
         provider: "codex",
         status: "ready",
+        enabled: true,
         label: "Codex",
         description: "Codex test provider",
         defaultModeId: "auto",
@@ -107,6 +108,7 @@ describe("useAgentFormState live preference hydration", () => {
       {
         provider: "claude",
         status: "ready",
+        enabled: true,
         label: "Claude",
         description: "Claude test provider",
         defaultModeId: "default",

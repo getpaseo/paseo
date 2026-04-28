@@ -25,8 +25,9 @@ function CLI() {
       <div>
         <h1 className="text-3xl font-medium font-title mb-4">CLI</h1>
         <p className="text-white/60 leading-relaxed">
-          The Paseo CLI lets you manage agents from your terminal. It's the same interface exposed
-          by the daemon's API, so anything you can do in the app you can do from the command line.
+          The Paseo CLI lets you manage agents from your terminal. It&apos;s the same interface
+          exposed by the daemon&apos;s API, so anything you can do in the app you can do from the
+          command line.
         </p>
       </div>
 
@@ -96,14 +97,14 @@ paseo ls -a -g --json       # Full list as JSON`}</pre>
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Streaming output</h2>
         <p className="text-white/60 leading-relaxed">
-          Use <code className="font-mono">paseo attach</code> to stream an agent's output in
+          Use <code className="font-mono">paseo attach</code> to stream an agent&apos;s output in
           real-time:
         </p>
         <Code>
           <pre className="text-white/80">{`paseo attach abc123   # Attach to agent (Ctrl+C to detach)`}</pre>
         </Code>
         <p className="text-white/60 leading-relaxed">
-          Agent IDs can be shortened — <code className="font-mono">abc</code> works if it's
+          Agent IDs can be shortened — <code className="font-mono">abc</code> works if it&apos;s
           unambiguous.
         </p>
       </section>
@@ -164,7 +165,7 @@ paseo permit deny <id> --all   # Deny all pending`}</pre>
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Agent modes</h2>
         <p className="text-white/60 leading-relaxed">
-          Change an agent's operational mode (provider-specific):
+          Change an agent&apos;s operational mode (provider-specific):
         </p>
         <Code>
           <pre className="text-white/80">{`paseo agent mode <id> --list   # Show available modes

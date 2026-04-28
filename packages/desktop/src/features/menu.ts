@@ -1,9 +1,9 @@
 import { app, Menu, BrowserWindow, ipcMain } from "electron";
 
-type ShowContextMenuInput = {
+interface ShowContextMenuInput {
   kind?: "terminal";
   hasSelection?: boolean;
-};
+}
 
 function withBrowserWindow(
   callback: (win: BrowserWindow) => void,
@@ -105,7 +105,7 @@ export function setupApplicationMenu(): void {
       return;
     }
 
-    const menu = Menu.buildFromTemplate([
+    const contextMenu = Menu.buildFromTemplate([
       {
         label: "Copy",
         role: "copy",
@@ -124,6 +124,6 @@ export function setupApplicationMenu(): void {
       },
     ]);
 
-    menu.popup({ window: win });
+    contextMenu.popup({ window: win });
   });
 }

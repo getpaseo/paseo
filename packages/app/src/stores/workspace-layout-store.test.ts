@@ -29,6 +29,7 @@ import {
   removeTabFromTree,
   useWorkspaceLayoutStore,
   type SplitNode,
+  type SplitPane,
 } from "@/stores/workspace-layout-store";
 
 const SERVER_ID = "server-1";
@@ -55,7 +56,7 @@ function createPane(input: {
       tabIds: input.tabIds,
       focusedTabId: input.focusedTabId ?? input.tabIds[input.tabIds.length - 1] ?? null,
       tabs,
-    } as any,
+    } as SplitPane,
   };
 }
 
@@ -580,7 +581,7 @@ describe("workspace-layout-store actions", () => {
     const store = useWorkspaceLayoutStore.getState();
 
     store.openTabFocused(workspaceKey, { kind: "file", path: "/repo/worktree/a.ts" });
-    const secondTabId = store.openTabFocused(workspaceKey, {
+    store.openTabFocused(workspaceKey, {
       kind: "file",
       path: "/repo/worktree/b.ts",
     });
@@ -1048,7 +1049,7 @@ describe("workspace-layout-store actions", () => {
                   createdAt: 4,
                 },
               ],
-            } as any,
+            } as SplitPane,
           },
           focusedPaneId: "main",
         },

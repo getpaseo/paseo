@@ -53,8 +53,7 @@ test.describe("Settings host page", () => {
 
     const injectMcpCard = page.getByTestId("host-page-inject-mcp-card");
     await expect(injectMcpCard).toBeVisible();
-    await expect(injectMcpCard.getByRole("button", { name: "On", exact: true })).toBeVisible();
-    await expect(injectMcpCard.getByRole("button", { name: "Off", exact: true })).toBeVisible();
+    await expect(injectMcpCard.getByRole("switch", { name: "Inject Paseo tools" })).toBeVisible();
 
     await expect(page.getByTestId("host-page-restart-card")).toBeVisible();
     await expect(page.getByTestId("host-page-restart-button")).toBeVisible();
@@ -130,13 +129,10 @@ test.describe("Settings host page", () => {
     const serverId = getSeededServerId();
 
     // Simulate the Electron desktop bridge so `useIsLocalDaemon` resolves the
-    // seeded host to the local daemon. `manageBuiltInDaemon: false` bypasses
-    // the desktop bootstrap flow so only the sidebar's status query runs.
+    // seeded host to the local daemon. `manageBuiltInDaemon: false` (returned
+    // from get_desktop_settings) bypasses the desktop bootstrap flow so only
+    // the sidebar's status query runs against the seeded test daemon.
     await page.addInitScript((localServerId) => {
-      localStorage.setItem(
-        "@paseo:app-settings",
-        JSON.stringify({ theme: "auto", manageBuiltInDaemon: false, sendBehavior: "interrupt" }),
-      );
       (window as unknown as { paseoDesktop: unknown }).paseoDesktop = {
         platform: "darwin",
         invoke: async (command: string) => {
@@ -151,6 +147,12 @@ test.describe("Settings host page", () => {
               version: null,
               desktopManaged: true,
               error: null,
+            };
+          }
+          if (command === "get_desktop_settings") {
+            return {
+              releaseChannel: "stable",
+              daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
             };
           }
           return null;

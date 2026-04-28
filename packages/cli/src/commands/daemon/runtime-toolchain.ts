@@ -76,25 +76,27 @@ async function resolveNodePathFromPidWindows(pid: number): Promise<NodePathFromP
   ];
 
   const errors: string[] = [];
-  for (const probe of probes) {
+
+  async function tryProbe(index: number): Promise<NodePathFromPidResult> {
+    if (index >= probes.length) {
+      return {
+        nodePath: null,
+        error: errors.join("; ") || "could not resolve executable path from PID",
+      };
+    }
+    const probe = probes[index] as (typeof probes)[number];
     const result = await runProcessProbe(probe.command, probe.args);
     if (result.resolved) {
       const resolved = probe.parseValue ? probe.parseValue(result.resolved) : result.resolved;
-      if (resolved) {
-        return { nodePath: resolved };
-      }
+      if (resolved) return { nodePath: resolved };
       errors.push(`${probe.label} returned no executable path`);
-      continue;
-    }
-    if (result.error) {
+    } else if (result.error) {
       errors.push(`${probe.label}: ${result.error}`);
     }
+    return tryProbe(index + 1);
   }
 
-  return {
-    nodePath: null,
-    error: errors.join("; ") || "could not resolve executable path from PID",
-  };
+  return tryProbe(0);
 }
 
 export async function resolveNodePathFromPid(pid: number): Promise<NodePathFromPidResult> {

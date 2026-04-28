@@ -19,6 +19,7 @@ import {
 function makeTimelineEntry(seq: number, text: string, type: string = "assistant_message") {
   return {
     seqStart: seq,
+    seqEnd: seq,
     provider: "claude",
     item: { type, text },
     timestamp: new Date(1000 + seq).toISOString(),
@@ -33,14 +34,6 @@ function makeTimelineEvent(
     type: "timeline",
     provider: "claude",
     item: { type, text },
-  } as AgentStreamEventPayload;
-}
-
-function makeUserTimelineEvent(text: string): AgentStreamEventPayload {
-  return {
-    type: "timeline",
-    provider: "claude",
-    item: { type: "user_message", text },
   } as AgentStreamEventPayload;
 }
 
@@ -72,6 +65,23 @@ function makeStreamReducerEvent(
     epoch: "epoch-1",
     timestamp: new Date(1000 + seq),
   };
+}
+
+function makeAssistantItem(text: string, id = `assistant-${text.length}`): StreamItem {
+  return {
+    kind: "assistant_message",
+    id,
+    text,
+    timestamp: new Date(1000),
+  };
+}
+
+function getAssistantTexts(items: StreamItem[]): string[] {
+  return items
+    .filter((item): item is Extract<StreamItem, { kind: "assistant_message" }> => {
+      return item.kind === "assistant_message";
+    })
+    .map((item) => item.text);
 }
 
 const baseTimelineInput: ProcessTimelineResponseInput = {
@@ -270,6 +280,34 @@ describe("processTimelineResponse", () => {
     expect(result.error).toBe(null);
   });
 
+  it("keeps an active assistant head live when an incremental fetch accepts same-turn assistant text", () => {
+    const existingCursor: TimelineCursor = {
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 2,
+    };
+    const currentHead = [makeAssistantItem("This is a par")];
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead,
+      currentCursor: existingCursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        entries: [makeTimelineEntry(3, "agraph")],
+      },
+    });
+
+    expect(getAssistantTexts(result.tail)).toEqual([]);
+    expect(getAssistantTexts(result.head)).toEqual(["This is a paragraph"]);
+    expect(result.cursor).toEqual({
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 3,
+    });
+  });
+
   it("detects gap and emits catch-up side effect", () => {
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",
@@ -316,6 +354,39 @@ describe("processTimelineResponse", () => {
     // No new items appended (all dropped as stale)
     expect(result.tail).toBe(baseTimelineInput.currentTail);
     expect(result.cursorChanged).toBe(false);
+  });
+
+  it("requests canonical catch-up when a projected entry overlaps unseen seqs", () => {
+    const existingCursor: TimelineCursor = {
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 5,
+    };
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentCursor: existingCursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        entries: [
+          {
+            ...makeTimelineEntry(4, "merged assistant message"),
+            seqEnd: 8,
+          },
+        ],
+      },
+    });
+
+    expect(result.tail).toBe(baseTimelineInput.currentTail);
+    expect(result.cursorChanged).toBe(false);
+    expect(result.sideEffects).toContainEqual({
+      type: "catch_up",
+      cursor: {
+        epoch: "epoch-1",
+        endSeq: 5,
+      },
+    });
   });
 
   it("drops entries with epoch mismatch", () => {
@@ -600,6 +671,28 @@ describe("processAgentStreamEvent", () => {
 
     expect(result.agentChanged).toBe(true);
     expect(result.agent!.status).toBe("error");
+  });
+
+  it("does not derive optimistic idle status on turn_canceled for running agent", () => {
+    const turnCanceledEvent: AgentStreamEventPayload = {
+      type: "turn_canceled",
+      provider: "codex",
+      reason: "interrupted",
+    };
+
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: turnCanceledEvent,
+      currentAgent: {
+        status: "running",
+        updatedAt: new Date(1000),
+        lastActivityAt: new Date(1000),
+      },
+      timestamp: new Date(2000),
+    });
+
+    expect(result.agentChanged).toBe(false);
+    expect(result.agent).toBe(null);
   });
 
   it("does not change agent when status is not running", () => {
@@ -918,6 +1011,59 @@ describe("createAgentStreamReducerQueue", () => {
 
     expect(commits).toEqual(["agent-1:queued"]);
     expect(scheduler.size).toBe(0);
+  });
+
+  it("keeps a live paragraph in one assistant item when canonical fetch interleaves with queued stream chunks", () => {
+    const scheduler = createManualScheduler();
+    let currentTail: StreamItem[] = [];
+    let currentHead: StreamItem[] = [];
+    let currentCursor: TimelineCursor | undefined;
+
+    const queue = createAgentStreamReducerQueue({
+      getSnapshot: () => ({
+        currentTail,
+        currentHead,
+        currentCursor,
+        currentAgent: null,
+      }),
+      commit: (_agentId, result) => {
+        currentTail = result.tail;
+        currentHead = result.head;
+        currentCursor = result.cursor ?? undefined;
+      },
+      handleSideEffects: () => {},
+      scheduleFlush: scheduler.schedule,
+      cancelFlush: scheduler.cancel,
+    });
+
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent("This is a par"), 2));
+    queue.flushAgent("agent-1");
+
+    const timelineResult = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentHead,
+      currentCursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        entries: [makeTimelineEntry(3, "agraph")],
+      },
+    });
+    currentTail = timelineResult.tail;
+    currentHead = timelineResult.head;
+    currentCursor = timelineResult.cursor ?? undefined;
+
+    queue.enqueue("agent-1", makeStreamReducerEvent(makeTimelineEvent(" continues."), 4));
+    queue.flushAgent("agent-1");
+
+    expect(getAssistantTexts(currentTail)).toEqual([]);
+    expect(getAssistantTexts(currentHead)).toEqual(["This is a paragraph continues."]);
+    expect(currentCursor).toEqual({
+      epoch: "epoch-1",
+      startSeq: 2,
+      endSeq: 4,
+    });
   });
 
   it("flushes queued events synchronously before disposal", () => {

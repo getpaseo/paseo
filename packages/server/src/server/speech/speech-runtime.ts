@@ -31,16 +31,16 @@ export type SpeechReadinessReasonCode =
   | "stt_unavailable"
   | "tts_unavailable";
 
-export type SpeechReadinessState = {
+export interface SpeechReadinessState {
   enabled: boolean;
   available: boolean;
   reasonCode: SpeechReadinessReasonCode;
   message: string;
   retryable: boolean;
   missingModelIds: LocalSpeechModelId[];
-};
+}
 
-export type SpeechReadinessSnapshot = {
+export interface SpeechReadinessSnapshot {
   generatedAt: string;
   requiredLocalModelIds: LocalSpeechModelId[];
   missingLocalModelIds: LocalSpeechModelId[];
@@ -51,7 +51,7 @@ export type SpeechReadinessSnapshot = {
   realtimeVoice: SpeechReadinessState;
   dictation: SpeechReadinessState;
   voiceFeature: SpeechReadinessState;
-};
+}
 
 function resolveRequestedSpeechProviders(
   speechConfig: PaseoSpeechConfig | null,
@@ -100,20 +100,19 @@ async function findMissingRequiredLocalModels(params: {
   const specsById = new Map(listLocalSpeechModels().map((model) => [model.id, model]));
   const missing = new Set<LocalSpeechModelId>();
 
-  for (const modelId of requiredModelIds) {
-    const spec = specsById.get(modelId);
-    if (!spec) {
-      missing.add(modelId);
-      continue;
-    }
-    const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
-    for (const relPath of spec.requiredFiles) {
-      const filePath = join(modelDir, relPath);
-      if (!(await hasRequiredLocalModelFile(filePath))) {
-        missing.add(modelId);
-        break;
-      }
-    }
+  const checks = await Promise.all(
+    requiredModelIds.map(async (modelId) => {
+      const spec = specsById.get(modelId);
+      if (!spec) return { modelId, missing: true };
+      const modelDir = getLocalSpeechModelDir(modelsDir, modelId);
+      const filePresence = await Promise.all(
+        spec.requiredFiles.map((relPath) => hasRequiredLocalModelFile(join(modelDir, relPath))),
+      );
+      return { modelId, missing: !filePresence.every((present) => present) };
+    }),
+  );
+  for (const check of checks) {
+    if (check.missing) missing.add(check.modelId);
   }
 
   return Array.from(missing);
@@ -312,6 +311,15 @@ function describeRequestedProviders(providers: RequestedSpeechProviders): {
   };
 }
 
+function resolveVoiceTtsLabel(
+  ttsService: TextToSpeechProvider | null,
+  localVoiceTtsProvider: TextToSpeechProvider | null,
+): "unavailable" | "local" | "openai" {
+  if (!ttsService) return "unavailable";
+  if (ttsService === localVoiceTtsProvider) return "local";
+  return "openai";
+}
+
 function resolveEffectiveProviderIds(params: {
   turnDetectionService: TurnDetectionProvider | null;
   sttService: SpeechToTextProvider | null;
@@ -328,15 +336,11 @@ function resolveEffectiveProviderIds(params: {
     dictationStt: params.dictationSttService?.id ?? "unavailable",
     voiceTurnDetection: params.turnDetectionService?.id ?? "unavailable",
     voiceStt: params.sttService?.id ?? "unavailable",
-    voiceTts: !params.ttsService
-      ? "unavailable"
-      : params.ttsService === params.localVoiceTtsProvider
-        ? "local"
-        : "openai",
+    voiceTts: resolveVoiceTtsLabel(params.ttsService, params.localVoiceTtsProvider),
   };
 }
 
-export type SpeechService = {
+export interface SpeechService {
   resolveStt: () => SpeechToTextProvider | null;
   resolveTts: () => TextToSpeechProvider | null;
   resolveTurnDetection: () => TurnDetectionProvider | null;
@@ -346,7 +350,7 @@ export type SpeechService = {
   start: () => void;
   stop: () => void;
   ready: Promise<void>;
-};
+}
 
 export function createSpeechService(params: {
   logger: Logger;

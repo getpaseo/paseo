@@ -18,6 +18,37 @@ const MIME_TYPE_CANDIDATES = [
   "audio/ogg",
 ];
 
+function assertMicrophoneEnvironment(): void {
+  const missingNavigator =
+    typeof navigator === "undefined" ||
+    !navigator.mediaDevices ||
+    typeof navigator.mediaDevices.getUserMedia !== "function";
+
+  const secureContext =
+    typeof window !== "undefined" && typeof window.isSecureContext === "boolean"
+      ? window.isSecureContext
+      : true;
+  const currentOrigin =
+    typeof window !== "undefined" && window.location ? window.location.origin : "unknown";
+  const isDesktopApp = isElectronRuntime();
+
+  if (missingNavigator) {
+    throw new Error("Microphone capture is not supported in this environment");
+  }
+
+  if (!secureContext && !isDesktopApp) {
+    throw new Error(
+      `Microphone access requires HTTPS or localhost. Current origin: ${currentOrigin}`,
+    );
+  }
+  if (!secureContext && isDesktopApp) {
+    console.warn(
+      "[AudioRecorder][Web] Insecure context reported under Desktop; attempting getUserMedia anyway",
+      { currentOrigin },
+    );
+  }
+}
+
 export function useAudioRecorder(config?: AudioCaptureConfig) {
   const [isRecording, setIsRecording] = useState(false);
 
@@ -146,34 +177,7 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
       throw new Error("Already recording");
     }
 
-    const missingNavigator =
-      typeof navigator === "undefined" ||
-      !navigator.mediaDevices ||
-      typeof navigator.mediaDevices.getUserMedia !== "function";
-
-    const secureContext =
-      typeof window !== "undefined" && typeof window.isSecureContext === "boolean"
-        ? window.isSecureContext
-        : true;
-    const currentOrigin =
-      typeof window !== "undefined" && window.location ? window.location.origin : "unknown";
-    const isDesktopApp = isElectronRuntime();
-
-    if (missingNavigator) {
-      throw new Error("Microphone capture is not supported in this environment");
-    }
-
-    if (!secureContext && !isDesktopApp) {
-      throw new Error(
-        `Microphone access requires HTTPS or localhost. Current origin: ${currentOrigin}`,
-      );
-    }
-    if (!secureContext && isDesktopApp) {
-      console.warn(
-        "[AudioRecorder][Web] Insecure context reported under Desktop; attempting getUserMedia anyway",
-        { currentOrigin },
-      );
-    }
+    assertMicrophoneEnvironment();
 
     const options = configRef.current;
     const constraints: MediaStreamConstraints = {
@@ -189,8 +193,11 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (error: any) {
-      throw new Error(`Failed to access microphone: ${error?.message ?? error}`);
+    } catch (error) {
+      throw new Error(
+        `Failed to access microphone: ${(error as { message?: string })?.message ?? String(error)}`,
+        { cause: error },
+      );
     }
 
     try {
@@ -223,9 +230,14 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
     let recorder: MediaRecorder;
     try {
       recorder = new MediaRecorder(stream, recorderOptions);
-    } catch (error: any) {
+    } catch (error) {
       cleanupStream();
-      throw new Error(`Failed to initialize recorder: ${error?.message ?? error}`);
+      throw new Error(
+        `Failed to initialize recorder: ${(error as { message?: string })?.message ?? String(error)}`,
+        {
+          cause: error,
+        },
+      );
     }
 
     mediaRecorderRef.current = recorder;
@@ -240,10 +252,10 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
       }
     };
 
-    recorder.onerror = (event) => {
+    recorder.addEventListener("error", (event) => {
       const error = (event as { error?: Error }).error;
       console.error("[AudioRecorder][Web] Recorder error", error ?? event);
-    };
+    });
 
     const timeslice = options?.enableContinuousRecording ? 1000 : undefined;
 
@@ -324,10 +336,12 @@ export function useAudioRecorder(config?: AudioCaptureConfig) {
   }, [cleanupStream, detectSupportedMimeType, stopMetering]);
 
   useEffect(() => {
+    const attemptGuard = attemptGuardRef.current;
+    const mediaRecorder = mediaRecorderRef;
     return () => {
-      attemptGuardRef.current.cancel();
+      attemptGuard.cancel();
       try {
-        void mediaRecorderRef.current?.stop();
+        void mediaRecorder.current?.stop();
       } catch {
         // Ignore stop during unmount.
       }

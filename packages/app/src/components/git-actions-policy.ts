@@ -230,15 +230,6 @@ function canPush(input: BuildGitActionsInput): boolean {
   return input.hasRemote && input.aheadOfOrigin > 0 && input.behindOfOrigin === 0;
 }
 
-function canMergeBranch(input: BuildGitActionsInput): boolean {
-  return (
-    !input.isOnBaseBranch &&
-    input.baseRefAvailable &&
-    !input.hasUncommittedChanges &&
-    input.aheadCount > 0
-  );
-}
-
 function canMergeFromBase(input: BuildGitActionsInput): boolean {
   return (
     !input.isOnBaseBranch &&

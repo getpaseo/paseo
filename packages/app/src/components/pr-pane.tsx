@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
@@ -24,10 +24,30 @@ import type {
   PrState,
 } from "@/utils/pr-pane-data";
 
+function rowPressableStyle({ hovered }: { hovered?: boolean }) {
+  return [styles.row, Boolean(hovered) && styles.hoverable];
+}
+
+function activityPressableStyle({ hovered }: { hovered?: boolean }) {
+  return [styles.activityRow, Boolean(hovered) && styles.hoverable];
+}
+
 export function PrPane({ data }: { data: PrPaneData }) {
   const { theme } = useUnistyles();
   const [checksOpen, setChecksOpen] = useState(true);
   const [reviewsOpen, setReviewsOpen] = useState(true);
+
+  const handleOpenPrUrl = useCallback(() => {
+    void openExternalUrl(data.url);
+  }, [data.url]);
+
+  const handleToggleChecks = useCallback(() => {
+    setChecksOpen((o) => !o);
+  }, []);
+
+  const handleToggleReviews = useCallback(() => {
+    setReviewsOpen((o) => !o);
+  }, []);
 
   const passed = data.checks.filter((c) => c.status === "success").length;
   const failed = data.checks.filter((c) => c.status === "failure").length;
@@ -46,15 +66,37 @@ export function PrPane({ data }: { data: PrPaneData }) {
   const stateColor = getStateColor(data.state, theme);
   const StateIcon = getStateIcon(data.state);
   const stateLabel = getStateLabel(data.state);
+  const stateLabelStyle = useMemo(() => [styles.stateLabel, { color: stateColor }], [stateColor]);
+  const keyedActivity = useMemo(
+    () => data.activity.map((item, idx) => ({ key: `${item.author}-${item.kind}-${idx}`, item })),
+    [data.activity],
+  );
+
+  const checkSuccessIcon = useMemo(
+    () => <CircleCheck size={12} color={theme.colors.statusSuccess} />,
+    [theme.colors.statusSuccess],
+  );
+  const checkDangerIcon = useMemo(
+    () => <CircleX size={12} color={theme.colors.statusDanger} />,
+    [theme.colors.statusDanger],
+  );
+  const checkWarningIcon = useMemo(
+    () => <CircleDot size={12} color={theme.colors.statusWarning} />,
+    [theme.colors.statusWarning],
+  );
+  const commentIcon = useMemo(
+    () => <MessageSquare size={11} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted],
+  );
 
   return (
     <View style={styles.root}>
-      <Pressable onPress={() => void openExternalUrl(data.url)} style={styles.header}>
+      <Pressable onPress={handleOpenPrUrl} style={styles.header}>
         {({ hovered }) => (
           <>
             <View style={styles.stateLine}>
               <StateIcon size={14} color={stateColor} />
-              <Text style={[styles.stateLabel, { color: stateColor }]}>{stateLabel}</Text>
+              <Text style={stateLabelStyle}>{stateLabel}</Text>
             </View>
             <Text style={styles.title} numberOfLines={3}>
               {data.title}
@@ -74,29 +116,25 @@ export function PrPane({ data }: { data: PrPaneData }) {
       <Section
         title="Checks"
         open={checksOpen}
-        onToggle={() => setChecksOpen((o) => !o)}
+        onToggle={handleToggleChecks}
         summary={
           <>
             <SummaryPill
               count={passed}
               color={theme.colors.statusSuccess}
-              icon={<CircleCheck size={12} color={theme.colors.statusSuccess} />}
+              icon={checkSuccessIcon}
             />
-            <SummaryPill
-              count={failed}
-              color={theme.colors.statusDanger}
-              icon={<CircleX size={12} color={theme.colors.statusDanger} />}
-            />
+            <SummaryPill count={failed} color={theme.colors.statusDanger} icon={checkDangerIcon} />
             <SummaryPill
               count={pending}
               color={theme.colors.statusWarning}
-              icon={<CircleDot size={12} color={theme.colors.statusWarning} />}
+              icon={checkWarningIcon}
             />
           </>
         }
       >
-        {data.checks.map((check, idx) => (
-          <CheckRow key={`${check.name}-${idx}`} check={check} />
+        {data.checks.map((check) => (
+          <CheckRow key={check.name} check={check} />
         ))}
       </Section>
 
@@ -105,29 +143,29 @@ export function PrPane({ data }: { data: PrPaneData }) {
       <Section
         title="Reviews"
         open={reviewsOpen}
-        onToggle={() => setReviewsOpen((o) => !o)}
+        onToggle={handleToggleReviews}
         summary={
           <>
             <SummaryPill
               count={approvals}
               color={theme.colors.statusSuccess}
-              icon={<CircleCheck size={12} color={theme.colors.statusSuccess} />}
+              icon={checkSuccessIcon}
             />
             <SummaryPill
               count={changesRequested}
               color={theme.colors.statusDanger}
-              icon={<CircleX size={12} color={theme.colors.statusDanger} />}
+              icon={checkDangerIcon}
             />
             <SummaryPill
               count={commentCount}
               color={theme.colors.foregroundMuted}
-              icon={<MessageSquare size={11} color={theme.colors.foregroundMuted} />}
+              icon={commentIcon}
             />
           </>
         }
       >
-        {data.activity.map((item, idx) => (
-          <ActivityRow key={`${item.author}-${idx}`} item={item} />
+        {keyedActivity.map(({ key, item }) => (
+          <ActivityRow key={key} item={item} />
         ))}
       </Section>
     </View>
@@ -177,21 +215,22 @@ function SummaryPill({
   color: string;
   icon: React.ReactNode;
 }) {
+  const textStyle = useMemo(() => [styles.summaryPillText, { color }], [color]);
   if (count === 0) return null;
   return (
     <View style={styles.summaryPill}>
       {icon}
-      <Text style={[styles.summaryPillText, { color }]}>{count}</Text>
+      <Text style={textStyle}>{count}</Text>
     </View>
   );
 }
 
 function CheckRow({ check }: { check: PrPaneCheck }) {
+  const handlePress = useCallback(() => {
+    void openExternalUrl(check.url);
+  }, [check.url]);
   return (
-    <Pressable
-      onPress={() => void openExternalUrl(check.url)}
-      style={({ hovered }) => [styles.row, hovered && styles.hoverable]}
-    >
+    <Pressable onPress={handlePress} style={rowPressableStyle}>
       <CheckStatusIcon status={check.status} />
       <Text style={styles.rowTitle} numberOfLines={1}>
         {check.name}
@@ -216,12 +255,16 @@ function CheckStatusIcon({ status }: { status: CheckStatus }) {
 
 function ActivityRow({ item }: { item: PrPaneActivity }) {
   const verb = getActivityVerb(item);
+  const handlePress = useCallback(() => {
+    void openExternalUrl(item.url);
+  }, [item.url]);
+  const avatarStyle = useMemo(
+    () => [styles.avatar, { backgroundColor: item.avatarColor }],
+    [item.avatarColor],
+  );
   return (
-    <Pressable
-      onPress={() => void openExternalUrl(item.url)}
-      style={({ hovered }) => [styles.activityRow, hovered && styles.hoverable]}
-    >
-      <View style={[styles.avatar, { backgroundColor: item.avatarColor }]}>
+    <Pressable onPress={handlePress} style={activityPressableStyle}>
+      <View style={avatarStyle}>
         <Text style={styles.avatarText}>{item.author.slice(0, 1).toUpperCase()}</Text>
       </View>
       <View style={styles.activityMain}>

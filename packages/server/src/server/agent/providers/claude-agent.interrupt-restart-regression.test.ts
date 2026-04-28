@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 
-type QueryMock = {
+interface QueryMock {
   next: ReturnType<typeof vi.fn>;
   interrupt: ReturnType<typeof vi.fn>;
   return: ReturnType<typeof vi.fn>;
@@ -16,18 +16,18 @@ type QueryMock = {
   supportedCommands: ReturnType<typeof vi.fn>;
   rewindFiles: ReturnType<typeof vi.fn>;
   [Symbol.asyncIterator]: () => AsyncIterator<Record<string, unknown>, void>;
-};
+}
 
-type PromptRecord = {
+interface PromptRecord {
   text: string;
   uuid: string | null;
-};
+}
 
-type AsyncQueue<T> = {
+interface AsyncQueue<T> {
   push: (value: T) => void;
   next: () => Promise<IteratorResult<T, void>>;
   end: () => void;
-};
+}
 
 type ScriptedQuery = QueryMock & {
   emit: (message: Record<string, unknown>) => void;
@@ -248,403 +248,395 @@ afterEach(() => {
   sdkMocks.query.mockReset();
 });
 
-describe("ClaudeAgentSession interrupt regression", () => {
-  test("interrupt only calls query.interrupt and leaves the query open", async () => {
-    const logger = createTestLogger();
-    const queries: ScriptedQuery[] = [];
+test("interrupt only calls query.interrupt and leaves the query open", async () => {
+  const logger = createTestLogger();
+  const queries: ScriptedQuery[] = [];
 
-    sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
-      const scriptedQuery = createScriptedQuery({
-        prompt,
-        sessionId: "interrupt-keep-query-session",
-      });
-      queries.push(scriptedQuery);
-      return scriptedQuery;
+  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const scriptedQuery = createScriptedQuery({
+      prompt,
+      sessionId: "interrupt-keep-query-session",
     });
-
-    const client = new ClaudeAgentClient({ logger });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-    });
-
-    const firstTurn = streamSession(session, "first prompt");
-    await firstTurn.next();
-    await waitFor(() => queries[0]?.prompts.length === 1);
-
-    await session.interrupt();
-    await waitFor(() => queries[0]?.interrupt.mock.calls.length === 1);
-
-    expect(sdkMocks.query).toHaveBeenCalledTimes(1);
-    expect(queries[0]?.return).not.toHaveBeenCalled();
-
-    const firstTurnEvents = await collectUntilTerminal(firstTurn);
-    expect(firstTurnEvents.find((event) => event.type === "turn_canceled")).toMatchObject({
-      type: "turn_canceled",
-      provider: "claude",
-      reason: "Interrupted",
-    });
-
-    await session.close();
+    queries.push(scriptedQuery);
+    return scriptedQuery;
   });
 
-  test("reuses the existing query after interrupt before starting the next prompt", async () => {
-    const logger = createTestLogger();
-    const queries: ScriptedQuery[] = [];
-
-    sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
-      const scriptedQuery = createScriptedQuery({
-        prompt,
-        sessionId: "interrupt-reuse-query-session",
-        async handlePrompt({ promptRecord, query }) {
-          if (promptRecord.text !== "second prompt") {
-            return;
-          }
-          query.emit({
-            type: "assistant",
-            message: { content: "SECOND_PROMPT_RESPONSE" },
-            session_id: "interrupt-reuse-query-session",
-          });
-          query.emit(buildSuccessResult("interrupt-reuse-query-session"));
-        },
-      });
-      queries.push(scriptedQuery);
-      return scriptedQuery;
-    });
-
-    const client = new ClaudeAgentClient({ logger });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-    });
-
-    const firstTurn = streamSession(session, "first prompt");
-    await firstTurn.next();
-    await waitFor(() => queries[0]?.prompts.length === 1);
-
-    await session.interrupt();
-    await collectUntilTerminal(firstTurn);
-
-    const secondTurnEvents = await collectUntilTerminal(streamSession(session, "second prompt"));
-
-    expect(sdkMocks.query).toHaveBeenCalledTimes(1);
-    expect(queries[0]?.prompts.map((prompt) => prompt.text)).toEqual([
-      "first prompt",
-      "second prompt",
-    ]);
-    expect(queries[0]?.interrupt).toHaveBeenCalledTimes(1);
-    expect(queries[0]?.return).not.toHaveBeenCalled();
-    expect(collectAssistantText(secondTurnEvents)).toContain("SECOND_PROMPT_RESPONSE");
-
-    await session.close();
+  const client = new ClaudeAgentClient({ logger });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
   });
 
-  test("recovers when the query pump sees a single interrupt abort before the next prompt", async () => {
-    const logger = createTestLogger();
-    const output = createAsyncQueue<Record<string, unknown>>();
-    const prompts: PromptRecord[] = [];
-    let throwAbortOnNext = false;
+  const firstTurn = streamSession(session, "first prompt");
+  await firstTurn.next();
+  await waitFor(() => queries[0]?.prompts.length === 1);
 
-    sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
-      const scriptedQuery = {
-        next: vi.fn(async () => {
-          if (throwAbortOnNext) {
-            throwAbortOnNext = false;
-            throw new Error("Request was aborted.");
-          }
-          return output.next();
-        }),
-        interrupt: vi.fn(async () => {
-          throwAbortOnNext = true;
-        }),
-        return: vi.fn(async () => {
-          output.end();
-        }),
-        setPermissionMode: vi.fn(async () => undefined),
-        setModel: vi.fn(async () => undefined),
-        supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
-        supportedCommands: vi.fn(async () => []),
-        rewindFiles: vi.fn(async () => ({ canRewind: true })),
-        emit: (message: Record<string, unknown>) => {
-          output.push(message);
-        },
-        end: () => {
-          output.end();
-        },
-        prompts,
-        [Symbol.asyncIterator]() {
-          return this;
-        },
-      } satisfies ScriptedQuery;
+  await session.interrupt();
+  await waitFor(() => queries[0]?.interrupt.mock.calls.length === 1);
 
-      scriptedQuery.emit({
-        type: "system",
-        subtype: "init",
-        session_id: "interrupt-abort-recovery-session",
-        permissionMode: "default",
-        model: "opus",
-      });
+  expect(sdkMocks.query).toHaveBeenCalledTimes(1);
+  expect(queries[0]?.return).not.toHaveBeenCalled();
 
-      void (async () => {
-        for await (const promptMessage of prompt) {
-          const record = promptMessage as Record<string, unknown>;
-          const promptRecord = {
-            text: extractPromptText(record),
-            uuid: typeof record.uuid === "string" ? record.uuid : null,
-          };
-          prompts.push(promptRecord);
-
-          if (promptRecord.text !== "second prompt") {
-            continue;
-          }
-
-          output.push({
-            type: "assistant",
-            message: { content: "SECOND_PROMPT_RESPONSE" },
-            session_id: "interrupt-abort-recovery-session",
-          });
-          output.push(buildSuccessResult("interrupt-abort-recovery-session"));
-        }
-      })();
-
-      return scriptedQuery;
-    });
-
-    const client = new ClaudeAgentClient({ logger });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-    });
-
-    const firstTurn = streamSession(session, "first prompt");
-    await firstTurn.next();
-    await session.interrupt();
-    await collectUntilTerminal(firstTurn);
-
-    const secondTurnEvents = await collectUntilTerminal(streamSession(session, "second prompt"));
-
-    expect(sdkMocks.query).toHaveBeenCalledTimes(1);
-    expect(prompts.map((prompt) => prompt.text)).toEqual(["first prompt", "second prompt"]);
-    expect(collectAssistantText(secondTurnEvents)).toContain("SECOND_PROMPT_RESPONSE");
-    expect(secondTurnEvents.some((event) => event.type === "turn_completed")).toBe(true);
-
-    await session.close();
+  const firstTurnEvents = await collectUntilTerminal(firstTurn);
+  expect(firstTurnEvents.find((event) => event.type === "turn_canceled")).toMatchObject({
+    type: "turn_canceled",
+    provider: "claude",
+    reason: "Interrupted",
   });
 
-  test("stale abort result after replacement start does not poison the new foreground turn", async () => {
-    const logger = createTestLogger();
-    let queryRef: ScriptedQuery | null = null;
-
-    sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
-      queryRef = createScriptedQuery({
-        prompt,
-        sessionId: "interrupt-stale-result-session",
-      });
-      return queryRef;
-    });
-
-    const client = new ClaudeAgentClient({ logger });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-    });
-
-    const firstTurn = streamSession(session, "first prompt");
-    const firstStarted = await firstTurn.next();
-    await waitFor(() => queryRef?.prompts.length === 1);
-
-    await session.interrupt();
-    const firstTurnEvents = [firstStarted.value!, ...(await collectUntilTerminal(firstTurn))];
-    expect(firstTurnEvents.some((event) => event.type === "turn_canceled")).toBe(true);
-
-    const observedSecondTurnEvents: AgentStreamEvent[] = [];
-    const unsubscribe = session.subscribe((event) => {
-      observedSecondTurnEvents.push(event);
-    });
-
-    const secondTurn = streamSession(session, "second prompt");
-    const secondStarted = await secondTurn.next();
-    await waitFor(() => queryRef?.prompts.length === 2);
-
-    queryRef?.emit({
-      type: "result",
-      subtype: "error_during_execution",
-      errors: ["Request was aborted."],
-      session_id: "interrupt-stale-result-session",
-    });
-    queryRef?.emit({
-      type: "assistant",
-      message: { content: "SECOND_PROMPT_RESPONSE" },
-      session_id: "interrupt-stale-result-session",
-    });
-    queryRef?.emit(buildSuccessResult("interrupt-stale-result-session"));
-
-    const secondTurnEvents = [secondStarted.value!, ...(await collectUntilTerminal(secondTurn))];
-    unsubscribe();
-
-    expect(secondTurnEvents.some((event) => event.type === "turn_failed")).toBe(false);
-    expect(secondTurnEvents.some((event) => event.type === "turn_canceled")).toBe(false);
-    expect(secondTurnEvents.some((event) => event.type === "turn_completed")).toBe(true);
-    expect(collectAssistantText(secondTurnEvents)).toContain("SECOND_PROMPT_RESPONSE");
-    expect(observedSecondTurnEvents.filter((event) => event.type === "turn_started").length).toBe(
-      1,
-    );
-    expect(
-      observedSecondTurnEvents.some(
-        (event) => event.type === "turn_failed" || event.type === "turn_canceled",
-      ),
-    ).toBe(false);
-
-    await session.close();
-  });
+  await session.close();
 });
 
-describe("ClaudeAgentSession autonomous turns", () => {
-  test("creates an autonomous live turn when assistant output arrives without a foreground run", async () => {
-    const logger = createTestLogger();
-    let queryRef: ScriptedQuery | null = null;
+test("reuses the existing query after interrupt before starting the next prompt", async () => {
+  const logger = createTestLogger();
+  const queries: ScriptedQuery[] = [];
 
-    sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
-      queryRef = createScriptedQuery({
-        prompt,
-        sessionId: "autonomous-live-session",
-        async handlePrompt({ promptRecord, query }) {
-          if (promptRecord.text !== "seed prompt") {
-            return;
-          }
+  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const scriptedQuery = createScriptedQuery({
+      prompt,
+      sessionId: "interrupt-reuse-query-session",
+      async handlePrompt({ promptRecord, query }) {
+        if (promptRecord.text !== "second prompt") {
+          return;
+        }
+        query.emit({
+          type: "assistant",
+          message: { content: "SECOND_PROMPT_RESPONSE" },
+          session_id: "interrupt-reuse-query-session",
+        });
+        query.emit(buildSuccessResult("interrupt-reuse-query-session"));
+      },
+    });
+    queries.push(scriptedQuery);
+    return scriptedQuery;
+  });
+
+  const client = new ClaudeAgentClient({ logger });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  const firstTurn = streamSession(session, "first prompt");
+  await firstTurn.next();
+  await waitFor(() => queries[0]?.prompts.length === 1);
+
+  await session.interrupt();
+  await collectUntilTerminal(firstTurn);
+
+  const secondTurnEvents = await collectUntilTerminal(streamSession(session, "second prompt"));
+
+  expect(sdkMocks.query).toHaveBeenCalledTimes(1);
+  expect(queries[0]?.prompts.map((prompt) => prompt.text)).toEqual([
+    "first prompt",
+    "second prompt",
+  ]);
+  expect(queries[0]?.interrupt).toHaveBeenCalledTimes(1);
+  expect(queries[0]?.return).not.toHaveBeenCalled();
+  expect(collectAssistantText(secondTurnEvents)).toContain("SECOND_PROMPT_RESPONSE");
+
+  await session.close();
+});
+
+test("recovers when the query pump sees a single interrupt abort before the next prompt", async () => {
+  const logger = createTestLogger();
+  const output = createAsyncQueue<Record<string, unknown>>();
+  const prompts: PromptRecord[] = [];
+  let throwAbortOnNext = false;
+
+  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const scriptedQuery = {
+      next: vi.fn(async () => {
+        if (throwAbortOnNext) {
+          throwAbortOnNext = false;
+          throw new Error("Request was aborted.");
+        }
+        return output.next();
+      }),
+      interrupt: vi.fn(async () => {
+        throwAbortOnNext = true;
+      }),
+      return: vi.fn(async () => {
+        output.end();
+      }),
+      setPermissionMode: vi.fn(async () => undefined),
+      setModel: vi.fn(async () => undefined),
+      supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
+      supportedCommands: vi.fn(async () => []),
+      rewindFiles: vi.fn(async () => ({ canRewind: true })),
+      emit: (message: Record<string, unknown>) => {
+        output.push(message);
+      },
+      end: () => {
+        output.end();
+      },
+      prompts,
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    } satisfies ScriptedQuery;
+
+    scriptedQuery.emit({
+      type: "system",
+      subtype: "init",
+      session_id: "interrupt-abort-recovery-session",
+      permissionMode: "default",
+      model: "opus",
+    });
+
+    void (async () => {
+      for await (const promptMessage of prompt) {
+        const record = promptMessage as Record<string, unknown>;
+        const promptRecord = {
+          text: extractPromptText(record),
+          uuid: typeof record.uuid === "string" ? record.uuid : null,
+        };
+        prompts.push(promptRecord);
+
+        if (promptRecord.text !== "second prompt") {
+          continue;
+        }
+
+        output.push({
+          type: "assistant",
+          message: { content: "SECOND_PROMPT_RESPONSE" },
+          session_id: "interrupt-abort-recovery-session",
+        });
+        output.push(buildSuccessResult("interrupt-abort-recovery-session"));
+      }
+    })();
+
+    return scriptedQuery;
+  });
+
+  const client = new ClaudeAgentClient({ logger });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  const firstTurn = streamSession(session, "first prompt");
+  await firstTurn.next();
+  await session.interrupt();
+  await collectUntilTerminal(firstTurn);
+
+  const secondTurnEvents = await collectUntilTerminal(streamSession(session, "second prompt"));
+
+  expect(sdkMocks.query).toHaveBeenCalledTimes(1);
+  expect(prompts.map((prompt) => prompt.text)).toEqual(["first prompt", "second prompt"]);
+  expect(collectAssistantText(secondTurnEvents)).toContain("SECOND_PROMPT_RESPONSE");
+  expect(secondTurnEvents.some((event) => event.type === "turn_completed")).toBe(true);
+
+  await session.close();
+});
+
+test("stale abort result after replacement start does not poison the new foreground turn", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+
+  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    queryRef = createScriptedQuery({
+      prompt,
+      sessionId: "interrupt-stale-result-session",
+    });
+    return queryRef;
+  });
+
+  const client = new ClaudeAgentClient({ logger });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  const firstTurn = streamSession(session, "first prompt");
+  const firstStarted = await firstTurn.next();
+  await waitFor(() => queryRef?.prompts.length === 1);
+
+  await session.interrupt();
+  const firstTurnEvents = [firstStarted.value!, ...(await collectUntilTerminal(firstTurn))];
+  expect(firstTurnEvents.some((event) => event.type === "turn_canceled")).toBe(true);
+
+  const observedSecondTurnEvents: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => {
+    observedSecondTurnEvents.push(event);
+  });
+
+  const secondTurn = streamSession(session, "second prompt");
+  const secondStarted = await secondTurn.next();
+  await waitFor(() => queryRef?.prompts.length === 2);
+
+  queryRef?.emit({
+    type: "result",
+    subtype: "error_during_execution",
+    errors: ["Request was aborted."],
+    session_id: "interrupt-stale-result-session",
+  });
+  queryRef?.emit({
+    type: "assistant",
+    message: { content: "SECOND_PROMPT_RESPONSE" },
+    session_id: "interrupt-stale-result-session",
+  });
+  queryRef?.emit(buildSuccessResult("interrupt-stale-result-session"));
+
+  const secondTurnEvents = [secondStarted.value!, ...(await collectUntilTerminal(secondTurn))];
+  unsubscribe();
+
+  expect(secondTurnEvents.some((event) => event.type === "turn_failed")).toBe(false);
+  expect(secondTurnEvents.some((event) => event.type === "turn_canceled")).toBe(false);
+  expect(secondTurnEvents.some((event) => event.type === "turn_completed")).toBe(true);
+  expect(collectAssistantText(secondTurnEvents)).toContain("SECOND_PROMPT_RESPONSE");
+  expect(observedSecondTurnEvents.filter((event) => event.type === "turn_started").length).toBe(1);
+  expect(
+    observedSecondTurnEvents.some(
+      (event) => event.type === "turn_failed" || event.type === "turn_canceled",
+    ),
+  ).toBe(false);
+
+  await session.close();
+});
+
+test("creates an autonomous live turn when assistant output arrives without a foreground run", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+
+  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    queryRef = createScriptedQuery({
+      prompt,
+      sessionId: "autonomous-live-session",
+      async handlePrompt({ promptRecord, query }) {
+        if (promptRecord.text !== "seed prompt") {
+          return;
+        }
+        query.emit({
+          type: "assistant",
+          message: { content: "SEED_RESPONSE" },
+          session_id: "autonomous-live-session",
+        });
+        query.emit(buildSuccessResult("autonomous-live-session"));
+      },
+    });
+    return queryRef;
+  });
+
+  const client = new ClaudeAgentClient({ logger });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  await collectUntilTerminal(streamSession(session, "seed prompt"));
+
+  const subscribedEvents = subscribeToEvents(session);
+  queryRef?.emit({
+    type: "assistant",
+    message: { content: "AUTONOMOUS_WAKE_RESPONSE" },
+    session_id: "autonomous-live-session",
+  });
+  queryRef?.emit(buildSuccessResult("autonomous-live-session"));
+
+  const started = await subscribedEvents.next();
+  const timeline = await subscribedEvents.next();
+  const completed = await subscribedEvents.next();
+
+  expect(started.value).toMatchObject({ type: "turn_started", provider: "claude" });
+  expect(timeline.value).toMatchObject({
+    type: "timeline",
+    provider: "claude",
+    item: {
+      type: "assistant_message",
+      text: "AUTONOMOUS_WAKE_RESPONSE",
+    },
+  });
+  expect(completed.value).toMatchObject({
+    type: "turn_completed",
+    provider: "claude",
+  });
+
+  subscribedEvents.close();
+  await session.close();
+});
+
+test("auto-completes an open autonomous turn when a foreground prompt starts", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+
+  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    queryRef = createScriptedQuery({
+      prompt,
+      sessionId: "autonomous-handoff-session",
+      async handlePrompt({ promptRecord, query }) {
+        if (promptRecord.text === "seed prompt") {
           query.emit({
             type: "assistant",
             message: { content: "SEED_RESPONSE" },
-            session_id: "autonomous-live-session",
+            session_id: "autonomous-handoff-session",
           });
-          query.emit(buildSuccessResult("autonomous-live-session"));
-        },
-      });
-      return queryRef;
-    });
+          query.emit(buildSuccessResult("autonomous-handoff-session"));
+          return;
+        }
 
-    const client = new ClaudeAgentClient({ logger });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-    });
-
-    await collectUntilTerminal(streamSession(session, "seed prompt"));
-
-    const subscribedEvents = subscribeToEvents(session);
-    queryRef?.emit({
-      type: "assistant",
-      message: { content: "AUTONOMOUS_WAKE_RESPONSE" },
-      session_id: "autonomous-live-session",
-    });
-    queryRef?.emit(buildSuccessResult("autonomous-live-session"));
-
-    const started = await subscribedEvents.next();
-    const timeline = await subscribedEvents.next();
-    const completed = await subscribedEvents.next();
-
-    expect(started.value).toMatchObject({ type: "turn_started", provider: "claude" });
-    expect(timeline.value).toMatchObject({
-      type: "timeline",
-      provider: "claude",
-      item: {
-        type: "assistant_message",
-        text: "AUTONOMOUS_WAKE_RESPONSE",
+        if (promptRecord.text === "foreground prompt") {
+          query.emit({
+            type: "assistant",
+            message: { content: "FOREGROUND_RESPONSE" },
+            session_id: "autonomous-handoff-session",
+          });
+          query.emit(buildSuccessResult("autonomous-handoff-session"));
+        }
       },
     });
-    expect(completed.value).toMatchObject({
-      type: "turn_completed",
-      provider: "claude",
-    });
-
-    subscribedEvents.close();
-    await session.close();
+    return queryRef;
   });
 
-  test("auto-completes an open autonomous turn when a foreground prompt starts", async () => {
-    const logger = createTestLogger();
-    let queryRef: ScriptedQuery | null = null;
-
-    sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
-      queryRef = createScriptedQuery({
-        prompt,
-        sessionId: "autonomous-handoff-session",
-        async handlePrompt({ promptRecord, query }) {
-          if (promptRecord.text === "seed prompt") {
-            query.emit({
-              type: "assistant",
-              message: { content: "SEED_RESPONSE" },
-              session_id: "autonomous-handoff-session",
-            });
-            query.emit(buildSuccessResult("autonomous-handoff-session"));
-            return;
-          }
-
-          if (promptRecord.text === "foreground prompt") {
-            query.emit({
-              type: "assistant",
-              message: { content: "FOREGROUND_RESPONSE" },
-              session_id: "autonomous-handoff-session",
-            });
-            query.emit(buildSuccessResult("autonomous-handoff-session"));
-          }
-        },
-      });
-      return queryRef;
-    });
-
-    const client = new ClaudeAgentClient({ logger });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-    });
-
-    await collectUntilTerminal(streamSession(session, "seed prompt"));
-
-    const subscribedEvents = subscribeToEvents(session);
-    queryRef?.emit({
-      type: "assistant",
-      message: { content: "BACKGROUND_ONLY_RESPONSE" },
-      session_id: "autonomous-handoff-session",
-    });
-
-    const autonomousStart = await subscribedEvents.next();
-    const autonomousTimeline = await subscribedEvents.next();
-    const foregroundEvents = await collectUntilTerminal(
-      streamSession(session, "foreground prompt"),
-    );
-    const autonomousComplete = await subscribedEvents.next();
-
-    expect(autonomousStart.value).toMatchObject({
-      type: "turn_started",
-      provider: "claude",
-    });
-    expect(autonomousTimeline.value).toMatchObject({
-      type: "timeline",
-      provider: "claude",
-      item: {
-        type: "assistant_message",
-        text: "BACKGROUND_ONLY_RESPONSE",
-      },
-    });
-    expect(autonomousComplete.value).toMatchObject({
-      type: "turn_completed",
-      provider: "claude",
-    });
-    expect(foregroundEvents.some((event) => event.type === "turn_completed")).toBe(true);
-    expect(collectAssistantText(foregroundEvents)).toContain("FOREGROUND_RESPONSE");
-    expect(
-      [autonomousStart.value, autonomousTimeline.value, autonomousComplete.value].some(
-        (event) => event?.type === "turn_canceled",
-      ),
-    ).toBe(false);
-    expect(sdkMocks.query).toHaveBeenCalledTimes(1);
-    expect(queryRef?.prompts.map((prompt) => prompt.text)).toEqual([
-      "seed prompt",
-      "foreground prompt",
-    ]);
-
-    subscribedEvents.close();
-    await session.close();
+  const client = new ClaudeAgentClient({ logger });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
   });
+
+  await collectUntilTerminal(streamSession(session, "seed prompt"));
+
+  const subscribedEvents = subscribeToEvents(session);
+  queryRef?.emit({
+    type: "assistant",
+    message: { content: "BACKGROUND_ONLY_RESPONSE" },
+    session_id: "autonomous-handoff-session",
+  });
+
+  const autonomousStart = await subscribedEvents.next();
+  const autonomousTimeline = await subscribedEvents.next();
+  const foregroundEvents = await collectUntilTerminal(streamSession(session, "foreground prompt"));
+  const autonomousComplete = await subscribedEvents.next();
+
+  expect(autonomousStart.value).toMatchObject({
+    type: "turn_started",
+    provider: "claude",
+  });
+  expect(autonomousTimeline.value).toMatchObject({
+    type: "timeline",
+    provider: "claude",
+    item: {
+      type: "assistant_message",
+      text: "BACKGROUND_ONLY_RESPONSE",
+    },
+  });
+  expect(autonomousComplete.value).toMatchObject({
+    type: "turn_completed",
+    provider: "claude",
+  });
+  expect(foregroundEvents.some((event) => event.type === "turn_completed")).toBe(true);
+  expect(collectAssistantText(foregroundEvents)).toContain("FOREGROUND_RESPONSE");
+  expect(
+    [autonomousStart.value, autonomousTimeline.value, autonomousComplete.value].some(
+      (event) => event?.type === "turn_canceled",
+    ),
+  ).toBe(false);
+  expect(sdkMocks.query).toHaveBeenCalledTimes(1);
+  expect(queryRef?.prompts.map((prompt) => prompt.text)).toEqual([
+    "seed prompt",
+    "foreground prompt",
+  ]);
+
+  subscribedEvents.close();
+  await session.close();
 });

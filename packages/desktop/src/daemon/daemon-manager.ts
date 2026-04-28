@@ -33,6 +33,11 @@ import {
   runCliJsonCommand,
   runCliTextCommand,
 } from "./runtime-paths.js";
+import {
+  createDesktopSettingsCommandHandlers,
+  type DesktopCommandHandler,
+} from "../settings/desktop-settings-commands.js";
+import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
 const PID_POLL_INTERVAL_MS = 100;
@@ -44,7 +49,7 @@ const DETACHED_STARTUP_GRACE_MS = 1200;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 
-type DesktopDaemonStatus = {
+export interface DesktopDaemonStatus {
   serverId: string;
   status: DesktopDaemonState;
   listen: string | null;
@@ -54,23 +59,29 @@ type DesktopDaemonStatus = {
   version: string | null;
   desktopManaged: boolean;
   error: string | null;
-};
+}
 
-type DesktopDaemonLogs = {
+interface DesktopDaemonLogs {
   logPath: string;
   contents: string;
-};
+}
 
-type DesktopPairingOffer = {
+interface DesktopPairingOffer {
   relayEnabled: boolean;
   url: string | null;
   qr: string | null;
-};
+}
 
-type DesktopCommandHandler = (args?: Record<string, unknown>) => Promise<unknown> | unknown;
-
-function parseReleaseChannel(args: Record<string, unknown> | undefined): AppReleaseChannel {
-  return args?.releaseChannel === "beta" ? "beta" : "stable";
+function parseReleaseChannel(
+  args: Record<string, unknown> | undefined,
+): AppReleaseChannel | undefined {
+  if (args?.releaseChannel === "beta") {
+    return "beta";
+  }
+  if (args?.releaseChannel === "stable") {
+    return "stable";
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +94,31 @@ function getPaseoHome(): string {
 
 function logFilePath(): string {
   return path.join(getPaseoHome(), DAEMON_LOG_FILENAME);
+}
+
+export function isDesktopManagedDaemonRunningSync(): boolean {
+  try {
+    const raw = readFileSync(path.join(getPaseoHome(), "paseo.pid"), "utf-8");
+    const lock = JSON.parse(raw) as { pid?: unknown; desktopManaged?: unknown };
+    if (lock.desktopManaged !== true) return false;
+    if (typeof lock.pid !== "number" || !Number.isInteger(lock.pid)) return false;
+    return isProcessRunning(lock.pid);
+  } catch {
+    return false;
+  }
+}
+
+export async function stopDesktopDaemonViaCli(): Promise<void> {
+  await runCliJsonCommand([
+    "daemon",
+    "stop",
+    "--json",
+    "--timeout",
+    "5",
+    "--force",
+    "--kill-timeout",
+    "5",
+  ]);
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -134,11 +170,13 @@ function sleep(ms: number): Promise<void> {
 
 async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  async function poll(): Promise<boolean> {
     if (!isProcessRunning(pid)) return true;
+    if (Date.now() >= deadline) return !isProcessRunning(pid);
     await sleep(PID_POLL_INTERVAL_MS);
+    return poll();
   }
-  return !isProcessRunning(pid);
+  return poll();
 }
 
 function tailFile(filePath: string, lines = 50): string {
@@ -153,7 +191,7 @@ function tailFile(filePath: string, lines = 50): string {
 function logDesktopDaemonLifecycle(message: string, details?: Record<string, unknown>): void {
   log.info("[desktop daemon]", message, {
     pid: process.pid,
-    ...(details ?? {}),
+    ...details,
   });
 }
 
@@ -193,7 +231,7 @@ function resolveDesktopAppVersion(): string {
 // Daemon lifecycle
 // ---------------------------------------------------------------------------
 
-async function resolveStatus(): Promise<DesktopDaemonStatus> {
+export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus> {
   const home = getPaseoHome();
 
   try {
@@ -238,8 +276,51 @@ function normalizeVersion(version: string | null): string | null {
   return trimmed.replace(/^v/i, "");
 }
 
+function shouldRestartForVersion(current: DesktopDaemonStatus): boolean {
+  if (!current.desktopManaged) return false;
+  const appVersion = normalizeVersion(resolveDesktopAppVersion());
+  const daemonVersion = normalizeVersion(current.version);
+  return Boolean(appVersion && daemonVersion && appVersion !== daemonVersion);
+}
+
+function buildStartupFailureError(
+  result: { code: number | null; signal: string | null; error?: Error },
+  stdout: string,
+  stderr: string,
+): Error {
+  const reason = result.error
+    ? result.error.message
+    : `exit code ${result.code ?? "unknown"}${result.signal ? ` (${result.signal})` : ""}`;
+  const parts = [`Daemon failed to start: ${reason}`];
+  if (stderr.trim()) parts.push(`stderr:\n${stderr.trim()}`);
+  if (stdout.trim()) parts.push(`stdout:\n${stdout.trim()}`);
+  const logs = tailFile(logFilePath(), 15);
+  if (logs) parts.push(`Recent logs (${logFilePath()}):\n${logs}`);
+  return new Error(parts.join("\n\n"));
+}
+
+async function pollForRunningDaemon(): Promise<DesktopDaemonStatus> {
+  async function poll(attempt: number): Promise<DesktopDaemonStatus> {
+    if (attempt >= STARTUP_POLL_MAX_ATTEMPTS) return resolveDesktopDaemonStatus();
+    const status = await resolveDesktopDaemonStatus();
+    if (attempt === 0 || attempt === STARTUP_POLL_MAX_ATTEMPTS - 1 || attempt % 10 === 9) {
+      logDesktopDaemonLifecycle("polling daemon status after detached start", {
+        attempt: attempt + 1,
+        status: status.status,
+        pid: status.pid,
+        listen: status.listen,
+        serverId: status.serverId || null,
+      });
+    }
+    if (status.status === "running" && status.serverId && status.listen) return status;
+    await sleep(STARTUP_POLL_INTERVAL_MS);
+    return poll(attempt + 1);
+  }
+  return poll(0);
+}
+
 async function startDaemon(): Promise<DesktopDaemonStatus> {
-  const current = await resolveStatus();
+  const current = await resolveDesktopDaemonStatus();
   logDesktopDaemonLifecycle("initial status check before start", {
     status: current.status,
     pid: current.pid,
@@ -249,14 +330,12 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
     desktopManaged: current.desktopManaged,
   });
   if (current.status === "running") {
-    const appVersion = normalizeVersion(resolveDesktopAppVersion());
-    const daemonVersion = normalizeVersion(current.version);
-    if (current.desktopManaged && appVersion && daemonVersion && appVersion !== daemonVersion) {
+    if (shouldRestartForVersion(current)) {
       logDesktopDaemonLifecycle("daemon version mismatch, restarting", {
-        appVersion,
-        daemonVersion,
+        appVersion: normalizeVersion(resolveDesktopAppVersion()),
+        daemonVersion: normalizeVersion(current.version),
       });
-      await stopDaemon();
+      await stopDesktopDaemon();
     } else {
       return current;
     }
@@ -280,7 +359,9 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
 
   const child: ChildProcess = spawnProcess(invocation.command, invocation.args, {
     detached: true,
-    env: { ...invocation.env, PASEO_DESKTOP_MANAGED: "1" },
+    envMode: "internal",
+    env: invocation.env,
+    envOverlay: { PASEO_DESKTOP_MANAGED: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -340,38 +421,14 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   });
 
   if (result.exitedEarly) {
-    const reason = result.error
-      ? result.error.message
-      : `exit code ${result.code ?? "unknown"}${result.signal ? ` (${result.signal})` : ""}`;
-    const parts = [`Daemon failed to start: ${reason}`];
-    if (stderr.trim()) parts.push(`stderr:\n${stderr.trim()}`);
-    if (stdout.trim()) parts.push(`stdout:\n${stdout.trim()}`);
-    const logs = tailFile(logFilePath(), 15);
-    if (logs) parts.push(`Recent logs (${logFilePath()}):\n${logs}`);
-    throw new Error(parts.join("\n\n"));
+    throw buildStartupFailureError(result, stdout, stderr);
   }
 
-  // Poll for PID file with server ID
-  for (let attempt = 0; attempt < STARTUP_POLL_MAX_ATTEMPTS; attempt++) {
-    const status = await resolveStatus();
-    if (attempt === 0 || attempt === STARTUP_POLL_MAX_ATTEMPTS - 1 || attempt % 10 === 9) {
-      logDesktopDaemonLifecycle("polling daemon status after detached start", {
-        attempt: attempt + 1,
-        status: status.status,
-        pid: status.pid,
-        listen: status.listen,
-        serverId: status.serverId || null,
-      });
-    }
-    if (status.status === "running" && status.serverId && status.listen) return status;
-    await sleep(STARTUP_POLL_INTERVAL_MS);
-  }
-
-  return await resolveStatus();
+  return pollForRunningDaemon();
 }
 
-async function stopDaemon(): Promise<DesktopDaemonStatus> {
-  const status = await resolveStatus();
+export async function stopDesktopDaemon(): Promise<DesktopDaemonStatus> {
+  const status = await resolveDesktopDaemonStatus();
   if (status.status !== "running" || !status.pid) return status;
 
   const pid = status.pid;
@@ -387,11 +444,11 @@ async function stopDaemon(): Promise<DesktopDaemonStatus> {
     throw new Error(`Timed out waiting for daemon PID ${pid} to stop`);
   }
 
-  return await resolveStatus();
+  return await resolveDesktopDaemonStatus();
 }
 
 async function restartDaemon(): Promise<DesktopDaemonStatus> {
-  await stopDaemon();
+  await stopDesktopDaemon();
   return startDaemon();
 }
 
@@ -408,7 +465,7 @@ async function getCliDaemonStatus(): Promise<string> {
 }
 
 async function getDaemonPairing(): Promise<DesktopPairingOffer> {
-  const status = await resolveStatus();
+  const status = await resolveDesktopDaemonStatus();
   if (status.status !== "running") {
     return {
       relayEnabled: false,
@@ -438,7 +495,7 @@ async function getDaemonPairing(): Promise<DesktopPairingOffer> {
 }
 
 async function getLocalDaemonVersion(): Promise<{ version: string | null; error: string | null }> {
-  const status = await resolveStatus();
+  const status = await resolveDesktopDaemonStatus();
   if (status.status !== "running") {
     return { version: null, error: "Daemon is not running." };
   }
@@ -448,12 +505,10 @@ async function getLocalDaemonVersion(): Promise<{ version: string | null; error:
   };
 }
 
-function resolveCurrentUpdateVersion(): string {
-  return resolveDesktopAppVersion();
-}
-
-function getSystemIdleTimeMs(): number {
-  return powerMonitor.getSystemIdleTime() * 1000;
+async function resolveRequestedReleaseChannel(
+  args: Record<string, unknown> | undefined,
+): Promise<AppReleaseChannel> {
+  return parseReleaseChannel(args) ?? (await getDesktopSettingsStore().get()).releaseChannel;
 }
 
 // ---------------------------------------------------------------------------
@@ -462,13 +517,14 @@ function getSystemIdleTimeMs(): number {
 
 export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
   return {
-    desktop_daemon_status: () => resolveStatus(),
+    ...createDesktopSettingsCommandHandlers({ settingsStore: getDesktopSettingsStore() }),
+    desktop_daemon_status: () => resolveDesktopDaemonStatus(),
     start_desktop_daemon: () => startDaemon(),
-    stop_desktop_daemon: () => stopDaemon(),
+    stop_desktop_daemon: () => stopDesktopDaemon(),
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
     desktop_daemon_pairing: () => getDaemonPairing(),
-    desktop_get_system_idle_time: () => getSystemIdleTimeMs(),
+    desktop_get_system_idle_time: () => powerMonitor.getSystemIdleTime() * 1000,
     cli_daemon_status: () => getCliDaemonStatus(),
     write_attachment_base64: (args) => writeAttachmentBase64(args ?? {}),
     copy_attachment_file: (args) => copyAttachmentFileToManagedStorage(args ?? {}),
@@ -492,15 +548,18 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       if (sessionId) closeLocalTransportSession(sessionId);
     },
     check_app_update: async (args) => {
-      const currentVersion = await resolveCurrentUpdateVersion();
-      return checkForAppUpdate({ currentVersion, releaseChannel: parseReleaseChannel(args) });
+      const currentVersion = resolveDesktopAppVersion();
+      return checkForAppUpdate({
+        currentVersion,
+        releaseChannel: await resolveRequestedReleaseChannel(args),
+      });
     },
     install_app_update: async (args) => {
-      const currentVersion = await resolveCurrentUpdateVersion();
+      const currentVersion = resolveDesktopAppVersion();
       return downloadAndInstallUpdate(
-        { currentVersion, releaseChannel: parseReleaseChannel(args) },
+        { currentVersion, releaseChannel: await resolveRequestedReleaseChannel(args) },
         async () => {
-          await stopDaemon();
+          await stopDesktopDaemon();
         },
       );
     },

@@ -5,11 +5,11 @@ import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { renderPairingQr } from "./pairing-qr.js";
 import { getOrCreateServerId } from "./server-id.js";
 
-export type LocalPairingOffer = {
+export interface LocalPairingOffer {
   relayEnabled: boolean;
   url: string | null;
   qr: string | null;
-};
+}
 
 export async function generateLocalPairingOffer(args: {
   paseoHome: string;

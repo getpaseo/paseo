@@ -7,10 +7,10 @@ export interface ScriptRuntimeEntry {
   exitCode: number | null;
 }
 
-type RuntimeEntryKey = {
+interface RuntimeEntryKey {
   workspaceId: string;
   scriptName: string;
-};
+}
 
 export class WorkspaceScriptRuntimeStore {
   private readonly entries = new Map<string, ScriptRuntimeEntry>();

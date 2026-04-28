@@ -2,15 +2,15 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { app, BrowserWindow, Notification, ipcMain, nativeImage } from "electron";
 
-type NotificationInput = {
+interface NotificationInput {
   title?: unknown;
   body?: unknown;
   data?: unknown;
-};
+}
 
-type NotificationClickPayload = {
+interface NotificationClickPayload {
   data?: Record<string, unknown>;
-};
+}
 
 const activeNotifications = new Set<Notification>();
 

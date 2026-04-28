@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import type { BarcodeScanningResult } from "expo-camera";
+import type { BarcodeScanningResult, BarcodeSettings } from "expo-camera";
 import { useHostMutations } from "@/runtime/host-runtime";
 import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
@@ -147,7 +147,7 @@ export default function PairScanScreen() {
     try {
       router.back();
     } catch {
-      router.replace("/" as any);
+      router.replace("/" as Href);
     }
   }, [router]);
 
@@ -198,15 +198,29 @@ export default function PairScanScreen() {
     [isPairing, navigateToPairedHost, upsertDaemonFromOfferUrl],
   );
 
+  const handleRouterBack = useCallback(() => router.back(), [router]);
+  const handleRequestPermission = useCallback(() => {
+    void requestPermission();
+  }, [requestPermission]);
+
+  const bodyStyle = useMemo(
+    () => [styles.body, { paddingBottom: insets.bottom + theme.spacing[6] }],
+    [insets.bottom, theme.spacing],
+  );
+  const helperTextStyle = useMemo(
+    () => [styles.helperText, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+
   if (isWeb) {
     return (
       <View style={styles.container}>
-        <BackHeader title="Scan QR" onBack={() => router.back()} />
-        <View style={[styles.body, { paddingBottom: insets.bottom + theme.spacing[6] }]}>
+        <BackHeader title="Scan QR" onBack={handleRouterBack} />
+        <View style={bodyStyle}>
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>Not available on web</Text>
             <Text style={styles.permissionBody}>
-              QR scanning isn't supported in the web build. Use "Paste link" instead.
+              {`QR scanning isn't supported in the web build. Use "Paste link" instead.`}
             </Text>
             <Pressable style={styles.permissionButton} onPress={closeToSource}>
               <Text style={styles.permissionButtonText}>Back to Settings</Text>
@@ -223,14 +237,14 @@ export default function PairScanScreen() {
     <View style={styles.container}>
       <BackHeader title="Scan QR" onBack={closeToSource} />
 
-      <View style={[styles.body, { paddingBottom: insets.bottom + theme.spacing[6] }]}>
+      <View style={bodyStyle}>
         {!granted ? (
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>Camera permission</Text>
             <Text style={styles.permissionBody}>
               Allow camera access to scan the pairing QR code from your daemon.
             </Text>
-            <Pressable style={styles.permissionButton} onPress={() => void requestPermission()}>
+            <Pressable style={styles.permissionButton} onPress={handleRequestPermission}>
               <Text style={styles.permissionButtonText}>Grant permission</Text>
             </Pressable>
           </View>
@@ -239,21 +253,17 @@ export default function PairScanScreen() {
             <CameraView
               style={styles.camera}
               facing="back"
-              barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+              barcodeScannerSettings={BARCODE_SCANNER_SETTINGS}
               onBarcodeScanned={handleScan}
             />
             <View style={styles.overlay} pointerEvents="none">
               <View style={styles.scanFrame}>
-                <View style={[styles.corner, styles.cornerTL]} />
-                <View style={[styles.corner, styles.cornerTR]} />
-                <View style={[styles.corner, styles.cornerBL]} />
-                <View style={[styles.corner, styles.cornerBR]} />
+                <View style={CORNER_TL_STYLE} />
+                <View style={CORNER_TR_STYLE} />
+                <View style={CORNER_BL_STYLE} />
+                <View style={CORNER_BR_STYLE} />
               </View>
-              {isPairing ? (
-                <Text style={[styles.helperText, { color: theme.colors.foreground }]}>
-                  Pairing…
-                </Text>
-              ) : null}
+              {isPairing ? <Text style={helperTextStyle}>Pairing…</Text> : null}
             </View>
           </View>
         )}
@@ -261,3 +271,9 @@ export default function PairScanScreen() {
     </View>
   );
 }
+
+const BARCODE_SCANNER_SETTINGS: BarcodeSettings = { barcodeTypes: ["qr"] };
+const CORNER_TL_STYLE = [styles.corner, styles.cornerTL];
+const CORNER_TR_STYLE = [styles.corner, styles.cornerTR];
+const CORNER_BL_STYLE = [styles.corner, styles.cornerBL];
+const CORNER_BR_STYLE = [styles.corner, styles.cornerBR];

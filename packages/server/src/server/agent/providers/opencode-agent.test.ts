@@ -17,7 +17,6 @@ import type {
   AgentStreamEvent,
   ToolCallTimelineItem,
   AssistantMessageTimelineItem,
-  UserMessageTimelineItem,
   AgentTimelineItem,
 } from "../agent-sdk-types.js";
 

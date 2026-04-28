@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -18,6 +18,7 @@ import {
 
 const CLI_DOCS_URL = "https://paseo.sh/docs/cli";
 const SKILLS_DOCS_URL = "https://paseo.sh/docs/skills";
+const ROW_WITH_BORDER_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
 
 export function IntegrationsSection() {
   const { theme } = useUnistyles();
@@ -76,36 +77,52 @@ export function IntegrationsSection() {
       });
   }, [isInstallingSkills]);
 
+  const handleOpenCliDocs = useCallback(() => {
+    void openExternalUrl(CLI_DOCS_URL);
+  }, []);
+
+  const handleOpenSkillsDocs = useCallback(() => {
+    void openExternalUrl(SKILLS_DOCS_URL);
+  }, []);
+
+  const arrowIcon = useMemo(
+    () => <ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+    [theme.iconSize.sm, theme.colors.foregroundMuted],
+  );
+
+  const trailing = useMemo(
+    () => (
+      <View style={styles.headerLinks}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={arrowIcon}
+          textStyle={settingsStyles.sectionHeaderLinkText}
+          style={settingsStyles.sectionHeaderLink}
+          onPress={handleOpenCliDocs}
+          accessibilityLabel="Open CLI documentation"
+        >
+          CLI docs
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={arrowIcon}
+          textStyle={settingsStyles.sectionHeaderLinkText}
+          style={settingsStyles.sectionHeaderLink}
+          onPress={handleOpenSkillsDocs}
+          accessibilityLabel="Open skills documentation"
+        >
+          Skills docs
+        </Button>
+      </View>
+    ),
+    [arrowIcon, handleOpenCliDocs, handleOpenSkillsDocs],
+  );
+
   if (!showSection) {
     return null;
   }
-
-  const trailing = (
-    <View style={styles.headerLinks}>
-      <Button
-        variant="ghost"
-        size="sm"
-        leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
-        textStyle={settingsStyles.sectionHeaderLinkText}
-        style={settingsStyles.sectionHeaderLink}
-        onPress={() => void openExternalUrl(CLI_DOCS_URL)}
-        accessibilityLabel="Open CLI documentation"
-      >
-        CLI docs
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        leftIcon={<ArrowUpRight size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />}
-        textStyle={settingsStyles.sectionHeaderLinkText}
-        style={settingsStyles.sectionHeaderLink}
-        onPress={() => void openExternalUrl(SKILLS_DOCS_URL)}
-        accessibilityLabel="Open skills documentation"
-      >
-        Skills docs
-      </Button>
-    </View>
-  );
 
   return (
     <SettingsSection title="Integrations" trailing={trailing}>
@@ -116,9 +133,7 @@ export function IntegrationsSection() {
               <Terminal size={theme.iconSize.md} color={theme.colors.foreground} />
               <Text style={settingsStyles.rowTitle}>Command line</Text>
             </View>
-            <Text style={settingsStyles.rowHint}>
-              Control and script agents from your terminal.
-            </Text>
+            <Text style={settingsStyles.rowHint}>Control and script agents from your terminal</Text>
           </View>
           {cliStatus?.installed ? (
             <View style={styles.installedLabel}>
@@ -136,14 +151,14 @@ export function IntegrationsSection() {
             </Button>
           )}
         </View>
-        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={ROW_WITH_BORDER_STYLE}>
           <View style={settingsStyles.rowContent}>
             <View style={styles.rowTitleRow}>
               <Blocks size={theme.iconSize.md} color={theme.colors.foreground} />
               <Text style={settingsStyles.rowTitle}>Orchestration skills</Text>
             </View>
             <Text style={settingsStyles.rowHint}>
-              Teach your agents to orchestrate through the CLI.
+              Teach your agents to orchestrate through the CLI
             </Text>
           </View>
           {skillsStatus?.installed ? (

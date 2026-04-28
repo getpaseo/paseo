@@ -193,6 +193,24 @@ function matchesPattern(filename: string, pattern: string): boolean {
   return filename === pattern;
 }
 
+async function isExistingFile(fullPath: string): Promise<boolean> {
+  try {
+    const stats = await stat(fullPath);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function isExistingDirectory(fullPath: string): Promise<boolean> {
+  try {
+    const stats = await stat(fullPath);
+    return stats.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 async function findIconInDir(dir: string, patterns: string[]): Promise<string | null> {
   let entries: string[];
   try {
@@ -201,24 +219,38 @@ async function findIconInDir(dir: string, patterns: string[]): Promise<string | 
     return null;
   }
 
-  // Check each pattern in order of priority
+  // Collect candidate paths in priority order (pattern, then entry)
+  const candidatePaths: string[] = [];
   for (const pattern of patterns) {
     for (const entry of entries) {
       if (matchesPattern(entry, pattern)) {
-        const fullPath = join(dir, entry);
-        try {
-          const stats = await stat(fullPath);
-          if (stats.isFile()) {
-            return fullPath;
-          }
-        } catch {
-          // File may have been deleted, continue
-        }
+        candidatePaths.push(join(dir, entry));
       }
     }
   }
 
-  return null;
+  const existsResults = await Promise.all(candidatePaths.map((p) => isExistingFile(p)));
+  const foundIndex = existsResults.findIndex((exists) => exists);
+  return foundIndex === -1 ? null : (candidatePaths[foundIndex] ?? null);
+}
+
+async function searchPriorityDirs(
+  basePath: string,
+  ignoredDirsSet: Set<string>,
+  remainingDepth: number,
+): Promise<string | null> {
+  const priorityPaths = PRIORITY_DIRS.map((priorityDir) => join(basePath, priorityDir));
+  const existenceResults = await Promise.all(
+    priorityPaths.map((priorityPath) => isExistingDirectory(priorityPath)),
+  );
+  const searchResults = await Promise.all(
+    priorityPaths.map((priorityPath, index) =>
+      existenceResults[index]
+        ? searchDirRecursively(priorityPath, ICON_PATTERNS, ignoredDirsSet, remainingDepth)
+        : Promise.resolve(null),
+    ),
+  );
+  return searchResults.find((result): result is string => result !== null) ?? null;
 }
 
 async function searchDirRecursively(
@@ -246,32 +278,20 @@ async function searchDirRecursively(
     return null;
   }
 
-  for (const entry of entries) {
-    if (ignoredDirs.has(entry)) {
-      continue;
-    }
-
-    const fullPath = join(dir, entry);
-    try {
-      const stats = await stat(fullPath);
-      if (stats.isDirectory()) {
-        const result = await searchDirRecursively(
-          fullPath,
-          patterns,
-          ignoredDirs,
-          maxDepth,
-          currentDepth + 1,
-        );
-        if (result) {
-          return result;
-        }
-      }
-    } catch {
-      // Directory may be inaccessible, continue
-    }
-  }
-
-  return null;
+  const candidatePaths = entries
+    .filter((entry) => !ignoredDirs.has(entry))
+    .map((entry) => join(dir, entry));
+  const isDirResults = await Promise.all(
+    candidatePaths.map((fullPath) => isExistingDirectory(fullPath)),
+  );
+  const recursionResults = await Promise.all(
+    candidatePaths.map((fullPath, index) =>
+      isDirResults[index]
+        ? searchDirRecursively(fullPath, patterns, ignoredDirs, maxDepth, currentDepth + 1)
+        : Promise.resolve(null),
+    ),
+  );
+  return recursionResults.find((result): result is string => result !== null) ?? null;
 }
 
 /**
@@ -289,72 +309,48 @@ export async function findProjectIcon(
   const ignoredDirsSet = new Set(IGNORED_DIRS);
 
   // First search priority directories
-  for (const priorityDir of PRIORITY_DIRS) {
-    const priorityPath = join(projectDir, priorityDir);
-    try {
-      const stats = await stat(priorityPath);
-      if (stats.isDirectory()) {
-        const result = await searchDirRecursively(
-          priorityPath,
-          ICON_PATTERNS,
-          ignoredDirsSet,
-          maxDepth - 1,
-        );
-        if (result) {
-          return result;
-        }
-      }
-    } catch {
-      // Directory doesn't exist, continue
-    }
+  const priorityResult = await searchPriorityDirs(projectDir, ignoredDirsSet, maxDepth - 1);
+  if (priorityResult) {
+    return priorityResult;
   }
 
   // Then search monorepo package directories (packages/*, apps/*)
-  for (const monoDir of MONOREPO_PACKAGE_DIRS) {
-    const monoPath = join(projectDir, monoDir);
-    let packageEntries: string[];
-    try {
-      packageEntries = await readdir(monoPath);
-    } catch {
-      continue;
-    }
-
-    for (const packageName of packageEntries) {
-      const packagePath = join(monoPath, packageName);
+  const monoPaths = MONOREPO_PACKAGE_DIRS.map((monoDir) => join(projectDir, monoDir));
+  const monoEntries = await Promise.all(
+    monoPaths.map(async (monoPath): Promise<string[] | null> => {
       try {
-        const packageStats = await stat(packagePath);
-        if (!packageStats.isDirectory()) continue;
+        return await readdir(monoPath);
       } catch {
-        continue;
+        return null;
       }
-
-      // Search priority dirs within the package
-      for (const priorityDir of PRIORITY_DIRS) {
-        const priorityPath = join(packagePath, priorityDir);
-        try {
-          const priorityStats = await stat(priorityPath);
-          if (priorityStats.isDirectory()) {
-            const result = await searchDirRecursively(
-              priorityPath,
-              ICON_PATTERNS,
-              ignoredDirsSet,
-              maxDepth - 1,
-            );
-            if (result) {
-              return result;
-            }
-          }
-        } catch {
-          // Directory doesn't exist, continue
-        }
-      }
-
-      // Search package root
-      const found = await findIconInDir(packagePath, ICON_PATTERNS);
-      if (found) {
-        return found;
-      }
-    }
+    }),
+  );
+  const monoResults = await Promise.all(
+    monoPaths.map(async (monoPath, monoIdx): Promise<string | null> => {
+      const packageEntries = monoEntries[monoIdx];
+      if (!packageEntries) return null;
+      const packagePaths = packageEntries.map((packageName) => join(monoPath, packageName));
+      const isDirResults = await Promise.all(
+        packagePaths.map((packagePath) => isExistingDirectory(packagePath)),
+      );
+      const packageResults = await Promise.all(
+        packagePaths.map(async (packagePath, idx): Promise<string | null> => {
+          if (!isDirResults[idx]) return null;
+          const packagePriorityResult = await searchPriorityDirs(
+            packagePath,
+            ignoredDirsSet,
+            maxDepth - 1,
+          );
+          if (packagePriorityResult) return packagePriorityResult;
+          return await findIconInDir(packagePath, ICON_PATTERNS);
+        }),
+      );
+      return packageResults.find((result): result is string => result !== null) ?? null;
+    }),
+  );
+  const monoMatch = monoResults.find((result): result is string => result !== null);
+  if (monoMatch) {
+    return monoMatch;
   }
 
   // Then search root and any other non-priority directories
@@ -385,35 +381,31 @@ async function findDirRecursively(
   }
 
   // Don't recurse further from root - we already searched priority dirs
-  if (currentDepth > 0) {
-    let entries: string[];
-    try {
-      entries = await readdir(dir);
-    } catch {
-      return null;
-    }
-
-    for (const entry of entries) {
-      if (ignoredDirsSet.has(entry) || priorityDirsSet.has(entry)) {
-        continue;
-      }
-
-      const fullPath = join(dir, entry);
-      try {
-        const stats = await stat(fullPath);
-        if (stats.isDirectory()) {
-          const result = await findDirRecursively(fullPath, maxDepth, currentDepth + 1);
-          if (result) {
-            return result;
-          }
-        }
-      } catch {
-        // Continue
-      }
-    }
+  if (currentDepth === 0) {
+    return null;
   }
 
-  return null;
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return null;
+  }
+
+  const candidatePaths = entries
+    .filter((entry) => !ignoredDirsSet.has(entry) && !priorityDirsSet.has(entry))
+    .map((entry) => join(dir, entry));
+  const isDirResults = await Promise.all(
+    candidatePaths.map((fullPath) => isExistingDirectory(fullPath)),
+  );
+  const recursionResults = await Promise.all(
+    candidatePaths.map((fullPath, index) =>
+      isDirResults[index]
+        ? findDirRecursively(fullPath, maxDepth, currentDepth + 1)
+        : Promise.resolve(null),
+    ),
+  );
+  return recursionResults.find((result): result is string => result !== null) ?? null;
 }
 
 /**

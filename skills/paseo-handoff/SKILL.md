@@ -30,13 +30,13 @@ Parse `$ARGUMENTS` to determine:
 
 ### Provider Resolution
 
-| User says | --provider | Mode |
-|---|---|---|
-| *(nothing)* | `codex/gpt-5.4` | `full-access` |
-| `codex` | `codex/gpt-5.4` | `full-access` |
-| `claude` | `claude/opus` | `bypass` |
-| `opus` | `claude/opus` | `bypass` |
-| `sonnet` | `claude/sonnet` | `bypass` |
+| User says   | --provider      | Mode          |
+| ----------- | --------------- | ------------- |
+| _(nothing)_ | `codex/gpt-5.4` | `full-access` |
+| `codex`     | `codex/gpt-5.4` | `full-access` |
+| `claude`    | `claude/opus`   | `bypass`      |
+| `opus`      | `claude/opus`   | `bypass`      |
+| `sonnet`    | `claude/sonnet` | `bypass`      |
 
 Default is **Codex** with `gpt-5.4`.
 

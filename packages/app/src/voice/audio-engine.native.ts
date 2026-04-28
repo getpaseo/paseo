@@ -98,17 +98,17 @@ export function createAudioEngine(
 
   const microphoneSubscription = native.addExpoTwoWayAudioEventListener(
     "onMicrophoneData",
-    (event: any) => {
+    (event: { data: Uint8Array }) => {
       if (!refs.captureActive || refs.muted) {
         return;
       }
-      const pcm = event.data as Uint8Array;
+      const pcm = event.data;
       callbacks.onCaptureData(pcm);
     },
   );
   const volumeSubscription = native.addExpoTwoWayAudioEventListener(
     "onInputVolumeLevelData",
-    (event: any) => {
+    (event: { data: number }) => {
       if (!refs.captureActive) {
         return;
       }
@@ -150,41 +150,44 @@ export function createAudioEngine(
   async function playAudio(audio: AudioPlaybackSource): Promise<number> {
     await ensureInitialized();
 
-    return await new Promise<number>(async (resolve, reject) => {
+    return await new Promise<number>((resolve, reject) => {
       refs.activePlayback = { resolve, reject, settled: false };
 
-      try {
-        const arrayBuffer = await audio.arrayBuffer();
-        const pcm = new Uint8Array(arrayBuffer);
-        const inputRate = parsePcmSampleRate(audio.type || "") ?? 24000;
+      audio
+        .arrayBuffer()
+        .then((arrayBuffer) => {
+          const pcm = new Uint8Array(arrayBuffer);
+          const inputRate = parsePcmSampleRate(audio.type || "") ?? 24000;
 
-        // Native AudioEngine expects 16kHz PCM16
-        const pcm16k = resamplePcm16(pcm, inputRate, 16000);
-        const durationSec = pcm16k.length / 2 / 16000;
+          // Native AudioEngine expects 16kHz PCM16
+          const pcm16k = resamplePcm16(pcm, inputRate, 16000);
+          const durationSec = pcm16k.length / 2 / 16000;
 
-        native.resumePlayback();
-        native.playPCMData(pcm16k);
+          native.resumePlayback();
+          native.playPCMData(pcm16k);
 
-        clearPlaybackTimeout();
-        refs.playbackTimeout = setTimeout(() => {
+          clearPlaybackTimeout();
+          refs.playbackTimeout = setTimeout(() => {
+            clearPlaybackTimeout();
+            const active = refs.activePlayback;
+            if (!active || active.settled) {
+              return;
+            }
+            active.settled = true;
+            refs.activePlayback = null;
+            resolve(durationSec);
+          }, durationSec * 1000);
+          return undefined;
+        })
+        .catch((error: unknown) => {
           clearPlaybackTimeout();
           const active = refs.activePlayback;
-          if (!active || active.settled) {
-            return;
+          if (active && !active.settled) {
+            active.settled = true;
+            refs.activePlayback = null;
+            reject(error instanceof Error ? error : new Error(String(error)));
           }
-          active.settled = true;
-          refs.activePlayback = null;
-          resolve(durationSec);
-        }, durationSec * 1000);
-      } catch (error) {
-        clearPlaybackTimeout();
-        const active = refs.activePlayback;
-        if (active && !active.settled) {
-          active.settled = true;
-          refs.activePlayback = null;
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      }
+        });
     });
   }
 

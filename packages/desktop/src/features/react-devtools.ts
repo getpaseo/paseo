@@ -5,18 +5,18 @@ import { app, session, net } from "electron";
 
 const REACT_DEVTOOLS_EXTENSION_ID = "fmkadmapgofadopljbjfkapdkoienihi";
 
-type ReactDevToolsContentScript = {
+interface ReactDevToolsContentScript {
   matches: string[];
   js: string[];
   run_at: "document_start" | "document_end";
   world?: "MAIN";
-};
+}
 
-type ReactDevToolsManifest = {
+interface ReactDevToolsManifest {
   version?: string;
   manifest_version?: number;
   content_scripts?: ReactDevToolsContentScript[];
-};
+}
 
 const ELECTRON_COMPATIBLE_CONTENT_SCRIPTS: ReactDevToolsContentScript[] = [
   {

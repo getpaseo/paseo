@@ -4,17 +4,17 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/server/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/server-ci.yml'
+      - "packages/server/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/server-ci.yml"
   pull_request:
     branches: [main]
     paths:
-      - 'packages/server/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/server-ci.yml'
+      - "packages/server/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/server-ci.yml"
 
 jobs:
   test:
@@ -27,8 +27,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Fetch origin/main (worktree tests)
         run: git fetch --no-tags origin main:refs/remotes/origin/main

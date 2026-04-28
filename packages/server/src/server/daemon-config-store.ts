@@ -9,11 +9,12 @@ export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/me
 
 type MutableDaemonConfig = import("../shared/messages.js").MutableDaemonConfig;
 type MutableDaemonConfigPatch = import("../shared/messages.js").MutableDaemonConfigPatch;
+type ProviderOverride = import("./agent/provider-launch-config.js").ProviderOverride;
 
-type LoggerLike = {
+interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
-  info(...args: any[]): void;
-};
+  info(...args: unknown[]): void;
+}
 
 type ConfigListener = (config: MutableDaemonConfig) => void;
 type FieldChangeHandler = (value: unknown) => void;
@@ -55,6 +56,30 @@ function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {
 
 function isEqualValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+export function applyMutableProviderConfigToOverrides(
+  baseOverrides: Record<string, ProviderOverride> | undefined,
+  mutableProviders: MutableDaemonConfig["providers"] | undefined,
+): Record<string, ProviderOverride> | undefined {
+  if (!baseOverrides && (!mutableProviders || Object.keys(mutableProviders).length === 0)) {
+    return undefined;
+  }
+
+  const nextOverrides: Record<string, ProviderOverride> = { ...baseOverrides };
+  for (const [providerId, providerConfig] of Object.entries(mutableProviders ?? {})) {
+    nextOverrides[providerId] = {
+      ...nextOverrides[providerId],
+    };
+    if (providerConfig.enabled !== undefined) {
+      nextOverrides[providerId].enabled = providerConfig.enabled;
+    }
+    if (providerConfig.additionalModels !== undefined) {
+      nextOverrides[providerId].additionalModels = providerConfig.additionalModels;
+    }
+  }
+
+  return nextOverrides;
 }
 
 export class DaemonConfigStore {
@@ -148,6 +173,14 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   mutable: MutableDaemonConfig;
 }): PersistedConfig {
   const { persisted, mutable } = params;
+  const providerOverrides = applyMutableProviderConfigToOverrides(
+    persisted.agents?.providers as Record<string, ProviderOverride> | undefined,
+    mutable.providers,
+  );
+  const persistedAgents = persisted.agents as
+    | ({ providers?: Record<string, ProviderOverride> } & Record<string, unknown>)
+    | undefined;
+
   return {
     ...persisted,
     daemon: {
@@ -157,5 +190,12 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         injectIntoAgents: mutable.mcp.injectIntoAgents,
       },
     },
-  };
+    agents:
+      providerOverrides && Object.keys(providerOverrides).length > 0
+        ? {
+            ...persistedAgents,
+            providers: providerOverrides,
+          }
+        : persisted.agents,
+  } as PersistedConfig;
 }

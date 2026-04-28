@@ -1,8 +1,8 @@
-export type HostPortParts = {
+export interface HostPortParts {
   host: string;
   port: number;
   isIpv6: boolean;
-};
+}
 
 export type RelayRole = "server" | "client";
 export type RelayProtocolVersion = "1" | "2";
@@ -17,8 +17,12 @@ export function normalizeRelayProtocolVersion(
     return fallback;
   }
 
-  const normalized =
-    typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
+  let normalized = "";
+  if (typeof value === "string") {
+    normalized = value.trim();
+  } else if (typeof value === "number") {
+    normalized = String(value);
+  }
   if (!normalized) {
     return fallback;
   }
@@ -134,7 +138,14 @@ export function extractHostPortFromWebSocketUrl(wsUrl: string): string {
   }
 
   const host = parsed.hostname;
-  const port = parsed.port ? Number(parsed.port) : parsed.protocol === "wss:" ? 443 : 80;
+  let port: number;
+  if (parsed.port) {
+    port = Number(parsed.port);
+  } else if (parsed.protocol === "wss:") {
+    port = 443;
+  } else {
+    port = 80;
+  }
   if (!host) {
     throw new Error("Invalid WebSocket URL (missing hostname)");
   }

@@ -86,6 +86,33 @@ describe("desktop attachment store", () => {
     });
   });
 
+  it("saves raw base64 sources via desktop filesystem writes", async () => {
+    const store = createDesktopAttachmentStore();
+    const attachment = await store.save({
+      id: "att_base64",
+      mimeType: "image/png",
+      fileName: "inline.png",
+      source: {
+        kind: "base64",
+        base64: "AAECAw==",
+      },
+    });
+
+    expect(writeDesktopAttachmentBase64Mock).toHaveBeenCalledWith({
+      attachmentId: "att_base64",
+      base64: "AAECAw==",
+      extension: ".png",
+    });
+    expect(attachment).toMatchObject({
+      id: "att_base64",
+      mimeType: "image/png",
+      storageType: "desktop-file",
+      storageKey: "/managed/att_2.png",
+      fileName: "inline.png",
+      byteSize: 4,
+    });
+  });
+
   it("delegates encode/preview/delete/gc to desktop command path", async () => {
     const store = createDesktopAttachmentStore();
     const attachment = {

@@ -13,9 +13,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import pino, { type Logger } from "pino";
 
 import type { SessionOutboundMessage, WorkspaceDescriptorPayload } from "./messages.js";
-import { ScriptRouteStore } from "./script-proxy.js";
+import { archivePaseoWorktree } from "./paseo-worktree-archive-service.js";
 import {
-  archivePaseoWorktree,
   buildAgentSessionConfig,
   handlePaseoWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest,
@@ -41,6 +40,7 @@ import {
 } from "./paseo-worktree-service.js";
 import { createWorktreeCoreDeps } from "./worktree-core.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 interface LegacyCreateWorktreeTestOptions {
   branchName: string;
@@ -294,7 +294,7 @@ describe("handlePaseoWorktreeListRequest", () => {
       {
         emit: (message) => emitted.push(message),
         paseoHome: "/tmp/paseo-home",
-        workspaceGitService: workspaceGitService as any,
+        workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
       },
       {
         type: "paseo_worktree_list_request",
@@ -335,9 +335,9 @@ describe("resolveGitCreateBaseBranch", () => {
     };
 
     try {
-      await expect(resolveGitCreateBaseBranch(cwd, workspaceGitService as any)).resolves.toBe(
-        "main",
-      );
+      await expect(
+        resolveGitCreateBaseBranch(cwd, workspaceGitService as unknown as WorkspaceGitService),
+      ).resolves.toBe("main");
 
       expect(workspaceGitService.resolveDefaultBranch).toHaveBeenCalledWith(cwd);
       expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
@@ -543,8 +543,8 @@ describe("runWorktreeSetupInBackground", () => {
       {
         paseoHome,
         emitWorkspaceUpdateForCwd,
-        cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
-          snapshots.set(workspaceId, snapshot),
+        cacheWorkspaceSetupSnapshot: (snapshotWorkspaceId, snapshot) =>
+          snapshots.set(snapshotWorkspaceId, snapshot),
         emit: (message) => emitted.push(message),
         sessionLogger: logger,
         terminalManager: null,
@@ -1154,7 +1154,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
         workspaceGitService: {
           resolveRepoRoot: vi.fn(async () => repoDir),
           resolveDefaultBranch: vi.fn(async () => "main"),
-        } as any,
+        } as unknown as WorkspaceGitService,
         createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
         checkoutExistingBranch: async () => {
           throw new Error("should not checkout existing branch");
@@ -1637,7 +1637,7 @@ describe("archivePaseoWorktree", () => {
       {
         paseoHome,
         github: createGitHubServiceStub(),
-        workspaceGitService: workspaceGitService as any,
+        workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
         agentManager: {
           listAgents: () => [],
           closeAgent: vi.fn(async () => {}),

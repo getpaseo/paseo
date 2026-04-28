@@ -1,8 +1,8 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolvePaseoHome } from "@getpaseo/server";
+import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
 export interface DaemonStartOptions {
@@ -43,6 +43,7 @@ export interface DetachedStartResult {
 export interface StopLocalDaemonOptions {
   home?: string;
   timeoutMs?: number;
+  killTimeoutMs?: number;
   force?: boolean;
 }
 
@@ -54,21 +55,21 @@ export interface StopLocalDaemonResult {
   message: string;
 }
 
-type ProcessExitDetails = {
+interface ProcessExitDetails {
   code: number | null;
   signal: NodeJS.Signals | null;
   error?: Error;
-};
+}
 
 type DetachedStartupResult = { exitedEarly: false } | ({ exitedEarly: true } & ProcessExitDetails);
 
 const DETACHED_STARTUP_GRACE_MS = 1200;
 const PID_POLL_INTERVAL_MS = 100;
-const KILL_TIMEOUT_MS = 3000;
 const DAEMON_LOG_FILENAME = "daemon.log";
 const DAEMON_PID_FILENAME = "paseo.pid";
 
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000;
+export const DEFAULT_KILL_TIMEOUT_MS = 3_000;
 
 const require = createRequire(import.meta.url);
 
@@ -119,25 +120,30 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   return childEnv;
 }
 
+function resolveServerRunnerFromDir(currentDir: string): string | null {
+  const packageJsonPath = path.join(currentDir, "package.json");
+  if (!existsSync(packageJsonPath)) return null;
+  try {
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: string };
+    if (packageJson.name !== "@getpaseo/server") return null;
+    const distRunner = path.join(currentDir, "dist", "scripts", "supervisor-entrypoint.js");
+    if (existsSync(distRunner)) {
+      return distRunner;
+    }
+    return path.join(currentDir, "scripts", "supervisor-entrypoint.ts");
+  } catch {
+    return null;
+  }
+}
+
 function resolveDaemonRunnerEntry(): string {
   const serverExportPath = require.resolve("@getpaseo/server");
   let currentDir = path.dirname(serverExportPath);
 
   while (true) {
-    const packageJsonPath = path.join(currentDir, "package.json");
-    if (existsSync(packageJsonPath)) {
-      try {
-        const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: string };
-        if (packageJson.name === "@getpaseo/server") {
-          const distRunner = path.join(currentDir, "dist", "scripts", "supervisor-entrypoint.js");
-          if (existsSync(distRunner)) {
-            return distRunner;
-          }
-          return path.join(currentDir, "scripts", "supervisor-entrypoint.ts");
-        }
-      } catch {
-        // Continue searching up if package.json exists but is invalid.
-      }
+    const entry = resolveServerRunnerFromDir(currentDir);
+    if (entry) {
+      return entry;
     }
 
     const parentDir = path.dirname(currentDir);
@@ -154,6 +160,22 @@ function pidFilePath(paseoHome: string): string {
   return path.join(paseoHome, DAEMON_PID_FILENAME);
 }
 
+function resolveListenField(listen: unknown, sockPath: unknown): string | undefined {
+  if (typeof listen === "string") return listen;
+  if (typeof sockPath === "string") return sockPath;
+  return undefined;
+}
+
+function resolveStopMessage(
+  forced: boolean,
+  lifecycleRequested: boolean,
+  fallbackMessage: string | null | undefined,
+): string {
+  if (forced) return "Daemon owner process was force-stopped";
+  if (lifecycleRequested) return "Daemon stopped gracefully";
+  return fallbackMessage ?? "Daemon stopped via owner PID signal";
+}
+
 function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
   try {
     const parsed = JSON.parse(readFileSync(pidPath, "utf-8")) as Record<string, unknown>;
@@ -167,12 +189,7 @@ function readPidFile(pidPath: string): LocalDaemonPidInfo | null {
       startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : undefined,
       hostname: typeof parsed.hostname === "string" ? parsed.hostname : undefined,
       uid: typeof parsed.uid === "number" ? parsed.uid : undefined,
-      listen:
-        typeof parsed.listen === "string"
-          ? parsed.listen
-          : typeof parsed.sockPath === "string"
-            ? parsed.sockPath
-            : undefined,
+      listen: resolveListenField(parsed.listen, parsed.sockPath),
       desktopManaged: parsed.desktopManaged === true ? true : undefined,
     };
   } catch {
@@ -271,13 +288,13 @@ function signalProcessGroupSafely(pid: number, signal: NodeJS.Signals): boolean 
 
 async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isProcessRunning(pid)) {
-      return true;
-    }
+  async function poll(): Promise<boolean> {
+    if (!isProcessRunning(pid)) return true;
+    if (Date.now() >= deadline) return !isProcessRunning(pid);
     await sleep(PID_POLL_INTERVAL_MS);
+    return poll();
   }
-  return !isProcessRunning(pid);
+  return poll();
 }
 
 type LifecycleShutdownAttempt = { requested: true } | { requested: false; reason: string };
@@ -356,16 +373,17 @@ export async function startLocalDaemonDetached(
     throw new Error("Cannot use --listen and --port together");
   }
 
+  const daemonRunnerEntry = resolveDaemonRunnerEntry();
   const childEnv = buildChildEnv(options);
 
   const paseoHome = resolvePaseoHome(childEnv);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
-  const daemonRunnerEntry = resolveDaemonRunnerEntry();
-  const child = spawn(
+  const child = spawnProcess(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
     {
       detached: true,
+      envMode: "internal",
       env: childEnv,
       stdio: ["ignore", "ignore", "ignore"],
     },
@@ -421,8 +439,8 @@ export function startLocalDaemonForeground(options: DaemonStartOptions): number 
     throw new Error("Cannot use --listen and --port together");
   }
 
-  const childEnv = buildChildEnv(options);
   const daemonRunnerEntry = resolveDaemonRunnerEntry();
+  const childEnv = buildChildEnv(options);
   const result = spawnSync(
     process.execPath,
     [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
@@ -478,6 +496,7 @@ export async function stopLocalDaemon(
   options: StopLocalDaemonOptions = {},
 ): Promise<StopLocalDaemonResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
+  const killTimeoutMs = options.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS;
   const state = resolveLocalDaemonState({ home: options.home });
 
   if (!state.pidInfo || !state.running) {
@@ -514,7 +533,7 @@ export async function stopLocalDaemon(
   if (!stopped && options.force) {
     forced = true;
     signalProcessGroupSafely(pid, "SIGKILL");
-    stopped = await waitForPidExit(pid, KILL_TIMEOUT_MS);
+    stopped = await waitForPidExit(pid, killTimeoutMs);
   }
 
   if (!stopped) {
@@ -528,10 +547,6 @@ export async function stopLocalDaemon(
     home: state.home,
     pid,
     forced,
-    message: forced
-      ? "Daemon owner process was force-stopped"
-      : lifecycleRequested
-        ? "Daemon stopped gracefully"
-        : (fallbackMessage ?? "Daemon stopped via owner PID signal"),
+    message: resolveStopMessage(forced, lifecycleRequested, fallbackMessage),
   };
 }

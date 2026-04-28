@@ -54,13 +54,13 @@ export class ChatServiceError extends Error {
   }
 }
 
-type Waiter = {
+interface Waiter {
   roomId: string;
   afterMessageId: string | null;
   resolve: (messages: ChatMessage[]) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout> | null;
-};
+}
 
 export interface CreateChatRoomInput {
   name: string;
@@ -176,7 +176,7 @@ export class FileBackedChatService {
     return { room: detail };
   }
 
-  async postMessage(input: PostChatMessageInput): Promise<ChatMessage> {
+  async dispatchMessage(input: PostChatMessageInput): Promise<ChatMessage> {
     await this.load();
     const room = this.resolveRoom(input.room);
     const body = input.body.trim();
@@ -418,7 +418,7 @@ export class FileBackedChatService {
       return;
     }
 
-    for (const waiter of [...waiters]) {
+    for (const waiter of Array.from(waiters)) {
       const messages =
         waiter.afterMessageId === null
           ? this.getRoomMessages(roomId).slice(-1)
@@ -446,7 +446,7 @@ export class FileBackedChatService {
     if (!waiters) {
       return;
     }
-    for (const waiter of [...waiters]) {
+    for (const waiter of Array.from(waiters)) {
       waiter.reject(error);
     }
   }

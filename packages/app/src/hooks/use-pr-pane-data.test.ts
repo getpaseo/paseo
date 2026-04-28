@@ -24,26 +24,26 @@ type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
 
 const { mockRuntime, mockClient, checkoutStatusUpdateHandlers } = vi.hoisted(() => {
-  const checkoutStatusUpdateHandlers = new Set<(message: unknown) => void>();
-  const mockClient = {
+  const hoistedHandlers = new Set<(message: unknown) => void>();
+  const hoistedClient = {
     checkoutPrStatus: vi.fn(),
     pullRequestTimeline: vi.fn(),
     on: vi.fn((type: string, handler: (message: unknown) => void) => {
       if (type !== "checkout_status_update") {
         return () => {};
       }
-      checkoutStatusUpdateHandlers.add(handler);
+      hoistedHandlers.add(handler);
       return () => {
-        checkoutStatusUpdateHandlers.delete(handler);
+        hoistedHandlers.delete(handler);
       };
     }),
   };
 
   return {
-    mockClient,
-    checkoutStatusUpdateHandlers,
+    mockClient: hoistedClient,
+    checkoutStatusUpdateHandlers: hoistedHandlers,
     mockRuntime: {
-      client: mockClient,
+      client: hoistedClient,
       isConnected: true,
     },
   };
@@ -766,9 +766,15 @@ function createDeferred<T>(): {
   return { promise, resolve };
 }
 
-function countTimelineCalls({ cwd, prNumber }: { cwd: string; prNumber: number }): number {
+function countTimelineCalls({
+  cwd: targetCwd,
+  prNumber,
+}: {
+  cwd: string;
+  prNumber: number;
+}): number {
   return mockClient.pullRequestTimeline.mock.calls.filter(([input]) => {
     const request = input as { cwd?: string; prNumber?: number | null };
-    return request.cwd === cwd && request.prNumber === prNumber;
+    return request.cwd === targetCwd && request.prNumber === prNumber;
   }).length;
 }

@@ -1,11 +1,13 @@
 import * as pty from "node-pty";
 import xterm, { type Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
-import { chmodSync, existsSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import stripAnsi from "strip-ansi";
+import { createExternalProcessEnv } from "../server/paseo-env.js";
 import type { TerminalCell, TerminalState } from "../shared/messages.js";
 
 const { Terminal } = xterm;
@@ -85,6 +87,7 @@ export interface CreateTerminalOptions {
 interface BuildTerminalEnvironmentInput {
   shell: string;
   env: Record<string, string>;
+  zshShellIntegrationDir?: string;
 }
 
 export interface CaptureTerminalLinesOptions {
@@ -98,12 +101,12 @@ export interface CaptureTerminalLinesResult {
   totalLines: number;
 }
 
-type EnsureNodePtySpawnHelperExecutableOptions = {
+interface EnsureNodePtySpawnHelperExecutableOptions {
   packageRoot?: string;
   platform?: NodeJS.Platform;
   arch?: string;
   force?: boolean;
-};
+}
 
 function resolveNodePtyPackageRoot(): string | null {
   try {
@@ -182,14 +185,39 @@ export function resolveZshShellIntegrationDir(): string {
   return fileURLToPath(new URL("./shell-integration/zsh", import.meta.url));
 }
 
+function resolveExternalProcessPath(filePath: string): string {
+  return filePath.replace(/\.asar(?=\/|$)/, ".asar.unpacked");
+}
+
+function resolveZshShellIntegrationRuntimeDir(): string {
+  let username = "unknown";
+  try {
+    username = userInfo().username || username;
+  } catch {
+    // keep fallback
+  }
+  return join(tmpdir(), `${username}-paseo-zsh`);
+}
+
+function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegrationDir()): string {
+  const readableSourceDir = resolveExternalProcessPath(sourceDir);
+  const runtimeDir = resolveZshShellIntegrationRuntimeDir();
+  mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+  chmodSync(runtimeDir, 0o700);
+  copyFileSync(join(readableSourceDir, ".zshenv"), join(runtimeDir, ".zshenv"));
+  copyFileSync(
+    join(readableSourceDir, "paseo-integration.zsh"),
+    join(runtimeDir, "paseo-integration.zsh"),
+  );
+  return runtimeDir;
+}
+
 export function buildTerminalEnvironment(
   input: BuildTerminalEnvironmentInput,
 ): Record<string, string> {
-  const baseEnv: Record<string, string> = {
-    ...process.env,
-    ...input.env,
+  const baseEnv: Record<string, string> = createExternalProcessEnv(process.env, input.env, {
     TERM: "xterm-256color",
-  };
+  });
 
   if (basename(input.shell) !== "zsh") {
     return baseEnv;
@@ -199,7 +227,7 @@ export function buildTerminalEnvironment(
   return {
     ...baseEnv,
     PASEO_ZSH_ZDOTDIR: originalZdotdir,
-    ZDOTDIR: resolveZshShellIntegrationDir(),
+    ZDOTDIR: prepareZshShellIntegrationRuntimeDir(input.zshShellIntegrationDir),
   };
 }
 
@@ -305,7 +333,13 @@ function extractScrollback(terminal: TerminalType): TerminalCell[][] {
 }
 
 function extractCursorState(terminal: TerminalType): TerminalState["cursor"] {
-  const coreService = (terminal as any)._core?.coreService;
+  const coreService = (terminal as unknown as { _core?: { coreService?: Record<string, unknown> } })
+    ._core?.coreService as
+    | {
+        decPrivateModes?: { cursorStyle?: unknown; cursorBlink?: unknown };
+        isCursorHidden?: unknown;
+      }
+    | undefined;
   const cursorStyle = coreService?.decPrivateModes?.cursorStyle;
   const normalizedCursorStyle =
     cursorStyle === "block" || cursorStyle === "underline" || cursorStyle === "bar"
@@ -331,12 +365,14 @@ function normalizeProcessToken(token: string): string {
     return token;
   }
 
-  const quote =
-    token.startsWith('"') && token.endsWith('"')
-      ? '"'
-      : token.startsWith("'") && token.endsWith("'")
-        ? "'"
-        : "";
+  let quote: "'" | '"' | "";
+  if (token.startsWith('"') && token.endsWith('"')) {
+    quote = '"';
+  } else if (token.startsWith("'") && token.endsWith("'")) {
+    quote = "'";
+  } else {
+    quote = "";
+  }
   const rawToken = quote ? token.slice(1, -1) : token;
   if (rawToken.length === 0) {
     return token;
@@ -458,8 +494,15 @@ function extractLastOutputLines(terminal: TerminalType, limit: number): string[]
   return mergedLines.slice(-limit);
 }
 
+const ESC = String.fromCharCode(0x1b);
+const BEL = String.fromCharCode(0x07);
+const ANSI_SEQUENCE_PATTERN = new RegExp(
+  `${ESC}(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~]|\\].*?(?:${BEL}|${ESC}\\\\))`,
+  "g",
+);
+
 function stripAnsiSequences(input: string): string {
-  return input.replace(/\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\].*?(?:\x07|\x1b\\))/g, "");
+  return input.replace(ANSI_SEQUENCE_PATTERN, "");
 }
 
 function extractLastOutputLinesFromText(text: string, limit: number): string[] {
@@ -613,7 +656,6 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   }
   emitTitleChange(initialTitle);
 
-  // Respond to DA1 queries (CSI c or CSI 0 c) — apps like nvim query terminal capabilities
   terminal.parser.registerCsiHandler({ final: "c" }, (params) => {
     if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
       ptyProcess.write("\x1b[?62;4;22c");
@@ -892,24 +934,31 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       return Promise.resolve(true);
     }
     return new Promise((resolve) => {
+      let pendingResolve: ((value: boolean) => void) | null = resolve;
+      const settle = (value: boolean) => {
+        if (!pendingResolve) return;
+        const fn = pendingResolve;
+        pendingResolve = null;
+        fn(value);
+      };
       const waiter = (): void => {
         clearTimeout(timer);
-        resolve(true);
+        settle(true);
       };
       const timer = setTimeout(() => {
         processExitWaiters.delete(waiter);
-        resolve(false);
+        settle(false);
       }, timeoutMs);
       processExitWaiters.add(waiter);
     });
   }
 
-  async function killAndWait(options?: {
+  async function killAndWait(killOptions?: {
     gracefulTimeoutMs?: number;
     forceTimeoutMs?: number;
   }): Promise<void> {
-    const gracefulTimeoutMs = options?.gracefulTimeoutMs ?? 2000;
-    const forceTimeoutMs = options?.forceTimeoutMs ?? 1000;
+    const gracefulTimeoutMs = killOptions?.gracefulTimeoutMs ?? 2000;
+    const forceTimeoutMs = killOptions?.forceTimeoutMs ?? 1000;
 
     if (processExited) {
       kill();

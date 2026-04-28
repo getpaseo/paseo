@@ -13,7 +13,7 @@ type WorkerLifecycleMessage =
       reason?: string;
     };
 
-type SupervisorOptions = {
+interface SupervisorOptions {
   name: string;
   startupMessage: string;
   resolveWorkerEntry: () => string;
@@ -28,7 +28,7 @@ type SupervisorOptions = {
   onWorkerReady?: (message: { listen: string }) => Promise<void> | void;
   restartOnCrash?: boolean;
   onSupervisorExit?: () => Promise<void> | void;
-};
+}
 
 function describeExit(code: number | null, signal: NodeJS.Signals | null): string {
   return signal ?? (typeof code === "number" ? `code ${code}` : "unknown");

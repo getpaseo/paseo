@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight, Globe, Monitor, Pencil, RotateCw, Trash2 } from "lucide-react-native";
@@ -17,7 +17,7 @@ import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { settingsStyles } from "@/styles/settings";
 import { Button } from "@/components/ui/button";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Switch } from "@/components/ui/switch";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
@@ -89,31 +89,45 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
   const lastError = snapshot?.lastError ?? null;
   const statusLabel = formatConnectionStatus(connectionStatus);
   const statusTone = getConnectionStatusTone(connectionStatus);
-  const statusColor =
-    statusTone === "success"
-      ? theme.colors.palette.green[400]
-      : statusTone === "warning"
-        ? theme.colors.palette.amber[500]
-        : statusTone === "error"
-          ? theme.colors.destructive
-          : theme.colors.foregroundMuted;
-  const statusPillBg =
-    statusTone === "success"
-      ? "rgba(74, 222, 128, 0.1)"
-      : statusTone === "warning"
-        ? "rgba(245, 158, 11, 0.1)"
-        : statusTone === "error"
-          ? "rgba(248, 113, 113, 0.1)"
-          : "rgba(161, 161, 170, 0.1)";
+  let statusColor: string;
+  if (statusTone === "success") {
+    statusColor = theme.colors.palette.green[400];
+  } else if (statusTone === "warning") {
+    statusColor = theme.colors.palette.amber[500];
+  } else if (statusTone === "error") {
+    statusColor = theme.colors.destructive;
+  } else {
+    statusColor = theme.colors.foregroundMuted;
+  }
+  let statusPillBg: string;
+  if (statusTone === "success") {
+    statusPillBg = "rgba(74, 222, 128, 0.1)";
+  } else if (statusTone === "warning") {
+    statusPillBg = "rgba(245, 158, 11, 0.1)";
+  } else if (statusTone === "error") {
+    statusPillBg = "rgba(248, 113, 113, 0.1)";
+  } else {
+    statusPillBg = "rgba(161, 161, 170, 0.1)";
+  }
   const connectionBadge = formatActiveConnectionBadge(activeConnection, theme);
   const versionBadgeText = formatDaemonVersionBadge(daemonVersion);
   const connectionError =
     typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
 
+  const statusPillStyle = useMemo(
+    () => [styles.statusPill, { backgroundColor: statusPillBg }],
+    [statusPillBg],
+  );
+  const statusDotStyle = useMemo(
+    () => [styles.statusDot, { backgroundColor: statusColor }],
+    [statusColor],
+  );
+  const statusTextStyle = useMemo(() => [styles.statusText, { color: statusColor }], [statusColor]);
+
   if (!host) {
     return (
       <View testID={`settings-host-page-${serverId}`}>
-        <View style={[settingsStyles.card, styles.emptyCard]}>
+        <View style={EMPTY_CARD_STYLE}>
           <Text style={styles.emptyText}>Host not found</Text>
         </View>
       </View>
@@ -123,9 +137,9 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
   return (
     <View testID={`settings-host-page-${serverId}`}>
       <View style={styles.identityBadges} testID="host-page-identity">
-        <View style={[styles.statusPill, { backgroundColor: statusPillBg }]}>
-          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-          <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+        <View style={statusPillStyle}>
+          <View style={statusDotStyle} />
+          <Text style={statusTextStyle}>{statusLabel}</Text>
         </View>
         {connectionBadge ? (
           <View style={styles.badgePill}>
@@ -205,13 +219,19 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
     setIsEditing(false);
   }, [host.label, isSaving]);
 
+  const handleStartEdit = useCallback(() => {
+    setDraftLabel(host.label ?? "");
+    setIsEditing(true);
+  }, [host.label]);
+
+  const handleSavePress = useCallback(() => {
+    void handleSave();
+  }, [handleSave]);
+
   return (
     <>
       <Pressable
-        onPress={() => {
-          setDraftLabel(host.label ?? "");
-          setIsEditing(true);
-        }}
+        onPress={handleStartEdit}
         hitSlop={8}
         style={styles.identityEditButton}
         accessibilityRole="button"
@@ -237,7 +257,7 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
             autoCapitalize="none"
             autoCorrect={false}
             editable={!isSaving}
-            onSubmitEditing={() => void handleSave()}
+            onSubmitEditing={handleSavePress}
             style={styles.renameInput}
             testID="host-page-label-input"
           />
@@ -245,7 +265,7 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
             <Button
               variant="secondary"
               size="sm"
-              style={{ flex: 1 }}
+              style={FLEX_1_STYLE}
               onPress={handleCancel}
               disabled={isSaving}
             >
@@ -253,8 +273,8 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
             </Button>
             <Button
               size="sm"
-              style={{ flex: 1 }}
-              onPress={() => void handleSave()}
+              style={FLEX_1_STYLE}
+              onPress={handleSavePress}
               disabled={isSaving}
               testID="host-page-label-save"
             >
@@ -277,6 +297,35 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
   } | null>(null);
   const [isRemovingConnection, setIsRemovingConnection] = useState(false);
 
+  const handleRequestRemove = useCallback((connection: HostConnection) => {
+    setPendingRemoveConnection({
+      connectionId: connection.id,
+      title: formatHostConnectionLabel(connection),
+    });
+  }, []);
+
+  const handleCloseConfirm = useCallback(() => {
+    if (isRemovingConnection) return;
+    setPendingRemoveConnection(null);
+  }, [isRemovingConnection]);
+
+  const handleCancelConfirm = useCallback(() => {
+    setPendingRemoveConnection(null);
+  }, []);
+
+  const handleConfirmRemove = useCallback(() => {
+    if (!pendingRemoveConnection) return;
+    const { connectionId } = pendingRemoveConnection;
+    setIsRemovingConnection(true);
+    void removeConnection(host.serverId, connectionId)
+      .then(() => setPendingRemoveConnection(null))
+      .catch((error) => {
+        console.error("[HostPage] Failed to remove connection", error);
+        Alert.alert("Error", "Unable to remove connection");
+      })
+      .finally(() => setIsRemovingConnection(false));
+  }, [pendingRemoveConnection, removeConnection, host.serverId]);
+
   return (
     <SettingsSection title="Connections">
       <View style={settingsStyles.card} testID="host-page-connections-card">
@@ -290,12 +339,7 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
               latencyMs={probe?.status === "available" ? probe.latencyMs : undefined}
               latencyLoading={!probe || probe.status === "pending"}
               latencyError={probe?.status === "unavailable"}
-              onRemove={() => {
-                setPendingRemoveConnection({
-                  connectionId: conn.id,
-                  title: formatHostConnectionLabel(conn),
-                });
-              }}
+              onRemove={handleRequestRemove}
             />
           );
         })}
@@ -305,10 +349,7 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
         <AdaptiveModalSheet
           title="Remove connection"
           visible
-          onClose={() => {
-            if (isRemovingConnection) return;
-            setPendingRemoveConnection(null);
-          }}
+          onClose={handleCloseConfirm}
           testID="remove-connection-confirm-modal"
         >
           <Text style={styles.confirmText}>
@@ -318,8 +359,8 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
             <Button
               variant="secondary"
               size="sm"
-              style={{ flex: 1 }}
-              onPress={() => setPendingRemoveConnection(null)}
+              style={FLEX_1_STYLE}
+              onPress={handleCancelConfirm}
               disabled={isRemovingConnection}
             >
               Cancel
@@ -327,18 +368,8 @@ function ConnectionsSection({ host }: { host: HostProfile }) {
             <Button
               variant="destructive"
               size="sm"
-              style={{ flex: 1 }}
-              onPress={() => {
-                const { connectionId } = pendingRemoveConnection;
-                setIsRemovingConnection(true);
-                void removeConnection(host.serverId, connectionId)
-                  .then(() => setPendingRemoveConnection(null))
-                  .catch((error) => {
-                    console.error("[HostPage] Failed to remove connection", error);
-                    Alert.alert("Error", "Unable to remove connection");
-                  })
-                  .finally(() => setIsRemovingConnection(false));
-              }}
+              style={FLEX_1_STYLE}
+              onPress={handleConfirmRemove}
               disabled={isRemovingConnection}
               testID="remove-connection-confirm"
             >
@@ -364,7 +395,7 @@ function ConnectionRow({
   latencyMs: number | null | undefined;
   latencyLoading: boolean;
   latencyError: boolean;
-  onRemove: () => void;
+  onRemove: (connection: HostConnection) => void;
 }) {
   const { theme } = useUnistyles();
   const title = formatHostConnectionLabel(connection);
@@ -377,19 +408,36 @@ function ConnectionRow({
   })();
   const latencyColor = latencyError ? theme.colors.palette.red[300] : theme.colors.foregroundMuted;
 
+  const handlePressRemove = useCallback(() => {
+    onRemove(connection);
+  }, [onRemove, connection]);
+
+  const rowStyle = useMemo(
+    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder],
+    [showBorder],
+  );
+  const latencyTextStyle = useMemo(
+    () => [styles.connectionLatency, { color: latencyColor }],
+    [latencyColor],
+  );
+  const destructiveTextStyle = useMemo(
+    () => ({ color: theme.colors.destructive }),
+    [theme.colors.destructive],
+  );
+
   return (
-    <View style={[settingsStyles.row, showBorder && settingsStyles.rowBorder]}>
+    <View style={rowStyle}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle} numberOfLines={1}>
           {title}
         </Text>
       </View>
-      <Text style={[styles.connectionLatency, { color: latencyColor }]}>{latencyText}</Text>
+      <Text style={latencyTextStyle}>{latencyText}</Text>
       <Button
         variant="ghost"
         size="sm"
-        textStyle={{ color: theme.colors.destructive }}
-        onPress={onRemove}
+        textStyle={destructiveTextStyle}
+        onPress={handlePressRemove}
       >
         Remove
       </Button>
@@ -416,10 +464,7 @@ function DaemonSection({ host, isLocalDaemon }: { host: HostProfile; isLocalDaem
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => {
-      clearTimeout(timeout);
-      resolve();
-    }, ms);
+    setTimeout(resolve, ms);
   });
 
 function RestartDaemonCard({ host }: { host: HostProfile }) {
@@ -510,6 +555,7 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
             );
           });
         void waitForDaemonRestart();
+        return;
       })
       .catch((error) => {
         console.error(`[HostPage] Failed to open restart confirmation for ${host.label}`, error);
@@ -517,19 +563,24 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
       });
   }, [daemonClient, host.label, host.serverId, isHostConnected, waitForDaemonRestart]);
 
+  const restartIcon = useMemo(
+    () => <RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+
   return (
     <View style={settingsStyles.card} testID="host-page-restart-card">
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>Restart daemon</Text>
           <Text style={settingsStyles.rowHint}>
-            Restarts the daemon process. The app will reconnect automatically.
+            Restarts the daemon process. The app will reconnect automatically
           </Text>
         </View>
         <Button
           variant="outline"
           size="sm"
-          leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
+          leftIcon={restartIcon}
           onPress={handleRestart}
           disabled={isRestarting || !daemonClient || !isConnected}
           testID="host-page-restart-button"
@@ -545,6 +596,17 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
 
+  const handleValueChange = useCallback(
+    (next: boolean) => {
+      void patchConfig({
+        mcp: {
+          injectIntoAgents: next,
+        },
+      });
+    },
+    [patchConfig],
+  );
+
   if (!isConnected) return null;
 
   return (
@@ -556,20 +618,10 @@ function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
             Automatically inject Paseo MCP tools into new agents
           </Text>
         </View>
-        <SegmentedControl
-          size="sm"
-          value={config?.mcp.injectIntoAgents === false ? "off" : "on"}
-          onValueChange={(value) => {
-            void patchConfig({
-              mcp: {
-                injectIntoAgents: value === "on",
-              },
-            });
-          }}
-          options={[
-            { value: "on", label: "On" },
-            { value: "off", label: "Off" },
-          ]}
+        <Switch
+          value={config?.mcp.injectIntoAgents !== false}
+          onValueChange={handleValueChange}
+          accessibilityLabel="Inject Paseo tools"
         />
       </View>
     </View>
@@ -580,11 +632,14 @@ function PairDeviceRow() {
   const { theme } = useUnistyles();
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  const handleOpen = useCallback(() => setIsModalOpen(true), []);
+  const handleClose = useCallback(() => setIsModalOpen(false), []);
+
   return (
     <View style={settingsStyles.card}>
       <Pressable
         style={settingsStyles.row}
-        onPress={() => setIsModalOpen(true)}
+        onPress={handleOpen}
         accessibilityRole="button"
         testID="host-page-pair-device-row"
       >
@@ -599,7 +654,7 @@ function PairDeviceRow() {
 
       <PairDeviceModal
         visible={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={handleClose}
         testID="host-page-pair-device-card"
       />
     </View>
@@ -611,6 +666,37 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
   const { removeHost } = useHostMutations();
   const [isConfirming, setIsConfirming] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+
+  const destructiveTextStyle = useMemo(
+    () => ({ color: theme.colors.destructive }),
+    [theme.colors.destructive],
+  );
+
+  const handleOpenConfirm = useCallback(() => setIsConfirming(true), []);
+  const handleCloseConfirm = useCallback(() => {
+    if (isRemoving) return;
+    setIsConfirming(false);
+  }, [isRemoving]);
+  const handleCancel = useCallback(() => setIsConfirming(false), []);
+  const handleConfirmRemove = useCallback(() => {
+    setIsRemoving(true);
+    void removeHost(host.serverId)
+      .then(() => {
+        setIsConfirming(false);
+        onRemoved?.();
+        return;
+      })
+      .catch((error) => {
+        console.error("[HostPage] Failed to remove host", error);
+        Alert.alert("Error", "Unable to remove host");
+      })
+      .finally(() => setIsRemoving(false));
+  }, [host.serverId, onRemoved, removeHost]);
+
+  const removeIcon = useMemo(
+    () => <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />,
+    [theme.iconSize.sm, theme.colors.destructive],
+  );
 
   return (
     <SettingsSection title="Danger zone" testID="host-page-remove-host-card">
@@ -625,9 +711,9 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
           <Button
             variant="outline"
             size="sm"
-            leftIcon={<Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />}
-            textStyle={{ color: theme.colors.destructive }}
-            onPress={() => setIsConfirming(true)}
+            leftIcon={removeIcon}
+            textStyle={destructiveTextStyle}
+            onPress={handleOpenConfirm}
             testID="host-page-remove-host-button"
           >
             Remove
@@ -639,10 +725,7 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
         <AdaptiveModalSheet
           title="Remove host"
           visible
-          onClose={() => {
-            if (isRemoving) return;
-            setIsConfirming(false);
-          }}
+          onClose={handleCloseConfirm}
           testID="remove-host-confirm-modal"
         >
           <Text style={styles.confirmText}>
@@ -652,8 +735,8 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
             <Button
               variant="secondary"
               size="sm"
-              style={{ flex: 1 }}
-              onPress={() => setIsConfirming(false)}
+              style={FLEX_1_STYLE}
+              onPress={handleCancel}
               disabled={isRemoving}
             >
               Cancel
@@ -661,20 +744,8 @@ function RemoveHostSection({ host, onRemoved }: { host: HostProfile; onRemoved?:
             <Button
               variant="destructive"
               size="sm"
-              style={{ flex: 1 }}
-              onPress={() => {
-                setIsRemoving(true);
-                void removeHost(host.serverId)
-                  .then(() => {
-                    setIsConfirming(false);
-                    onRemoved?.();
-                  })
-                  .catch((error) => {
-                    console.error("[HostPage] Failed to remove host", error);
-                    Alert.alert("Error", "Unable to remove host");
-                  })
-                  .finally(() => setIsRemoving(false));
-              }}
+              style={FLEX_1_STYLE}
+              onPress={handleConfirmRemove}
               disabled={isRemoving}
               testID="remove-host-confirm"
             >
@@ -781,3 +852,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
 }));
+
+const FLEX_1_STYLE = { flex: 1 };
+const EMPTY_CARD_STYLE = [settingsStyles.card, styles.emptyCard];

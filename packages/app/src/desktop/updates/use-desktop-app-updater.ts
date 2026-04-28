@@ -7,7 +7,7 @@ import {
   type DesktopAppUpdateCheckResult,
   type DesktopAppUpdateInstallResult,
 } from "@/desktop/updates/desktop-updates";
-import { useAppSettings } from "@/hooks/use-settings";
+import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 
 export type DesktopAppUpdateStatus =
   | "idle"
@@ -84,8 +84,8 @@ function formatStatusText(input: {
 
 export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
   const isDesktopApp = shouldShowDesktopUpdateSection();
-  const { settings } = useAppSettings();
-  const releaseChannel = settings.releaseChannel;
+  const { settings: desktopSettings } = useDesktopSettings();
+  const releaseChannel = desktopSettings.releaseChannel;
   const requestVersionRef = useRef(0);
   const [status, setStatus] = useState<DesktopAppUpdateStatus>("idle");
   const [availableUpdate, setAvailableUpdate] = useState<DesktopAppUpdateCheckResult | null>(null);

@@ -8,14 +8,14 @@ import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
 
 export type SherpaTtsPreset = "kokoro-en-v0_19" | "kitten-nano-en-v0_1-fp16";
 
-export type SherpaTtsConfig = {
+export interface SherpaTtsConfig {
   preset: SherpaTtsPreset;
   modelDir: string;
   speakerId?: number;
   speed?: number;
   lengthScale?: number;
   numThreads?: number;
-};
+}
 
 function assertFileExists(filePath: string, label: string): void {
   if (!existsSync(filePath)) {
@@ -23,8 +23,19 @@ function assertFileExists(filePath: string, label: string): void {
   }
 }
 
+interface SherpaOfflineTtsNative {
+  sampleRate?: number;
+  generate: (args: {
+    text: string;
+    sid: number;
+    speed: number;
+    enableExternalBuffer: boolean;
+  }) => { samples?: Float32Array | number[]; sampleRate?: number } | undefined;
+  free?: () => void;
+}
+
 export class SherpaOnnxTTS implements TextToSpeechProvider {
-  private readonly tts: any;
+  private readonly tts: SherpaOfflineTtsNative;
   private readonly speakerId: number;
   private readonly speed: number;
   private readonly logger: pino.Logger;
@@ -81,7 +92,9 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
       maxNumSentences: 1,
     };
 
-    this.tts = new sherpa.OfflineTts(offlineTtsConfig);
+    this.tts = new (
+      sherpa as unknown as { OfflineTts: new (config: unknown) => SherpaOfflineTtsNative }
+    ).OfflineTts(offlineTtsConfig);
     this.logger.info(
       { preset: config.preset, modelDir: config.modelDir },
       "Sherpa offline TTS initialized",
@@ -102,24 +115,28 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
       // from sherpa itself instead of trying to clone after generate() returns.
       enableExternalBuffer: false,
     });
-    const rawSamples: Float32Array | null =
-      audio && audio.samples instanceof Float32Array
-        ? audio.samples
-        : audio && Array.isArray(audio.samples)
-          ? Float32Array.from(audio.samples as number[])
-          : null;
+    let rawSamples: Float32Array | null = null;
+    if (audio && audio.samples instanceof Float32Array) {
+      rawSamples = audio.samples;
+    } else if (audio && Array.isArray(audio.samples)) {
+      rawSamples = Float32Array.from(audio.samples as number[]);
+    }
     // Copy to avoid "External buffers are not allowed" when sherpa-onnx
     // returns a Float32Array backed by native memory.
     const samples = rawSamples ? Float32Array.from(rawSamples) : null;
-    const sampleRate: number =
+    let sampleRate: number;
+    if (
       audio &&
       typeof audio.sampleRate === "number" &&
       Number.isFinite(audio.sampleRate) &&
       audio.sampleRate > 0
-        ? audio.sampleRate
-        : typeof this.tts.sampleRate === "number"
-          ? this.tts.sampleRate
-          : 24000;
+    ) {
+      sampleRate = audio.sampleRate;
+    } else if (typeof this.tts.sampleRate === "number") {
+      sampleRate = this.tts.sampleRate;
+    } else {
+      sampleRate = 24000;
+    }
 
     if (!samples) {
       throw new Error("Unexpected sherpa TTS output: missing Float32 samples");

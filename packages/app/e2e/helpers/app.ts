@@ -27,19 +27,19 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
   }
 
   const needsReset = await page.evaluate(
-    ({ expectedEndpoint, expectedServerId }) => {
+    ({ expectedEndpoint: endpoint, expectedServerId: serverId }) => {
       const raw = localStorage.getItem("@paseo:daemon-registry");
       if (!raw) return true;
       try {
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed) || parsed.length !== 1) return true;
-        const entry = parsed[0] as any;
-        if (entry?.serverId !== expectedServerId) return true;
+        const entry = parsed[0] as { serverId?: string; connections?: unknown };
+        if (entry?.serverId !== serverId) return true;
         const connections = entry?.connections;
         if (!Array.isArray(connections)) return true;
         if (
           connections.some(
-            (c: any) =>
+            (c: { type?: string; endpoint?: string }) =>
               c?.type === "directTcp" &&
               typeof c?.endpoint === "string" &&
               /:6767\b/.test(c.endpoint),
@@ -47,7 +47,8 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
         )
           return true;
         return !connections.some(
-          (c: any) => c?.type === "directTcp" && c?.endpoint === expectedEndpoint,
+          (c: { type?: string; endpoint?: string }) =>
+            c?.type === "directTcp" && c?.endpoint === endpoint,
         );
       } catch {
         return true;
@@ -68,16 +69,78 @@ async function ensureE2EStorageSeeded(page: Page): Promise<void> {
   });
   const preferences = buildCreateAgentPreferences(expectedServerId);
   await page.evaluate(
-    ({ daemon, preferences }) => {
+    ({ daemon: seededDaemon, preferences: seededPreferences }) => {
       localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
-      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+      localStorage.setItem("@paseo:daemon-registry", JSON.stringify([seededDaemon]));
+      localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(seededPreferences));
       localStorage.removeItem("@paseo:settings");
     },
     { daemon, preferences },
   );
 
   await page.reload();
+}
+
+function parseRegistryEntry(registryRaw: string): { serverId: string; connections: unknown } {
+  let registry: unknown;
+  try {
+    registry = JSON.parse(registryRaw);
+  } catch {
+    throw new Error("E2E expected @paseo:daemon-registry to be valid JSON.");
+  }
+  if (!Array.isArray(registry) || registry.length !== 1) {
+    throw new Error(
+      `E2E expected @paseo:daemon-registry to contain exactly 1 daemon (got ${Array.isArray(registry) ? registry.length : "non-array"}).`,
+    );
+  }
+  const daemon = registry[0] as { serverId?: string; connections?: unknown };
+  if (typeof daemon?.serverId !== "string" || daemon.serverId.length === 0) {
+    throw new Error(
+      `E2E expected seeded daemon to have a string serverId (got ${String(daemon?.serverId)}).`,
+    );
+  }
+  return { serverId: daemon.serverId, connections: daemon.connections };
+}
+
+function assertDaemonConnections(connections: unknown, expectedEndpoint: string): void {
+  if (
+    !Array.isArray(connections) ||
+    !connections.some(
+      (c: { type?: string; endpoint?: string }) =>
+        c?.type === "directTcp" && c?.endpoint === expectedEndpoint,
+    )
+  ) {
+    throw new Error(
+      `E2E expected seeded daemon connections to include directTcp ${expectedEndpoint} (got ${JSON.stringify(connections)}).`,
+    );
+  }
+  if (
+    Array.isArray(connections) &&
+    connections.some(
+      (c: { type?: string; endpoint?: string }) =>
+        c?.type === "directTcp" && typeof c?.endpoint === "string" && /:6767\b/.test(c.endpoint),
+    )
+  ) {
+    throw new Error(
+      `E2E detected a daemon endpoint pointing at :6767 (${JSON.stringify(connections)}).`,
+    );
+  }
+}
+
+function assertPreferencesMatch(prefsRaw: string, serverId: string): void {
+  try {
+    const prefs = JSON.parse(prefsRaw) as { serverId?: string };
+    if (prefs?.serverId !== serverId) {
+      throw new Error(
+        `E2E expected create-agent-preferences.serverId to match seeded daemon serverId (${serverId}) (got ${String(prefs?.serverId)}).`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw new Error("E2E expected @paseo:create-agent-preferences to be valid JSON.", {
+      cause: error,
+    });
+  }
 }
 
 async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
@@ -98,66 +161,18 @@ async function assertE2EUsesSeededTestDaemon(page: Page): Promise<void> {
     throw new Error("E2E expected @paseo:daemon-registry to be set before app load.");
   }
 
-  let registry: any;
-  try {
-    registry = JSON.parse(snapshot.registryRaw);
-  } catch {
-    throw new Error("E2E expected @paseo:daemon-registry to be valid JSON.");
-  }
-
-  if (!Array.isArray(registry) || registry.length !== 1) {
+  const { serverId, connections } = parseRegistryEntry(snapshot.registryRaw);
+  if (serverId !== expectedServerId) {
     throw new Error(
-      `E2E expected @paseo:daemon-registry to contain exactly 1 daemon (got ${Array.isArray(registry) ? registry.length : "non-array"}).`,
+      `E2E expected seeded daemon serverId to be ${expectedServerId} (got ${serverId}).`,
     );
   }
-
-  const daemon = registry[0];
-  if (typeof daemon?.serverId !== "string" || daemon.serverId.length === 0) {
-    throw new Error(
-      `E2E expected seeded daemon to have a string serverId (got ${String(daemon?.serverId)}).`,
-    );
-  }
-  if (daemon.serverId !== expectedServerId) {
-    throw new Error(
-      `E2E expected seeded daemon serverId to be ${expectedServerId} (got ${daemon.serverId}).`,
-    );
-  }
-
-  const connections: unknown = daemon?.connections;
-  if (
-    !Array.isArray(connections) ||
-    !connections.some((c: any) => c?.type === "directTcp" && c?.endpoint === expectedEndpoint)
-  ) {
-    throw new Error(
-      `E2E expected seeded daemon connections to include directTcp ${expectedEndpoint} (got ${JSON.stringify(connections)}).`,
-    );
-  }
-  if (
-    Array.isArray(connections) &&
-    connections.some(
-      (c: any) =>
-        c?.type === "directTcp" && typeof c?.endpoint === "string" && /:6767\b/.test(c.endpoint),
-    )
-  ) {
-    throw new Error(
-      `E2E detected a daemon endpoint pointing at :6767 (${JSON.stringify(connections)}).`,
-    );
-  }
+  assertDaemonConnections(connections, expectedEndpoint);
 
   if (!snapshot.prefsRaw) {
     throw new Error("E2E expected @paseo:create-agent-preferences to be set before app load.");
   }
-  try {
-    const prefs = JSON.parse(snapshot.prefsRaw) as any;
-    if (prefs?.serverId !== daemon.serverId) {
-      throw new Error(
-        `E2E expected create-agent-preferences.serverId to match seeded daemon serverId (${daemon.serverId}) (got ${String(prefs?.serverId)}).`,
-      );
-    }
-  } catch (error) {
-    if (error instanceof Error) throw error;
-    throw new Error("E2E expected @paseo:create-agent-preferences to be valid JSON.");
-  }
+  assertPreferencesMatch(snapshot.prefsRaw, serverId);
 }
 
 export const gotoAppShell = async (page: Page) => {
@@ -308,7 +323,7 @@ export const setWorkingDirectory = async (page: Page, directory: string) => {
   if (trimmedDirectory.startsWith("/private/var/")) {
     directoryCandidates.add(trimmedDirectory.replace(/^\/private/, ""));
   }
-  const basename = trimmedDirectory.split("/").filter(Boolean).pop() ?? trimmedDirectory;
+  const basename = trimmedDirectory.split("/").findLast(Boolean) ?? trimmedDirectory;
 
   await expect
     .poll(
@@ -343,8 +358,8 @@ export const ensureHostSelected = async (page: Page) => {
       const registryRaw = localStorage.getItem("@paseo:daemon-registry");
       const prefsRaw = localStorage.getItem("@paseo:create-agent-preferences");
       if (!registryRaw || !prefsRaw) return { ok: false, reason: "missing storage" } as const;
-      const registry = JSON.parse(registryRaw) as any[];
-      const prefs = JSON.parse(prefsRaw) as any;
+      const registry = JSON.parse(registryRaw) as Array<{ serverId?: string }>;
+      const prefs = JSON.parse(prefsRaw) as { serverId?: string };
       if (!Array.isArray(registry) || registry.length !== 1)
         return { ok: false, reason: "registry shape" } as const;
       const serverId = registry[0]?.serverId;

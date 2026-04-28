@@ -1,14 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Server as HTTPServer } from "http";
 import type pino from "pino";
+import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentStorage } from "./agent/agent-storage.js";
+import type { DownloadTokenStore } from "./file-download/token-store.js";
+import type { DaemonConfigStore } from "./daemon-config-store.js";
+import type { FileBackedChatService } from "./chat/chat-service.js";
+import type { LoopService } from "./loop-service.js";
+import type { ScheduleService } from "./schedule/service.js";
+import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { SessionOutboundMessage, WSOutboundMessage } from "./messages.js";
 
 const wsModuleMock = vi.hoisted(() => {
   class MockWebSocketServer {
-    readonly handlers = new Map<string, (...args: any[]) => void>();
+    readonly handlers = new Map<string, (...args: unknown[]) => void>();
 
-    constructor(_options: unknown) {}
-
-    on(event: string, handler: (...args: any[]) => void) {
+    on(event: string, handler: (...args: unknown[]) => void) {
       this.handlers.set(event, handler);
       return this;
     }
@@ -28,7 +35,14 @@ vi.mock("ws", () => ({
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { wrapSessionMessage } from "./messages.js";
 
-type RuntimeMetricsLog = {
+interface WebSocketServerInternals {
+  flushRuntimeMetrics(options?: { final?: boolean }): void;
+  sendToClient(ws: unknown, message: WSOutboundMessage): void;
+  sendBinaryToClient(ws: unknown, frame: Uint8Array): void;
+  sessions: Map<unknown, unknown>;
+}
+
+interface RuntimeMetricsLog {
   outboundMessageTypesTop: Array<[string, number]>;
   outboundSessionMessageTypesTop: Array<[string, number]>;
   outboundAgentStreamTypesTop: Array<[string, number]>;
@@ -38,9 +52,9 @@ type RuntimeMetricsLog = {
     p95: number;
     max: number;
   };
-};
+}
 
-type TestSocket = {
+interface TestSocket {
   readyState: number;
   bufferedAmount: number;
   sent: Array<string | Uint8Array | ArrayBuffer>;
@@ -49,7 +63,7 @@ type TestSocket = {
   close: () => void;
   on: () => void;
   once: () => void;
-};
+}
 
 function createLogger() {
   const logger = {
@@ -69,7 +83,7 @@ function createServer(logger: ReturnType<typeof createLogger>) {
   };
 
   return new VoiceAssistantWebSocketServer(
-    {} as any,
+    {} as unknown as HTTPServer,
     logger as unknown as pino.Logger,
     "srv-test",
     {
@@ -82,11 +96,11 @@ function createServer(logger: ReturnType<typeof createLogger>) {
         pendingPermissionAgents: 0,
         erroredAgents: 0,
       })),
-    } as any,
-    {} as any,
-    {} as any,
+    } as unknown as AgentManager,
+    {} as unknown as AgentStorage,
+    {} as unknown as DownloadTokenStore,
     "/tmp/paseo-test",
-    daemonConfigStore as any,
+    daemonConfigStore as unknown as DaemonConfigStore,
     null,
     { allowedOrigins: new Set() },
     undefined,
@@ -99,9 +113,9 @@ function createServer(logger: ReturnType<typeof createLogger>) {
     undefined,
     undefined,
     undefined,
-    {} as any,
-    {} as any,
-    {} as any,
+    {} as unknown as FileBackedChatService,
+    {} as unknown as LoopService,
+    {} as unknown as ScheduleService,
     {
       subscribe: vi.fn(),
       scheduleRefreshForCwd: vi.fn(),
@@ -112,7 +126,7 @@ function createServer(logger: ReturnType<typeof createLogger>) {
         checkoutDiffFallbackRefreshTargetCount: 0,
       })),
       dispose: vi.fn(),
-    } as any,
+    } as unknown as CheckoutDiffManager,
   );
 }
 
@@ -134,7 +148,7 @@ function createSocket(afterSendBufferedAmounts: number[]): TestSocket {
 }
 
 function flushRuntimeMetrics(server: VoiceAssistantWebSocketServer): void {
-  (server as any).flushRuntimeMetrics({ final: true });
+  (server as unknown as WebSocketServerInternals).flushRuntimeMetrics({ final: true });
 }
 
 function getRuntimeMetricsLog(logger: ReturnType<typeof createLogger>): RuntimeMetricsLog {
@@ -148,7 +162,7 @@ function sendToClient(
   socket: TestSocket,
   message: WSOutboundMessage,
 ) {
-  (server as any).sendToClient(socket, message);
+  (server as unknown as WebSocketServerInternals).sendToClient(socket, message);
 }
 
 function sendBinaryToClient(
@@ -156,11 +170,11 @@ function sendBinaryToClient(
   socket: TestSocket,
   frame: Uint8Array,
 ) {
-  (server as any).sendBinaryToClient(socket, frame);
+  (server as unknown as WebSocketServerInternals).sendBinaryToClient(socket, frame);
 }
 
 function attachSessionSocket(server: VoiceAssistantWebSocketServer, socket: TestSocket): void {
-  (server as any).sessions.set(socket, {
+  (server as unknown as WebSocketServerInternals).sessions.set(socket, {
     session: {},
     clientId: "client-1",
     appVersion: null,

@@ -4,13 +4,13 @@ import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useClientActivity } from "./use-client-activity";
 
-type HeartbeatPayload = {
+interface HeartbeatPayload {
   deviceType: "web" | "mobile";
   focusedAgentId: string | null;
   lastActivityAt: string;
   appVisible: boolean;
   appVisibilityChangedAt?: string;
-};
+}
 
 const { platformState, getDesktopSystemIdleTimeMs } = vi.hoisted(() => ({
   platformState: {
@@ -76,10 +76,10 @@ async function renderActivityHook({
   client?: ReturnType<typeof createTestClient>;
   focusedAgentId?: string | null;
 } = {}) {
-  function Probe({ focusedAgentId }: { focusedAgentId: string | null }) {
+  function Probe({ focusedAgentId: probeFocusedAgentId }: { focusedAgentId: string | null }) {
     useClientActivity({
       client: client as unknown as Parameters<typeof useClientActivity>[0]["client"],
-      focusedAgentId,
+      focusedAgentId: probeFocusedAgentId,
     });
     return null;
   }

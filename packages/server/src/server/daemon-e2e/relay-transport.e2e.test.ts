@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import pino from "pino";
 import { Writable } from "node:stream";
 import net from "node:net";
@@ -110,19 +110,25 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       role: "server",
     });
     const opened = await new Promise<boolean>((resolve) => {
+      let pendingResolve: ((value: boolean) => void) | null = resolve;
+      const settle = (value: boolean) => {
+        if (!pendingResolve) return;
+        const fn = pendingResolve;
+        pendingResolve = null;
+        clearTimeout(timer);
+        fn(value);
+      };
       const ws = new WebSocket(url);
       const timer = setTimeout(() => {
         ws.terminate();
-        resolve(false);
+        settle(false);
       }, 5000);
       ws.once("open", () => {
-        clearTimeout(timer);
         ws.close(1000, "probe");
-        resolve(true);
+        settle(true);
       });
       ws.once("error", () => {
-        clearTimeout(timer);
-        resolve(false);
+        settle(false);
       });
     });
     if (opened) {
@@ -225,9 +231,27 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       );
 
       const received = await new Promise<unknown>((resolve, reject) => {
+        let pendingResolve: ((value: unknown) => void) | null = resolve;
+        let pendingReject: ((reason: unknown) => void) | null = reject;
+        const settleResolve = (value: unknown) => {
+          if (!pendingResolve) return;
+          const fn = pendingResolve;
+          pendingResolve = null;
+          pendingReject = null;
+          clearTimeout(timeout);
+          fn(value);
+        };
+        const settleReject = (reason: unknown) => {
+          if (!pendingReject) return;
+          const fn = pendingReject;
+          pendingResolve = null;
+          pendingReject = null;
+          clearTimeout(timeout);
+          fn(reason);
+        };
         const timeout = setTimeout(() => {
           ws.close();
-          reject(new Error("timed out waiting for pong"));
+          settleReject(new Error("timed out waiting for pong"));
         }, 20000);
 
         const transport: Transport = {
@@ -259,9 +283,24 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                   if (
                     payload &&
                     typeof payload === "object" &&
-                    (payload as any).type === "session" &&
-                    (payload as any).message?.type === "status" &&
-                    (payload as any).message?.payload?.status === "server_info"
+                    (
+                      payload as {
+                        type?: string;
+                        message?: { type?: string; payload?: { status?: string } };
+                      }
+                    ).type === "session" &&
+                    (
+                      payload as {
+                        type?: string;
+                        message?: { type?: string; payload?: { status?: string } };
+                      }
+                    ).message?.type === "status" &&
+                    (
+                      payload as {
+                        type?: string;
+                        message?: { type?: string; payload?: { status?: string } };
+                      }
+                    ).message?.payload?.status === "server_info"
                   ) {
                     if (!pingSent && channelRef) {
                       pingSent = true;
@@ -269,19 +308,25 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                     }
                     return;
                   }
-                  if (payload && typeof payload === "object" && (payload as any).type === "pong") {
-                    clearTimeout(timeout);
-                    resolve(payload);
+                  if (
+                    payload &&
+                    typeof payload === "object" &&
+                    (
+                      payload as {
+                        type?: string;
+                        message?: { type?: string; payload?: { status?: string } };
+                      }
+                    ).type === "pong"
+                  ) {
+                    settleResolve(payload);
                     ws.close();
                   }
                 } catch (err) {
-                  clearTimeout(timeout);
-                  reject(err);
+                  settleReject(err);
                 }
               },
               onerror: (err) => {
-                clearTimeout(timeout);
-                reject(err);
+                settleReject(err);
               },
             });
             channelRef = channel;
@@ -294,8 +339,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
               }),
             );
           } catch (err) {
-            clearTimeout(timeout);
-            reject(err);
+            settleReject(err);
           }
         });
       });
@@ -388,9 +432,24 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                 if (
                   payload &&
                   typeof payload === "object" &&
-                  (payload as any).type === "session" &&
-                  (payload as any).message?.type === "status" &&
-                  (payload as any).message?.payload?.status === "server_info"
+                  (
+                    payload as {
+                      type?: string;
+                      message?: { type?: string; payload?: { status?: string } };
+                    }
+                  ).type === "session" &&
+                  (
+                    payload as {
+                      type?: string;
+                      message?: { type?: string; payload?: { status?: string } };
+                    }
+                  ).message?.type === "status" &&
+                  (
+                    payload as {
+                      type?: string;
+                      message?: { type?: string; payload?: { status?: string } };
+                    }
+                  ).message?.payload?.status === "server_info"
                 ) {
                   if (!pingSent && channelRef) {
                     pingSent = true;
@@ -398,7 +457,16 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
                   }
                   return;
                 }
-                if (payload && typeof payload === "object" && (payload as any).type === "pong") {
+                if (
+                  payload &&
+                  typeof payload === "object" &&
+                  (
+                    payload as {
+                      type?: string;
+                      message?: { type?: string; payload?: { status?: string } };
+                    }
+                  ).type === "pong"
+                ) {
                   clearTimeout(timeout);
                   resolve(payload);
                   ws.close();

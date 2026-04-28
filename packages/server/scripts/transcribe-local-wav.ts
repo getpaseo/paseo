@@ -13,12 +13,12 @@ import {
 import { initializeLocalSpeechServices } from "../src/server/speech/providers/local/runtime.js";
 import type { RequestedSpeechProviders } from "../src/server/speech/speech-types.js";
 
-type CliOptions = {
+interface CliOptions {
   wavPath: string;
   outPath?: string;
   model: LocalSttModelId;
   modelsDir: string;
-};
+}
 
 function usage(): string {
   return [

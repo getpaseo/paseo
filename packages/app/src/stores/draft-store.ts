@@ -9,15 +9,15 @@ import {
   persistAttachmentFromFileUri,
 } from "@/attachments/service";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import { useSessionStore } from "@/stores/session-store";
+import { useSessionStore, type SessionState } from "@/stores/session-store";
 
 const DRAFT_STORE_VERSION = 4;
 const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
-type LegacyDraftImage = {
+interface LegacyDraftImage {
   uri: string;
   mimeType?: string;
-};
+}
 
 type PersistedDraftImage = AttachmentMetadata | LegacyDraftImage;
 
@@ -299,43 +299,44 @@ async function runAttachmentGc(): Promise<void> {
 
   const sessions = useSessionStore.getState().sessions;
   for (const session of Object.values(sessions)) {
-    for (const queue of session.queuedMessages.values()) {
-      for (const queuedMessage of queue) {
-        for (const attachment of queuedMessage.attachments) {
-          if (attachment.kind === "image") {
-            referencedIds.add(attachment.metadata.id);
-          }
-        }
-      }
-    }
-
-    for (const stream of session.agentStreamTail.values()) {
-      for (const item of stream) {
-        if (item.kind !== "user_message") {
-          continue;
-        }
-        for (const image of item.images ?? []) {
-          referencedIds.add(image.id);
-        }
-      }
-    }
-
-    for (const stream of session.agentStreamHead.values()) {
-      for (const item of stream) {
-        if (item.kind !== "user_message") {
-          continue;
-        }
-        for (const image of item.images ?? []) {
-          referencedIds.add(image.id);
-        }
-      }
-    }
+    collectQueuedMessageAttachmentIds(session, referencedIds);
+    collectStreamUserImageIds(session.agentStreamTail, referencedIds);
+    collectStreamUserImageIds(session.agentStreamHead, referencedIds);
   }
 
   try {
     await garbageCollectAttachments({ referencedIds });
   } catch (error) {
     console.warn("[DraftStore] Attachment garbage collection failed", error);
+  }
+}
+
+function collectQueuedMessageAttachmentIds(
+  session: SessionState,
+  referencedIds: Set<string>,
+): void {
+  for (const queue of session.queuedMessages.values()) {
+    for (const queuedMessage of queue) {
+      for (const attachment of queuedMessage.attachments) {
+        if (attachment.kind === "image") {
+          referencedIds.add(attachment.metadata.id);
+        }
+      }
+    }
+  }
+}
+
+function collectStreamUserImageIds(
+  streams: SessionState["agentStreamTail"],
+  referencedIds: Set<string>,
+): void {
+  for (const stream of streams.values()) {
+    for (const item of stream) {
+      if (item.kind !== "user_message") continue;
+      for (const image of item.images ?? []) {
+        referencedIds.add(image.id);
+      }
+    }
   }
 }
 
@@ -441,6 +442,29 @@ async function migrateDraftInput(input: {
   };
 }
 
+function resolvePersistedLifecycle(lifecycle: unknown): DraftLifecycleState {
+  if (lifecycle === "sent" || lifecycle === "abandoned") {
+    return lifecycle as DraftLifecycleState;
+  }
+  return "active";
+}
+
+function extractRawInput(record: Record<string, unknown>): unknown {
+  if ("input" in record && record.input && typeof record.input === "object") {
+    return record.input;
+  }
+  return record;
+}
+
+async function buildMigratedDraftRecord(parsed: Record<string, unknown>): Promise<DraftRecord> {
+  return {
+    input: await migrateDraftInput({ rawInput: extractRawInput(parsed) }),
+    lifecycle: resolvePersistedLifecycle(parsed.lifecycle),
+    updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
+    version: typeof parsed.version === "number" ? parsed.version : 1,
+  };
+}
+
 async function migratePersistedState(state: unknown): Promise<DraftStoreState> {
   const input = (state ?? {}) as {
     drafts?: Record<string, unknown>;
@@ -452,34 +476,14 @@ async function migratePersistedState(state: unknown): Promise<DraftStoreState> {
     if (!rawRecord || typeof rawRecord !== "object") {
       continue;
     }
-    const parsed = rawRecord as Record<string, unknown>;
-    const rawInput =
-      "input" in parsed && parsed.input && typeof parsed.input === "object" ? parsed.input : parsed;
-
-    nextDrafts[draftKey] = {
-      input: await migrateDraftInput({ rawInput }),
-      lifecycle:
-        parsed.lifecycle === "sent" || parsed.lifecycle === "abandoned"
-          ? (parsed.lifecycle as DraftLifecycleState)
-          : "active",
-      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
-      version: typeof parsed.version === "number" ? parsed.version : 1,
-    };
+    nextDrafts[draftKey] = await buildMigratedDraftRecord(rawRecord as Record<string, unknown>);
   }
 
   let createModalDraft: DraftRecord | null = null;
   if (input.createModalDraft && typeof input.createModalDraft === "object") {
-    const record = input.createModalDraft as Record<string, unknown>;
-    const rawInput = record.input && typeof record.input === "object" ? record.input : record;
-    createModalDraft = {
-      input: await migrateDraftInput({ rawInput }),
-      lifecycle:
-        record.lifecycle === "sent" || record.lifecycle === "abandoned"
-          ? (record.lifecycle as DraftLifecycleState)
-          : "active",
-      updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now(),
-      version: typeof record.version === "number" ? record.version : 1,
-    };
+    createModalDraft = await buildMigratedDraftRecord(
+      input.createModalDraft as Record<string, unknown>,
+    );
   }
 
   return {

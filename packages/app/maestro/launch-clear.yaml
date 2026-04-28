@@ -3,4 +3,3 @@ appId: sh.paseo
 - launchApp:
     clearState: true
 - runFlow: flows/dev-client.yaml
-

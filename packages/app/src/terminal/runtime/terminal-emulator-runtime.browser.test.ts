@@ -10,19 +10,23 @@ vi.mock("@xterm/addon-webgl", () => ({
   },
 }));
 
-type TerminalSize = { rows: number; cols: number };
+interface TerminalSize {
+  rows: number;
+  cols: number;
+}
 
 type BrowserTerminal = TerminalSize & {
   refresh: (start: number, end: number) => void;
   reset: () => void;
 };
 
-type MountedTerminal = {
+interface MountedTerminal {
   host: HTMLDivElement;
   root: HTMLDivElement;
   runtime: TerminalEmulatorRuntime;
+  inputs: string[];
   sizes: TerminalSize[];
-};
+}
 
 const mountedTerminals: MountedTerminal[] = [];
 
@@ -62,9 +66,13 @@ function createTerminalHost(input: { width: number; height: number }): MountedTe
   document.body.appendChild(root);
 
   const sizes: TerminalSize[] = [];
+  const inputs: string[] = [];
   const runtime = new TerminalEmulatorRuntime();
   runtime.setCallbacks({
     callbacks: {
+      onInput: (data) => {
+        inputs.push(data);
+      },
       onResize: (size) => {
         sizes.push(size);
       },
@@ -81,7 +89,7 @@ function createTerminalHost(input: { width: number; height: number }): MountedTe
     },
   });
 
-  const mounted = { host, root, runtime, sizes };
+  const mounted = { host, root, runtime, inputs, sizes };
   mountedTerminals.push(mounted);
   return mounted;
 }
@@ -152,6 +160,29 @@ describe("terminal emulator runtime in a real browser", () => {
 
     await waitFor({ predicate: () => refreshCalls.length > 0 });
     expect(refreshCalls.at(-1)).toEqual([0, terminal.rows - 1]);
+  });
+
+  it.each([
+    { name: "DA1", bytes: "\x1b[c" },
+    { name: "DA1-zero", bytes: "\x1b[0c" },
+    { name: "DA2", bytes: "\x1b[>c" },
+    { name: "DA3", bytes: "\x1b[=c" },
+    { name: "DSR-5", bytes: "\x1b[5n" },
+    { name: "DSR-6", bytes: "\x1b[6n" },
+    { name: "DSR-?6", bytes: "\x1b[?6n" },
+    { name: "DECRQM", bytes: "\x1b[1$p" },
+    { name: "DECRQM-?", bytes: "\x1b[?1$p" },
+  ])("does not emit a PTY input reply for $name", async ({ bytes }) => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    mounted.runtime.write({ text: bytes });
+    await nextFrame();
+    await nextFrame();
+
+    expect(mounted.inputs).toEqual([]);
   });
 
   it("replays snapshots without synchronously resetting the visible terminal", async () => {

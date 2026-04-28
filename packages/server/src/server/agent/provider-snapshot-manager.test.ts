@@ -15,28 +15,31 @@ import type {
 import type { ProviderDefinition } from "./provider-registry.js";
 import { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 
-type Deferred<T> = {
+interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
-};
+}
 
-type MockProviderOptions = {
+interface MockProviderOptions {
   provider: AgentProvider;
+  enabled?: boolean;
   label?: string;
   description?: string;
   defaultModeId?: string | null;
+  modes?: AgentMode[];
   isAvailable?: () => Promise<boolean>;
   fetchModels?: (cwd: string, force: boolean) => Promise<AgentModelDefinition[]>;
   fetchModes?: (cwd: string, force: boolean) => Promise<AgentMode[]>;
-};
+}
 
-type MockProviderHandle = {
+interface MockProviderHandle {
   definition: ProviderDefinition;
+  createClient: ReturnType<typeof vi.fn>;
   isAvailable: ReturnType<typeof vi.fn>;
   fetchModels: ReturnType<typeof vi.fn>;
   fetchModes: ReturnType<typeof vi.fn>;
-};
+}
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -158,6 +161,7 @@ describe("ProviderSnapshotManager", () => {
         {
           provider: "codex",
           status: "unavailable",
+          enabled: true,
           label: "codex",
           description: "codex test provider",
           defaultModeId: null,
@@ -189,6 +193,7 @@ describe("ProviderSnapshotManager", () => {
         {
           provider: "codex",
           status: "error",
+          enabled: true,
           error: "model lookup failed",
           label: "codex",
           description: "codex test provider",
@@ -278,6 +283,7 @@ describe("ProviderSnapshotManager", () => {
       {
         provider: "codex",
         status: "loading",
+        enabled: true,
         label: "codex",
         description: "codex test provider",
         defaultModeId: null,
@@ -385,6 +391,7 @@ describe("ProviderSnapshotManager", () => {
       {
         provider: "codex",
         status: "loading",
+        enabled: true,
         label: "codex",
         description: "codex test provider",
         defaultModeId: null,
@@ -392,6 +399,7 @@ describe("ProviderSnapshotManager", () => {
       {
         provider: "claude",
         status: "loading",
+        enabled: true,
         label: "claude",
         description: "claude test provider",
         defaultModeId: null,
@@ -465,6 +473,7 @@ describe("ProviderSnapshotManager", () => {
       {
         provider: "codex",
         status: "loading",
+        enabled: true,
         label: "codex",
         description: "codex test provider",
         defaultModeId: null,
@@ -1047,6 +1056,49 @@ describe("ProviderSnapshotManager", () => {
     manager.destroy();
   });
 
+  test("replaceRegistry removes providers that were disabled at runtime", async () => {
+    const { registry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async () => [createModel("codex", "gpt-5.2")],
+      }),
+      createMockProvider({
+        provider: "claude",
+        fetchModels: async () => [createModel("claude", "sonnet")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+    const listener = vi.fn<(entries: ProviderSnapshotEntry[], cwd: string) => void>();
+    manager.on("change", listener);
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+    });
+
+    const { registry: nextRegistry } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async () => [createModel("codex", "gpt-5.2")],
+      }),
+    ]);
+    manager.replaceRegistry(nextRegistry);
+
+    expect(manager.getSnapshot(projectCwd).map((entry) => entry.provider)).toEqual(["codex"]);
+    expect(listener).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "codex",
+        }),
+      ]),
+      homedir(),
+    );
+
+    manager.destroy();
+  });
+
   test("snapshot includes user-defined providers from the registry", async () => {
     const { registry } = createRegistry([
       createMockProvider({ provider: "claude" }),
@@ -1073,6 +1125,72 @@ describe("ProviderSnapshotManager", () => {
       description: "Custom Claude profile",
       defaultModeId: "default",
     });
+
+    manager.destroy();
+  });
+
+  test("disabled providers stay in the snapshot without probing or fetching", async () => {
+    const disabledModels = [createModel("zai", "glm-4.6")];
+    const disabledMode = createMode("plan");
+    const { registry, handles } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async () => [createModel("codex", "gpt-5.2")],
+        fetchModes: async () => [createMode("auto")],
+      }),
+      createMockProvider({
+        provider: "zai",
+        enabled: false,
+        label: "Z.AI",
+        description: "Custom disabled Claude profile",
+        defaultModeId: "plan",
+        models: disabledModels,
+        modes: [disabledMode],
+        fetchModels: async () => [createModel("zai", "glm-4.6")],
+        fetchModes: async () => [disabledMode],
+      }),
+      createMockProvider({
+        provider: "claude",
+        fetchModels: async () => [createModel("claude", "sonnet")],
+        fetchModes: async () => [createMode("default")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "claude")?.status).toBe("ready");
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "zai")?.status).toBe("unavailable");
+    });
+
+    const snapshot = manager.getSnapshot(projectCwd);
+    expect(snapshot.map((entry) => entry.provider)).toEqual(["codex", "zai", "claude"]);
+    const zaiEntry = getProviderEntry(snapshot, "zai");
+    expect(zaiEntry).toMatchObject({
+      provider: "zai",
+      status: "unavailable",
+      enabled: false,
+      label: "Z.AI",
+      description: "Custom disabled Claude profile",
+      defaultModeId: "plan",
+    });
+    expect(zaiEntry?.models).toBeUndefined();
+    expect(zaiEntry?.modes).toBeUndefined();
+
+    expect(handles.zai?.createClient).not.toHaveBeenCalled();
+    expect(handles.zai?.isAvailable).not.toHaveBeenCalled();
+    expect(handles.zai?.fetchModels).not.toHaveBeenCalled();
+    expect(handles.zai?.fetchModes).not.toHaveBeenCalled();
+    expect(handles.codex?.createClient).toHaveBeenCalledTimes(1);
+    expect(handles.codex?.isAvailable).toHaveBeenCalledTimes(1);
+    expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(1);
+    expect(handles.codex?.fetchModes).toHaveBeenCalledTimes(1);
+    expect(handles.claude?.createClient).toHaveBeenCalledTimes(1);
+    expect(handles.claude?.isAvailable).toHaveBeenCalledTimes(1);
+    expect(handles.claude?.fetchModels).toHaveBeenCalledTimes(1);
+    expect(handles.claude?.fetchModes).toHaveBeenCalledTimes(1);
 
     manager.destroy();
   });
@@ -1108,6 +1226,7 @@ describe("ProviderSnapshotManager", () => {
       {
         provider: "zai",
         status: "loading",
+        enabled: true,
         label: "ZAI",
         description: "Custom Claude profile",
         defaultModeId: "plan",
@@ -1132,13 +1251,13 @@ describe("ProviderSnapshotManager", () => {
 });
 
 function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
+  let resolvePromise!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
   const promise = new Promise<T>((res, rej) => {
-    resolve = res;
+    resolvePromise = res;
     reject = rej;
   });
-  return { promise, resolve, reject };
+  return { promise, resolve: resolvePromise, reject };
 }
 
 function createRegistry(handles: MockProviderHandle[]): {
@@ -1157,6 +1276,7 @@ function createRegistry(handles: MockProviderHandle[]): {
 }
 
 function createMockProvider(options: MockProviderOptions): MockProviderHandle {
+  const createClient = vi.fn();
   const isAvailable = vi.fn(async () => options.isAvailable?.() ?? true);
   const fetchModels = vi.fn(
     async (listOptions: ListModelsOptions) =>
@@ -1171,14 +1291,16 @@ function createMockProvider(options: MockProviderOptions): MockProviderHandle {
       ],
   );
 
-  const definition: ProviderDefinition = {
+  const definition = {
     id: options.provider,
+    enabled: options.enabled ?? true,
     label: options.label ?? options.provider,
     description: options.description ?? `${options.provider} test provider`,
     defaultModeId: options.defaultModeId ?? null,
-    modes: [],
-    createClient: () =>
-      ({
+    modes: options.modes ?? [],
+    createClient: () => {
+      createClient();
+      return {
         provider: options.provider,
         capabilities: TEST_CAPABILITIES,
         async createSession() {
@@ -1193,13 +1315,15 @@ function createMockProvider(options: MockProviderOptions): MockProviderHandle {
         async isAvailable() {
           return isAvailable();
         },
-      }) satisfies AgentClient,
+      } satisfies AgentClient;
+    },
     fetchModels,
     fetchModes,
-  };
+  } satisfies ProviderDefinition;
 
   return {
     definition,
+    createClient,
     isAvailable,
     fetchModels,
     fetchModes,

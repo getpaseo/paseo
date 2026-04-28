@@ -20,28 +20,39 @@ function resolveCodexSessionRoot(): string | null {
 }
 
 async function findRolloutFile(threadId: string, root: string): Promise<string | null> {
-  const stack: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
-  while (stack.length > 0) {
-    const { dir, depth } = stack.pop()!;
-    let entries: Dirent[];
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isFile()) {
-        const matchesThread = entry.name.includes(threadId);
-        const matchesPrefix = entry.name.startsWith("rollout-");
-        const matchesExtension = entry.name.endsWith(".json") || entry.name.endsWith(".jsonl");
-        if (matchesThread && matchesPrefix && matchesExtension) {
-          return entryPath;
+  let currentLevel: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+  while (currentLevel.length > 0) {
+    const readings = await Promise.all(
+      currentLevel.map(async ({ dir, depth }) => {
+        let entries: Dirent[];
+        try {
+          entries = await fs.readdir(dir, { withFileTypes: true });
+        } catch {
+          return { match: null as string | null, next: [] as { dir: string; depth: number }[] };
         }
-      } else if (entry.isDirectory() && depth < MAX_ROLLOUT_SEARCH_DEPTH) {
-        stack.push({ dir: entryPath, depth: depth + 1 });
-      }
+        let match: string | null = null;
+        const next: { dir: string; depth: number }[] = [];
+        for (const entry of entries) {
+          const entryPath = path.join(dir, entry.name);
+          if (entry.isFile()) {
+            const matchesThread = entry.name.includes(threadId);
+            const matchesPrefix = entry.name.startsWith("rollout-");
+            const matchesExtension = entry.name.endsWith(".json") || entry.name.endsWith(".jsonl");
+            if (matchesThread && matchesPrefix && matchesExtension && match === null) {
+              match = entryPath;
+            }
+          } else if (entry.isDirectory() && depth < MAX_ROLLOUT_SEARCH_DEPTH) {
+            next.push({ dir: entryPath, depth: depth + 1 });
+          }
+        }
+        return { match, next };
+      }),
+    );
+    const firstMatch = readings.find((reading) => reading.match !== null);
+    if (firstMatch?.match) {
+      return firstMatch.match;
     }
+    currentLevel = readings.flatMap((reading) => reading.next);
   }
   return null;
 }
@@ -549,43 +560,43 @@ export async function parseRolloutFile(filePath: string): Promise<AgentTimelineI
     .reduce((map, record) => map.set(record.callId, record.output), new Map<string, unknown>());
   const terminalCommandsBySessionId = buildTerminalCommandBySessionId(parsedRecords);
 
-  const timeline = parsedRecords.flatMap((record): AgentTimelineItem[] =>
-    record.kind === "timeline"
-      ? [record.item]
-      : record.kind === "call"
-        ? (() => {
-            if (record.name === "write_stdin") {
-              const input =
-                record.input && typeof record.input === "object"
-                  ? (record.input as { session_id?: unknown; sessionId?: unknown })
-                  : null;
-              const sessionId =
-                readTerminalSessionId(input?.session_id) ?? readTerminalSessionId(input?.sessionId);
-              return [
-                mapCodexTerminalInteractionToToolCall({
-                  processId: sessionId,
-                  fallbackCallId: record.callId,
-                  command: sessionId ? terminalCommandsBySessionId.get(sessionId) : undefined,
-                }),
-              ];
-            }
-            const mapped = mapCodexRolloutToolCall({
-              callId: record.callId ?? null,
-              name: record.name,
-              input: record.input ?? null,
-              output: record.callId ? (outputsByCallId.get(record.callId) ?? null) : null,
-            });
-            return mapped ? [mapped] : [];
-          })()
-        : [],
-  );
+  const timeline = parsedRecords.flatMap((record): AgentTimelineItem[] => {
+    if (record.kind === "timeline") {
+      return [record.item];
+    }
+    if (record.kind !== "call") {
+      return [];
+    }
+    if (record.name === "write_stdin") {
+      const input =
+        record.input && typeof record.input === "object"
+          ? (record.input as { session_id?: unknown; sessionId?: unknown })
+          : null;
+      const sessionId =
+        readTerminalSessionId(input?.session_id) ?? readTerminalSessionId(input?.sessionId);
+      return [
+        mapCodexTerminalInteractionToToolCall({
+          processId: sessionId,
+          fallbackCallId: record.callId,
+          command: sessionId ? terminalCommandsBySessionId.get(sessionId) : undefined,
+        }),
+      ];
+    }
+    const mapped = mapCodexRolloutToolCall({
+      callId: record.callId ?? null,
+      name: record.name,
+      input: record.input ?? null,
+      output: record.callId ? (outputsByCallId.get(record.callId) ?? null) : null,
+    });
+    return mapped ? [mapped] : [];
+  });
   return dedupeMirroredTextTimelineItems(timeline);
 }
 
-export type CodexPersistedTimelineOptions = {
+export interface CodexPersistedTimelineOptions {
   sessionRoot?: string | null;
   rolloutPath?: string | null;
-};
+}
 
 export async function loadCodexPersistedTimeline(
   sessionId: string,

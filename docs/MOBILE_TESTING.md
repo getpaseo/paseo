@@ -223,7 +223,7 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-<Animated.View style={[styles.sidebar, animatedStyle]} />
+<Animated.View style={[styles.sidebar, animatedStyle]} />;
 ```
 
 ```tsx
@@ -244,7 +244,7 @@ const { theme } = useUnistyles();
 
 <Animated.View
   style={[staticStyles.sidebar, animatedStyle, { backgroundColor: theme.colors.surfaceSidebar }]}
-/>
+/>;
 ```
 
 Regular `View` components can safely use Unistyles dynamic styles — the conflict is specific to `Animated.View`.

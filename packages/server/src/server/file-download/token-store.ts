@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-export type DownloadTokenEntry = {
+export interface DownloadTokenEntry {
   token: string;
   path: string;
   absolutePath: string;
@@ -8,12 +8,12 @@ export type DownloadTokenEntry = {
   mimeType: string;
   size: number;
   expiresAt: number;
-};
+}
 
-type DownloadTokenStoreOptions = {
+interface DownloadTokenStoreOptions {
   ttlMs: number;
   now?: () => number;
-};
+}
 
 export class DownloadTokenStore {
   private readonly ttlMs: number;

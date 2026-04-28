@@ -77,7 +77,7 @@ const MODELS: AgentModelDefinition[] = [
   },
 ];
 
-type ActiveTurn = {
+interface ActiveTurn {
   turnId: string;
   prompt: AgentPromptInput;
   startedAt: number;
@@ -87,17 +87,17 @@ type ActiveTurn = {
   timer: ReturnType<typeof setTimeout> | null;
   resolve: (result: AgentRunResult) => void;
   completed: Promise<AgentRunResult>;
-};
+}
 
-type LargeAgentStreamPayloadRequest = {
+interface LargeAgentStreamPayloadRequest {
   bytes: number;
   kind: "diff" | "file" | "image";
-};
+}
 
-type AgentStreamStressRequest = {
+interface AgentStreamStressRequest {
   count: number;
   coalesced: boolean;
-};
+}
 
 function resolveModelProfile(modelId: string | null | undefined): {
   modelId: string;
@@ -291,11 +291,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   private modeId: string | null;
   private modelId: string | null;
 
-  constructor(options: {
-    config: AgentSessionConfig;
-    sessionId: string;
-    logger?: Logger;
-  }) {
+  constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
     this.id = options.sessionId;
     this.logger = options.logger;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;

@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   FlatList,
   Keyboard,
@@ -21,6 +29,10 @@ const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   minIndexForVisible: 0,
   autoscrollToTopThreshold: 0,
 });
+
+function keyExtractor(item: { id: string }): string {
+  return item.id;
+}
 
 function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrategy }) {
   const {
@@ -267,10 +279,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     });
   });
 
-  const renderItem = useStableEvent(({ item, index }: ListRenderItemInfo<StreamItem>) => {
-    const rendered = renderHistoryMountedRow(item, index, historyRows);
-    return rendered ? <Fragment>{rendered}</Fragment> : null;
-  });
+  const renderItem = useStableEvent(
+    ({ item, index }: ListRenderItemInfo<StreamItem>): ReactElement | null => {
+      const rendered = renderHistoryMountedRow(item, index, historyRows);
+      return (rendered ?? null) as ReactElement | null;
+    },
+  );
 
   const liveHeaderContent = useMemo(() => {
     const liveHeadRows = segments.liveHead.map((item, index) => (
@@ -283,7 +297,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       !boundary.hasMountedHistory &&
       !boundary.hasVirtualizedHistory
     ) {
-      return listEmptyComponent ? <Fragment>{listEmptyComponent}</Fragment> : null;
+      return (listEmptyComponent ?? null) as ReactElement | null;
     }
     return (
       <Fragment>
@@ -298,7 +312,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       ref={flatListRef}
       data={historyRows}
       renderItem={renderItem}
-      keyExtractor={(item) => item.id}
+      keyExtractor={keyExtractor}
       testID="agent-chat-scroll"
       nativeID="agent-chat-scroll-native-virtualized"
       ListHeaderComponent={liveHeaderContent ?? undefined}

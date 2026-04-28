@@ -5,8 +5,32 @@ import {
   useInView,
   useScroll,
   useTransform,
-  useMotionValueEvent,
+  type Transition,
 } from "framer-motion";
+
+// Shared motion presets — hoisted so every JSX site receives the same object
+// reference and doesn't trigger jsx-no-new-object-as-prop.
+const FADE_IN_UP = { opacity: 0, y: 20 };
+const FADE_IN = { opacity: 1, y: 0 };
+const FADE_IN_UP_TINY = { opacity: 0, y: -10 };
+const FADE_IN_UP_XL = { opacity: 0, y: 30 };
+const FADE_IN_UP_40 = { opacity: 0, y: 40 };
+const FADE_IN_UP_4 = { opacity: 0, y: 4 };
+const FADE_OUT_UP_4 = { opacity: 0, y: 4 };
+
+const EASE_OUT_06: Transition = { duration: 0.6, ease: "easeOut" };
+const EASE_OUT_06_DELAY_015: Transition = { duration: 0.6, delay: 0.15, ease: "easeOut" };
+const EASE_OUT_06_DELAY_01: Transition = { duration: 0.6, delay: 0.1, ease: "easeOut" };
+const EASE_OUT_06_DELAY_04: Transition = { duration: 0.6, delay: 0.4, ease: "easeOut" };
+const EASE_OUT_08_DELAY_05: Transition = { duration: 0.8, delay: 0.5, ease: "easeOut" };
+const EASE_OUT_05: Transition = { duration: 0.5, ease: "easeOut" };
+const EASE_OUT_015: Transition = { duration: 0.15, ease: "easeOut" };
+const DURATION_05: Transition = { duration: 0.5 };
+
+const VIEWPORT_60 = { once: true, margin: "-60px" };
+
+const SVG_OVERFLOW_VISIBLE_STYLE = { overflow: "visible" as const };
+const PHONE_PERSPECTIVE_STYLE = { minHeight: 480, perspective: 1200 };
 import { CursorFieldProvider } from "~/components/butterfly";
 import { CommandDialog } from "~/components/command-dialog";
 import {
@@ -45,9 +69,9 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
 
         {/* Mockup - inside hero so it's above the gradient, positioned to overflow into black section */}
         <motion.div
-          initial={{ opacity: 0, y: 40 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.5, ease: "easeOut" }}
+          initial={FADE_IN_UP_40}
+          animate={FADE_IN}
+          transition={EASE_OUT_08_DELAY_05}
           className="relative px-6 md:px-8 pb-8 md:pb-16"
         >
           <div className="max-w-7xl mx-auto">
@@ -210,17 +234,17 @@ function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: string })
   return (
     <div className="space-y-6">
       <motion.h1
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: "easeOut" }}
+        initial={FADE_IN_UP}
+        animate={FADE_IN}
+        transition={EASE_OUT_06}
         className="text-3xl md:text-5xl font-medium tracking-tight"
       >
         {title}
       </motion.h1>
       <motion.p
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.15, ease: "easeOut" }}
+        initial={FADE_IN_UP}
+        animate={FADE_IN}
+        transition={EASE_OUT_06_DELAY_015}
         className="text-white/70 text-lg leading-relaxed max-w-lg"
       >
         {subtitle}
@@ -229,23 +253,31 @@ function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: string })
   );
 }
 
+const CLAUDE_CODE_BADGE_ICON = <ClaudeCodeIcon className="h-6 w-6" />;
+const CODEX_BADGE_ICON = <CodexIcon className="h-6 w-6" />;
+const OPENCODE_BADGE_ICON = <OpenCodeIcon className="h-6 w-6" />;
+const COPILOT_BADGE_ICON = <CopilotIcon className="h-6 w-6" />;
+const PI_BADGE_ICON = <PiIcon className="h-6 w-6" />;
+
 function AgentBadge({ name, icon }: { name: string; icon: React.ReactNode }) {
   const [hovered, setHovered] = React.useState(false);
+  const handleMouseEnter = React.useCallback(() => setHovered(true), []);
+  const handleMouseLeave = React.useCallback(() => setHovered(false), []);
 
   return (
     <span
       className="relative inline-flex items-center justify-center rounded-full p-1.5 text-white/60"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       {icon}
       <AnimatePresence>
         {hovered && (
           <motion.span
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.15, ease: "easeOut" }}
+            initial={FADE_IN_UP_4}
+            animate={FADE_IN}
+            exit={FADE_OUT_UP_4}
+            transition={EASE_OUT_015}
             className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded bg-white text-black text-xs whitespace-nowrap pointer-events-none"
           >
             {name}
@@ -267,10 +299,10 @@ function FeatureSection({
 }) {
   return (
     <motion.section
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
+      initial={FADE_IN_UP}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_60}
+      transition={EASE_OUT_05}
       className="space-y-8"
     >
       <div className="space-y-2">
@@ -279,22 +311,6 @@ function FeatureSection({
       </div>
       {children}
     </motion.section>
-  );
-}
-
-function PrinciplesSection() {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-40px" }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
-      className="py-32 px-6 md:px-20 max-w-3xl mx-auto text-center"
-    >
-      <p className="text-2xl md:text-4xl font-medium text-white/90">
-        Here's what's under the hood.
-      </p>
-    </motion.div>
   );
 }
 
@@ -418,6 +434,19 @@ function SelfHostedDiagram() {
   const clientRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const hostRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const centerRef = React.useRef<HTMLDivElement>(null);
+
+  const setClientRef = React.useCallback(
+    (index: number) => (el: HTMLDivElement | null) => {
+      clientRefs.current[index] = el;
+    },
+    [],
+  );
+  const setHostRef = React.useCallback(
+    (index: number) => (el: HTMLDivElement | null) => {
+      hostRefs.current[index] = el;
+    },
+    [],
+  );
   const [paths, setPaths] = React.useState<{ left: string[]; right: string[] }>({
     left: [],
     right: [],
@@ -517,13 +546,13 @@ function SelfHostedDiagram() {
         {/* SVG curves */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none"
-          style={{ overflow: "visible" }}
+          style={SVG_OVERFLOW_VISIBLE_STYLE}
         >
           {[...paths.left, ...paths.right].map(
-            (d, i) =>
+            (d) =>
               d && (
                 <path
-                  key={i}
+                  key={d}
                   d={d}
                   fill="none"
                   stroke="rgba(255,255,255,0.25)"
@@ -539,9 +568,7 @@ function SelfHostedDiagram() {
           {clients.map((c, i) => (
             <div
               key={c.name}
-              ref={(el) => {
-                clientRefs.current[i] = el;
-              }}
+              ref={setClientRef(i)}
               className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4 backdrop-blur-sm"
             >
               <span className="text-white/80">{c.icon}</span>
@@ -571,9 +598,7 @@ function SelfHostedDiagram() {
           {hosts.map((h, i) => (
             <div
               key={h}
-              ref={(el) => {
-                hostRefs.current[i] = el;
-              }}
+              ref={setHostRef(i)}
               className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4 backdrop-blur-sm"
             >
               <span className="text-white/80">
@@ -703,38 +728,43 @@ function ShortcutsSection() {
   );
 }
 
+interface VoiceBarProps {
+  index: number;
+  barCount: number;
+}
+
+function VoiceBar({ index, barCount }: VoiceBarProps) {
+  const style = React.useMemo(() => {
+    const center = barCount / 2;
+    const dist = Math.abs(index - center) / center;
+    const envelope = 1 - dist * dist;
+    const minH = 4;
+    const maxH = 56;
+    const baseH = minH + (maxH - minH) * envelope;
+    const jitter = Math.sin(index * 2.3) * 0.3 + Math.cos(index * 1.7) * 0.2;
+    const h = Math.max(minH, baseH * (0.5 + 0.5 * Math.abs(jitter + Math.sin(index * 0.8))));
+    return {
+      height: h,
+      animationName: "voice-bar",
+      animationDuration: `${800 + (index % 5) * 200}ms`,
+      animationTimingFunction: "ease-in-out",
+      animationIterationCount: "infinite",
+      animationDirection: "alternate" as const,
+      animationDelay: `${(index % 7) * 80}ms`,
+    };
+  }, [index, barCount]);
+  return <div className="w-[3px] rounded-full bg-white/30" style={style} />;
+}
+
+const VOICE_BAR_COUNT = 48;
+const VOICE_BAR_INDICES = Array.from({ length: VOICE_BAR_COUNT }, (_, i) => i);
+
 function VoiceWaveform() {
-  const barCount = 48;
   return (
     <div className="flex items-center justify-center gap-[3px] h-16">
-      {Array.from({ length: barCount }).map((_, i) => {
-        // Create a natural-looking waveform envelope — louder in center, quieter at edges
-        const center = barCount / 2;
-        const dist = Math.abs(i - center) / center;
-        const envelope = 1 - dist * dist; // quadratic falloff
-        const minH = 4;
-        const maxH = 56;
-        const baseH = minH + (maxH - minH) * envelope;
-        // Vary per-bar so it doesn't look uniform
-        const jitter = Math.sin(i * 2.3) * 0.3 + Math.cos(i * 1.7) * 0.2;
-        const h = Math.max(minH, baseH * (0.5 + 0.5 * Math.abs(jitter + Math.sin(i * 0.8))));
-
-        return (
-          <div
-            key={i}
-            className="w-[3px] rounded-full bg-white/30"
-            style={{
-              height: h,
-              animationName: "voice-bar",
-              animationDuration: `${800 + (i % 5) * 200}ms`,
-              animationTimingFunction: "ease-in-out",
-              animationIterationCount: "infinite",
-              animationDirection: "alternate",
-              animationDelay: `${(i % 7) * 80}ms`,
-            }}
-          />
-        );
-      })}
+      {VOICE_BAR_INDICES.map((i) => (
+        <VoiceBar key={`voice-bar-${i}`} index={i} barCount={VOICE_BAR_COUNT} />
+      ))}
     </div>
   );
 }
@@ -845,6 +875,25 @@ function useVoiceConversation() {
   return { dictationWordIndex, responseWordIndex, showResponse };
 }
 
+function makeWordKey(words: string[], i: number): string {
+  const word = words[i];
+  let occurrence = 0;
+  for (let j = 0; j < i; j++) {
+    if (words[j] === word) occurrence++;
+  }
+  return `${word}#${occurrence}`;
+}
+
+function WordSpan({ word, confirmed }: { word: string; confirmed: boolean }) {
+  return (
+    <span
+      className={`transition-colors duration-300 ${confirmed ? "text-white/90" : "text-white/40"}`}
+    >
+      {word}{" "}
+    </span>
+  );
+}
+
 function StreamingWords({
   words,
   wordIndex,
@@ -865,14 +914,7 @@ function StreamingWords({
         {words.map((word, i) => {
           if (i >= wordIndex) return null;
           const confirmed = i < wordIndex - confirmLag;
-          return (
-            <span
-              key={i}
-              className={`transition-colors duration-300 ${confirmed ? "text-white/90" : "text-white/40"}`}
-            >
-              {word}{" "}
-            </span>
-          );
+          return <WordSpan key={makeWordKey(words, i)} word={word} confirmed={confirmed} />;
         })}
       </p>
     </div>
@@ -932,9 +974,9 @@ function LocalVoiceSection() {
 function GetStarted() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6, delay: 0.4, ease: "easeOut" }}
+      initial={FADE_IN_UP}
+      animate={FADE_IN}
+      transition={EASE_OUT_06_DELAY_04}
       className="pt-10"
     >
       <div className="flex flex-row flex-wrap gap-3">
@@ -976,11 +1018,11 @@ function GetStarted() {
       <div className="flex items-center gap-2 pt-6">
         <span className="text-xs text-white/40">Supports</span>
         <div className="flex items-center gap-1">
-          <AgentBadge name="Claude Code" icon={<ClaudeCodeIcon className="h-6 w-6" />} />
-          <AgentBadge name="Codex" icon={<CodexIcon className="h-6 w-6" />} />
-          <AgentBadge name="OpenCode" icon={<OpenCodeIcon className="h-6 w-6" />} />
-          <AgentBadge name="Copilot" icon={<CopilotIcon className="h-6 w-6" />} />
-          <AgentBadge name="Pi" icon={<PiIcon className="h-6 w-6" />} />
+          <AgentBadge name="Claude Code" icon={CLAUDE_CODE_BADGE_ICON} />
+          <AgentBadge name="Codex" icon={CODEX_BADGE_ICON} />
+          <AgentBadge name="OpenCode" icon={OPENCODE_BADGE_ICON} />
+          <AgentBadge name="Copilot" icon={COPILOT_BADGE_ICON} />
+          <AgentBadge name="Pi" icon={PI_BADGE_ICON} />
         </div>
       </div>
     </motion.div>
@@ -1006,23 +1048,27 @@ function DownloadButton() {
   );
 }
 
+const SERVER_INSTALL_TRIGGER = (
+  <span className="inline-flex items-center justify-center rounded-lg border border-white/20 px-3 py-2 text-white hover:bg-white/10 transition-colors">
+    <TerminalIcon className="h-5 w-5" />
+  </span>
+);
+
+const SERVER_INSTALL_FOOTNOTE = (
+  <>
+    Requires Node.js 18+. Run <span className="font-mono text-white/40">paseo</span> to start the
+    daemon.
+  </>
+);
+
 function ServerInstallButton() {
   return (
     <CommandDialog
-      trigger={
-        <span className="inline-flex items-center justify-center rounded-lg border border-white/20 px-3 py-2 text-white hover:bg-white/10 transition-colors">
-          <TerminalIcon className="h-5 w-5" />
-        </span>
-      }
+      trigger={SERVER_INSTALL_TRIGGER}
       title="Run agents on a remote machine"
       description="For headless machines you want to connect to from the Paseo apps. The desktop app already includes a built-in daemon."
       command="npm install -g @getpaseo/cli && paseo"
-      footnote={
-        <>
-          Requires Node.js 18+. Run <span className="font-mono text-white/40">paseo</span> to start
-          the daemon.
-        </>
-      }
+      footnote={SERVER_INSTALL_FOOTNOTE}
     />
   );
 }
@@ -1112,61 +1158,6 @@ function PiIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-function AppStoreIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 960 960"
-      fill="currentColor"
-      aria-hidden="true"
-      {...props}
-    >
-      <path d="M342.277 86.6927C463.326 84.6952 587.87 65.619 705.523 104.97C830.467 143.522 874.012 278.153 872.814 397.105C873.713 481.299 874.012 566.193 858.931 649.19C834.262 804.895 746.172 873.01 590.666 874.608C422.377 880.301 172.489 908.965 104.474 711.012C76.5092 599.452 86.6964 481.1 88.1946 366.843C98.9811 200.75 163.301 90.2882 342.277 86.6927ZM715.411 596.156C758.856 591.362 754.362 524.645 710.816 524.545C610.542 525.244 639.605 550.513 594.462 456.83C577.383 418.778 540.529 337.279 496.085 396.006C479.206 431.062 516.359 464.121 528.844 495.382C569.892 560.6 606.647 628.515 648.494 693.334C667.77 724.495 716.509 696.73 697.333 663.372C685.048 642.298 677.258 619.726 665.773 598.253C682.452 597.854 698.831 598.053 715.411 596.156Z" />
-      <path
-        d="M697.234 663.371C716.41 696.729 667.671 724.494 648.395 693.333C606.548 628.614 569.794 560.699 528.745 495.381C516.161 464.219 479.107 431.161 495.986 396.005C540.43 337.178 577.384 418.776 594.363 456.829C639.506 550.512 610.443 525.243 710.717 524.544C754.263 524.644 758.757 591.361 715.312 596.155C698.732 598.052 682.453 597.852 665.674 598.252C677.159 619.725 684.95 642.297 697.234 663.371Z"
-        fill="black"
-      />
-      <path
-        d="M474.312 257.679C486.597 230.913 517.059 198.453 545.224 224.92C564.3 242.298 551.316 269.465 538.332 287.242C489.194 363.747 450.242 445.844 405.598 524.845C445.448 528.341 485.598 525.844 525.149 532.835C564.1 539.827 558.907 597.455 519.256 598.353C442.153 601.35 365.049 595.457 287.845 599.652C260.28 597.554 225.024 612.336 203.751 589.065C161.104 516.456 275.761 527.442 317.608 524.546C343.776 499.377 356.659 456.93 377.833 425.769C395.311 394.608 412.39 363.147 429.868 331.986C432.964 322.199 418.982 314.109 415.486 305.12C349.169 230.713 442.153 172.885 474.312 257.679Z"
-        fill="black"
-      />
-      <path
-        d="M265.471 626.12C284.647 595.758 329.491 609.042 330.39 643.199C325.296 664.872 313.511 684.647 298.53 701.027C275.758 724.997 235.009 703.124 242.5 670.864C246.195 654.485 256.882 640.302 265.471 626.12Z"
-        fill="black"
-      />
-    </svg>
-  );
-}
-
-function ChevronDownIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      {...props}
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
-}
-
-function Step({ number, children }: { number: number; children: React.ReactNode }) {
-  return (
-    <div className="flex gap-4">
-      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center text-xs font-medium">
-        {number}
-      </span>
-      <div className="space-y-2 flex-1">{children}</div>
-    </div>
-  );
-}
-
 const bashKeywords = new Set([
   "while",
   "do",
@@ -1181,167 +1172,134 @@ const bashKeywords = new Set([
 ]);
 const bashCommands = new Set(["paseo", "echo", "jq"]);
 
+function tokenizeBashComment(code: string, i: number): { node: React.ReactNode; len: number } {
+  const end = code.indexOf("\n", i);
+  const comment = end === -1 ? code.slice(i) : code.slice(i, end);
+  return {
+    node: <span className="text-white/30 italic">{comment}</span>,
+    len: comment.length,
+  };
+}
+
+function tokenizeBashDoubleQuoted(code: string, i: number): { node: React.ReactNode; len: number } {
+  let j = i + 1;
+  while (j < code.length && code[j] !== '"') {
+    if (code[j] === "\\") j++;
+    j++;
+  }
+  const str = code.slice(i, j + 1);
+  return { node: <span className="text-green-400/80">{str}</span>, len: str.length };
+}
+
+function tokenizeBashSingleQuoted(code: string, i: number): { node: React.ReactNode; len: number } {
+  let j = i + 1;
+  while (j < code.length && code[j] !== "'") j++;
+  const str = code.slice(i, j + 1);
+  return { node: <span className="text-green-400/80">{str}</span>, len: str.length };
+}
+
+function tokenizeBashDollar(code: string, i: number): { node: React.ReactNode; len: number } {
+  if (code[i + 1] === "(") {
+    return { node: <span className="text-amber-300/70">$(</span>, len: 2 };
+  }
+  let j = i + 1;
+  while (j < code.length && /\w/.test(code[j])) j++;
+  return {
+    node: <span className="text-amber-300/70">{code.slice(i, j)}</span>,
+    len: j - i,
+  };
+}
+
+function tokenizeBashFlag(code: string, i: number): { node: React.ReactNode; len: number } {
+  let j = i;
+  if (code[j + 1] === "-") j++;
+  j++;
+  while (j < code.length && /[\w-]/.test(code[j])) j++;
+  return {
+    node: <span className="text-sky-300/70">{code.slice(i, j)}</span>,
+    len: j - i,
+  };
+}
+
+function tokenizeBashWord(code: string, i: number): { node: React.ReactNode; len: number } {
+  let j = i;
+  while (j < code.length && /\w/.test(code[j])) j++;
+  const word = code.slice(i, j);
+  const len = j - i;
+  if (bashKeywords.has(word)) {
+    return { node: <span className="text-purple-400">{word}</span>, len };
+  }
+  if (bashCommands.has(word)) {
+    return { node: <span className="text-white">{word}</span>, len };
+  }
+  return { node: word, len };
+}
+
+function isBashFlagStart(code: string, i: number): boolean {
+  return (
+    code[i] === "-" &&
+    (i === 0 || /\s/.test(code[i - 1])) &&
+    i + 1 < code.length &&
+    /[\w-]/.test(code[i + 1])
+  );
+}
+
+function isBashCommentStart(code: string, i: number): boolean {
+  return code[i] === "#" && (i === 0 || /[\s(]/.test(code[i - 1]));
+}
+
+function tokenizeBashChar(code: string, i: number): { node: React.ReactNode; len: number } {
+  const c = code[i];
+  if (c === "|" || (c === "&" && code[i + 1] === "&")) {
+    const op = c === "|" ? "|" : "&&";
+    return { node: <span className="text-white/40">{op}</span>, len: op.length };
+  }
+  if (c === "\\") return { node: <span className="text-white/40">\</span>, len: 1 };
+  if (c === ")") return { node: <span className="text-amber-300/70">)</span>, len: 1 };
+  return { node: c, len: 1 };
+}
+
+function nextBashToken(code: string, i: number): { node: React.ReactNode; len: number } {
+  if (isBashCommentStart(code, i)) return tokenizeBashComment(code, i);
+  if (code[i] === '"') return tokenizeBashDoubleQuoted(code, i);
+  if (code[i] === "'") return tokenizeBashSingleQuoted(code, i);
+  if (code[i] === "$") return tokenizeBashDollar(code, i);
+  if (isBashFlagStart(code, i)) return tokenizeBashFlag(code, i);
+  if (/[a-zA-Z_]/.test(code[i])) return tokenizeBashWord(code, i);
+  return tokenizeBashChar(code, i);
+}
+
 function highlightBash(code: string): React.ReactNode {
   const tokens: React.ReactNode[] = [];
   let i = 0;
   let key = 0;
 
   while (i < code.length) {
-    if (code[i] === "#" && (i === 0 || /[\s(]/.test(code[i - 1]))) {
-      const end = code.indexOf("\n", i);
-      const comment = end === -1 ? code.slice(i) : code.slice(i, end);
-      tokens.push(
-        <span key={key++} className="text-white/30 italic">
-          {comment}
-        </span>,
-      );
-      i += comment.length;
-      continue;
+    const { node, len } = nextBashToken(code, i);
+    if (React.isValidElement(node)) {
+      tokens.push(React.cloneElement(node, { key: key++ }));
+    } else {
+      tokens.push(node);
     }
-
-    if (code[i] === '"') {
-      let j = i + 1;
-      while (j < code.length && code[j] !== '"') {
-        if (code[j] === "\\") j++;
-        j++;
-      }
-      const str = code.slice(i, j + 1);
-      tokens.push(
-        <span key={key++} className="text-green-400/80">
-          {str}
-        </span>,
-      );
-      i = j + 1;
-      continue;
-    }
-
-    if (code[i] === "'") {
-      let j = i + 1;
-      while (j < code.length && code[j] !== "'") j++;
-      const str = code.slice(i, j + 1);
-      tokens.push(
-        <span key={key++} className="text-green-400/80">
-          {str}
-        </span>,
-      );
-      i = j + 1;
-      continue;
-    }
-
-    if (code[i] === "$") {
-      if (code[i + 1] === "(") {
-        tokens.push(
-          <span key={key++} className="text-amber-300/70">
-            $(
-          </span>,
-        );
-        i += 2;
-        continue;
-      }
-      let j = i + 1;
-      while (j < code.length && /\w/.test(code[j])) j++;
-      tokens.push(
-        <span key={key++} className="text-amber-300/70">
-          {code.slice(i, j)}
-        </span>,
-      );
-      i = j;
-      continue;
-    }
-
-    if (
-      code[i] === "-" &&
-      (i === 0 || /\s/.test(code[i - 1])) &&
-      i + 1 < code.length &&
-      /[\w-]/.test(code[i + 1])
-    ) {
-      let j = i;
-      if (code[j + 1] === "-") j++;
-      j++;
-      while (j < code.length && /[\w-]/.test(code[j])) j++;
-      tokens.push(
-        <span key={key++} className="text-sky-300/70">
-          {code.slice(i, j)}
-        </span>,
-      );
-      i = j;
-      continue;
-    }
-
-    if (/[a-zA-Z_]/.test(code[i])) {
-      let j = i;
-      while (j < code.length && /\w/.test(code[j])) j++;
-      const word = code.slice(i, j);
-      if (bashKeywords.has(word)) {
-        tokens.push(
-          <span key={key++} className="text-purple-400">
-            {word}
-          </span>,
-        );
-      } else if (bashCommands.has(word)) {
-        tokens.push(
-          <span key={key++} className="text-white">
-            {word}
-          </span>,
-        );
-      } else {
-        tokens.push(word);
-        key++;
-      }
-      i = j;
-      continue;
-    }
-
-    if (code[i] === "|" || (code[i] === "&" && code[i + 1] === "&")) {
-      const op = code[i] === "|" ? "|" : "&&";
-      tokens.push(
-        <span key={key++} className="text-white/40">
-          {op}
-        </span>,
-      );
-      i += op.length;
-      continue;
-    }
-
-    if (code[i] === "\\") {
-      tokens.push(
-        <span key={key++} className="text-white/40">
-          \
-        </span>,
-      );
-      i++;
-      continue;
-    }
-
-    if (code[i] === ")") {
-      tokens.push(
-        <span key={key++} className="text-amber-300/70">
-          )
-        </span>,
-      );
-      i++;
-      continue;
-    }
-
-    tokens.push(code[i]);
-    i++;
+    i += len;
   }
 
-  return <>{tokens}</>;
+  return tokens;
 }
 
 function CLICodeBlock({ children }: { children: string }) {
   const [copied, setCopied] = React.useState(false);
 
-  function handleCopy() {
+  const handleCopy = React.useCallback(() => {
     navigator.clipboard.writeText(children);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }
+  }, [children]);
 
   return (
     <div className="relative bg-white/5 rounded-lg overflow-hidden">
       <button
+        type="button"
         onClick={handleCopy}
         className="absolute top-3 right-3 text-white/30 hover:text-white/70 transition-colors p-1"
         title="Copy to clipboard"
@@ -1447,13 +1405,24 @@ function PhoneShowcase() {
   const leftX = useTransform(scrollYProgress, [0.2, 0.6], [0, -slideDistance]);
   const rightX = useTransform(scrollYProgress, [0.2, 0.6], [0, slideDistance]);
 
+  const leftPhoneStyle = React.useMemo(
+    () => ({ opacity: sideOpacity, x: leftX, rotateY: -15, scale: 0.97 }),
+    [sideOpacity, leftX],
+  );
+  const rightPhoneStyle = React.useMemo(
+    () => ({ opacity: sideOpacity, x: rightX, rotateY: 15, scale: 0.97 }),
+    [sideOpacity, rightX],
+  );
+  const centerPhoneAnimate = React.useMemo(() => (textInView ? FADE_IN : {}), [textInView]);
+  const textAnimate = React.useMemo(() => (textInView ? FADE_IN : {}), [textInView]);
+
   return (
     <div ref={containerRef} className="flex flex-col items-center pt-4 pb-16 gap-20">
       {/* Arrow + text */}
       <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={textInView ? { opacity: 1, y: 0 } : {}}
-        transition={{ duration: 0.5 }}
+        initial={FADE_IN_UP_TINY}
+        animate={textAnimate}
+        transition={DURATION_05}
         className="flex flex-col items-center gap-1.5 px-6"
       >
         <svg
@@ -1481,13 +1450,10 @@ function PhoneShowcase() {
       {/* Phone trio — side phones are absolute, start behind center, slide outward with perspective rotation */}
       <div
         className="relative flex items-center justify-center overflow-x-clip w-full"
-        style={{ minHeight: 480, perspective: 1200 }}
+        style={PHONE_PERSPECTIVE_STYLE}
       >
         {/* Left phone — rotated to face inward */}
-        <motion.div
-          style={{ opacity: sideOpacity, x: leftX, rotateY: -15, scale: 0.97 }}
-          className="w-[160px] md:w-[240px] absolute"
-        >
+        <motion.div style={leftPhoneStyle} className="w-[160px] md:w-[240px] absolute">
           <img
             src="/phone-1.png"
             alt="Paseo sessions list"
@@ -1497,9 +1463,9 @@ function PhoneShowcase() {
 
         {/* Center phone */}
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={textInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.6, delay: 0.1, ease: "easeOut" }}
+          initial={FADE_IN_UP_XL}
+          animate={centerPhoneAnimate}
+          transition={EASE_OUT_06_DELAY_01}
           className="w-[220px] md:w-[240px] relative z-10"
         >
           <img
@@ -1510,10 +1476,7 @@ function PhoneShowcase() {
         </motion.div>
 
         {/* Right phone — rotated to face inward */}
-        <motion.div
-          style={{ opacity: sideOpacity, x: rightX, rotateY: 15, scale: 0.97 }}
-          className="w-[160px] md:w-[240px] absolute"
-        >
+        <motion.div style={rightPhoneStyle} className="w-[160px] md:w-[240px] absolute">
           <img
             src="/phone-3.png"
             alt="Paseo diff view"
@@ -1522,6 +1485,33 @@ function PhoneShowcase() {
         </motion.div>
       </div>
     </div>
+  );
+}
+
+function CLITabButton({
+  title,
+  index,
+  active,
+  onSelect,
+}: {
+  title: string;
+  index: number;
+  active: boolean;
+  onSelect: (i: number) => void;
+}) {
+  const handleClick = React.useCallback(() => onSelect(index), [onSelect, index]);
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+        active
+          ? "border-white/40 text-white bg-white/10"
+          : "border-white/15 text-white/50 hover:text-white/80 hover:border-white/30"
+      }`}
+    >
+      {title}
+    </button>
   );
 }
 
@@ -1536,17 +1526,13 @@ function CLISection() {
     >
       <div className="flex flex-wrap gap-2">
         {cliExamples.map((example, i) => (
-          <button
+          <CLITabButton
             key={example.title}
-            onClick={() => setActiveIndex(i)}
-            className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-              i === activeIndex
-                ? "border-white/40 text-white bg-white/10"
-                : "border-white/15 text-white/50 hover:text-white/80 hover:border-white/30"
-            }`}
-          >
-            {example.title}
-          </button>
+            title={example.title}
+            index={i}
+            active={i === activeIndex}
+            onSelect={setActiveIndex}
+          />
         ))}
       </div>
 
@@ -1580,10 +1566,10 @@ function CLISection() {
 function FAQ() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
+      initial={FADE_IN_UP}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_60}
+      transition={EASE_OUT_05}
       className="space-y-6"
     >
       <h2 className="text-3xl font-medium">FAQ</h2>
@@ -1594,8 +1580,8 @@ function FAQ() {
           speech providers if you configure them.
         </FAQItem>
         <FAQItem question="Does my code leave my machine?">
-          Paseo doesn't send your code anywhere. Agents run locally and talk to their own APIs as
-          they normally would. For remote access, you can use the optional{" "}
+          Paseo doesn&apos;t send your code anywhere. Agents run locally and talk to their own APIs
+          as they normally would. For remote access, you can use the optional{" "}
           <a href="/docs/security" className="underline hover:text-white/80">
             end-to-end encrypted relay
           </a>
@@ -1603,7 +1589,7 @@ function FAQ() {
         </FAQItem>
         <FAQItem question="What agents does it support?">
           Claude Code, Codex, and OpenCode. Each agent runs as its own process using its own CLI.
-          Paseo doesn't modify or wrap their behavior.
+          Paseo doesn&apos;t modify or wrap their behavior.
         </FAQItem>
         <FAQItem question="Do I need the desktop app?">
           No. You can run the daemon headless with{" "}
@@ -1623,9 +1609,9 @@ function FAQ() {
           .
         </FAQItem>
         <FAQItem question="Can I connect from outside my network?">
-          Yes. You can use the hosted relay (end-to-end encrypted, Paseo can't read your traffic),
-          set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the daemon port
-          directly. See{" "}
+          Yes. You can use the hosted relay (end-to-end encrypted, Paseo can&apos;t read your
+          traffic), set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the
+          daemon port directly. See{" "}
           <a href="/docs/configuration" className="underline hover:text-white/80">
             configuration
           </a>
@@ -1633,17 +1619,17 @@ function FAQ() {
         </FAQItem>
         <FAQItem question="Do I need git or GitHub?">
           No. Paseo works in any directory. Worktrees are optional and only relevant if you use git.
-          You can run agents anywhere you'd normally work.
+          You can run agents anywhere you&apos;d normally work.
         </FAQItem>
         <FAQItem question="Can I get banned for using Paseo?">
-          <p>We can't make promises on behalf of providers.</p>
+          <p>We can&apos;t make promises on behalf of providers.</p>
           <p>
             That said, Paseo launches the official first-party CLIs (Claude Code, Codex, OpenCode)
-            as subprocesses. It doesn't extract tokens or call inference APIs directly. From the
-            provider's perspective, usage through Paseo is indistinguishable from running the CLI
-            yourself.
+            as subprocesses. It doesn&apos;t extract tokens or call inference APIs directly. From
+            the provider&apos;s perspective, usage through Paseo is indistinguishable from running
+            the CLI yourself.
           </p>
-          <p>I've been using Paseo with all providers for months without issue.</p>
+          <p>I&apos;ve been using Paseo with all providers for months without issue.</p>
         </FAQItem>
         <FAQItem question="How do worktrees work?">
           When you launch an agent with the worktree option (from the app, desktop, or CLI), Paseo
@@ -1662,17 +1648,17 @@ function FAQ() {
 function SponsorCTA() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
+      initial={FADE_IN_UP}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_60}
+      transition={EASE_OUT_05}
       className="rounded-xl bg-white/5 border border-white/10 p-8 md:p-10 text-left space-y-4 max-w-xl mx-auto"
     >
       <div className="text-sm text-muted-foreground leading-relaxed space-y-3">
         <p>
-          I built Paseo because I wanted better tools for coding agents on my own setup. It's an
-          independent open source project, built around freedom of choice and real workflows. If you
-          like what I'm building, consider becoming a supporter.
+          I built Paseo because I wanted better tools for coding agents on my own setup. It&apos;s
+          an independent open source project, built around freedom of choice and real workflows. If
+          you like what I&apos;m building, consider becoming a supporter.
         </p>
         <p>- Mo</p>
       </div>

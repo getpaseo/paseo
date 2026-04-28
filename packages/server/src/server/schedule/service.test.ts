@@ -7,6 +7,11 @@ import { AgentStorage } from "../agent/agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { ScheduleService } from "./service.js";
+import type { StoredSchedule, ScheduleExecutionResult } from "./types.js";
+
+interface ScheduleServiceInternals {
+  executeSchedule(schedule: StoredSchedule): Promise<ScheduleExecutionResult>;
+}
 
 describe("ScheduleService", () => {
   let tempDir: string;
@@ -302,7 +307,7 @@ describe("ScheduleService", () => {
     });
 
     await expect(
-      (service as any).executeSchedule({
+      (service as unknown as ScheduleServiceInternals).executeSchedule({
         id: "schedule-1",
         name: null,
         prompt: "Check archived agent",

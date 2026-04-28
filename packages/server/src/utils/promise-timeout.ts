@@ -1,8 +1,8 @@
-type TimeoutOptions<T> = {
+interface TimeoutOptions<T> {
   promise: Promise<T>;
   timeoutMs: number;
   label: string;
-};
+}
 
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T>;
 export function withTimeout<T>(options: TimeoutOptions<T>): Promise<T>;

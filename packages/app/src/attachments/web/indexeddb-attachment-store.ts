@@ -10,12 +10,12 @@ import {
   parseDataUrl,
 } from "@/attachments/utils";
 
-type StoredBlobRecord = {
+interface StoredBlobRecord {
   id: string;
   blob: Blob;
   createdAt: number;
   fileName: string | null;
-};
+}
 
 const DB_NAME = "paseo-attachment-bytes";
 const STORE_NAME = "attachments";
@@ -40,13 +40,13 @@ function openAttachmentDb(): Promise<IDBDatabase> {
       }
     };
 
-    request.onsuccess = () => {
+    request.addEventListener("success", () => {
       resolve(request.result);
-    };
+    });
 
-    request.onerror = () => {
+    request.addEventListener("error", () => {
       reject(request.error ?? new Error("Failed to open attachment IndexedDB."));
-    };
+    });
   });
 }
 
@@ -60,18 +60,27 @@ function runTx<T>(
     const store = transaction.objectStore(STORE_NAME);
     const request = run(store);
 
-    request.onsuccess = () => {
+    request.addEventListener("success", () => {
       resolve(request.result as T);
-    };
+    });
 
-    request.onerror = () => {
+    request.addEventListener("error", () => {
       reject(request.error ?? new Error("IndexedDB transaction request failed."));
-    };
+    });
 
-    transaction.onerror = () => {
+    transaction.addEventListener("error", () => {
       reject(transaction.error ?? new Error("IndexedDB transaction failed."));
-    };
+    });
   });
+}
+
+function base64ToBlob(input: { base64: string; mimeType: string }): Blob {
+  const binary = atob(input.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: input.mimeType });
 }
 
 async function sourceToBlob(input: SaveAttachmentInput): Promise<{ blob: Blob; mimeType: string }> {
@@ -92,6 +101,14 @@ async function sourceToBlob(input: SaveAttachmentInput): Promise<{ blob: Blob; m
     const mimeType = normalizeMimeType(input.mimeType ?? parsed.mimeType ?? blob.type);
     return {
       blob: blob.type === mimeType ? blob : blob.slice(0, blob.size, mimeType),
+      mimeType,
+    };
+  }
+
+  if (source.kind === "base64") {
+    const mimeType = normalizeMimeType(input.mimeType);
+    return {
+      blob: base64ToBlob({ base64: source.base64, mimeType }),
       mimeType,
     };
   }
@@ -186,13 +203,13 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
           const store = tx.objectStore(STORE_NAME);
           const cursorRequest = store.openCursor();
 
-          cursorRequest.onerror = () => {
+          cursorRequest.addEventListener("error", () => {
             reject(
               cursorRequest.error ?? new Error("Failed to iterate IndexedDB attachment store."),
             );
-          };
+          });
 
-          cursorRequest.onsuccess = () => {
+          cursorRequest.addEventListener("success", () => {
             const cursor = cursorRequest.result;
             if (!cursor) {
               resolve();
@@ -204,11 +221,11 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
               cursor.delete();
             }
             cursor.continue();
-          };
+          });
 
-          tx.onerror = () => {
+          tx.addEventListener("error", () => {
             reject(tx.error ?? new Error("Failed to garbage collect IndexedDB attachments."));
-          };
+          });
         });
       } finally {
         db.close();

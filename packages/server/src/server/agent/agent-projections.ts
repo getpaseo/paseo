@@ -7,23 +7,21 @@ import type {
   AgentMode,
   AgentPermissionRequest,
   AgentPersistenceHandle,
+  AgentProvider,
   AgentSessionConfig,
   AgentRuntimeInfo,
   AgentUsage,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { JsonValue } from "../json-utils.js";
-import type { Logger } from "pino";
-import { buildProviderRegistry } from "./provider-registry.js";
-import { coerceAgentProvider, toAgentPersistenceHandle } from "../persistence-hooks.js";
-
+import { isStoredAgentProviderAvailable, toAgentPersistenceHandle } from "../persistence-hooks.js";
 export type { ManagedAgent };
 
-type ProjectionOptions = {
+interface ProjectionOptions {
   title?: string | null;
   createdAt?: string;
   internal?: boolean;
-};
+}
 
 function normalizeThinkingOptionId(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
@@ -143,10 +141,41 @@ export function toAgentPayload(
   return payload;
 }
 
+function buildStoredRuntimeInfo(record: StoredAgentRecord): AgentRuntimeInfo | undefined {
+  if (!record.runtimeInfo) return undefined;
+  const ri = record.runtimeInfo;
+  const runtimeInfo: AgentRuntimeInfo = {
+    provider: ri.provider,
+    sessionId: ri.sessionId,
+  };
+  if (Object.prototype.hasOwnProperty.call(ri, "model")) {
+    runtimeInfo.model = ri.model ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(ri, "thinkingOptionId")) {
+    runtimeInfo.thinkingOptionId = ri.thinkingOptionId ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(ri, "modeId")) {
+    runtimeInfo.modeId = ri.modeId ?? null;
+  }
+  if (ri.extra) {
+    runtimeInfo.extra = ri.extra;
+  }
+  return runtimeInfo;
+}
+
+function buildStoredPersistenceHandle(
+  record: StoredAgentRecord,
+  validProviders: Iterable<AgentProvider>,
+): AgentPersistenceHandle | null {
+  if (!isStoredAgentProviderAvailable(record, validProviders)) {
+    return null;
+  }
+  return toAgentPersistenceHandle(validProviders, record.persistence);
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
-  providerRegistry: ReturnType<typeof buildProviderRegistry>,
-  logger: Logger,
+  validProviders: Iterable<AgentProvider>,
 ): AgentSnapshotPayload {
   const defaultCapabilities = {
     supportsStreaming: false,
@@ -161,32 +190,13 @@ export function buildStoredAgentPayload(
   const updatedAt = new Date(resolveStoredAgentPayloadUpdatedAt(record));
   const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
-  const provider = coerceAgentProvider(logger, providerRegistry, record.provider, record.id);
-  const runtimeInfo = record.runtimeInfo
-    ? {
-        provider: coerceAgentProvider(
-          logger,
-          providerRegistry,
-          record.runtimeInfo.provider,
-          record.id,
-        ),
-        sessionId: record.runtimeInfo.sessionId,
-        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "model")
-          ? { model: record.runtimeInfo.model ?? null }
-          : {}),
-        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "thinkingOptionId")
-          ? { thinkingOptionId: record.runtimeInfo.thinkingOptionId ?? null }
-          : {}),
-        ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "modeId")
-          ? { modeId: record.runtimeInfo.modeId ?? null }
-          : {}),
-        ...(record.runtimeInfo.extra ? { extra: record.runtimeInfo.extra } : {}),
-      }
-    : undefined;
+  const runtimeInfo = buildStoredRuntimeInfo(record);
+  const providerAvailable = isStoredAgentProviderAvailable(record, validProviders);
+  const persistence = buildStoredPersistenceHandle(record, validProviders);
 
   return {
     id: record.id,
-    provider,
+    provider: record.provider,
     cwd: record.cwd,
     model: record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
@@ -203,13 +213,14 @@ export function buildStoredAgentPayload(
     currentModeId: record.lastModeId ?? null,
     availableModes: [],
     pendingPermissions: [],
-    persistence: toAgentPersistenceHandle(logger, providerRegistry, record.persistence),
+    persistence,
     title: record.title ?? record.config?.title ?? null,
     requiresAttention: record.requiresAttention ?? false,
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
     labels: normalizeLabels(record.labels),
+    ...(providerAvailable ? {} : { providerUnavailable: true }),
   };
 }
 
@@ -232,6 +243,7 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp ?? null,
     labels: agent.labels,
+    ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
   };
 }
 
@@ -288,13 +300,14 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
 function sanitizePendingPermissions(
   pending: Map<string, AgentPermissionRequest>,
 ): AgentPermissionRequest[] {
-  return Array.from(pending.values()).map((request) => ({
-    ...request,
-    input: sanitizeMetadata(request.input),
-    suggestions: sanitizeMetadataArray(request.suggestions),
-    actions: request.actions?.map((action) => ({ ...action })),
-    metadata: sanitizeMetadata(request.metadata),
-  }));
+  return Array.from(pending.values()).map((request) =>
+    Object.assign({}, request, {
+      input: sanitizeMetadata(request.input),
+      suggestions: sanitizeMetadataArray(request.suggestions),
+      actions: request.actions?.map((action) => Object.assign({}, action)),
+      metadata: sanitizeMetadata(request.metadata),
+    }),
+  );
 }
 
 function sanitizePersistenceHandle(
@@ -383,47 +396,39 @@ function sanitizeMetadataArray(value: unknown): AgentMetadata[] | undefined {
   return sanitized.length > 0 ? sanitized : undefined;
 }
 
+type UsageNumericField = Exclude<keyof AgentUsage, never>;
+
+function assignFiniteNumber(
+  source: { [key: string]: JsonValue },
+  target: AgentUsage,
+  field: UsageNumericField,
+): boolean {
+  const raw = source[field];
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    target[field] = raw;
+    return true;
+  }
+  return raw === undefined || raw === null;
+}
+
 function sanitizeUsage(value: unknown): AgentUsage | undefined {
   const sanitized = sanitizeOptionalJson(value);
   if (!sanitized || !isJsonObject(sanitized)) {
     return undefined;
   }
   const result: AgentUsage = {};
-  const inputTokens = sanitized.inputTokens;
-  if (typeof inputTokens === "number" && Number.isFinite(inputTokens)) {
-    result.inputTokens = inputTokens;
-  } else if (inputTokens !== undefined && inputTokens !== null) {
-    return undefined;
-  }
-  const cachedInputTokens = sanitized.cachedInputTokens;
-  if (typeof cachedInputTokens === "number" && Number.isFinite(cachedInputTokens)) {
-    result.cachedInputTokens = cachedInputTokens;
-  } else if (cachedInputTokens !== undefined && cachedInputTokens !== null) {
-    return undefined;
-  }
-  const outputTokens = sanitized.outputTokens;
-  if (typeof outputTokens === "number" && Number.isFinite(outputTokens)) {
-    result.outputTokens = outputTokens;
-  } else if (outputTokens !== undefined && outputTokens !== null) {
-    return undefined;
-  }
-  const totalCostUsd = sanitized.totalCostUsd;
-  if (typeof totalCostUsd === "number" && Number.isFinite(totalCostUsd)) {
-    result.totalCostUsd = totalCostUsd;
-  } else if (totalCostUsd !== undefined && totalCostUsd !== null) {
-    return undefined;
-  }
-  const contextWindowMaxTokens = sanitized.contextWindowMaxTokens;
-  if (typeof contextWindowMaxTokens === "number" && Number.isFinite(contextWindowMaxTokens)) {
-    result.contextWindowMaxTokens = contextWindowMaxTokens;
-  } else if (contextWindowMaxTokens !== undefined && contextWindowMaxTokens !== null) {
-    return undefined;
-  }
-  const contextWindowUsedTokens = sanitized.contextWindowUsedTokens;
-  if (typeof contextWindowUsedTokens === "number" && Number.isFinite(contextWindowUsedTokens)) {
-    result.contextWindowUsedTokens = contextWindowUsedTokens;
-  } else if (contextWindowUsedTokens !== undefined && contextWindowUsedTokens !== null) {
-    return undefined;
+  const fields: UsageNumericField[] = [
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "totalCostUsd",
+    "contextWindowMaxTokens",
+    "contextWindowUsedTokens",
+  ];
+  for (const field of fields) {
+    if (!assignFiniteNumber(sanitized, result, field)) {
+      return undefined;
+    }
   }
   return Object.keys(result).length ? result : undefined;
 }

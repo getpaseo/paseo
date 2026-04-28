@@ -23,17 +23,17 @@ function collectAssistantText(entries: Array<{ item: { type: string; text?: stri
     .join("\n");
 }
 
-type ToolCallRecord = {
+interface ToolCallRecord {
   name: string;
   status: string;
-};
+}
 
-type ProviderRunResult = {
+interface ProviderRunResult {
   provider: "claude" | "codex";
   agentId: string;
   assistantText: string;
   toolCalls: ToolCallRecord[];
-};
+}
 
 async function verifyInjectedMcpForProvider(
   client: DaemonClient,
@@ -181,9 +181,9 @@ async function main(): Promise<void> {
       ),
     );
   } finally {
-    for (const agentId of createdAgentIds) {
-      await client.archiveAgent(agentId).catch(() => undefined);
-    }
+    await Promise.all(
+      createdAgentIds.map((agentId) => client.archiveAgent(agentId).catch(() => undefined)),
+    );
     await client.close().catch(() => undefined);
     await daemon.close().catch(() => undefined);
     await rm(rootCwd, { recursive: true, force: true });

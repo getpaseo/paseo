@@ -41,14 +41,14 @@ interface Rect {
   height: number;
 }
 
-type TooltipContextValue = {
+interface TooltipContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
   triggerRef: React.RefObject<View | null>;
   enabled: boolean;
   openOnPress: boolean;
   delayDuration: number;
-};
+}
 
 const TooltipContext = createContext<TooltipContextValue | null>(null);
 
@@ -132,6 +132,37 @@ function measureElement(element: View): Promise<Rect> {
   });
 }
 
+function resolveActualSide(args: {
+  triggerRect: Rect;
+  contentSize: { width: number; height: number };
+  displayArea: Rect;
+  side: Side;
+}): Side {
+  const { triggerRect, contentSize, displayArea, side } = args;
+  const spaceTop = triggerRect.y - displayArea.y;
+  const spaceBottom = displayArea.y + displayArea.height - (triggerRect.y + triggerRect.height);
+  const spaceLeft = triggerRect.x - displayArea.x;
+  const spaceRight = displayArea.x + displayArea.width - (triggerRect.x + triggerRect.width);
+
+  if (side === "bottom" && spaceBottom < contentSize.height && spaceTop > spaceBottom) return "top";
+  if (side === "top" && spaceTop < contentSize.height && spaceBottom > spaceTop) return "bottom";
+  if (side === "left" && spaceLeft < contentSize.width && spaceRight > spaceLeft) return "right";
+  if (side === "right" && spaceRight < contentSize.width && spaceLeft > spaceRight) return "left";
+  return side;
+}
+
+function resolveAlignedCoordinate(args: {
+  align: Align;
+  start: number;
+  size: number;
+  contentSize: number;
+}): number {
+  const { align, start, size, contentSize } = args;
+  if (align === "start") return start;
+  if (align === "end") return start + size - contentSize;
+  return start + (size - contentSize) / 2;
+}
+
 function computePosition({
   triggerRect,
   contentSize,
@@ -148,62 +179,43 @@ function computePosition({
   offset: number;
 }): { x: number; y: number; actualSide: Side } {
   const { width: contentWidth, height: contentHeight } = contentSize;
-
-  const spaceTop = triggerRect.y - displayArea.y;
-  const spaceBottom = displayArea.y + displayArea.height - (triggerRect.y + triggerRect.height);
-  const spaceLeft = triggerRect.x - displayArea.x;
-  const spaceRight = displayArea.x + displayArea.width - (triggerRect.x + triggerRect.width);
-
-  let actualSide = side;
-  if (side === "bottom" && spaceBottom < contentHeight && spaceTop > spaceBottom) {
-    actualSide = "top";
-  } else if (side === "top" && spaceTop < contentHeight && spaceBottom > spaceTop) {
-    actualSide = "bottom";
-  } else if (side === "left" && spaceLeft < contentWidth && spaceRight > spaceLeft) {
-    actualSide = "right";
-  } else if (side === "right" && spaceRight < contentWidth && spaceLeft > spaceRight) {
-    actualSide = "left";
-  }
+  const actualSide = resolveActualSide({ triggerRect, contentSize, displayArea, side });
 
   let x = 0;
   let y = 0;
 
   if (actualSide === "bottom") {
     y = triggerRect.y + triggerRect.height + offset;
-    if (align === "start") {
-      x = triggerRect.x;
-    } else if (align === "end") {
-      x = triggerRect.x + triggerRect.width - contentWidth;
-    } else {
-      x = triggerRect.x + (triggerRect.width - contentWidth) / 2;
-    }
+    x = resolveAlignedCoordinate({
+      align,
+      start: triggerRect.x,
+      size: triggerRect.width,
+      contentSize: contentWidth,
+    });
   } else if (actualSide === "top") {
     y = triggerRect.y - contentHeight - offset;
-    if (align === "start") {
-      x = triggerRect.x;
-    } else if (align === "end") {
-      x = triggerRect.x + triggerRect.width - contentWidth;
-    } else {
-      x = triggerRect.x + (triggerRect.width - contentWidth) / 2;
-    }
+    x = resolveAlignedCoordinate({
+      align,
+      start: triggerRect.x,
+      size: triggerRect.width,
+      contentSize: contentWidth,
+    });
   } else if (actualSide === "left") {
     x = triggerRect.x - contentWidth - offset;
-    if (align === "start") {
-      y = triggerRect.y;
-    } else if (align === "end") {
-      y = triggerRect.y + triggerRect.height - contentHeight;
-    } else {
-      y = triggerRect.y + (triggerRect.height - contentHeight) / 2;
-    }
+    y = resolveAlignedCoordinate({
+      align,
+      start: triggerRect.y,
+      size: triggerRect.height,
+      contentSize: contentHeight,
+    });
   } else {
     x = triggerRect.x + triggerRect.width + offset;
-    if (align === "start") {
-      y = triggerRect.y;
-    } else if (align === "end") {
-      y = triggerRect.y + triggerRect.height - contentHeight;
-    } else {
-      y = triggerRect.y + (triggerRect.height - contentHeight) / 2;
-    }
+    y = resolveAlignedCoordinate({
+      align,
+      start: triggerRect.y,
+      size: triggerRect.height,
+      contentSize: contentHeight,
+    });
   }
 
   const padding = 8;
@@ -307,24 +319,24 @@ export function TooltipTrigger({
   }, [clearOpenTimer]);
 
   const handleHoverIn = useCallback(
-    (e?: any) => {
-      onHoverIn?.(e);
+    (e?: unknown) => {
+      onHoverIn?.(e as never);
       scheduleOpen();
     },
     [onHoverIn, scheduleOpen],
   );
 
   const handleHoverOut = useCallback(
-    (e?: any) => {
-      onHoverOut?.(e);
+    (e?: unknown) => {
+      onHoverOut?.(e as never);
       close();
     },
     [onHoverOut, close],
   );
 
   const handleFocus = useCallback(
-    (e: any) => {
-      onFocus?.(e);
+    (e: unknown) => {
+      onFocus?.(e as never);
       if (!ctx.enabled || disabled) return;
       if (!shouldOpenOnFocus()) return;
       clearOpenTimer();
@@ -334,16 +346,16 @@ export function TooltipTrigger({
   );
 
   const handleBlur = useCallback(
-    (e: any) => {
-      onBlur?.(e);
+    (e: unknown) => {
+      onBlur?.(e as never);
       close();
     },
     [close, onBlur],
   );
 
   const handlePress = useCallback(
-    (e: any) => {
-      onPress?.(e);
+    (e: unknown) => {
+      onPress?.(e as never);
       if (!ctx.enabled || disabled) {
         return;
       }
@@ -372,7 +384,7 @@ export function TooltipTrigger({
           onPointerLeave: handleHoverOut,
           onMouseEnter: handleHoverIn,
           onMouseLeave: handleHoverOut,
-        } as any)
+        } as object)
       : null),
   };
 
@@ -382,21 +394,21 @@ export function TooltipTrigger({
       throw new Error("TooltipTrigger with asChild expects a single React element child");
     }
 
-    const childProps = child.props as Record<string, any>;
+    const childProps = child.props as Record<string, unknown>;
     const mergedProps = {
       ...childProps,
       ...triggerProps,
       disabled: childProps.disabled || disabled,
-      onHoverIn: composeEventHandlers(childProps.onHoverIn, handleHoverIn),
-      onHoverOut: composeEventHandlers(childProps.onHoverOut, handleHoverOut),
-      onFocus: composeEventHandlers(childProps.onFocus, handleFocus),
-      onBlur: composeEventHandlers(childProps.onBlur, handleBlur),
-      onPress: composeEventHandlers(childProps.onPress, handlePress),
-      onPointerEnter: composeEventHandlers(childProps.onPointerEnter, handleHoverIn),
-      onPointerLeave: composeEventHandlers(childProps.onPointerLeave, handleHoverOut),
-      onMouseEnter: composeEventHandlers(childProps.onMouseEnter, handleHoverIn),
-      onMouseLeave: composeEventHandlers(childProps.onMouseLeave, handleHoverOut),
-    } as Record<string, any>;
+      onHoverIn: composeEventHandlers(childProps.onHoverIn as never, handleHoverIn),
+      onHoverOut: composeEventHandlers(childProps.onHoverOut as never, handleHoverOut),
+      onFocus: composeEventHandlers(childProps.onFocus as never, handleFocus),
+      onBlur: composeEventHandlers(childProps.onBlur as never, handleBlur),
+      onPress: composeEventHandlers(childProps.onPress as never, handlePress),
+      onPointerEnter: composeEventHandlers(childProps.onPointerEnter as never, handleHoverIn),
+      onPointerLeave: composeEventHandlers(childProps.onPointerLeave as never, handleHoverOut),
+      onMouseEnter: composeEventHandlers(childProps.onMouseEnter as never, handleHoverIn),
+      onMouseLeave: composeEventHandlers(childProps.onMouseLeave as never, handleHoverOut),
+    } as Record<string, unknown>;
 
     const existingRefProp = childProps[triggerRefProp] as Ref<View | null> | undefined;
     mergedProps[triggerRefProp] = (node: View | null) => {
@@ -450,6 +462,7 @@ export function TooltipContent({
     measureElement(ctx.triggerRef.current).then((rect) => {
       if (cancelled) return;
       setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
+      return;
     });
 
     return () => {
@@ -480,6 +493,22 @@ export function TooltipContent({
     [],
   );
 
+  const contentStyle = useMemo(
+    () => [
+      styles.content,
+      { maxWidth },
+      style,
+      {
+        position: "absolute" as const,
+        top: position?.y ?? -9999,
+        left: position?.x ?? -9999,
+      },
+    ],
+    [maxWidth, style, position?.x, position?.y],
+  );
+
+  const handleDismiss = useCallback(() => ctx.setOpen(false), [ctx]);
+
   if (!ctx.open || !ctx.enabled) return null;
 
   // On web, avoid React Native's <Modal/> implementation (it uses <dialog> and can
@@ -496,16 +525,7 @@ export function TooltipContent({
             collapsable={false}
             testID={testID}
             onLayout={handleLayout}
-            style={[
-              styles.content,
-              { maxWidth },
-              style,
-              {
-                position: "absolute",
-                top: position?.y ?? -9999,
-                left: position?.x ?? -9999,
-              },
-            ]}
+            style={contentStyle}
           >
             {children}
           </Animated.View>
@@ -520,9 +540,9 @@ export function TooltipContent({
       transparent
       animationType="none"
       statusBarTranslucent={Platform.OS === "android"}
-      onRequestClose={() => ctx.setOpen(false)}
+      onRequestClose={handleDismiss}
     >
-      <Pressable style={styles.overlay} onPress={() => ctx.setOpen(false)}>
+      <Pressable style={styles.overlay} onPress={handleDismiss}>
         <Animated.View
           pointerEvents="none"
           entering={FadeIn.duration(80)}
@@ -530,16 +550,7 @@ export function TooltipContent({
           collapsable={false}
           testID={testID}
           onLayout={handleLayout}
-          style={[
-            styles.content,
-            { maxWidth },
-            style,
-            {
-              position: "absolute",
-              top: position?.y ?? -9999,
-              left: position?.x ?? -9999,
-            },
-          ]}
+          style={contentStyle}
         >
           {children}
         </Animated.View>

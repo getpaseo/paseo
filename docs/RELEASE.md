@@ -59,6 +59,65 @@ Use the beta path when you need to:
 - send a build to a user who is hitting a specific problem
 - iterate on `beta.1`, `beta.2`, `beta.3`, and so on before deciding to ship broadly
 
+## Staged rollout (stable channel)
+
+Stable desktop releases go out via a linear time-based rollout: 0% admitted at publish, 100% admitted 24 hours later, linear ramp in between. Beta releases bypass the rollout entirely — beta users always receive updates immediately.
+
+The rollout is driven by a `rolloutHours` field stamped into the GitHub Release manifests (`latest-mac.yml`, `latest-linux.yml`, `latest.yml`) by the `finalize-rollout` job in `desktop-release.yml`.
+
+### Default behavior
+
+`npm run release:patch` → tag push → 24h ramp. No extra action needed.
+
+### Adjusting an already-published release
+
+To change the rollout duration on a release that's already shipped — e.g. flip a hotfix to instant admit, or slow a release down — use the dedicated `desktop-rollout.yml` workflow. It edits the manifests in place on the GitHub release without rebuilding anything. It only rewrites `rolloutHours`; `releaseDate` is preserved, so the rollout clock keeps ticking from the original publish time.
+
+**Hotfix (instant admit):**
+
+```bash
+gh workflow run desktop-rollout.yml \
+  -f tag=v0.1.42 \
+  -f rollout_hours=0
+```
+
+`rollout_hours=0` admits 100% of stable users on their next update check (within ~30 min for active clients).
+
+**Slow a rollout down** (e.g. extend total duration to 72h since the original release):
+
+```bash
+gh workflow run desktop-rollout.yml \
+  -f tag=v0.1.42 \
+  -f rollout_hours=72
+```
+
+`rollout_hours` is **total duration since the original release date**, not "extend by N more hours from now." If `v0.1.42` was published 2h ago and you set `rollout_hours=72`, the ramp finishes 70h from now.
+
+The dispatch is idempotent and shares a concurrency group with `desktop-release.yml`'s `finalize-rollout` job keyed on the tag, so it serializes safely against an in-flight tag-push pipeline targeting the same release.
+
+### Faster ramp at release time
+
+For low-risk changes (doc-only, dependency bumps with no behavior change), trigger `desktop-release.yml` manually with a shorter rollout window so the build itself stamps a smaller `rolloutHours`:
+
+```bash
+gh workflow run desktop-release.yml \
+  -f tag=v0.1.43 \
+  -f rollout_hours=6
+```
+
+### Releasing during an active rollout
+
+If you ship N+1 while N is still ramping, N+1 starts a fresh rollout from its own publish timestamp. N's rollout effectively ends — the newer manifest supersedes it.
+
+If N+1 is a hotfix for a bug in N, dispatch `desktop-rollout.yml -f tag=v0.1.<N+1> -f rollout_hours=0` after N+1 publishes so the users who already got N reach the fix fast.
+
+### Limitations
+
+- **No pause / kill switch.** Once a stable user is admitted, they will install the update on next quit (`autoInstallOnAppQuit = true`). To stop new admissions, ship a superseding release. To "recall" already-admitted users, ship a hotfix `+1` patch.
+- **No rollback.** `allowDowngrade = false`. Bad release = ship a hotfix.
+- **Bootstrap caveat.** Clients running a build older than the rollout feature ignore `rolloutHours` and admit immediately. Rollout protection only applies to clients running the rollout-aware version or later.
+- **Up to ~30 min admission latency.** Renderer polls every 30 minutes, so a stable user may take up to that long to be evaluated against the rollout window.
+
 ## Website behavior
 
 - The website download page points to GitHub's latest published **stable** release.

@@ -32,6 +32,8 @@ export const ProviderSummarySchema = z
   .object({
     id: z.string(),
     label: z.string().nullish(),
+    description: z.string().nullish(),
+    enabled: z.boolean().optional().default(true),
     modes: z.array(ProviderModeSchema).nullish(),
   })
   .passthrough();
@@ -88,10 +90,10 @@ export function resolveRequiredProviderModel(
   };
 }
 
-export type StartAgentRunOptions = {
+export interface StartAgentRunOptions {
   replaceRunning?: boolean;
   runOptions?: AgentRunOptions;
-};
+}
 
 /**
  * Wraps agentManager.waitForAgentEvent with a self-imposed timeout.

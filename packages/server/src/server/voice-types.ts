@@ -4,9 +4,9 @@ export type VoiceSpeakHandler = (params: {
   signal?: AbortSignal;
 }) => Promise<void>;
 
-export type VoiceCallerContext = {
+export interface VoiceCallerContext {
   childAgentDefaultLabels?: Record<string, string>;
   lockedCwd?: string;
   allowCustomCwd?: boolean;
   enableVoiceTools?: boolean;
-};
+}

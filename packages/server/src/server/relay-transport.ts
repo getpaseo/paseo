@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 import { EventEmitter } from "node:events";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import type pino from "pino";
 import {
   createDaemonChannel,
@@ -11,25 +11,25 @@ import {
 import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 
-type RelayTransportOptions = {
+interface RelayTransportOptions {
   logger: pino.Logger;
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>;
   relayEndpoint: string; // "host:port"
   serverId: string;
   daemonKeyPair?: KeyPair;
-};
+}
 
-export type RelayTransportController = {
+export interface RelayTransportController {
   stop: () => Promise<void>;
-};
+}
 
-type RelaySocketLike = {
+interface RelaySocketLike {
   readyState: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
-  on: (event: "message" | "close" | "error", listener: (...args: any[]) => void) => void;
-  once: (event: "close" | "error", listener: (...args: any[]) => void) => void;
-};
+  on: (event: "message" | "close" | "error", listener: (...args: unknown[]) => void) => void;
+  once: (event: "close" | "error", listener: (...args: unknown[]) => void) => void;
+}
 
 type ControlMessage =
   | { type: "sync"; connectionIds: string[] }
@@ -42,11 +42,29 @@ const CONTROL_PING_INTERVAL_MS = 10_000;
 const CONTROL_STALE_TIMEOUT_MS = 30_000;
 const CONTROL_READY_TIMEOUT_MS = 8_000;
 
+function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): string | ArrayBuffer {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) return data;
+  if (ArrayBuffer.isView(data)) {
+    const view = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    const out = new Uint8Array(view.byteLength);
+    out.set(view);
+    return out.buffer;
+  }
+  return String(data);
+}
+
 function tryParseControlMessage(raw: unknown): ControlMessage | null {
   try {
-    const text =
-      typeof raw === "string" ? raw : Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
-    const parsed = JSON.parse(text) as any;
+    let text: string;
+    if (typeof raw === "string") {
+      text = raw;
+    } else if (Buffer.isBuffer(raw)) {
+      text = raw.toString("utf8");
+    } else {
+      text = String(raw);
+    }
+    const parsed = JSON.parse(text) as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object") return null;
     if (parsed.type === "ping") return { type: "ping" };
     if (parsed.type === "pong") return { type: "pong" };
@@ -266,8 +284,8 @@ export function startRelayTransport({
       }
       if (msg.type === "pong") return;
       if (msg.type === "sync") {
-        for (const connectionId of msg.connectionIds) {
-          ensureClientDataSocket(connectionId);
+        for (const clientConnectionId of msg.connectionIds) {
+          ensureClientDataSocket(clientConnectionId);
         }
         return;
       }
@@ -443,19 +461,7 @@ function createEncryptedSocket(channel: EncryptedChannel, emitter: EventEmitter)
       return readyState;
     },
     send: (data) => {
-      const outbound =
-        typeof data === "string"
-          ? data
-          : data instanceof ArrayBuffer
-            ? data
-            : ArrayBuffer.isView(data)
-              ? (() => {
-                  const view = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-                  const out = new Uint8Array(view.byteLength);
-                  out.set(view);
-                  return out.buffer;
-                })()
-              : String(data);
+      const outbound = normalizeRelaySendPayload(data);
       void channel.send(outbound).catch((error) => {
         emitter.emit("error", error);
       });

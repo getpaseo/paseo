@@ -7,20 +7,20 @@ import { afterEach, describe, expect, test } from "vitest";
 import { findExecutable } from "../../../utils/executable.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 
-type SpawnResult = {
+interface SpawnResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
   error: Error | null;
-};
+}
 
-type ProviderLaunchCase = {
+interface ProviderLaunchCase {
   provider: "claude" | "codex" | "opencode" | "generic-acp";
   binaryName: string;
   args: string[];
   shell?: boolean;
-};
+}
 
 const JSON_ARG = '{"mcpServers":{"paseo":{"type":"http","url":"http://127.0.0.1:6767/mcp"}}}';
 const tempDirs: string[] = [];
@@ -55,7 +55,7 @@ console.log("ARGV_OK");
   const shim = path.join(root, `${binaryName}.cmd`);
   writeFileSync(
     shim,
-    ["@echo off", "setlocal", `\"${fakeDaemonNode}\" \"${assertScript}\" %*`, ""].join("\r\n"),
+    ["@echo off", "setlocal", `"${fakeDaemonNode}" "${assertScript}" %*`, ""].join("\r\n"),
   );
 
   return { root, shim, expectedArgs };
@@ -63,18 +63,19 @@ console.log("ARGV_OK");
 
 function collectChild(child: ChildProcess, timeoutMs = 10_000): Promise<SpawnResult> {
   return new Promise((resolve) => {
+    let pendingResolve: ((value: SpawnResult) => void) | null = resolve;
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let error: Error | null = null;
-    let settled = false;
 
     const settle = (result: Pick<SpawnResult, "code" | "signal">) => {
-      if (settled) {
+      if (!pendingResolve) {
         return;
       }
-      settled = true;
+      const fn = pendingResolve;
+      pendingResolve = null;
       clearTimeout(timer);
-      resolve({
+      fn({
         ...result,
         stdout: Buffer.concat(stdoutChunks).toString("utf8"),
         stderr: Buffer.concat(stderrChunks).toString("utf8"),
@@ -140,7 +141,7 @@ function withPathEntry<T>(dir: string, run: () => Promise<T>): Promise<T> {
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -192,26 +193,23 @@ describe.runIf(process.platform === "win32")("Windows provider launch parity", (
     });
   });
 
-  test.each(
-    providerLaunchCases,
-  )("$provider launches a cmd shim from a path with spaces through spawnProcess", async ({
-    binaryName,
-    args,
-    shell,
-  }) => {
-    const fixture = makeFixture(binaryName, args);
+  test.each(providerLaunchCases)(
+    "$provider launches a cmd shim from a path with spaces through spawnProcess",
+    async ({ binaryName, args, shell }) => {
+      const fixture = makeFixture(binaryName, args);
 
-    const result = await runProviderFixture({
-      command: fixture.shim,
-      args: fixture.expectedArgs,
-      expectedArgs: fixture.expectedArgs,
-      shell,
-    });
+      const result = await runProviderFixture({
+        command: fixture.shim,
+        args: fixture.expectedArgs,
+        expectedArgs: fixture.expectedArgs,
+        shell,
+      });
 
-    expect(result.error).toBeNull();
-    expect(result.code).toBe(0);
-    expect(result.signal).toBeNull();
-    expect(result.stderr).toBe("");
-    expect(result.stdout.trim()).toBe("ARGV_OK");
-  });
+      expect(result.error).toBeNull();
+      expect(result.code).toBe(0);
+      expect(result.signal).toBeNull();
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toBe("ARGV_OK");
+    },
+  );
 });

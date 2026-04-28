@@ -11,39 +11,39 @@ import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types
 import { useSessionStore } from "@/stores/session-store";
 import { providersSnapshotQueryKey, useProvidersSnapshot } from "./use-providers-snapshot";
 
-type ProviderSnapshotUpdateMessage = {
+interface ProviderSnapshotUpdateMessage {
   type: "providers_snapshot_update";
   payload: {
     cwd: string;
     entries: ProviderSnapshotEntry[];
     generatedAt: string;
   };
-};
+}
 type ProviderSnapshotUpdateListener = (message: ProviderSnapshotUpdateMessage) => void;
-type ProvidersSnapshot = {
+interface ProvidersSnapshot {
   entries: ProviderSnapshotEntry[];
   generatedAt: string;
   requestId: string;
-};
+}
 type HookResult = ReturnType<typeof renderProvidersSnapshotHook>["result"];
 
 const { mockClient, mockRuntime, snapshotUpdateListeners } = vi.hoisted(() => {
-  const snapshotUpdateListeners: ProviderSnapshotUpdateListener[] = [];
-  const mockClient = {
+  const hoistedListeners: ProviderSnapshotUpdateListener[] = [];
+  const hoistedClient = {
     getProvidersSnapshot: vi.fn(),
     refreshProvidersSnapshot: vi.fn(),
     on: vi.fn((_event: string, listener: ProviderSnapshotUpdateListener) => {
-      snapshotUpdateListeners.push(listener);
+      hoistedListeners.push(listener);
       return () => {};
     }),
   };
   return {
-    mockClient,
+    mockClient: hoistedClient,
     mockRuntime: {
-      client: mockClient,
+      client: hoistedClient,
       isConnected: true,
     },
-    snapshotUpdateListeners,
+    snapshotUpdateListeners: hoistedListeners,
   };
 });
 
@@ -101,6 +101,7 @@ function codexEntry(
   return {
     provider: "codex",
     status,
+    enabled: true,
     ...(models ? { models } : {}),
   };
 }
@@ -237,23 +238,24 @@ describe("providers snapshot hook cache scope", () => {
   it.each([
     { name: "missing", entries: [] },
     { name: "loading", entries: [codexEntry("loading")] },
-  ])("ensures a selected provider snapshot on selector open when it is $name", async ({
-    entries,
-  }) => {
-    enableProvidersSnapshot();
-    mockClient.getProvidersSnapshot
-      .mockResolvedValueOnce(providersSnapshot(entries))
-      .mockResolvedValueOnce(providersSnapshot([codexEntry("ready", [readyCodexModel])]));
+  ])(
+    "ensures a selected provider snapshot on selector open when it is $name",
+    async ({ entries }) => {
+      enableProvidersSnapshot();
+      mockClient.getProvidersSnapshot
+        .mockResolvedValueOnce(providersSnapshot(entries))
+        .mockResolvedValueOnce(providersSnapshot([codexEntry("ready", [readyCodexModel])]));
 
-    const { result } = renderProvidersSnapshotHook();
+      const { result } = renderProvidersSnapshotHook();
 
-    await waitForSnapshotEntries(result, entries);
-    await openSelectorForSelectedProvider(result);
-    await waitForSnapshotReads(2);
+      await waitForSnapshotEntries(result, entries);
+      await openSelectorForSelectedProvider(result);
+      await waitForSnapshotReads(2);
 
-    expect(mockClient.getProvidersSnapshot).toHaveBeenLastCalledWith({});
-    expect(mockClient.refreshProvidersSnapshot).not.toHaveBeenCalled();
-  });
+      expect(mockClient.getProvidersSnapshot).toHaveBeenLastCalledWith({});
+      expect(mockClient.refreshProvidersSnapshot).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not ensure a selected provider snapshot on selector open when the provider is ready with no models", async () => {
     enableProvidersSnapshot();

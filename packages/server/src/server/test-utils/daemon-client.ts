@@ -1,4 +1,4 @@
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import {
   DaemonClient as SharedDaemonClient,
   type DaemonClientConfig as SharedDaemonClientConfig,

@@ -34,10 +34,10 @@ function resolveRelayVersion(rawValue: string | null): RelayProtocolVersion | nu
   return null;
 }
 
-type WebSocketPair = {
+interface WebSocketPair {
   0: WebSocket;
   1: WebSocket;
-};
+}
 
 interface DurableObjectState {
   acceptWebSocket(ws: WebSocket, tags?: string[]): void;
@@ -125,6 +125,36 @@ export class RelayDurableObject {
       return this.state.getWebSockets(`client:${connectionId}`).length > 0;
     } catch {
       return false;
+    }
+  }
+
+  private closeExistingServerSockets(args: {
+    isServerControl: boolean;
+    isServerData: boolean;
+    resolvedConnectionId: string;
+  }): void {
+    if (args.isServerControl) {
+      for (const ws of this.state.getWebSockets("server-control")) {
+        ws.close(1008, "Replaced by new connection");
+      }
+    } else if (args.isServerData) {
+      for (const ws of this.state.getWebSockets(`server:${args.resolvedConnectionId}`)) {
+        ws.close(1008, "Replaced by new connection");
+      }
+    }
+  }
+
+  private handleControlKeepalive(ws: WebSocket, message: string): void {
+    try {
+      const parsed = JSON.parse(message) as unknown as { type?: unknown };
+      if (parsed?.type !== "ping") return;
+      try {
+        ws.send(JSON.stringify({ type: "pong", ts: Date.now() }));
+      } catch {
+        // ignore
+      }
+    } catch {
+      // ignore non-JSON control payloads
     }
   }
 
@@ -270,15 +300,7 @@ export class RelayDurableObject {
     // - server-control: single per serverId
     // - server-data: single per connectionId
     // - client: many sockets per connectionId are allowed
-    if (isServerControl) {
-      for (const ws of this.state.getWebSockets("server-control")) {
-        ws.close(1008, "Replaced by new connection");
-      }
-    } else if (isServerData) {
-      for (const ws of this.state.getWebSockets(`server:${resolvedConnectionId}`)) {
-        ws.close(1008, "Replaced by new connection");
-      }
-    }
+    this.closeExistingServerSockets({ isServerControl, isServerData, resolvedConnectionId });
 
     const [client, server] = this.createWebSocketPair();
 
@@ -302,9 +324,15 @@ export class RelayDurableObject {
     };
     (server as WebSocketWithAttachment).serializeAttachment(attachment);
 
-    console.log(
-      `[Relay DO] v2:${role}${isServerControl ? "(control)" : ""}${isServerData ? `(data:${resolvedConnectionId})` : role === "client" ? `(${resolvedConnectionId})` : ""} connected to session ${serverId}`,
-    );
+    let roleSuffix = "";
+    if (isServerControl) {
+      roleSuffix = "(control)";
+    } else if (isServerData) {
+      roleSuffix = `(data:${resolvedConnectionId})`;
+    } else if (role === "client") {
+      roleSuffix = `(${resolvedConnectionId})`;
+    }
+    console.log(`[Relay DO] v2:${role}${roleSuffix} connected to session ${serverId}`);
 
     if (role === "client") {
       this.notifyControls({ type: "connected", connectionId: resolvedConnectionId });
@@ -387,18 +415,7 @@ export class RelayDurableObject {
     if (!connectionId) {
       // Control channel: support simple app-level keepalive.
       if (typeof message === "string") {
-        try {
-          const parsed = JSON.parse(message) as unknown as { type?: unknown };
-          if (parsed?.type === "ping") {
-            try {
-              ws.send(JSON.stringify({ type: "pong", ts: Date.now() }));
-            } catch {
-              // ignore
-            }
-          }
-        } catch {
-          // ignore non-JSON control payloads
-        }
+        this.handleControlKeepalive(ws, message);
       }
       return;
     }

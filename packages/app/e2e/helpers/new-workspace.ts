@@ -17,21 +17,21 @@ type NewWorkspaceDaemonClient = Pick<
   | "openProject"
 >;
 
-type NewWorkspaceDaemonClientConfig = {
+interface NewWorkspaceDaemonClientConfig {
   url: string;
   clientId: string;
   clientType: "cli";
   webSocketFactory?: NodeWebSocketFactory;
-};
+}
 
 type OpenProjectPayload = Awaited<ReturnType<NewWorkspaceDaemonClient["openProject"]>>;
 
-export type OpenedProject = {
+export interface OpenedProject {
   workspaceId: string;
   projectKey: string;
   projectDisplayName: string;
   workspaceName: string;
-};
+}
 
 function getDaemonPort(): string {
   const daemonPort = process.env.E2E_DAEMON_PORT;
@@ -49,9 +49,7 @@ function getDaemonWsUrl(): string {
 }
 
 async function loadDaemonClientConstructor(): Promise<
-  new (
-    config: NewWorkspaceDaemonClientConfig,
-  ) => NewWorkspaceDaemonClient
+  new (config: NewWorkspaceDaemonClientConfig) => NewWorkspaceDaemonClient
 > {
   const repoRoot = path.resolve(__dirname, "../../../../");
   const moduleUrl = pathToFileURL(

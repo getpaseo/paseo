@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GitHubAuthenticationError,
@@ -1220,6 +1224,78 @@ describe("GitHubService", () => {
     ]);
   });
 
+  it("selects the requested fork owner when resolving a scoped PR worktree branch", async () => {
+    const runner = createScriptedRunner([
+      { error: noPullRequestError() },
+      JSON.stringify([
+        {
+          number: 77,
+          url: "https://github.com/repoOwner/repo/pull/77",
+          title: "Unrelated fork main branch",
+          state: "OPEN",
+          isDraft: false,
+          baseRefName: "main",
+          headRefName: "main",
+          mergedAt: null,
+          statusCheckRollup: [],
+          reviewDecision: "REVIEW_REQUIRED",
+          headRepositoryOwner: { login: "otherForkOwner" },
+        },
+        {
+          number: 345,
+          url: "https://github.com/repoOwner/repo/pull/345",
+          title: "Requested fork main branch",
+          state: "OPEN",
+          isDraft: false,
+          baseRefName: "main",
+          headRefName: "main",
+          mergedAt: null,
+          statusCheckRollup: [],
+          reviewDecision: "REVIEW_REQUIRED",
+          headRepositoryOwner: { login: "chethanuk" },
+        },
+      ]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "main",
+      headRepositoryOwner: "chethanuk",
+    });
+
+    expect(status).toMatchObject({
+      number: 345,
+      repoOwner: "repoOwner",
+      repoName: "repo",
+      headRefName: "main",
+    });
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      [
+        "pr",
+        "view",
+        "--json",
+        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
+      ],
+      [
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--head",
+        "main",
+        "--json",
+        "number,url,title,state,isDraft,baseRefName,headRefName,mergedAt,statusCheckRollup,reviewDecision,headRepositoryOwner",
+        "--limit",
+        "10",
+      ],
+    ]);
+  });
+
   it("finds a fork PR in the parent repo when the direct current branch view is unavailable", async () => {
     const runner = createScriptedRunner([
       { error: noPullRequestError() },
@@ -1765,16 +1841,20 @@ describe("GitHubService", () => {
     expect(valid.reason).toBe("test");
   });
 
-  it("resolves GitHub repos from a WorkspaceGitService-owned remote URL", async () => {
-    const workspaceGitService = {
-      resolveRepoRemoteUrl: async (cwd: string) => {
-        expect(cwd).toBe("/repo");
-        return "git@github.com:getpaseo/paseo.git";
-      },
-    };
+  it("resolves GitHub repos from the origin remote URL", async () => {
+    vi.useRealTimers();
+    const cwd = mkdtempSync(join(tmpdir(), "github-service-repo-"));
 
-    await expect(resolveGitHubRepo("/repo", { workspaceGitService })).resolves.toBe(
-      "getpaseo/paseo",
-    );
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
+      execFileSync("git", ["remote", "add", "origin", "git@github.com:getpaseo/paseo.git"], {
+        cwd,
+        stdio: "ignore",
+      });
+
+      await expect(resolveGitHubRepo(cwd)).resolves.toBe("getpaseo/paseo");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

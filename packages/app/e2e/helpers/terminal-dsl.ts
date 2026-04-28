@@ -7,16 +7,16 @@ import {
   type TerminalPerfDaemonClient,
 } from "./terminal-perf";
 
-type TempRepo = {
+interface TempRepo {
   path: string;
   cleanup: () => Promise<void>;
-};
+}
 
-export type TerminalInstance = {
+export interface TerminalInstance {
   id: string;
   name: string;
   cwd: string;
-};
+}
 
 export class TerminalE2EHarness {
   readonly client: TerminalPerfDaemonClient;

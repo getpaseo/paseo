@@ -4,27 +4,27 @@ on:
   push:
     branches: [main]
     paths:
-      - 'nix/**'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'packages/highlight/**'
-      - 'packages/server/**'
-      - 'packages/relay/**'
-      - 'packages/cli/**'
+      - "nix/**"
+      - "flake.nix"
+      - "flake.lock"
+      - "package.json"
+      - "package-lock.json"
+      - "packages/highlight/**"
+      - "packages/server/**"
+      - "packages/relay/**"
+      - "packages/cli/**"
   pull_request:
     branches: [main]
     paths:
-      - 'nix/**'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'packages/highlight/**'
-      - 'packages/server/**'
-      - 'packages/relay/**'
-      - 'packages/cli/**'
+      - "nix/**"
+      - "flake.nix"
+      - "flake.lock"
+      - "package.json"
+      - "package-lock.json"
+      - "packages/highlight/**"
+      - "packages/server/**"
+      - "packages/relay/**"
+      - "packages/cli/**"
 
 permissions:
   contents: read

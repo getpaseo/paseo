@@ -5,6 +5,7 @@ Deploy impl agents to execute the plan phase by phase. Each phase is independent
 ## TDD — Not Optional
 
 Every impl agent works TDD:
+
 1. Write a failing test that defines the expected behavior
 2. Make it pass
 3. Refactor if needed
@@ -17,6 +18,7 @@ If an impl agent finds a broken test, it fixes it. No "pre-existing failures." N
 Execute phases sequentially from the plan. Refactoring phases first, then feature phases, then UI passes.
 
 After each phase:
+
 1. Verify (see verification.md)
 2. Fix any issues found
 3. Re-verify
@@ -29,11 +31,13 @@ Use the Paseo **create agent** tool with `background: true` and `notifyOnFinish:
 ### How to describe the work
 
 **Describe the problem, not the solution.** Your prompt should tell the agent:
+
 - What's wrong or what needs to be built (the goal)
 - How it currently fails (error output, test output, user-visible behavior)
 - The acceptance criteria (what "done" looks like)
 
 **Do NOT tell the agent:**
+
 - Which specific lines to change
 - What code to write
 - Which functions to call or which patterns to use
@@ -95,6 +99,7 @@ Run typecheck when done. Do NOT commit."
 ## Handling Blockers
 
 If an impl agent reports a blocker:
+
 - Do NOT ask the user (in either mode)
 - Spin up a researcher to investigate
 - Spin up an impl agent to fix it

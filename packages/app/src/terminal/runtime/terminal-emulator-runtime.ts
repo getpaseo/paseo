@@ -18,14 +18,14 @@ import {
 } from "@/utils/terminal-keys";
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
 
-export type TerminalEmulatorRuntimeMountInput = {
+export interface TerminalEmulatorRuntimeMountInput {
   root: HTMLDivElement;
   host: HTMLDivElement;
   initialSnapshot: TerminalState | null;
   theme: ITheme;
-};
+}
 
-export type TerminalEmulatorRuntimeCallbacks = {
+export interface TerminalEmulatorRuntimeCallbacks {
   onInput?: (data: string) => Promise<void> | void;
   onResize?: (input: { rows: number; cols: number }) => Promise<void> | void;
   onTerminalKey?: (input: {
@@ -37,9 +37,9 @@ export type TerminalEmulatorRuntimeCallbacks = {
   }) => Promise<void> | void;
   onPendingModifiersConsumed?: () => Promise<void> | void;
   onOpenExternalUrl?: (url: string) => Promise<void> | void;
-};
+}
 
-type TerminalEmulatorRuntimeDisposables = {
+interface TerminalEmulatorRuntimeDisposables {
   disposeInput: () => void;
   disconnectResizeObserver: () => void;
   removeWindowResize: () => void;
@@ -55,16 +55,16 @@ type TerminalEmulatorRuntimeDisposables = {
   disposeFitAddon: () => void;
   disposeWebglAddon: () => void;
   disposeTerminal: () => void;
-};
+}
 
-type TerminalOutputOperation = {
+interface TerminalOutputOperation {
   type: "write" | "clear" | "snapshot";
   text: string;
   rows?: number;
   cols?: number;
   suppressInput?: boolean;
   onCommitted?: () => void;
-};
+}
 
 declare global {
   interface Window {
@@ -75,7 +75,7 @@ declare global {
 const isMac =
   typeof navigator !== "undefined" &&
   (/Macintosh|Mac OS/i.test(navigator.userAgent ?? "") ||
-    /Mac/i.test((navigator as any).platform ?? ""));
+    /Mac/i.test((navigator as Navigator & { platform?: string }).platform ?? ""));
 
 const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
@@ -158,6 +158,7 @@ export class TerminalEmulatorRuntime {
       convertEol: false,
       cursorBlink: true,
       cursorStyle: "bar",
+      customGlyphs: true,
       fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
       fontSize: 13,
       lineHeight: 1.0,
@@ -173,6 +174,7 @@ export class TerminalEmulatorRuntime {
     const fitAddon = new FitAddon();
     const unicode11Addon = new Unicode11Addon();
     let webglAddon: WebglAddon | null = null;
+    let imageAddon: ImageAddon | null = null;
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(unicode11Addon);
     terminal.loadAddon(
@@ -195,39 +197,66 @@ export class TerminalEmulatorRuntime {
       // Ignore if unicode API isn't available in this build/runtime.
     }
 
-    // Prefer GPU rendering when available. This tends to reduce visible seams in block characters
-    // and improves scroll performance, but must gracefully fall back on platforms without WebGL.
+    const disposeImageAddon = (): void => {
+      try {
+        imageAddon?.dispose();
+      } catch {
+        // ignore
+      }
+      imageAddon = null;
+    };
+    const disposeWebglRenderer = (): void => {
+      if (!webglAddon) {
+        return;
+      }
+      try {
+        webglAddon.dispose();
+      } catch {
+        // ignore
+      }
+      webglAddon = null;
+      disposeImageAddon();
+      // WebGL and DOM renderers can have different cell dimensions.
+      this.fitAndEmitResize?.(true);
+    };
+
+    // Browser xterm is a renderer only; it never replies to terminal protocol queries.
+    // Replies live on the daemon (one process boundary from the PTY) so they arrive
+    // before the foreground app exits, instead of racing back over the websocket.
+    // Re-registered after the image addon loads so our handlers stay last in the
+    // LIFO dispatch (the image addon registers its own {final:"c"} for sixel DA1).
+    const registerProtocolQuerySuppression = (): void => {
+      terminal.parser.registerCsiHandler({ final: "c" }, () => true);
+      terminal.parser.registerCsiHandler({ prefix: ">", final: "c" }, () => true);
+      terminal.parser.registerCsiHandler({ prefix: "=", final: "c" }, () => true);
+      terminal.parser.registerCsiHandler({ final: "n" }, () => true);
+      terminal.parser.registerCsiHandler({ prefix: "?", final: "n" }, () => true);
+      terminal.parser.registerCsiHandler({ final: "R" }, () => true);
+      terminal.parser.registerCsiHandler({ intermediates: "$", final: "p" }, () => true);
+      terminal.parser.registerCsiHandler(
+        { prefix: "?", intermediates: "$", final: "p" },
+        () => true,
+      );
+    };
+    registerProtocolQuerySuppression();
+
     let webglAddonRaf: number | null = requestAnimationFrame(() => {
       webglAddonRaf = null;
       try {
+        disposeWebglRenderer();
         webglAddon = new WebglAddon();
         webglAddon.onContextLoss(() => {
-          try {
-            webglAddon?.dispose();
-          } catch {
-            // ignore
-          }
-          webglAddon = null;
-          // Force a refresh after context loss to avoid visual corruption.
-          try {
-            terminal.refresh(0, terminal.rows - 1);
-          } catch {
-            // ignore
-          }
+          disposeWebglRenderer();
         });
         terminal.loadAddon(webglAddon);
+        imageAddon = new ImageAddon();
+        terminal.loadAddon(imageAddon);
+        registerProtocolQuerySuppression();
+        this.fitAndEmitResize?.(true);
       } catch {
-        webglAddon = null;
+        disposeWebglRenderer();
       }
     });
-
-    terminal.loadAddon(new ImageAddon());
-
-    // Suppress terminal query responses — the server-side headless xterm handles these.
-    // Without this, xterm.js generates DA/CPR responses via onData that feed back
-    // to the PTY as visible text.
-    terminal.parser.registerCsiHandler({ final: "c" }, () => true);
-    terminal.parser.registerCsiHandler({ final: "R" }, () => true);
 
     const restoreDocumentStyles = this.applyDocumentBoundsStyles({
       root: input.root,
@@ -303,6 +332,7 @@ export class TerminalEmulatorRuntime {
             if (text) {
               terminal.paste(text);
             }
+            return;
           });
           return false;
         }
@@ -393,6 +423,7 @@ export class TerminalEmulatorRuntime {
     void fontSet?.ready
       .then(() => {
         fitAndEmitResize(true);
+        return;
       })
       .catch(() => {
         // no-op
@@ -449,12 +480,8 @@ export class TerminalEmulatorRuntime {
           cancelAnimationFrame(webglAddonRaf);
           webglAddonRaf = null;
         }
-        try {
-          webglAddon?.dispose();
-        } catch {
-          // ignore
-        }
-        webglAddon = null;
+        disposeWebglRenderer();
+        disposeImageAddon();
       },
       disposeTerminal: () => {
         terminal.dispose();

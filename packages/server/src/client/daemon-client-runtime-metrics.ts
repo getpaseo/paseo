@@ -1,16 +1,16 @@
 import type { SessionOutboundMessage } from "../shared/messages.js";
 
-type RuntimeMetricsLogger = {
+interface RuntimeMetricsLogger {
   info(obj: object, msg?: string): void;
-};
+}
 
-type RuntimeMetricsHandlerTiming = {
+interface RuntimeMetricsHandlerTiming {
   count: number;
   totalMs: number;
   maxMs: number;
-};
+}
 
-type RuntimeMetricsBucket = {
+interface RuntimeMetricsBucket {
   inboundMessageCounts: Map<string, number>;
   inboundMessageBytes: Map<string, number>;
   inboundMessageHandlerMs: Map<string, RuntimeMetricsHandlerTiming>;
@@ -18,17 +18,17 @@ type RuntimeMetricsBucket = {
   inboundAgentStreamByAgentCounts: Map<string, number>;
   inboundBinaryFrameCounts: Map<string, number>;
   endedAt: number;
-};
+}
 
-type RuntimeMetricsContext = {
+interface RuntimeMetricsContext {
   connectionPath: "direct" | "relay";
   serverId: string | null;
   getConnectionStatus: () => string;
-};
+}
 
-type RuntimeMetricsOptions = {
+interface RuntimeMetricsOptions {
   windowMs?: number;
-};
+}
 
 const DEFAULT_ROLLING_WINDOW_MS = 60_000;
 

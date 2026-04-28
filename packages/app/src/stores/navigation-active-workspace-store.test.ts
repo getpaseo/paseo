@@ -1,8 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const asyncStorageMock = vi.hoisted(() => ({
+  getItem: vi.fn<(_: string) => Promise<string | null>>(),
+  setItem: vi.fn<(_: string, __: string) => Promise<void>>(),
+}));
+
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: asyncStorageMock,
+}));
+
 vi.mock("@/constants/platform", () => ({
   isWeb: true,
 }));
+
+const LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-selection";
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
 
 function installWindowStub(pathname: string) {
   const windowStub = {
@@ -75,6 +94,10 @@ function createNavigationPathWithParamsRef(path: string, serverId: string, works
 describe("navigation active workspace store", () => {
   beforeEach(() => {
     vi.resetModules();
+    asyncStorageMock.getItem.mockReset();
+    asyncStorageMock.setItem.mockReset();
+    asyncStorageMock.getItem.mockResolvedValue(null);
+    asyncStorageMock.setItem.mockResolvedValue();
   });
 
   afterEach(() => {
@@ -172,5 +195,59 @@ describe("navigation active workspace store", () => {
       serverId: "server-1",
       workspaceId: "workspace-a",
     });
+  });
+
+  it("hydrates the last workspace route selection from storage on startup", async () => {
+    const storedSelection = createDeferred<string | null>();
+    asyncStorageMock.getItem.mockReturnValue(storedSelection.promise);
+    installWindowStub("/open-project");
+
+    const store = await import("@/stores/navigation-active-workspace-store");
+
+    expect(store.getIsLastNavigationWorkspaceRouteSelectionLoaded()).toBe(false);
+    const hydration = store.hydrateLastNavigationWorkspaceRouteSelection();
+    storedSelection.resolve(JSON.stringify({ serverId: "server-1", workspaceId: "workspace-a" }));
+    await hydration;
+
+    expect(asyncStorageMock.getItem).toHaveBeenCalledWith(
+      LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY,
+    );
+    expect(store.getLastNavigationWorkspaceRouteSelection()).toEqual({
+      serverId: "server-1",
+      workspaceId: "workspace-a",
+    });
+    expect(store.getIsLastNavigationWorkspaceRouteSelectionLoaded()).toBe(true);
+  });
+
+  it("hydrates empty and corrupt workspace route storage as null", async () => {
+    installWindowStub("/open-project");
+
+    asyncStorageMock.getItem.mockResolvedValueOnce(null);
+    let store = await import("@/stores/navigation-active-workspace-store");
+    await store.hydrateLastNavigationWorkspaceRouteSelection();
+
+    expect(store.getLastNavigationWorkspaceRouteSelection()).toBeNull();
+    expect(store.getIsLastNavigationWorkspaceRouteSelectionLoaded()).toBe(true);
+
+    vi.resetModules();
+    asyncStorageMock.getItem.mockResolvedValueOnce("{not json");
+    store = await import("@/stores/navigation-active-workspace-store");
+    await store.hydrateLastNavigationWorkspaceRouteSelection();
+
+    expect(store.getLastNavigationWorkspaceRouteSelection()).toBeNull();
+    expect(store.getIsLastNavigationWorkspaceRouteSelectionLoaded()).toBe(true);
+  });
+
+  it("persists valid last workspace route selections", async () => {
+    installWindowStub("/h/server-1/workspace/workspace-a");
+    const store = await import("@/stores/navigation-active-workspace-store");
+    await store.hydrateLastNavigationWorkspaceRouteSelection();
+
+    store.syncNavigationActiveWorkspace(createNavigationRef("server-1", "workspace-a"));
+
+    expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
+      LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY,
+      JSON.stringify({ serverId: "server-1", workspaceId: "workspace-a" }),
+    );
   });
 });

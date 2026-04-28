@@ -54,8 +54,15 @@ export function useHoverSafeZone({
       const contentRect = contentNode ? contentNode.getBoundingClientRect() : null;
 
       const inside = isInsideSafeZone(triggerRect, contentRect, event.clientX, event.clientY);
-      if (inside) enterSafeZone();
-      else leaveSafeZone();
+      if (inside) {
+        if (wasInside) {
+          onEnterSafeZone();
+          return;
+        }
+        enterSafeZone();
+        return;
+      }
+      leaveSafeZone();
     }
 
     function handlePointerOut(event: PointerEvent) {

@@ -1,11 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import path from "node:path";
+import type { FSWatcher } from "node:fs";
+import type pino from "pino";
 import type { GitHubService } from "../services/github-service.js";
 import type { CheckoutStatusGit, PullRequestStatusResult } from "../utils/checkout-git.js";
 import {
   WorkspaceGitServiceImpl,
   type WorkspaceGitRuntimeSnapshot,
 } from "./workspace-git-service.js";
+
+interface ServiceInternals {
+  workingTreeWatchTargets: Map<string, { fallbackRefreshInterval: unknown; repoWatchPath: string }>;
+  scheduleWorkspaceRefresh(cwd: string, options: { force: boolean; reason: string }): void;
+}
 
 function createLogger() {
   const logger = {
@@ -82,6 +89,7 @@ function createCheckoutStatus(
   return {
     isGit: true,
     repoRoot: cwd,
+    mainRepoRoot: null,
     currentBranch: "main",
     isDirty: false,
     baseRef: "main",
@@ -112,11 +120,12 @@ function createPullRequestStatusResult(
   };
 }
 
-function createWatcher() {
-  return {
+function createWatcher(): FSWatcher & { close: ReturnType<typeof vi.fn> } {
+  const watcher = {
     close: vi.fn(),
     on: vi.fn().mockReturnThis(),
   };
+  return watcher as unknown as FSWatcher & { close: ReturnType<typeof vi.fn> };
 }
 
 function createDirent(name: string, isDirectory: boolean) {
@@ -127,8 +136,9 @@ function createDirent(name: string, isDirectory: boolean) {
 }
 
 async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 6; i++) {
+    await Promise.resolve();
+  }
 }
 
 function createDeferred<T>() {
@@ -167,7 +177,7 @@ function createGitHubServiceStub(): GitHubService {
   };
 }
 
-function createService(options?: {
+interface CreateServiceTestOptions {
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
@@ -179,38 +189,38 @@ function createService(options?: {
   readdir?: ReturnType<typeof vi.fn>;
   watch?: ReturnType<typeof vi.fn>;
   now?: () => Date;
-}) {
+}
+
+function buildDefaultTestServiceDeps() {
+  return {
+    watch: (() => createWatcher()) as unknown as typeof import("node:fs").watch,
+    readdir: vi.fn(async () => []),
+    getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
+    getCheckoutShortstat: vi.fn(async () => ({
+      additions: 1,
+      deletions: 0,
+    })),
+    getPullRequestStatus: vi.fn(async () => createPullRequestStatusResult()),
+    github: createGitHubServiceStub(),
+    resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
+    hasOriginRemote: vi.fn(async () => false),
+    runGitFetch: vi.fn(async () => {}),
+    runGitCommand: vi.fn(async () => ({
+      stdout: "/tmp/repo\n",
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    })),
+    now: () => new Date("2026-04-12T00:00:00.000Z"),
+  };
+}
+
+function createService(options?: CreateServiceTestOptions) {
   return new WorkspaceGitServiceImpl({
-    logger: createLogger() as any,
+    logger: createLogger() as unknown as pino.Logger,
     paseoHome: "/tmp/paseo-test",
-    deps: {
-      watch: options?.watch ?? ((() => createWatcher()) as unknown as any),
-      readdir: options?.readdir ?? vi.fn(async () => []),
-      getCheckoutStatus:
-        options?.getCheckoutStatus ?? vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
-      getCheckoutShortstat:
-        options?.getCheckoutShortstat ??
-        vi.fn(async () => ({
-          additions: 1,
-          deletions: 0,
-        })),
-      getPullRequestStatus:
-        options?.getPullRequestStatus ?? vi.fn(async () => createPullRequestStatusResult()),
-      github: options?.github ?? createGitHubServiceStub(),
-      resolveAbsoluteGitDir: options?.resolveAbsoluteGitDir ?? vi.fn(async () => "/tmp/repo/.git"),
-      hasOriginRemote: options?.hasOriginRemote ?? vi.fn(async () => false),
-      runGitFetch: options?.runGitFetch ?? vi.fn(async () => {}),
-      runGitCommand:
-        options?.runGitCommand ??
-        vi.fn(async () => ({
-          stdout: "/tmp/repo\n",
-          stderr: "",
-          truncated: false,
-          exitCode: 0,
-          signal: null,
-        })),
-      now: options?.now ?? (() => new Date("2026-04-12T00:00:00.000Z")),
-    },
+    deps: { ...buildDefaultTestServiceDeps(), ...options },
   });
 }
 
@@ -223,14 +233,16 @@ describe("WorkspaceGitServiceImpl", () => {
     vi.useRealTimers();
   });
 
-  test("subscribe returns an initial workspace runtime snapshot", async () => {
+  test("registerWorkspace returns a subscription without an initial snapshot contract", async () => {
     const service = createService();
 
     const listener = vi.fn();
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
 
-    expect(subscription.initial).toEqual(createSnapshot("/tmp/repo"));
+    expect(subscription).toEqual({ unsubscribe: expect.any(Function) });
+    expect("initial" in subscription).toBe(false);
     expect(listener).not.toHaveBeenCalled();
+    expect(service.peekSnapshot("/tmp/repo")).toBeNull();
 
     subscription.unsubscribe();
     service.dispose();
@@ -274,6 +286,37 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("getSnapshot keeps plain git classification when shortstat lookup fails", async () => {
+    const getCheckoutShortstat = vi.fn(async () => {
+      throw new Error(
+        "Missing Paseo worktree base metadata: /tmp/repo/.git/worktrees/feature/paseo/worktree.json",
+      );
+    });
+    const service = createService({
+      getCheckoutStatus: vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, {
+          repoRoot: cwd,
+          currentBranch: "feature/worktree",
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: "/tmp/main-repo",
+        }),
+      ),
+      getCheckoutShortstat,
+    });
+
+    await expect(service.getSnapshot("/tmp/repo")).resolves.toEqual(
+      createSnapshot("/tmp/repo", {
+        git: {
+          repoRoot: "/tmp/repo",
+          currentBranch: "feature/worktree",
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: "/tmp/main-repo",
+          diffStat: null,
+        },
+      }),
+    );
+  });
+
   test("non-forced GitHub refresh does not emit when pull request state is unchanged", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
@@ -282,7 +325,8 @@ describe("WorkspaceGitServiceImpl", () => {
       now: () => new Date(nowMs),
     });
     const listener = vi.fn();
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+    await service.getSnapshot("/tmp/repo");
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
 
     nowMs += 3_000;
     await service.refresh("/tmp/repo");
@@ -313,8 +357,6 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(0);
     expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(0);
-    expect((service as any).workspaceTargets.size).toBe(1);
-    expect((service as any).workspaceTargetSetups.size).toBe(1);
 
     checkoutStatusDeferred.resolve(createCheckoutStatus("/tmp/repo"));
 
@@ -325,8 +367,7 @@ describe("WorkspaceGitServiceImpl", () => {
 
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
-    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
-    expect((service as any).workspaceTargets.size).toBe(1);
+    expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(0);
     expect(service.peekSnapshot("/tmp/repo")).toEqual(createSnapshot("/tmp/repo"));
 
     await expect(service.getSnapshot("/tmp/repo")).resolves.toEqual(createSnapshot("/tmp/repo"));
@@ -347,14 +388,12 @@ describe("WorkspaceGitServiceImpl", () => {
       now: () => new Date(nowMs),
     });
 
-    const [first, second] = await Promise.all([
-      service.subscribe({ cwd: "/tmp/repo" }, vi.fn()),
-      service.subscribe({ cwd: "/tmp/repo" }, vi.fn()),
-    ]);
+    const first = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const second = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    await flushPromises();
 
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
     expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
-    expect((service as any).workspaceTargets.size).toBe(1);
 
     first.unsubscribe();
     second.unsubscribe();
@@ -372,9 +411,9 @@ describe("WorkspaceGitServiceImpl", () => {
       now: () => new Date(nowMs),
     });
 
-    const subscription = await service.subscribe({ cwd: "/tmp/repo/." }, vi.fn());
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo/." }, vi.fn());
 
-    expect(subscription.initial).toEqual(createSnapshot("/tmp/repo"));
+    await expect(service.getSnapshot("/tmp/repo/.")).resolves.toEqual(createSnapshot("/tmp/repo"));
     expect(service.peekSnapshot("/tmp/repo")).toEqual(createSnapshot("/tmp/repo"));
 
     nowMs += 3_000;
@@ -383,7 +422,6 @@ describe("WorkspaceGitServiceImpl", () => {
 
     expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
     expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(1);
-    expect((service as any).workspaceTargets.size).toBe(1);
 
     subscription.unsubscribe();
     service.dispose();
@@ -392,20 +430,23 @@ describe("WorkspaceGitServiceImpl", () => {
   test("repo-level fetch intervals are shared for workspaces in the same repo", async () => {
     const runGitFetch = vi.fn(async () => {});
     const hasOriginRemote = vi.fn(async () => true);
+    const resolveAbsoluteGitDir = vi.fn(async () => "/tmp/repo/.git");
 
     const service = createService({
-      resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
+      resolveAbsoluteGitDir,
       hasOriginRemote,
       runGitFetch,
     });
 
-    const first = await service.subscribe({ cwd: "/tmp/repo" }, vi.fn());
-    const second = await service.subscribe({ cwd: "/tmp/repo/packages/server" }, vi.fn());
-    await flushPromises();
+    const first = service.registerWorkspace({ cwd: "/tmp/repo" }, vi.fn());
+    const second = service.registerWorkspace({ cwd: "/tmp/repo/packages/server" }, vi.fn());
+    await vi.waitFor(() => {
+      expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(2);
+      expect(runGitFetch).toHaveBeenCalledTimes(1);
+    });
 
     expect(hasOriginRemote).toHaveBeenCalledTimes(1);
     expect(runGitFetch).toHaveBeenCalledTimes(1);
-    expect((service as any).repoTargets.size).toBe(1);
 
     await vi.advanceTimersByTimeAsync(180_000);
     await flushPromises();
@@ -452,9 +493,10 @@ describe("WorkspaceGitServiceImpl", () => {
     });
 
     const listener = vi.fn();
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+    const initialSnapshot = await service.getSnapshot("/tmp/repo");
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
 
-    expect(subscription.initial.github.pullRequest?.title).toBe("Before refresh");
+    expect(initialSnapshot.github.pullRequest?.title).toBe("Before refresh");
 
     await service.refresh("/tmp/repo");
     await flushPromises();
@@ -521,9 +563,10 @@ describe("WorkspaceGitServiceImpl", () => {
     });
 
     const listener = vi.fn();
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+    const initialSnapshot = await service.getSnapshot("/tmp/repo");
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
 
-    expect(subscription.initial.git.currentBranch).toBe("main");
+    expect(initialSnapshot.git.currentBranch).toBe("main");
 
     nowMs += 3_000;
     await service.refresh("/tmp/repo");
@@ -564,7 +607,8 @@ describe("WorkspaceGitServiceImpl", () => {
     });
 
     const listener = vi.fn();
-    const subscription = await service.subscribe({ cwd: "/tmp/repo" }, listener);
+    await service.getSnapshot("/tmp/repo");
+    const subscription = service.registerWorkspace({ cwd: "/tmp/repo" }, listener);
 
     await service.getSnapshot("/tmp/repo", {
       force: true,
@@ -590,7 +634,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const watch = vi.fn((watchPath: string) => {
       const watcher = createWatcher();
       watchCalls.push({ path: watchPath, close: watcher.close });
-      return watcher as any;
+      return watcher;
     });
     const readdir = vi.fn(async (directory: string) => {
       if (directory === "/tmp/repo") {
@@ -639,10 +683,7 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("requestWorkingTreeWatch reference-counts watchers by cwd", async () => {
     const watchers = [createWatcher(), createWatcher()];
-    const watch = vi
-      .fn()
-      .mockReturnValueOnce(watchers[0] as any)
-      .mockReturnValueOnce(watchers[1] as any);
+    const watch = vi.fn().mockReturnValueOnce(watchers[0]).mockReturnValueOnce(watchers[1]);
     const service = createService({ watch });
 
     const firstListener = vi.fn();
@@ -680,13 +721,15 @@ describe("WorkspaceGitServiceImpl", () => {
         if (options.recursive) {
           throw recursiveUnsupported;
         }
-        return createWatcher() as any;
+        return createWatcher();
       })
-      .mockImplementationOnce(() => createWatcher() as any);
+      .mockImplementationOnce(() => createWatcher());
 
     const service = createService({ watch });
     const subscription = await service.requestWorkingTreeWatch("/tmp/repo", vi.fn());
-    const target = (service as any).workingTreeWatchTargets.get("/tmp/repo");
+    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get(
+      "/tmp/repo",
+    );
 
     expect(target?.fallbackRefreshInterval).not.toBeNull();
 
@@ -695,7 +738,7 @@ describe("WorkspaceGitServiceImpl", () => {
   });
 
   test("non-git directories fall back to watching cwd with polling", async () => {
-    const watch = vi.fn(() => createWatcher() as any);
+    const watch = vi.fn(() => createWatcher());
     const runGitCommand = vi.fn(async () => {
       throw new Error("not a git repository");
     });
@@ -707,7 +750,9 @@ describe("WorkspaceGitServiceImpl", () => {
     });
 
     const subscription = await service.requestWorkingTreeWatch("/tmp/plain", vi.fn());
-    const target = (service as any).workingTreeWatchTargets.get("/tmp/plain");
+    const target = (service as unknown as ServiceInternals).workingTreeWatchTargets.get(
+      "/tmp/plain",
+    );
 
     expect(subscription.repoRoot).toBeNull();
     const expectedRecursive = process.platform !== "linux";
@@ -728,11 +773,11 @@ describe("WorkspaceGitServiceImpl", () => {
     const watch = vi.fn(
       (_watchPath: string, _options: { recursive: boolean }, callback: () => void) => {
         watchCallbacks.push(callback);
-        return createWatcher() as any;
+        return createWatcher();
       },
     );
     const service = createService({ watch });
-    const refreshSpy = vi.spyOn(service as any, "scheduleWorkspaceRefresh");
+    const refreshSpy = vi.spyOn(service as unknown as ServiceInternals, "scheduleWorkspaceRefresh");
     const listener = vi.fn();
 
     const subscription = await service.requestWorkingTreeWatch("/tmp/repo", listener);
@@ -755,7 +800,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const watch = vi.fn(
       (watchPath: string, _options: { recursive: boolean }, callback: () => void) => {
         watchCallbacks.push({ path: watchPath, callback });
-        return createWatcher() as any;
+        return createWatcher();
       },
     );
     const getCheckoutShortstat = vi
@@ -765,10 +810,14 @@ describe("WorkspaceGitServiceImpl", () => {
     const service = createService({ getCheckoutShortstat, watch });
     const workspaceListener = vi.fn();
 
-    const workspaceSubscription = await service.subscribe({ cwd: "/tmp/repo" }, workspaceListener);
+    const initialSnapshot = await service.getSnapshot("/tmp/repo");
+    const workspaceSubscription = service.registerWorkspace(
+      { cwd: "/tmp/repo" },
+      workspaceListener,
+    );
     const diffSubscription = await service.requestWorkingTreeWatch("/tmp/repo", vi.fn());
 
-    expect(workspaceSubscription.initial.git.diffStat).toEqual({ additions: 1, deletions: 0 });
+    expect(initialSnapshot.git.diffStat).toEqual({ additions: 1, deletions: 0 });
     const repoRootWatch = watchCallbacks.find((entry) => entry.path === "/tmp/repo");
     expect(repoRootWatch).toBeDefined();
 

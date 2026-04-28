@@ -145,6 +145,7 @@ export function useCheckoutDiffQuery({
           error: payload.error,
           requestId: payload.requestId,
         });
+        return;
       })
       .catch((error) => {
         if (cancelled) {

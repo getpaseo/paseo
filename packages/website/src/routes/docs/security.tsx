@@ -83,8 +83,8 @@ function Security() {
             <code className="font-mono">$PASEO_HOME/daemon-keypair.json</code>
           </li>
           <li>
-            When you scan the QR code or click the pairing link, your phone receives the daemon's
-            public key
+            When you scan the QR code or click the pairing link, your phone receives the
+            daemon&apos;s public key
           </li>
           <li>
             Your phone sends a handshake message with its own public key. The daemon will not accept
@@ -100,15 +100,15 @@ function Security() {
           message contents, forge messages, or derive encryption keys from observing the handshake.
         </p>
 
-        <h3 className="text-lg font-medium mt-6">Why the relay can't attack you</h3>
+        <h3 className="text-lg font-medium mt-6">Why the relay can&apos;t attack you</h3>
         <p className="text-white/60 leading-relaxed">
           The daemon requires a valid cryptographic handshake before processing any commands. A
           compromised relay cannot:
         </p>
         <ul className="text-white/60 space-y-2 list-disc list-inside">
           <li>
-            <strong className="text-white/80">Send commands</strong> — Without your phone's private
-            key, it cannot complete the handshake
+            <strong className="text-white/80">Send commands</strong> — Without your phone&apos;s
+            private key, it cannot complete the handshake
           </li>
           <li>
             <strong className="text-white/80">Read your traffic</strong> — All messages are
@@ -126,9 +126,9 @@ function Security() {
 
         <h3 className="text-lg font-medium mt-6">Trust model</h3>
         <p className="text-white/60 leading-relaxed">
-          The QR code or pairing link is the trust anchor. It contains the daemon's public key,
-          which is required to establish the encrypted connection. Treat it like a password — don't
-          share it publicly.
+          The QR code or pairing link is the trust anchor. It contains the daemon&apos;s public key,
+          which is required to establish the encrypted connection. Treat it like a password —
+          don&apos;t share it publicly.
         </p>
         <p className="text-white/60 leading-relaxed">
           If you believe a pairing offer has been compromised, restart the daemon to generate a new
@@ -226,7 +226,7 @@ function Security() {
             <code className="font-mono">*.localhost</code>, and all IP addresses
           </li>
           <li>
-            <code className="font-mono">['.example.com']</code>: allow{" "}
+            <code className="font-mono">[&apos;.example.com&apos;]</code>: allow{" "}
             <code className="font-mono">example.com</code> and any subdomain, plus defaults
           </li>
           <li>
@@ -244,8 +244,8 @@ function Security() {
         </p>
         <ul className="text-white/60 space-y-2 list-disc list-inside">
           <li>
-            <strong className="text-white/80">Claude Code</strong> — authenticates via Anthropic's
-            OAuth flow, stored in <code className="font-mono">~/.claude/</code>
+            <strong className="text-white/80">Claude Code</strong> — authenticates via
+            Anthropic&apos;s OAuth flow, stored in <code className="font-mono">~/.claude/</code>
           </li>
           <li>
             <strong className="text-white/80">Codex</strong> — uses your OpenAI API key or OAuth
@@ -267,8 +267,8 @@ function Security() {
         <h2 className="text-xl font-medium">Recommendations</h2>
         <ul className="text-white/60 space-y-3 list-disc list-inside">
           <li>
-            <strong className="text-white/80">Use the relay</strong> for mobile access — it's the
-            simplest option and all traffic is end-to-end encrypted
+            <strong className="text-white/80">Use the relay</strong> for mobile access — it&apos;s
+            the simplest option and all traffic is end-to-end encrypted
           </li>
           <li>
             <strong className="text-white/80">Treat the QR code like a password</strong> — anyone

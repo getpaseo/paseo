@@ -7,13 +7,13 @@ import { afterEach, describe, expect, test } from "vitest";
 import { findExecutable } from "./executable.js";
 import { spawnProcess } from "./spawn.js";
 
-type SpawnResult = {
+interface SpawnResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
   error: Error | null;
-};
+}
 
 const tempDirs: string[] = [];
 const JSON_ARG = '{"key":"value with spaces","nested":{"quote":"\\"yes\\""}}';
@@ -57,7 +57,7 @@ console.log("ARGV_OK");
   if (options?.includeCmdShim !== false) {
     writeFileSync(
       shim,
-      ["@echo off", "setlocal", `\"${fakeDaemonNode}\" \"${assertScript}\" %*`, ""].join("\r\n"),
+      ["@echo off", "setlocal", `"${fakeDaemonNode}" "${assertScript}" %*`, ""].join("\r\n"),
     );
   }
 
@@ -77,18 +77,19 @@ console.log("ARGV_OK");
 
 function collectChild(child: ChildProcess, timeoutMs = 10_000): Promise<SpawnResult> {
   return new Promise((resolve) => {
+    let pendingResolve: ((value: SpawnResult) => void) | null = resolve;
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let error: Error | null = null;
-    let settled = false;
 
     const settle = (result: Pick<SpawnResult, "code" | "signal">) => {
-      if (settled) {
+      if (!pendingResolve) {
         return;
       }
-      settled = true;
+      const fn = pendingResolve;
+      pendingResolve = null;
       clearTimeout(timer);
-      resolve({
+      fn({
         ...result,
         stdout: Buffer.concat(stdoutChunks).toString("utf8"),
         stderr: Buffer.concat(stderrChunks).toString("utf8"),

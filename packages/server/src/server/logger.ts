@@ -25,20 +25,20 @@ export interface ResolvedLogConfig {
   };
 }
 
-type LegacyLogConfig = {
+interface LegacyLogConfig {
   level?: LogLevel;
   format?: LogFormat;
-};
+}
 
 type LoggerConfigInput = PersistedConfig | LegacyLogConfig | undefined;
 
-type ResolveLogConfigOptions = {
+interface ResolveLogConfigOptions {
   paseoHome?: string;
   env?: NodeJS.ProcessEnv;
-};
+}
 
-const LOG_LEVELS: LogLevel[] = ["trace", "debug", "info", "warn", "error", "fatal"];
-const LOG_FORMATS: LogFormat[] = ["pretty", "json"];
+const LOG_LEVELS: Set<LogLevel> = new Set(["trace", "debug", "info", "warn", "error", "fatal"]);
+const LOG_FORMATS: Set<LogFormat> = new Set(["pretty", "json"]);
 const LOG_LEVEL_PRIORITIES: Record<LogLevel, number> = {
   trace: 10,
   debug: 20,
@@ -56,14 +56,14 @@ const DEFAULT_FILE_ROTATE_MAX_FILES = 2;
 const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
 
 function parseLogLevel(value: string | undefined): LogLevel | undefined {
-  if (!value || !LOG_LEVELS.includes(value as LogLevel)) {
+  if (!value || !LOG_LEVELS.has(value as LogLevel)) {
     return undefined;
   }
   return value as LogLevel;
 }
 
 function parseLogFormat(value: string | undefined): LogFormat | undefined {
-  if (!value || !LOG_FORMATS.includes(value as LogFormat)) {
+  if (!value || !LOG_FORMATS.has(value as LogFormat)) {
     return undefined;
   }
   return value as LogFormat;
@@ -158,7 +158,7 @@ function rotateOnRestart(filePath: string, maxFiles: number): void {
   const rotatedFiles = readdirSync(dir)
     .filter((f) => f.endsWith(`-${base}`) && f !== base)
     .sort()
-    .reverse();
+    .toReversed();
 
   for (const file of rotatedFiles.slice(maxFiles)) {
     try {
@@ -179,6 +179,59 @@ function toRotatingFileStreamSize(size: string): string {
   return `${value}${unit}`;
 }
 
+interface LogLevelResolution {
+  consoleLevel: LogLevel;
+  fileLevel: LogLevel;
+  consoleFormat: LogFormat;
+}
+
+function resolveLogLevelsAndFormat(
+  env: NodeJS.ProcessEnv,
+  persistedLog: NonNullable<ReturnType<typeof normalizeLoggerConfigInput>>["log"] | undefined,
+): LogLevelResolution {
+  const envGlobalLevel = parseLogLevel(env.PASEO_LOG);
+  const persistedGlobalLevel = persistedLog?.level;
+  const consoleLevel: LogLevel =
+    parseLogLevel(env.PASEO_LOG_CONSOLE_LEVEL) ??
+    envGlobalLevel ??
+    persistedLog?.console?.level ??
+    persistedGlobalLevel ??
+    DEFAULT_CONSOLE_LEVEL;
+  const fileLevel: LogLevel =
+    parseLogLevel(env.PASEO_LOG_FILE_LEVEL) ??
+    envGlobalLevel ??
+    persistedLog?.file?.level ??
+    persistedGlobalLevel ??
+    DEFAULT_FILE_LEVEL;
+  const consoleFormat: LogFormat =
+    parseLogFormat(env.PASEO_LOG_FORMAT) ??
+    persistedLog?.console?.format ??
+    persistedLog?.format ??
+    DEFAULT_CONSOLE_FORMAT;
+  return { consoleLevel, fileLevel, consoleFormat };
+}
+
+interface RotateResolution {
+  maxSize: string;
+  maxFiles: number;
+}
+
+function resolveRotateConfig(
+  env: NodeJS.ProcessEnv,
+  persistedLog: NonNullable<ReturnType<typeof normalizeLoggerConfigInput>>["log"] | undefined,
+): RotateResolution {
+  return {
+    maxSize:
+      env.PASEO_LOG_FILE_ROTATE_SIZE?.trim() ||
+      persistedLog?.file?.rotate?.maxSize ||
+      DEFAULT_FILE_ROTATE_SIZE,
+    maxFiles:
+      parsePositiveInteger(env.PASEO_LOG_FILE_ROTATE_COUNT) ??
+      persistedLog?.file?.rotate?.maxFiles ??
+      DEFAULT_FILE_ROTATE_MAX_FILES,
+  };
+}
+
 export function resolveLogConfig(
   configInput: LoggerConfigInput,
   options?: ResolveLogConfigOptions,
@@ -188,39 +241,9 @@ export function resolveLogConfig(
   const paseoHome = resolveConfiguredPaseoHome(options);
   const persistedLog = persistedConfig?.log;
 
-  const envGlobalLevel = parseLogLevel(env.PASEO_LOG);
-  const persistedGlobalLevel = persistedLog?.level;
-  const consoleLevel: LogLevel =
-    parseLogLevel(env.PASEO_LOG_CONSOLE_LEVEL) ??
-    envGlobalLevel ??
-    persistedLog?.console?.level ??
-    persistedGlobalLevel ??
-    DEFAULT_CONSOLE_LEVEL;
-
-  const fileLevel: LogLevel =
-    parseLogLevel(env.PASEO_LOG_FILE_LEVEL) ??
-    envGlobalLevel ??
-    persistedLog?.file?.level ??
-    persistedGlobalLevel ??
-    DEFAULT_FILE_LEVEL;
-
-  const consoleFormat: LogFormat =
-    parseLogFormat(env.PASEO_LOG_FORMAT) ??
-    persistedLog?.console?.format ??
-    persistedLog?.format ??
-    DEFAULT_CONSOLE_FORMAT;
-
+  const { consoleLevel, fileLevel, consoleFormat } = resolveLogLevelsAndFormat(env, persistedLog);
   const filePath = resolveFilePath(paseoHome, env.PASEO_LOG_FILE_PATH ?? persistedLog?.file?.path);
-
-  const rotateMaxSize =
-    env.PASEO_LOG_FILE_ROTATE_SIZE?.trim() ||
-    persistedLog?.file?.rotate?.maxSize ||
-    DEFAULT_FILE_ROTATE_SIZE;
-
-  const rotateMaxFiles =
-    parsePositiveInteger(env.PASEO_LOG_FILE_ROTATE_COUNT) ??
-    persistedLog?.file?.rotate?.maxFiles ??
-    DEFAULT_FILE_ROTATE_MAX_FILES;
+  const rotate = resolveRotateConfig(env, persistedLog);
 
   return {
     level: minLogLevel([consoleLevel, fileLevel]),
@@ -231,10 +254,7 @@ export function resolveLogConfig(
     file: {
       level: fileLevel,
       path: filePath,
-      rotate: {
-        maxSize: rotateMaxSize,
-        maxFiles: rotateMaxFiles,
-      },
+      rotate,
     },
   };
 }

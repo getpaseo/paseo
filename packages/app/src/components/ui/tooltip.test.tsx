@@ -16,7 +16,7 @@ vi.mock("@/constants/layout", () => ({
 }));
 
 vi.mock("@gorhom/portal", () => ({
-  Portal: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  Portal: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 vi.mock("@gorhom/bottom-sheet", () => ({

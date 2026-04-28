@@ -21,18 +21,18 @@ export class StructuredAgentResponseError extends Error {
   }
 }
 
-export type StructuredGenerationProvider = {
+export interface StructuredGenerationProvider {
   provider: AgentProvider;
   model?: string;
   thinkingOptionId?: string;
-};
+}
 
-export type StructuredGenerationAttempt = {
+export interface StructuredGenerationAttempt {
   provider: AgentProvider;
   model: string | null;
   available: boolean;
   error: string | null;
-};
+}
 
 export class StructuredAgentFallbackError extends Error {
   readonly attempts: StructuredGenerationAttempt[];
@@ -130,9 +130,7 @@ function buildZodValidator<T>(schema: z.ZodTypeAny, schemaName: string): SchemaV
 
 function buildJsonSchemaValidator<T>(schema: JsonSchema): SchemaValidator<T> {
   const AjvConstructor = Ajv as unknown as {
-    new (
-      options?: AjvOptions,
-    ): {
+    new (options?: AjvOptions): {
       compile: (input: JsonSchema) => ((value: unknown) => boolean) & {
         errors?: ErrorObject[] | null;
       };
@@ -204,6 +202,66 @@ function extractJsonFromMarkdown(text: string): string {
   return text.trim();
 }
 
+function tryParseJson(candidate: string): string | null {
+  try {
+    JSON.parse(candidate);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
+function extractBalancedJsonCandidate(source: string, start: number): string | null {
+  const open = source[start]!;
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i]!;
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === open) {
+      depth += 1;
+      continue;
+    }
+    if (ch !== close) {
+      continue;
+    }
+    depth -= 1;
+    if (depth !== 0) {
+      continue;
+    }
+    const candidate = source.slice(start, i + 1).trim();
+    const parsed = tryParseJson(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
 function extractFirstJsonSnippet(text: string): string | null {
   const source = text.trim();
   if (!source) {
@@ -222,51 +280,9 @@ function extractFirstJsonSnippet(text: string): string | null {
   }
 
   for (const start of startIndexes) {
-    const open = source[start]!;
-    const close = open === "{" ? "}" : "]";
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-
-    for (let i = start; i < source.length; i += 1) {
-      const ch = source[i]!;
-
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-          continue;
-        }
-        if (ch === "\\") {
-          escaped = true;
-          continue;
-        }
-        if (ch === '"') {
-          inString = false;
-        }
-        continue;
-      }
-
-      if (ch === '"') {
-        inString = true;
-        continue;
-      }
-
-      if (ch === open) {
-        depth += 1;
-        continue;
-      }
-      if (ch === close) {
-        depth -= 1;
-        if (depth === 0) {
-          const candidate = source.slice(start, i + 1).trim();
-          try {
-            JSON.parse(candidate);
-            return candidate;
-          } catch {
-            // keep scanning; the snippet might not be JSON (e.g. braces in prose)
-          }
-        }
-      }
+    const candidate = extractBalancedJsonCandidate(source, start);
+    if (candidate !== null) {
+      return candidate;
     }
   }
 
@@ -336,9 +352,7 @@ export async function generateStructuredAgentResponse<T>(
         return result.finalText;
       }
       // Fallback for providers that may not populate finalText consistently.
-      const lastAssistant = result.timeline
-        .filter((item) => item.type === "assistant_message")
-        .at(-1);
+      const lastAssistant = result.timeline.findLast((item) => item.type === "assistant_message");
       return lastAssistant?.text ?? "";
     };
     return await getStructuredAgentResponse({

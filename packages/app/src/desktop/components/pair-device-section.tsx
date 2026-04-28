@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { ActivityIndicator, Image, Text, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as QRCode from "qrcode";
@@ -9,6 +9,34 @@ import { settingsStyles } from "@/styles/settings";
 import { Button } from "@/components/ui/button";
 import { getDesktopDaemonPairing, shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { useState } from "react";
+
+type PairingViewState =
+  | { tag: "loading" }
+  | { tag: "error"; message: string }
+  | { tag: "unavailable"; message: string }
+  | { tag: "ready"; url: string };
+
+function resolvePairingViewState(args: {
+  isPending: boolean;
+  isError: boolean;
+  error: unknown;
+  data: { url?: string | null; relayEnabled?: boolean } | undefined;
+}): PairingViewState {
+  if (args.isPending) return { tag: "loading" };
+  if (args.isError) {
+    const message =
+      args.error instanceof Error ? args.error.message : "Failed to load pairing offer.";
+    return { tag: "error", message };
+  }
+  if (!args.data?.url) {
+    const message =
+      args.data?.relayEnabled === false
+        ? "Relay is not enabled. Enable relay to pair a device."
+        : "Pairing offer unavailable.";
+    return { tag: "unavailable", message };
+  }
+  return { tag: "ready", url: args.data.url };
+}
 
 export function PairDeviceSection() {
   const { theme } = useUnistyles();
@@ -42,92 +70,143 @@ export function PairDeviceSection() {
     setTimeout(() => setCopied(false), 2000);
   }, [pairingQuery.data?.url]);
 
+  const handleRefetch = useCallback(() => {
+    void pairingQuery.refetch();
+  }, [pairingQuery]);
+
+  const handleCopyPress = useCallback(() => {
+    void handleCopyLink();
+  }, [handleCopyLink]);
+
+  const qrImageSource = useMemo(
+    () => (qrQuery.data ? { uri: qrQuery.data } : null),
+    [qrQuery.data],
+  );
+
+  const retryIcon = useMemo(
+    () => <RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />,
+    [theme.iconSize.sm, theme.colors.foreground],
+  );
+  const copyButtonIcon = useMemo(
+    () =>
+      copied ? (
+        <Check size={theme.iconSize.sm} color={theme.colors.accent} />
+      ) : (
+        <Copy size={theme.iconSize.sm} color={theme.colors.foreground} />
+      ),
+    [copied, theme.iconSize.sm, theme.colors.accent, theme.colors.foreground],
+  );
+
   if (!showSection) return null;
+
+  const viewState = resolvePairingViewState({
+    isPending: pairingQuery.isPending,
+    isError: pairingQuery.isError,
+    error: pairingQuery.error,
+    data: pairingQuery.data,
+  });
 
   return (
     <View style={settingsStyles.section} testID="host-page-pair-device-card">
       <View style={settingsStyles.card}>
-        {pairingQuery.isPending ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="small" />
-            <Text style={styles.hint}>Loading pairing offer…</Text>
-          </View>
-        ) : pairingQuery.isError ? (
-          <View style={styles.centered}>
-            <Text style={styles.hint}>
-              {pairingQuery.error instanceof Error
-                ? pairingQuery.error.message
-                : "Failed to load pairing offer."}
-            </Text>
-            <Button
-              variant="outline"
-              size="sm"
-              leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
-              onPress={() => void pairingQuery.refetch()}
-            >
-              Retry
-            </Button>
-          </View>
-        ) : !pairingQuery.data?.url ? (
-          <View style={styles.centered}>
-            <Text style={styles.hint}>
-              {pairingQuery.data?.relayEnabled === false
-                ? "Relay is not enabled. Enable relay to pair a device."
-                : "Pairing offer unavailable."}
-            </Text>
-            <Button
-              variant="outline"
-              size="sm"
-              leftIcon={<RotateCw size={theme.iconSize.sm} color={theme.colors.foreground} />}
-              onPress={() => void pairingQuery.refetch()}
-            >
-              Retry
-            </Button>
-          </View>
-        ) : (
-          <View style={styles.content}>
-            <Text style={styles.hint}>
-              Scan this QR code with Paseo on your phone, or copy the link below.
-            </Text>
-            <View style={styles.qrContainer}>
-              {qrQuery.data ? (
-                <Image source={{ uri: qrQuery.data }} style={styles.qrImage} resizeMode="contain" />
-              ) : qrQuery.isError ? (
-                <Text style={styles.hint}>QR code unavailable.</Text>
-              ) : (
-                <ActivityIndicator size="small" />
-              )}
-            </View>
-            <View style={styles.linkRow}>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.linkInput}
-                  value={pairingQuery.data.url}
-                  readOnly
-                  selectTextOnFocus
-                  selectionColor={theme.colors.accent}
-                />
-              </View>
-              <Button
-                variant="outline"
-                size="sm"
-                leftIcon={
-                  copied ? (
-                    <Check size={theme.iconSize.sm} color={theme.colors.accent} />
-                  ) : (
-                    <Copy size={theme.iconSize.sm} color={theme.colors.foreground} />
-                  )
-                }
-                onPress={() => void handleCopyLink()}
-              >
-                {copied ? "Copied" : "Copy"}
-              </Button>
-            </View>
-          </View>
-        )}
+        <PairDeviceBody
+          viewState={viewState}
+          theme={theme}
+          retryIcon={retryIcon}
+          copyButtonIcon={copyButtonIcon}
+          qrImageSource={qrImageSource}
+          qrQuery={qrQuery}
+          copied={copied}
+          handleRefetch={handleRefetch}
+          handleCopyPress={handleCopyPress}
+        />
       </View>
     </View>
   );
+}
+
+interface PairDeviceBodyProps {
+  viewState: PairingViewState;
+  theme: { colors: { accent: string } };
+  retryIcon: React.ReactElement;
+  copyButtonIcon: React.ReactElement;
+  qrImageSource: { uri: string } | null;
+  qrQuery: { isError: boolean };
+  copied: boolean;
+  handleRefetch: () => void;
+  handleCopyPress: () => void;
+}
+
+function PairDeviceBody(props: PairDeviceBodyProps) {
+  const {
+    viewState,
+    theme,
+    retryIcon,
+    copyButtonIcon,
+    qrImageSource,
+    qrQuery,
+    copied,
+    handleRefetch,
+    handleCopyPress,
+  } = props;
+
+  if (viewState.tag === "loading") {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="small" />
+        <Text style={styles.hint}>Loading pairing offer…</Text>
+      </View>
+    );
+  }
+
+  if (viewState.tag === "error" || viewState.tag === "unavailable") {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.hint}>{viewState.message}</Text>
+        <Button variant="outline" size="sm" leftIcon={retryIcon} onPress={handleRefetch}>
+          Retry
+        </Button>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.content}>
+      <Text style={styles.hint}>
+        Scan this QR code with Paseo on your phone, or copy the link below.
+      </Text>
+      <View style={styles.qrContainer}>
+        <PairDeviceQrContent qrImageSource={qrImageSource} qrQuery={qrQuery} />
+      </View>
+      <View style={styles.linkRow}>
+        <View style={styles.inputWrapper}>
+          <TextInput
+            style={styles.linkInput}
+            value={viewState.url}
+            readOnly
+            selectTextOnFocus
+            selectionColor={theme.colors.accent}
+          />
+        </View>
+        <Button variant="outline" size="sm" leftIcon={copyButtonIcon} onPress={handleCopyPress}>
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+function PairDeviceQrContent(props: {
+  qrImageSource: { uri: string } | null;
+  qrQuery: { isError: boolean };
+}) {
+  if (props.qrImageSource) {
+    return <Image source={props.qrImageSource} style={styles.qrImage} resizeMode="contain" />;
+  }
+  if (props.qrQuery.isError) {
+    return <Text style={styles.hint}>QR code unavailable.</Text>;
+  }
+  return <ActivityIndicator size="small" />;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -182,5 +261,5 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     outlineStyle: "none",
-  } as any,
+  } as object,
 }));

@@ -29,7 +29,6 @@
               ]
             },
             "allowedHosts": {
-              "description": "Deprecated: use hostnames instead",
               "anyOf": [
                 {
                   "type": "boolean",
@@ -48,9 +47,12 @@
               "properties": {
                 "enabled": {
                   "type": "boolean"
+                },
+                "injectIntoAgents": {
+                  "type": "boolean"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "cors": {
               "type": "object",
@@ -125,68 +127,95 @@
               "additionalProperties": {
                 "type": "object",
                 "properties": {
+                  "extends": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
                   "command": {
-                    "anyOf": [
-                      {
-                        "type": "object",
-                        "properties": {
-                          "mode": {
-                            "type": "string",
-                            "const": "default"
-                          }
-                        },
-                        "required": ["mode"],
-                        "additionalProperties": false
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "mode": {
-                            "type": "string",
-                            "const": "append"
-                          },
-                          "args": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        },
-                        "required": ["mode"],
-                        "additionalProperties": false
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "mode": {
-                            "type": "string",
-                            "const": "replace"
-                          },
-                          "argv": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "minItems": 1
-                          }
-                        },
-                        "required": ["mode", "argv"],
-                        "additionalProperties": false
-                      }
-                    ]
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1
                   },
                   "env": {
                     "type": "object",
                     "additionalProperties": {
                       "type": "string"
                     }
+                  },
+                  "models": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "isDefault": {
+                          "type": "boolean"
+                        },
+                        "thinkingOptions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "isDefault": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": ["id", "label"],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": ["id", "label"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalModels": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/PaseoConfigV1/properties/agents/properties/providers/additionalProperties/properties/models/items"
+                    }
+                  },
+                  "disallowedTools": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "order": {
+                    "type": "number"
                   }
                 },
                 "additionalProperties": false
-              },
-              "propertyNames": {
-                "type": "string"
               }
             }
           },
@@ -256,6 +285,15 @@
                     "model": {
                       "type": "string",
                       "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "turnDetection": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/provider"
                     }
                   },
                   "additionalProperties": false

@@ -84,7 +84,7 @@ function GettingStarted() {
           >
             GitHub releases page
           </a>
-          . Open it and you're done.
+          . Open it and you&apos;re done.
         </p>
         <p className="text-white/60">
           The desktop app bundles and manages its own daemon automatically, so you do not need a
@@ -146,6 +146,11 @@ function GettingStarted() {
           <li>
             <a href="/docs/voice" className="underline hover:text-white/80">
               Voice
+            </a>
+          </li>
+          <li>
+            <a href="/docs/providers" className="underline hover:text-white/80">
+              Providers
             </a>
           </li>
           <li>

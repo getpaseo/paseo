@@ -36,7 +36,10 @@ for (let i = 0; i < args.length; i++) {
 
 $.verbose = false;
 
-type Failure = { test: string; error: string };
+interface Failure {
+  test: string;
+  error: string;
+}
 
 async function runCommand(label: string, command: string): Promise<void> {
   console.log(`\n${"─".repeat(50)}`);
@@ -115,7 +118,9 @@ await runCommand("Building relay", "npm run build --workspace=@getpaseo/relay");
 await runCommand("Building server", "npm run build --workspace=@getpaseo/server");
 await runCommand("Building CLI", "npm run build --workspace=@getpaseo/cli");
 
-for (const testFile of testFiles) {
+type TestOutcome = { status: "passed" } | { status: "failed"; failure: Failure };
+
+async function runSingleTest(testFile: string): Promise<TestOutcome> {
   const testPath = join(__dirname, testFile);
   const testName = testFile.replace(/\.test\.ts$/, "");
 
@@ -128,25 +133,37 @@ for (const testFile of testFiles) {
       await $`PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnvDefaults.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnvDefaults.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnvDefaults.PASEO_VOICE_MODE_ENABLED} npx tsx ${testPath}`.nothrow();
     if (result.exitCode === 0) {
       console.log(`\n✅ ${testName} PASSED`);
-      passed++;
-    } else {
-      console.log(`\n❌ ${testName} FAILED (exit code: ${result.exitCode})`);
-      if (result.stderr) {
-        console.log("stderr:", result.stderr);
-      }
-      failed++;
-      failures.push({ test: testName, error: result.stderr || `Exit code: ${result.exitCode}` });
-      break;
+      return { status: "passed" };
     }
+    console.log(`\n❌ ${testName} FAILED (exit code: ${result.exitCode})`);
+    if (result.stderr) {
+      console.log("stderr:", result.stderr);
+    }
+    return {
+      status: "failed",
+      failure: { test: testName, error: result.stderr || `Exit code: ${result.exitCode}` },
+    };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     console.log(`\n❌ ${testName} FAILED`);
     console.log("Error:", error);
-    failed++;
-    failures.push({ test: testName, error });
-    break;
+    return { status: "failed", failure: { test: testName, error } };
   }
 }
+
+async function runRemainingTests(index: number): Promise<void> {
+  if (index >= testFiles.length) return;
+  const testFile = testFiles[index] as string;
+  const outcome = await runSingleTest(testFile);
+  if (outcome.status === "passed") {
+    passed++;
+    return runRemainingTests(index + 1);
+  }
+  failed++;
+  failures.push(outcome.failure);
+}
+
+await runRemainingTests(0);
 
 // Summary
 console.log("\n" + "=".repeat(50));

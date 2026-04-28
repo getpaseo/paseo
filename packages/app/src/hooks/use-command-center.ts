@@ -51,14 +51,14 @@ function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
   return right.lastActivityAt.getTime() - left.lastActivityAt.getTime();
 }
 
-type CommandCenterActionDefinition = {
+interface CommandCenterActionDefinition {
   id: string;
   title: string;
   icon?: "plus" | "settings";
   actionId?: string;
   keywords: string[];
   routeKind: "settings" | "none";
-};
+}
 
 const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
   {
@@ -87,14 +87,14 @@ function matchesActionQuery(query: string, action: CommandCenterActionDefinition
   return action.keywords.some((keyword) => keyword.includes(normalized));
 }
 
-export type CommandCenterActionItem = {
+export interface CommandCenterActionItem {
   kind: "action";
   id: string;
   title: string;
   icon?: "plus" | "settings";
   route?: Href;
   shortcutKeys?: ShortcutKey[][];
-};
+}
 
 export type CommandCenterItem =
   | {
@@ -123,7 +123,7 @@ function resolveActionShortcutKeys(
 }
 
 export function useCommandCenter() {
-  const pathname = usePathname();
+  const _pathname = usePathname();
   const routeActiveServerId = useActiveServerId();
   const { overrides } = useKeyboardShortcutOverrides();
   const open = useKeyboardShortcutsStore((s) => s.commandCenterOpen);
@@ -209,7 +209,7 @@ export function useCommandCenter() {
         workspaceDirectory: agent.cwd,
       });
       if (!workspaceId) {
-        router.navigate(buildHostAgentDetailRoute(agent.serverId, agent.id) as any);
+        router.navigate(buildHostAgentDetailRoute(agent.serverId, agent.id) as Href);
         return;
       }
       const route = prepareWorkspaceTab({

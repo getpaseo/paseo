@@ -25,6 +25,16 @@ import {
   toolDetailBranchByName,
 } from "../tool-call-detail-primitives.js";
 
+const ClaudeGrepOutputSchema = z
+  .union([
+    ToolGrepOutputSchema,
+    z
+      .object({ output: z.string() })
+      .passthrough()
+      .transform(({ output }) => ({ numFiles: 0, filenames: [], content: output })),
+  ])
+  .nullable();
+
 const ClaudeToolEnvelopeSchema = z
   .object({
     name: z.string().min(1),
@@ -128,17 +138,11 @@ const ClaudeToolDetailPass2Schema = z.union([
   toolDetailBranchByName("search", ToolSearchInputSchema, z.unknown(), (input) =>
     toSearchToolDetail({ input, toolName: "search" }),
   ),
-  toolDetailBranchByName(
-    "Grep",
-    ToolSearchInputSchema,
-    ToolGrepOutputSchema.nullable(),
-    (input, output) => toSearchToolDetail({ input, output, toolName: "grep" }),
+  toolDetailBranchByName("Grep", ToolSearchInputSchema, ClaudeGrepOutputSchema, (input, output) =>
+    toSearchToolDetail({ input, output, toolName: "grep" }),
   ),
-  toolDetailBranchByName(
-    "grep",
-    ToolSearchInputSchema,
-    ToolGrepOutputSchema.nullable(),
-    (input, output) => toSearchToolDetail({ input, output, toolName: "grep" }),
+  toolDetailBranchByName("grep", ToolSearchInputSchema, ClaudeGrepOutputSchema, (input, output) =>
+    toSearchToolDetail({ input, output, toolName: "grep" }),
   ),
   toolDetailBranchByName(
     "Glob",

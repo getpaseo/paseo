@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
-export type TerminalPerfDaemonClient = {
+export interface TerminalPerfDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
   openProject(cwd: string): Promise<{
@@ -37,7 +37,7 @@ export type TerminalPerfDaemonClient = {
     handler: (event: { terminalId: string; type: string; data?: Uint8Array }) => void,
   ): () => void;
   killTerminal(terminalId: string): Promise<{ error: string | null }>;
-};
+}
 
 function getDaemonWsUrl(): string {
   const daemonPort = process.env.E2E_DAEMON_PORT;
@@ -55,17 +55,15 @@ function getServerId(): string {
   return serverId;
 }
 
-type TerminalPerfDaemonClientConfig = {
+interface TerminalPerfDaemonClientConfig {
   url: string;
   clientId: string;
   clientType: "cli";
   webSocketFactory?: NodeWebSocketFactory;
-};
+}
 
 async function loadDaemonClientConstructor(): Promise<
-  new (
-    config: TerminalPerfDaemonClientConfig,
-  ) => TerminalPerfDaemonClient
+  new (config: TerminalPerfDaemonClientConfig) => TerminalPerfDaemonClient
 > {
   const repoRoot = path.resolve(__dirname, "../../../../");
   const moduleUrl = pathToFileURL(
@@ -102,7 +100,19 @@ function buildWorkspaceUrl(workspaceId: string): string {
 
 export async function getTerminalBufferText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__paseoTerminal;
+    const term = (
+      window as Window & {
+        __paseoTerminal?: {
+          buffer: {
+            active: {
+              length: number;
+              getLine: (i: number) => { translateToString: (trim: boolean) => string } | null;
+            };
+          };
+          onWriteParsed: (cb: () => void) => { dispose: () => void };
+        };
+      }
+    ).__paseoTerminal;
     if (!term) {
       return "";
     }
@@ -193,10 +203,10 @@ export async function setupDeterministicPrompt(page: Page, sentinel?: string): P
   await page.waitForTimeout(300);
 }
 
-export type LatencySample = {
+export interface LatencySample {
   char: string;
   latencyMs: number;
-};
+}
 
 /**
  * Measures keystroke echo round-trip latency.
@@ -207,12 +217,16 @@ export type LatencySample = {
  */
 export async function measureKeystrokeLatency(page: Page, char: string): Promise<number> {
   await page.evaluate(() => {
-    const term = (window as any).__paseoTerminal;
-    if (!term) {
+    const win = window as Window & {
+      __paseoTerminal?: { onWriteParsed: (cb: () => void) => { dispose: () => void } };
+      __perfKeystroke?: { promise: Promise<number> | null };
+    };
+    if (!win.__paseoTerminal) {
       throw new Error("__paseoTerminal not available");
     }
+    const term = win.__paseoTerminal;
 
-    const state = ((window as any).__perfKeystroke = {
+    const state = (win.__perfKeystroke = {
       promise: null as Promise<number> | null,
     });
 
@@ -238,7 +252,11 @@ export async function measureKeystrokeLatency(page: Page, char: string): Promise
 
   await page.keyboard.press(char);
 
-  return page.evaluate(() => (window as any).__perfKeystroke.promise);
+  return page.evaluate(
+    () =>
+      (window as unknown as { __perfKeystroke: { promise: Promise<number> } }).__perfKeystroke
+        .promise,
+  );
 }
 
 export function computePercentile(samples: number[], p: number): number {

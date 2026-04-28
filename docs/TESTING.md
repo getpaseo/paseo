@@ -79,7 +79,9 @@ const realSender: EmailSender = { send: sendgrid.send };
 function createTestEmailSender() {
   const sent: Array<{ to: string; body: string }> = [];
   return {
-    send: async (to: string, body: string) => { sent.push({ to, body }); },
+    send: async (to: string, body: string) => {
+      sent.push({ to, body });
+    },
     sent,
   };
 }
@@ -115,6 +117,7 @@ The test output is the source of truth, not your reading of the code.
 ## Design for testability
 
 If code isn't testable, refactor it. Signs:
+
 - You want to reach for a mock
 - You can't inject a dependency
 - You need to test private internals

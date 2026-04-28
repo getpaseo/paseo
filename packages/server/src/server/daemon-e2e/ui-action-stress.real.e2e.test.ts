@@ -71,15 +71,15 @@ type UiAction =
       label: string;
     };
 
-type UiScenario = {
+interface UiScenario {
   name: string;
   actions: UiAction[];
-};
+}
 
-type QueuedPrompt = {
+interface QueuedPrompt {
   id: string;
   prompt: string;
-};
+}
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-real-ui-action-stress-"));

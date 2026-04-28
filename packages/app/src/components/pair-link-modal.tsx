@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -10,6 +10,8 @@ import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { ConnectionOfferSchema } from "@server/shared/connection-offer";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+
+const FLEX_ONE_STYLE = { flex: 1 } as const;
 
 const styles = StyleSheet.create((theme) => ({
   helper: {
@@ -71,6 +73,11 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
     offerUrlRef.current = "";
     inputRef.current?.clear();
   }, []);
+
+  const pairIcon = useMemo(
+    () => <Link size={16} color={theme.colors.palette.white} />,
+    [theme.colors.palette.white],
+  );
 
   const handleClose = useCallback(() => {
     if (isSaving) return;
@@ -151,6 +158,14 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
     }
   }, [daemons, handleClose, isMobile, isSaving, onSaved, upsertDaemonFromOfferUrl]);
 
+  const handleChangeOfferUrl = useCallback((next: string) => {
+    offerUrlRef.current = next;
+  }, []);
+
+  const handleSavePress = useCallback(() => {
+    void handleSave();
+  }, [handleSave]);
+
   return (
     <AdaptiveModalSheet
       title="Paste pairing link"
@@ -167,9 +182,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
           testID="pair-link-input"
           nativeID="pair-link-input"
           accessibilityLabel="pair-link-input"
-          onChangeText={(next) => {
-            offerUrlRef.current = next;
-          }}
+          onChangeText={handleChangeOfferUrl}
           placeholder="https://app.paseo.sh/#offer=..."
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
@@ -183,7 +196,7 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
 
       <View style={styles.actions}>
         <Button
-          style={{ flex: 1 }}
+          style={FLEX_ONE_STYLE}
           variant="secondary"
           onPress={handleCancel}
           disabled={isSaving}
@@ -194,14 +207,14 @@ export function PairLinkModal({ visible, onClose, onCancel, onSaved }: PairLinkM
           Cancel
         </Button>
         <Button
-          style={{ flex: 1 }}
+          style={FLEX_ONE_STYLE}
           variant="default"
-          onPress={() => void handleSave()}
+          onPress={handleSavePress}
           disabled={isSaving}
           testID="pair-link-submit"
           accessibilityRole="button"
           accessibilityLabel="Pair"
-          leftIcon={<Link size={16} color={theme.colors.palette.white} />}
+          leftIcon={pairIcon}
         >
           {isSaving ? "Pairing..." : "Pair"}
         </Button>

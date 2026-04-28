@@ -9,11 +9,12 @@ import { findFreePort, ScriptRouteStore } from "./script-proxy.js";
 import { ScriptHealthMonitor, type ScriptHealthEntry } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import type { TerminalManager } from "./terminal/terminal-manager.js";
 
-type TcpServerHandle = {
+interface TcpServerHandle {
   port: number;
   server: net.Server;
-};
+}
 
 function createWorkspaceRepo(options?: {
   branchName?: string;
@@ -139,9 +140,7 @@ describe("ScriptHealthMonitor", () => {
   afterEach(async () => {
     vi.useRealTimers();
 
-    for (const server of servers) {
-      await closeServer(server);
-    }
+    await Promise.all(Array.from(servers, (server) => closeServer(server)));
     servers.clear();
   });
 
@@ -433,19 +432,23 @@ describe("ScriptHealthMonitor", () => {
       [];
 
     try {
-      for (const scriptName of ["typecheck", "api"]) {
-        await spawnWorkspaceScript({
-          repoRoot: workspace.repoDir,
-          workspaceId: workspace.repoDir,
-          projectSlug: "repo",
-          branchName: null,
-          scriptName,
-          daemonPort: null,
-          routeStore,
-          runtimeStore,
-          terminalManager: createStubTerminalManager(createTerminalCalls) as any,
-        });
-      }
+      await Promise.all(
+        ["typecheck", "api"].map((scriptName) =>
+          spawnWorkspaceScript({
+            repoRoot: workspace.repoDir,
+            workspaceId: workspace.repoDir,
+            projectSlug: "repo",
+            branchName: null,
+            scriptName,
+            daemonPort: null,
+            routeStore,
+            runtimeStore,
+            terminalManager: createStubTerminalManager(
+              createTerminalCalls,
+            ) as unknown as TerminalManager,
+          }),
+        ),
+      );
 
       expect(createTerminalCalls).toHaveLength(2);
       expect(routeStore.listRoutes()).toEqual([

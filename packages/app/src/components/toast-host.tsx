@@ -15,15 +15,15 @@ import {
 
 export type ToastVariant = "default" | "success" | "error";
 
-export type ToastShowOptions = {
+export interface ToastShowOptions {
   icon?: ReactNode;
   variant?: ToastVariant;
   durationMs?: number;
   nativeAndroid?: boolean;
   testID?: string;
-};
+}
 
-export type ToastState = {
+export interface ToastState {
   id: number;
   content: ReactNode;
   nativeMessage: string | null;
@@ -31,13 +31,13 @@ export type ToastState = {
   variant: ToastVariant;
   durationMs: number;
   testID?: string;
-};
+}
 
-export type ToastApi = {
+export interface ToastApi {
   show: (content: ReactNode, options?: ToastShowOptions) => void;
   copied: (label?: string) => void;
   error: (message: string) => void;
-};
+}
 
 type ToastViewportPlacement = "app-shell" | "panel";
 
@@ -212,10 +212,6 @@ export function ToastViewport({
     };
   }, [clearTimer, opacity, scheduleDismiss, toast, translateY]);
 
-  if (!toast) {
-    return null;
-  }
-
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
   const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const topOffset =
@@ -223,13 +219,36 @@ export function ToastViewport({
       ? insets.top + headerTopPadding + headerHeight + theme.spacing[2]
       : theme.spacing[3];
 
-  const icon =
-    toast.icon ??
-    (toast.variant === "success" ? (
-      <CheckCircle2 size={18} color={theme.colors.primary} />
-    ) : toast.variant === "error" ? (
-      <AlertTriangle size={18} color={theme.colors.destructive} />
-    ) : null);
+  const toastVariant = toast?.variant;
+  const toastAnimatedStyle = useMemo(
+    () => [
+      styles.toast,
+      toastVariant === "success" ? styles.toastSuccess : null,
+      toastVariant === "error" ? styles.toastError : null,
+      {
+        marginTop: topOffset,
+        opacity,
+        transform: [{ translateY }],
+      },
+    ],
+    [toastVariant, topOffset, opacity, translateY],
+  );
+  const toastMessageStyle = useMemo(
+    () => [styles.message, toastVariant === "error" ? styles.messageError : null],
+    [toastVariant],
+  );
+
+  if (!toast) {
+    return null;
+  }
+
+  let defaultIcon: ReactNode = null;
+  if (toast.variant === "success") {
+    defaultIcon = <CheckCircle2 size={18} color={theme.colors.primary} />;
+  } else if (toast.variant === "error") {
+    defaultIcon = <AlertTriangle size={18} color={theme.colors.destructive} />;
+  }
+  const icon = toast.icon ?? defaultIcon;
 
   const content = (
     <View style={styles.container} pointerEvents="box-none">
@@ -237,24 +256,12 @@ export function ToastViewport({
         testID={toast.testID ?? "app-toast"}
         onPointerEnter={isWeb ? pauseDismiss : undefined}
         onPointerLeave={isWeb ? resumeDismiss : undefined}
-        style={[
-          styles.toast,
-          toast.variant === "success" ? styles.toastSuccess : null,
-          toast.variant === "error" ? styles.toastError : null,
-          {
-            marginTop: topOffset,
-            opacity,
-            transform: [{ translateY }],
-          },
-        ]}
+        style={toastAnimatedStyle}
         accessibilityRole="alert"
       >
         {icon ? <View style={styles.iconSlot}>{icon}</View> : null}
         {typeof toast.content === "string" ? (
-          <Text
-            testID="app-toast-message"
-            style={[styles.message, toast.variant === "error" ? styles.messageError : null]}
-          >
+          <Text testID="app-toast-message" style={toastMessageStyle}>
             {toast.content}
           </Text>
         ) : (

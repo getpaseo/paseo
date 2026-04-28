@@ -3,10 +3,9 @@
     "target": "ES2020",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2020", "DOM"],
-    "baseUrl": "./src",
+    "lib": ["ES2023", "DOM"],
     "paths": {
-      "@server/*": ["./*"]
+      "@server/*": ["./src/*"]
     },
     "skipLibCheck": true,
     "resolveJsonModule": true,

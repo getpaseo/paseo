@@ -1,11 +1,11 @@
-export type DaemonTransport = {
+export interface DaemonTransport {
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
   onMessage: (handler: (data: unknown) => void) => () => void;
   onOpen: (handler: () => void) => () => void;
   onClose: (handler: (event?: unknown) => void) => () => void;
   onError: (handler: (event?: unknown) => void) => () => void;
-};
+}
 
 export type DaemonTransportFactory = (options: {
   url: string;
@@ -17,21 +17,21 @@ export type WebSocketFactory = (
   options?: { headers?: Record<string, string> },
 ) => WebSocketLike;
 
-export type WebSocketLike = {
+export interface WebSocketLike {
   readyState: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;
   binaryType?: string;
-  on?: (event: string, listener: (...args: any[]) => void) => void;
-  off?: (event: string, listener: (...args: any[]) => void) => void;
-  removeListener?: (event: string, listener: (...args: any[]) => void) => void;
-  addEventListener?: (event: string, listener: (event: any) => void) => void;
-  removeEventListener?: (event: string, listener: (event: any) => void) => void;
-  onopen?: ((event: any) => void) | null;
-  onclose?: ((event: any) => void) | null;
-  onerror?: ((event: any) => void) | null;
-  onmessage?: ((event: any) => void) | null;
-};
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  off?: (event: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+  addEventListener?: (event: string, listener: (event: unknown) => void) => void;
+  removeEventListener?: (event: string, listener: (event: unknown) => void) => void;
+  onopen?: ((event: unknown) => void) | null;
+  onclose?: ((event: unknown) => void) | null;
+  onerror?: ((event: unknown) => void) | null;
+  onmessage?: ((event: unknown) => void) | null;
+}
 
 export interface TransportLogger {
   warn(obj: object, msg?: string): void;

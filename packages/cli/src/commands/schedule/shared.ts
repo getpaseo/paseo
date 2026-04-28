@@ -83,6 +83,46 @@ export function formatDurationMs(durationMs: number): string {
   return parts.join("");
 }
 
+function resolveScheduleTarget(args: {
+  targetValue: string | undefined;
+  hasExplicitProviderSelection: boolean;
+  createNewAgentTarget: () => ScheduleTarget;
+}): ScheduleTarget {
+  const { targetValue, hasExplicitProviderSelection, createNewAgentTarget } = args;
+  const currentAgentId = process.env.PASEO_AGENT_ID?.trim();
+
+  if (!targetValue) {
+    if (currentAgentId && !hasExplicitProviderSelection) {
+      return { type: "self", agentId: currentAgentId };
+    }
+    return createNewAgentTarget();
+  }
+
+  if (targetValue === "new-agent") {
+    return createNewAgentTarget();
+  }
+
+  if (hasExplicitProviderSelection) {
+    throw {
+      code: "INVALID_TARGET",
+      message: "--provider can only be used with a new-agent target",
+      details: "Use --target new-agent or omit --target to create a new agent schedule",
+    } satisfies CommandError;
+  }
+
+  if (targetValue === "self") {
+    if (!currentAgentId) {
+      throw {
+        code: "INVALID_TARGET",
+        message: "--target self requires running inside a Paseo agent",
+      } satisfies CommandError;
+    }
+    return { type: "self", agentId: currentAgentId };
+  }
+
+  return { type: "agent", agentId: targetValue };
+}
+
 export function parseScheduleCreateInput(options: {
   prompt: string;
   every?: string;
@@ -115,57 +155,24 @@ export function parseScheduleCreateInput(options: {
 
   const targetValue = options.target?.trim();
   const hasExplicitProviderSelection = options.provider !== undefined;
-  const resolvedProviderModel = resolveProviderAndModel({
-    provider: options.provider,
-    defaultProvider: "claude",
-  });
-  const newAgentTarget: ScheduleTarget = {
-    type: "new-agent",
-    config: {
-      provider: resolvedProviderModel.provider,
-      cwd: process.cwd(),
-      ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
-    },
-  };
-  let target: ScheduleTarget;
-  if (!targetValue) {
-    const currentAgentId = process.env.PASEO_AGENT_ID?.trim();
-    if (currentAgentId && !hasExplicitProviderSelection) {
-      target = { type: "self", agentId: currentAgentId };
-    } else {
-      target = newAgentTarget;
-    }
-  } else if (targetValue === "self") {
-    if (hasExplicitProviderSelection) {
-      throw {
-        code: "INVALID_TARGET",
-        message: "--provider can only be used with a new-agent target",
-        details: "Use --target new-agent or omit --target to create a new agent schedule",
-      } satisfies CommandError;
-    }
-    const currentAgentId = process.env.PASEO_AGENT_ID?.trim();
-    if (!currentAgentId) {
-      throw {
-        code: "INVALID_TARGET",
-        message: "--target self requires running inside a Paseo agent",
-      } satisfies CommandError;
-    }
-    target = { type: "self", agentId: currentAgentId };
-  } else if (targetValue === "new-agent") {
-    target = newAgentTarget;
-  } else {
-    if (hasExplicitProviderSelection) {
-      throw {
-        code: "INVALID_TARGET",
-        message: "--provider can only be used with a new-agent target",
-        details: "Use --target new-agent or omit --target to create a new agent schedule",
-      } satisfies CommandError;
-    }
-    target = {
-      type: "agent",
-      agentId: targetValue,
+  const createNewAgentTarget = (): ScheduleTarget => {
+    const resolvedProviderModel = resolveProviderAndModel({
+      provider: options.provider,
+    });
+    return {
+      type: "new-agent",
+      config: {
+        provider: resolvedProviderModel.provider,
+        cwd: process.cwd(),
+        ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
+      },
     };
-  }
+  };
+  const target = resolveScheduleTarget({
+    targetValue,
+    hasExplicitProviderSelection,
+    createNewAgentTarget,
+  });
 
   const maxRuns =
     options.maxRuns === undefined ? undefined : parsePositiveInt(options.maxRuns, "--max-runs");

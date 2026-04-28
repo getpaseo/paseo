@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -36,6 +36,21 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
     };
   }, [metadata, onClose]);
 
+  const closeButtonStyle = useMemo(
+    () => [
+      styles.closeButton,
+      {
+        top: insets.top + theme.spacing[3],
+        right: insets.right + theme.spacing[3],
+      },
+    ],
+    [insets.top, insets.right, theme.spacing],
+  );
+
+  const handleImageError = useCallback(() => setErrored(true), []);
+  const noopPress = useCallback(() => {}, []);
+  const imageSource = useMemo(() => ({ uri: url ?? "" }), [url]);
+
   if (!metadata) {
     return null;
   }
@@ -55,14 +70,14 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
         <View style={styles.contentLayer}>
           <View style={styles.imageArea}>
             {hasError ? (
-              <Text style={styles.errorText}>Couldn't load image</Text>
+              <Text style={styles.errorText}>Couldn&apos;t load image</Text>
             ) : (
-              <Pressable onPress={() => {}} style={styles.imagePressable}>
+              <Pressable onPress={noopPress} style={styles.imagePressable}>
                 <ExpoImage
                   testID="attachment-lightbox-image"
-                  source={{ uri: url }}
+                  source={imageSource}
                   contentFit="contain"
-                  onError={() => setErrored(true)}
+                  onError={handleImageError}
                   style={imageFillStyle}
                 />
               </Pressable>
@@ -74,13 +89,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
             accessibilityLabel="Close image"
             hitSlop={8}
             onPress={onClose}
-            style={[
-              styles.closeButton,
-              {
-                top: insets.top + theme.spacing[3],
-                right: insets.right + theme.spacing[3],
-              },
-            ]}
+            style={closeButtonStyle}
           >
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>

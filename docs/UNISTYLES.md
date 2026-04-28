@@ -4,6 +4,74 @@ This app uses [`react-native-unistyles` v3](https://www.unistyl.es/) for theme-a
 
 That model is powerful, but it has sharp edges. Use this note when adding theme-dependent styles.
 
+## STOP — `useUnistyles()` Is Forbidden
+
+**Do not call `useUnistyles()` unless every alternative below has been ruled out and you can explain in a code comment why.** The library authors themselves [strongly advise against it](https://www.unistyl.es/v3/references/use-unistyles):
+
+> We strongly recommend **not using** this hook, as it will re-render your component on every change. This hook was created to simplify the migration process and should only be used when other methods fail.
+
+We have hit this gotcha repeatedly in Paseo. It manifests as periodic, lockstep re-renders of warm subtrees (agent streams, panels, sidebars) even when nothing the user can see has changed — confirmed in profiling: `AgentStreamView` re-rendering constantly with `theme` showing as the only changed input on every render. The hook subscribes the component to **all** Unistyles runtime changes (theme, breakpoint, insets, color scheme, scale) and returns a fresh object reference each call, which also breaks every downstream `useMemo`/`memo` boundary that includes a derived theme value.
+
+Before reaching for `useUnistyles()`, work down this list of alternatives in order:
+
+### 1. `StyleSheet.create((theme) => ...)` — default
+
+Most theme-aware styling needs nothing else. The Babel plugin tracks theme dependencies inside the factory and updates the native ShadowTree without any React re-render.
+
+```tsx
+const styles = StyleSheet.create((theme) => ({
+  container: {
+    backgroundColor: theme.colors.surface0,
+    padding: theme.spacing[4],
+  },
+}));
+
+<View style={styles.container} />;
+```
+
+If you are reading a theme value just to feed it back into a `style` prop, you almost certainly want this and not the hook.
+
+### 2. Hard-coded constants for genuinely static values
+
+If you only need a number that happens to live on the theme (e.g. a fixed spacing value used to compute a gap or animation distance), use a literal constant or import a static module. Static reads do not need a subscription. See the "Static Theme Imports" section below — importing `baseColors`, theme-name constants, or `type Theme` is fine when the value is intentionally static.
+
+### 3. `withUnistyles(Component)` for third-party props
+
+When a third-party component takes a non-`style` prop that must be theme-reactive (e.g. `BlurView.tint`, `Image.tintColor`, navigator option props, bottom-sheet `backgroundStyle`), wrap that single component with `withUnistyles`. Only the wrapper re-renders, not the surrounding tree.
+
+```tsx
+const ThemedBlur = withUnistyles(BlurView);
+<ThemedBlur tint={theme.colors.surface0} />;
+```
+
+(Mind the `> *` child-selector leak documented further down.)
+
+### 4. Lift the read into a tiny leaf component
+
+If only one prop in a large component needs a theme value at runtime, extract a small leaf component that calls `useUnistyles()` and accept its re-renders in isolation. Never let a whole stream / panel / sidebar / virtualized list subscribe.
+
+### 5. (Last resort) `useUnistyles()`
+
+Only acceptable when both of:
+
+- (a) The value is consumed by a 3rd-party library that cannot be wrapped with `withUnistyles` (per the upstream "When to use it?" list), AND
+- (b) The component is small, leaf-level, and not on a hot render path.
+
+If you add a new `useUnistyles()` call, leave a comment on the line explaining which of (a)/(b) applies and why each higher-priority alternative was ruled out.
+
+### Hot-path forbidden list
+
+Do not introduce `useUnistyles()` in or above any of these subtrees — re-renders here are observably expensive:
+
+- `AgentStreamView` and anything it renders (message rows, tool calls, plan card, todo list, activity log, compaction marker, copy buttons)
+- `AgentPanel` body / `AgentStreamSection` / `AgentComposerSection`
+- `Composer` and `MessageInput`
+- `WorkspaceScreen` shell, tabs row, deck wrapper
+- `LeftSidebar` row items, `SidebarWorkspaceList`, `CommandCenter`
+- Anything inside a virtualized list (`@tanstack/react-virtual`, `FlashList`)
+
+Reviewers must reject PRs that add `useUnistyles()` calls in these areas without a written justification matching the last-resort criteria above.
+
 ## How Updates Propagate
 
 For standard React Native components, the [Unistyles Babel plugin](https://www.unistyl.es/v3/other/babel-plugin) rewrites imports such as `View`, `Text`, `Pressable`, and `ScrollView` to Unistyles-aware component factories. On native, those factories borrow the component ref and register the `style` prop with the ShadowRegistry. The upstream ["Why my view doesn't update?"](https://www.unistyl.es/v3/guides/why-my-view-doesnt-update) guide describes this as the ShadowTree update path that avoids unnecessary React re-renders.
@@ -19,7 +87,7 @@ The important detail: the automatic native path tracks `props.style`. It does no
 Avoid this pattern when the style depends on the theme:
 
 ```tsx
-<ScrollView contentContainerStyle={styles.container} />
+<ScrollView contentContainerStyle={styles.container} />;
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -39,10 +107,8 @@ Preferred pattern: put themed backgrounds on a normal wrapper view, and keep `co
 
 ```tsx
 <View style={styles.container}>
-  <ScrollView contentContainerStyle={styles.contentContainer}>
-    {children}
-  </ScrollView>
-</View>
+  <ScrollView contentContainerStyle={styles.contentContainer}>{children}</ScrollView>
+</View>;
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -66,10 +132,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 
 const ThemedScrollView = withUnistyles(ScrollView);
 
-<ThemedScrollView
-  style={styles.scrollView}
-  contentContainerStyle={styles.contentContainer}
-/>
+<ThemedScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer} />;
 ```
 
 `withUnistyles` extracts dependency metadata from both `style` and `contentContainerStyle`, subscribes to the relevant theme/runtime changes, and re-renders only that wrapped component when needed. Its [auto-mapping behavior for `style` and `contentContainerStyle`](https://www.unistyl.es/v3/references/with-unistyles#auto-mapping-for-style-and-contentcontainerstyle-props) is the reason it fixes themed `ScrollView` content containers. Reach for it when wrapper-view layout would be awkward or when a third-party component needs theme-aware non-`style` props mapped through Unistyles.
@@ -80,11 +143,8 @@ The smallest escape hatch is to use `useUnistyles()` and pass an inline value th
 const { theme } = useUnistyles();
 
 <ScrollView
-  contentContainerStyle={[
-    styles.contentContainer,
-    { backgroundColor: theme.colors.surface0 },
-  ]}
-/>
+  contentContainerStyle={[styles.contentContainer, { backgroundColor: theme.colors.surface0 }]}
+/>;
 ```
 
 Use this sparingly. It works because React re-renders the prop, but it gives up the main Unistyles native-update path for that value.
@@ -98,8 +158,14 @@ The sharp edge: Unistyles hashes styles by value. If `withUnistyles` receives a 
 Concrete regression we hit: `welcome-screen.tsx` had `const ThemedScrollView = withUnistyles(ScrollView)` with `style={{ flex: 1, backgroundColor: theme.colors.surface0 }}`. `agent-panel.tsx` had `root` and `container` styles with the exact same value. All three collided on class `unistyles_j2k2iilhfz`, so the browser stylesheet contained:
 
 ```css
-.unistyles_j2k2iilhfz { flex: 1 1 0%; background-color: var(--colors-surface0); }
-.unistyles_j2k2iilhfz > * { flex: 1 1 0%; background-color: var(--colors-surface0); }
+.unistyles_j2k2iilhfz {
+  flex: 1 1 0%;
+  background-color: var(--colors-surface0);
+}
+.unistyles_j2k2iilhfz > * {
+  flex: 1 1 0%;
+  background-color: var(--colors-surface0);
+}
 ```
 
 The child-selector rule forced `flex:1` and `background-color: surface0` onto the Composer's outer `Animated.View` (a direct child of `container`), stretching it to fill remaining space and leaving a large empty gap between the composer UI and the bottom of the screen. It also painted a `surface0` band behind the scroll-to-bottom button. The bug only appeared in the browser — Electron skips `WelcomeScreen` after pairing, so the `> *` rule was never injected there.
@@ -113,8 +179,10 @@ Symptoms to watch for:
 Quick confirmation in DevTools console:
 
 ```js
-[...document.styleSheets].flatMap(s => [...(s.cssRules || [])])
-  .map(r => r.cssText).filter(t => t.includes("unistyles") && t.includes("> *"));
+[...document.styleSheets]
+  .flatMap((s) => [...(s.cssRules || [])])
+  .map((r) => r.cssText)
+  .filter((t) => t.includes("unistyles") && t.includes("> *"));
 ```
 
 Any match beyond benign `r-pointerEvents-* > *` rules from react-native-web is a leak.
@@ -130,9 +198,7 @@ We saw this in `AdaptiveModalSheet`: the body text and buttons were dark-theme-c
 ```tsx
 const { theme } = useUnistyles();
 
-<Text style={[styles.title, { color: theme.colors.foreground }]}>
-  {title}
-</Text>
+<Text style={[styles.title, { color: theme.colors.foreground }]}>{title}</Text>;
 ```
 
 Keep layout and typography in `StyleSheet.create`; move only the stale theme-dependent value through React. If a larger subtree shows the same behavior, consider remounting the sheet on theme changes or moving the themed paint onto a wrapper that is mounted with the visible content.
@@ -170,7 +236,7 @@ Use `useUnistyles()` inside the component instead:
 ```tsx
 const { theme } = useUnistyles();
 
-<ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+<ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />;
 ```
 
 Importing `baseColors`, theme-name constants, or `type Theme` is fine when the value is intentionally static or type-only.
@@ -233,4 +299,4 @@ The welcome-screen investigation used this approach to prove the white layer was
 - [GitHub issue #550: ScrollView sticky-header theme updates](https://github.com/jpudysz/react-native-unistyles/issues/550)
 - [GitHub issue #817: `UnistylesRuntime.themeName` does not re-render](https://github.com/jpudysz/react-native-unistyles/issues/817)
 - [GitHub issue #1030: `Image.tintColor` and native style update edge case](https://github.com/jpudysz/react-native-unistyles/issues/1030)
-- [Local research note: welcome theme split](</Users/moboudra/.paseo/notes/welcome-theme-split-research.md>)
+- [Local research note: welcome theme split](/Users/moboudra/.paseo/notes/welcome-theme-split-research.md)

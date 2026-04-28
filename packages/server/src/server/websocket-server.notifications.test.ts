@@ -1,12 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Server as HTTPServer } from "http";
+import type pino from "pino";
+import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentStorage } from "./agent/agent-storage.js";
+import type { DownloadTokenStore } from "./file-download/token-store.js";
+import type { DaemonConfigStore } from "./daemon-config-store.js";
+import type { FileBackedChatService } from "./chat/chat-service.js";
+import type { LoopService } from "./loop-service.js";
+import type { ScheduleService } from "./schedule/service.js";
+import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 
 const wsModuleMock = vi.hoisted(() => {
   class MockWebSocketServer {
-    readonly handlers = new Map<string, (...args: any[]) => void>();
+    readonly handlers = new Map<string, (...args: unknown[]) => void>();
 
-    constructor(_options: unknown) {}
-
-    on(event: string, handler: (...args: any[]) => void) {
+    on(event: string, handler: (...args: unknown[]) => void) {
       this.handlers.set(event, handler);
       return this;
     }
@@ -29,7 +37,9 @@ vi.mock("ws", () => ({
 }));
 
 vi.mock("./session.js", () => ({
-  Session: class {},
+  Session: function Session() {
+    return {};
+  },
 }));
 
 vi.mock("./push/token-store.js", () => ({
@@ -46,6 +56,17 @@ vi.mock("./push/push-service.js", () => ({
 }));
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
+
+interface WebSocketServerInternals {
+  sessions: Map<unknown, unknown>;
+  broadcastAgentAttention(params: {
+    agentId: string;
+    reason: string;
+    preview?: string;
+    providerId?: string;
+    timestamp?: string;
+  }): Promise<void>;
+}
 
 function createLogger() {
   const logger = {
@@ -71,14 +92,14 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
   };
 
   const server = new VoiceAssistantWebSocketServer(
-    {} as any,
-    createLogger() as any,
+    {} as unknown as HTTPServer,
+    createLogger() as unknown as pino.Logger,
     "srv-test",
-    agentManager as any,
-    {} as any,
-    {} as any,
+    agentManager as unknown as AgentManager,
+    {} as unknown as AgentStorage,
+    {} as unknown as DownloadTokenStore,
     "/tmp/paseo-test",
-    daemonConfigStore as any,
+    daemonConfigStore as unknown as DaemonConfigStore,
     null,
     { allowedOrigins: new Set() },
     undefined,
@@ -91,9 +112,9 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     undefined,
     undefined,
     undefined,
-    {} as any,
-    {} as any,
-    {} as any,
+    {} as unknown as FileBackedChatService,
+    {} as unknown as LoopService,
+    {} as unknown as ScheduleService,
     {
       subscribe: vi.fn(),
       scheduleRefreshForCwd: vi.fn(),
@@ -104,7 +125,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
         checkoutDiffFallbackRefreshTargetCount: 0,
       })),
       dispose: vi.fn(),
-    } as any,
+    } as unknown as CheckoutDiffManager,
   );
 
   return { server, agentManager };
@@ -145,7 +166,7 @@ function connectClient(
   } | null,
 ) {
   const ws = createOpenSocket();
-  (server as any).sessions.set(ws, {
+  (server as unknown as WebSocketServerInternals).sessions.set(ws, {
     session: createSessionWithActivity(activity),
     clientId: "client-test",
     appVersion: null,
@@ -184,7 +205,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       getLastAssistantMessage,
     });
 
-    await (server as any).broadcastAgentAttention({
+    await (server as unknown as WebSocketServerInternals).broadcastAgentAttention({
       agentId: "agent-1",
       provider: "claude",
       reason: "finished",
@@ -214,7 +235,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       getLastAssistantMessage,
     });
 
-    await (server as any).broadcastAgentAttention({
+    await (server as unknown as WebSocketServerInternals).broadcastAgentAttention({
       agentId: "agent-2",
       provider: "claude",
       reason: "finished",
@@ -240,7 +261,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       lastActivityAt: new Date(nowMs - 300_000),
     });
 
-    await (server as any).broadcastAgentAttention({
+    await (server as unknown as WebSocketServerInternals).broadcastAgentAttention({
       agentId: "agent-X",
       provider: "claude",
       reason: "finished",
@@ -255,7 +276,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     const { server } = createServer();
     const ws = connectClient(server, null);
 
-    await (server as any).broadcastAgentAttention({
+    await (server as unknown as WebSocketServerInternals).broadcastAgentAttention({
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "finished",
@@ -269,7 +290,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     const { server } = createServer();
     const ws = connectClient(server, null);
 
-    await (server as any).broadcastAgentAttention({
+    await (server as unknown as WebSocketServerInternals).broadcastAgentAttention({
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "error",

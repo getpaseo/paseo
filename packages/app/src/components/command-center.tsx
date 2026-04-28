@@ -1,5 +1,13 @@
-import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { memo, useEffect, useRef, type ReactNode } from "react";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+  type PressableStateCallbackType,
+} from "react-native";
+import { memo, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Plus, Settings } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useCommandCenter } from "@/hooks/use-command-center";
@@ -14,12 +22,12 @@ function agentKey(agent: Pick<AggregatedAgent, "serverId" | "id">): string {
   return `${agent.serverId}:${agent.id}`;
 }
 
-type CommandCenterRowProps = {
+interface CommandCenterRowProps {
   active: boolean;
   children: ReactNode;
   onPress: () => void;
   registerRow: (el: View | null) => void;
-};
+}
 
 const CommandCenterRow = memo(function CommandCenterRow({
   active,
@@ -29,21 +37,213 @@ const CommandCenterRow = memo(function CommandCenterRow({
 }: CommandCenterRowProps) {
   const { theme } = useUnistyles();
 
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.row,
+      (Boolean(hovered) || pressed || active) && {
+        backgroundColor: theme.colors.surface1,
+      },
+    ],
+    [active, theme.colors.surface1],
+  );
+
   return (
-    <Pressable
-      ref={registerRow}
-      style={({ hovered, pressed }) => [
-        styles.row,
-        (hovered || pressed || active) && {
-          backgroundColor: theme.colors.surface1,
-        },
-      ]}
-      onPress={onPress}
-    >
+    <Pressable ref={registerRow} style={pressableStyle} onPress={onPress}>
       {children}
     </Pressable>
   );
 });
+
+interface CommandCenterRowContainerProps {
+  rowIndex: number;
+  active: boolean;
+  rowRefs: React.MutableRefObject<Map<number, View>>;
+  onPress: () => void;
+  children: ReactNode;
+}
+
+function CommandCenterRowContainer({
+  rowIndex,
+  active,
+  rowRefs,
+  onPress,
+  children,
+}: CommandCenterRowContainerProps) {
+  const registerRow = useCallback(
+    (el: View | null) => {
+      if (el) rowRefs.current.set(rowIndex, el);
+      else rowRefs.current.delete(rowIndex);
+    },
+    [rowRefs, rowIndex],
+  );
+  return (
+    <CommandCenterRow active={active} registerRow={registerRow} onPress={onPress}>
+      {children}
+    </CommandCenterRow>
+  );
+}
+
+interface CommandCenterActionRowProps {
+  item: Extract<ReturnType<typeof useCommandCenter>["items"][number], { kind: "action" }>;
+  rowIndex: number;
+  active: boolean;
+  rowRefs: React.MutableRefObject<Map<number, View>>;
+  onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
+}
+
+function CommandCenterActionRow({
+  item,
+  rowIndex,
+  active,
+  rowRefs,
+  onSelect,
+}: CommandCenterActionRowProps) {
+  const { theme } = useUnistyles();
+  const handlePress = useCallback(() => onSelect(item), [onSelect, item]);
+  const action = item.action;
+  let actionIcon: React.ReactNode = null;
+  if (action.icon === "plus") {
+    actionIcon = <Plus size={16} strokeWidth={2.4} color={theme.colors.foregroundMuted} />;
+  } else if (action.icon === "settings") {
+    actionIcon = <Settings size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />;
+  }
+  const titleStyle = useMemo(
+    () => [styles.title, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  return (
+    <CommandCenterRowContainer
+      rowIndex={rowIndex}
+      active={active}
+      rowRefs={rowRefs}
+      onPress={handlePress}
+    >
+      <View style={styles.rowContent}>
+        <View style={styles.rowMain}>
+          {actionIcon ? <View style={styles.iconSlot}>{actionIcon}</View> : null}
+          <View style={styles.textContent}>
+            <Text style={titleStyle} numberOfLines={1}>
+              {action.title}
+            </Text>
+          </View>
+        </View>
+        {action.shortcutKeys ? (
+          <Shortcut chord={action.shortcutKeys} style={styles.rowShortcut} />
+        ) : null}
+      </View>
+    </CommandCenterRowContainer>
+  );
+}
+
+interface CommandCenterAgentRowProps {
+  item: Extract<ReturnType<typeof useCommandCenter>["items"][number], { kind: "agent" }>;
+  rowIndex: number;
+  active: boolean;
+  rowRefs: React.MutableRefObject<Map<number, View>>;
+  onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
+  children: ReactNode;
+}
+
+function CommandCenterAgentRow({
+  rowIndex,
+  active,
+  rowRefs,
+  onSelect,
+  item,
+  children,
+}: CommandCenterAgentRowProps) {
+  const handlePress = useCallback(() => onSelect(item), [onSelect, item]);
+  return (
+    <CommandCenterRowContainer
+      rowIndex={rowIndex}
+      active={active}
+      rowRefs={rowRefs}
+      onPress={handlePress}
+    >
+      {children}
+    </CommandCenterRowContainer>
+  );
+}
+
+interface CommandCenterAgentRowContentProps {
+  agent: AggregatedAgent;
+}
+
+function CommandCenterAgentRowContent({ agent }: CommandCenterAgentRowContentProps) {
+  const { theme } = useUnistyles();
+  const titleStyle = useMemo(
+    () => [styles.title, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const subtitleStyle = useMemo(
+    () => [styles.subtitle, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+  return (
+    <View style={styles.rowContent}>
+      <View style={styles.rowMain}>
+        <View style={styles.iconSlot}>
+          <AgentStatusDot
+            status={agent.status}
+            requiresAttention={agent.requiresAttention}
+            showInactive
+          />
+        </View>
+        <View style={styles.textContent}>
+          <Text style={titleStyle} numberOfLines={1}>
+            {agent.title || "New agent"}
+          </Text>
+          <Text style={subtitleStyle} numberOfLines={1}>
+            {shortenPath(agent.cwd)} · {formatTimeAgo(agent.lastActivityAt)}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+interface AgentItemsSectionProps {
+  agentItems: Extract<ReturnType<typeof useCommandCenter>["items"][number], { kind: "agent" }>[];
+  actionItemsLength: number;
+  activeIndex: number;
+  rowRefs: React.MutableRefObject<Map<number, View>>;
+  onSelect: (item: ReturnType<typeof useCommandCenter>["items"][number]) => void;
+  sectionDividerStyle: React.ComponentProps<typeof View>["style"];
+  sectionLabelStyle: React.ComponentProps<typeof Text>["style"];
+}
+
+function AgentItemsSection({
+  agentItems,
+  actionItemsLength,
+  activeIndex,
+  rowRefs,
+  onSelect,
+  sectionDividerStyle,
+  sectionLabelStyle,
+}: AgentItemsSectionProps) {
+  return (
+    <>
+      {actionItemsLength > 0 ? <View style={sectionDividerStyle} /> : null}
+      <Text style={sectionLabelStyle}>Agents</Text>
+      {agentItems.map((item, index) => {
+        const rowIndex = actionItemsLength + index;
+        const agent = item.agent;
+        return (
+          <CommandCenterAgentRow
+            key={agentKey(agent)}
+            item={item}
+            rowIndex={rowIndex}
+            active={rowIndex === activeIndex}
+            rowRefs={rowRefs}
+            onSelect={onSelect}
+          >
+            <CommandCenterAgentRowContent agent={agent} />
+          </CommandCenterAgentRow>
+        );
+      })}
+    </>
+  );
+}
 
 export function CommandCenter() {
   const { theme } = useUnistyles();
@@ -91,24 +291,46 @@ export function CommandCenter() {
     }
   }, [activeIndex, open]);
 
-  if (isNative || !open) return null;
+  const actionItems = useMemo(() => items.filter((item) => item.kind === "action"), [items]);
+  const agentItems = useMemo(() => items.filter((item) => item.kind === "agent"), [items]);
 
-  const actionItems = items.filter((item) => item.kind === "action");
-  const agentItems = items.filter((item) => item.kind === "agent");
+  const panelStyle = useMemo(
+    () => [
+      styles.panel,
+      { borderColor: theme.colors.border, backgroundColor: theme.colors.surface0 },
+    ],
+    [theme.colors.border, theme.colors.surface0],
+  );
+  const headerStyle = useMemo(
+    () => [styles.header, { borderBottomColor: theme.colors.border }],
+    [theme.colors.border],
+  );
+  const inputStyle = useMemo(
+    () => [styles.input, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const emptyTextStyle = useMemo(
+    () => [styles.emptyText, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+  const sectionLabelStyle = useMemo(
+    () => [styles.sectionLabel, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+  const sectionDividerStyle = useMemo(
+    () => [styles.sectionDivider, { backgroundColor: theme.colors.border }],
+    [theme.colors.border],
+  );
+
+  if (isNative || !open) return null;
 
   return (
     <Modal visible={open} transparent animationType="fade" onRequestClose={handleClose}>
       <View style={styles.overlay}>
         <Pressable style={styles.backdrop} onPress={handleClose} />
 
-        <View
-          testID="command-center-panel"
-          style={[
-            styles.panel,
-            { borderColor: theme.colors.border, backgroundColor: theme.colors.surface0 },
-          ]}
-        >
-          <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+        <View testID="command-center-panel" style={panelStyle}>
+          <View style={headerStyle}>
             <TextInput
               testID="command-center-input"
               ref={inputRef}
@@ -116,7 +338,7 @@ export function CommandCenter() {
               onChangeText={setQuery}
               placeholder="Type a command or search agents..."
               placeholderTextColor={theme.colors.foregroundMuted}
-              style={[styles.input, { color: theme.colors.foreground }]}
+              style={inputStyle}
               autoCapitalize="none"
               autoCorrect={false}
               autoFocus
@@ -131,116 +353,35 @@ export function CommandCenter() {
             showsVerticalScrollIndicator={false}
           >
             {items.length === 0 ? (
-              <Text style={[styles.emptyText, { color: theme.colors.foregroundMuted }]}>
-                No matches
-              </Text>
+              <Text style={emptyTextStyle}>No matches</Text>
             ) : (
               <>
                 {actionItems.length > 0 ? (
                   <>
-                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
-                      Actions
-                    </Text>
-                    {actionItems.map((item, index) => {
-                      const active = index === activeIndex;
-                      const action = item.action;
-                      const actionIcon =
-                        action.icon === "plus" ? (
-                          <Plus size={16} strokeWidth={2.4} color={theme.colors.foregroundMuted} />
-                        ) : action.icon === "settings" ? (
-                          <Settings
-                            size={16}
-                            strokeWidth={2.2}
-                            color={theme.colors.foregroundMuted}
-                          />
-                        ) : null;
-                      return (
-                        <CommandCenterRow
-                          key={`action:${action.id}`}
-                          registerRow={(el: View | null) => {
-                            if (el) rowRefs.current.set(index, el);
-                            else rowRefs.current.delete(index);
-                          }}
-                          active={active}
-                          onPress={() => handleSelectItem(item)}
-                        >
-                          <View style={styles.rowContent}>
-                            <View style={styles.rowMain}>
-                              {actionIcon ? (
-                                <View style={styles.iconSlot}>{actionIcon}</View>
-                              ) : null}
-                              <View style={styles.textContent}>
-                                <Text
-                                  style={[styles.title, { color: theme.colors.foreground }]}
-                                  numberOfLines={1}
-                                >
-                                  {action.title}
-                                </Text>
-                              </View>
-                            </View>
-                            {action.shortcutKeys ? (
-                              <Shortcut chord={action.shortcutKeys} style={styles.rowShortcut} />
-                            ) : null}
-                          </View>
-                        </CommandCenterRow>
-                      );
-                    })}
+                    <Text style={sectionLabelStyle}>Actions</Text>
+                    {actionItems.map((item, index) => (
+                      <CommandCenterActionRow
+                        key={`action:${item.action.id}`}
+                        item={item}
+                        rowIndex={index}
+                        active={index === activeIndex}
+                        rowRefs={rowRefs}
+                        onSelect={handleSelectItem}
+                      />
+                    ))}
                   </>
                 ) : null}
 
                 {agentItems.length > 0 ? (
-                  <>
-                    {actionItems.length > 0 ? (
-                      <View
-                        style={[styles.sectionDivider, { backgroundColor: theme.colors.border }]}
-                      />
-                    ) : null}
-                    <Text style={[styles.sectionLabel, { color: theme.colors.foregroundMuted }]}>
-                      Agents
-                    </Text>
-                    {agentItems.map((item, index) => {
-                      const rowIndex = actionItems.length + index;
-                      const active = rowIndex === activeIndex;
-                      const agent = item.agent;
-                      return (
-                        <CommandCenterRow
-                          key={agentKey(agent)}
-                          registerRow={(el: View | null) => {
-                            if (el) rowRefs.current.set(rowIndex, el);
-                            else rowRefs.current.delete(rowIndex);
-                          }}
-                          active={active}
-                          onPress={() => handleSelectItem(item)}
-                        >
-                          <View style={styles.rowContent}>
-                            <View style={styles.rowMain}>
-                              <View style={styles.iconSlot}>
-                                <AgentStatusDot
-                                  status={agent.status}
-                                  requiresAttention={agent.requiresAttention}
-                                  showInactive
-                                />
-                              </View>
-                              <View style={styles.textContent}>
-                                <Text
-                                  style={[styles.title, { color: theme.colors.foreground }]}
-                                  numberOfLines={1}
-                                >
-                                  {agent.title || "New agent"}
-                                </Text>
-                                <Text
-                                  style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
-                                  numberOfLines={1}
-                                >
-                                  {shortenPath(agent.cwd)} · {formatTimeAgo(agent.lastActivityAt)}
-                                </Text>
-                              </View>
-                            </View>
-                          </View>
-                        </CommandCenterRow>
-                      );
-                    })}
-                  </>
+                  <AgentItemsSection
+                    agentItems={agentItems}
+                    actionItemsLength={actionItems.length}
+                    activeIndex={activeIndex}
+                    rowRefs={rowRefs}
+                    onSelect={handleSelectItem}
+                    sectionDividerStyle={sectionDividerStyle}
+                    sectionLabelStyle={sectionLabelStyle}
+                  />
                 ) : null}
               </>
             )}
@@ -280,7 +421,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.lg,
     paddingVertical: theme.spacing[1],
     outlineStyle: "none",
-  } as any,
+  } as object,
   results: {
     flexGrow: 0,
   },

@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
@@ -30,14 +30,22 @@ export function AttachmentPill({
   const [isCloseHovered, setIsCloseHovered] = useState(false);
   const alwaysShow = isNative || isCompact;
   const showRemove = alwaysShow || isBodyHovered || isCloseHovered;
+  const closeButtonStyle = useMemo(
+    () => [styles.closeButton, !showRemove && styles.closeButtonHidden],
+    [showRemove],
+  );
+  const handleBodyHoverIn = useCallback(() => setIsBodyHovered(true), []);
+  const handleBodyHoverOut = useCallback(() => setIsBodyHovered(false), []);
+  const handleCloseHoverIn = useCallback(() => setIsCloseHovered(true), []);
+  const handleCloseHoverOut = useCallback(() => setIsCloseHovered(false), []);
   return (
     <View style={styles.wrapper}>
       <Pressable
         testID={testID}
         onPress={onOpen}
         disabled={disabled}
-        onHoverIn={() => setIsBodyHovered(true)}
-        onHoverOut={() => setIsBodyHovered(false)}
+        onHoverIn={handleBodyHoverIn}
+        onHoverOut={handleBodyHoverOut}
         accessibilityRole="button"
         accessibilityLabel={openAccessibilityLabel}
         style={styles.body}
@@ -47,12 +55,12 @@ export function AttachmentPill({
       <Pressable
         onPress={onRemove}
         disabled={disabled}
-        onHoverIn={() => setIsCloseHovered(true)}
-        onHoverOut={() => setIsCloseHovered(false)}
+        onHoverIn={handleCloseHoverIn}
+        onHoverOut={handleCloseHoverOut}
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel={removeAccessibilityLabel}
-        style={[styles.closeButton, !showRemove && styles.closeButtonHidden]}
+        style={closeButtonStyle}
       >
         <X size={12} color={theme.colors.foregroundMuted} />
       </Pressable>

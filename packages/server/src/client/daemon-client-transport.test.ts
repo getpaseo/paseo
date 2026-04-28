@@ -89,12 +89,12 @@ describe("daemon-client transport helpers", () => {
   });
 
   test("createWebSocketTransportFactory binds and unbinds event listeners", () => {
-    const listeners = new Map<string, (...args: any[]) => void>();
+    const listeners = new Map<string, (...args: unknown[]) => void>();
     const ws = {
       readyState: 1,
       send: vi.fn(),
       close: vi.fn(),
-      addEventListener: vi.fn((event: string, handler: (...args: any[]) => void) => {
+      addEventListener: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
         listeners.set(event, handler);
       }),
       removeEventListener: vi.fn((event: string) => {

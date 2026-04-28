@@ -55,6 +55,7 @@ Use `extends` to create a new provider entry that inherits from a built-in provi
 ```
 
 Required fields for custom providers:
+
 - `extends` — which built-in provider to inherit from (or `"acp"`)
 - `label` — display name in the UI
 
@@ -95,12 +96,12 @@ Required fields for custom providers:
 
 ### Available models
 
-| Model | Tier |
-|---|---|
-| `glm-5.1` | Advanced (flagship) |
-| `glm-5-turbo` | Advanced |
-| `glm-4.7` | Standard |
-| `glm-4.5-air` | Lightweight |
+| Model         | Tier                |
+| ------------- | ------------------- |
+| `glm-5.1`     | Advanced (flagship) |
+| `glm-5-turbo` | Advanced            |
+| `glm-4.7`     | Standard            |
+| `glm-4.5-air` | Lightweight         |
 
 ### Notes
 
@@ -148,10 +149,10 @@ Required fields for custom providers:
 
 ### API endpoints
 
-| Mode | Base URL |
-|---|---|
-| Coding plan (subscription) | `https://coding-intl.dashscope.aliyuncs.com/apps/anthropic` |
-| Pay-as-you-go (no subscription) | `https://dashscope-intl.aliyuncs.com/apps/anthropic` |
+| Mode                            | Base URL                                                    |
+| ------------------------------- | ----------------------------------------------------------- |
+| Coding plan (subscription)      | `https://coding-intl.dashscope.aliyuncs.com/apps/anthropic` |
+| Pay-as-you-go (no subscription) | `https://dashscope-intl.aliyuncs.com/apps/anthropic`        |
 
 For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk-xxxxx`) instead of `ANTHROPIC_AUTH_TOKEN`.
 
@@ -159,13 +160,13 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 
 **Recommended for coding plan:**
 
-| Model | Notes |
-|---|---|
-| `qwen3.5-plus` | Vision capable, recommended |
-| `qwen3-coder-next` | Optimized for coding |
-| `kimi-k2.5` | Vision capable |
-| `glm-5` | Zhipu GLM |
-| `MiniMax-M2.5` | MiniMax |
+| Model              | Notes                       |
+| ------------------ | --------------------------- |
+| `qwen3.5-plus`     | Vision capable, recommended |
+| `qwen3-coder-next` | Optimized for coding        |
+| `kimi-k2.5`        | Vision capable              |
+| `glm-5`            | Zhipu GLM                   |
+| `MiniMax-M2.5`     | MiniMax                     |
 
 **Additional models (pay-as-you-go):**
 `qwen3-max`, `qwen3.5-flash`, `qwen3-coder-plus`, `qwen3-coder-flash`, `qwen3-vl-plus`, `qwen3-vl-flash`
@@ -221,16 +222,12 @@ You can also combine profiles with model overrides to pin specific models per pr
       "claude-fast": {
         "extends": "claude",
         "label": "Claude (Fast)",
-        "models": [
-          { "id": "claude-sonnet-4-6", "label": "Sonnet 4.6", "isDefault": true }
-        ]
+        "models": [{ "id": "claude-sonnet-4-6", "label": "Sonnet 4.6", "isDefault": true }]
       },
       "claude-smart": {
         "extends": "claude",
         "label": "Claude (Smart)",
-        "models": [
-          { "id": "claude-opus-4-6", "label": "Opus 4.6", "isDefault": true }
-        ]
+        "models": [{ "id": "claude-opus-4-6", "label": "Opus 4.6", "isDefault": true }]
       }
     }
   }
@@ -338,6 +335,7 @@ Set `extends: "acp"` and provide a `command`:
 ```
 
 Required fields for ACP providers:
+
 - `extends: "acp"`
 - `label`
 - `command` — the command to spawn the agent process (must support ACP over stdio)
@@ -424,44 +422,85 @@ Models and modes are discovered dynamically at runtime from the agent process. I
 
 Profile models (defined in config.json) completely replace runtime-discovered models when present.
 
+If you want to keep runtime-discovered models and add or relabel a few entries, use `additionalModels` instead.
+
+Example: add an experimental model while keeping every model the provider discovers at runtime:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-agent": {
+        "extends": "acp",
+        "label": "My Agent",
+        "command": ["my-agent", "--acp"],
+        "additionalModels": [
+          { "id": "experimental-model", "label": "Experimental", "isDefault": true }
+        ]
+      }
+    }
+  }
+}
+```
+
+Example: relabel a discovered model without replacing the full list:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-agent": {
+        "extends": "acp",
+        "label": "My Agent",
+        "command": ["my-agent", "--acp"],
+        "additionalModels": [{ "id": "provider/model-id", "label": "My Preferred Label" }]
+      }
+    }
+  }
+}
+```
+
+When an `additionalModels` entry has the same `id` as a discovered model, it updates that model in place.
+
 ---
 
 ## Provider override reference
 
 Every entry under `agents.providers` accepts these fields:
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `extends` | `string` | Yes (custom only) | Built-in provider ID to inherit from, or `"acp"` |
-| `label` | `string` | Yes (custom only) | Display name in the UI |
-| `description` | `string` | No | Short description shown in the UI |
-| `command` | `string[]` | Yes (ACP only) | Command to spawn the agent process |
-| `env` | `Record<string, string>` | No | Environment variables to set for the agent process |
-| `models` | `ProviderProfileModel[]` | No | Static model list (overrides runtime discovery) |
-| `disallowedTools` | `string[]` | No | Tool names to disable for this provider (e.g. `["WebSearch"]`) |
-| `enabled` | `boolean` | No | Set to `false` to hide the provider (default: `true`) |
-| `order` | `number` | No | Sort order in the provider list |
+| Field              | Type                     | Required          | Description                                                        |
+| ------------------ | ------------------------ | ----------------- | ------------------------------------------------------------------ |
+| `extends`          | `string`                 | Yes (custom only) | Built-in provider ID to inherit from, or `"acp"`                   |
+| `label`            | `string`                 | Yes (custom only) | Display name in the UI                                             |
+| `description`      | `string`                 | No                | Short description shown in the UI                                  |
+| `command`          | `string[]`               | Yes (ACP only)    | Command to spawn the agent process                                 |
+| `env`              | `Record<string, string>` | No                | Environment variables to set for the agent process                 |
+| `models`           | `ProviderProfileModel[]` | No                | Static model list (overrides runtime discovery)                    |
+| `additionalModels` | `ProviderProfileModel[]` | No                | Static model additions (merged with runtime discovery or `models`) |
+| `disallowedTools`  | `string[]`               | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)     |
+| `enabled`          | `boolean`                | No                | Set to `false` to hide the provider (default: `true`)              |
+| `order`            | `number`                 | No                | Sort order in the provider list                                    |
 
 ### Model definition
 
 Each entry in the `models` array:
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | Yes | Model identifier sent to the provider |
-| `label` | `string` | Yes | Display name in the UI |
-| `description` | `string` | No | Short description |
-| `isDefault` | `boolean` | No | Mark as the default model selection |
-| `thinkingOptions` | `ThinkingOption[]` | No | Available thinking/reasoning levels |
+| Field             | Type               | Required | Description                           |
+| ----------------- | ------------------ | -------- | ------------------------------------- |
+| `id`              | `string`           | Yes      | Model identifier sent to the provider |
+| `label`           | `string`           | Yes      | Display name in the UI                |
+| `description`     | `string`           | No       | Short description                     |
+| `isDefault`       | `boolean`          | No       | Mark as the default model selection   |
+| `thinkingOptions` | `ThinkingOption[]` | No       | Available thinking/reasoning levels   |
 
 ### Thinking option
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | Yes | Thinking option identifier |
-| `label` | `string` | Yes | Display name |
-| `description` | `string` | No | Short description |
-| `isDefault` | `boolean` | No | Mark as the default thinking option |
+| Field         | Type      | Required | Description                         |
+| ------------- | --------- | -------- | ----------------------------------- |
+| `id`          | `string`  | Yes      | Thinking option identifier          |
+| `label`       | `string`  | Yes      | Display name                        |
+| `description` | `string`  | No       | Short description                   |
+| `isDefault`   | `boolean` | No       | Mark as the default thinking option |
 
 ### Gotcha: `extends: "claude"` with third-party endpoints
 

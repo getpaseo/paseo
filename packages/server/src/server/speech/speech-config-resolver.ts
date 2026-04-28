@@ -47,55 +47,83 @@ function resolveOptionalBooleanFlag(value: unknown): boolean {
   return OptionalBooleanFlagSchema.parse(value) ?? true;
 }
 
+interface FeatureProviderInputs {
+  configuredValue: string | undefined;
+  enabled: boolean;
+}
+
+function firstSpeechDefinedValue<T>(values: Array<T | null | undefined>): T | undefined {
+  for (const value of values) {
+    if (value !== undefined && value !== null) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function buildFeatureProviderInputs(params: {
+  env: NodeJS.ProcessEnv;
+  persisted: PersistedConfig;
+}): Record<keyof RequestedSpeechProviders, FeatureProviderInputs> {
+  const voiceModeEnabled = resolveOptionalBooleanFlag(
+    firstSpeechDefinedValue<string | boolean>([
+      params.env.PASEO_VOICE_MODE_ENABLED,
+      params.persisted.features?.voiceMode?.enabled,
+    ]),
+  );
+  return {
+    dictationStt: {
+      configuredValue: firstSpeechDefinedValue<string>([
+        params.env.PASEO_DICTATION_STT_PROVIDER,
+        params.persisted.features?.dictation?.stt?.provider,
+      ]),
+      enabled: resolveOptionalBooleanFlag(
+        firstSpeechDefinedValue<string | boolean>([
+          params.env.PASEO_DICTATION_ENABLED,
+          params.persisted.features?.dictation?.enabled,
+        ]),
+      ),
+    },
+    voiceTurnDetection: {
+      configuredValue: firstSpeechDefinedValue<string>([
+        params.env.PASEO_VOICE_TURN_DETECTION_PROVIDER,
+        params.persisted.features?.voiceMode?.turnDetection?.provider,
+      ]),
+      enabled: voiceModeEnabled,
+    },
+    voiceStt: {
+      configuredValue: firstSpeechDefinedValue<string>([
+        params.env.PASEO_VOICE_STT_PROVIDER,
+        params.persisted.features?.voiceMode?.stt?.provider,
+      ]),
+      enabled: voiceModeEnabled,
+    },
+    voiceTts: {
+      configuredValue: firstSpeechDefinedValue<string>([
+        params.env.PASEO_VOICE_TTS_PROVIDER,
+        params.persisted.features?.voiceMode?.tts?.provider,
+      ]),
+      enabled: voiceModeEnabled,
+    },
+  };
+}
+
+function buildRequestedFeatureProvider(
+  inputs: FeatureProviderInputs,
+  parsedValue: z.infer<typeof SpeechProviderIdSchema>,
+): RequestedSpeechProvider {
+  return {
+    provider: parsedValue,
+    explicit: inputs.configuredValue !== undefined,
+    enabled: inputs.enabled,
+  };
+}
+
 function resolveRequestedSpeechProviders(params: {
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
 }): RequestedSpeechProviders {
-  const resolveFeatureProvider = (
-    configuredValue: string | undefined,
-    parsedValue: z.infer<typeof SpeechProviderIdSchema>,
-    enabled: boolean,
-  ): RequestedSpeechProvider => ({
-    provider: parsedValue,
-    explicit: configuredValue !== undefined,
-    enabled,
-  });
-
-  const voiceModeEnabled = resolveOptionalBooleanFlag(
-    params.env.PASEO_VOICE_MODE_ENABLED ?? params.persisted.features?.voiceMode?.enabled,
-  );
-  const featureProviders = {
-    dictationStt: {
-      configuredValue:
-        params.env.PASEO_DICTATION_STT_PROVIDER ??
-        params.persisted.features?.dictation?.stt?.provider,
-      enabled: resolveOptionalBooleanFlag(
-        params.env.PASEO_DICTATION_ENABLED ?? params.persisted.features?.dictation?.enabled,
-      ),
-    },
-    voiceTurnDetection: {
-      configuredValue:
-        params.env.PASEO_VOICE_TURN_DETECTION_PROVIDER ??
-        params.persisted.features?.voiceMode?.turnDetection?.provider,
-      enabled: voiceModeEnabled,
-    },
-    voiceStt: {
-      configuredValue:
-        params.env.PASEO_VOICE_STT_PROVIDER ?? params.persisted.features?.voiceMode?.stt?.provider,
-      enabled: voiceModeEnabled,
-    },
-    voiceTts: {
-      configuredValue:
-        params.env.PASEO_VOICE_TTS_PROVIDER ?? params.persisted.features?.voiceMode?.tts?.provider,
-      enabled: voiceModeEnabled,
-    },
-  } satisfies Record<
-    keyof RequestedSpeechProviders,
-    {
-      configuredValue: string | undefined;
-      enabled: boolean;
-    }
-  >;
+  const featureProviders = buildFeatureProviderInputs(params);
 
   const parsed = RequestedSpeechProvidersSchema.parse({
     dictationStt: featureProviders.dictationStt.configuredValue ?? "local",
@@ -105,26 +133,13 @@ function resolveRequestedSpeechProviders(params: {
   });
 
   return {
-    dictationStt: resolveFeatureProvider(
-      featureProviders.dictationStt.configuredValue,
-      parsed.dictationStt,
-      featureProviders.dictationStt.enabled,
-    ),
-    voiceTurnDetection: resolveFeatureProvider(
-      featureProviders.voiceTurnDetection.configuredValue,
+    dictationStt: buildRequestedFeatureProvider(featureProviders.dictationStt, parsed.dictationStt),
+    voiceTurnDetection: buildRequestedFeatureProvider(
+      featureProviders.voiceTurnDetection,
       parsed.voiceTurnDetection,
-      featureProviders.voiceTurnDetection.enabled,
     ),
-    voiceStt: resolveFeatureProvider(
-      featureProviders.voiceStt.configuredValue,
-      parsed.voiceStt,
-      featureProviders.voiceStt.enabled,
-    ),
-    voiceTts: resolveFeatureProvider(
-      featureProviders.voiceTts.configuredValue,
-      parsed.voiceTts,
-      featureProviders.voiceTts.enabled,
-    ),
+    voiceStt: buildRequestedFeatureProvider(featureProviders.voiceStt, parsed.voiceStt),
+    voiceTts: buildRequestedFeatureProvider(featureProviders.voiceTts, parsed.voiceTts),
   };
 }
 

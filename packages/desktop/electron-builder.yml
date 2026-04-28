@@ -3,12 +3,14 @@ appId: sh.paseo.desktop
 productName: Paseo
 executableName: Paseo
 afterPack: ./scripts/after-pack.js
+afterSign: ./scripts/after-sign.js
 directories:
   output: release
 files:
   - dist/**/*
 asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
+  - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
 extraResources:
   - from: ../app/dist
     to: app-dist

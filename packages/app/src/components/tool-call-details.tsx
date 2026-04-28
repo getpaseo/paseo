@@ -1,10 +1,16 @@
-import React, { useMemo, ReactNode } from "react";
-import { View, Text, ScrollView as RNScrollView } from "react-native";
+import React, { useMemo, type ReactNode } from "react";
+import {
+  View,
+  Text,
+  ScrollView as RNScrollView,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
-import { buildLineDiff, parseUnifiedDiff } from "@/utils/tool-call-parsers";
+import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "@/utils/tool-call-parsers";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 import { DiffViewer } from "./diff-viewer";
@@ -23,297 +29,364 @@ interface ToolCallDetailsContentProps {
   showLoadingSkeleton?: boolean;
 }
 
-export function ToolCallDetailsContent({
-  detail,
-  errorText,
-  maxHeight,
-  fillAvailableHeight = false,
-  showLoadingSkeleton = false,
-}: ToolCallDetailsContentProps) {
-  const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
-  const webScrollbarStyle = useWebScrollbarStyle();
+interface DetailStyles {
+  sectionFillStyle: StyleProp<ViewStyle>;
+  codeBlockFillStyle: StyleProp<ViewStyle>;
+  codeVerticalScrollStyle: StyleProp<ViewStyle>;
+  scrollAreaFillStyle: StyleProp<ViewStyle>;
+  scrollAreaStyle: StyleProp<ViewStyle>;
+  jsonScrollCombined: StyleProp<ViewStyle>;
+  jsonScrollErrorCombined: StyleProp<ViewStyle>;
+  fullBleedContainerStyle: StyleProp<ViewStyle>;
+  loadingContainerStyle: StyleProp<ViewStyle>;
+  webScrollbarStyle: StyleProp<ViewStyle>;
+  resolvedMaxHeight: number | undefined;
+  shouldFill: boolean;
+  isFullBleed: boolean;
+}
 
-  // Compute diff lines for edit type
-  const diffLines = useMemo(() => {
+function resolveIsFullBleed(detail: ToolCallDetail | undefined): boolean {
+  return detail?.type === "edit" || detail?.type === "shell" || detail?.type === "write";
+}
+
+function resolveShouldFill(
+  detail: ToolCallDetail | undefined,
+  fillAvailableHeight: boolean,
+): boolean {
+  if (!fillAvailableHeight) return false;
+  const t = detail?.type;
+  return t === "shell" || t === "edit" || t === "write" || t === "read" || t === "sub_agent";
+}
+
+function useDetailStyles(
+  detail: ToolCallDetail | undefined,
+  resolvedMaxHeight: number | undefined,
+  fillAvailableHeight: boolean,
+): DetailStyles {
+  const webScrollbarStyle = useWebScrollbarStyle();
+  const isFullBleed = resolveIsFullBleed(detail);
+  const shouldFill = resolveShouldFill(detail, fillAvailableHeight);
+  const codeBlockStyle = isFullBleed ? styles.fullBleedBlock : styles.diffContainer;
+
+  const sectionFillStyle = useMemo(
+    () => [styles.section, shouldFill && styles.fillHeight],
+    [shouldFill],
+  );
+  const codeBlockFillStyle = useMemo(
+    () => [codeBlockStyle, shouldFill && styles.fillHeight],
+    [codeBlockStyle, shouldFill],
+  );
+  const codeVerticalScrollStyle = useMemo(
+    () => [
+      styles.codeVerticalScroll,
+      resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+      shouldFill && styles.fillHeight,
+      webScrollbarStyle,
+    ],
+    [resolvedMaxHeight, shouldFill, webScrollbarStyle],
+  );
+  const scrollAreaFillStyle = useMemo(
+    () => [
+      styles.scrollArea,
+      resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+      shouldFill && styles.fillHeight,
+      webScrollbarStyle,
+    ],
+    [resolvedMaxHeight, shouldFill, webScrollbarStyle],
+  );
+  const scrollAreaStyle = useMemo(
+    () => [
+      styles.scrollArea,
+      resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
+      webScrollbarStyle,
+    ],
+    [resolvedMaxHeight, webScrollbarStyle],
+  );
+  const jsonScrollCombined = useMemo(
+    () => [styles.jsonScroll, webScrollbarStyle],
+    [webScrollbarStyle],
+  );
+  const jsonScrollErrorCombined = useMemo(
+    () => [styles.jsonScroll, styles.jsonScrollError, webScrollbarStyle],
+    [webScrollbarStyle],
+  );
+  const fullBleedContainerStyle = useMemo(
+    () => [
+      isFullBleed ? styles.fullBleedContainer : styles.paddedContainer,
+      shouldFill && styles.fillHeight,
+    ],
+    [isFullBleed, shouldFill],
+  );
+  const loadingContainerStyle = useMemo(
+    () => [styles.loadingContainer, fillAvailableHeight && styles.fillHeight],
+    [fillAvailableHeight],
+  );
+
+  return {
+    sectionFillStyle,
+    codeBlockFillStyle,
+    codeVerticalScrollStyle,
+    scrollAreaFillStyle,
+    scrollAreaStyle,
+    jsonScrollCombined,
+    jsonScrollErrorCombined,
+    fullBleedContainerStyle,
+    loadingContainerStyle,
+    webScrollbarStyle,
+    resolvedMaxHeight,
+    shouldFill,
+    isFullBleed,
+  };
+}
+
+function useDiffLines(detail: ToolCallDetail | undefined): DiffLine[] | undefined {
+  return useMemo(() => {
     if (!detail || detail.type !== "edit") return undefined;
-    // Use pre-computed unified diff if available (e.g., from apply_patch)
     if (detail.unifiedDiff) {
       return parseUnifiedDiff(detail.unifiedDiff);
     }
     return buildLineDiff(detail.oldString ?? "", detail.newString ?? "");
   }, [detail]);
+}
 
-  const sections: ReactNode[] = [];
-  const isFullBleed =
-    detail?.type === "edit" || detail?.type === "shell" || detail?.type === "write";
-  const shouldFill =
-    fillAvailableHeight &&
-    (detail?.type === "shell" ||
-      detail?.type === "edit" ||
-      detail?.type === "write" ||
-      detail?.type === "read" ||
-      detail?.type === "sub_agent");
-  const codeBlockStyle = isFullBleed ? styles.fullBleedBlock : styles.diffContainer;
+interface ShellDetailProps {
+  command: string;
+  output: string | null | undefined;
+  ds: DetailStyles;
+}
 
-  if (detail?.type === "shell") {
-    const command = detail.command.replace(/\n+$/, "");
-    const commandOutput = (detail.output ?? "").replace(/^\n+/, "");
-    const hasOutput = commandOutput.length > 0;
-    sections.push(
-      <View key="shell" style={[styles.section, shouldFill && styles.fillHeight]}>
-        <View style={[codeBlockStyle, shouldFill && styles.fillHeight]}>
-          <ScrollView
-            style={[
-              styles.codeVerticalScroll,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
-            contentContainerStyle={styles.codeVerticalContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator
-          >
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator
-              style={webScrollbarStyle}
-              contentContainerStyle={styles.codeHorizontalContent}
-            >
-              <View style={styles.codeLine}>
-                <Text selectable style={styles.scrollText}>
-                  <Text style={styles.shellPrompt}>$ </Text>
-                  {command}
-                  {hasOutput ? `\n\n${commandOutput}` : ""}
-                </Text>
-              </View>
-            </ScrollView>
-          </ScrollView>
-        </View>
-      </View>,
-    );
-  } else if (detail?.type === "worktree_setup") {
-    const setupLog = detail.log.replace(/^\n+/, "");
-    const hasLog = setupLog.length > 0;
-    sections.push(
-      <View key="worktree-setup" style={[styles.section, shouldFill && styles.fillHeight]}>
-        <View style={[codeBlockStyle, shouldFill && styles.fillHeight]}>
-          <ScrollView
-            style={[
-              styles.codeVerticalScroll,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
-            contentContainerStyle={styles.codeVerticalContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator
-          >
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator
-              style={webScrollbarStyle}
-              contentContainerStyle={styles.codeHorizontalContent}
-            >
-              <View style={styles.codeLine}>
-                <Text selectable style={styles.scrollText}>
-                  {hasLog
-                    ? setupLog
-                    : `Preparing worktree ${detail.branchName} at ${detail.worktreePath}`}
-                </Text>
-              </View>
-            </ScrollView>
-          </ScrollView>
-        </View>
-      </View>,
-    );
-  } else if (detail?.type === "sub_agent") {
-    const activityLog = detail.log.replace(/^\n+/, "");
-    const hasLog = activityLog.length > 0;
-    const fallbackHeader =
-      detail.subAgentType && detail.description
-        ? `${detail.subAgentType}: ${detail.description}`
-        : (detail.subAgentType ?? detail.description ?? "Sub-agent activity");
-    sections.push(
-      <View key="sub-agent" style={[styles.section, shouldFill && styles.fillHeight]}>
-        <View style={[codeBlockStyle, shouldFill && styles.fillHeight]}>
-          <ScrollView
-            style={[
-              styles.codeVerticalScroll,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
-            contentContainerStyle={styles.codeVerticalContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator
-          >
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator
-              style={webScrollbarStyle}
-              contentContainerStyle={styles.codeHorizontalContent}
-            >
-              <View style={styles.codeLine}>
-                <Text selectable style={styles.scrollText}>
-                  {hasLog ? activityLog : fallbackHeader}
-                </Text>
-              </View>
-            </ScrollView>
-          </ScrollView>
-        </View>
-      </View>,
-    );
-  } else if (detail?.type === "edit") {
-    sections.push(
-      <View key="edit" style={[styles.section, shouldFill && styles.fillHeight]}>
-        {diffLines ? (
-          <View style={[codeBlockStyle, shouldFill && styles.fillHeight]}>
-            <DiffViewer
-              diffLines={diffLines}
-              maxHeight={resolvedMaxHeight}
-              fillAvailableHeight={shouldFill}
-            />
-          </View>
-        ) : null}
-      </View>,
-    );
-  } else if (detail?.type === "write") {
-    sections.push(
-      <View key="write" style={[styles.section, shouldFill && styles.fillHeight]}>
-        {detail.content ? (
-          <ScrollView
-            style={[
-              styles.scrollArea,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
-            contentContainerStyle={styles.scrollContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator={true}
-          >
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator={true}
-              style={webScrollbarStyle}
-            >
-              <Text selectable style={styles.scrollText}>
-                {detail.content}
-              </Text>
-            </ScrollView>
-          </ScrollView>
-        ) : null}
-      </View>,
-    );
-  } else if (detail?.type === "read") {
-    if (detail.content) {
-      sections.push(
-        <View key="read" style={[styles.section, shouldFill && styles.fillHeight]}>
-          <ScrollView
-            style={[
-              styles.scrollArea,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              shouldFill && styles.fillHeight,
-              webScrollbarStyle,
-            ]}
-            contentContainerStyle={styles.scrollContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator={true}
-          >
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator={true}
-              style={webScrollbarStyle}
-            >
-              <Text selectable style={styles.scrollText}>
-                {detail.content}
-              </Text>
-            </ScrollView>
-          </ScrollView>
-        </View>,
-      );
-    }
-  } else if (detail?.type === "search") {
-    const searchSections: ReactNode[] = [];
-    if (detail.query) {
-      searchSections.push(
-        <View key="search-query" style={styles.section}>
-          <Text selectable style={styles.scrollText}>
-            {detail.query}
-          </Text>
-        </View>,
-      );
-    }
-    if (detail.content) {
-      searchSections.push(
-        <View key="search-content" style={styles.section}>
-          <ScrollView
-            style={[
-              styles.scrollArea,
-              resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-              webScrollbarStyle,
-            ]}
-            contentContainerStyle={styles.scrollContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator
-          >
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator
-              style={webScrollbarStyle}
-            >
-              <Text selectable style={styles.scrollText}>
-                {detail.content}
-              </Text>
-            </ScrollView>
-          </ScrollView>
-        </View>,
-      );
-    }
-    if (detail.filePaths && detail.filePaths.length > 0) {
-      searchSections.push(
-        <View key="search-files" style={styles.section}>
-          <Text selectable style={styles.scrollText}>
-            {detail.filePaths.join("\n")}
-          </Text>
-        </View>,
-      );
-    }
-    if (detail.webResults && detail.webResults.length > 0) {
-      searchSections.push(
-        <View key="search-web-results" style={styles.section}>
-          <Text selectable style={styles.scrollText}>
-            {detail.webResults.map((entry) => `${entry.title}\n${entry.url}`).join("\n\n")}
-          </Text>
-        </View>,
-      );
-    }
-    if (detail.annotations && detail.annotations.length > 0) {
-      searchSections.push(
-        <View key="search-annotations" style={styles.section}>
-          <Text selectable style={styles.scrollText}>
-            {detail.annotations.join("\n\n")}
-          </Text>
-        </View>,
-      );
-    }
-    sections.push(...searchSections);
-  } else if (detail?.type === "fetch") {
-    sections.push(
-      <View key="fetch" style={[styles.section, shouldFill && styles.fillHeight]}>
+function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
+  const normalizedCommand = command.replace(/\n+$/, "");
+  const commandOutput = (output ?? "").replace(/^\n+/, "");
+  const hasOutput = commandOutput.length > 0;
+  return (
+    <View style={ds.sectionFillStyle}>
+      <View style={ds.codeBlockFillStyle}>
         <ScrollView
-          style={[
-            styles.scrollArea,
-            resolvedMaxHeight !== undefined && { maxHeight: resolvedMaxHeight },
-            shouldFill && styles.fillHeight,
-            webScrollbarStyle,
-          ]}
+          style={ds.codeVerticalScrollStyle}
+          contentContainerStyle={styles.codeVerticalContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
+        >
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={ds.webScrollbarStyle}
+            contentContainerStyle={styles.codeHorizontalContent}
+          >
+            <View style={styles.codeLine}>
+              <Text selectable style={styles.scrollText}>
+                <Text style={styles.shellPrompt}>$ </Text>
+                {normalizedCommand}
+                {hasOutput ? `\n\n${commandOutput}` : ""}
+              </Text>
+            </View>
+          </ScrollView>
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
+interface WorktreeSetupDetailProps {
+  log: string;
+  branchName: string;
+  worktreePath: string;
+  ds: DetailStyles;
+}
+
+function WorktreeSetupDetailSection({
+  log,
+  branchName,
+  worktreePath,
+  ds,
+}: WorktreeSetupDetailProps) {
+  const setupLog = log.replace(/^\n+/, "");
+  const hasLog = setupLog.length > 0;
+  return (
+    <View style={ds.sectionFillStyle}>
+      <View style={ds.codeBlockFillStyle}>
+        <ScrollView
+          style={ds.codeVerticalScrollStyle}
+          contentContainerStyle={styles.codeVerticalContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
+        >
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={ds.webScrollbarStyle}
+            contentContainerStyle={styles.codeHorizontalContent}
+          >
+            <View style={styles.codeLine}>
+              <Text selectable style={styles.scrollText}>
+                {hasLog ? setupLog : `Preparing worktree ${branchName} at ${worktreePath}`}
+              </Text>
+            </View>
+          </ScrollView>
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
+function resolveSubAgentFallbackHeader(
+  subAgentType: string | null | undefined,
+  description: string | null | undefined,
+): string {
+  if (subAgentType && description) {
+    return `${subAgentType}: ${description}`;
+  }
+  return subAgentType ?? description ?? "Sub-agent activity";
+}
+
+interface SubAgentDetailProps {
+  log: string;
+  subAgentType: string | null | undefined;
+  description: string | null | undefined;
+  ds: DetailStyles;
+}
+
+function SubAgentDetailSection({ log, subAgentType, description, ds }: SubAgentDetailProps) {
+  const activityLog = log.replace(/^\n+/, "");
+  const hasLog = activityLog.length > 0;
+  const fallbackHeader = resolveSubAgentFallbackHeader(subAgentType, description);
+  return (
+    <View style={ds.sectionFillStyle}>
+      <View style={ds.codeBlockFillStyle}>
+        <ScrollView
+          style={ds.codeVerticalScrollStyle}
+          contentContainerStyle={styles.codeVerticalContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
+        >
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={ds.webScrollbarStyle}
+            contentContainerStyle={styles.codeHorizontalContent}
+          >
+            <View style={styles.codeLine}>
+              <Text selectable style={styles.scrollText}>
+                {hasLog ? activityLog : fallbackHeader}
+              </Text>
+            </View>
+          </ScrollView>
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
+interface EditDetailProps {
+  diffLines: DiffLine[] | undefined;
+  ds: DetailStyles;
+}
+
+function EditDetailSection({ diffLines, ds }: EditDetailProps) {
+  return (
+    <View style={ds.sectionFillStyle}>
+      {diffLines ? (
+        <View style={ds.codeBlockFillStyle}>
+          <DiffViewer
+            diffLines={diffLines}
+            maxHeight={ds.resolvedMaxHeight}
+            fillAvailableHeight={ds.shouldFill}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+interface ScrollableContentProps {
+  content: string;
+  ds: DetailStyles;
+  wrapInSectionFill?: boolean;
+}
+
+function ScrollableTextSection({ content, ds, wrapInSectionFill = true }: ScrollableContentProps) {
+  const body = (
+    <ScrollView
+      style={ds.scrollAreaFillStyle}
+      contentContainerStyle={styles.scrollContent}
+      nestedScrollEnabled
+      showsVerticalScrollIndicator={true}
+    >
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        showsHorizontalScrollIndicator={true}
+        style={ds.webScrollbarStyle}
+      >
+        <Text selectable style={styles.scrollText}>
+          {content}
+        </Text>
+      </ScrollView>
+    </ScrollView>
+  );
+  if (!wrapInSectionFill) return body;
+  return <View style={ds.sectionFillStyle}>{body}</View>;
+}
+
+interface FetchDetailProps {
+  url: string;
+  result: string | null | undefined;
+  ds: DetailStyles;
+}
+
+function FetchDetailSection({ url, result, ds }: FetchDetailProps) {
+  return (
+    <View style={ds.sectionFillStyle}>
+      <ScrollView
+        style={ds.scrollAreaFillStyle}
+        contentContainerStyle={styles.scrollContent}
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+      >
+        <ScrollView
+          horizontal
+          nestedScrollEnabled
+          showsHorizontalScrollIndicator
+          style={ds.webScrollbarStyle}
+        >
+          <Text selectable style={styles.scrollText}>
+            {result ? `${url}\n\n${result}` : url}
+          </Text>
+        </ScrollView>
+      </ScrollView>
+    </View>
+  );
+}
+
+function PlainTextSection({ text }: { text: string }) {
+  return (
+    <View style={styles.plainTextSection}>
+      <Text selectable style={styles.plainText}>
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+interface SearchDetail {
+  query?: string;
+  content?: string;
+  filePaths?: string[];
+  webResults?: { title: string; url: string }[];
+  annotations?: string[];
+}
+
+function buildSearchSections(detail: SearchDetail, ds: DetailStyles): ReactNode[] {
+  const out: ReactNode[] = [];
+  if (detail.content) {
+    out.push(
+      <View key="search-content" style={styles.section}>
+        <ScrollView
+          style={ds.scrollAreaStyle}
           contentContainerStyle={styles.scrollContent}
           nestedScrollEnabled
           showsVerticalScrollIndicator
@@ -322,129 +395,233 @@ export function ToolCallDetailsContent({
             horizontal
             nestedScrollEnabled
             showsHorizontalScrollIndicator
-            style={webScrollbarStyle}
+            style={ds.webScrollbarStyle}
           >
             <Text selectable style={styles.scrollText}>
-              {detail.result ? `${detail.url}\n\n${detail.result}` : detail.url}
+              {detail.content}
             </Text>
           </ScrollView>
         </ScrollView>
       </View>,
     );
-  } else if (detail?.type === "plain_text") {
-    if (detail.text) {
-      sections.push(
-        <View key="plain-text" style={styles.plainTextSection}>
-          <Text selectable style={styles.plainText}>
-            {detail.text}
-          </Text>
-        </View>,
-      );
-    }
-  } else if (detail?.type === "unknown") {
-    const plainInputText =
-      typeof detail.input === "string" && detail.output === null ? detail.input : null;
+  }
+  if (detail.filePaths && detail.filePaths.length > 0) {
+    out.push(
+      <View key="search-files" style={styles.section}>
+        <Text selectable style={styles.scrollText}>
+          {detail.filePaths.join("\n")}
+        </Text>
+      </View>,
+    );
+  }
+  if (detail.webResults && detail.webResults.length > 0) {
+    out.push(
+      <View key="search-web-results" style={styles.section}>
+        <Text selectable style={styles.scrollText}>
+          {detail.webResults.map((entry) => `${entry.title}\n${entry.url}`).join("\n\n")}
+        </Text>
+      </View>,
+    );
+  }
+  if (detail.annotations && detail.annotations.length > 0) {
+    out.push(
+      <View key="search-annotations" style={styles.section}>
+        <Text selectable style={styles.scrollText}>
+          {detail.annotations.join("\n\n")}
+        </Text>
+      </View>,
+    );
+  }
+  return out;
+}
 
-    if (plainInputText !== null) {
-      sections.push(
-        <View key="unknown-plain-text" style={styles.plainTextSection}>
-          <Text selectable style={styles.plainText}>
-            {plainInputText}
-          </Text>
-        </View>,
-      );
-    } else {
-      const sectionsFromTopLevel = [
-        { title: "Input", value: detail.input },
-        { title: "Output", value: detail.output },
-      ].filter((entry) =>
-        hasMeaningfulToolCallDetail({
-          type: "unknown",
-          input: entry.value ?? null,
-          output: null,
-        }),
-      );
+function serializeUnknownValue(value: unknown): string {
+  try {
+    return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
 
-      for (const section of sectionsFromTopLevel) {
-        let value = "";
-        try {
-          value =
-            typeof section.value === "string"
-              ? section.value
-              : JSON.stringify(section.value, null, 2);
-        } catch {
-          value = String(section.value);
-        }
-        if (!value.length) {
-          continue;
-        }
-        sections.push(
-          <View key={`${section.title}-header`} style={styles.groupHeader}>
-            <Text style={styles.groupHeaderText}>{section.title}</Text>
-          </View>,
-        );
-        sections.push(
-          <View key={`${section.title}-value`} style={styles.section}>
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              style={[styles.jsonScroll, webScrollbarStyle]}
-              contentContainerStyle={styles.jsonContent}
-              showsHorizontalScrollIndicator={true}
-            >
-              <Text selectable style={styles.scrollText}>
-                {value}
-              </Text>
-            </ScrollView>
-          </View>,
-        );
-      }
-    }
+interface UnknownDetail {
+  input: unknown;
+  output: unknown;
+}
+
+function buildUnknownSections(detail: UnknownDetail, ds: DetailStyles): ReactNode[] {
+  const plainInputText =
+    typeof detail.input === "string" && detail.output === null ? detail.input : null;
+
+  if (plainInputText !== null) {
+    return [
+      <View key="unknown-plain-text" style={styles.plainTextSection}>
+        <Text selectable style={styles.plainText}>
+          {plainInputText}
+        </Text>
+      </View>,
+    ];
   }
 
-  // Always show errors if available
-  if (errorText) {
-    sections.push(
-      <View key="error" style={styles.section}>
-        <Text style={[styles.sectionTitle, styles.errorText]}>Error</Text>
+  const sectionsFromTopLevel = [
+    { title: "Input", value: detail.input },
+    { title: "Output", value: detail.output },
+  ].filter((entry) =>
+    hasMeaningfulToolCallDetail({
+      type: "unknown",
+      input: entry.value ?? null,
+      output: null,
+    }),
+  );
+
+  const out: ReactNode[] = [];
+  for (const section of sectionsFromTopLevel) {
+    const value = serializeUnknownValue(section.value);
+    if (!value.length) {
+      continue;
+    }
+    out.push(
+      <View key={`${section.title}-header`} style={styles.groupHeader}>
+        <Text style={styles.groupHeaderText}>{section.title}</Text>
+      </View>,
+    );
+    out.push(
+      <View key={`${section.title}-value`} style={styles.section}>
         <ScrollView
           horizontal
           nestedScrollEnabled
-          style={[styles.jsonScroll, styles.jsonScrollError, webScrollbarStyle]}
+          style={ds.jsonScrollCombined}
           contentContainerStyle={styles.jsonContent}
           showsHorizontalScrollIndicator={true}
         >
-          <Text selectable style={[styles.scrollText, styles.errorText]}>
-            {errorText}
+          <Text selectable style={styles.scrollText}>
+            {value}
           </Text>
         </ScrollView>
       </View>,
     );
   }
+  return out;
+}
+
+function buildDetailSections(
+  detail: ToolCallDetail | undefined,
+  diffLines: DiffLine[] | undefined,
+  ds: DetailStyles,
+): ReactNode[] {
+  if (!detail) return [];
+  if (detail.type === "shell") {
+    return [
+      <ShellDetailSection key="shell" command={detail.command} output={detail.output} ds={ds} />,
+    ];
+  }
+  if (detail.type === "worktree_setup") {
+    return [
+      <WorktreeSetupDetailSection
+        key="worktree-setup"
+        log={detail.log}
+        branchName={detail.branchName}
+        worktreePath={detail.worktreePath}
+        ds={ds}
+      />,
+    ];
+  }
+  if (detail.type === "sub_agent") {
+    return [
+      <SubAgentDetailSection
+        key="sub-agent"
+        log={detail.log}
+        subAgentType={detail.subAgentType}
+        description={detail.description}
+        ds={ds}
+      />,
+    ];
+  }
+  if (detail.type === "edit") {
+    return [<EditDetailSection key="edit" diffLines={diffLines} ds={ds} />];
+  }
+  if (detail.type === "write") {
+    return [
+      <View key="write" style={ds.sectionFillStyle}>
+        {detail.content ? (
+          <ScrollableTextSection content={detail.content} ds={ds} wrapInSectionFill={false} />
+        ) : null}
+      </View>,
+    ];
+  }
+  if (detail.type === "read") {
+    if (!detail.content) return [];
+    return [<ScrollableTextSection key="read" content={detail.content} ds={ds} />];
+  }
+  if (detail.type === "search") {
+    return buildSearchSections(detail, ds);
+  }
+  if (detail.type === "fetch") {
+    return [<FetchDetailSection key="fetch" url={detail.url} result={detail.result} ds={ds} />];
+  }
+  if (detail.type === "plain_text") {
+    if (!detail.text) return [];
+    return [<PlainTextSection key="plain-text" text={detail.text} />];
+  }
+  if (detail.type === "unknown") {
+    return buildUnknownSections(detail, ds);
+  }
+  return [];
+}
+
+function ErrorSection({ errorText, ds }: { errorText: string; ds: DetailStyles }) {
+  return (
+    <View style={styles.section}>
+      <Text style={SECTION_TITLE_ERROR_STYLE}>Error</Text>
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        style={ds.jsonScrollErrorCombined}
+        contentContainerStyle={styles.jsonContent}
+        showsHorizontalScrollIndicator={true}
+      >
+        <Text selectable style={SCROLL_TEXT_ERROR_STYLE}>
+          {errorText}
+        </Text>
+      </ScrollView>
+    </View>
+  );
+}
+
+function LoadingSkeleton({ containerStyle }: { containerStyle: StyleProp<ViewStyle> }) {
+  return (
+    <View style={containerStyle}>
+      <View style={styles.loadingLineWide} />
+      <View style={styles.loadingLineMedium} />
+      <View style={styles.loadingLineShort} />
+    </View>
+  );
+}
+
+export function ToolCallDetailsContent({
+  detail,
+  errorText,
+  maxHeight,
+  fillAvailableHeight = false,
+  showLoadingSkeleton = false,
+}: ToolCallDetailsContentProps) {
+  const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
+  const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
+  const diffLines = useDiffLines(detail);
+
+  const sections: ReactNode[] = buildDetailSections(detail, diffLines, ds);
+
+  if (errorText) {
+    sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);
+  }
 
   if (sections.length === 0) {
     if (showLoadingSkeleton) {
-      return (
-        <View style={[styles.loadingContainer, fillAvailableHeight && styles.fillHeight]}>
-          <View style={styles.loadingLineWide} />
-          <View style={styles.loadingLineMedium} />
-          <View style={styles.loadingLineShort} />
-        </View>
-      );
+      return <LoadingSkeleton containerStyle={ds.loadingContainerStyle} />;
     }
     return <Text style={styles.emptyStateText}>No additional details available</Text>;
   }
 
-  return (
-    <View
-      style={[
-        isFullBleed ? styles.fullBleedContainer : styles.paddedContainer,
-        shouldFill && styles.fillHeight,
-      ]}
-    >
-      {sections}
-    </View>
-  );
+  return <View style={ds.fullBleedContainerStyle}>{sections}</View>;
 }
 
 // ---- Styles ----
@@ -598,3 +775,6 @@ const styles = StyleSheet.create((theme) => {
     },
   };
 });
+
+const SECTION_TITLE_ERROR_STYLE = [styles.sectionTitle, styles.errorText];
+const SCROLL_TEXT_ERROR_STYLE = [styles.scrollText, styles.errorText];

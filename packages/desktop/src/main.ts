@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { app, BrowserWindow, ipcMain, nativeImage, net, protocol } from "electron";
-import { registerDaemonManager } from "./daemon/daemon-manager.js";
+import { createDaemonCommandHandlers, registerDaemonManager } from "./daemon/daemon-manager.js";
 import {
   parseCliPassthroughArgsFromArgv,
   runCliPassthroughCommand,
@@ -21,6 +21,7 @@ import {
   getMainWindowChromeOptions,
   getWindowBackgroundColor,
   resolveSystemWindowTheme,
+  setupDarwinPaintRefresh,
   setupWindowResizeEvents,
   setupDefaultContextMenu,
   setupDragDropPrevention,
@@ -33,16 +34,31 @@ import {
 import { registerOpenerHandlers } from "./features/opener.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
+import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
+import {
+  isDesktopManagedDaemonRunningSync,
+  stopDesktopDaemonViaCli,
+} from "./daemon/daemon-manager.js";
+import {
+  createBeforeQuitHandler,
+  stopDesktopManagedDaemonOnQuitIfNeeded,
+} from "./daemon/quit-lifecycle.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
 const OPEN_PROJECT_EVENT = "paseo:event:open-project";
+const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
+const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
 app.setName("Paseo");
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
 let devWorktreeName: string | null = null;
-if (!app.isPackaged) {
+const forcedUserDataDir = process.env.PASEO_ELECTRON_USER_DATA_DIR?.trim();
+if (forcedUserDataDir) {
+  app.setPath("userData", forcedUserDataDir);
+  log.info("[dev-user-data] forced userData dir:", forcedUserDataDir);
+} else if (!app.isPackaged) {
   try {
     const topLevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
@@ -120,20 +136,27 @@ function getAppDistDir(): string {
   return path.resolve(__dirname, "../../app/dist");
 }
 
-function getWindowIconPath(): string | null {
-  const candidates = app.isPackaged
-    ? process.platform === "win32"
-      ? [path.join(process.resourcesPath, "icon.ico"), path.join(process.resourcesPath, "icon.png")]
-      : [path.join(process.resourcesPath, "icon.png")]
-    : process.platform === "darwin"
-      ? [path.resolve(__dirname, "../assets/icon.png")]
-      : process.platform === "win32"
-        ? [
-            path.resolve(__dirname, "../assets/icon.ico"),
-            path.resolve(__dirname, "../assets/icon.png"),
-          ]
-        : [path.resolve(__dirname, "../assets/icon.png")];
+function getWindowIconCandidates(): string[] {
+  if (app.isPackaged) {
+    if (process.platform === "win32") {
+      return [
+        path.join(process.resourcesPath, "icon.ico"),
+        path.join(process.resourcesPath, "icon.png"),
+      ];
+    }
+    return [path.join(process.resourcesPath, "icon.png")];
+  }
+  if (process.platform === "win32") {
+    return [
+      path.resolve(__dirname, "../assets/icon.ico"),
+      path.resolve(__dirname, "../assets/icon.png"),
+    ];
+  }
+  return [path.resolve(__dirname, "../assets/icon.png")];
+}
 
+function getWindowIconPath(): string | null {
+  const candidates = getWindowIconCandidates();
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
@@ -182,6 +205,7 @@ async function createMainWindow(): Promise<void> {
     app.dock?.setBadge(devWorktreeName);
   }
 
+  setupDarwinPaintRefresh(mainWindow);
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
@@ -194,7 +218,6 @@ async function createMainWindow(): Promise<void> {
     const { loadReactDevTools } = await import("./features/react-devtools.js");
     await loadReactDevTools();
     await mainWindow.loadURL(DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools({ mode: "detach" });
     return;
   }
 
@@ -266,6 +289,53 @@ async function runCliPassthroughIfRequested(): Promise<boolean> {
   return true;
 }
 
+async function runDesktopSmokeIfRequested(): Promise<boolean> {
+  if (process.env[DESKTOP_SMOKE_ENV] !== "1") {
+    return false;
+  }
+
+  const handlers = createDaemonCommandHandlers();
+  const startStatus = await handlers.start_desktop_daemon();
+  process.stdout.write(
+    `[paseo-smoke] ${JSON.stringify({
+      type: "desktop-daemon-smoke-started",
+      status: startStatus,
+    })}\n`,
+  );
+
+  await waitForDesktopSmokeStopRequest();
+
+  const stopStatus = await handlers.stop_desktop_daemon();
+  process.stdout.write(
+    `[paseo-smoke] ${JSON.stringify({
+      type: "desktop-daemon-smoke-stopped",
+      stopStatus,
+    })}\n`,
+  );
+
+  app.exit(0);
+  return true;
+}
+
+function waitForDesktopSmokeStopRequest(): Promise<void> {
+  return new Promise((resolve) => {
+    let buffer = "";
+    const stop = () => {
+      process.stdin.off("data", onData);
+      resolve();
+    };
+    const onData = (chunk: Buffer | string) => {
+      buffer += chunk.toString();
+      if (buffer.includes(DESKTOP_SMOKE_STOP_REQUEST)) {
+        stop();
+      }
+    };
+
+    process.stdin.on("data", onData);
+    process.stdin.resume();
+  });
+}
+
 async function bootstrap(): Promise<void> {
   if (!pendingOpenProjectPath && (await runCliPassthroughIfRequested())) {
     return;
@@ -307,6 +377,9 @@ async function bootstrap(): Promise<void> {
   applyAppIcon();
   setupApplicationMenu();
   ensureNotificationCenterRegistration();
+  if (await runDesktopSmokeIfRequested()) {
+    return;
+  }
   registerDaemonManager();
   registerWindowManager();
   registerDialogHandlers();
@@ -327,9 +400,29 @@ void bootstrap().catch((error) => {
   process.exit(1);
 });
 
-app.on("before-quit", () => {
-  closeAllTransportSessions();
-});
+function showDaemonShutdownDialog(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("paseo:event:quitting", {});
+  }
+}
+
+app.on(
+  "before-quit",
+  createBeforeQuitHandler({
+    app,
+    closeTransportSessions: closeAllTransportSessions,
+    stopDesktopManagedDaemonIfNeeded: () =>
+      stopDesktopManagedDaemonOnQuitIfNeeded({
+        settingsStore: getDesktopSettingsStore(),
+        isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
+        stopDaemon: stopDesktopDaemonViaCli,
+        showShutdownFeedback: showDaemonShutdownDialog,
+      }),
+    onStopError: (error) => {
+      log.error("[desktop daemon] failed to stop managed daemon on quit", error);
+    },
+  }),
+);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

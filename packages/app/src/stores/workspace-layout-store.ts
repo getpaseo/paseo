@@ -531,7 +531,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
           splitSizesByWorkspace: {
             ...state.splitSizesByWorkspace,
             [normalizedWorkspaceKey]: {
-              ...(state.splitSizesByWorkspace[normalizedWorkspaceKey] ?? {}),
+              ...state.splitSizesByWorkspace[normalizedWorkspaceKey],
               [normalizedGroupId]: clampNormalizedSizes(sizes),
             },
           },

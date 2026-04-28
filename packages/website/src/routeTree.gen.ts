@@ -25,6 +25,7 @@ import { Route as DocsVoiceRouteImport } from "./routes/docs/voice";
 import { Route as DocsUpdatesRouteImport } from "./routes/docs/updates";
 import { Route as DocsSkillsRouteImport } from "./routes/docs/skills";
 import { Route as DocsSecurityRouteImport } from "./routes/docs/security";
+import { Route as DocsProvidersRouteImport } from "./routes/docs/providers";
 import { Route as DocsConfigurationRouteImport } from "./routes/docs/configuration";
 import { Route as DocsCliRouteImport } from "./routes/docs/cli";
 import { Route as DocsBestPracticesRouteImport } from "./routes/docs/best-practices";
@@ -110,6 +111,11 @@ const DocsSecurityRoute = DocsSecurityRouteImport.update({
   path: "/security",
   getParentRoute: () => DocsRoute,
 } as any);
+const DocsProvidersRoute = DocsProvidersRouteImport.update({
+  id: "/providers",
+  path: "/providers",
+  getParentRoute: () => DocsRoute,
+} as any);
 const DocsConfigurationRoute = DocsConfigurationRouteImport.update({
   id: "/configuration",
   path: "/configuration",
@@ -145,6 +151,7 @@ export interface FileRoutesByFullPath {
   "/docs/best-practices": typeof DocsBestPracticesRoute;
   "/docs/cli": typeof DocsCliRoute;
   "/docs/configuration": typeof DocsConfigurationRoute;
+  "/docs/providers": typeof DocsProvidersRoute;
   "/docs/security": typeof DocsSecurityRoute;
   "/docs/skills": typeof DocsSkillsRoute;
   "/docs/updates": typeof DocsUpdatesRoute;
@@ -165,6 +172,7 @@ export interface FileRoutesByTo {
   "/docs/best-practices": typeof DocsBestPracticesRoute;
   "/docs/cli": typeof DocsCliRoute;
   "/docs/configuration": typeof DocsConfigurationRoute;
+  "/docs/providers": typeof DocsProvidersRoute;
   "/docs/security": typeof DocsSecurityRoute;
   "/docs/skills": typeof DocsSkillsRoute;
   "/docs/updates": typeof DocsUpdatesRoute;
@@ -188,6 +196,7 @@ export interface FileRoutesById {
   "/docs/best-practices": typeof DocsBestPracticesRoute;
   "/docs/cli": typeof DocsCliRoute;
   "/docs/configuration": typeof DocsConfigurationRoute;
+  "/docs/providers": typeof DocsProvidersRoute;
   "/docs/security": typeof DocsSecurityRoute;
   "/docs/skills": typeof DocsSkillsRoute;
   "/docs/updates": typeof DocsUpdatesRoute;
@@ -212,6 +221,7 @@ export interface FileRouteTypes {
     | "/docs/best-practices"
     | "/docs/cli"
     | "/docs/configuration"
+    | "/docs/providers"
     | "/docs/security"
     | "/docs/skills"
     | "/docs/updates"
@@ -232,6 +242,7 @@ export interface FileRouteTypes {
     | "/docs/best-practices"
     | "/docs/cli"
     | "/docs/configuration"
+    | "/docs/providers"
     | "/docs/security"
     | "/docs/skills"
     | "/docs/updates"
@@ -254,6 +265,7 @@ export interface FileRouteTypes {
     | "/docs/best-practices"
     | "/docs/cli"
     | "/docs/configuration"
+    | "/docs/providers"
     | "/docs/security"
     | "/docs/skills"
     | "/docs/updates"
@@ -389,6 +401,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof DocsSecurityRouteImport;
       parentRoute: typeof DocsRoute;
     };
+    "/docs/providers": {
+      id: "/docs/providers";
+      path: "/providers";
+      fullPath: "/docs/providers";
+      preLoaderRoute: typeof DocsProvidersRouteImport;
+      parentRoute: typeof DocsRoute;
+    };
     "/docs/configuration": {
       id: "/docs/configuration";
       path: "/configuration";
@@ -436,6 +455,7 @@ interface DocsRouteChildren {
   DocsBestPracticesRoute: typeof DocsBestPracticesRoute;
   DocsCliRoute: typeof DocsCliRoute;
   DocsConfigurationRoute: typeof DocsConfigurationRoute;
+  DocsProvidersRoute: typeof DocsProvidersRoute;
   DocsSecurityRoute: typeof DocsSecurityRoute;
   DocsSkillsRoute: typeof DocsSkillsRoute;
   DocsUpdatesRoute: typeof DocsUpdatesRoute;
@@ -448,6 +468,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsBestPracticesRoute: DocsBestPracticesRoute,
   DocsCliRoute: DocsCliRoute,
   DocsConfigurationRoute: DocsConfigurationRoute,
+  DocsProvidersRoute: DocsProvidersRoute,
   DocsSecurityRoute: DocsSecurityRoute,
   DocsSkillsRoute: DocsSkillsRoute,
   DocsUpdatesRoute: DocsUpdatesRoute,

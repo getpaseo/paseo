@@ -96,6 +96,71 @@ function mapDirectorySuggestionsToEntries(payload: {
   }));
 }
 
+type AutocompleteMode = "command" | "file" | null;
+
+function resolveAutocompleteMode(args: {
+  showFileAutocomplete: boolean;
+  showCommandAutocomplete: boolean;
+}): AutocompleteMode {
+  if (args.showFileAutocomplete) {
+    return "file";
+  }
+  if (args.showCommandAutocomplete) {
+    return "command";
+  }
+  return null;
+}
+
+function resolveAutocompleteIsVisible(args: {
+  mode: AutocompleteMode;
+  canLoadCommands: boolean;
+  serverId: string;
+  autocompleteCwd: string;
+}): boolean {
+  if (args.mode === "command") {
+    return args.canLoadCommands;
+  }
+  if (args.mode === "file") {
+    return Boolean(args.serverId) && args.autocompleteCwd.length > 0;
+  }
+  return false;
+}
+
+function resolveAutocompleteIsLoading(args: {
+  mode: AutocompleteMode;
+  isCommandsLoading: boolean;
+  fileSuggestionsIsPending: boolean;
+  fileSuggestionsIsLoading: boolean;
+  optionsLength: number;
+}): boolean {
+  if (args.mode === "command") {
+    return args.isCommandsLoading;
+  }
+  if (args.mode === "file") {
+    return (
+      args.fileSuggestionsIsPending || (args.fileSuggestionsIsLoading && args.optionsLength === 0)
+    );
+  }
+  return false;
+}
+
+function resolveAutocompleteErrorMessage(args: {
+  mode: AutocompleteMode;
+  isCommandError: boolean;
+  commandError: Error | null;
+  fileSuggestionsError: unknown;
+}): string | undefined {
+  if (args.mode === "command") {
+    return args.isCommandError ? (args.commandError?.message ?? "Failed to load") : undefined;
+  }
+  if (args.mode === "file") {
+    return args.fileSuggestionsError instanceof Error
+      ? args.fileSuggestionsError.message
+      : undefined;
+  }
+  return undefined;
+}
+
 export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAutocompleteResult {
   const {
     userInput,
@@ -143,17 +208,13 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
 
-  const mode: "command" | "file" | null = showFileAutocomplete
-    ? "file"
-    : showCommandAutocomplete
-      ? "command"
-      : null;
-  const isVisible =
-    mode === "command"
-      ? canLoadCommands
-      : mode === "file"
-        ? Boolean(serverId) && autocompleteCwd.length > 0
-        : false;
+  const mode = resolveAutocompleteMode({ showFileAutocomplete, showCommandAutocomplete });
+  const isVisible = resolveAutocompleteIsVisible({
+    mode,
+    canLoadCommands,
+    serverId,
+    autocompleteCwd,
+  });
 
   const {
     commands,
@@ -258,22 +319,19 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onEscape: mode === "command" ? () => setUserInput("") : undefined,
   });
 
-  const isLoading =
-    mode === "command"
-      ? isCommandsLoading
-      : mode === "file"
-        ? fileSuggestionsQuery.isPending || (fileSuggestionsQuery.isLoading && options.length === 0)
-        : false;
-  const errorMessage =
-    mode === "command"
-      ? isError
-        ? (error?.message ?? "Failed to load")
-        : undefined
-      : mode === "file"
-        ? fileSuggestionsQuery.error instanceof Error
-          ? fileSuggestionsQuery.error.message
-          : undefined
-        : undefined;
+  const isLoading = resolveAutocompleteIsLoading({
+    mode,
+    isCommandsLoading,
+    fileSuggestionsIsPending: fileSuggestionsQuery.isPending,
+    fileSuggestionsIsLoading: fileSuggestionsQuery.isLoading,
+    optionsLength: options.length,
+  });
+  const errorMessage = resolveAutocompleteErrorMessage({
+    mode,
+    isCommandError: isError,
+    commandError: error,
+    fileSuggestionsError: fileSuggestionsQuery.error,
+  });
 
   const loadingText = mode === "file" ? "Searching workspace..." : "Loading commands...";
   const emptyText = mode === "file" ? "No files or directories found" : "No commands found";

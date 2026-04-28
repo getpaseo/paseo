@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useMemo } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import type { TextInputProps } from "react-native";
@@ -24,6 +24,7 @@ import { isWeb } from "@/constants/platform";
 type EscHandler = () => void;
 const escStack: EscHandler[] = [];
 let escListenerAttached = false;
+const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFillObject };
 
 function handleEscKeyDown(event: KeyboardEvent) {
   if (event.key !== "Escape") return;
@@ -143,18 +144,18 @@ const styles = StyleSheet.create((theme) => ({
 
 function SheetBackground({ style }: BottomSheetBackgroundProps) {
   const { theme } = useUnistyles();
-  return (
-    <View
-      style={[
-        style,
-        {
-          backgroundColor: theme.colors.surface1,
-          borderTopLeftRadius: theme.borderRadius.xl,
-          borderTopRightRadius: theme.borderRadius.xl,
-        },
-      ]}
-    />
+  const combinedStyle = useMemo(
+    () => [
+      style,
+      {
+        backgroundColor: theme.colors.surface1,
+        borderTopLeftRadius: theme.borderRadius.xl,
+        borderTopRightRadius: theme.borderRadius.xl,
+      },
+    ],
+    [style, theme.colors.surface1, theme.borderRadius.xl],
   );
+  return <View style={combinedStyle} />;
 }
 
 export interface AdaptiveModalSheetProps {
@@ -191,6 +192,10 @@ export function AdaptiveModalSheet({
   const isMobile = useIsCompactFormFactor();
   const titleColor = theme.colors.foreground;
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
+  const handleIndicatorStyle = useMemo(
+    () => ({ backgroundColor: theme.colors.surface2 }),
+    [theme.colors.surface2],
+  );
   const { sheetRef, handleSheetChange } = useIsolatedBottomSheetVisibility({
     visible,
     isEnabled: isMobile,
@@ -202,6 +207,12 @@ export function AdaptiveModalSheet({
       <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.45} />
     ),
     [],
+  );
+
+  const titleStyle = useMemo(() => [styles.title, { color: titleColor }], [titleColor]);
+  const desktopCardStyle = useMemo(
+    () => [styles.desktopCard, desktopMaxWidth != null && { maxWidth: desktopMaxWidth }],
+    [desktopMaxWidth],
   );
 
   useEffect(() => {
@@ -220,14 +231,14 @@ export function AdaptiveModalSheet({
         backdropComponent={renderBackdrop}
         enablePanDownToClose
         backgroundComponent={SheetBackground}
-        handleIndicatorStyle={{ backgroundColor: theme.colors.surface2 }}
+        handleIndicatorStyle={handleIndicatorStyle}
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
         accessible={false}
       >
         <View style={styles.bottomSheetHeader} testID={testID}>
           <View style={styles.headerTitleGroup}>
-            <Text key={titleColor} style={[styles.title, { color: titleColor }]} numberOfLines={1}>
+            <Text key={titleColor} style={titleStyle} numberOfLines={1}>
               {title}
             </Text>
             {subtitle}
@@ -256,7 +267,7 @@ export function AdaptiveModalSheet({
     <>
       <View style={styles.header}>
         <View style={styles.headerTitleGroup}>
-          <Text key={titleColor} style={[styles.title, { color: titleColor }]} numberOfLines={1}>
+          <Text key={titleColor} style={titleStyle} numberOfLines={1}>
             {title}
           </Text>
           {subtitle}
@@ -283,12 +294,8 @@ export function AdaptiveModalSheet({
 
   const desktopContent = (
     <View style={styles.desktopOverlay} testID={testID}>
-      <Pressable
-        accessibilityLabel="Dismiss"
-        style={{ ...StyleSheet.absoluteFillObject }}
-        onPress={onClose}
-      />
-      <View style={[styles.desktopCard, desktopMaxWidth != null && { maxWidth: desktopMaxWidth }]}>
+      <Pressable accessibilityLabel="Dismiss" style={ABSOLUTE_FILL_STYLE} onPress={onClose} />
+      <View style={desktopCardStyle}>
         {onFilesDropped ? (
           <FileDropZone onFilesDropped={onFilesDropped}>{cardInner}</FileDropZone>
         ) : (
@@ -326,7 +333,7 @@ export const AdaptiveTextInput = forwardRef<TextInput, TextInputProps>(
     const isMobile = useIsCompactFormFactor();
 
     if (isMobile) {
-      return <BottomSheetTextInput ref={ref as any} {...props} />;
+      return <BottomSheetTextInput ref={ref as unknown as Ref<never>} {...props} />;
     }
 
     return <TextInput ref={ref} {...props} />;

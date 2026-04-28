@@ -1,5 +1,4 @@
-import { useMemo } from "react";
-import { useUnistyles } from "react-native-unistyles";
+import { withUnistyles } from "react-native-unistyles";
 import {
   Archive,
   Download,
@@ -11,6 +10,7 @@ import {
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { GitActionsSplitButton } from "@/components/git-actions-split-button";
 import { useGitActions } from "@/hooks/use-git-actions";
+import type { Theme } from "@/styles/theme";
 
 interface WorkspaceGitActionsProps {
   serverId: string;
@@ -18,24 +18,31 @@ interface WorkspaceGitActionsProps {
   hideLabels?: boolean;
 }
 
+const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
+const ThemedDownload = withUnistyles(Download);
+const ThemedUpload = withUnistyles(Upload);
+const ThemedGitHubIcon = withUnistyles(GitHubIcon);
+const ThemedGitMerge = withUnistyles(GitMerge);
+const ThemedRefreshCcw = withUnistyles(RefreshCcw);
+const ThemedArchive = withUnistyles(Archive);
+
+const mutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
+
+const ICONS = {
+  commit: <ThemedGitCommitHorizontal size={16} uniProps={mutedColorMapping} />,
+  pull: <ThemedDownload size={16} uniProps={mutedColorMapping} />,
+  push: <ThemedUpload size={16} uniProps={mutedColorMapping} />,
+  viewPr: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
+  createPr: <ThemedGitHubIcon size={16} uniProps={mutedColorMapping} />,
+  merge: <ThemedGitMerge size={16} uniProps={mutedColorMapping} />,
+  mergeFromBase: <ThemedRefreshCcw size={16} uniProps={mutedColorMapping} />,
+  archive: <ThemedArchive size={16} uniProps={mutedColorMapping} />,
+};
+
 export function WorkspaceGitActions({ serverId, cwd, hideLabels }: WorkspaceGitActionsProps) {
-  const { theme } = useUnistyles();
-
-  const icons = useMemo(
-    () => ({
-      commit: <GitCommitHorizontal size={16} color={theme.colors.foregroundMuted} />,
-      pull: <Download size={16} color={theme.colors.foregroundMuted} />,
-      push: <Upload size={16} color={theme.colors.foregroundMuted} />,
-      viewPr: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
-      createPr: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
-      merge: <GitMerge size={16} color={theme.colors.foregroundMuted} />,
-      mergeFromBase: <RefreshCcw size={16} color={theme.colors.foregroundMuted} />,
-      archive: <Archive size={16} color={theme.colors.foregroundMuted} />,
-    }),
-    [theme.colors.foregroundMuted],
-  );
-
-  const { gitActions, isGit } = useGitActions({ serverId, cwd, icons });
+  const { gitActions, isGit } = useGitActions({ serverId, cwd, icons: ICONS });
 
   if (!isGit) {
     return null;

@@ -1,5 +1,15 @@
 import * as React from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, type Transition } from "framer-motion";
+
+const OVERLAY_INITIAL = { opacity: 0 };
+const OVERLAY_ANIMATE = { opacity: 1 };
+const OVERLAY_EXIT = { opacity: 0 };
+const OVERLAY_TRANSITION: Transition = { duration: 0.2 };
+
+const PANEL_INITIAL = { opacity: 0, scale: 0.95 };
+const PANEL_ANIMATE = { opacity: 1, scale: 1 };
+const PANEL_EXIT = { opacity: 0, scale: 0.95 };
+const PANEL_TRANSITION: Transition = { duration: 0.2, ease: "easeOut" };
 
 interface CommandDialogProps {
   trigger: React.ReactNode;
@@ -36,25 +46,30 @@ export function CommandDialog({
     };
   }, []);
 
+  const handleToggle = React.useCallback(() => setOpen((prev) => !prev), []);
+  const handleClose = React.useCallback(() => setOpen(false), []);
+
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen(!open)}>{trigger}</button>
+      <button type="button" onClick={handleToggle}>
+        {trigger}
+      </button>
       <AnimatePresence>
         {open && (
           <>
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+              initial={OVERLAY_INITIAL}
+              animate={OVERLAY_ANIMATE}
+              exit={OVERLAY_EXIT}
+              transition={OVERLAY_TRANSITION}
               className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
-              onClick={() => setOpen(false)}
+              onClick={handleClose}
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
+              initial={PANEL_INITIAL}
+              animate={PANEL_ANIMATE}
+              exit={PANEL_EXIT}
+              transition={PANEL_TRANSITION}
               className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md rounded-xl border border-white/20 bg-background p-6 space-y-4"
             >
               <div className="space-y-2">
@@ -74,11 +89,11 @@ export function CommandDialog({
 function CodeBlock({ children }: { children: string }) {
   const [copied, setCopied] = React.useState(false);
 
-  function handleCopy() {
+  const handleCopy = React.useCallback(() => {
     navigator.clipboard.writeText(children);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }
+  }, [children]);
 
   return (
     <div className="bg-black/30 backdrop-blur-sm rounded-lg p-3 md:p-4 font-mono text-sm flex items-center justify-between gap-2">
@@ -87,6 +102,7 @@ function CodeBlock({ children }: { children: string }) {
         <span className="text-foreground">{children}</span>
       </div>
       <button
+        type="button"
         onClick={handleCopy}
         className="text-muted-foreground hover:text-foreground transition-colors p-1"
         title="Copy to clipboard"

@@ -3,12 +3,12 @@ import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-r
 
 // Extend base test to provide dynamic baseURL from global-setup
 const test = base.extend({
-  baseURL: async ({}, use) => {
+  baseURL: async ({}, provide) => {
     const metroPort = process.env.E2E_METRO_PORT;
     if (!metroPort) {
       throw new Error("E2E_METRO_PORT not set - globalSetup must run first");
     }
-    await use(`http://localhost:${metroPort}`);
+    await provide(`http://localhost:${metroPort}`);
   },
 });
 
@@ -67,7 +67,7 @@ test.beforeEach(async ({ page }) => {
   const createAgentPreferences = buildCreateAgentPreferences(testDaemon.serverId);
 
   await page.addInitScript(
-    ({ daemon, preferences, seedNonce }) => {
+    ({ daemon, preferences, seedNonce: nonce }) => {
       // `addInitScript` runs on every navigation (including reloads). Some tests intentionally
       // override storage and reload; they can opt out of seeding for the *next* navigation by
       // setting this flag before the reload.
@@ -75,13 +75,13 @@ test.beforeEach(async ({ page }) => {
       const disableValue = localStorage.getItem(disableOnceKey);
       if (disableValue) {
         localStorage.removeItem(disableOnceKey);
-        if (disableValue === seedNonce) {
+        if (disableValue === nonce) {
           return;
         }
       }
 
       localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:e2e-seed-nonce", seedNonce);
+      localStorage.setItem("@paseo:e2e-seed-nonce", nonce);
 
       // Hard-reset anything that could point to a developer's real daemon.
       localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));

@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 
-export type TerminalRenderProbeSnapshot = {
+export interface TerminalRenderProbeSnapshot {
   setCount: number;
   unsetCount: number;
   writeCount: number;
@@ -10,28 +10,28 @@ export type TerminalRenderProbeSnapshot = {
   altExitWrites: number;
   events: TerminalRenderProbeEvent[];
   frames: TerminalFrame[];
-};
+}
 
-export type TerminalRenderProbeEvent = {
+export interface TerminalRenderProbeEvent {
   at: number;
   type: "set" | "unset" | "reset-write" | "clear-write" | "alt-enter-write" | "alt-exit-write";
   preview?: string;
-};
+}
 
-export type TerminalFrame = {
+export interface TerminalFrame {
   at: number;
   rowCount: number;
   nonEmptyRows: number;
   firstNonEmptyRow: number | null;
   text: string;
   topText: string;
-};
+}
 
 export type TerminalRenderProbeSummary = Omit<TerminalRenderProbeSnapshot, "frames"> & {
   frameCount: number;
 };
 
-export type TerminalKeystrokeStressReport = {
+export interface TerminalKeystrokeStressReport {
   inputTextLength: number;
   keydownCount: number;
   inputFrameCount: number;
@@ -70,21 +70,25 @@ export type TerminalKeystrokeStressReport = {
   keydownToXtermCommitMs: LatencyStats | null;
   firstKeydownAt: number | null;
   lastXtermCommitAt: number | null;
-};
+}
 
-export type LatencyStats = {
+export interface LatencyStats {
   count: number;
   minMs: number;
   p50Ms: number;
   p95Ms: number;
   maxMs: number;
   avgMs: number;
-};
+}
 
 export async function installTerminalRenderProbe(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    type ProbeState = {
-      term: any;
+    interface ProbeTerm {
+      write?: (data: string | Uint8Array, callback?: () => void) => void;
+      __paseoRenderProbeWriteWrapped?: boolean;
+    }
+    interface ProbeState {
+      term: ProbeTerm | undefined;
       setCount: number;
       unsetCount: number;
       writeCount: number;
@@ -99,9 +103,12 @@ export async function installTerminalRenderProbe(page: Page): Promise<void> {
       reset: () => void;
       snapshot: () => TerminalRenderProbeSnapshot;
       startSampling: (durationMs: number) => void;
-    };
+    }
 
-    const win = window as any;
+    const win = window as unknown as Record<string, unknown> & {
+      __terminalRenderProbe?: ProbeState;
+      __paseoTerminal?: ProbeTerm;
+    };
     const existingDescriptor = Object.getOwnPropertyDescriptor(win, "__paseoTerminal");
     const getExisting = () =>
       existingDescriptor?.get ? existingDescriptor.get.call(win) : existingDescriptor?.value;
@@ -182,7 +189,7 @@ export async function installTerminalRenderProbe(page: Page): Promise<void> {
       get() {
         return probe.term;
       },
-      set(next: any) {
+      set(next: ProbeTerm | undefined) {
         if (next === undefined) {
           probe.unsetCount += 1;
           probe.events.push({ at: performance.now(), type: "unset" });
@@ -201,7 +208,7 @@ export async function installTerminalRenderProbe(page: Page): Promise<void> {
               typeof data === "string" ? data : new TextDecoder().decode(data as Uint8Array);
             probe.writeCount += 1;
             const preview = text
-              .replace(/\u001b/g, "\\x1b")
+              .replaceAll("\u001b", "\\x1b")
               .replace(/\r/g, "\\r")
               .replace(/\n/g, "\\n")
               .slice(0, 160);
@@ -230,20 +237,30 @@ export async function installTerminalRenderProbe(page: Page): Promise<void> {
   });
 }
 
+interface TerminalRenderProbeWindow {
+  __terminalRenderProbe: {
+    reset: () => void;
+    startSampling: (durationMs: number) => void;
+    snapshot: () => TerminalRenderProbeSnapshot;
+  };
+}
+
 export async function resetTerminalRenderProbe(page: Page): Promise<void> {
   await page.evaluate(() => {
-    (window as any).__terminalRenderProbe.reset();
+    (window as unknown as TerminalRenderProbeWindow).__terminalRenderProbe.reset();
   });
 }
 
 export async function startTerminalFrameSampling(page: Page, durationMs = 2500): Promise<void> {
   await page.evaluate((ms) => {
-    (window as any).__terminalRenderProbe.startSampling(ms);
+    (window as unknown as TerminalRenderProbeWindow).__terminalRenderProbe.startSampling(ms);
   }, durationMs);
 }
 
 export async function readTerminalRenderProbe(page: Page): Promise<TerminalRenderProbeSnapshot> {
-  return page.evaluate(() => (window as any).__terminalRenderProbe.snapshot());
+  return page.evaluate(() =>
+    (window as unknown as TerminalRenderProbeWindow).__terminalRenderProbe.snapshot(),
+  );
 }
 
 export async function terminalVisibleText(page: Page): Promise<string> {
@@ -272,29 +289,29 @@ export function summarizeTerminalRenderProbe(
 
 export async function installTerminalKeystrokeStressProbe(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    type TimedTextEvent = {
+    interface TimedTextEvent {
       at: number;
       text: string;
       bytes: number;
-    };
-    type TimedTextMessageEvent = {
+    }
+    interface TimedTextMessageEvent {
       at: number;
       bytes: number;
       kind: string | null;
-    };
-    type XtermWriteEvent = {
+    }
+    interface XtermWriteEvent {
       at: number;
       committedAt: number | null;
       text: string;
       bytes: number;
-    };
-    type AppProbeEvent = {
+    }
+    interface AppProbeEvent {
       type: string;
       at: number;
       bytes?: number;
       queueDepth?: number;
-    };
-    type StressProbeState = {
+    }
+    interface StressProbeState {
       keydowns: Array<{ at: number; key: string }>;
       inputFrames: TimedTextEvent[];
       outputFrames: TimedTextEvent[];
@@ -303,7 +320,7 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
       appEvents: AppProbeEvent[];
       reset: () => void;
       report: (inputText: string) => TerminalKeystrokeStressReport;
-    };
+    }
 
     const INPUT_OPCODE = 0x02;
     const OUTPUT_OPCODE = 0x01;
@@ -553,8 +570,7 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
           lastXtermCommitAt:
             this.xtermWrites
               .map((write) => write.committedAt)
-              .filter((at): at is number => typeof at === "number")
-              .at(-1) ?? null,
+              .findLast((at): at is number => typeof at === "number") ?? null,
         };
       },
     };
@@ -592,6 +608,7 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
               text: frameText(bytes),
               bytes: bytes.byteLength - 2,
             });
+            return;
           });
           void eventDataText(event.data).then((text) => {
             if (text === null) {
@@ -602,11 +619,12 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
               bytes: new TextEncoder().encode(text).byteLength,
               kind: textMessageKind(text),
             });
+            return;
           });
         });
       }
 
-      send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+      send(data: Parameters<WebSocket["send"]>[0]): void {
         const bytes = bytesFrom(data);
         if (bytes && bytes.byteLength >= 2 && bytes[0] === INPUT_OPCODE) {
           probe.inputFrames.push({
@@ -637,7 +655,10 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
       get() {
         return terminal;
       },
-      set(next: any) {
+      set(next: {
+        write?: (data: string | Uint8Array, callback?: () => void) => void;
+        __paseoKeystrokeProbeWriteWrapped?: boolean;
+      }) {
         terminal = next;
         if (next?.write && !next.__paseoKeystrokeProbeWriteWrapped) {
           const originalWrite = next.write.bind(next);
@@ -663,9 +684,18 @@ export async function installTerminalKeystrokeStressProbe(page: Page): Promise<v
   });
 }
 
+interface TerminalKeystrokeStressProbeWindow {
+  __terminalKeystrokeStressProbe: {
+    reset: () => void;
+    report: (text: string) => TerminalKeystrokeStressReport;
+  };
+}
+
 export async function resetTerminalKeystrokeStressProbe(page: Page): Promise<void> {
   await page.evaluate(() => {
-    (window as any).__terminalKeystrokeStressProbe.reset();
+    (
+      window as unknown as TerminalKeystrokeStressProbeWindow
+    ).__terminalKeystrokeStressProbe.reset();
   });
 }
 
@@ -674,7 +704,10 @@ export async function readTerminalKeystrokeStressReport(
   inputText: string,
 ): Promise<TerminalKeystrokeStressReport> {
   return page.evaluate(
-    (text) => (window as any).__terminalKeystrokeStressProbe.report(text),
+    (text) =>
+      (
+        window as unknown as TerminalKeystrokeStressProbeWindow
+      ).__terminalKeystrokeStressProbe.report(text),
     inputText,
   );
 }

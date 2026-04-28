@@ -221,10 +221,9 @@ function selectWorkspaceStructureProjects(
     ({ workspaces: projectWorkspaces, ...project }) => {
       const sortedWorkspaces = [...projectWorkspaces].sort(compareWorkspaceStructureItems);
 
-      return {
-        ...project,
+      return Object.assign({}, project, {
         workspaceKeys: sortedWorkspaces.map((workspace) => workspace.workspaceId),
-      };
+      });
     },
   );
 

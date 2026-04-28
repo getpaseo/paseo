@@ -1,7 +1,8 @@
 import { basename } from "path";
+import { parseGitHubRemoteUrl } from "../utils/github-remote.js";
 import { slugify } from "../utils/worktree.js";
 
-export type WorkspaceGitMetadata = {
+export interface WorkspaceGitMetadata {
   projectKind: "git" | "directory";
   projectDisplayName: string;
   workspaceDisplayName: string;
@@ -11,44 +12,10 @@ export type WorkspaceGitMetadata = {
   repoRoot: string | null;
   currentBranch: string | null;
   remoteUrl: string | null;
-};
+}
 
 export function parseGitHubRepoFromRemote(remoteUrl: string): string | null {
-  let cleaned = remoteUrl.trim();
-  if (!cleaned) {
-    return null;
-  }
-
-  if (cleaned.startsWith("git@github.com:")) {
-    cleaned = cleaned.slice("git@github.com:".length);
-  } else {
-    let parsed: URL;
-    try {
-      parsed = new URL(cleaned);
-    } catch {
-      return null;
-    }
-
-    if (parsed.hostname !== "github.com") {
-      return null;
-    }
-
-    try {
-      cleaned = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
-    } catch {
-      return null;
-    }
-  }
-
-  if (cleaned.endsWith(".git")) {
-    cleaned = cleaned.slice(0, -".git".length);
-  }
-
-  if (!cleaned.includes("/")) {
-    return null;
-  }
-
-  return cleaned;
+  return parseGitHubRemoteUrl(remoteUrl)?.repo ?? null;
 }
 
 export function parseGitHubRepoNameFromRemote(remoteUrl: string): string | null {

@@ -117,6 +117,7 @@ export function createDesktopLocalDaemonTransportFactory(): DaemonTransportFacto
           return;
         }
         unlisten = cleanup;
+        return;
       })
       .catch((error) => {
         emitError(error);
@@ -130,6 +131,7 @@ export function createDesktopLocalDaemonTransportFactory(): DaemonTransportFacto
         }
         sessionId = id;
         emitOpen();
+        return;
       })
       .catch((error) => {
         emitError(error);

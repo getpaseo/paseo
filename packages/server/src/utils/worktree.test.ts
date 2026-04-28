@@ -5,7 +5,9 @@ import {
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
   getScriptConfigs,
+  getWorktreeSetupCommands,
   getWorktreeTerminalSpecs,
+  getWorktreeTeardownCommands,
   isServiceScript,
   isPaseoOwnedWorktreeCwd,
   listPaseoWorktrees,
@@ -118,7 +120,7 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     execSync("git add .", { cwd: varRepoDir });
     execSync('git -c commit.gpgsign=false commit -m "initial"', { cwd: varRepoDir });
 
-    const result = await createLegacyWorktreeForTest({
+    await createLegacyWorktreeForTest({
       branchName: "main",
       cwd: varRepoDir,
       baseBranch: "main",
@@ -442,6 +444,79 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
     expect(portValue).toBeGreaterThan(0);
   });
 
+  it("runs string setup scripts from paseo.json as a single shell command", async () => {
+    const paseoConfig = {
+      worktree: {
+        setup: 'greeting="hello from string setup"\necho "$greeting" > setup.log',
+      },
+    };
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add string setup"', {
+      cwd: repoDir,
+    });
+
+    const result = await createLegacyWorktreeForTest({
+      branchName: "main",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "string-setup-test",
+      paseoHome,
+    });
+
+    expect(getWorktreeSetupCommands(result.worktreePath)).toEqual([
+      'greeting="hello from string setup"\necho "$greeting" > setup.log',
+    ]);
+    expect(readFileSync(join(result.worktreePath, "setup.log"), "utf8").trim()).toBe(
+      "hello from string setup",
+    );
+  });
+
+  it("treats blank lifecycle strings as empty", () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: " \n\t ",
+          teardown: " \n ",
+        },
+      }),
+    );
+
+    expect(getWorktreeSetupCommands(repoDir)).toEqual([]);
+    expect(getWorktreeTeardownCommands(repoDir)).toEqual([]);
+  });
+
+  it("filters non-string and blank entries from lifecycle arrays", () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: [
+            'echo "first" > setup-array.log',
+            null,
+            "   ",
+            'echo "second" >> setup-array.log',
+          ],
+          teardown: [
+            'echo "first" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-array.log"',
+            null,
+            "",
+            'echo "second" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown-array.log"',
+          ],
+        },
+      }),
+    );
+
+    expect(getWorktreeSetupCommands(repoDir)).toEqual([
+      'echo "first" > setup-array.log',
+      'echo "second" >> setup-array.log',
+    ]);
+    expect(getWorktreeTeardownCommands(repoDir)).toEqual([
+      'echo "first" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown-array.log"',
+      'echo "second" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown-array.log"',
+    ]);
+  });
+
   it("does not run setup commands when runSetup=false", async () => {
     const paseoConfig = {
       worktree: {
@@ -704,6 +779,66 @@ describe.skipIf(process.platform === "win32")("createWorktree", () => {
       ]),
     );
   });
+
+  it("seeds an uncommitted paseo.json from the main repo into a new worktree", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({ scripts: { dev: { command: "echo hi" } } }),
+    );
+
+    const result = await createLegacyWorktreeForTest({
+      cwd: repoDir,
+      worktreeSlug: "seed-uncommitted",
+      source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/seed" },
+      runSetup: false,
+      paseoHome,
+    });
+
+    const worktreeConfigPath = join(result.worktreePath, "paseo.json");
+    expect(existsSync(worktreeConfigPath)).toBe(true);
+    expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
+      scripts: { dev: { command: "echo hi" } },
+    });
+  });
+
+  it("does not overwrite a committed paseo.json with uncommitted edits in the main repo", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({ scripts: { dev: { command: "committed" } } }),
+    );
+    execSync("git add paseo.json", { cwd: repoDir });
+    execSync('git -c commit.gpgsign=false commit -m "add paseo.json"', { cwd: repoDir });
+
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({ scripts: { dev: { command: "uncommitted" } } }),
+    );
+
+    const result = await createLegacyWorktreeForTest({
+      cwd: repoDir,
+      worktreeSlug: "preserve-committed",
+      source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/preserve" },
+      runSetup: false,
+      paseoHome,
+    });
+
+    const worktreeConfigPath = join(result.worktreePath, "paseo.json");
+    expect(JSON.parse(readFileSync(worktreeConfigPath, "utf8"))).toEqual({
+      scripts: { dev: { command: "committed" } },
+    });
+  });
+
+  it("creates a worktree without error when no paseo.json exists in the main repo", async () => {
+    const result = await createLegacyWorktreeForTest({
+      cwd: repoDir,
+      worktreeSlug: "no-config",
+      source: { kind: "branch-off", baseBranch: "main", newBranchName: "feature/no-config" },
+      runSetup: false,
+      paseoHome,
+    });
+
+    expect(existsSync(join(result.worktreePath, "paseo.json"))).toBe(false);
+  });
 });
 
 describe("paseo worktree manager", () => {
@@ -856,6 +991,34 @@ describe("paseo worktree manager", () => {
     expect(teardownLog).toContain(`worktree=${created.worktreePath}`);
     expect(teardownLog).toContain("branch=teardown-branch");
     expect(teardownLog).toContain(`port=${runtimeEnv.PASEO_WORKTREE_PORT}`);
+  });
+
+  it("runs string teardown scripts from paseo.json as a single shell command", async () => {
+    const paseoConfig = {
+      worktree: {
+        teardown:
+          'cleanup_message="teardown string"\necho "$cleanup_message" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+      },
+    };
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+    execSync('git add paseo.json && git -c commit.gpgsign=false commit -m "add string teardown"', {
+      cwd: repoDir,
+    });
+
+    const created = await createLegacyWorktreeForTest({
+      branchName: "teardown-string-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "teardown-string-test",
+      paseoHome,
+    });
+
+    await deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome });
+
+    expect(getWorktreeTeardownCommands(repoDir)).toEqual([
+      'cleanup_message="teardown string"\necho "$cleanup_message" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+    ]);
+    expect(readFileSync(join(repoDir, "teardown.log"), "utf8").trim()).toBe("teardown string");
   });
 
   it("omits PASEO_WORKTREE_PORT from teardown env when runtime metadata is missing", async () => {

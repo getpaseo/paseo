@@ -1,11 +1,11 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { normalizeWorkspaceOpaqueId, normalizeWorkspacePath } from "@/utils/workspace-identity";
 
-export type WorkspaceAuthorityResult = {
+export interface WorkspaceAuthorityResult {
   workspaceId: string;
   workspaceDirectory: string;
   workspace: WorkspaceDescriptor;
-};
+}
 
 export type WorkspaceExecutionAuthorityFailureReason =
   | "workspace_id_missing"

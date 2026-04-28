@@ -403,6 +403,18 @@ export function buildSettingsHostRoute(serverId: string) {
   return `/settings/hosts/${encodeSegment(normalized)}` as const;
 }
 
+export function buildProjectsSettingsRoute() {
+  return "/settings/projects" as const;
+}
+
+export function buildProjectSettingsRoute(projectKey: string) {
+  const normalized = trimNonEmpty(projectKey);
+  if (!normalized) {
+    throw new Error("buildProjectSettingsRoute requires a non-empty projectKey");
+  }
+  return `/settings/projects/${encodeSegment(normalized)}` as const;
+}
+
 export function mapPathnameToServer(pathname: string, nextServerId: string) {
   const normalized = trimNonEmpty(nextServerId);
   if (!normalized) {

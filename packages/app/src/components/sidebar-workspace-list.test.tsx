@@ -45,13 +45,13 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
 
 const SERVER_ID = "sidebar-render-count";
 
-type RenderCounts = {
+interface RenderCounts {
   frame: number;
   headers: Record<string, number>;
   rows: Record<string, number>;
   projectSelection: Record<string, number>;
   rowSelection: Record<string, number>;
-};
+}
 
 const runningScript: WorkspaceScriptPayload = {
   scriptName: "web",
@@ -203,11 +203,11 @@ function WorkspaceRowProbe({
   workspaceId: string;
   counts: RenderCounts;
 }): null {
-  const workspace = useWorkspaceFields(serverId, workspaceId, (entry) =>
+  const workspaceEntry = useWorkspaceFields(serverId, workspaceId, (entry) =>
     createSidebarWorkspaceEntry({ serverId, workspace: entry }),
   );
-  if (workspace) {
-    incrementRecord(counts.rows, workspace.workspaceId);
+  if (workspaceEntry) {
+    incrementRecord(counts.rows, workspaceEntry.workspaceId);
   }
   return null;
 }
@@ -223,7 +223,7 @@ function ProjectActiveProbe({
 }): null {
   useIsNavigationProjectActive({
     serverId,
-    workspaceIds: project.workspaces.map((workspace) => workspace.workspaceId),
+    workspaceIds: project.workspaces.map((entry) => entry.workspaceId),
   });
   incrementRecord(counts.projectSelection, project.projectKey);
   return null;
@@ -253,16 +253,16 @@ function SidebarFrameProbe({ counts }: { counts: RenderCounts }): ReactElement {
         <div key={project.projectKey}>
           <ProjectHeaderProbe project={project} counts={counts} />
           <ProjectActiveProbe serverId={SERVER_ID} project={project} counts={counts} />
-          {project.workspaces.map((workspace) => (
-            <React.Fragment key={workspace.workspaceKey}>
+          {project.workspaces.map((entry) => (
+            <React.Fragment key={entry.workspaceKey}>
               <WorkspaceRowProbe
-                serverId={workspace.serverId}
-                workspaceId={workspace.workspaceId}
+                serverId={entry.serverId}
+                workspaceId={entry.workspaceId}
                 counts={counts}
               />
               <WorkspaceSelectionProbe
-                serverId={workspace.serverId}
-                workspaceId={workspace.workspaceId}
+                serverId={entry.serverId}
+                workspaceId={entry.workspaceId}
                 counts={counts}
               />
             </React.Fragment>
@@ -397,13 +397,14 @@ describe("sidebar workspace render isolation", () => {
     };
     ({ root, container } = await renderProbe(counts));
 
+    const applyRunningScript = (current: Parameters<typeof patchWorkspaceScripts>[0]) =>
+      patchWorkspaceScripts(current, {
+        workspaceId: "a-main",
+        scripts: [{ ...runningScript }],
+      });
+
     act(() => {
-      useSessionStore.getState().setWorkspaces(SERVER_ID, (current) =>
-        patchWorkspaceScripts(current, {
-          workspaceId: "a-main",
-          scripts: [{ ...runningScript }],
-        }),
-      );
+      useSessionStore.getState().setWorkspaces(SERVER_ID, applyRunningScript);
     });
 
     expect(counts).toEqual({

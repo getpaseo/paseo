@@ -35,9 +35,9 @@ function createQueryMock(events: unknown[]): Query {
 }
 
 function createChildProcessStub(): ChildProcess {
-  return {
-    stderr: new EventEmitter(),
-  } as ChildProcess;
+  const child = new EventEmitter() as ChildProcess;
+  child.stderr = new EventEmitter() as ChildProcess["stderr"];
+  return child;
 }
 
 describe("Claude spawn override", () => {
@@ -96,8 +96,9 @@ describe("Claude spawn override", () => {
       await session.close();
     }
 
-    expect(spawnSpy).toHaveBeenCalledTimes(1);
-    const spawnOptions = spawnSpy.mock.calls[0]?.[2];
+    const claudeSpawnCall = spawnSpy.mock.calls.find(([, args]) => args[0] === "claude.js");
+    expect(claudeSpawnCall).toBeDefined();
+    const spawnOptions = claudeSpawnCall?.[2];
     expect(spawnOptions?.shell).toBe(false);
   });
 });

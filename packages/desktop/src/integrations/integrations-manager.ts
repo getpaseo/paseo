@@ -280,25 +280,27 @@ export async function installSkills(): Promise<InstallStatus> {
 
   log.info("[integrations] installSkills", { sourceDir, agentsDir, claudeDir, codexDir });
 
-  for (const skillName of SKILL_NAMES) {
-    const sourceFile = path.join(sourceDir, skillName, "SKILL.md");
-    await copySkillFile(sourceFile, agentsDir, skillName);
-    await symlinkSkillDir(skillName, agentsDir, claudeDir);
-    await copySkillFile(sourceFile, codexDir, skillName);
-  }
+  await Promise.all(
+    SKILL_NAMES.map(async (skillName) => {
+      const sourceFile = path.join(sourceDir, skillName, "SKILL.md");
+      await copySkillFile(sourceFile, agentsDir, skillName);
+      await symlinkSkillDir(skillName, agentsDir, claudeDir);
+      await copySkillFile(sourceFile, codexDir, skillName);
+    }),
+  );
 
   return getSkillsInstallStatus();
 }
 
 export async function getSkillsInstallStatus(): Promise<InstallStatus> {
   const claudeDir = getClaudeSkillsDir();
-  for (const skillName of SKILL_NAMES) {
-    const skillFile = path.join(claudeDir, skillName, "SKILL.md");
-    try {
-      await fs.access(skillFile);
-    } catch {
-      return { installed: false };
-    }
-  }
-  return { installed: true };
+  const accessResults = await Promise.all(
+    SKILL_NAMES.map((skillName) =>
+      fs
+        .access(path.join(claudeDir, skillName, "SKILL.md"))
+        .then(() => true)
+        .catch(() => false),
+    ),
+  );
+  return { installed: accessResults.every(Boolean) };
 }

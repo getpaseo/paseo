@@ -6,13 +6,13 @@ After every implementation phase, deploy auditors to verify the work. Auditors a
 
 Not every phase needs every auditor. Match auditors to the work:
 
-| Phase type | Auditors |
-|-----------|----------|
-| Refactor | `parity`, `regression`, `types` |
-| Feature (backend) | `overeng`, `tests`, `regression`, `types` |
+| Phase type         | Auditors                                               |
+| ------------------ | ------------------------------------------------------ |
+| Refactor           | `parity`, `regression`, `types`                        |
+| Feature (backend)  | `overeng`, `tests`, `regression`, `types`              |
 | Feature (frontend) | `overeng`, `tests`, `types`, `browser` (if applicable) |
-| UI pass | `overeng`, `browser` (if applicable) |
-| Test-only | `regression` |
+| UI pass            | `overeng`, `browser` (if applicable)                   |
+| Test-only          | `regression`                                           |
 
 Deploy all relevant auditors in parallel — they're read-only so they don't conflict.
 
@@ -151,6 +151,7 @@ Do NOT edit files."
 ## Interpreting Findings
 
 If any auditor reports issues:
+
 1. Check the auditor's activity with the Paseo **get agent activity** tool for details
 2. Direct the impl agent to fix them via the Paseo **send agent prompt** tool, or launch a new impl agent if the old one is stale
 3. Re-deploy the same auditor after fixes

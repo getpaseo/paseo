@@ -17,7 +17,7 @@ export interface PendingWorkspaceDraftSubmission {
   allowEmptyText?: boolean;
 }
 
-type WorkspaceDraftSubmissionState = {
+interface WorkspaceDraftSubmissionState {
   pendingByDraftId: Record<string, PendingWorkspaceDraftSubmission>;
   setPending: (submission: PendingWorkspaceDraftSubmission) => void;
   consumePending: (input: {
@@ -25,7 +25,7 @@ type WorkspaceDraftSubmissionState = {
     workspaceId: string;
     draftId: string;
   }) => PendingWorkspaceDraftSubmission | null;
-};
+}
 
 function matchesPendingSubmission(
   pending: PendingWorkspaceDraftSubmission | null | undefined,

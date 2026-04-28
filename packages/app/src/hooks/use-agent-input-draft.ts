@@ -16,25 +16,25 @@ type AttachmentUpdater =
   | ComposerAttachment[]
   | ((prev: ComposerAttachment[]) => ComposerAttachment[]);
 
-type AgentInputDraftComposerOptions = {
+interface AgentInputDraftComposerOptions {
   initialServerId: string | null;
   initialValues?: CreateAgentInitialValues;
   isVisible?: boolean;
   onlineServerIds?: string[];
   lockedWorkingDir?: string;
-};
+}
 
-type DraftKeyContext = {
+interface DraftKeyContext {
   selectedServerId: string | null;
-};
+}
 
 type DraftKeyInput = string | ((context: DraftKeyContext) => string);
 
-type UseAgentInputDraftInput = {
+interface UseAgentInputDraftInput {
   draftKey: DraftKeyInput;
   initialCwd?: string;
   composer?: AgentInputDraftComposerOptions;
-};
+}
 
 type DraftComposerState = UseAgentFormStateResult & {
   workingDir: string;

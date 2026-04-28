@@ -7,9 +7,18 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
+  type ReactNode,
 } from "react";
-import { View, Text, Pressable, Platform, ActivityIndicator } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import {
+  View,
+  Text,
+  Pressable,
+  Platform,
+  ActivityIndicator,
+  type PressableStateCallbackType,
+} from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
@@ -75,6 +84,7 @@ import {
   WORKING_INDICATOR_OFFSETS,
 } from "@/utils/working-indicator";
 import { isWeb } from "@/constants/platform";
+import { SPACING, type Theme } from "@/styles/theme";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
@@ -147,7 +157,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     ref,
   ) {
     const viewportRef = useRef<StreamViewportHandle | null>(null);
-    const { theme } = useUnistyles();
     const router = useRouter();
     const isMobile = useIsCompactFormFactor();
     const streamRenderStrategy = useMemo(
@@ -249,8 +258,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       },
       [
         agent.cwd,
+        agent.projectPlacement?.checkout?.isGit,
         isMobile,
         openFileExplorerForCheckout,
+        onOpenWorkspaceFile,
         requestDirectoryListing,
         resolvedServerId,
         router,
@@ -258,6 +269,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         openWorkspaceFile,
         workspaceId,
       ],
+    );
+
+    const handleToolCallOpenFile = useCallback(
+      (filePath: string) => {
+        handleInlinePathPress({ raw: filePath, path: filePath });
+      },
+      [handleInlinePathPress],
     );
 
     const baseRenderModel = useMemo(() => {
@@ -281,13 +299,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [],
     );
 
-    function scrollToBottom() {
+    const scrollToBottom = useCallback(() => {
       viewportRef.current?.scrollToBottom("jump-to-bottom");
-    }
+    }, []);
 
-    const tightGap = theme.spacing[1]; // 4px
-    const assistantBlockGap = theme.spacing[3]; // 12px
-    const looseGap = theme.spacing[4]; // 16px
+    const tightGap = SPACING[1];
+    const assistantBlockGap = SPACING[3];
+    const looseGap = SPACING[4];
 
     const getGapBetween = useCallback(
       (item: StreamItem | null, belowItem: StreamItem | null) => {
@@ -318,6 +336,184 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [assistantBlockGap, looseGap, tightGap],
     );
 
+    const setInlineDetailsExpanded = useCallback(
+      (itemId: string, expanded: boolean) => {
+        if (!streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion()) {
+          return;
+        }
+        setExpandedInlineToolCallIds((previous) => {
+          const next = new Set(previous);
+          if (expanded) {
+            next.add(itemId);
+          } else {
+            next.delete(itemId);
+          }
+          return next;
+        });
+      },
+      [streamRenderStrategy],
+    );
+
+    const renderUserMessageItem = useCallback(
+      (
+        item: Extract<StreamItem, { kind: "user_message" }>,
+        index: number,
+        items: StreamItem[],
+        seamAboveItem: StreamItem | null,
+      ) => {
+        const aboveItem =
+          getStreamNeighborItem({
+            strategy: streamRenderStrategy,
+            items,
+            index,
+            relation: "above",
+          }) ??
+          seamAboveItem ??
+          undefined;
+        const belowItem = getStreamNeighborItem({
+          strategy: streamRenderStrategy,
+          items,
+          index,
+          relation: "below",
+        });
+        const isFirstInGroup = aboveItem?.kind !== "user_message";
+        const isLastInGroup = belowItem?.kind !== "user_message";
+        return (
+          <UserMessage
+            message={item.text}
+            images={item.images}
+            timestamp={item.timestamp.getTime()}
+            isFirstInGroup={isFirstInGroup}
+            isLastInGroup={isLastInGroup}
+          />
+        );
+      },
+      [streamRenderStrategy],
+    );
+
+    const renderAssistantMessageItem = useCallback(
+      (
+        item: Extract<StreamItem, { kind: "assistant_message" }>,
+        index: number,
+        items: StreamItem[],
+        seamAboveItem: StreamItem | null,
+      ) => {
+        const aboveItem =
+          getStreamNeighborItem({
+            strategy: streamRenderStrategy,
+            items,
+            index,
+            relation: "above",
+          }) ??
+          seamAboveItem ??
+          undefined;
+        const belowItem = getStreamNeighborItem({
+          strategy: streamRenderStrategy,
+          items,
+          index,
+          relation: "below",
+        });
+        const spacing = getAssistantBlockSpacing({
+          item,
+          aboveItem,
+          belowItem,
+        });
+        return (
+          <AssistantMessage
+            message={item.text}
+            timestamp={item.timestamp.getTime()}
+            onInlinePathPress={handleInlinePathPress}
+            workspaceRoot={workspaceRoot}
+            serverId={serverId}
+            client={client}
+            spacing={spacing}
+          />
+        );
+      },
+      [handleInlinePathPress, streamRenderStrategy, workspaceRoot, serverId, client],
+    );
+
+    const renderThoughtItem = useCallback(
+      (item: Extract<StreamItem, { kind: "thought" }>, index: number, items: StreamItem[]) => {
+        const nextItem = getStreamNeighborItem({
+          strategy: streamRenderStrategy,
+          items,
+          index,
+          relation: "below",
+        });
+        const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
+        return (
+          <ToolCallSlot
+            itemId={item.id}
+            onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+            toolName="thinking"
+            args={item.text}
+            status={item.status === "ready" ? "completed" : "executing"}
+            isLastInSequence={isLastInSequence}
+          />
+        );
+      },
+      [streamRenderStrategy, setInlineDetailsExpanded],
+    );
+
+    const renderToolCallItem = useCallback(
+      (item: Extract<StreamItem, { kind: "tool_call" }>, index: number, items: StreamItem[]) => {
+        const { payload } = item;
+        const nextItem = getStreamNeighborItem({
+          strategy: streamRenderStrategy,
+          items,
+          index,
+          relation: "below",
+        });
+        const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
+
+        if (payload.source === "agent") {
+          const data = payload.data;
+
+          if (
+            data.name === "speak" &&
+            data.detail.type === "unknown" &&
+            typeof data.detail.input === "string" &&
+            data.detail.input.trim()
+          ) {
+            return (
+              <SpeakMessage message={data.detail.input} timestamp={item.timestamp.getTime()} />
+            );
+          }
+
+          return (
+            <ToolCallSlot
+              itemId={item.id}
+              onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+              toolName={data.name}
+              error={data.error}
+              status={data.status}
+              detail={data.detail}
+              cwd={agent.cwd}
+              metadata={data.metadata}
+              isLastInSequence={isLastInSequence}
+              onOpenFilePath={handleToolCallOpenFile}
+            />
+          );
+        }
+
+        const data = payload.data;
+        return (
+          <ToolCallSlot
+            itemId={item.id}
+            onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
+            toolName={data.toolName}
+            args={data.arguments}
+            result={data.result}
+            status={data.status}
+            isLastInSequence={isLastInSequence}
+            onOpenFilePath={handleToolCallOpenFile}
+          />
+        );
+      },
+      [agent.cwd, streamRenderStrategy, setInlineDetailsExpanded, handleToolCallOpenFile],
+    );
+
     const renderStreamItemContent = useCallback(
       (
         item: StreamItem,
@@ -325,153 +521,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         items: StreamItem[],
         seamAboveItem: StreamItem | null = null,
       ) => {
-        const handleInlineDetailsExpandedChange = (expanded: boolean) => {
-          if (!streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion()) {
-            return;
-          }
-          setExpandedInlineToolCallIds((previous) => {
-            const next = new Set(previous);
-            if (expanded) {
-              next.add(item.id);
-            } else {
-              next.delete(item.id);
-            }
-            return next;
-          });
-        };
-
         switch (item.kind) {
-          case "user_message": {
-            const aboveItem =
-              getStreamNeighborItem({
-                strategy: streamRenderStrategy,
-                items,
-                index,
-                relation: "above",
-              }) ??
-              seamAboveItem ??
-              undefined;
-            const belowItem = getStreamNeighborItem({
-              strategy: streamRenderStrategy,
-              items,
-              index,
-              relation: "below",
-            });
-            const isFirstInGroup = aboveItem?.kind !== "user_message";
-            const isLastInGroup = belowItem?.kind !== "user_message";
-            return (
-              <UserMessage
-                message={item.text}
-                images={item.images}
-                timestamp={item.timestamp.getTime()}
-                isFirstInGroup={isFirstInGroup}
-                isLastInGroup={isLastInGroup}
-              />
-            );
-          }
+          case "user_message":
+            return renderUserMessageItem(item, index, items, seamAboveItem);
 
-          case "assistant_message": {
-            const aboveItem =
-              getStreamNeighborItem({
-                strategy: streamRenderStrategy,
-                items,
-                index,
-                relation: "above",
-              }) ??
-              seamAboveItem ??
-              undefined;
-            const belowItem = getStreamNeighborItem({
-              strategy: streamRenderStrategy,
-              items,
-              index,
-              relation: "below",
-            });
-            const spacing = getAssistantBlockSpacing({
-              item,
-              aboveItem,
-              belowItem,
-            });
-            return (
-              <AssistantMessage
-                message={item.text}
-                timestamp={item.timestamp.getTime()}
-                onInlinePathPress={handleInlinePathPress}
-                workspaceRoot={workspaceRoot}
-                serverId={serverId}
-                client={client}
-                spacing={spacing}
-              />
-            );
-          }
-          case "thought": {
-            const nextItem = getStreamNeighborItem({
-              strategy: streamRenderStrategy,
-              items,
-              index,
-              relation: "below",
-            });
-            const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
-            return (
-              <ToolCall
-                toolName="thinking"
-                args={item.text}
-                status={item.status === "ready" ? "completed" : "executing"}
-                isLastInSequence={isLastInSequence}
-                onInlineDetailsExpandedChange={handleInlineDetailsExpandedChange}
-              />
-            );
-          }
+          case "assistant_message":
+            return renderAssistantMessageItem(item, index, items, seamAboveItem);
 
-          case "tool_call": {
-            const { payload } = item;
-            const nextItem = getStreamNeighborItem({
-              strategy: streamRenderStrategy,
-              items,
-              index,
-              relation: "below",
-            });
-            const isLastInSequence = nextItem?.kind !== "tool_call" && nextItem?.kind !== "thought";
+          case "thought":
+            return renderThoughtItem(item, index, items);
 
-            if (payload.source === "agent") {
-              const data = payload.data;
-
-              if (
-                data.name === "speak" &&
-                data.detail.type === "unknown" &&
-                typeof data.detail.input === "string" &&
-                data.detail.input.trim()
-              ) {
-                return (
-                  <SpeakMessage message={data.detail.input} timestamp={item.timestamp.getTime()} />
-                );
-              }
-
-              return (
-                <ToolCall
-                  toolName={data.name}
-                  error={data.error}
-                  status={data.status}
-                  detail={data.detail}
-                  cwd={agent.cwd}
-                  metadata={data.metadata}
-                  isLastInSequence={isLastInSequence}
-                  onInlineDetailsExpandedChange={handleInlineDetailsExpandedChange}
-                />
-              );
-            }
-
-            const data = payload.data;
-            return (
-              <ToolCall
-                toolName={data.toolName}
-                args={data.arguments}
-                result={data.result}
-                status={data.status}
-                isLastInSequence={isLastInSequence}
-                onInlineDetailsExpandedChange={handleInlineDetailsExpandedChange}
-              />
-            );
-          }
+          case "tool_call":
+            return renderToolCallItem(item, index, items);
 
           case "activity_log":
             return (
@@ -493,7 +554,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             return null;
         }
       },
-      [handleInlinePathPress, agent.cwd, streamRenderStrategy],
+      [renderUserMessageItem, renderAssistantMessageItem, renderThoughtItem, renderToolCallItem],
     );
 
     const renderStreamItem = useCallback(
@@ -519,18 +580,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           item.kind === "assistant_message" &&
           (nextItem?.kind === "user_message" ||
             (nextItem === undefined && agent.status !== "running"));
-        const getTurnContent = () =>
-          collectAssistantTurnContentForStreamRenderStrategy({
-            strategy: streamRenderStrategy,
-            items,
-            startIndex: index,
-          });
 
         return (
-          <View style={[stylesheet.streamItemWrapper, { marginBottom: gapBelow }]}>
+          <StreamItemWrapper gapBelow={gapBelow}>
             {content}
-            {isEndOfAssistantTurn ? <TurnCopyButton getContent={getTurnContent} /> : null}
-          </View>
+            {isEndOfAssistantTurn ? (
+              <TurnCopyButtonSlot
+                strategy={streamRenderStrategy}
+                items={items}
+                startIndex={index}
+              />
+            ) : null}
+          </StreamItemWrapper>
         );
       },
       [getGapBetween, renderStreamItemContent, agent.status, streamRenderStrategy],
@@ -579,6 +640,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       };
     }, [baseRenderModel, getGapBetween, pendingPermissionsNode, workingIndicatorNode]);
 
+    const emptyStateStyle = useMemo(() => [stylesheet.emptyState, stylesheet.contentWrapper], []);
     const listEmptyComponent = useMemo(() => {
       if (
         renderModel.boundary.hasVirtualizedHistory ||
@@ -591,14 +653,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       }
 
       return (
-        <View style={[stylesheet.emptyState, stylesheet.contentWrapper]}>
+        <View style={emptyStateStyle}>
           <Text style={stylesheet.emptyStateText}>Start chatting with this agent...</Text>
         </View>
       );
-    }, [renderModel]);
+    }, [renderModel, emptyStateStyle]);
 
     const historyItems = renderModel.history;
-    const liveHeadItems = renderModel.segments.liveHead;
+    const _liveHeadItems = renderModel.segments.liveHead;
     const { boundary, auxiliary } = renderModel;
     const lastHistoryItem = historyItems.at(-1) ?? null;
 
@@ -633,34 +695,27 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderStreamItem(item, index, items, index === 0 ? lastHistoryItem : null),
       [lastHistoryItem, renderStreamItem],
     );
+    const liveAuxiliaryHeaderStyle = useMemo(() => {
+      let headerPadding: { paddingBottom: number } | { paddingTop: number } | null;
+      if (!boundary.hasLiveHead) headerPadding = null;
+      else if (streamRenderStrategy.getFlatListInverted())
+        headerPadding = { paddingBottom: looseGap };
+      else headerPadding = { paddingTop: looseGap };
+      return [stylesheet.listHeaderContent, headerPadding];
+    }, [boundary.hasLiveHead, streamRenderStrategy, looseGap]);
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {
       if (!auxiliary.pendingPermissions && !auxiliary.workingIndicator) {
         return null;
       }
       return (
         <View style={stylesheet.contentWrapper}>
-          <View
-            style={[
-              stylesheet.listHeaderContent,
-              boundary.hasLiveHead
-                ? streamRenderStrategy.getFlatListInverted()
-                  ? { paddingBottom: looseGap }
-                  : { paddingTop: looseGap }
-                : null,
-            ]}
-          >
+          <View style={liveAuxiliaryHeaderStyle}>
             {auxiliary.pendingPermissions}
             {auxiliary.workingIndicator}
           </View>
         </View>
       );
-    }, [
-      auxiliary.pendingPermissions,
-      auxiliary.workingIndicator,
-      boundary.hasLiveHead,
-      looseGap,
-      streamRenderStrategy,
-    ]);
+    }, [auxiliary.pendingPermissions, auxiliary.workingIndicator, liveAuxiliaryHeaderStyle]);
 
     const renderers = useMemo<StreamSegmentRenderers>(
       () => ({
@@ -774,18 +829,124 @@ function WorkingIndicator() {
     };
   });
 
+  const dotOneCombinedStyle = useMemo(() => [stylesheet.workingDot, dotOneStyle], [dotOneStyle]);
+  const dotTwoCombinedStyle = useMemo(() => [stylesheet.workingDot, dotTwoStyle], [dotTwoStyle]);
+  const dotThreeCombinedStyle = useMemo(
+    () => [stylesheet.workingDot, dotThreeStyle],
+    [dotThreeStyle],
+  );
+
   return (
     <View style={stylesheet.workingIndicatorBubble}>
       <View style={stylesheet.workingDotsRow}>
-        <Animated.View style={[stylesheet.workingDot, dotOneStyle]} />
-        <Animated.View style={[stylesheet.workingDot, dotTwoStyle]} />
-        <Animated.View style={[stylesheet.workingDot, dotThreeStyle]} />
+        <Animated.View style={dotOneCombinedStyle} />
+        <Animated.View style={dotTwoCombinedStyle} />
+        <Animated.View style={dotThreeCombinedStyle} />
       </View>
     </View>
   );
 }
 
 // Permission Request Card Component
+type TurnContentStrategy = Parameters<
+  typeof collectAssistantTurnContentForStreamRenderStrategy
+>[0]["strategy"];
+
+interface TurnCopyButtonSlotProps {
+  strategy: TurnContentStrategy;
+  items: StreamItem[];
+  startIndex: number;
+}
+
+function TurnCopyButtonSlot({ strategy, items, startIndex }: TurnCopyButtonSlotProps) {
+  const getContent = useCallback(
+    () =>
+      collectAssistantTurnContentForStreamRenderStrategy({
+        strategy,
+        items,
+        startIndex,
+      }),
+    [strategy, items, startIndex],
+  );
+  return <TurnCopyButton getContent={getContent} />;
+}
+
+interface ToolCallSlotProps extends Omit<
+  ComponentProps<typeof ToolCall>,
+  "onInlineDetailsExpandedChange"
+> {
+  itemId: string;
+  onInlineDetailsExpandedChangeByItemId: (itemId: string, expanded: boolean) => void;
+}
+
+function ToolCallSlot({
+  itemId,
+  onInlineDetailsExpandedChangeByItemId,
+  ...rest
+}: ToolCallSlotProps) {
+  const handleExpandedChange = useCallback(
+    (expanded: boolean) => onInlineDetailsExpandedChangeByItemId(itemId, expanded),
+    [onInlineDetailsExpandedChangeByItemId, itemId],
+  );
+  return <ToolCall {...rest} onInlineDetailsExpandedChange={handleExpandedChange} />;
+}
+
+const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
+const ThemedCheckIcon = withUnistyles(Check);
+const ThemedXIcon = withUnistyles(X);
+
+const primaryColorMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+});
+const mutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
+
+const pressableStyle = ({
+  pressed,
+  hovered = false,
+}: PressableStateCallbackType & { hovered?: boolean }) => [
+  permissionStyles.optionButton,
+  hovered ? permissionStyles.optionButtonHovered : null,
+  pressed ? permissionStyles.optionButtonPressed : null,
+];
+
+interface PermissionActionButtonProps {
+  action: AgentPermissionAction;
+  isRespondingAction: boolean;
+  isResponding: boolean;
+  isPrimary: boolean;
+  Icon: typeof ThemedCheckIcon;
+  testID: string;
+  onPress: (action: AgentPermissionAction) => void;
+}
+
+function PermissionActionButton({
+  action,
+  isRespondingAction,
+  isResponding,
+  isPrimary,
+  Icon,
+  testID,
+  onPress,
+}: PermissionActionButtonProps) {
+  const handlePress = useCallback(() => onPress(action), [onPress, action]);
+  const optionTextStyle = isPrimary ? optionTextPrimaryStyle : permissionStyles.optionText;
+  const colorMapping = isPrimary ? primaryColorMapping : mutedColorMapping;
+  return (
+    <Pressable testID={testID} style={pressableStyle} onPress={handlePress} disabled={isResponding}>
+      {isRespondingAction ? (
+        <ThemedActivityIndicator size="small" uniProps={colorMapping} />
+      ) : (
+        <View style={permissionStyles.optionContent}>
+          <Icon size={14} uniProps={colorMapping} />
+          <Text style={optionTextStyle}>{action.label}</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
 function PermissionRequestCard({
   permission,
   client,
@@ -793,13 +954,21 @@ function PermissionRequestCard({
   permission: PendingPermission;
   client: DaemonClient | null;
 }) {
-  const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
   const title = isPlanRequest ? "Plan" : (request.title ?? request.name ?? "Permission Required");
   const description = request.description ?? "";
+  const resolvedToolCallDetail = useMemo(
+    () =>
+      request.detail ?? {
+        type: "unknown" as const,
+        input: request.input ?? null,
+        output: null,
+      },
+    [request.detail, request.input],
+  );
   const resolvedActions = useMemo((): AgentPermissionAction[] => {
     if (request.kind === "question") {
       return [];
@@ -900,6 +1069,14 @@ function PermissionRequestCard({
     [handleResponse],
   );
 
+  const optionsContainerStyle = useMemo(
+    () => [
+      permissionStyles.optionsContainer,
+      !isMobile && permissionStyles.optionsContainerDesktop,
+    ],
+    [isMobile],
+  );
+
   if (request.kind === "question") {
     return (
       <QuestionFormCard
@@ -912,59 +1089,32 @@ function PermissionRequestCard({
 
   const footer = (
     <>
-      <Text
-        testID="permission-request-question"
-        style={[permissionStyles.question, { color: theme.colors.foregroundMuted }]}
-      >
+      <Text testID="permission-request-question" style={permissionStyles.question}>
         How would you like to proceed?
       </Text>
 
-      <View
-        style={[
-          permissionStyles.optionsContainer,
-          !isMobile && permissionStyles.optionsContainerDesktop,
-        ]}
-      >
+      <View style={optionsContainerStyle}>
         {resolvedActions.map((action) => {
-          const isDanger = action.variant === "danger" || action.behavior === "deny";
           const isPrimary = action.variant === "primary";
           const isRespondingAction = respondingActionId === action.id;
-          const textColor = isPrimary ? theme.colors.foreground : theme.colors.foregroundMuted;
-          const iconColor = textColor;
-          const Icon = action.behavior === "allow" ? Check : X;
-          const testID =
-            action.behavior === "deny"
-              ? "permission-request-deny"
-              : action.id === "accept" || action.id === "implement"
-                ? "permission-request-accept"
-                : `permission-request-action-${action.id}`;
+          const Icon = action.behavior === "allow" ? ThemedCheckIcon : ThemedXIcon;
+          let testID: string;
+          if (action.behavior === "deny") testID = "permission-request-deny";
+          else if (action.id === "accept" || action.id === "implement")
+            testID = "permission-request-accept";
+          else testID = `permission-request-action-${action.id}`;
 
           return (
-            <Pressable
+            <PermissionActionButton
               key={action.id}
+              action={action}
+              isRespondingAction={isRespondingAction}
+              isResponding={isResponding}
+              isPrimary={isPrimary}
+              Icon={Icon}
               testID={testID}
-              style={({ pressed, hovered = false }) => [
-                permissionStyles.optionButton,
-                {
-                  backgroundColor: hovered ? theme.colors.surface2 : theme.colors.surface1,
-                  borderColor: isDanger ? theme.colors.borderAccent : theme.colors.borderAccent,
-                },
-                pressed ? permissionStyles.optionButtonPressed : null,
-              ]}
-              onPress={() => handleActionPress(action)}
-              disabled={isResponding}
-            >
-              {isRespondingAction ? (
-                <ActivityIndicator size="small" color={textColor} />
-              ) : (
-                <View style={permissionStyles.optionContent}>
-                  <Icon size={14} color={iconColor} />
-                  <Text style={[permissionStyles.optionText, { color: textColor }]}>
-                    {action.label}
-                  </Text>
-                </View>
-              )}
-            </Pressable>
+              onPress={handleActionPress}
+            />
           );
         })}
       </View>
@@ -984,38 +1134,17 @@ function PermissionRequestCard({
   }
 
   return (
-    <View
-      style={[
-        permissionStyles.container,
-        {
-          backgroundColor: theme.colors.surface1,
-          borderColor: theme.colors.border,
-        },
-      ]}
-    >
-      <Text style={[permissionStyles.title, { color: theme.colors.foreground }]}>{title}</Text>
+    <View style={permissionStyles.container}>
+      <Text style={permissionStyles.title}>{title}</Text>
 
-      {description ? (
-        <Text style={[permissionStyles.description, { color: theme.colors.foregroundMuted }]}>
-          {description}
-        </Text>
-      ) : null}
+      {description ? <Text style={permissionStyles.description}>{description}</Text> : null}
 
       {planMarkdown ? (
         <PlanCard title="Proposed plan" text={planMarkdown} disableOuterSpacing />
       ) : null}
 
       {!isPlanRequest ? (
-        <ToolCallDetailsContent
-          detail={
-            request.detail ?? {
-              type: "unknown",
-              input: request.input ?? null,
-              output: null,
-            }
-          }
-          maxHeight={200}
-        />
+        <ToolCallDetailsContent detail={resolvedToolCallDetail} maxHeight={200} />
       ) : null}
 
       {footer}
@@ -1154,14 +1283,18 @@ const permissionStyles = StyleSheet.create((theme) => ({
     borderRadius: theme.spacing[2],
     borderWidth: 1,
     gap: theme.spacing[2],
+    backgroundColor: theme.colors.surface1,
+    borderColor: theme.colors.border,
   },
   title: {
     fontSize: theme.fontSize.base,
     lineHeight: 22,
+    color: theme.colors.foreground,
   },
   description: {
     fontSize: theme.fontSize.sm,
     lineHeight: 20,
+    color: theme.colors.foregroundMuted,
   },
   section: {
     gap: theme.spacing[2],
@@ -1173,6 +1306,7 @@ const permissionStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
     marginBottom: theme.spacing[1],
+    color: theme.colors.foregroundMuted,
   },
   optionsContainer: {
     gap: theme.spacing[2],
@@ -1189,6 +1323,11 @@ const permissionStyles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     borderWidth: theme.borderWidth[1],
+    backgroundColor: theme.colors.surface1,
+    borderColor: theme.colors.borderAccent,
+  },
+  optionButtonHovered: {
+    backgroundColor: theme.colors.surface2,
   },
   optionButtonPressed: {
     opacity: 0.9,
@@ -1201,5 +1340,24 @@ const permissionStyles = StyleSheet.create((theme) => ({
   optionText: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foregroundMuted,
+  },
+  optionTextPrimary: {
+    color: theme.colors.foreground,
   },
 }));
+
+const optionTextPrimaryStyle = [permissionStyles.optionText, permissionStyles.optionTextPrimary];
+
+interface StreamItemWrapperProps {
+  gapBelow: number;
+  children: ReactNode;
+}
+
+function StreamItemWrapper({ gapBelow, children }: StreamItemWrapperProps) {
+  const wrapperStyle = useMemo(
+    () => [stylesheet.streamItemWrapper, { marginBottom: gapBelow }],
+    [gapBelow],
+  );
+  return <View style={wrapperStyle}>{children}</View>;
+}

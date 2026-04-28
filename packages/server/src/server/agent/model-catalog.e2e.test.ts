@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
 
-import type { AgentModelDefinition } from "../agent-sdk-types.js";
+import type { AgentModelDefinition } from "./agent-sdk-types.js";
 import { createDaemonTestContext } from "../test-utils/index.js";
 
 function isBinaryInstalled(binary: string): boolean {

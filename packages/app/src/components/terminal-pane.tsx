@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type PressableStateCallbackType,
+} from "react-native";
 import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { encodeTerminalKeyInput } from "@server/shared/terminal-key-input";
@@ -51,11 +58,11 @@ const KEY_BUTTONS: Array<{ id: string; label: string; key: string }> = [
   { id: "c", label: "C", key: "c" },
 ];
 
-type ModifierState = {
+interface ModifierState {
   ctrl: boolean;
   shift: boolean;
   alt: boolean;
-};
+}
 
 type PendingTerminalInput =
   | {
@@ -83,6 +90,56 @@ function terminalScopeKey(input: { serverId: string; cwd: string }): string {
   return `${input.serverId}:${input.cwd}`;
 }
 
+interface ModifierButtonProps {
+  modifier: keyof ModifierState;
+  active: boolean;
+  onToggle: (modifier: keyof ModifierState) => void;
+}
+
+function ModifierButton({ modifier, active, onToggle }: ModifierButtonProps) {
+  const handlePress = useCallback(() => onToggle(modifier), [onToggle, modifier]);
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.keyButton,
+      active && styles.keyButtonActive,
+      (Boolean(hovered) || pressed) && styles.keyButtonHovered,
+    ],
+    [active],
+  );
+  const textStyle = useMemo(
+    () => [styles.keyButtonText, active && styles.keyButtonTextActive],
+    [active],
+  );
+  return (
+    <Pressable testID={`terminal-key-${modifier}`} onPress={handlePress} style={pressableStyle}>
+      <Text style={textStyle}>{MODIFIER_LABELS[modifier]}</Text>
+    </Pressable>
+  );
+}
+
+interface VirtualKeyButtonProps {
+  id: string;
+  label: string;
+  keyValue: string;
+  onSend: (key: string) => void;
+}
+
+function VirtualKeyButton({ id, label, keyValue, onSend }: VirtualKeyButtonProps) {
+  const handlePress = useCallback(() => onSend(keyValue), [onSend, keyValue]);
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.keyButton,
+      (Boolean(hovered) || pressed) && styles.keyButtonHovered,
+    ],
+    [],
+  );
+  return (
+    <Pressable testID={`terminal-key-${id}`} onPress={handlePress} style={pressableStyle}>
+      <Text style={styles.keyButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export function TerminalPane({
   serverId,
   cwd,
@@ -107,7 +164,10 @@ export function TerminalPane({
   const isConnected = useHostRuntimeIsConnected(serverId);
 
   const scopeKey = useMemo(() => terminalScopeKey({ serverId, cwd }), [serverId, cwd]);
-  const lastReportedSizeRef = useRef<{ rows: number; cols: number } | null>(null);
+  // Keep the latest measured size for whichever client currently owns the pane,
+  // but only dedupe resizes that this specific client has already pushed.
+  const measuredTerminalSizeRef = useRef<{ rows: number; cols: number } | null>(null);
+  const lastSentTerminalSizeRef = useRef<{ rows: number; cols: number } | null>(null);
   const streamControllerRef = useRef<TerminalStreamController | null>(null);
   const workspaceTerminalSession = useMemo(
     () => getWorkspaceTerminalSession({ scopeKey }),
@@ -153,7 +213,7 @@ export function TerminalPane({
 
   useEffect(() => {
     if (isPaneFocused && isWorkspaceFocused && isAppVisible && terminalId) {
-      lastReportedSizeRef.current = null;
+      lastSentTerminalSizeRef.current = null;
       requestTerminalReflow();
     }
   }, [isAppVisible, isPaneFocused, isWorkspaceFocused, requestTerminalReflow, terminalId]);
@@ -239,7 +299,8 @@ export function TerminalPane({
   }, [client, isConnected, isWorkspaceFocused, workspaceTerminalSession.snapshots]);
 
   useEffect(() => {
-    lastReportedSizeRef.current = null;
+    measuredTerminalSizeRef.current = null;
+    lastSentTerminalSizeRef.current = null;
   }, [scopeKey]);
 
   const handleStreamControllerStatus = useCallback((status: TerminalStreamControllerStatus) => {
@@ -259,16 +320,16 @@ export function TerminalPane({
 
     const controller = new TerminalStreamController({
       client,
-      getPreferredSize: () => lastReportedSizeRef.current,
-      onOutput: ({ terminalId, text }) => {
-        if (!isWorkspaceFocused || terminalIdRef.current !== terminalId) {
+      getPreferredSize: () => measuredTerminalSizeRef.current,
+      onOutput: ({ terminalId: outputTerminalId, text }) => {
+        if (!isWorkspaceFocused || terminalIdRef.current !== outputTerminalId) {
           return;
         }
         emulatorRef.current?.writeOutput(text);
       },
-      onSnapshot: ({ terminalId, state }) => {
-        workspaceTerminalSession.snapshots.set({ terminalId, state });
-        if (!isWorkspaceFocused || terminalIdRef.current !== terminalId) {
+      onSnapshot: ({ terminalId: snapshotTerminalId, state }) => {
+        workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });
+        if (!isWorkspaceFocused || terminalIdRef.current !== snapshotTerminalId) {
           return;
         }
         emulatorRef.current?.renderSnapshot(state);
@@ -467,9 +528,7 @@ export function TerminalPane({
       clearPendingModifiers,
       client,
       dispatchTerminalInputEntry,
-      modifiers.alt,
-      modifiers.ctrl,
-      modifiers.shift,
+      modifiers,
       sendTerminalKey,
       enqueuePendingTerminalInput,
     ],
@@ -477,24 +536,25 @@ export function TerminalPane({
 
   const handleTerminalResize = useStableEvent((input: { rows: number; cols: number }) => {
     const { rows, cols } = input;
-    if (
-      !client ||
-      !terminalId ||
-      !isPaneFocused ||
-      !isWorkspaceFocused ||
-      !isAppVisible ||
-      rows <= 0 ||
-      cols <= 0
-    ) {
+    if (rows <= 0 || cols <= 0) {
       return;
     }
     const normalizedRows = Math.floor(rows);
     const normalizedCols = Math.floor(cols);
-    const previous = lastReportedSizeRef.current;
-    if (previous && previous.rows === normalizedRows && previous.cols === normalizedCols) {
+    const nextSize = { rows: normalizedRows, cols: normalizedCols };
+    measuredTerminalSizeRef.current = nextSize;
+    if (!client || !terminalId || !isPaneFocused || !isWorkspaceFocused || !isAppVisible) {
       return;
     }
-    lastReportedSizeRef.current = { rows: normalizedRows, cols: normalizedCols };
+    const previousSent = lastSentTerminalSizeRef.current;
+    if (
+      previousSent &&
+      previousSent.rows === normalizedRows &&
+      previousSent.cols === normalizedCols
+    ) {
+      return;
+    }
+    lastSentTerminalSizeRef.current = nextSize;
     client.sendTerminalInput(terminalId, {
       type: "resize",
       rows: normalizedRows,
@@ -543,6 +603,21 @@ export function TerminalPane({
     ],
   );
 
+  const containerStyle = useMemo(
+    () => [styles.container, keyboardPaddingStyle],
+    [keyboardPaddingStyle],
+  );
+
+  const handleSwipeRight = useCallback(() => {
+    if (!swipeGesturesEnabled) return;
+    showMobileAgentList();
+  }, [swipeGesturesEnabled, showMobileAgentList]);
+
+  const handleSwipeLeft = useCallback(() => {
+    if (!swipeGesturesEnabled) return;
+    onOpenFileExplorer();
+  }, [swipeGesturesEnabled, onOpenFileExplorer]);
+
   if (!client || !isConnected) {
     return (
       <View style={styles.centerState}>
@@ -552,39 +627,20 @@ export function TerminalPane({
   }
 
   return (
-    <Animated.View style={[styles.container, keyboardPaddingStyle]}>
+    <Animated.View style={containerStyle}>
       <View style={styles.outputContainer}>
         {isWorkspaceFocused ? (
           <View style={styles.terminalGestureContainer}>
             <TerminalEmulator
               ref={emulatorRef}
-              dom={{
-                style: { flex: 1 },
-                matchContents: false,
-                scrollEnabled: true,
-                nestedScrollEnabled: true,
-                overScrollMode: "never",
-                bounces: false,
-                automaticallyAdjustContentInsets: false,
-                contentInsetAdjustmentBehavior: "never",
-              }}
+              dom={TERMINAL_EMULATOR_DOM_PROPS}
               streamKey={`${scopeKey}:${terminalId}`}
               testId="terminal-surface"
               xtermTheme={xtermTheme}
               swipeGesturesEnabled={swipeGesturesEnabled}
               initialSnapshot={initialSnapshot}
-              onSwipeRight={() => {
-                if (!swipeGesturesEnabled) {
-                  return;
-                }
-                showMobileAgentList();
-              }}
-              onSwipeLeft={() => {
-                if (!swipeGesturesEnabled) {
-                  return;
-                }
-                onOpenFileExplorer();
-              }}
+              onSwipeRight={handleSwipeRight}
+              onSwipeLeft={handleSwipeLeft}
               onInput={handleTerminalData}
               onResize={handleTerminalResize}
               onTerminalKey={handleTerminalKey}
@@ -618,39 +674,22 @@ export function TerminalPane({
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.keyboardRow}>
               {(Object.keys(MODIFIER_LABELS) as Array<keyof ModifierState>).map((modifier) => (
-                <Pressable
+                <ModifierButton
                   key={modifier}
-                  testID={`terminal-key-${modifier}`}
-                  onPress={() => toggleModifier(modifier)}
-                  style={({ hovered, pressed }) => [
-                    styles.keyButton,
-                    modifiers[modifier] && styles.keyButtonActive,
-                    (hovered || pressed) && styles.keyButtonHovered,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.keyButtonText,
-                      modifiers[modifier] && styles.keyButtonTextActive,
-                    ]}
-                  >
-                    {MODIFIER_LABELS[modifier]}
-                  </Text>
-                </Pressable>
+                  modifier={modifier}
+                  active={modifiers[modifier]}
+                  onToggle={toggleModifier}
+                />
               ))}
 
               {KEY_BUTTONS.map((button) => (
-                <Pressable
+                <VirtualKeyButton
                   key={button.id}
-                  testID={`terminal-key-${button.id}`}
-                  onPress={() => sendVirtualKey(button.key)}
-                  style={({ hovered, pressed }) => [
-                    styles.keyButton,
-                    (hovered || pressed) && styles.keyButtonHovered,
-                  ]}
-                >
-                  <Text style={styles.keyButtonText}>{button.label}</Text>
-                </Pressable>
+                  id={button.id}
+                  label={button.label}
+                  keyValue={button.key}
+                  onSend={sendVirtualKey}
+                />
               ))}
             </View>
           </ScrollView>
@@ -744,3 +783,14 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: "center",
   },
 }));
+
+const TERMINAL_EMULATOR_DOM_PROPS = {
+  style: { flex: 1 },
+  matchContents: false,
+  scrollEnabled: true,
+  nestedScrollEnabled: true,
+  overScrollMode: "never" as const,
+  bounces: false,
+  automaticallyAdjustContentInsets: false,
+  contentInsetAdjustmentBehavior: "never" as const,
+};

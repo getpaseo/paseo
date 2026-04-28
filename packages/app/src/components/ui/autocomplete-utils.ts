@@ -9,7 +9,7 @@ export function orderAutocompleteOptions<T>(
   if (position === "below-input") {
     return [...options];
   }
-  return [...options].reverse();
+  return [...options].toReversed();
 }
 
 export function getAutocompleteFallbackIndex(

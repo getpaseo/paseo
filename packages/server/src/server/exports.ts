@@ -31,15 +31,10 @@ export {
 
 // Provider binary resolution
 export {
-  applyProviderEnv,
   type ProviderOverride,
   type ProviderProfileModel,
 } from "./agent/provider-launch-config.js";
-export {
-  findExecutable,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "../utils/executable.js";
+export { findExecutable } from "../utils/executable.js";
 export { execCommand, spawnProcess } from "../utils/spawn.js";
 
 // Provider manifest (source of truth for provider definitions)
@@ -56,6 +51,7 @@ export type {
   AgentCapabilityFlags,
   AgentPermissionRequest,
   AgentTimelineItem,
+  ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 
 // Agent activity curator for CLI logs

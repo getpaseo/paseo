@@ -30,5 +30,5 @@ export function useExpoTwoWayAudioEventListener<K extends keyof ExpoTwoWayAudioE
   useEffect(() => {
     const sub = addExpoTwoWayAudioEventListener(eventName, listener);
     return () => sub.remove();
-  }, [listener]);
+  }, [eventName, listener]);
 }

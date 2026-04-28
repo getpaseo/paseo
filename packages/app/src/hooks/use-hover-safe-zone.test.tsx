@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import React, { useRef, type RefObject } from "react";
+import React, { useCallback, useRef, type RefObject } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { View } from "react-native";
@@ -12,12 +12,12 @@ vi.mock("@/constants/platform", () => ({
   isWeb: true,
 }));
 
-type RectInput = {
+interface RectInput {
   left: number;
   right: number;
   top: number;
   bottom: number;
-};
+}
 
 let root: Root | null = null;
 let container: HTMLElement | null = null;
@@ -73,20 +73,20 @@ function Harness({
     onLeaveSafeZone,
   });
 
+  const handleTriggerRef = useCallback((node: HTMLDivElement | null) => {
+    triggerRef.current = node;
+    installRect(node, { left: 0, right: 100, top: 20, bottom: 60 });
+  }, []);
+
+  const handleContentRef = useCallback((node: HTMLDivElement | null) => {
+    contentRef.current = node;
+    installRect(node, { left: 120, right: 240, top: 20, bottom: 120 });
+  }, []);
+
   return (
     <>
-      <div
-        ref={(node) => {
-          triggerRef.current = node;
-          installRect(node, { left: 0, right: 100, top: 20, bottom: 60 });
-        }}
-      />
-      <div
-        ref={(node) => {
-          contentRef.current = node;
-          installRect(node, { left: 120, right: 240, top: 20, bottom: 120 });
-        }}
-      />
+      <div ref={handleTriggerRef} />
+      <div ref={handleContentRef} />
     </>
   );
 }
@@ -111,13 +111,29 @@ describe("useHoverSafeZone", () => {
     });
 
     act(() => pointerMove(110, 40));
+    expect(onEnterSafeZone).toHaveBeenCalledTimes(1);
     expect(onLeaveSafeZone).not.toHaveBeenCalled();
 
     act(() => pointerMove(300, 40));
     expect(onLeaveSafeZone).toHaveBeenCalledTimes(1);
 
     act(() => pointerMove(130, 40));
-    expect(onEnterSafeZone).toHaveBeenCalledTimes(1);
+    expect(onEnterSafeZone).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes the safe-zone enter callback while moving inside", () => {
+    const onEnterSafeZone = vi.fn();
+    const onLeaveSafeZone = vi.fn();
+
+    act(() => {
+      root?.render(<Harness onEnterSafeZone={onEnterSafeZone} onLeaveSafeZone={onLeaveSafeZone} />);
+    });
+
+    act(() => pointerMove(110, 40));
+    act(() => pointerMove(130, 40));
+
+    expect(onEnterSafeZone).toHaveBeenCalledTimes(2);
+    expect(onLeaveSafeZone).not.toHaveBeenCalled();
   });
 
   it("treats leaving the browser window as leaving the safe zone", () => {

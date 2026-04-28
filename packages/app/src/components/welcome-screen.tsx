@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Pressable, Text, View, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -16,14 +16,14 @@ import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isWeb, isNative } from "@/constants/platform";
 
-type WelcomeAction = {
+interface WelcomeAction {
   key: "scan-qr" | "direct-connection" | "paste-pairing-link";
   label: string;
   testID: string;
   primary: boolean;
   icon: typeof QrCode;
   onPress: () => void;
-};
+}
 
 const styles = StyleSheet.create((theme) => ({
   root: {
@@ -178,6 +178,30 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
     [router],
   );
 
+  const handleOpenPaseoSite = useCallback(() => {
+    void openExternalUrl("https://paseo.sh");
+  }, []);
+
+  const handleOpenSettings = useCallback(() => {
+    router.push("/settings");
+  }, [router]);
+
+  const handleOpenDirect = useCallback(() => setIsDirectOpen(true), []);
+  const handleCloseDirect = useCallback(() => setIsDirectOpen(false), []);
+  const handleOpenPasteLink = useCallback(() => setIsPasteLinkOpen(true), []);
+  const handleClosePasteLink = useCallback(() => setIsPasteLinkOpen(false), []);
+  const handleScanQr = useCallback(() => {
+    router.push("/pair-scan?source=onboarding");
+  }, [router]);
+
+  const handleHostSaved = useCallback(
+    ({ profile, serverId }: { profile: HostProfile; serverId: string }) => {
+      onHostAdded?.(profile);
+      finishOnboarding(serverId);
+    },
+    [onHostAdded, finishOnboarding],
+  );
+
   const actions: WelcomeAction[] = isWeb
     ? [
         {
@@ -186,7 +210,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-direct-connection",
           primary: true,
           icon: Link2,
-          onPress: () => setIsDirectOpen(true),
+          onPress: handleOpenDirect,
         },
         {
           key: "paste-pairing-link",
@@ -194,7 +218,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-paste-pairing-link",
           primary: false,
           icon: ClipboardPaste,
-          onPress: () => setIsPasteLinkOpen(true),
+          onPress: handleOpenPasteLink,
         },
       ]
     : [
@@ -204,7 +228,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-scan-qr",
           primary: true,
           icon: QrCode,
-          onPress: () => router.push("/pair-scan?source=onboarding"),
+          onPress: handleScanQr,
         },
         {
           key: "direct-connection",
@@ -212,7 +236,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-direct-connection",
           primary: false,
           icon: Link2,
-          onPress: () => setIsDirectOpen(true),
+          onPress: handleOpenDirect,
         },
         {
           key: "paste-pairing-link",
@@ -220,20 +244,22 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           testID: "welcome-paste-pairing-link",
           primary: false,
           icon: ClipboardPaste,
-          onPress: () => setIsPasteLinkOpen(true),
+          onPress: handleOpenPasteLink,
         },
       ];
 
   const isConnectingToSavedHosts = hosts.length > 0 && !anyOnlineServerId;
 
+  const scrollContentContainerStyle = useMemo(
+    () => [styles.container, { paddingBottom: theme.spacing[6] + insets.bottom }],
+    [theme.spacing, insets.bottom],
+  );
+
   return (
     <View style={styles.root}>
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={[
-          styles.container,
-          { paddingBottom: theme.spacing[6] + insets.bottom },
-        ]}
+        contentContainerStyle={scrollContentContainerStyle}
         showsVerticalScrollIndicator={false}
         testID="welcome-screen"
       >
@@ -247,10 +273,7 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
                 <Text style={styles.title}>Welcome to Paseo</Text>
                 <Text style={styles.subtitle}>Connect your computer to get started</Text>
                 {isNative ? (
-                  <Pressable
-                    style={styles.setupLink}
-                    onPress={() => openExternalUrl("https://paseo.sh")}
-                  >
+                  <Pressable style={styles.setupLink} onPress={handleOpenPaseoSite}>
                     <Text style={styles.setupLinkText}>paseo.sh</Text>
                     <ExternalLink size={14} color={theme.colors.accent} />
                   </Pressable>
@@ -260,34 +283,16 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
           </View>
 
           <View style={styles.actions}>
-            {actions.map((action) => {
-              const Icon = action.icon;
-              return (
-                <Pressable
-                  key={action.key}
-                  style={[styles.actionButton, action.primary ? styles.actionButtonPrimary : null]}
-                  onPress={action.onPress}
-                  testID={action.testID}
-                >
-                  <Icon
-                    size={18}
-                    color={action.primary ? theme.colors.accentForeground : theme.colors.foreground}
-                  />
-                  <Text
-                    style={[styles.actionText, action.primary ? styles.actionTextPrimary : null]}
-                  >
-                    {action.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
+            {actions.map((action) => (
+              <WelcomeActionButton key={action.key} action={action} />
+            ))}
           </View>
 
           <Button
             variant="ghost"
             size="sm"
             leftIcon={Settings}
-            onPress={() => router.push("/settings")}
+            onPress={handleOpenSettings}
             style={styles.settingsButton}
             testID="welcome-open-settings"
           >
@@ -298,22 +303,42 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
 
         <AddHostModal
           visible={isDirectOpen}
-          onClose={() => setIsDirectOpen(false)}
-          onSaved={({ profile, serverId }) => {
-            onHostAdded?.(profile);
-            finishOnboarding(serverId);
-          }}
+          onClose={handleCloseDirect}
+          onSaved={handleHostSaved}
         />
 
         <PairLinkModal
           visible={isPasteLinkOpen}
-          onClose={() => setIsPasteLinkOpen(false)}
-          onSaved={({ profile, serverId }) => {
-            onHostAdded?.(profile);
-            finishOnboarding(serverId);
-          }}
+          onClose={handleClosePasteLink}
+          onSaved={handleHostSaved}
         />
       </ScrollView>
     </View>
+  );
+}
+
+interface WelcomeActionButtonProps {
+  action: WelcomeAction;
+}
+
+function WelcomeActionButton({ action }: WelcomeActionButtonProps) {
+  const { theme } = useUnistyles();
+  const Icon = action.icon;
+  const buttonStyle = useMemo(
+    () => [styles.actionButton, action.primary ? styles.actionButtonPrimary : null],
+    [action.primary],
+  );
+  const textStyle = useMemo(
+    () => [styles.actionText, action.primary ? styles.actionTextPrimary : null],
+    [action.primary],
+  );
+  return (
+    <Pressable style={buttonStyle} onPress={action.onPress} testID={action.testID}>
+      <Icon
+        size={18}
+        color={action.primary ? theme.colors.accentForeground : theme.colors.foreground}
+      />
+      <Text style={textStyle}>{action.label}</Text>
+    </Pressable>
   );
 }

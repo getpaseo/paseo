@@ -11,11 +11,13 @@ function workspace(input: {
   workspaceId: string;
   workspaceDirectory: string;
   name: string;
+  projectKey?: string;
 }): SidebarWorkspaceEntry {
   return {
     workspaceKey: `${input.serverId}:${input.workspaceId}`,
     serverId: input.serverId,
     workspaceId: input.workspaceId,
+    projectKey: input.projectKey ?? "project-default",
     workspaceDirectory: input.workspaceDirectory,
     projectKind: "git",
     workspaceKind: "checkout",

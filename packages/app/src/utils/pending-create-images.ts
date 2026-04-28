@@ -1,10 +1,10 @@
 import type { StreamItem, UserMessageImageAttachment } from "@/types/stream";
 
-type MergePendingCreateImagesParams = {
+interface MergePendingCreateImagesParams {
   streamItems: StreamItem[];
   clientMessageId: string;
   images?: UserMessageImageAttachment[];
-};
+}
 
 export function mergePendingCreateImages({
   streamItems,

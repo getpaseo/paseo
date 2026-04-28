@@ -142,7 +142,10 @@ export interface CompactionItem {
   preTokens?: number;
 }
 
-export type TodoEntry = { text: string; completed: boolean };
+export interface TodoEntry {
+  text: string;
+  completed: boolean;
+}
 
 export interface TodoListItem {
   kind: "todo_list";
@@ -543,6 +546,142 @@ function formatErrorMessage(message: string): string {
   return `Agent error\n${message}`;
 }
 
+function reduceTimelineToolCall(
+  state: StreamItem[],
+  event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
+  item: Extract<
+    Extract<AgentStreamEventPayload, { type: "timeline" }>["item"],
+    { type: "tool_call" }
+  >,
+  timestamp: Date,
+): StreamItem[] {
+  const normalizedToolName = item.name
+    .trim()
+    .replace(/[.\s-]+/g, "_")
+    .toLowerCase();
+  if (event.provider === "claude" && normalizedToolName === "exitplanmode") {
+    return state;
+  }
+
+  if (
+    event.provider === "claude" &&
+    (normalizedToolName === "todowrite" || normalizedToolName === "todo_write")
+  ) {
+    const tasks = extractTaskEntriesFromToolCall(item.name, inputFromUnknownDetail(item.detail));
+    if (!tasks) {
+      return state;
+    }
+    return appendTodoList(
+      state,
+      event.provider,
+      tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
+      timestamp,
+    );
+  }
+
+  const tasks = extractTaskEntriesFromToolCall(item.name, inputFromUnknownDetail(item.detail));
+  if (tasks) {
+    return appendTodoList(
+      state,
+      event.provider,
+      tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
+      timestamp,
+    );
+  }
+
+  return appendAgentToolCall(
+    state,
+    {
+      provider: event.provider,
+      callId: item.callId,
+      name: item.name,
+      status: item.status,
+      error: item.error,
+      detail: item.detail,
+      metadata: item.metadata,
+    },
+    timestamp,
+  );
+}
+
+function reduceTimelineCompaction(
+  state: StreamItem[],
+  item: Extract<
+    Extract<AgentStreamEventPayload, { type: "timeline" }>["item"],
+    { type: "compaction" }
+  >,
+  timestamp: Date,
+): StreamItem[] {
+  if (item.status === "completed") {
+    const loadingIdx = state.findIndex((s) => s.kind === "compaction" && s.status === "loading");
+    const existing = loadingIdx >= 0 ? state[loadingIdx] : undefined;
+    if (loadingIdx >= 0 && existing && existing.kind === "compaction") {
+      const updated: CompactionItem = {
+        ...existing,
+        status: "completed",
+        trigger: item.trigger,
+        preTokens: item.preTokens,
+      };
+      return [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
+    }
+    if (loadingIdx >= 0) {
+      return state;
+    }
+  }
+  const compaction: CompactionItem = {
+    kind: "compaction",
+    id: createTimelineId("compaction", item.status, timestamp),
+    timestamp,
+    status: item.status,
+    trigger: item.trigger,
+    preTokens: item.preTokens,
+  };
+  return [...state, compaction];
+}
+
+function reduceTimelineEvent(
+  state: StreamItem[],
+  event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
+  timestamp: Date,
+  source: StreamUpdateSource,
+): StreamItem[] {
+  const item = event.item;
+  switch (item.type) {
+    case "user_message":
+      return finalizeActiveThoughts(appendUserMessage(state, item.text, timestamp, item.messageId));
+    case "assistant_message":
+      return finalizeActiveThoughts(appendAssistantMessage(state, item.text, timestamp, source));
+    case "reasoning":
+      return appendThought(state, item.text, timestamp);
+    case "tool_call":
+      return finalizeActiveThoughts(reduceTimelineToolCall(state, event, item, timestamp));
+    case "todo": {
+      if (event.provider === "claude") {
+        return finalizeActiveThoughts(state);
+      }
+      const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
+        text: todo.text,
+        completed: Boolean(todo.completed),
+      }));
+      return finalizeActiveThoughts(appendTodoList(state, event.provider, items, timestamp));
+    }
+    case "error": {
+      const activity: ActivityLogItem = {
+        kind: "activity_log",
+        id: createTimelineId("error", item.message ?? "", timestamp),
+        timestamp,
+        activityType: "error",
+        message: formatErrorMessage(item.message ?? "Unknown error"),
+      };
+      return finalizeActiveThoughts(appendActivityLog(state, activity));
+    }
+    case "compaction":
+      return finalizeActiveThoughts(reduceTimelineCompaction(state, item, timestamp));
+    default:
+      return state;
+  }
+}
+
 /**
  * Reduce a single AgentManager stream event into the UI timeline
  */
@@ -554,145 +693,8 @@ export function reduceStreamUpdate(
 ): StreamItem[] {
   const source = options?.source ?? "live";
   switch (event.type) {
-    case "timeline": {
-      const item = event.item;
-      let nextState = state;
-      switch (item.type) {
-        case "user_message":
-          nextState = appendUserMessage(state, item.text, timestamp, item.messageId);
-          break;
-        case "assistant_message":
-          nextState = appendAssistantMessage(state, item.text, timestamp, source);
-          break;
-        case "reasoning":
-          return appendThought(state, item.text, timestamp);
-        case "tool_call": {
-          const normalizedToolName = item.name
-            .trim()
-            .replace(/[.\s-]+/g, "_")
-            .toLowerCase();
-          if (event.provider === "claude" && normalizedToolName === "exitplanmode") {
-            // ExitPlanMode is rendered via the plan permission prompt; avoid duplicating it in the timeline.
-            break;
-          }
-
-          if (
-            event.provider === "claude" &&
-            (normalizedToolName === "todowrite" || normalizedToolName === "todo_write")
-          ) {
-            // For Claude: TodoWrite often appears as a tool call that never resolves. Always render it
-            // as Tasks when possible and otherwise hide it to avoid a stuck loading tool call.
-            const tasks = extractTaskEntriesFromToolCall(
-              item.name,
-              inputFromUnknownDetail(item.detail),
-            );
-            if (tasks) {
-              nextState = appendTodoList(
-                state,
-                event.provider,
-                tasks.map((entry) => ({
-                  text: entry.text,
-                  completed: entry.completed,
-                })),
-                timestamp,
-              );
-            }
-            break;
-          }
-
-          const tasks = extractTaskEntriesFromToolCall(
-            item.name,
-            inputFromUnknownDetail(item.detail),
-          );
-          if (tasks) {
-            nextState = appendTodoList(
-              state,
-              event.provider,
-              tasks.map((entry) => ({
-                text: entry.text,
-                completed: entry.completed,
-              })),
-              timestamp,
-            );
-            break;
-          }
-
-          nextState = appendAgentToolCall(
-            state,
-            {
-              provider: event.provider,
-              callId: item.callId,
-              name: item.name,
-              status: item.status,
-              error: item.error,
-              detail: item.detail,
-              metadata: item.metadata,
-            },
-            timestamp,
-          );
-          break;
-        }
-        case "todo": {
-          if (event.provider === "claude") {
-            // Claude plan mode is rendered via permission prompts + TodoWrite tool calls.
-            // Avoid rendering legacy plan-mode todo timeline items as Tasks.
-            break;
-          }
-          const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
-            text: todo.text,
-            completed: Boolean(todo.completed),
-          }));
-          nextState = appendTodoList(state, event.provider, items, timestamp);
-          break;
-        }
-        case "error": {
-          const activity: ActivityLogItem = {
-            kind: "activity_log",
-            id: createTimelineId("error", item.message ?? "", timestamp),
-            timestamp,
-            activityType: "error",
-            message: formatErrorMessage(item.message ?? "Unknown error"),
-          };
-          nextState = appendActivityLog(state, activity);
-          break;
-        }
-        case "compaction": {
-          if (item.status === "completed") {
-            const loadingIdx = state.findIndex(
-              (s) => s.kind === "compaction" && s.status === "loading",
-            );
-            if (loadingIdx >= 0) {
-              const existing = state[loadingIdx];
-              if (!existing || existing.kind !== "compaction") {
-                break;
-              }
-              const updated: CompactionItem = {
-                ...existing,
-                status: "completed",
-                trigger: item.trigger,
-                preTokens: item.preTokens,
-              };
-              nextState = [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
-              break;
-            }
-          }
-          const compaction: CompactionItem = {
-            kind: "compaction",
-            id: createTimelineId("compaction", item.status, timestamp),
-            timestamp,
-            status: item.status,
-            trigger: item.trigger,
-            preTokens: item.preTokens,
-          };
-          nextState = [...state, compaction];
-          break;
-        }
-        default:
-          return state;
-      }
-
-      return finalizeActiveThoughts(nextState);
-    }
+    case "timeline":
+      return reduceTimelineEvent(state, event, timestamp, source);
     case "thread_started":
     case "turn_started":
     case "turn_completed":

@@ -12,17 +12,19 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "../bootstrap.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
-type StructuredContent = { [key: string]: unknown };
+interface StructuredContent {
+  [key: string]: unknown;
+}
 
-type McpToolResult = {
+interface McpToolResult {
   structuredContent?: StructuredContent;
   content?: Array<{ structuredContent?: StructuredContent } | StructuredContent>;
-};
+}
 
-type McpClient = {
+interface McpClient {
   callTool: (input: { name: string; args?: StructuredContent }) => Promise<unknown>;
   close: () => Promise<void>;
-};
+}
 
 async function waitForPathExists(options: {
   targetPath: string;

@@ -23,6 +23,7 @@ export type ComposerAttachment =
   | { kind: "github_pr"; item: GitHubSearchItem };
 
 export type AttachmentDataSource =
+  | { kind: "base64"; base64: string }
   | { kind: "blob"; blob: Blob }
   | { kind: "data_url"; dataUrl: string }
   | { kind: "file_uri"; uri: string };

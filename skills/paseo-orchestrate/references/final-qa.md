@@ -81,6 +81,7 @@ Do NOT edit files."
 ## If Issues Are Found
 
 If any final QA agent reports issues:
+
 1. Launch an impl or refactorer agent to fix them
 2. Re-run the specific QA check that failed
 3. Repeat until all checks pass

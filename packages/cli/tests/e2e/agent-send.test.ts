@@ -147,14 +147,6 @@ async function test_verify_logs(agentId: string): Promise<void> {
   // Logs should have content from both tasks
   assert(result.stdout.length > 0, "Logs should have content");
 
-  // The agent was asked to say specific things, check if either appears in logs
-  // This is a loose check since exact log format may vary
-  const logsLower = result.stdout.toLowerCase();
-  const hasInitialTask =
-    logsLower.includes("initial") || logsLower.includes("hello") || logsLower.includes("task");
-  const hasFollowUp =
-    logsLower.includes("follow") || logsLower.includes("complete") || logsLower.includes("task");
-
   // At minimum, there should be log entries (we can't guarantee exact content)
   assert(result.stdout.split("\n").length > 3, "Should have multiple log entries from both tasks");
 

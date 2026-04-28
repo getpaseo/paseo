@@ -32,7 +32,10 @@ function setsEqual(left: Set<string>, right: Set<string>): boolean {
 export function useMountedTabSet(input: UseMountedTabSetInput): UseMountedTabSetResult {
   const { activeTabId, allTabIds, cap } = input;
   const allTabIdsKey = allTabIds.join("\u0000");
-  const availableTabIds = useMemo(() => new Set(allTabIds), [allTabIdsKey]);
+  const availableTabIds = useMemo(() => {
+    void allTabIdsKey;
+    return new Set(allTabIds);
+  }, [allTabIds, allTabIdsKey]);
   const [mountedTabIds, setMountedTabIds] = useState(() => createInitialMountedTabIds(input));
   const lruRef = useRef(activeTabId && allTabIds.includes(activeTabId) ? [activeTabId] : []);
 

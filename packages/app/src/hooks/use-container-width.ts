@@ -16,3 +16,25 @@ export function useContainerWidth(): {
     width,
   };
 }
+
+/**
+ * Tracks only whether a container is narrower than a threshold.
+ */
+export function useContainerWidthBelow(threshold: number): {
+  onLayout: (e: LayoutChangeEvent) => void;
+  isBelow: boolean;
+} {
+  const [isBelow, setIsBelow] = useState(true);
+  return {
+    onLayout: useCallback(
+      (e: LayoutChangeEvent) => {
+        const nextIsBelow = e.nativeEvent.layout.width < threshold;
+        setIsBelow((currentIsBelow) =>
+          currentIsBelow === nextIsBelow ? currentIsBelow : nextIsBelow,
+        );
+      },
+      [threshold],
+    ),
+    isBelow,
+  };
+}

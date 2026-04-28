@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 type MockPlatform = "web" | "ios" | "android";
 
-type GlobalSnapshot = {
+interface GlobalSnapshot {
   Notification: unknown;
   navigatorDescriptor?: PropertyDescriptor;
   windowDescriptor?: PropertyDescriptor;
   paseoDesktop: unknown;
-};
+}
 
 const originalGlobals: GlobalSnapshot = {
   Notification: (globalThis as { Notification?: unknown }).Notification,
@@ -86,9 +86,7 @@ describe("desktop-permissions", () => {
   });
 
   it("reads notification and microphone status", async () => {
-    class MockNotification {
-      static permission = "default";
-    }
+    const MockNotification = { permission: "default" };
     (globalThis as { Notification?: unknown }).Notification = MockNotification;
     setNavigator({
       permissions: {
@@ -152,10 +150,10 @@ describe("desktop-permissions", () => {
   });
 
   it("requests notification permission via the browser Notification API", async () => {
-    class MockNotification {
-      static permission = "default";
-      static requestPermission = vi.fn(async () => "granted");
-    }
+    const MockNotification = {
+      permission: "default",
+      requestPermission: vi.fn(async () => "granted"),
+    };
     (globalThis as { Notification?: unknown }).Notification = MockNotification;
 
     const { requestDesktopPermission } = await loadModuleForPlatform("web");
@@ -166,9 +164,7 @@ describe("desktop-permissions", () => {
   });
 
   it("reads browser Notification permission when available", async () => {
-    class MockNotification {
-      static permission = "denied";
-    }
+    const MockNotification = { permission: "denied" };
     (globalThis as { Notification?: unknown }).Notification = MockNotification;
     setNavigator({});
 

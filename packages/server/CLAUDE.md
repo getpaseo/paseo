@@ -11,6 +11,7 @@ Paseo is a mobile + CLI app for monitoring and controlling local AI coding agent
 ## Build / Lint / Test Commands
 
 ### Root (monorepo)
+
 ```bash
 npm run dev                          # Start daemon + Expo in Tmux
 npm run build:daemon                 # Build: highlight + relay + server + cli
@@ -20,6 +21,7 @@ npm run format                       # Format with Biome (in-place)
 ```
 
 ### Server package (`packages/server`)
+
 ```bash
 npm run dev                          # Start dev daemon (tsx watch)
 npm run build                        # Build lib + scripts to dist/
@@ -45,6 +47,7 @@ npm run test:ui                     # Vitest UI at localhost:51204
 ```
 
 ### Other useful commands
+
 ```bash
 npm run build --workspace=@getpaseo/relay    # Rebuild relay before daemon
 npm run build --workspace=@getpaseo/server   # Rebuild server
@@ -58,13 +61,22 @@ npm run cli -- daemon status                 # Check daemon status
 ## Code Style
 
 ### Biome (formatting only, no linting)
+
 ```json
-{ "indentStyle": "space", "indentWidth": 2, "lineWidth": 100, "quoteStyle": "double", "trailingCommas": "all", "semicolons": "always" }
+{
+  "indentStyle": "space",
+  "indentWidth": 2,
+  "lineWidth": 100,
+  "quoteStyle": "double",
+  "trailingCommas": "all",
+  "semicolons": "always"
+}
 ```
 
 ### TypeScript
+
 - **Fully strict** — no `any`, no implicit `any`
-- **`interface`** over `type`** when possible
+- **`interface`** over `type`\*\* when possible
 - **`function` declarations** over arrow function assignments
 - **Named types** — no complex inline types in public signatures
 - **Object parameters** — use single object param when >1 argument
@@ -72,15 +84,18 @@ npm run cli -- daemon status                 # Check daemon status
 - `noUnusedLocals: true`, `noUnusedParameters: true`, `noFallthroughCasesInSwitch: true`
 
 ### Imports
+
 - Use path alias `@server/*` in server package (maps to `./src/`)
 - No barrel `index.ts` re-exports — they create unnecessary indirection
 
 ### Naming
+
 - Files: `kebab-case.ts` named after the main export (`create-tool-call.ts`)
 - Tests: collocated with implementation (`thing.test.ts`)
 - No prefixes like `RpcX`, `DbX`, `UiX` — keep one canonical type per concept
 
 ### Error Handling
+
 - **Fail explicitly** — throw instead of silently returning defaults
 - **Typed domain errors** — extend `Error` with structured metadata
 
@@ -97,10 +112,16 @@ class TimeoutError extends Error {
 ```
 
 ### State Design
+
 Discriminated unions over bags of booleans/optionals:
+
 ```typescript
 // Bad
-interface FetchState { isLoading: boolean; error?: Error; data?: Data }
+interface FetchState {
+  isLoading: boolean;
+  error?: Error;
+  data?: Data;
+}
 
 // Good
 type FetchState =
@@ -168,10 +189,10 @@ npm run db:query -- "SELECT * FROM agent_timeline_rows..."
 
 ## Relevant Docs
 
-| File | What it covers |
-|---|---|
-| [../CLAUDE.md](../CLAUDE.md) | Repository overview, critical rules, quick start |
-| [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) | System design, WebSocket protocol, data flow |
-| [../docs/CODING_STANDARDS.md](../docs/CODING_STANDARDS.md) | Type hygiene, error handling, React patterns |
-| [../docs/TESTING.md](../docs/TESTING.md) | TDD workflow, determinism, real deps over mocks |
-| [../SECURITY.md](../SECURITY.md) | Relay threat model, E2E encryption |
+| File                                                       | What it covers                                   |
+| ---------------------------------------------------------- | ------------------------------------------------ |
+| [../CLAUDE.md](../CLAUDE.md)                               | Repository overview, critical rules, quick start |
+| [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)         | System design, WebSocket protocol, data flow     |
+| [../docs/CODING_STANDARDS.md](../docs/CODING_STANDARDS.md) | Type hygiene, error handling, React patterns     |
+| [../docs/TESTING.md](../docs/TESTING.md)                   | TDD workflow, determinism, real deps over mocks  |
+| [../SECURITY.md](../SECURITY.md)                           | Relay threat model, E2E encryption               |

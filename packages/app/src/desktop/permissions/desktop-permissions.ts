@@ -22,27 +22,27 @@ export interface DesktopPermissionSnapshot {
   microphone: DesktopPermissionStatus;
 }
 
-type NotificationConstructorLike = {
+interface NotificationConstructorLike {
   permission?: string;
   requestPermission?: () => Promise<string>;
-};
+}
 
-type MediaStreamTrackLike = {
+interface MediaStreamTrackLike {
   stop?: () => void;
-};
+}
 
-type MediaStreamLike = {
+interface MediaStreamLike {
   getTracks?: () => MediaStreamTrackLike[];
-};
+}
 
-type NavigatorLike = {
+interface NavigatorLike {
   mediaDevices?: {
     getUserMedia?: (constraints: { audio: boolean }) => Promise<MediaStreamLike>;
   };
   permissions?: {
     query?: (descriptor: { name: string }) => Promise<{ state?: string }>;
   };
-};
+}
 
 export function shouldShowDesktopPermissionSection(): boolean {
   return isWeb && getDesktopHost() !== null;

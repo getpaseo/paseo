@@ -1,13 +1,13 @@
 {
   "name": "@getpaseo/website",
-  "version": "0.1.60-beta.2",
+  "version": "0.1.63",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
@@ -28,7 +28,6 @@
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.5.1",
-    "tailwindcss": "^4.1.8",
     "typescript": "^5.9.3",
     "vite": "^7.0.0",
     "vite-tsconfig-paths": "^5.1.4"

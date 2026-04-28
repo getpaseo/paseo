@@ -11,10 +11,10 @@ import { resolvePaseoHome } from "../src/server/paseo-home.js";
 import { runSupervisor } from "./supervisor.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
-type DaemonRunnerConfig = {
+interface DaemonRunnerConfig {
   devMode: boolean;
   workerArgs: string[];
-};
+}
 
 function parseConfig(argv: string[]): DaemonRunnerConfig {
   let devMode = false;

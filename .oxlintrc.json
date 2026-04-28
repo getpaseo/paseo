@@ -1,0 +1,89 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "react-perf", "unicorn", "typescript", "oxc", "import", "promise"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error"
+  },
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+
+    "no-await-in-loop": "off",
+
+    "no-unused-expressions": "error",
+    "no-useless-catch": "error",
+    "preserve-caught-error": "error",
+    "require-await": "off",
+    "no-async-promise-executor": "error",
+    "no-useless-escape": "error",
+    "no-empty-pattern": "error",
+    "no-self-assign": "error",
+    "no-shadow": "error",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/no-array-sort": "off",
+
+    "unicorn/no-useless-spread": "error",
+    "unicorn/no-useless-fallback-in-spread": "error",
+    "unicorn/no-new-array": "error",
+    "unicorn/no-empty-file": "error",
+
+    "promise/always-return": "error",
+    "promise/no-multiple-resolved": "error",
+
+    "react/no-array-index-key": "error",
+    "react/jsx-no-useless-fragment": "error",
+    "react/jsx-no-constructed-context-values": "error",
+    "react/no-unescaped-entities": "error",
+    "react/button-has-type": "error",
+    "react/jsx-max-depth": ["error", { "max": 6 }],
+
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "error",
+
+    "react-perf/jsx-no-new-array-as-prop": "error",
+    "react-perf/jsx-no-new-function-as-prop": "error",
+    "react-perf/jsx-no-new-object-as-prop": "error",
+    "react-perf/jsx-no-jsx-as-prop": "error",
+
+    "oxc/no-map-spread": "error",
+    "oxc/no-async-endpoint-handlers": "error",
+    "oxc/only-used-in-recursion": "error",
+
+    "typescript/no-explicit-any": "error",
+    "typescript/prefer-as-const": "error",
+    "typescript/no-this-alias": "error",
+    "typescript/consistent-type-definitions": ["error", "interface"],
+
+    "import/no-unassigned-import": [
+      "error",
+      {
+        "allow": [
+          "**/*.css",
+          "**/expo-router/entry",
+          "**/event-target-polyfill",
+          "**/dotenv/config",
+          "**/react-native",
+          "**/@/styles/unistyles",
+          "**/src/styles/unistyles",
+          "**/@/test/window-local-storage"
+        ]
+      }
+    ],
+
+    "no-nested-ternary": "error",
+    "no-unneeded-ternary": "error",
+
+    "complexity": ["error", { "max": 20 }],
+    "max-depth": ["error", { "max": 4 }],
+    "max-nested-callbacks": ["error", { "max": 3 }]
+  },
+  "overrides": [
+    {
+      "files": ["**/e2e/fixtures.ts"],
+      "rules": {
+        "no-empty-pattern": "off"
+      }
+    }
+  ]
+}

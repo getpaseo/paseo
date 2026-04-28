@@ -10,7 +10,9 @@ vi.mock("./checkout-git-utils.js", () => ({
   toCheckoutError: toCheckoutErrorMock,
 }));
 
+import type pino from "pino";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 describe("CheckoutDiffManager", () => {
   beforeEach(() => {
@@ -54,9 +56,9 @@ describe("CheckoutDiffManager", () => {
     };
 
     const manager = new CheckoutDiffManager({
-      logger: logger as any,
+      logger: logger as unknown as pino.Logger,
       paseoHome: "/tmp/paseo-test",
-      workspaceGitService: workspaceGitService as any,
+      workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
     });
 
     return {

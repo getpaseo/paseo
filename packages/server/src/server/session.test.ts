@@ -1,11 +1,12 @@
 import { execSync } from "child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { CheckoutPrStatusSchema } from "../shared/messages.js";
+import type { WorkspaceDescriptorPayload } from "../shared/messages.js";
 import { normalizeCheckoutPrStatusPayload, Session } from "./session.js";
 import type {
   AgentClient,
@@ -16,6 +17,32 @@ import type {
 } from "./agent/agent-sdk-types.js";
 import type { ProviderDefinition } from "./agent/provider-registry.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import type { SessionOptions } from "./session.js";
+
+interface SessionHandlerInternals {
+  handleCheckoutMergeRequest(params: unknown): Promise<unknown>;
+  handleCheckoutMergeFromBaseRequest(params: unknown): Promise<unknown>;
+  handleCheckoutCommitRequest(params: unknown): Promise<unknown>;
+  handleCheckoutPrCreateRequest(params: unknown): Promise<unknown>;
+  handleCheckoutPullRequest(params: unknown): Promise<unknown>;
+  handleCheckoutPushRequest(params: unknown): Promise<unknown>;
+  handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
+  describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
+  describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
+  handleValidateBranchRequest(params: unknown): Promise<unknown>;
+  createBranchFromBase(params: unknown): Promise<unknown>;
+  handleCheckoutSwitchBranchRequest(params: unknown): Promise<unknown>;
+  handleBranchSuggestionsRequest(params: unknown): Promise<unknown>;
+  handleStashListRequest(params: unknown): Promise<unknown>;
+  handleStashSaveRequest(params: unknown): Promise<unknown>;
+  handleStashPopRequest(params: unknown): Promise<unknown>;
+  createPaseoWorktree(params: unknown): Promise<unknown>;
+  handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
+}
+
+function asSessionInternals(session: Session): SessionHandlerInternals {
+  return session as unknown as SessionHandlerInternals;
+}
 
 const checkoutGitMocks = vi.hoisted(() => ({
   checkoutResolvedBranch: vi.fn(),
@@ -45,11 +72,11 @@ const paseoWorktreeServiceMocks = vi.hoisted(() => ({
   createPaseoWorktree: vi.fn(),
 }));
 
-type Deferred<T> = {
+interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
-};
+}
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -59,6 +86,37 @@ const TEST_CAPABILITIES = {
   supportsReasoningStream: false,
   supportsToolInvocations: false,
 } as const;
+
+function createTestProviderDefinition(overrides?: Partial<ProviderDefinition>): ProviderDefinition {
+  return {
+    id: "codex",
+    label: "Codex",
+    description: "Codex test provider",
+    enabled: true,
+    defaultModeId: null,
+    modes: [],
+    createClient: () =>
+      ({
+        provider: "codex",
+        capabilities: TEST_CAPABILITIES,
+        async createSession() {
+          throw new Error("not implemented");
+        },
+        async resumeSession() {
+          throw new Error("not implemented");
+        },
+        async listModels() {
+          return [];
+        },
+        async isAvailable() {
+          return true;
+        },
+      }) satisfies AgentClient,
+    fetchModels: async () => [],
+    fetchModes: async () => [],
+    ...overrides,
+  };
+}
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
@@ -142,6 +200,7 @@ function createSessionForTest(options?: {
     getWorkspaceGitMetadata?: ReturnType<typeof vi.fn>;
   };
   workspaceRegistry?: { get: ReturnType<typeof vi.fn> };
+  projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
   terminalManager?: unknown;
   scriptRouteStore?: unknown;
   scriptRuntimeStore?: unknown;
@@ -176,37 +235,288 @@ function createSessionForTest(options?: {
     clientId: "test-client",
     onMessage: (message) => messages.push(message),
     logger,
-    downloadTokenStore: {} as any,
-    pushTokenStore: {} as any,
+    downloadTokenStore: {} as unknown as SessionOptions["downloadTokenStore"],
+    pushTokenStore: {} as unknown as SessionOptions["pushTokenStore"],
     paseoHome: "/tmp/paseo-home",
     agentManager: {
+      listAgents: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
-    } as any,
-    agentStorage: {} as any,
-    projectRegistry: {} as any,
-    workspaceRegistry:
-      options?.workspaceRegistry ??
-      ({
-        get: vi.fn(),
-        list: vi.fn().mockResolvedValue([]),
-      } as any),
-    chatService: {} as any,
-    scheduleService: {} as any,
-    loopService: {} as any,
-    checkoutDiffManager: checkoutDiffManager as any,
-    github: github as any,
-    workspaceGitService: workspaceGitService as any,
-    daemonConfigStore: {} as any,
+    } as unknown as SessionOptions["agentManager"],
+    agentStorage: {
+      list: vi.fn().mockResolvedValue([]),
+    } as unknown as SessionOptions["agentStorage"],
+    projectRegistry: (options?.projectRegistry ?? {
+      list: vi.fn().mockResolvedValue([]),
+      get: vi.fn(),
+      upsert: vi.fn(),
+      archive: vi.fn(),
+      remove: vi.fn(),
+      initialize: vi.fn(),
+      existsOnDisk: vi.fn(),
+    }) as unknown as SessionOptions["projectRegistry"],
+    workspaceRegistry: (options?.workspaceRegistry ?? {
+      get: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
+    }) as unknown as SessionOptions["workspaceRegistry"],
+    chatService: {} as unknown as SessionOptions["chatService"],
+    scheduleService: {} as unknown as SessionOptions["scheduleService"],
+    loopService: {} as unknown as SessionOptions["loopService"],
+    checkoutDiffManager: checkoutDiffManager as unknown as SessionOptions["checkoutDiffManager"],
+    github: github as unknown as SessionOptions["github"],
+    workspaceGitService: workspaceGitService as unknown as SessionOptions["workspaceGitService"],
+    daemonConfigStore: {
+      get: vi.fn(() => ({
+        mcp: { injectIntoAgents: false },
+        providers: {},
+      })),
+      onChange: vi.fn(() => () => {}),
+    } as unknown as SessionOptions["daemonConfigStore"],
     stt: null,
     tts: null,
-    terminalManager: (options?.terminalManager ?? null) as any,
+    terminalManager: (options?.terminalManager ?? null) as SessionOptions["terminalManager"],
     providerSnapshotManager: options?.providerSnapshotManager,
-    scriptRouteStore: options?.scriptRouteStore as any,
-    scriptRuntimeStore: options?.scriptRuntimeStore as any,
+    scriptRouteStore: options?.scriptRouteStore as SessionOptions["scriptRouteStore"],
+    scriptRuntimeStore: options?.scriptRuntimeStore as SessionOptions["scriptRuntimeStore"],
     getDaemonTcpPort: options?.getDaemonTcpPort,
     getDaemonTcpHost: options?.getDaemonTcpHost,
   });
 }
+
+function createProjectRecord(rootPath: string, archivedAt: string | null = null) {
+  return {
+    projectId: `project:${rootPath}`,
+    rootPath,
+    kind: "git" as const,
+    displayName: "Project",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt,
+  };
+}
+
+describe("project config RPC authorization", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function makeRoot(): string {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "project-config-session-test-")));
+    tempDirs.push(root);
+    return root;
+  }
+
+  test("read_project_config_request accepts the same root with a trailing slash", async () => {
+    const repoRoot = makeRoot();
+    writeFileSync(join(repoRoot, "paseo.json"), JSON.stringify({ worktree: { setup: "npm ci" } }));
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      projectRegistry: { list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]) },
+    });
+
+    await session.handleMessage({
+      type: "read_project_config_request",
+      requestId: "read-trailing-slash-1",
+      repoRoot: `${repoRoot}/`,
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "read_project_config_response",
+        payload: {
+          requestId: "read-trailing-slash-1",
+          repoRoot,
+          ok: true,
+          config: { worktree: { setup: "npm ci" } },
+          revision: expect.objectContaining({
+            mtimeMs: expect.any(Number),
+            size: expect.any(Number),
+          }),
+        },
+      },
+    ]);
+  });
+
+  test("read_project_config_request accepts a symlink to an active project root", async () => {
+    const repoRoot = makeRoot();
+    writeFileSync(join(repoRoot, "paseo.json"), JSON.stringify({ worktree: { setup: "npm ci" } }));
+    const linkRoot = join(makeRoot(), "link");
+    symlinkSync(repoRoot, linkRoot, "dir");
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      projectRegistry: { list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]) },
+    });
+
+    await session.handleMessage({
+      type: "read_project_config_request",
+      requestId: "read-symlink-1",
+      repoRoot: linkRoot,
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "read_project_config_response",
+        payload: {
+          requestId: "read-symlink-1",
+          repoRoot,
+          ok: true,
+          config: { worktree: { setup: "npm ci" } },
+          revision: expect.objectContaining({
+            mtimeMs: expect.any(Number),
+            size: expect.any(Number),
+          }),
+        },
+      },
+    ]);
+  });
+
+  test("read_project_config_request rejects archived and unknown roots with project_not_found", async () => {
+    const archivedRoot = makeRoot();
+    const unknownRoot = makeRoot();
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      projectRegistry: {
+        list: vi
+          .fn()
+          .mockResolvedValue([createProjectRecord(archivedRoot, "2026-01-02T00:00:00.000Z")]),
+      },
+    });
+
+    await session.handleMessage({
+      type: "read_project_config_request",
+      requestId: "archived-1",
+      repoRoot: archivedRoot,
+    });
+    await session.handleMessage({
+      type: "read_project_config_request",
+      requestId: "unknown-1",
+      repoRoot: unknownRoot,
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "read_project_config_response",
+        payload: {
+          requestId: "archived-1",
+          repoRoot: archivedRoot,
+          ok: false,
+          error: { code: "project_not_found" },
+        },
+      },
+      {
+        type: "read_project_config_response",
+        payload: {
+          requestId: "unknown-1",
+          repoRoot: unknownRoot,
+          ok: false,
+          error: { code: "project_not_found" },
+        },
+      },
+    ]);
+  });
+
+  test("read_project_config_request emits raw lifecycle forms for a known project root", async () => {
+    const repoRoot = makeRoot();
+    writeFileSync(
+      join(repoRoot, "paseo.json"),
+      JSON.stringify({ worktree: { setup: "npm install", teardown: ["npm run clean"] } }),
+    );
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      projectRegistry: { list: vi.fn().mockResolvedValue([createProjectRecord(repoRoot)]) },
+    });
+
+    await session.handleMessage({
+      type: "read_project_config_request",
+      requestId: "read-1",
+      repoRoot,
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "read_project_config_response",
+        payload: {
+          requestId: "read-1",
+          repoRoot,
+          ok: true,
+          config: { worktree: { setup: "npm install", teardown: ["npm run clean"] } },
+          revision: expect.objectContaining({
+            mtimeMs: expect.any(Number),
+            size: expect.any(Number),
+          }),
+        },
+      },
+    ]);
+  });
+
+  test("write_project_config_request emits stale and write-failed inline domain failures", async () => {
+    const staleRoot = makeRoot();
+    writeFileSync(join(staleRoot, "paseo.json"), JSON.stringify({ worktree: { setup: "old" } }));
+    const writeFailedRoot = join(makeRoot(), "not-a-directory");
+    writeFileSync(writeFailedRoot, "file");
+    const messages: unknown[] = [];
+    const session = createSessionForTest({
+      messages,
+      projectRegistry: {
+        list: vi
+          .fn()
+          .mockResolvedValue([
+            createProjectRecord(staleRoot),
+            createProjectRecord(writeFailedRoot),
+          ]),
+      },
+    });
+
+    await session.handleMessage({
+      type: "write_project_config_request",
+      requestId: "stale-1",
+      repoRoot: staleRoot,
+      config: { worktree: { setup: "new" } },
+      expectedRevision: { mtimeMs: 1, size: 1 },
+    });
+    await session.handleMessage({
+      type: "write_project_config_request",
+      requestId: "write-failed-1",
+      repoRoot: writeFailedRoot,
+      config: { worktree: { setup: "new" } },
+      expectedRevision: null,
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "write_project_config_response",
+        payload: {
+          requestId: "stale-1",
+          repoRoot: staleRoot,
+          ok: false,
+          error: {
+            code: "stale_project_config",
+            currentRevision: expect.objectContaining({
+              mtimeMs: expect.any(Number),
+              size: expect.any(Number),
+            }),
+          },
+        },
+      },
+      {
+        type: "write_project_config_response",
+        payload: {
+          requestId: "write-failed-1",
+          repoRoot: writeFailedRoot,
+          ok: false,
+          error: { code: "write_failed" },
+        },
+      },
+    ]);
+  });
+});
 
 function createWorkspaceGitSnapshot(
   cwd: string,
@@ -332,12 +642,12 @@ describe("session provider refresh cwd routing", () => {
     const session = createSessionForTest({ messages });
     const fetchModels = vi.fn(async () => []);
     const fetchModes = vi.fn(async () => []);
-    (session as unknown as { providerRegistry: unknown }).providerRegistry = {
-      codex: {
+    (session as unknown as { getProviderRegistry: () => unknown }).getProviderRegistry = () => ({
+      codex: createTestProviderDefinition({
         fetchModels,
         fetchModes,
-      },
-    };
+      }),
+    });
 
     await session.handleMessage({
       type: "list_provider_models_request",
@@ -354,6 +664,123 @@ describe("session provider refresh cwd routing", () => {
     expect(fetchModes).toHaveBeenCalledWith({ cwd: homedir(), force: false });
   });
 
+  test("legacy model list request treats disabled snapshot entries as unavailable without warming", async () => {
+    const messages: unknown[] = [];
+    const providerSnapshotManager = createProviderSnapshotManagerStub();
+    providerSnapshotManager.getSnapshot = vi.fn(() => [
+      {
+        provider: "codex",
+        status: "loading",
+        enabled: false,
+      },
+    ]);
+    const session = createSessionForTest({ messages, providerSnapshotManager });
+
+    await session.handleMessage({
+      type: "list_provider_models_request",
+      provider: "codex",
+      requestId: "models-disabled",
+    });
+
+    expect(providerSnapshotManager.warmUpSnapshotForCwd).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "list_provider_models_response",
+      payload: {
+        provider: "codex",
+        error: "Provider codex is disabled",
+        fetchedAt: expect.any(String),
+        requestId: "models-disabled",
+      },
+    });
+  });
+
+  test("legacy mode list request treats disabled snapshot entries as unavailable without warming", async () => {
+    const messages: unknown[] = [];
+    const providerSnapshotManager = createProviderSnapshotManagerStub();
+    providerSnapshotManager.getSnapshot = vi.fn(() => [
+      {
+        provider: "codex",
+        status: "loading",
+        enabled: false,
+      },
+    ]);
+    const session = createSessionForTest({ messages, providerSnapshotManager });
+
+    await session.handleMessage({
+      type: "list_provider_modes_request",
+      provider: "codex",
+      requestId: "modes-disabled",
+    });
+
+    expect(providerSnapshotManager.warmUpSnapshotForCwd).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "list_provider_modes_response",
+      payload: {
+        provider: "codex",
+        error: "Provider codex is disabled",
+        fetchedAt: expect.any(String),
+        requestId: "modes-disabled",
+      },
+    });
+  });
+
+  test("legacy model and mode list fallback treats disabled registry definitions as unavailable without fetching", async () => {
+    const messages: unknown[] = [];
+    const session = createSessionForTest({ messages });
+    const fetchModels = vi.fn(async () => [
+      {
+        provider: "codex" as const,
+        id: "should-not-fetch",
+        label: "Should not fetch",
+      },
+    ]);
+    const fetchModes = vi.fn(async () => [
+      {
+        id: "should-not-fetch",
+        label: "Should not fetch",
+      },
+    ]);
+    (session as unknown as { getProviderRegistry: () => unknown }).getProviderRegistry = () => ({
+      codex: createTestProviderDefinition({
+        enabled: false,
+        fetchModels,
+        fetchModes,
+      }),
+    });
+
+    await session.handleMessage({
+      type: "list_provider_models_request",
+      provider: "codex",
+      requestId: "fallback-models-disabled",
+    });
+    await session.handleMessage({
+      type: "list_provider_modes_request",
+      provider: "codex",
+      requestId: "fallback-modes-disabled",
+    });
+
+    expect(fetchModels).not.toHaveBeenCalled();
+    expect(fetchModes).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "list_provider_models_response",
+      payload: {
+        provider: "codex",
+        error: "Provider codex is disabled",
+        fetchedAt: expect.any(String),
+        requestId: "fallback-models-disabled",
+      },
+    });
+    expect(messages).toContainEqual({
+      type: "list_provider_modes_response",
+      payload: {
+        provider: "codex",
+        error: "Provider codex is disabled",
+        fetchedAt: expect.any(String),
+        requestId: "fallback-modes-disabled",
+      },
+    });
+  });
+
   test("legacy model list request without cwd awaits loading snapshot without forced discovery", async () => {
     const messages: unknown[] = [];
     const models = deferred<AgentModelDefinition[]>();
@@ -364,12 +791,7 @@ describe("session provider refresh cwd routing", () => {
       },
     );
     const fetchModes = vi.fn(async (_options: ListModesOptions): Promise<AgentMode[]> => []);
-    const providerDefinition: ProviderDefinition = {
-      id: "codex",
-      label: "Codex",
-      description: "Codex test provider",
-      defaultModeId: null,
-      modes: [],
+    const providerDefinition = createTestProviderDefinition({
       createClient: () =>
         ({
           provider: "codex",
@@ -389,7 +811,7 @@ describe("session provider refresh cwd routing", () => {
         }) satisfies AgentClient,
       fetchModels,
       fetchModes,
-    };
+    });
     const providerSnapshotManager = new ProviderSnapshotManager(
       { codex: providerDefinition },
       pino({ level: "silent" }),
@@ -470,7 +892,7 @@ describe("session checkout merge handling", () => {
 
     checkoutGitMocks.mergeToBase.mockResolvedValue("/tmp/base-worktree");
 
-    await (session as any).handleCheckoutMergeRequest({
+    await asSessionInternals(session).handleCheckoutMergeRequest({
       type: "checkout_merge_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -518,7 +940,7 @@ describe("session checkout merge handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutMergeFromBaseRequest({
+    await asSessionInternals(session).handleCheckoutMergeFromBaseRequest({
       type: "checkout_merge_from_base_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -556,7 +978,7 @@ describe("session checkout merge handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.mergeFromBase.mockResolvedValue(undefined);
 
-    await (session as any).handleCheckoutMergeFromBaseRequest({
+    await asSessionInternals(session).handleCheckoutMergeFromBaseRequest({
       type: "checkout_merge_from_base_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -594,7 +1016,7 @@ describe("session checkout commit handling", () => {
 
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
 
-    await (session as any).handleCheckoutCommitRequest({
+    await asSessionInternals(session).handleCheckoutCommitRequest({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "Ship it",
@@ -648,7 +1070,7 @@ describe("session checkout commit handling", () => {
     checkoutGitMocks.commitChanges.mockResolvedValue(undefined);
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutCommitRequest({
+    await asSessionInternals(session).handleCheckoutCommitRequest({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "",
@@ -682,7 +1104,7 @@ describe("session checkout commit handling", () => {
     const session = createSessionForTest({ workspaceGitService, messages });
     checkoutGitMocks.commitChanges.mockRejectedValue(new Error("nothing to commit"));
 
-    await (session as any).handleCheckoutCommitRequest({
+    await asSessionInternals(session).handleCheckoutCommitRequest({
       type: "checkout_commit_request",
       cwd: "/tmp/request-worktree",
       message: "Ship it",
@@ -735,7 +1157,7 @@ describe("session checkout pull request creation", () => {
     });
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutPrCreateRequest({
+    await asSessionInternals(session).handleCheckoutPrCreateRequest({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -758,9 +1180,6 @@ describe("session checkout pull request creation", () => {
         base: "main",
       },
       expect.anything(),
-      expect.objectContaining({
-        getCheckoutDiff: workspaceGitService.getCheckoutDiff,
-      }),
     );
     expect(messages).toContainEqual({
       type: "checkout_pr_create_response",
@@ -786,7 +1205,7 @@ describe("session checkout pull request creation", () => {
     });
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
-    await (session as any).handleCheckoutPrCreateRequest({
+    await asSessionInternals(session).handleCheckoutPrCreateRequest({
       type: "checkout_pr_create_request",
       cwd: "/tmp/request-worktree",
       baseRef: "main",
@@ -821,7 +1240,7 @@ describe("session checkout pull and push handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.pullCurrentBranch.mockResolvedValue(undefined);
 
-    await (session as any).handleCheckoutPullRequest({
+    await asSessionInternals(session).handleCheckoutPullRequest({
       type: "checkout_pull_request",
       cwd: "/tmp/request-worktree",
       requestId: "request-pull",
@@ -851,7 +1270,7 @@ describe("session checkout pull and push handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.pushCurrentBranch.mockResolvedValue(undefined);
 
-    await (session as any).handleCheckoutPushRequest({
+    await asSessionInternals(session).handleCheckoutPushRequest({
       type: "checkout_push_request",
       cwd: "/tmp/request-worktree",
       requestId: "request-push",
@@ -884,7 +1303,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutStatusRequest({
+    await asSessionInternals(session).handleCheckoutStatusRequest({
       type: "checkout_status_request",
       cwd: "/tmp/service-worktree",
       requestId: "request-status",
@@ -899,6 +1318,7 @@ describe("session checkout status handling", () => {
         cwd: "/tmp/service-worktree",
         isGit: true,
         repoRoot: "/tmp/service-worktree",
+        mainRepoRoot: null,
         currentBranch: "feature/service",
         isDirty: true,
         baseRef: "main",
@@ -932,7 +1352,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutStatusRequest({
+    await asSessionInternals(session).handleCheckoutStatusRequest({
       type: "checkout_status_request",
       cwd: "/tmp/cold-worktree",
       requestId: "request-cold-status",
@@ -956,6 +1376,146 @@ describe("session checkout status handling", () => {
 });
 
 describe("session workspace descriptors", () => {
+  test("fetch_workspaces_request includes project placement for a GitHub-backed workspace", async () => {
+    const messages: unknown[] = [];
+    const workspace = {
+      workspaceId: "ws-gh",
+      projectId: "remote:github.com/acme/app",
+      cwd: "/repo/app",
+      kind: "local_checkout" as const,
+      displayName: "app",
+      archivedAt: null,
+    };
+    const project = {
+      projectId: "remote:github.com/acme/app",
+      rootPath: "/repo/app",
+      kind: "git" as const,
+      displayName: "acme/app",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    };
+    const session = createSessionForTest({
+      messages,
+      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
+      workspaceGitService: {
+        getSnapshot: vi.fn(),
+        peekSnapshot: vi.fn(() =>
+          createWorkspaceGitSnapshot("/repo/app", {
+            git: {
+              remoteUrl: "https://github.com/acme/app.git",
+              currentBranch: "main",
+              isPaseoOwnedWorktree: false,
+              mainRepoRoot: null,
+            },
+          }),
+        ),
+        registerWorkspace: vi.fn(() => () => {}),
+      },
+    });
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "fetch-workspaces-gh",
+    });
+
+    expect(messages).toContainEqual({
+      type: "fetch_workspaces_response",
+      payload: expect.objectContaining({
+        requestId: "fetch-workspaces-gh",
+        entries: [
+          expect.objectContaining({
+            id: "ws-gh",
+            project: {
+              projectKey: "remote:github.com/acme/app",
+              projectName: "acme/app",
+              checkout: {
+                cwd: "/repo/app",
+                isGit: true,
+                currentBranch: "app",
+                remoteUrl: null,
+                worktreeRoot: "/repo/app",
+                isPaseoOwnedWorktree: false,
+                mainRepoRoot: null,
+              },
+            },
+          }),
+        ],
+      }),
+    });
+  });
+
+  test("fetch_workspaces_request includes repo-root fallback placement for a workspace without remote", async () => {
+    const messages: unknown[] = [];
+    const workspace = {
+      workspaceId: "ws-local",
+      projectId: "/repo/local",
+      cwd: "/repo/local",
+      kind: "local_checkout" as const,
+      displayName: "local",
+      archivedAt: null,
+    };
+    const project = {
+      projectId: "/repo/local",
+      rootPath: "/repo/local",
+      kind: "git" as const,
+      displayName: "local",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    };
+    const session = createSessionForTest({
+      messages,
+      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
+      workspaceGitService: {
+        getSnapshot: vi.fn(),
+        peekSnapshot: vi.fn(() =>
+          createWorkspaceGitSnapshot("/repo/local", {
+            git: {
+              remoteUrl: null,
+              currentBranch: "main",
+              isPaseoOwnedWorktree: false,
+              mainRepoRoot: null,
+            },
+          }),
+        ),
+        registerWorkspace: vi.fn(() => () => {}),
+      },
+    });
+
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "fetch-workspaces-local",
+    });
+
+    expect(messages).toContainEqual({
+      type: "fetch_workspaces_response",
+      payload: expect.objectContaining({
+        requestId: "fetch-workspaces-local",
+        entries: [
+          expect.objectContaining({
+            id: "ws-local",
+            project: {
+              projectKey: "/repo/local",
+              projectName: "local",
+              checkout: {
+                cwd: "/repo/local",
+                isGit: true,
+                currentBranch: "local",
+                remoteUrl: null,
+                worktreeRoot: "/repo/local",
+                isPaseoOwnedWorktree: false,
+                mainRepoRoot: null,
+              },
+            },
+          }),
+        ],
+      }),
+    });
+  });
+
   test("reads descriptor diff stat from the workspace git service snapshot", async () => {
     const workspaceGitService = {
       getSnapshot: vi.fn(),
@@ -971,7 +1531,7 @@ describe("session workspace descriptors", () => {
       deletions: 88,
     });
 
-    const descriptor = await (session as any).describeWorkspaceRecord(
+    const descriptor = await asSessionInternals(session).describeWorkspaceRecord(
       {
         workspaceId: "workspace-1",
         projectId: "project-1",
@@ -1001,7 +1561,7 @@ describe("session workspace descriptors", () => {
     };
     const session = createSessionForTest({ workspaceGitService });
 
-    const descriptor = await (session as any).describeWorkspaceRecordWithGitData(
+    const descriptor = await asSessionInternals(session).describeWorkspaceRecordWithGitData(
       {
         workspaceId: "workspace-1",
         projectId: "project-1",
@@ -1036,7 +1596,7 @@ describe("session branch validation", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleValidateBranchRequest({
+    await asSessionInternals(session).handleValidateBranchRequest({
       type: "validate_branch_request",
       cwd: "/tmp/repo",
       branchName: "feature",
@@ -1112,7 +1672,7 @@ describe("session branch creation handling", () => {
     const session = createSessionForTest({ workspaceGitService });
 
     await expect(
-      (session as any).createBranchFromBase({
+      asSessionInternals(session).createBranchFromBase({
         cwd: "/tmp/repo",
         baseBranch: "missing-base",
         newBranchName: "feature/new-work",
@@ -1138,7 +1698,7 @@ describe("session branch creation handling", () => {
     const session = createSessionForTest({ workspaceGitService });
 
     await expect(
-      (session as any).createBranchFromBase({
+      asSessionInternals(session).createBranchFromBase({
         cwd: "/tmp/repo",
         baseBranch: "main",
         newBranchName: "feature/existing",
@@ -1179,7 +1739,7 @@ describe("session branch creation handling", () => {
       truncated: false,
     });
 
-    await (session as any).createBranchFromBase({
+    await asSessionInternals(session).createBranchFromBase({
       cwd: "/tmp/repo",
       baseBranch: "main",
       newBranchName: "feature/new-work",
@@ -1214,7 +1774,7 @@ describe("session checkout switch branch handling", () => {
     const session = createSessionForTest({ github, workspaceGitService, messages });
     checkoutGitMocks.checkoutResolvedBranch.mockResolvedValue({ source: "local" });
 
-    await (session as any).handleCheckoutSwitchBranchRequest({
+    await asSessionInternals(session).handleCheckoutSwitchBranchRequest({
       type: "checkout_switch_branch_request",
       cwd: "/tmp/repo",
       branch: "release",
@@ -1257,7 +1817,7 @@ describe("session branch suggestions handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleBranchSuggestionsRequest({
+    await asSessionInternals(session).handleBranchSuggestionsRequest({
       type: "branch_suggestions_request",
       cwd: "/tmp/repo",
       query: "service",
@@ -1301,7 +1861,7 @@ describe("session stash list handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleStashListRequest({
+    await asSessionInternals(session).handleStashListRequest({
       type: "stash_list_request",
       cwd: "/tmp/repo",
       paseoOnly: true,
@@ -1332,7 +1892,7 @@ describe("session stash mutation handling", () => {
       truncated: false,
     });
 
-    await (session as any).handleStashSaveRequest({
+    await asSessionInternals(session).handleStashSaveRequest({
       type: "stash_save_request",
       cwd: "/tmp/repo",
       branch: "feature",
@@ -1366,7 +1926,7 @@ describe("session stash mutation handling", () => {
       truncated: false,
     });
 
-    await (session as any).handleStashPopRequest({
+    await asSessionInternals(session).handleStashPopRequest({
       type: "stash_pop_request",
       cwd: "/tmp/repo",
       stashIndex: 0,
@@ -1409,7 +1969,7 @@ describe("session paseo worktree creation handling", () => {
       created: true,
     });
 
-    await (session as any).createPaseoWorktree({
+    await asSessionInternals(session).createPaseoWorktree({
       cwd: "/tmp/repo",
       worktreeSlug: "new-worktree",
       runSetup: false,
@@ -1463,7 +2023,7 @@ describe("session workspace script handling", () => {
       messages,
     });
 
-    await (session as any).handleStartWorkspaceScriptRequest({
+    await asSessionInternals(session).handleStartWorkspaceScriptRequest({
       type: "start_workspace_script_request",
       workspaceId: "workspace-1",
       scriptName: "api",

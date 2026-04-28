@@ -17,7 +17,6 @@ import {
 } from "./helpers/launcher";
 import {
   connectTerminalClient,
-  waitForTerminalContent,
   setupDeterministicPrompt,
   type TerminalPerfDaemonClient,
 } from "./helpers/terminal-perf";

@@ -3,11 +3,11 @@ import { mkdtemp, writeFile, rm, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-type TempRepo = {
+interface TempRepo {
   path: string;
   branchHeads: Record<string, string>;
   cleanup: () => Promise<void>;
-};
+}
 
 export const createTempGitRepo = async (
   prefix = "paseo-e2e-",

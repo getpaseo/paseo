@@ -17,11 +17,11 @@ export const TerminalStreamOpcode = {
 
 export type TerminalStreamOpcode = (typeof TerminalStreamOpcode)[keyof typeof TerminalStreamOpcode];
 
-export type TerminalStreamFrame = {
+export interface TerminalStreamFrame {
   opcode: TerminalStreamOpcode;
   slot: number;
   payload: Uint8Array;
-};
+}
 
 export function asUint8Array(data: unknown): Uint8Array | null {
   if (typeof data === "string") {

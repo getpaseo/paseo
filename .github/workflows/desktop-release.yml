@@ -3,27 +3,45 @@ name: Desktop Release
 on:
   push:
     tags:
-      - 'v*'
-      - 'desktop-v*'
-      - 'desktop-macos-v*'
-      - 'desktop-linux-v*'
-      - 'desktop-windows-v*'
+      - "v*"
+      - "desktop-v*"
+      - "desktop-macos-v*"
+      - "desktop-linux-v*"
+      - "desktop-windows-v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to build (e.g. v0.1.0)'
+        description: "Existing tag to build (e.g. v0.1.0)"
         required: true
         type: string
       platform:
-        description: 'Optional desktop platform to build.'
+        description: "Optional desktop platform to build."
         required: false
-        default: 'all'
+        default: "all"
         type: choice
         options:
           - all
           - macos
           - linux
           - windows
+      checkout_ref:
+        description: "Optional branch/ref to checkout while using tag for release metadata."
+        required: false
+        default: ""
+        type: string
+      publish:
+        description: "Publish built artifacts to GitHub Releases."
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      rollout_hours:
+        description: "Linear rollout duration in hours. Use 0 for instant rollout."
+        required: false
+        default: "24"
+        type: string
 
 concurrency:
   group: desktop-release-${{ github.ref }}
@@ -31,12 +49,15 @@ concurrency:
 
 env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
-  DESKTOP_WORKSPACE: '@getpaseo/desktop'
-  DESKTOP_PACKAGE_PATH: 'packages/desktop'
+  CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.checkout_ref || github.ref_name) || github.ref_name }}
+  SHOULD_PUBLISH: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false' }}
+  ROLLOUT_HOURS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.rollout_hours || '24' }}
+  DESKTOP_WORKSPACE: "@getpaseo/desktop"
+  DESKTOP_PACKAGE_PATH: "packages/desktop"
 
 jobs:
   create-release:
-    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all') }}
+    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all' && github.event.inputs.publish != 'false') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -44,7 +65,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: scripts
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release metadata
         shell: bash
@@ -65,7 +86,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
               --title "Paseo $RELEASE_TAG" \
-              --generate-notes \
+              --notes "" \
               $prerelease_flag || {
                 echo "Release creation raced with another workflow; continuing."
               }
@@ -91,7 +112,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release metadata
         shell: bash
@@ -100,11 +121,11 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
           cache-dependency-path: package-lock.json
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@boudra'
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@boudra"
 
       - name: Install JS dependencies
         run: npm ci
@@ -140,20 +161,22 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PASEO_DESKTOP_SMOKE: "1"
         run: |
           set -euo pipefail
           publish_mode="never"
-          publish_args=()
-          if [[ "$IS_SMOKE_TAG" != "true" ]]; then
+          build_args=(-- --publish "$publish_mode" --mac --${{ matrix.electron_arch }})
+          if [[ "$SHOULD_PUBLISH" == "true" && "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
-            publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
-            publish_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+            build_args=(-- --publish "$publish_mode" --mac --${{ matrix.electron_arch }})
+            build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           fi
 
-          npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --mac --${{ matrix.electron_arch }} "${publish_args[@]}"
+          npm run build --workspace="$DESKTOP_WORKSPACE" "${build_args[@]}"
 
       - name: Upload manifest artifact
-        if: env.IS_SMOKE_TAG != 'true'
+        if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mac-manifest-${{ matrix.electron_arch }}
@@ -162,7 +185,7 @@ jobs:
 
   finalize-mac-manifest:
     needs: [publish-macos]
-    if: ${{ needs.publish-macos.result == 'success' }}
+    if: ${{ needs.publish-macos.result == 'success' && (github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -170,12 +193,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: scripts
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          sparse-checkout: |
+            package.json
+            package-lock.json
+            scripts
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release tag
         shell: bash
         run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@boudra"
+
+      - name: Install JS dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download manifest artifacts
         if: env.IS_SMOKE_TAG != 'true'
@@ -188,68 +228,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          node <<'NODE'
-          const fs = require('node:fs');
-
-          // Simple YAML parser for electron-builder's latest-mac.yml format
-          function parseManifest(text) {
-            const lines = text.split('\n');
-            const result = { files: [] };
-            let currentFile = null;
-
-            for (const line of lines) {
-              if (line.startsWith('version:')) result.version = line.split(': ')[1].trim();
-              else if (line.startsWith('path:')) result.path = line.split(': ')[1].trim();
-              else if (line.startsWith('sha512:') && !currentFile) result.sha512 = line.split(': ')[1].trim();
-              else if (line.startsWith('releaseDate:')) result.releaseDate = line.split(': ')[1].trim().replace(/'/g, '');
-              else if (line.trim().startsWith('- url:')) {
-                currentFile = { url: line.trim().replace('- url: ', '') };
-                result.files.push(currentFile);
-              } else if (line.trim().startsWith('sha512:') && currentFile) {
-                currentFile.sha512 = line.trim().split(': ')[1].trim();
-              } else if (line.trim().startsWith('size:') && currentFile) {
-                currentFile.size = parseInt(line.trim().split(': ')[1].trim(), 10);
-                currentFile = null;
-              }
-            }
-            return result;
-          }
-
-          function toYaml(manifest) {
-            let out = `version: ${manifest.version}\n`;
-            out += `files:\n`;
-            for (const f of manifest.files) {
-              out += `  - url: ${f.url}\n`;
-              out += `    sha512: ${f.sha512}\n`;
-              out += `    size: ${f.size}\n`;
-            }
-            out += `path: ${manifest.path}\n`;
-            out += `sha512: ${manifest.sha512}\n`;
-            out += `releaseDate: '${manifest.releaseDate}'\n`;
-            return out;
-          }
-
-          const manifestName = `${process.env.RELEASE_CHANNEL}-mac.yml`;
-          const arm64Text = fs.readFileSync(`mac-manifest-arm64/${manifestName}`, 'utf8');
-          const x64Text = fs.readFileSync(`mac-manifest-x64/${manifestName}`, 'utf8');
-
-          const arm64 = parseManifest(arm64Text);
-          const x64 = parseManifest(x64Text);
-
-          // Merge: all files from both, default path points to arm64 zip
-          const merged = {
-            version: arm64.version,
-            files: [...arm64.files, ...x64.files],
-            path: arm64.path,
-            sha512: arm64.sha512,
-            releaseDate: arm64.releaseDate || x64.releaseDate,
-          };
-
-          const output = toYaml(merged);
-          fs.writeFileSync(manifestName, output);
-          console.log('Merged manifest:\n' + output);
-          NODE
+          manifest_name="${RELEASE_CHANNEL}-mac.yml"
+          node scripts/merge-mac-manifest.mjs \
+            "mac-manifest-arm64/${manifest_name}" \
+            "mac-manifest-x64/${manifest_name}" \
+            "${manifest_name}"
 
       - name: Upload merged manifest to release
         if: env.IS_SMOKE_TAG != 'true'
@@ -269,7 +252,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release metadata
         shell: bash
@@ -278,11 +261,11 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
           cache-dependency-path: package-lock.json
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@boudra'
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@boudra"
 
       - name: Install JS dependencies
         run: npm ci
@@ -308,22 +291,27 @@ jobs:
       - name: Build web app for desktop
         run: npm run build:web --workspace=@getpaseo/app
 
+      - name: Install Linux smoke display
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
       - name: Build desktop release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
+          PASEO_DESKTOP_SMOKE: "1"
         run: |
           set -euo pipefail
           publish_mode="never"
-          publish_args=()
-          if [[ "$IS_SMOKE_TAG" != "true" ]]; then
+          build_args=(-- --publish "$publish_mode" --linux --x64)
+          if [[ "$SHOULD_PUBLISH" == "true" && "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
-            publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
-            publish_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+            build_args=(-- --publish "$publish_mode" --linux --x64)
+            build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           fi
 
-          npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --linux --x64 "${publish_args[@]}"
+          npm run build --workspace="$DESKTOP_WORKSPACE" "${build_args[@]}"
 
   publish-windows:
     needs: [create-release]
@@ -337,7 +325,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Resolve release metadata
         shell: bash
@@ -346,11 +334,11 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
           cache-dependency-path: package-lock.json
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@boudra'
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@boudra"
 
       - name: Install JS dependencies
         run: npm ci
@@ -389,14 +377,94 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
+          PASEO_DESKTOP_SMOKE: "1"
         run: |
           set -euo pipefail
           publish_mode="never"
-          publish_args=()
-          if [[ "$IS_SMOKE_TAG" != "true" ]]; then
+          build_args=(-- --publish "$publish_mode" --win --x64)
+          if [[ "$SHOULD_PUBLISH" == "true" && "$IS_SMOKE_TAG" != "true" ]]; then
             publish_mode="always"
-            publish_args+=("-c.publish.releaseType=$RELEASE_TYPE")
-            publish_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+            build_args=(-- --publish "$publish_mode" --win --x64)
+            build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
+            build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           fi
 
-          npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --win --x64 "${publish_args[@]}"
+          npm run build --workspace="$DESKTOP_WORKSPACE" "${build_args[@]}"
+
+  finalize-rollout:
+    needs: [publish-macos, finalize-mac-manifest, publish-linux, publish-windows]
+    if: ${{ always() && (needs.publish-macos.result == 'success' || needs.publish-macos.result == 'skipped') && (needs.finalize-mac-manifest.result == 'success' || needs.finalize-mac-manifest.result == 'skipped') && (needs.publish-linux.result == 'success' || needs.publish-linux.result == 'skipped') && (needs.publish-windows.result == 'success' || needs.publish-windows.result == 'skipped') && (github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false') }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    concurrency:
+      group: desktop-rollout-${{ github.event.inputs.tag || github.ref_name }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            package.json
+            package-lock.json
+            scripts
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Resolve release tag
+        shell: bash
+        run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@boudra"
+
+      - name: Install JS dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stamp rollout metadata
+        if: env.IS_SMOKE_TAG != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-manifests
+          cd release-manifests
+          gh release download "$RELEASE_TAG" --repo "${{ github.repository }}" --pattern "${RELEASE_CHANNEL}*.yml"
+          shopt -s nullglob
+          files=( ./*.yml )
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::No manifests matched ${RELEASE_CHANNEL}*.yml on $RELEASE_TAG"
+            exit 1
+          fi
+          timestamp="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
+          node ../scripts/stamp-rollout.mjs --release-date "$timestamp" --rollout-hours "$ROLLOUT_HOURS" "${files[@]}"
+          ROLLOUT_HOURS_EXPECTED="$ROLLOUT_HOURS" RELEASE_DATE_EXPECTED="$timestamp" node -e '
+            const yaml = require("js-yaml");
+            const fs = require("fs");
+            const expectedHours = Number(process.env.ROLLOUT_HOURS_EXPECTED);
+            const expectedDate = process.env.RELEASE_DATE_EXPECTED;
+            if (!Number.isFinite(expectedHours) || expectedHours < 0) {
+              throw new Error(`expected non-negative rolloutHours, got ${process.env.ROLLOUT_HOURS_EXPECTED}`);
+            }
+            for (const f of process.argv.slice(1)) {
+              const m = yaml.load(fs.readFileSync(f, "utf8")) ?? {};
+              if (m.rolloutHours !== expectedHours) {
+                throw new Error(`${f}: rolloutHours=${m.rolloutHours}, expected ${expectedHours}`);
+              }
+              if (m.releaseDate !== expectedDate) {
+                throw new Error(`${f}: releaseDate=${m.releaseDate}, expected ${expectedDate}`);
+              }
+              if (typeof m.version !== "string" || m.version.length === 0) {
+                throw new Error(`${f}: missing or invalid version`);
+              }
+            }
+          ' "${files[@]}"
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"

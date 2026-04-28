@@ -22,10 +22,10 @@ type StoredKeyPair = z.infer<typeof KeyPairSchema>;
 
 const KEYPAIR_FILENAME = "daemon-keypair.json";
 
-export type DaemonKeyPairBundle = {
+export interface DaemonKeyPairBundle {
   keyPair: KeyPair;
   publicKeyB64: string;
-};
+}
 
 export async function loadOrCreateDaemonKeyPair(
   paseoHome: string,

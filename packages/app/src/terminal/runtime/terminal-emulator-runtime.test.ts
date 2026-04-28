@@ -1,31 +1,45 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@xterm/addon-clipboard", () => ({
-  ClipboardAddon: class ClipboardAddon {},
+  ClipboardAddon: class ClipboardAddon {
+    dispose(): void {}
+  },
 }));
 
 vi.mock("@xterm/addon-fit", () => ({
-  FitAddon: class FitAddon {},
+  FitAddon: class FitAddon {
+    dispose(): void {}
+  },
 }));
 
 vi.mock("@xterm/addon-image", () => ({
-  ImageAddon: class ImageAddon {},
+  ImageAddon: class ImageAddon {
+    dispose(): void {}
+  },
 }));
 
 vi.mock("@xterm/addon-ligatures/lib/addon-ligatures.mjs", () => ({
-  LigaturesAddon: class LigaturesAddon {},
+  LigaturesAddon: class LigaturesAddon {
+    dispose(): void {}
+  },
 }));
 
 vi.mock("@xterm/addon-search", () => ({
-  SearchAddon: class SearchAddon {},
+  SearchAddon: class SearchAddon {
+    dispose(): void {}
+  },
 }));
 
 vi.mock("@xterm/addon-unicode11", () => ({
-  Unicode11Addon: class Unicode11Addon {},
+  Unicode11Addon: class Unicode11Addon {
+    dispose(): void {}
+  },
 }));
 
 vi.mock("@xterm/addon-web-links", () => ({
-  WebLinksAddon: class WebLinksAddon {},
+  WebLinksAddon: class WebLinksAddon {
+    dispose(): void {}
+  },
 }));
 
 vi.mock("@xterm/addon-webgl", () => ({
@@ -36,12 +50,14 @@ vi.mock("@xterm/addon-webgl", () => ({
 }));
 
 vi.mock("@xterm/xterm", () => ({
-  Terminal: class Terminal {},
+  Terminal: class Terminal {
+    dispose(): void {}
+  },
 }));
 
 import { TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
-type StubTerminal = {
+interface StubTerminal {
   write: (text: string, callback?: () => void) => void;
   reset: () => void;
   resize?: (cols: number, rows: number) => void;
@@ -50,7 +66,7 @@ type StubTerminal = {
   options?: { theme?: unknown };
   rows?: number;
   cols?: number;
-};
+}
 
 function createRuntimeWithTerminal(): {
   runtime: TerminalEmulatorRuntime;

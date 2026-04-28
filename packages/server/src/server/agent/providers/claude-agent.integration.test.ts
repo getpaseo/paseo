@@ -131,7 +131,7 @@ function getToolCalls(events: AgentStreamEvent[]): ToolCallTimelineItem[] {
 
 function getLatestCompletedBashCall(events: AgentStreamEvent[]): ToolCallTimelineItem | undefined {
   return [...getToolCalls(events)]
-    .reverse()
+    .toReversed()
     .find((item) => item.status === "completed" && item.name.toLowerCase() === "bash");
 }
 

@@ -1,11 +1,6 @@
 import type { Command } from "commander";
 import { createRequire } from "node:module";
-import {
-  getOrCreateServerId,
-  findExecutable,
-  applyProviderEnv,
-  execCommand,
-} from "@getpaseo/server";
+import { getOrCreateServerId, findExecutable, execCommand } from "@getpaseo/server";
 import { tryConnectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import { resolveLocalDaemonState, resolveTcpHostFromListen } from "./local-daemon.js";
@@ -44,9 +39,9 @@ interface StatusRow {
   value: string;
 }
 
-type CliPackageJson = {
+interface CliPackageJson {
   version?: unknown;
-};
+}
 
 const require = createRequire(import.meta.url);
 
@@ -178,11 +173,9 @@ async function checkProviderBinary(
   if (!binaryPath) {
     return { path: null, version: null };
   }
-  const env = applyProviderEnv(process.env);
   try {
     const { stdout } = await execCommand(binaryPath, ["--version"], {
       timeout: 5000,
-      env,
     });
     return { path: binaryPath, version: stdout.trim() || null };
   } catch {
@@ -194,7 +187,7 @@ async function checkProviderBinaries(): Promise<ProviderBinaryStatus[]> {
   const results = await Promise.all(
     PROVIDER_BINARIES.map(async ({ label, binary }) => {
       const result = await checkProviderBinary(binary);
-      return { label, ...result };
+      return Object.assign({ label }, result);
     }),
   );
   return results;
@@ -209,6 +202,117 @@ function resolveOwnerLabel(uid: number | undefined, hostname: string | undefined
   return `${uidPart}@${hostPart}`;
 }
 
+interface DaemonProbeResult {
+  connectedDaemon: DaemonStatus["connectedDaemon"];
+  localDaemonOverride?: DaemonStatus["localDaemon"];
+  daemonVersion?: string | null;
+  runningAgents?: number;
+  idleAgents?: number;
+  daemonNodeOverride?: string;
+  note?: string;
+}
+
+async function probeDaemonOverWebsocket(args: {
+  host: string;
+  state: ReturnType<typeof resolveLocalDaemonState>;
+}): Promise<DaemonProbeResult> {
+  const { host, state } = args;
+  const client = await tryConnectToDaemon({ host, timeout: 1500 });
+  if (!client) {
+    if (state.running) {
+      return {
+        connectedDaemon: "unreachable",
+        localDaemonOverride: "unresponsive",
+        note: `Local daemon PID is running but websocket at ${host} is not reachable`,
+      };
+    }
+    return { connectedDaemon: "unreachable" };
+  }
+
+  const daemonVersion = client.getLastServerInfoMessage()?.version ?? null;
+  try {
+    const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
+    const agents = agentsPayload.entries.map((entry) => entry.agent);
+    const runningAgents = agents.filter((a) => a.status === "running").length;
+    const idleAgents = agents.filter((a) => a.status === "idle").length;
+
+    if (!state.running) {
+      return {
+        connectedDaemon: "reachable",
+        daemonVersion,
+        runningAgents,
+        idleAgents,
+        daemonNodeOverride: "unknown (API reachable, PID unresolved)",
+        note: state.pidInfo
+          ? `Connected daemon is reachable at ${host} even though local daemon PID ${state.pidInfo.pid} is stale`
+          : `Connected daemon is reachable at ${host} but no local daemon PID file was found`,
+      };
+    }
+
+    return {
+      connectedDaemon: "reachable",
+      daemonVersion,
+      runningAgents,
+      idleAgents,
+    };
+  } catch {
+    return {
+      connectedDaemon: "reachable",
+      daemonVersion,
+      localDaemonOverride: state.running ? "unresponsive" : undefined,
+      note: state.running
+        ? `Local daemon PID is running but API requests to ${host} failed`
+        : `Connected daemon websocket is reachable at ${host} but fetch_agents failed`,
+    };
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+interface ProbeMergeState {
+  probe: DaemonProbeResult;
+  connectedDaemon: DaemonStatus["connectedDaemon"];
+  localDaemon: DaemonStatus["localDaemon"];
+  daemonNode: string;
+  daemonVersion: string | null;
+  runningAgents: number | null;
+  idleAgents: number | null;
+  note: string | undefined;
+}
+
+function applyProbeToStatus(input: ProbeMergeState): Omit<ProbeMergeState, "probe"> {
+  const { probe } = input;
+  return {
+    connectedDaemon: probe.connectedDaemon,
+    localDaemon: probe.localDaemonOverride ?? input.localDaemon,
+    daemonNode: probe.daemonNodeOverride ?? input.daemonNode,
+    daemonVersion: probe.daemonVersion !== undefined ? probe.daemonVersion : input.daemonVersion,
+    runningAgents: probe.runningAgents !== undefined ? probe.runningAgents : input.runningAgents,
+    idleAgents: probe.idleAgents !== undefined ? probe.idleAgents : input.idleAgents,
+    note: probe.note ? appendNote(input.note, probe.note) : input.note,
+  };
+}
+
+function resolveServerIdSafely(home: string): { serverId: string | null; error: string | null } {
+  try {
+    return { serverId: getOrCreateServerId(home), error: null };
+  } catch (error) {
+    return {
+      serverId: null,
+      error: `serverId unavailable: ${shortenMessage(normalizeError(error))}`,
+    };
+  }
+}
+
+async function resolveDaemonNodeLabel(
+  state: ReturnType<typeof resolveLocalDaemonState>,
+): Promise<string> {
+  if (!state.running) return "-";
+  if (!state.pidInfo?.pid) return "unknown (no PID available)";
+  const fromPid = await resolveNodePathFromPid(state.pidInfo.pid);
+  return fromPid.nodePath ?? `unknown (${fromPid.error ?? "could not resolve from PID"})`;
+}
+
 export type StatusResult = ListResult<StatusRow>;
 
 export async function runStatusCommand(
@@ -220,15 +324,7 @@ export async function runStatusCommand(
   const host = resolveTcpHostFromListen(state.listen);
 
   const owner = resolveOwnerLabel(state.pidInfo?.uid, state.pidInfo?.hostname);
-  let daemonNode: string;
-  if (!state.running) {
-    daemonNode = "-";
-  } else if (state.pidInfo?.pid) {
-    const fromPid = await resolveNodePathFromPid(state.pidInfo.pid);
-    daemonNode = fromPid.nodePath ?? `unknown (${fromPid.error ?? "could not resolve from PID"})`;
-  } else {
-    daemonNode = "unknown (no PID available)";
-  }
+  let daemonNode = await resolveDaemonNodeLabel(state);
   const cliNode = process.execPath;
   let localDaemon: DaemonStatus["localDaemon"] = state.running ? "running" : "stopped";
   let connectedDaemon: DaemonStatus["connectedDaemon"] = "not_probed";
@@ -243,58 +339,28 @@ export async function runStatusCommand(
   }
 
   if (host) {
-    const client = await tryConnectToDaemon({ host, timeout: 1500 });
-    if (client) {
-      connectedDaemon = "reachable";
-      daemonVersion = client.getLastServerInfoMessage()?.version ?? null;
-      try {
-        const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-        const agents = agentsPayload.entries.map((entry) => entry.agent);
-        runningAgents = agents.filter((a) => a.status === "running").length;
-        idleAgents = agents.filter((a) => a.status === "idle").length;
-        if (!state.running) {
-          daemonNode = "unknown (API reachable, PID unresolved)";
-          note = appendNote(
-            note,
-            state.pidInfo
-              ? `Connected daemon is reachable at ${host} even though local daemon PID ${state.pidInfo.pid} is stale`
-              : `Connected daemon is reachable at ${host} but no local daemon PID file was found`,
-          );
-        }
-      } catch {
-        if (state.running) {
-          localDaemon = "unresponsive";
-        }
-        note = appendNote(
-          note,
-          state.running
-            ? `Local daemon PID is running but API requests to ${host} failed`
-            : `Connected daemon websocket is reachable at ${host} but fetch_agents failed`,
-        );
-      } finally {
-        await client.close().catch(() => {});
-      }
-    } else if (state.running) {
-      connectedDaemon = "unreachable";
-      localDaemon = "unresponsive";
-      note = appendNote(
+    const probe = await probeDaemonOverWebsocket({ host, state });
+    ({ connectedDaemon, localDaemon, daemonNode, daemonVersion, runningAgents, idleAgents, note } =
+      applyProbeToStatus({
+        probe,
+        connectedDaemon,
+        localDaemon,
+        daemonNode,
+        daemonVersion,
+        runningAgents,
+        idleAgents,
         note,
-        `Local daemon PID is running but websocket at ${host} is not reachable`,
-      );
-    } else {
-      connectedDaemon = "unreachable";
-    }
+      }));
   } else {
     note = appendNote(note, "Daemon is configured for unix socket listen; API probe skipped");
   }
 
   const cliVersion = resolveCliVersion();
 
-  let serverId: string | null = null;
-  try {
-    serverId = getOrCreateServerId(state.home);
-  } catch (error) {
-    note = appendNote(note, `serverId unavailable: ${shortenMessage(normalizeError(error))}`);
+  const serverIdResult = resolveServerIdSafely(state.home);
+  const serverId = serverIdResult.serverId;
+  if (serverIdResult.error) {
+    note = appendNote(note, serverIdResult.error);
   }
 
   const providers = await checkProviderBinaries();

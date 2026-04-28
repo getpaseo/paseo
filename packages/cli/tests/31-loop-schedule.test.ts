@@ -16,7 +16,18 @@ try {
   {
     console.log("Test 1: schedule create/ls/inspect/pause/resume/delete work");
     const created = await ctx.paseo(
-      ["schedule", "create", "Review new PRs", "--every", "5m", "--name", "review-prs", "--json"],
+      [
+        "schedule",
+        "create",
+        "Review new PRs",
+        "--every",
+        "5m",
+        "--name",
+        "review-prs",
+        "--provider",
+        "claude",
+        "--json",
+      ],
       { timeout: 30000 },
     );
     assert.strictEqual(created.exitCode, 0, created.stderr);
@@ -141,18 +152,20 @@ try {
       listed.stdout,
     );
 
-    let status = "running";
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+    async function pollStatus(attempt: number): Promise<string> {
+      if (attempt >= 40) return "running";
       const inspect = await ctx.paseo(["loop", "inspect", runJson.id, "--json"]);
       assert.strictEqual(inspect.exitCode, 0, inspect.stderr);
       const inspectJson = JSON.parse(inspect.stdout);
-      status = inspectJson.status;
-      if (status !== "running") {
-        assert.strictEqual(status, "succeeded", inspect.stdout);
-        break;
+      const current = inspectJson.status;
+      if (current !== "running") {
+        assert.strictEqual(current, "succeeded", inspect.stdout);
+        return current;
       }
       await sleep(250);
+      return pollStatus(attempt + 1);
     }
+    const status = await pollStatus(0);
     assert.strictEqual(status, "succeeded");
 
     const logs = await ctx.paseo(["loop", "logs", runJson.id], { timeout: 15000 });

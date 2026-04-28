@@ -58,14 +58,14 @@ export type KeyboardActionDefinition =
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "worktree.archive"; scope: KeyboardActionScope };
 
-export type KeyboardActionHandler = {
+export interface KeyboardActionHandler {
   handlerId: string;
   actions: readonly KeyboardActionId[];
   enabled: boolean;
   priority: number;
   isActive?: () => boolean;
   handle: (action: KeyboardActionDefinition) => boolean;
-};
+}
 
 type KeyboardActionRegistryEntry = KeyboardActionHandler & {
   registeredAt: number;

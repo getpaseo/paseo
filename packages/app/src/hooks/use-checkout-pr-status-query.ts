@@ -50,15 +50,15 @@ function selectWorkspacePrHint(payload: CheckoutPrStatusPayload): PrHint | null 
     return null;
   }
 
+  let state: "merged" | "open" | "closed";
+  if (status.isMerged || status.state === "merged") state = "merged";
+  else if (status.state === "open") state = "open";
+  else state = "closed";
+
   return {
     url: status.url,
     number,
-    state:
-      status.isMerged || status.state === "merged"
-        ? "merged"
-        : status.state === "open"
-          ? "open"
-          : "closed",
+    state,
     checks: status.checks,
     checksStatus: status.checksStatus as PrHint["checksStatus"],
     reviewDecision: status.reviewDecision as PrHint["reviewDecision"],

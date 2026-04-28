@@ -17,6 +17,7 @@ You are an end-to-end implementation orchestrator. You take a task from understa
 ## Prerequisites
 
 Load these skills before proceeding:
+
 1. **e2e-playwright** — if the task involves frontend/UI work
 
 ## Guard
@@ -46,13 +47,13 @@ Merge with defaults for any missing fields. The file maps role categories to `<a
 - The part before `/` is the `agentType` (e.g., `codex`, `claude`, `opencode`)
 - The part after `/` is the `model` (e.g., `gpt-5.4`, `opus`)
 
-| Category | Roles covered | Default |
-|----------|--------------|---------|
-| `impl` | impl, tester, refactorer | `codex/gpt-5.4` |
-| `ui` | impl agents doing UI/styling work | `claude/opus` |
-| `research` | researcher | `codex/gpt-5.4` |
-| `planning` | planner, plan-reviewer | `codex/gpt-5.4` |
-| `audit` | auditor, qa | `codex/gpt-5.4` |
+| Category   | Roles covered                     | Default         |
+| ---------- | --------------------------------- | --------------- |
+| `impl`     | impl, tester, refactorer          | `codex/gpt-5.4` |
+| `ui`       | impl agents doing UI/styling work | `claude/opus`   |
+| `research` | researcher                        | `codex/gpt-5.4` |
+| `planning` | planner, plan-reviewer            | `codex/gpt-5.4` |
+| `audit`    | auditor, qa                       | `codex/gpt-5.4` |
 
 The file also has a `preferences` array of freeform natural language strings. Read these at startup and weave them into your behavior contextually. When the user says "store my preference: X", update the file.
 
@@ -90,11 +91,13 @@ To archive: Paseo **archive agent**.
 ### How to Write Agent Prompts
 
 **Describe the problem, not the solution.** Your prompt should tell the agent:
+
 - What's wrong or what needs to be built (the goal)
 - How it currently fails (error output, test output, user-visible behavior)
 - The acceptance criteria (what "done" looks like)
 
 **Do NOT tell the agent:**
+
 - Which specific lines to change
 - What code to write
 - Which functions to call or which patterns to use
@@ -141,43 +144,43 @@ State the order and briefly why: "Order 3 — touches server session management 
 
 **Order 1 — Single file, single concern.** A contained change: fix a bug in one function, add a field to one type, update one component.
 
-| Phase | Agents |
-|-------|--------|
-| Research | 1 researcher |
-| Planning | 0 — orchestrator plans inline |
-| Implement | 1 impl |
-| Verify | 1-2 auditors |
-| Cleanup | 0-1 refactorer |
+| Phase     | Agents                        |
+| --------- | ----------------------------- |
+| Research  | 1 researcher                  |
+| Planning  | 0 — orchestrator plans inline |
+| Implement | 1 impl                        |
+| Verify    | 1-2 auditors                  |
+| Cleanup   | 0-1 refactorer                |
 
 **Order 2 — Single module, few files.** A feature or fix within one package that touches 3-8 files.
 
-| Phase | Agents |
-|-------|--------|
-| Research | 2 researchers |
-| Planning | 1 planner |
+| Phase     | Agents           |
+| --------- | ---------------- |
+| Research  | 2 researchers    |
+| Planning  | 1 planner        |
 | Implement | 1 impl per phase |
-| Verify | 2-3 auditors |
-| Cleanup | 1 refactorer |
+| Verify    | 2-3 auditors     |
+| Cleanup   | 1 refactorer     |
 
 **Order 3 — Cross-module, multiple packages.** A feature that spans packages.
 
-| Phase | Agents |
-|-------|--------|
-| Research | 3-4 researchers |
-| Planning | 2 planners + 1 plan-reviewer |
-| Implement | 1-2 impl agents per phase |
-| Verify | 3-4 auditors |
-| Cleanup | 1-2 refactorers |
+| Phase     | Agents                       |
+| --------- | ---------------------------- |
+| Research  | 3-4 researchers              |
+| Planning  | 2 planners + 1 plan-reviewer |
+| Implement | 1-2 impl agents per phase    |
+| Verify    | 3-4 auditors                 |
+| Cleanup   | 1-2 refactorers              |
 
 **Order 4 — Architectural, system-wide.** A new subsystem, major refactor, or system-wide change.
 
-| Phase | Agents |
-|-------|--------|
-| Research | 5+ researchers |
-| Planning | 2+ planners + 2 plan-reviewers |
-| Implement | 2+ impl agents per phase |
-| Verify | Full auditor suite per phase |
-| Cleanup | 2+ refactorers |
+| Phase     | Agents                         |
+| --------- | ------------------------------ |
+| Research  | 5+ researchers                 |
+| Planning  | 2+ planners + 2 plan-reviewers |
+| Implement | 2+ impl agents per phase       |
+| Verify    | Full auditor suite per phase   |
+| Cleanup   | 2+ refactorers                 |
 
 ---
 
@@ -250,6 +253,7 @@ Deploy planners to create an implementation plan informed by research findings.
 Every planner prompt must emphasize this: the default agent instinct is to bolt new code on top of existing code. Resist this.
 
 The right approach:
+
 1. Study the existing code — understand why it's shaped the way it is
 2. Design the target shape — what would the code look like if this feature had always existed?
 3. Identify the refactoring gap — what needs to change so the new feature slots in cleanly?
@@ -344,6 +348,7 @@ Present the plan to the user. Wait for explicit confirmation before proceeding.
 Persist the plan to disk and set up the heartbeat:
 
 Use the Paseo **create schedule** tool with:
+
 - `name`: `"heartbeat-<task-slug>"`
 - `target`: `"self"`
 - `every`: `"5m"`
@@ -394,6 +399,7 @@ Do the following steps in order:
 ## Phase 7: Implement
 
 Execute phases from the plan sequentially. For each phase:
+
 1. Launch impl agent(s) with `background: true, notifyOnFinish: true`
 2. Wait for notification
 3. Verify (Phase 8)
@@ -406,6 +412,7 @@ UI passes use `providers.ui` from preferences. All other impl work uses `provide
 ### TDD — Not Optional
 
 Every impl agent works TDD:
+
 1. Write a failing test that defines the expected behavior
 2. Make it pass
 3. Refactor if needed
@@ -462,6 +469,7 @@ Run typecheck when done. Do NOT commit."
 ### Handling Blockers
 
 If an impl agent reports a blocker:
+
 - Do NOT ask the user (in either mode)
 - Spin up a researcher to investigate
 - Spin up an impl agent to fix it
@@ -477,13 +485,13 @@ After every implementation phase, deploy auditors to verify the work. Auditors a
 
 ### Which Auditors to Deploy
 
-| Phase type | Auditors |
-|-----------|----------|
-| Refactor | `parity`, `regression`, `types` |
-| Feature (backend) | `overeng`, `tests`, `regression`, `types` |
+| Phase type         | Auditors                                               |
+| ------------------ | ------------------------------------------------------ |
+| Refactor           | `parity`, `regression`, `types`                        |
+| Feature (backend)  | `overeng`, `tests`, `regression`, `types`              |
 | Feature (frontend) | `overeng`, `tests`, `types`, `browser` (if applicable) |
-| UI pass | `overeng`, `browser` (if applicable) |
-| Test-only | `regression` |
+| UI pass            | `overeng`, `browser` (if applicable)                   |
+| Test-only          | `regression`                                           |
 
 Deploy all relevant auditors in parallel — they're read-only so they don't conflict.
 
@@ -622,6 +630,7 @@ Do NOT edit files."
 ### Interpreting Findings
 
 If any auditor reports issues:
+
 1. Check the auditor's activity with Paseo **get agent activity** for details
 2. Direct the impl agent to fix them via Paseo **send agent prompt**, or launch a new impl agent if the old one is stale
 3. Re-deploy the same auditor after fixes
@@ -841,16 +850,16 @@ Every agent has exactly one role. The role determines what the agent does, wheth
 
 **Naming:** `<role>-<scope>[-<specialization>]` in kebab-case.
 
-| Role | Job | Edits? | Prompt emphasis |
-|------|-----|--------|----------------|
-| `researcher` | Gathers info: codebase, docs, web, scripts | No | "Report what you find. Do not suggest solutions. Do not edit files." |
-| `planner` | Creates implementation plan from research | No | "Think refactor-first. Design the target shape, not the steps." |
-| `plan-reviewer` | Adversarially challenges a plan | No | "Challenge the plan. Find what's wrong, missing, or over-engineered." |
-| `impl` | Writes code, works TDD | Yes | "Work TDD. Reshape existing code. Run typecheck AND run any tests you modified. Both must pass. Do NOT commit." |
-| `tester` | Writes/fixes tests | Yes | "Verify behavior, not implementation. Run every test you modified and confirm it passes. A test change without running the test is not done." |
-| `auditor` | Read-only verification | No | "Check [specialization]. Report YES/NO with evidence. Do NOT edit files." |
-| `refactorer` | Targeted cleanup | Yes | "Fix [specialization] only. Run typecheck and any tests you touch. Do NOT commit." |
-| `qa` | End-to-end QA, browser testing | No | "Test the actual user experience. Report with evidence." |
+| Role            | Job                                        | Edits? | Prompt emphasis                                                                                                                               |
+| --------------- | ------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `researcher`    | Gathers info: codebase, docs, web, scripts | No     | "Report what you find. Do not suggest solutions. Do not edit files."                                                                          |
+| `planner`       | Creates implementation plan from research  | No     | "Think refactor-first. Design the target shape, not the steps."                                                                               |
+| `plan-reviewer` | Adversarially challenges a plan            | No     | "Challenge the plan. Find what's wrong, missing, or over-engineered."                                                                         |
+| `impl`          | Writes code, works TDD                     | Yes    | "Work TDD. Reshape existing code. Run typecheck AND run any tests you modified. Both must pass. Do NOT commit."                               |
+| `tester`        | Writes/fixes tests                         | Yes    | "Verify behavior, not implementation. Run every test you modified and confirm it passes. A test change without running the test is not done." |
+| `auditor`       | Read-only verification                     | No     | "Check [specialization]. Report YES/NO with evidence. Do NOT edit files."                                                                     |
+| `refactorer`    | Targeted cleanup                           | Yes    | "Fix [specialization] only. Run typecheck and any tests you touch. Do NOT commit."                                                            |
+| `qa`            | End-to-end QA, browser testing             | No     | "Test the actual user experience. Report with evidence."                                                                                      |
 
 Auditor specializations: `overeng`, `dry`, `tests`, `regression`, `types`, `browser`, `parity`
 Refactorer specializations: `dry`, `dead-code`, `naming`

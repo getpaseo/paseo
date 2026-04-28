@@ -387,7 +387,7 @@ describe("Codex app-server provider (e2e)", () => {
           ).toBe(true);
 
           const finalAssistantMessage = [...events]
-            .reverse()
+            .toReversed()
             .find((event) => event.type === "timeline" && event.item.type === "assistant_message");
           expect(finalAssistantMessage).toBeDefined();
           if (

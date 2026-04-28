@@ -22,7 +22,7 @@ const escapedAppSrcRoot = appSrcRoot
 const pathSeparatorPattern = "[\\\\/]";
 
 config.resolver.extraNodeModules = {
-  ...(config.resolver.extraNodeModules ?? {}),
+  ...config.resolver.extraNodeModules,
   react: path.join(appNodeModulesRoot, "react"),
   "react-dom": path.join(appNodeModulesRoot, "react-dom"),
   "react/jsx-runtime": path.join(appNodeModulesRoot, "react/jsx-runtime"),

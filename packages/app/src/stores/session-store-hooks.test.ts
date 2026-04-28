@@ -141,13 +141,14 @@ describe("useWorkspaceFields", () => {
     const workspace = createWorkspace({ id: "workspace-a", name: "A", status: "done" });
     initializeWorkspaces([workspace]);
 
+    const selectIdentity = (current: { id: string; name: string }) => ({
+      identity: {
+        id: current.id,
+        name: current.name,
+      },
+    });
     const { result } = renderHook(() =>
-      useWorkspaceFields(SERVER_ID, workspace.id, (current) => ({
-        identity: {
-          id: current.id,
-          name: current.name,
-        },
-      })),
+      useWorkspaceFields(SERVER_ID, workspace.id, selectIdentity),
     );
     const before = result.current;
 

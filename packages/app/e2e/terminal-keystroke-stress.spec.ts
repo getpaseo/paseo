@@ -17,7 +17,7 @@ const STRESS_TIMEOUT_MS = 15_000;
 const RUN_MANUAL_TERMINAL_PERF = process.env.PASEO_TERMINAL_PERF_E2E === "1";
 const terminalPerfDescribe = RUN_MANUAL_TERMINAL_PERF ? test.describe : test.describe.skip;
 
-type DaemonEchoReport = {
+interface DaemonEchoReport {
   inputTextLength: number;
   inputFrameCount: number;
   outputEventCount: number;
@@ -25,7 +25,7 @@ type DaemonEchoReport = {
   sendToOutputMs: LatencyStats;
   firstSendAt: number;
   lastOutputAt: number;
-};
+}
 
 terminalPerfDescribe("Terminal keystroke stress", () => {
   let harness: TerminalE2EHarness;

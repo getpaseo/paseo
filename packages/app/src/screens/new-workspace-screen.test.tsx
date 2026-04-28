@@ -17,7 +17,7 @@ const {
   saveDraftInputMock,
   clearDraftInputMock,
   queueDraftSubmissionMock,
-  createdAgent,
+  createdAgent: _createdAgent,
   createdWorkspace,
   prItem,
   prItemB,
@@ -25,7 +25,7 @@ const {
   initialAttachments,
   initialDraftState,
 } = vi.hoisted(() => {
-  const theme = {
+  const hoistedTheme = {
     spacing: { 1: 4, 2: 8, 3: 12, 4: 16, 6: 24, 8: 32 },
     iconSize: { sm: 14, md: 18, lg: 22 },
     borderWidth: { 1: 1 },
@@ -48,7 +48,7 @@ const {
     },
   };
 
-  const prItem: GitHubSearchItem = {
+  const hoistedPrItem: GitHubSearchItem = {
     kind: "pr",
     number: 202,
     title: "Refactor picker",
@@ -60,7 +60,7 @@ const {
     headRefName: "feature/picker",
   };
 
-  const prItemB: GitHubSearchItem = {
+  const hoistedPrItemB: GitHubSearchItem = {
     kind: "pr",
     number: 303,
     title: "Polish composer chip",
@@ -72,7 +72,7 @@ const {
     headRefName: "feature/composer-chip",
   };
 
-  const issueItem: GitHubSearchItem = {
+  const hoistedIssueItem: GitHubSearchItem = {
     kind: "issue",
     number: 44,
     title: "Keep manual attachment",
@@ -82,50 +82,50 @@ const {
     labels: [],
   };
 
-  const initialAttachments: ComposerAttachment[] = [];
-  const initialDraftState = { text: "" };
+  const hoistedInitialAttachments: ComposerAttachment[] = [];
+  const hoistedInitialDraftState = { text: "" };
 
-  const createdWorkspace = {
+  const hoistedCreatedWorkspace = {
     id: "workspace-1",
     workspaceDirectory: "/repo/.paseo/worktrees/workspace-1",
   };
 
-  const createdAgent = {
+  const hoistedCreatedAgent = {
     id: "agent-1",
-    cwd: createdWorkspace.workspaceDirectory,
+    cwd: hoistedCreatedWorkspace.workspaceDirectory,
   };
 
-  const mockClient = {
+  const hoistedMockClient = {
     isConnected: true,
     getCheckoutStatus: vi.fn(async () => ({ currentBranch: "main" })),
     getBranchSuggestions: vi.fn(async () => ({ branches: ["main", "dev", "feat/x"] })),
     searchGitHub: vi.fn(async () => ({
-      items: [prItem, prItemB],
+      items: [hoistedPrItem, hoistedPrItemB],
       githubFeaturesEnabled: true,
       error: null,
     })),
     createPaseoWorktree: vi.fn(async (_input: CreatePaseoWorktreeInput) => ({
-      workspace: createdWorkspace,
+      workspace: hoistedCreatedWorkspace,
       error: null,
     })),
-    createAgent: vi.fn(async () => createdAgent),
+    createAgent: vi.fn(async () => hoistedCreatedAgent),
   };
 
   return {
-    theme,
-    mockClient,
+    theme: hoistedTheme,
+    mockClient: hoistedMockClient,
     mergeWorkspacesMock: vi.fn(),
     navigateMock: vi.fn(),
     saveDraftInputMock: vi.fn(),
     clearDraftInputMock: vi.fn(),
     queueDraftSubmissionMock: vi.fn(),
-    createdAgent,
-    createdWorkspace,
-    prItem,
-    prItemB,
-    issueItem,
-    initialAttachments,
-    initialDraftState,
+    createdAgent: hoistedCreatedAgent,
+    createdWorkspace: hoistedCreatedWorkspace,
+    prItem: hoistedPrItem,
+    prItemB: hoistedPrItemB,
+    issueItem: hoistedIssueItem,
+    initialAttachments: hoistedInitialAttachments,
+    initialDraftState: hoistedInitialDraftState,
   };
 });
 
@@ -163,6 +163,13 @@ vi.mock("lucide-react-native", () => {
   };
 });
 
+function flattenReanimatedStyle(style: unknown) {
+  if (!Array.isArray(style)) {
+    return style;
+  }
+  return Object.assign({}, ...style.filter(Boolean));
+}
+
 vi.mock("react-native-reanimated", () => ({
   default: {
     View: ({
@@ -170,9 +177,7 @@ vi.mock("react-native-reanimated", () => ({
       style,
       ...props
     }: React.HTMLAttributes<HTMLDivElement> & { testID?: string; style?: unknown }) => {
-      const flattenedStyle = Array.isArray(style)
-        ? Object.assign({}, ...style.filter(Boolean))
-        : style;
+      const flattenedStyle = flattenReanimatedStyle(style);
       return <div {...props} data-testid={testID} style={flattenedStyle as React.CSSProperties} />;
     },
   },
@@ -274,30 +279,77 @@ vi.mock("@/hooks/use-keyboard-shift-style", () => ({
   useKeyboardShiftStyle: () => ({ style: { transform: "translateY(-216px)" } }),
 }));
 
-vi.mock("@/components/composer", () => ({
-  Composer: ({
-    onSubmitMessage,
-    submitBehavior,
-    submitIcon,
-    isSubmitLoading,
-    value,
-    onChangeText,
-    attachments,
-    onChangeAttachments,
-  }: {
-    onSubmitMessage: (payload: {
-      text: string;
-      attachments: ComposerAttachment[];
-      cwd: string;
-    }) => void;
-    submitBehavior?: "clear" | "preserve-and-lock";
-    submitIcon?: "arrow" | "return";
-    isSubmitLoading?: boolean;
-    value: string;
-    onChangeText: (text: string) => void;
+interface ComposerMockProps {
+  onSubmitMessage: (payload: {
+    text: string;
     attachments: ComposerAttachment[];
-    onChangeAttachments: (attachments: ComposerAttachment[]) => void;
-  }) => (
+    cwd: string;
+  }) => void;
+  submitBehavior?: "clear" | "preserve-and-lock";
+  submitIcon?: "arrow" | "return";
+  isSubmitLoading?: boolean;
+  value: string;
+  onChangeText: (text: string) => void;
+  attachments: ComposerAttachment[];
+  onChangeAttachments: (attachments: ComposerAttachment[]) => void;
+}
+
+interface AttachmentPillProps {
+  attachment: Extract<ComposerAttachment, { kind: "github_pr" | "github_issue" }>;
+  attachments: ComposerAttachment[];
+  isDisabled: boolean;
+  onChangeAttachments: (attachments: ComposerAttachment[]) => void;
+}
+
+function ComposerMockAttachmentPill({
+  attachment,
+  attachments,
+  isDisabled,
+  onChangeAttachments,
+}: AttachmentPillProps) {
+  const handleRemove = React.useCallback(() => {
+    onChangeAttachments(
+      attachments.filter(
+        (candidate) =>
+          candidate.kind !== attachment.kind || candidate.item.number !== attachment.item.number,
+      ),
+    );
+  }, [attachment, attachments, onChangeAttachments]);
+  return (
+    <div data-testid="composer-github-attachment-pill">
+      #{attachment.item.number} {attachment.item.title}
+      <button
+        type="button"
+        aria-label={`Remove ${attachment.kind === "github_pr" ? "PR" : "issue"} #${attachment.item.number}`}
+        disabled={isDisabled}
+        onClick={handleRemove}
+      >
+        Remove
+      </button>
+    </div>
+  );
+}
+
+function ComposerMock({
+  onSubmitMessage,
+  submitBehavior,
+  submitIcon,
+  isSubmitLoading,
+  value,
+  onChangeText,
+  attachments,
+  onChangeAttachments,
+}: ComposerMockProps) {
+  const isDisabled = submitBehavior === "preserve-and-lock" && Boolean(isSubmitLoading);
+  const handleTextareaChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLTextAreaElement>) => onChangeText(event.currentTarget.value),
+    [onChangeText],
+  );
+  const handleSubmit = React.useCallback(
+    () => onSubmitMessage({ text: value, attachments, cwd: "/repo" }),
+    [onSubmitMessage, value, attachments],
+  );
+  return (
     <div
       data-testid="test-composer"
       data-submit-behavior={submitBehavior}
@@ -305,54 +357,33 @@ vi.mock("@/components/composer", () => ({
     >
       <textarea
         aria-label="Message agent..."
-        disabled={submitBehavior === "preserve-and-lock" && isSubmitLoading}
+        disabled={isDisabled}
         value={value}
-        onChange={(event) => onChangeText(event.currentTarget.value)}
+        onChange={handleTextareaChange}
       />
-      <button
-        type="button"
-        data-testid="message-input-attach-button"
-        disabled={submitBehavior === "preserve-and-lock" && isSubmitLoading}
-      >
+      <button type="button" data-testid="message-input-attach-button" disabled={isDisabled}>
         Attach
       </button>
       {attachments.map((attachment) =>
         attachment.kind === "github_pr" || attachment.kind === "github_issue" ? (
-          <div
-            data-testid="composer-github-attachment-pill"
+          <ComposerMockAttachmentPill
             key={`${attachment.kind}-${attachment.item.number}`}
-          >
-            #{attachment.item.number} {attachment.item.title}
-            <button
-              type="button"
-              aria-label={`Remove ${attachment.kind === "github_pr" ? "PR" : "issue"} #${
-                attachment.item.number
-              }`}
-              disabled={submitBehavior === "preserve-and-lock" && isSubmitLoading}
-              onClick={() =>
-                onChangeAttachments(
-                  attachments.filter(
-                    (candidate) =>
-                      candidate.kind !== attachment.kind ||
-                      candidate.item.number !== attachment.item.number,
-                  ),
-                )
-              }
-            >
-              Remove
-            </button>
-          </div>
+            attachment={attachment}
+            attachments={attachments}
+            isDisabled={isDisabled}
+            onChangeAttachments={onChangeAttachments}
+          />
         ) : null,
       )}
-      <button
-        type="button"
-        data-testid="test-composer-submit"
-        onClick={() => onSubmitMessage({ text: value, attachments, cwd: "/repo" })}
-      >
+      <button type="button" data-testid="test-composer-submit" onClick={handleSubmit}>
         Submit
       </button>
     </div>
-  ),
+  );
+}
+
+vi.mock("@/components/composer", () => ({
+  Composer: ComposerMock,
 }));
 
 vi.mock("@/components/composer-attachments", () => ({
@@ -399,10 +430,52 @@ vi.mock("@/components/headers/screen-header", () => ({
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  Tooltip: ({ children }: { children: React.ReactNode }) => children,
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) => children,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => children,
 }));
+
+function ComboboxOptionButton({
+  option,
+  onSelect,
+}: {
+  option: { id: string; label: string };
+  onSelect: (id: string) => void;
+}) {
+  const handleClick = React.useCallback(() => onSelect(option.id), [onSelect, option.id]);
+  return (
+    <button type="button" onClick={handleClick}>
+      {option.label}
+    </button>
+  );
+}
+
+function ComboboxOptionRenderWrapper({
+  option,
+  onSelect,
+  renderOption,
+}: {
+  option: { id: string; label: string };
+  onSelect: (id: string) => void;
+  renderOption: (input: {
+    option: { id: string; label: string };
+    selected: boolean;
+    active: boolean;
+    onPress: () => void;
+  }) => React.ReactElement;
+}) {
+  const handlePress = React.useCallback(() => onSelect(option.id), [onSelect, option.id]);
+  return (
+    <>
+      {renderOption({
+        option,
+        selected: false,
+        active: false,
+        onPress: handlePress,
+      })}
+    </>
+  );
+}
 
 vi.mock("@/components/ui/combobox", () => ({
   Combobox: ({
@@ -426,18 +499,14 @@ vi.mock("@/components/ui/combobox", () => ({
       <div data-testid="ref-picker-combobox">
         {options.map((option) =>
           renderOption ? (
-            <React.Fragment key={option.id}>
-              {renderOption({
-                option,
-                selected: false,
-                active: false,
-                onPress: () => onSelect(option.id),
-              })}
-            </React.Fragment>
+            <ComboboxOptionRenderWrapper
+              key={option.id}
+              option={option}
+              onSelect={onSelect}
+              renderOption={renderOption}
+            />
           ) : (
-            <button type="button" key={option.id} onClick={() => onSelect(option.id)}>
-              {option.label}
-            </button>
+            <ComboboxOptionButton key={option.id} option={option} onSelect={onSelect} />
           ),
         )}
       </div>
@@ -586,8 +655,13 @@ describe("NewWorkspaceScreen picker payload", () => {
     expect(pickerRow.style.transform).toBe("translateY(-216px)");
   });
 
-  it("searches only GitHub PRs for the picker", async () => {
+  it("lazily searches only GitHub PRs when the picker opens", async () => {
     renderScreen();
+    await flush();
+
+    expect(mockClient.searchGitHub).not.toHaveBeenCalled();
+
+    click(await findByTestId("new-workspace-ref-picker-trigger"));
     await flush();
 
     expect(mockClient.searchGitHub).toHaveBeenCalledWith({

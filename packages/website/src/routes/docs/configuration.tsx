@@ -11,6 +11,8 @@ export const Route = createFileRoute("/docs/configuration")({
   component: Configuration,
 });
 
+const CUSTOM_PROVIDERS_URL = "https://github.com/getpaseo/paseo/blob/main/docs/CUSTOM-PROVIDERS.md";
+
 function Configuration() {
   return (
     <div className="space-y-8">
@@ -59,15 +61,12 @@ function Configuration() {
       <section className="space-y-4">
         <h2 className="text-xl font-medium">Example</h2>
         <p className="text-white/60 leading-relaxed">
-          Minimal example that configures listening address, hostnames, provider keys, and MCP:
+          Minimal example that configures listening address, hostnames, and MCP:
         </p>
         <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
           {`{
   "$schema": "https://paseo.sh/schemas/paseo.config.v1.json",
   "version": 1,
-  "providers": {
-    "openai": { "apiKey": "..." }
-  },
   "daemon": {
     "listen": "127.0.0.1:6767",
     "hostnames": ["localhost", ".localhost"],
@@ -83,84 +82,31 @@ function Configuration() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-medium">Agent provider runtime settings</h2>
+        <h2 className="text-xl font-medium">Agent providers</h2>
         <p className="text-white/60 leading-relaxed">
-          Use <code className="font-mono">agents.providers</code> to customize how Paseo launches
-          agent provider CLIs. This works for <code className="font-mono">claude</code>,{" "}
-          <code className="font-mono">codex</code>, and
-          <code className="font-mono"> opencode</code>.
+          Agent providers — both the first-class ones Paseo ships with and custom entries you add
+          under <code className="font-mono">agents.providers</code> — are documented on their own
+          page.
         </p>
         <p className="text-white/60 leading-relaxed">
-          <code className="font-mono">command.mode</code> can be{" "}
-          <code className="font-mono">default</code>, <code className="font-mono">append</code>, or{" "}
-          <code className="font-mono">replace</code>. Use <code className="font-mono">env</code> to
-          inject provider-specific environment variables.
+          See{" "}
+          <a href="/docs/providers" className="underline hover:text-white/80">
+            Providers
+          </a>{" "}
+          for first-class providers, how to point Claude at Anthropic-compatible endpoints (Z.AI,
+          Alibaba/Qwen), multiple profiles, custom binaries, ACP agents, and the{" "}
+          <code className="font-mono">additionalModels</code> merge behavior. The full field
+          reference lives on GitHub at{" "}
+          <a
+            href={CUSTOM_PROVIDERS_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="underline hover:text-white/80"
+          >
+            docs/CUSTOM-PROVIDERS.md
+          </a>
+          .
         </p>
-
-        <h3 className="text-lg font-medium">Enable Claude Code Chrome MCP</h3>
-        <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
-          {`{
-  "agents": {
-    "providers": {
-      "claude": {
-        "command": {
-          "mode": "append",
-          "args": ["--chrome"]
-        }
-      }
-    }
-  }
-}`}
-        </pre>
-
-        <h3 className="text-lg font-medium">
-          Point Claude to Anthropic-compatible endpoints (z.ai example)
-        </h3>
-        <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
-          {`{
-  "agents": {
-    "providers": {
-      "claude": {
-        "env": {
-          "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
-          "ANTHROPIC_AUTH_TOKEN": "auth token",
-          "ANTHROPIC_API_KEY": ""
-        }
-      }
-    }
-  }
-}`}
-        </pre>
-
-        <h3 className="text-lg font-medium">Run Claude through Docker</h3>
-        <p className="text-white/60 leading-relaxed">
-          Create a wrapper script that runs Claude in Docker, then tell Paseo to replace the Claude
-          launch command with that script.
-        </p>
-        <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
-          {`{
-  "agents": {
-    "providers": {
-      "claude": {
-        "command": {
-          "mode": "replace",
-          "argv": ["/Users/you/bin/claude-docker"]
-        }
-      }
-    }
-  }
-}`}
-        </pre>
-        <pre className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto text-white/80">
-          {`#!/usr/bin/env bash
-set -euo pipefail
-docker run --rm -i \\
-  -v "$PWD":"$PWD" \\
-  -w "$PWD" \\
-  -v "$HOME/.claude":"$HOME/.claude" \\
-  ghcr.io/anthropics/claude-code:latest \\
-  claude "$@"`}
-        </pre>
       </section>
 
       <section className="space-y-4">

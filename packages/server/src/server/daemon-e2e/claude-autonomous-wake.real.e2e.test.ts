@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 import { ClaudeAgentClient } from "../agent/providers/claude-agent.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -26,7 +26,7 @@ const BACKGROUND_TASK_SLEEP_5_PROMPT = [
 const BACKGROUND_TASK_SLEEP_5_REPEAT_PROMPT = `do it again: ${BACKGROUND_TASK_SLEEP_5_PROMPT}`;
 
 function sanitizeClaudeProjectPath(cwd: string): string {
-  return cwd.replace(/[\\/\.]/g, "-").replace(/_/g, "-");
+  return cwd.replace(/[\\/.]/g, "-").replace(/_/g, "-");
 }
 
 function resolveClaudeTranscriptPath(params: { cwd: string; sessionId: string }): string {
@@ -61,13 +61,13 @@ function resolveClaudeTranscriptPath(params: { cwd: string; sessionId: string })
   );
 }
 
-type ClaudeTranscriptLine = {
+interface ClaudeTranscriptLine {
   type?: unknown;
   timestamp?: unknown;
   uuid?: unknown;
   parentUuid?: unknown;
   message?: { content?: unknown } | null;
-};
+}
 
 function readTranscriptLines(pathname: string): ClaudeTranscriptLine[] {
   if (!existsSync(pathname)) {
@@ -158,10 +158,10 @@ function parseTimestamp(line: ClaudeTranscriptLine): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-type TranscriptRaceEvidence = {
+interface TranscriptRaceEvidence {
   helloAssistantText: string;
   notificationOutcomeAssistantText: string;
-};
+}
 
 function extractTranscriptRaceEvidence(
   lines: ClaudeTranscriptLine[],
@@ -169,13 +169,13 @@ function extractTranscriptRaceEvidence(
   const userLines = lines.filter((line) => line.type === "user");
   const assistantLines = lines.filter((line) => line.type === "assistant");
   const doItAgain = [...userLines]
-    .reverse()
+    .toReversed()
     .find((line) => readUserText(line).toLowerCase().includes("do it again"));
   const isHelloPrompt = (line: ClaudeTranscriptLine): boolean => {
     const text = readUserText(line).trim().toLowerCase();
     return text === "hello" || text === "say exactly hello";
   };
-  const helloUser = [...userLines].reverse().find((line) => isHelloPrompt(line));
+  const helloUser = [...userLines].toReversed().find((line) => isHelloPrompt(line));
 
   if (!doItAgain || !helloUser || typeof helloUser.uuid !== "string") {
     return null;
@@ -201,7 +201,7 @@ function extractTranscriptRaceEvidence(
     return readUserText(line).includes("<task-notification>");
   });
   const taskNotificationUser =
-    [...taskNotificationCandidates].reverse().find((line) => parseTimestamp(line) >= helloTs) ??
+    [...taskNotificationCandidates].toReversed().find((line) => parseTimestamp(line) >= helloTs) ??
     taskNotificationCandidates[0];
   if (!taskNotificationUser || typeof taskNotificationUser.uuid !== "string") {
     return null;
@@ -284,6 +284,14 @@ async function runPreHelloNoise(params: { wsUrl: string; durationMs: number }): 
   const deadline = Date.now() + params.durationMs;
   while (Date.now() < deadline) {
     await new Promise<void>((resolve) => {
+      let pendingResolve: (() => void) | null = resolve;
+      const settle = () => {
+        if (!pendingResolve) return;
+        const fn = pendingResolve;
+        pendingResolve = null;
+        clearTimeout(fallback);
+        fn();
+      };
       const ws = new WebSocket(params.wsUrl);
       const fallback = setTimeout(() => {
         try {
@@ -291,7 +299,7 @@ async function runPreHelloNoise(params: { wsUrl: string; durationMs: number }): 
         } catch {
           // ignore
         }
-        resolve();
+        settle();
       }, 250);
 
       ws.once("open", () => {
@@ -319,14 +327,8 @@ async function runPreHelloNoise(params: { wsUrl: string; durationMs: number }): 
         }, 5);
       });
 
-      ws.once("close", () => {
-        clearTimeout(fallback);
-        resolve();
-      });
-      ws.once("error", () => {
-        clearTimeout(fallback);
-        resolve();
-      });
+      ws.once("close", settle);
+      ws.once("error", settle);
     });
   }
 }
@@ -349,6 +351,76 @@ function summarizeTimelineEntry(entry: {
     return `[tool:${item.name}:${item.status}]`;
   }
   return `[${item.type}]`;
+}
+
+async function waitForTranscriptRaceEvidence(params: {
+  transcriptPath: string;
+  waitError: Error | null;
+  afterWaitStatus: string;
+  cancelRecovered: boolean;
+}): Promise<TranscriptRaceEvidence> {
+  const { transcriptPath, waitError, afterWaitStatus, cancelRecovered } = params;
+  let evidence: TranscriptRaceEvidence | null = null;
+  const transcriptDeadline = Date.now() + 20_000;
+  while (Date.now() < transcriptDeadline) {
+    const lines = readTranscriptLines(transcriptPath);
+    evidence = extractTranscriptRaceEvidence(lines);
+    if (evidence) {
+      break;
+    }
+    await sleep(250);
+  }
+  if (!evidence) {
+    const transcriptDump = summarizeTranscriptTail(readTranscriptLines(transcriptPath));
+    throw new Error(
+      [
+        "Failed to extract transcript race evidence (hello assistant and notification-turn assistant).",
+        `transcriptPath=${transcriptPath}`,
+        `waitError=${waitError ? waitError.message : "null"}`,
+        `afterWaitStatus=${afterWaitStatus}`,
+        `cancelRecovered=${cancelRecovered}`,
+        "transcriptTail:",
+        transcriptDump,
+      ].join("\n"),
+    );
+  }
+  return evidence;
+}
+
+async function waitForAssistantTextCombined(params: {
+  client: DaemonClient;
+  agentId: string;
+  helloAssistant: string;
+  notificationAssistant: string;
+}): Promise<string> {
+  const { client, agentId, helloAssistant, notificationAssistant } = params;
+  let assistantTextCombined = "";
+  const timelineDeadline = Date.now() + 20_000;
+  while (Date.now() < timelineDeadline) {
+    const timeline = await client.fetchAgentTimeline(agentId, {
+      direction: "tail",
+      limit: 0,
+      projection: "canonical",
+    });
+    const assistantTexts = timeline.entries
+      .filter(
+        (
+          entry,
+        ): entry is {
+          item: { type: "assistant_message"; text: string };
+        } => entry.item.type === "assistant_message",
+      )
+      .map((entry) => compactText(entry.item.text));
+    assistantTextCombined = assistantTexts.join("");
+    if (
+      assistantTextCombined.includes(helloAssistant) &&
+      assistantTextCombined.includes(notificationAssistant)
+    ) {
+      break;
+    }
+    await sleep(250);
+  }
+  return assistantTextCombined;
 }
 
 describe("daemon E2E (real claude) - autonomous wake from background task", () => {
@@ -1019,60 +1091,21 @@ describe("daemon E2E (real claude) - autonomous wake from background task", () =
         sessionId: sessionId as string,
       });
 
-      let evidence: TranscriptRaceEvidence | null = null;
-      const transcriptDeadline = Date.now() + 20_000;
-      while (Date.now() < transcriptDeadline) {
-        const lines = readTranscriptLines(transcriptPath);
-        evidence = extractTranscriptRaceEvidence(lines);
-        if (evidence) {
-          break;
-        }
-        await sleep(250);
-      }
-      if (!evidence) {
-        const transcriptDump = summarizeTranscriptTail(readTranscriptLines(transcriptPath));
-        throw new Error(
-          [
-            "Failed to extract transcript race evidence (hello assistant and notification-turn assistant).",
-            `transcriptPath=${transcriptPath}`,
-            `waitError=${waitError ? waitError.message : "null"}`,
-            `afterWaitStatus=${afterWait?.status ?? "unknown"}`,
-            `cancelRecovered=${cancelRecovered}`,
-            "transcriptTail:",
-            transcriptDump,
-          ].join("\n"),
-        );
-      }
+      const evidence = await waitForTranscriptRaceEvidence({
+        transcriptPath,
+        waitError,
+        afterWaitStatus: afterWait?.status ?? "unknown",
+        cancelRecovered,
+      });
 
       const helloAssistant = compactText(evidence.helloAssistantText);
       const notificationAssistant = compactText(evidence.notificationOutcomeAssistantText);
-      let assistantTexts: string[] = [];
-      let assistantTextCombined = "";
-      const timelineDeadline = Date.now() + 20_000;
-      while (Date.now() < timelineDeadline) {
-        const timeline = await client.fetchAgentTimeline(agent.id, {
-          direction: "tail",
-          limit: 0,
-          projection: "canonical",
-        });
-        assistantTexts = timeline.entries
-          .filter(
-            (
-              entry,
-            ): entry is {
-              item: { type: "assistant_message"; text: string };
-            } => entry.item.type === "assistant_message",
-          )
-          .map((entry) => compactText(entry.item.text));
-        assistantTextCombined = assistantTexts.join("");
-        if (
-          assistantTextCombined.includes(helloAssistant) &&
-          assistantTextCombined.includes(notificationAssistant)
-        ) {
-          break;
-        }
-        await sleep(250);
-      }
+      const assistantTextCombined = await waitForAssistantTextCombined({
+        client,
+        agentId: agent.id,
+        helloAssistant,
+        notificationAssistant,
+      });
 
       expect(assistantTextCombined.includes(helloAssistant)).toBe(true);
       expect(assistantTextCombined.includes(notificationAssistant)).toBe(true);

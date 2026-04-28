@@ -51,51 +51,42 @@ export function addSendOptions(cmd: Command): Command {
 async function readImageFiles(
   imagePaths: string[],
 ): Promise<Array<{ data: string; mimeType: string }>> {
-  const images: Array<{ data: string; mimeType: string }> = [];
+  return Promise.all(
+    imagePaths.map(async (path) => {
+      try {
+        const buffer = await readFile(path);
+        const ext = extname(path).toLowerCase();
 
-  for (const path of imagePaths) {
-    try {
-      const buffer = await readFile(path);
-      const ext = extname(path).toLowerCase();
+        let mimeType = "image/jpeg";
+        switch (ext) {
+          case ".png":
+            mimeType = "image/png";
+            break;
+          case ".jpg":
+          case ".jpeg":
+            mimeType = "image/jpeg";
+            break;
+          case ".gif":
+            mimeType = "image/gif";
+            break;
+          case ".webp":
+            mimeType = "image/webp";
+            break;
+          default:
+            mimeType = "image/jpeg";
+        }
 
-      // Determine media type from extension
-      let mimeType = "image/jpeg";
-      switch (ext) {
-        case ".png":
-          mimeType = "image/png";
-          break;
-        case ".jpg":
-        case ".jpeg":
-          mimeType = "image/jpeg";
-          break;
-        case ".gif":
-          mimeType = "image/gif";
-          break;
-        case ".webp":
-          mimeType = "image/webp";
-          break;
-        default:
-          // Default to jpeg for unknown types
-          mimeType = "image/jpeg";
+        return { data: buffer.toString("base64"), mimeType };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw {
+          code: "IMAGE_READ_ERROR",
+          message: `Failed to read image file: ${path}`,
+          details: message,
+        } satisfies CommandError;
       }
-
-      const data = buffer.toString("base64");
-      images.push({
-        data,
-        mimeType,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const error: CommandError = {
-        code: "IMAGE_READ_ERROR",
-        message: `Failed to read image file: ${path}`,
-        details: message,
-      };
-      throw error;
-    }
-  }
-
-  return images;
+    }),
+  );
 }
 
 async function resolvePromptInput(options: {
@@ -145,6 +136,28 @@ async function resolvePromptInput(options: {
     };
     throw error;
   }
+}
+
+type SendWaitState = Awaited<
+  ReturnType<Awaited<ReturnType<typeof connectToDaemon>>["waitForFinish"]>
+>;
+
+function buildSendResult(agentIdArg: string, state: SendWaitState): AgentSendResult {
+  const agentId = state.final?.id ?? agentIdArg;
+  if (state.status === "timeout") {
+    return { agentId, status: "timeout", message: "Timed out waiting for agent to finish" };
+  }
+  if (state.status === "permission") {
+    return { agentId, status: "permission", message: "Agent is waiting for permission" };
+  }
+  if (state.status === "error") {
+    return {
+      agentId,
+      status: "error",
+      message: state.error ?? "Agent finished with error",
+    };
+  }
+  return { agentId, status: "completed", message: "Agent completed processing the message" };
 }
 
 export async function runSendCommand(
@@ -207,54 +220,12 @@ export async function runSendCommand(
       };
     }
 
-    // Wait for agent to finish
     const state = await client.waitForFinish(agentIdArg, 600000); // 10 minute timeout
-
     await client.close();
-
-    if (state.status === "timeout") {
-      return {
-        type: "single",
-        data: {
-          agentId: state.final?.id ?? agentIdArg,
-          status: "timeout",
-          message: "Timed out waiting for agent to finish",
-        },
-        schema: agentSendSchema,
-      };
-    }
-
-    if (state.status === "permission") {
-      return {
-        type: "single",
-        data: {
-          agentId: state.final?.id ?? agentIdArg,
-          status: "permission",
-          message: "Agent is waiting for permission",
-        },
-        schema: agentSendSchema,
-      };
-    }
-
-    if (state.status === "error") {
-      return {
-        type: "single",
-        data: {
-          agentId: state.final?.id ?? agentIdArg,
-          status: "error",
-          message: state.error ?? "Agent finished with error",
-        },
-        schema: agentSendSchema,
-      };
-    }
 
     return {
       type: "single",
-      data: {
-        agentId: state.final?.id ?? agentIdArg,
-        status: "completed",
-        message: "Agent completed processing the message",
-      },
+      data: buildSendResult(agentIdArg, state),
       schema: agentSendSchema,
     };
   } catch (err) {

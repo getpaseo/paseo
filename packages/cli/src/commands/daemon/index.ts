@@ -7,6 +7,12 @@ import { pairCommand } from "./pair.js";
 import { withOutput } from "../../output/index.js";
 import { addJsonOption } from "../../utils/command-options.js";
 
+function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
+  if (typeof hostnames === "string") return hostnames;
+  if (typeof allowedHosts === "string") return allowedHosts;
+  return undefined;
+}
+
 export function createDaemonCommand(): Command {
   const daemon = new Command("daemon").description("Manage the Paseo daemon");
 
@@ -21,6 +27,7 @@ export function createDaemonCommand(): Command {
     .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
     .option("--timeout <seconds>", "Wait timeout before failing (default: 15)")
     .option("--force", "Send SIGKILL if graceful stop times out")
+    .option("--kill-timeout <seconds>", "Wait after SIGKILL before failing (default: 3)")
     .action(withOutput(runStopCommand));
 
   addJsonOption(daemon.command("restart").description("Restart the local daemon"))
@@ -46,12 +53,7 @@ export function createDaemonCommand(): Command {
         return runRestartCommand(
           {
             ...options,
-            hostnames:
-              typeof options.hostnames === "string"
-                ? options.hostnames
-                : typeof options.allowedHosts === "string"
-                  ? options.allowedHosts
-                  : undefined,
+            hostnames: resolveHostnamesOption(options.hostnames, options.allowedHosts),
           },
           command,
         );

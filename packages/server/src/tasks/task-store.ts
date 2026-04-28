@@ -181,16 +181,9 @@ export class FileTaskStore implements TaskStore {
     await this.ensureDir();
     try {
       const files = await readdir(this.dir);
-      const tasks: Task[] = [];
-      for (const file of files) {
-        if (file.endsWith(".md")) {
-          const id = file.slice(0, -3);
-          const task = await this.readTask(id);
-          if (task) {
-            tasks.push(task);
-          }
-        }
-      }
+      const ids = files.filter((file) => file.endsWith(".md")).map((file) => file.slice(0, -3));
+      const loaded = await Promise.all(ids.map((id) => this.readTask(id)));
+      const tasks: Task[] = loaded.filter((task): task is Task => task !== null);
       // Sort by created date (oldest first) for consistent ordering
       return tasks.sort((a, b) => a.created.localeCompare(b.created));
     } catch (error) {

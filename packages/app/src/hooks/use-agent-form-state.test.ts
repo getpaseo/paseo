@@ -53,6 +53,7 @@ describe("useAgentFormState", () => {
         {
           provider: "zai",
           status: "ready",
+          enabled: true,
           label: "ZAI",
           description: "Claude with ZAI config",
           defaultModeId: "default",
@@ -69,6 +70,7 @@ describe("useAgentFormState", () => {
         {
           provider: "claude",
           status: "ready",
+          enabled: true,
           label: "Claude",
           description: "Anthropic Claude",
           defaultModeId: "default",
@@ -544,6 +546,7 @@ describe("useAgentFormState", () => {
         {
           provider: "codex",
           status: "loading",
+          enabled: true,
           label: TEST_CODEX_DEFINITION.label,
           description: TEST_CODEX_DEFINITION.description,
           defaultModeId: TEST_CODEX_DEFINITION.defaultModeId,
@@ -552,6 +555,7 @@ describe("useAgentFormState", () => {
         {
           provider: "claude",
           status: "ready",
+          enabled: true,
           label: TEST_CLAUDE_DEFINITION.label,
           description: TEST_CLAUDE_DEFINITION.description,
           defaultModeId: TEST_CLAUDE_DEFINITION.defaultModeId,
@@ -596,11 +600,12 @@ describe("useAgentFormState", () => {
       expect(resolved.thinkingOptionId).toBe("xhigh");
     });
 
-    it("clears a user-selected provider when the refreshed snapshot marks it unavailable", () => {
-      const unavailableEntries: ProviderSnapshotEntry[] = [
+    it("ignores disabled ready providers when resolving selectable defaults", () => {
+      const entries: ProviderSnapshotEntry[] = [
         {
           provider: "codex",
-          status: "unavailable",
+          status: "ready",
+          enabled: true,
           label: TEST_CODEX_DEFINITION.label,
           description: TEST_CODEX_DEFINITION.description,
           defaultModeId: TEST_CODEX_DEFINITION.defaultModeId,
@@ -609,6 +614,106 @@ describe("useAgentFormState", () => {
         {
           provider: "claude",
           status: "ready",
+          enabled: false,
+          label: TEST_CLAUDE_DEFINITION.label,
+          description: TEST_CLAUDE_DEFINITION.description,
+          defaultModeId: TEST_CLAUDE_DEFINITION.defaultModeId,
+          modes: TEST_CLAUDE_DEFINITION.modes,
+        },
+      ];
+      const providerDefinitions = buildProviderDefinitions(entries);
+      const selectableProviderMap = __private__.buildProviderDefinitionMapForStatuses({
+        snapshotEntries: entries,
+        providerDefinitions,
+        statuses: new Set<ProviderSnapshotEntry["status"]>(["ready"]),
+      });
+
+      const resolved = __private__.resolveFormState(
+        undefined,
+        { provider: "claude" },
+        null,
+        {
+          serverId: false,
+          provider: false,
+          modeId: false,
+          model: false,
+          thinkingOptionId: false,
+          workingDir: false,
+        },
+        {
+          serverId: null,
+          provider: "codex",
+          modeId: "",
+          model: "",
+          thinkingOptionId: "",
+          workingDir: "",
+        },
+        new Set<string>(),
+        selectableProviderMap,
+      );
+
+      expect(resolved.provider).toBe("codex");
+      expect(resolved.modeId).toBe("auto");
+    });
+
+    it("excludes disabled providers from the selectable provider map without removing them from snapshot definitions", () => {
+      const entries: ProviderSnapshotEntry[] = [
+        {
+          provider: "codex",
+          status: "ready",
+          enabled: true,
+          label: TEST_CODEX_DEFINITION.label,
+          description: TEST_CODEX_DEFINITION.description,
+          defaultModeId: TEST_CODEX_DEFINITION.defaultModeId,
+          modes: TEST_CODEX_DEFINITION.modes,
+        },
+        {
+          provider: "claude",
+          status: "ready",
+          enabled: false,
+          label: TEST_CLAUDE_DEFINITION.label,
+          description: TEST_CLAUDE_DEFINITION.description,
+          defaultModeId: TEST_CLAUDE_DEFINITION.defaultModeId,
+          modes: TEST_CLAUDE_DEFINITION.modes,
+        },
+      ];
+      const providerDefinitions = buildProviderDefinitions(entries);
+
+      const selectableProviderMap = __private__.buildProviderDefinitionMapForStatuses({
+        snapshotEntries: entries,
+        providerDefinitions,
+        statuses: new Set<ProviderSnapshotEntry["status"]>(["ready"]),
+      });
+
+      const providerDefinitionIds = [providerDefinitions[0]?.id, providerDefinitions[1]?.id];
+      const snapshotProviderStates = [
+        { provider: entries[0]?.provider, enabled: entries[0]?.enabled },
+        { provider: entries[1]?.provider, enabled: entries[1]?.enabled },
+      ];
+
+      expect([...selectableProviderMap.keys()]).toEqual(["codex"]);
+      expect(providerDefinitionIds).toEqual(["codex", "claude"]);
+      expect(snapshotProviderStates).toEqual([
+        { provider: "codex", enabled: true },
+        { provider: "claude", enabled: false },
+      ]);
+    });
+
+    it("clears a user-selected provider when the refreshed snapshot marks it unavailable", () => {
+      const unavailableEntries: ProviderSnapshotEntry[] = [
+        {
+          provider: "codex",
+          status: "unavailable",
+          enabled: true,
+          label: TEST_CODEX_DEFINITION.label,
+          description: TEST_CODEX_DEFINITION.description,
+          defaultModeId: TEST_CODEX_DEFINITION.defaultModeId,
+          modes: TEST_CODEX_DEFINITION.modes,
+        },
+        {
+          provider: "claude",
+          status: "ready",
+          enabled: true,
           label: TEST_CLAUDE_DEFINITION.label,
           description: TEST_CLAUDE_DEFINITION.description,
           defaultModeId: TEST_CLAUDE_DEFINITION.defaultModeId,

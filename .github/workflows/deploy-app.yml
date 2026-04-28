@@ -3,10 +3,10 @@ name: Deploy App
 on:
   push:
     tags:
-      - 'v*'
-      - '!v*-beta.*'
-      - 'app-v*'
-      - '!app-v*-beta.*'
+      - "v*"
+      - "!v*-beta.*"
+      - "app-v*"
+      - "!app-v*-beta.*"
   workflow_dispatch:
 
 jobs:
@@ -18,10 +18,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@boudra'
+          node-version: "22"
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@boudra"
 
       - name: Install dependencies
         run: npm install --workspace=@getpaseo/app --include-workspace-root

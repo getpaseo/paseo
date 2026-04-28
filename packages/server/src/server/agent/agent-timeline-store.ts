@@ -6,19 +6,19 @@ import type {
   AgentTimelineRow,
 } from "./agent-timeline-store-types.js";
 
-export type SeedAgentTimelineOptions = {
+export interface SeedAgentTimelineOptions {
   items?: readonly AgentTimelineItem[];
   rows?: readonly AgentTimelineRow[];
   epoch?: string;
   nextSeq?: number;
   timestamp?: string;
-};
+}
 
-type AgentTimelineState = {
+interface AgentTimelineState {
   epoch: string;
   rows: AgentTimelineRow[];
   nextSeq: number;
-};
+}
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 
@@ -32,6 +32,93 @@ function normalizeTimelineMessageId(messageId: string | undefined): string | und
   }
   const normalized = messageId.trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+interface FetchContext {
+  state: AgentTimelineState;
+  direction: NonNullable<AgentTimelineFetchOptions["direction"]>;
+  limit: number;
+  selectAll: boolean;
+  cursor: AgentTimelineFetchOptions["cursor"];
+  minSeq: number;
+  maxSeq: number;
+  window: { minSeq: number; maxSeq: number; nextSeq: number };
+}
+
+function fetchTail(ctx: FetchContext): AgentTimelineFetchResult {
+  const { state, direction, limit, selectAll, minSeq, window } = ctx;
+  const selected =
+    selectAll || limit >= state.rows.length
+      ? state.rows
+      : state.rows.slice(state.rows.length - limit);
+  return {
+    epoch: state.epoch,
+    direction,
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window,
+    hasOlder: selected.length > 0 && selected[0]!.seq > minSeq,
+    hasNewer: false,
+    rows: selected.map(cloneRow),
+  };
+}
+
+function fetchAfter(ctx: FetchContext): AgentTimelineFetchResult {
+  const { state, direction, limit, selectAll, cursor, minSeq, maxSeq, window } = ctx;
+  const baseSeq = cursor?.seq ?? 0;
+  const startIdx = state.rows.findIndex((row) => row.seq > baseSeq);
+  if (startIdx < 0) {
+    return {
+      epoch: state.epoch,
+      direction,
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window,
+      hasOlder: baseSeq >= minSeq,
+      hasNewer: false,
+      rows: [],
+    };
+  }
+
+  const selected = selectAll
+    ? state.rows.slice(startIdx)
+    : state.rows.slice(startIdx, startIdx + limit);
+  const lastSelected = selected[selected.length - 1];
+  return {
+    epoch: state.epoch,
+    direction,
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window,
+    hasOlder: selected[0]!.seq > minSeq,
+    hasNewer: Boolean(lastSelected && lastSelected.seq < maxSeq),
+    rows: selected.map(cloneRow),
+  };
+}
+
+function fetchBefore(ctx: FetchContext): AgentTimelineFetchResult {
+  const { state, direction, limit, selectAll, cursor, minSeq, window } = ctx;
+  const beforeSeq = cursor?.seq ?? state.nextSeq;
+  const endExclusive = state.rows.findIndex((row) => row.seq >= beforeSeq);
+  const boundedRows = endExclusive < 0 ? state.rows : state.rows.slice(0, endExclusive);
+  const selected =
+    selectAll || limit >= boundedRows.length
+      ? boundedRows
+      : boundedRows.slice(boundedRows.length - limit);
+  return {
+    epoch: state.epoch,
+    direction,
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window,
+    hasOlder: selected.length > 0 && selected[0]!.seq > minSeq,
+    hasNewer: endExclusive >= 0,
+    rows: selected.map(cloneRow),
+  };
 }
 
 export class InMemoryAgentTimelineStore {
@@ -103,8 +190,6 @@ export class InMemoryAgentTimelineStore {
       };
     }
 
-    const cloneRows = (items: AgentTimelineRow[]) => items.map(cloneRow);
-
     if (direction === "after" && cursor && state.rows.length > 0 && cursor.seq < minSeq - 1) {
       return {
         epoch: state.epoch,
@@ -115,7 +200,7 @@ export class InMemoryAgentTimelineStore {
         window,
         hasOlder: false,
         hasNewer: false,
-        rows: cloneRows(state.rows),
+        rows: state.rows.map(cloneRow),
       };
     }
 
@@ -133,76 +218,24 @@ export class InMemoryAgentTimelineStore {
       };
     }
 
-    if (direction === "tail") {
-      const selected =
-        selectAll || limit >= state.rows.length
-          ? state.rows
-          : state.rows.slice(state.rows.length - limit);
-      return {
-        epoch: state.epoch,
-        direction,
-        reset: false,
-        staleCursor: false,
-        gap: false,
-        window,
-        hasOlder: selected.length > 0 && selected[0]!.seq > minSeq,
-        hasNewer: false,
-        rows: cloneRows(selected),
-      };
-    }
-
-    if (direction === "after") {
-      const baseSeq = cursor?.seq ?? 0;
-      const startIdx = state.rows.findIndex((row) => row.seq > baseSeq);
-      if (startIdx < 0) {
-        return {
-          epoch: state.epoch,
-          direction,
-          reset: false,
-          staleCursor: false,
-          gap: false,
-          window,
-          hasOlder: baseSeq >= minSeq,
-          hasNewer: false,
-          rows: [],
-        };
-      }
-
-      const selected = selectAll
-        ? state.rows.slice(startIdx)
-        : state.rows.slice(startIdx, startIdx + limit);
-      const lastSelected = selected[selected.length - 1];
-      return {
-        epoch: state.epoch,
-        direction,
-        reset: false,
-        staleCursor: false,
-        gap: false,
-        window,
-        hasOlder: selected[0]!.seq > minSeq,
-        hasNewer: Boolean(lastSelected && lastSelected.seq < maxSeq),
-        rows: cloneRows(selected),
-      };
-    }
-
-    const beforeSeq = cursor?.seq ?? state.nextSeq;
-    const endExclusive = state.rows.findIndex((row) => row.seq >= beforeSeq);
-    const boundedRows = endExclusive < 0 ? state.rows : state.rows.slice(0, endExclusive);
-    const selected =
-      selectAll || limit >= boundedRows.length
-        ? boundedRows
-        : boundedRows.slice(boundedRows.length - limit);
-    return {
-      epoch: state.epoch,
+    const ctx: FetchContext = {
+      state,
       direction,
-      reset: false,
-      staleCursor: false,
-      gap: false,
+      limit,
+      selectAll,
+      cursor,
+      minSeq,
+      maxSeq,
       window,
-      hasOlder: selected.length > 0 && selected[0]!.seq > minSeq,
-      hasNewer: endExclusive >= 0,
-      rows: cloneRows(selected),
     };
+
+    if (direction === "tail") {
+      return fetchTail(ctx);
+    }
+    if (direction === "after") {
+      return fetchAfter(ctx);
+    }
+    return fetchBefore(ctx);
   }
 
   append(
@@ -244,7 +277,7 @@ export class InMemoryAgentTimelineStore {
       return null;
     }
 
-    return chunks.reverse().join("");
+    return chunks.toReversed().join("");
   }
 
   getCanonicalUserMessagesById(agentId: string): Map<string, string> {

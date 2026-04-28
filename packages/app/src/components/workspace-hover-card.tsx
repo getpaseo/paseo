@@ -1,16 +1,27 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PropsWithChildren,
   type ReactElement,
+  type ReactNode,
 } from "react";
-import { Dimensions, Platform, Text, View } from "react-native";
+import {
+  Dimensions,
+  Platform,
+  Text,
+  View,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ExternalLink } from "lucide-react-native";
 import { GitHubIcon } from "@/components/icons/github-icon";
+import type { Theme } from "@/styles/theme";
 import { DiffStat } from "@/components/diff-stat";
 import { Pressable } from "react-native";
 import { Portal } from "@gorhom/portal";
@@ -80,10 +91,10 @@ export function WorkspaceHoverCard({
   prHint,
   isDragging,
   children,
-}: PropsWithChildren<WorkspaceHoverCardProps>): ReactElement {
+}: PropsWithChildren<WorkspaceHoverCardProps>): ReactNode {
   // Desktop-only: skip on non-web platforms
   if (Platform.OS !== "web") {
-    return <>{children}</>;
+    return children;
   }
 
   return (
@@ -205,7 +216,6 @@ function WorkspaceHoverCardContent({
   triggerRef: React.RefObject<View | null>;
   contentRef: React.RefObject<View | null>;
 }): ReactElement | null {
-  const { theme } = useUnistyles();
   const bottomSheetInternal = useBottomSheetModalInternal(true);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
@@ -219,6 +229,7 @@ function WorkspaceHoverCardContent({
     measureElement(triggerRef.current).then((rect) => {
       if (cancelled) return;
       setTriggerRect(rect);
+      return;
     });
 
     return () => {
@@ -248,6 +259,19 @@ function WorkspaceHoverCardContent({
     [],
   );
 
+  const cardStyle = useMemo(
+    () => [
+      styles.card,
+      {
+        width: HOVER_CARD_WIDTH,
+        position: "absolute" as const,
+        top: position?.y ?? -9999,
+        left: position?.x ?? -9999,
+      },
+    ],
+    [position?.x, position?.y],
+  );
+
   return (
     <Portal hostName={bottomSheetInternal?.hostName}>
       <View pointerEvents="box-none" style={styles.portalOverlay}>
@@ -260,15 +284,7 @@ function WorkspaceHoverCardContent({
           accessibilityRole="menu"
           accessibilityLabel="Workspace scripts"
           testID="workspace-hover-card"
-          style={[
-            styles.card,
-            {
-              width: HOVER_CARD_WIDTH,
-              position: "absolute",
-              top: position?.y ?? -9999,
-              left: position?.x ?? -9999,
-            },
-          ]}
+          style={cardStyle}
         >
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle} numberOfLines={1} testID="hover-card-workspace-name">
@@ -289,63 +305,95 @@ function WorkspaceHoverCardContent({
           {prHint?.checks && prHint.checks.length > 0 ? (
             <>
               <View style={styles.separator} />
-              <Pressable
-                style={({ hovered }) => [styles.checksSummaryRow, hovered && styles.listRowHovered]}
-                onPress={() => void openExternalUrl(`${prHint.url}/checks`)}
-              >
-                {({ hovered }) => {
-                  const checks = prHint.checks!;
-                  const failed = checks.filter((c) => c.status === "failure").length;
-                  const pending = checks.filter((c) => c.status === "pending").length;
-
-                  let badgeColor: string;
-                  let badgeLabel: string;
-
-                  if (failed > 0) {
-                    badgeColor = theme.colors.palette.red[500];
-                    badgeLabel = `${failed} failed`;
-                  } else if (pending > 0) {
-                    badgeColor = theme.colors.palette.amber[500];
-                    badgeLabel = `${pending} running`;
-                  } else {
-                    badgeColor = theme.colors.palette.green[500];
-                    badgeLabel = `${checks.length} passed`;
-                  }
-
-                  const iconColor = hovered
-                    ? theme.colors.foreground
-                    : theme.colors.foregroundMuted;
-                  return (
-                    <>
-                      {hovered ? (
-                        <ExternalLink size={12} color={iconColor} />
-                      ) : (
-                        <GitHubIcon size={12} color={iconColor} />
-                      )}
-                      <Text
-                        style={[
-                          styles.checksSummaryLabel,
-                          hovered && styles.checksSummaryLabelHovered,
-                        ]}
-                      >
-                        Checks
-                      </Text>
-                      <View style={styles.checksSummaryCounts}>
-                        <View style={[styles.checksDot, { backgroundColor: badgeColor }]} />
-                        <Text style={[styles.checksStatusText, { color: badgeColor }]}>
-                          {badgeLabel}
-                        </Text>
-                      </View>
-                    </>
-                  );
-                }}
-              </Pressable>
+              <ChecksSummaryPressable checks={prHint.checks} url={prHint.url} />
             </>
           ) : null}
         </Animated.View>
       </View>
     </Portal>
   );
+}
+
+const ThemedExternalLink = withUnistyles(ExternalLink);
+const ThemedGitHubIcon = withUnistyles(GitHubIcon);
+
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function ChecksSummaryContent({
+  checks,
+  hovered,
+}: {
+  checks: NonNullable<PrHint["checks"]>;
+  hovered: boolean;
+}) {
+  const failed = checks.filter((c) => c.status === "failure").length;
+  const pending = checks.filter((c) => c.status === "pending").length;
+
+  let badgeLabel: string;
+  let dotStyle: StyleProp<ViewStyle>;
+  let statusTextStyle: StyleProp<TextStyle>;
+
+  if (failed > 0) {
+    badgeLabel = `${failed} failed`;
+    dotStyle = styles.checksDotFailed;
+    statusTextStyle = styles.checksStatusTextFailed;
+  } else if (pending > 0) {
+    badgeLabel = `${pending} running`;
+    dotStyle = styles.checksDotPending;
+    statusTextStyle = styles.checksStatusTextPending;
+  } else {
+    badgeLabel = `${checks.length} passed`;
+    dotStyle = styles.checksDotPassed;
+    statusTextStyle = styles.checksStatusTextPassed;
+  }
+
+  const labelStyle = hovered ? checksSummaryLabelHoveredCombined : styles.checksSummaryLabel;
+  const iconUniProps = hovered ? foregroundColorMapping : foregroundMutedColorMapping;
+
+  return (
+    <>
+      {hovered ? (
+        <ThemedExternalLink size={12} uniProps={iconUniProps} />
+      ) : (
+        <ThemedGitHubIcon size={12} uniProps={iconUniProps} />
+      )}
+      <Text style={labelStyle}>Checks</Text>
+      <View style={styles.checksSummaryCounts}>
+        <View style={dotStyle} />
+        <Text style={statusTextStyle}>{badgeLabel}</Text>
+      </View>
+    </>
+  );
+}
+
+function ChecksSummaryPressable({
+  checks,
+  url,
+}: {
+  checks: NonNullable<PrHint["checks"]>;
+  url: string;
+}) {
+  const handlePress = useCallback(() => {
+    void openExternalUrl(`${url}/checks`);
+  }, [url]);
+
+  const renderChildren = useCallback(
+    ({ hovered }: { pressed: boolean; hovered?: boolean }) => (
+      <ChecksSummaryContent checks={checks} hovered={Boolean(hovered)} />
+    ),
+    [checks],
+  );
+
+  return (
+    <Pressable style={checksSummaryPressableStyle} onPress={handlePress}>
+      {renderChildren}
+    </Pressable>
+  );
+}
+
+function checksSummaryPressableStyle({ hovered = false }: { pressed: boolean; hovered?: boolean }) {
+  return [styles.checksSummaryRow, hovered && styles.listRowHovered];
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -421,13 +469,42 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     justifyContent: "flex-end",
   },
-  checksDot: {
+  checksDotFailed: {
     width: 6,
     height: 6,
     borderRadius: 3,
+    backgroundColor: theme.colors.palette.red[500],
   },
-  checksStatusText: {
+  checksDotPending: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.colors.palette.amber[500],
+  },
+  checksDotPassed: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.colors.palette.green[500],
+  },
+  checksStatusTextFailed: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
+    color: theme.colors.palette.red[500],
+  },
+  checksStatusTextPending: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.palette.amber[500],
+  },
+  checksStatusTextPassed: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.palette.green[500],
   },
 }));
+
+const checksSummaryLabelHoveredCombined = [
+  styles.checksSummaryLabel,
+  styles.checksSummaryLabelHovered,
+];

@@ -14,13 +14,13 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { useAgentHistory } from "./use-agent-history";
 
 const { mockClient, mockRuntimeStore } = vi.hoisted(() => {
-  const mockClient = {
+  const hoistedClient = {
     fetchAgentHistory: vi.fn(),
   };
-  const mockRuntimeStore = {
+  const hoistedRuntimeStore = {
     refreshAgentDirectory: vi.fn(),
   };
-  return { mockClient, mockRuntimeStore };
+  return { mockClient: hoistedClient, mockRuntimeStore: hoistedRuntimeStore };
 });
 
 vi.mock("@/runtime/host-runtime", () => ({
@@ -159,6 +159,10 @@ afterEach(() => {
   useSessionStore.setState({ sessions: {}, agentLastActivity: new Map() });
 });
 
+function agentIds(agents: ReadonlyArray<{ id: string }>): string[] {
+  return agents.map((agent) => agent.id);
+}
+
 describe("useAgentHistory", () => {
   it("loads history one page at a time without refreshing active agents", async () => {
     mockClient.fetchAgentHistory
@@ -210,7 +214,7 @@ describe("useAgentHistory", () => {
       },
     ] satisfies FetchAgentHistoryOptions[]);
     await waitFor(() => {
-      expect(result.current.agents.map((agent) => agent.id)).toEqual(["history-1"]);
+      expect(agentIds(result.current.agents)).toEqual(["history-1"]);
     });
     expect(result.current.hasMore).toBe(true);
 
@@ -227,7 +231,7 @@ describe("useAgentHistory", () => {
       page: { limit: 200, cursor: "cursor-2" },
     } satisfies FetchAgentHistoryOptions);
     await waitFor(() => {
-      expect(result.current.agents.map((agent) => agent.id)).toEqual(["history-1", "history-2"]);
+      expect(agentIds(result.current.agents)).toEqual(["history-1", "history-2"]);
     });
     expect(result.current.hasMore).toBe(false);
     expect(

@@ -108,6 +108,7 @@ paseo loop stop <id>            # Stop a running loop
 ### Worker prompt
 
 The worker prompt must be:
+
 - self-contained
 - concrete about commands, files, branches, tests, PRs, or systems to inspect
 - explicit about what counts as progress this iteration
@@ -115,6 +116,7 @@ The worker prompt must be:
 ### Verifier prompt
 
 The verifier prompt should:
+
 - check facts, not offer fixes
 - cite commands, outputs, or file evidence
 - be specific about what "done" means

@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import type { PromptResponse, SessionConfigOption, SessionUpdate } from "@agentclientprotocol/sdk";
 
 import {
   ACPAgentClient,
@@ -12,6 +13,25 @@ import {
 } from "./acp-agent.js";
 import { transformPiModels } from "./pi-direct-agent.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+
+interface ACPSessionInternals {
+  sessionId: string | null;
+  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  activeForegroundTurnId: string | null;
+  translateSessionUpdate(update: SessionUpdate): unknown;
+}
+
+interface ACPModelSelectionInternals {
+  sessionId: string | null;
+  connection: {
+    setSessionConfigOption: (input: {
+      sessionId: string;
+      configId: string;
+      value: string;
+    }) => Promise<void>;
+  };
+  configOptions: SessionConfigOption[];
+}
 
 function createSession(): ACPAgentSession {
   return new ACPAgentSession(
@@ -35,6 +55,32 @@ function createSession(): ACPAgentSession {
     },
   );
 }
+
+test("ACP setModel forwards model ids that are absent from the advertised catalog", async () => {
+  const session = createSession();
+  const setSessionConfigOption = vi.fn(async () => undefined);
+  const internals = session as unknown as ACPModelSelectionInternals;
+  internals.sessionId = "session-1";
+  internals.connection = { setSessionConfigOption };
+  internals.configOptions = [
+    {
+      id: "model-option",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "sonnet",
+      options: [{ value: "sonnet", name: "Sonnet" }],
+    },
+  ];
+
+  await session.setModel("new-provider-model");
+
+  expect(setSessionConfigOption).toHaveBeenCalledWith({
+    sessionId: "session-1",
+    configId: "model-option",
+    value: "new-provider-model",
+  });
+});
 
 describe("createLoggedNdJsonStream", () => {
   test("routes malformed ACP stdout through the provider logger instead of console.error", async () => {
@@ -63,16 +109,53 @@ describe("createLoggedNdJsonStream", () => {
     expect(parsed.value).toEqual({ jsonrpc: "2.0", method: "ok", params: {} });
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
+        err: {
+          type: "SyntaxError",
+          message: "ACP stdout line was not valid JSON",
+        },
         provider: "gemini",
-        linePreview: "Please visit the following URL to authorize the application:",
       }),
       "ACP agent emitted non-JSON stdout; ignoring line",
     );
+    expect(logger.warn.mock.calls[0]?.[0]).not.toHaveProperty("linePreview");
     expect(consoleError).not.toHaveBeenCalled();
 
     await writer.close();
     reader.releaseLock();
     consoleError.mockRestore();
+  });
+
+  test("does not log terminal control sequences from malformed ACP stdout", async () => {
+    const input = new TransformStream<Uint8Array, Uint8Array>();
+    const output = new TransformStream<Uint8Array, Uint8Array>();
+    const logger = {
+      warn: vi.fn(),
+    };
+
+    const stream = createLoggedNdJsonStream(output.writable, input.readable, {
+      logger: logger as unknown as ReturnType<typeof createTestLogger>,
+      provider: "gemini",
+    });
+    const reader = stream.readable.getReader();
+    const writer = input.writable.getWriter();
+
+    await writer.write(new TextEncoder().encode('\u001b[1G\u001b[0JEn\n{"ok":true}\n'));
+
+    const parsed = await reader.read();
+
+    expect(parsed.value).toEqual({ ok: true });
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("\u001b");
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("[1G");
+    expect(logger.warn.mock.calls[0]?.[0]).toEqual({
+      err: {
+        type: "SyntaxError",
+        message: "ACP stdout line was not valid JSON",
+      },
+      provider: "gemini",
+    });
+
+    await writer.close();
+    reader.releaseLock();
   });
 });
 
@@ -521,7 +604,7 @@ describe("ACPAgentSession slash commands", () => {
 
     const listCommandsPromise = session.listCommands();
 
-    (session as any).translateSessionUpdate({
+    (session as unknown as ACPSessionInternals).translateSessionUpdate({
       sessionUpdate: "available_commands_update",
       availableCommands: [
         {
@@ -567,7 +650,7 @@ describe("ACPAgentSession", () => {
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {
     const session = createSession();
     const events: Array<{ type: string; item?: { type: string; text?: string } }> = [];
-    (session as any).sessionId = "session-1";
+    (session as unknown as ACPSessionInternals).sessionId = "session-1";
 
     session.subscribe((event) => {
       events.push(event as { type: string; item?: { type: string; text?: string } });
@@ -579,7 +662,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "agent_message_chunk",
         messageId: "assistant-1",
         content: { type: "text", text: "Hey!" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -587,7 +670,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "agent_message_chunk",
         messageId: "assistant-1",
         content: { type: "text", text: " How are you?" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -595,7 +678,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "agent_thought_chunk",
         messageId: "thought-1",
         content: { type: "text", text: "Thinking" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -603,7 +686,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "agent_thought_chunk",
         messageId: "thought-1",
         content: { type: "text", text: " more" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -611,7 +694,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "user_message_chunk",
         messageId: "user-1",
         content: { type: "text", text: "hel" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
     await session.sessionUpdate({
       sessionId: "session-1",
@@ -619,7 +702,7 @@ describe("ACPAgentSession", () => {
         sessionUpdate: "user_message_chunk",
         messageId: "user-1",
         content: { type: "text", text: "lo" },
-      } as any,
+      } as unknown as SessionUpdate,
     });
 
     const timeline = events
@@ -640,7 +723,7 @@ describe("ACPAgentSession", () => {
   test("startTurn returns before the ACP prompt settles and completes later via subscribers", async () => {
     const session = createSession();
     const events: Array<{ type: string; turnId?: string }> = [];
-    let resolvePrompt!: (value: any) => void;
+    let resolvePrompt!: (value: PromptResponse) => void;
     const prompt = vi.fn(
       () =>
         new Promise((resolve) => {
@@ -648,8 +731,8 @@ describe("ACPAgentSession", () => {
         }),
     );
 
-    (session as any).sessionId = "session-1";
-    (session as any).connection = { prompt };
+    (session as unknown as ACPSessionInternals).sessionId = "session-1";
+    (session as unknown as ACPSessionInternals).connection = { prompt };
 
     session.subscribe((event) => {
       events.push(event as { type: string; turnId?: string });
@@ -662,7 +745,7 @@ describe("ACPAgentSession", () => {
       type: "turn_started",
       turnId,
     });
-    expect((session as any).activeForegroundTurnId).toBe(turnId);
+    expect((session as unknown as ACPSessionInternals).activeForegroundTurnId).toBe(turnId);
 
     resolvePrompt({ stopReason: "end_turn", usage: { outputTokens: 3 } });
     await Promise.resolve();
@@ -672,7 +755,7 @@ describe("ACPAgentSession", () => {
       type: "turn_completed",
       turnId,
     });
-    expect((session as any).activeForegroundTurnId).toBeNull();
+    expect((session as unknown as ACPSessionInternals).activeForegroundTurnId).toBeNull();
   });
 
   test("startTurn converts background prompt rejections into turn_failed events", async () => {
@@ -686,8 +769,8 @@ describe("ACPAgentSession", () => {
         }),
     );
 
-    (session as any).sessionId = "session-1";
-    (session as any).connection = { prompt };
+    (session as unknown as ACPSessionInternals).sessionId = "session-1";
+    (session as unknown as ACPSessionInternals).connection = { prompt };
 
     session.subscribe((event) => {
       events.push(event as { type: string; turnId?: string; error?: string });
@@ -705,6 +788,6 @@ describe("ACPAgentSession", () => {
       turnId,
       error: "prompt failed",
     });
-    expect((session as any).activeForegroundTurnId).toBeNull();
+    expect((session as unknown as ACPSessionInternals).activeForegroundTurnId).toBeNull();
   });
 });

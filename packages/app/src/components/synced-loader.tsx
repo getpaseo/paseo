@@ -7,16 +7,16 @@ import Animated, {
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 const SYNCED_LOADER_DURATION_MS = 950;
 const SYNCED_LOADER_EPOCH_MS = 0;
 const DOT_SEQUENCE = [0, 1, 3, 5, 4, 2] as const;
 const DOT_COUNT = DOT_SEQUENCE.length;
-const GRID_ROWS = 3;
 const GRID_COLUMNS = 2;
 const SNAKE_SEGMENT_OFFSETS = [0, -1, -2, -3, -4] as const;
 const SNAKE_OPACITIES = [1, 0.78, 0.56, 0.34, 0] as const;
+const DOT_KEYS = Array.from({ length: DOT_COUNT }, (_, i) => `dot-${i}`);
 const sharedStepProgress = makeMutable(0);
 let sharedLoopStarted = false;
 
@@ -66,24 +66,25 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
   const gridWidth = dotSize * 2 + gap;
   const gridHeight = dotSize * 3 + gap * 2;
 
-  return (
-    <View
-      style={{
+  const gridStyle = useMemo(
+    () => [animatedStyle, { width: gridWidth, height: gridHeight }],
+    [animatedStyle, gridWidth, gridHeight],
+  );
+
+  const containerStyle = useMemo(
+    () =>
+      ({
         width: size,
         height: size,
         alignItems: "center",
         justifyContent: "center",
-      }}
-    >
-      <Animated.View
-        style={[
-          animatedStyle,
-          {
-            width: gridWidth,
-            height: gridHeight,
-          },
-        ]}
-      >
+      }) as const,
+    [size],
+  );
+
+  return (
+    <View style={containerStyle}>
+      <Animated.View style={gridStyle}>
         {Array.from({ length: DOT_COUNT }).map((_, dotIndex) => {
           const rowIndex = Math.floor(dotIndex / GRID_COLUMNS);
           const columnIndex = dotIndex % GRID_COLUMNS;
@@ -91,16 +92,13 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
 
           return (
             <SpinnerDot
-              key={dotIndex}
+              key={DOT_KEYS[dotIndex]}
               color={color}
               dotSize={dotSize}
               sequenceIndex={sequenceIndex}
               progress={sharedStepProgress}
-              style={{
-                position: "absolute",
-                left: columnIndex * (dotSize + gap),
-                top: rowIndex * (dotSize + gap),
-              }}
+              left={columnIndex * (dotSize + gap)}
+              top={rowIndex * (dotSize + gap)}
             />
           );
         })}
@@ -114,17 +112,15 @@ function SpinnerDot({
   dotSize,
   sequenceIndex,
   progress,
-  style,
+  left,
+  top,
 }: {
   color: string;
   dotSize: number;
   sequenceIndex: number;
   progress: SharedValue<number>;
-  style: {
-    position: "absolute";
-    left: number;
-    top: number;
-  };
+  left: number;
+  top: number;
 }) {
   const animatedStyle = useAnimatedStyle(() => {
     const headIndex = Math.floor(progress.value) % DOT_COUNT;
@@ -144,18 +140,21 @@ function SpinnerDot({
     };
   });
 
-  return (
-    <Animated.View
-      style={[
-        animatedStyle,
-        {
-          width: dotSize,
-          height: dotSize,
-          borderRadius: dotSize / 2,
-          backgroundColor: color,
-        },
-        style,
-      ]}
-    />
+  const dotStyle = useMemo(
+    () => [
+      animatedStyle,
+      {
+        width: dotSize,
+        height: dotSize,
+        borderRadius: dotSize / 2,
+        backgroundColor: color,
+        position: "absolute" as const,
+        left,
+        top,
+      },
+    ],
+    [animatedStyle, dotSize, color, left, top],
   );
+
+  return <Animated.View style={dotStyle} />;
 }

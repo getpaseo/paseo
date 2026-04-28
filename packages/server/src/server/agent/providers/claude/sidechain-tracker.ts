@@ -5,28 +5,31 @@ import { buildToolCallDisplayModel } from "../../../../shared/tool-call-display.
 
 import type { AgentMetadata, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 
-type ClaudeContentChunk = { type: string; [key: string]: unknown };
+interface ClaudeContentChunk {
+  type: string;
+  [key: string]: unknown;
+}
 
-type SubAgentActionEntry = {
+interface SubAgentActionEntry {
   index: number;
   toolName: string;
   summary?: string;
-};
+}
 
-type SubAgentActivityState = {
+interface SubAgentActivityState {
   subAgentType?: string;
   description?: string;
   actions: SubAgentActionEntry[];
   actionKeys: string[];
   nextActionIndex: number;
   actionIndexByKey: Map<string, number>;
-};
+}
 
-type SubAgentActionCandidate = {
+interface SubAgentActionCandidate {
   key: string;
   toolName: string;
   input: unknown;
-};
+}
 
 const MAX_SUB_AGENT_LOG_ENTRIES = 200;
 const MAX_SUB_AGENT_SUMMARY_CHARS = 160;
@@ -49,9 +52,7 @@ export class ClaudeSidechainTracker {
   private readonly activeSidechains = new Map<string, SubAgentActivityState>();
   private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
 
-  constructor(input: {
-    getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
-  }) {
+  constructor(input: { getToolInput: (toolUseId: string) => AgentMetadata | null | undefined }) {
     this.getToolInput = input.getToolInput;
   }
 
@@ -98,11 +99,12 @@ export class ClaudeSidechainTracker {
           action.summary ? `[${action.toolName}] ${action.summary}` : `[${action.toolName}]`,
         )
         .join("\n"),
-      actions: state.actions.map((action) => ({
-        index: action.index,
-        toolName: action.toolName,
-        ...(action.summary ? { summary: action.summary } : {}),
-      })),
+      actions: state.actions.map((action) =>
+        Object.assign(
+          { index: action.index, toolName: action.toolName },
+          action.summary ? { summary: action.summary } : {},
+        ),
+      ),
     };
 
     return [
@@ -156,43 +158,17 @@ export class ClaudeSidechainTracker {
     return `${normalized.slice(0, MAX_SUB_AGENT_SUMMARY_CHARS)}...`;
   }
 
-  private extractSubAgentActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {
-    if (message.type === "assistant") {
-      const content = message.message?.content;
-      if (!Array.isArray(content)) {
-        return [];
-      }
-      const actions: SubAgentActionCandidate[] = [];
-      for (const block of content) {
-        if (
-          !isClaudeContentChunk(block) ||
-          !(
-            block.type === "tool_use" ||
-            block.type === "mcp_tool_use" ||
-            block.type === "server_tool_use"
-          ) ||
-          typeof block.name !== "string"
-        ) {
-          continue;
-        }
-        const key = readTrimmedString(block.id) ?? `assistant:${block.name}:${actions.length}`;
-        actions.push({
-          key,
-          toolName: block.name,
-          input: block.input ?? null,
-        });
-      }
-      return actions;
+  private extractAssistantMessageActions(
+    message: Extract<SDKMessage, { type: "assistant" }>,
+  ): SubAgentActionCandidate[] {
+    const content = message.message?.content;
+    if (!Array.isArray(content)) {
+      return [];
     }
-
-    if (message.type === "stream_event") {
-      const event = message.event;
-      if (event.type !== "content_block_start") {
-        return [];
-      }
-      const block = isClaudeContentChunk(event.content_block) ? event.content_block : null;
+    const actions: SubAgentActionCandidate[] = [];
+    for (const block of content) {
       if (
-        !block ||
+        !isClaudeContentChunk(block) ||
         !(
           block.type === "tool_use" ||
           block.type === "mcp_tool_use" ||
@@ -200,18 +176,56 @@ export class ClaudeSidechainTracker {
         ) ||
         typeof block.name !== "string"
       ) {
-        return [];
+        continue;
       }
-      const key =
-        readTrimmedString(block.id) ??
-        `stream:${block.name}:${typeof event.index === "number" ? event.index : 0}`;
-      return [
-        {
-          key,
-          toolName: block.name,
-          input: block.input ?? null,
-        },
-      ];
+      const key = readTrimmedString(block.id) ?? `assistant:${block.name}:${actions.length}`;
+      actions.push({
+        key,
+        toolName: block.name,
+        input: block.input ?? null,
+      });
+    }
+    return actions;
+  }
+
+  private extractStreamEventActions(
+    message: Extract<SDKMessage, { type: "stream_event" }>,
+  ): SubAgentActionCandidate[] {
+    const event = message.event;
+    if (event.type !== "content_block_start") {
+      return [];
+    }
+    const block = isClaudeContentChunk(event.content_block) ? event.content_block : null;
+    if (
+      !block ||
+      !(
+        block.type === "tool_use" ||
+        block.type === "mcp_tool_use" ||
+        block.type === "server_tool_use"
+      ) ||
+      typeof block.name !== "string"
+    ) {
+      return [];
+    }
+    const key =
+      readTrimmedString(block.id) ??
+      `stream:${block.name}:${typeof event.index === "number" ? event.index : 0}`;
+    return [
+      {
+        key,
+        toolName: block.name,
+        input: block.input ?? null,
+      },
+    ];
+  }
+
+  private extractSubAgentActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {
+    if (message.type === "assistant") {
+      return this.extractAssistantMessageActions(message);
+    }
+
+    if (message.type === "stream_event") {
+      return this.extractStreamEventActions(message);
     }
 
     if (message.type === "tool_progress") {

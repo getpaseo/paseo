@@ -5,7 +5,9 @@ import { extractCodexShellOutput, truncateDiffText } from "../tool-call-mapper-u
 import { deriveCodexToolDetail, normalizeCodexFilePath } from "./tool-call-detail-parser.js";
 import { isSpeakToolName } from "../../tool-name-normalization.js";
 
-type CodexMapperOptions = { cwd?: string | null };
+interface CodexMapperOptions {
+  cwd?: string | null;
+}
 
 const FAILED_STATUSES = new Set(["failed", "error", "errored", "rejected", "denied"]);
 const CANCELED_STATUSES = new Set(["canceled", "cancelled", "interrupted", "aborted"]);
@@ -24,7 +26,7 @@ const CodexRolloutToolCallParamsSchema = z
   })
   .passthrough();
 
-type CodexNormalizedToolCallEnvelope = {
+interface CodexNormalizedToolCallEnvelope {
   callId: string;
   name: string;
   input?: unknown | null;
@@ -33,7 +35,7 @@ type CodexNormalizedToolCallEnvelope = {
   error?: unknown | null;
   metadata?: Record<string, unknown>;
   cwd?: string | null;
-};
+}
 
 const CodexNormalizedToolCallPass1Schema = z
   .object({
@@ -300,10 +302,10 @@ function looksLikeUnifiedDiff(text: string): boolean {
   );
 }
 
-type CodexApplyPatchDirective = {
+interface CodexApplyPatchDirective {
   kind: "add" | "update" | "delete";
   path: string;
-};
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -445,33 +447,22 @@ function asEditTextFields(text: string | undefined): { unifiedDiff?: string; new
   return { newString: text };
 }
 
-function normalizeRolloutEditInput(input: unknown): unknown {
-  if (typeof input === "string") {
-    const textFields = asEditTextFields(input);
-    const path = extractPatchPrimaryFilePath(input);
-    return {
-      ...(path ? { path } : {}),
-      ...(textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
-      ...(textFields.newString ? { content: textFields.newString } : {}),
-    };
-  }
-  if (!isRecord(input)) {
-    return input;
-  }
-
-  const candidatePatchText =
+function findRolloutEditPatchText(input: Record<string, unknown>): string | undefined {
+  return (
     (typeof input.patch === "string" && input.patch) ||
     (typeof input.diff === "string" && input.diff) ||
     (typeof input.unified_diff === "string" && input.unified_diff) ||
     (typeof input.unifiedDiff === "string" && input.unifiedDiff) ||
     (typeof input.content === "string" && input.content) ||
-    undefined;
-  if (!candidatePatchText) {
-    return input;
-  }
+    undefined
+  );
+}
 
-  const textFields = asEditTextFields(candidatePatchText);
-  const rawPath =
+function findRolloutEditInputPath(
+  input: Record<string, unknown>,
+  patchText: string,
+): string | undefined {
+  return (
     (typeof input.path === "string" && input.path.trim().length > 0 ? input.path : undefined) ||
     (typeof input.file_path === "string" && input.file_path.trim().length > 0
       ? input.file_path
@@ -479,7 +470,18 @@ function normalizeRolloutEditInput(input: unknown): unknown {
     (typeof input.filePath === "string" && input.filePath.trim().length > 0
       ? input.filePath
       : undefined) ||
-    extractPatchPrimaryFilePath(candidatePatchText);
+    extractPatchPrimaryFilePath(patchText)
+  );
+}
+
+function normalizeRolloutEditRecordInput(input: Record<string, unknown>): unknown {
+  const candidatePatchText = findRolloutEditPatchText(input);
+  if (!candidatePatchText) {
+    return input;
+  }
+
+  const textFields = asEditTextFields(candidatePatchText);
+  const rawPath = findRolloutEditInputPath(input, candidatePatchText);
 
   const {
     patch: _patch,
@@ -501,6 +503,22 @@ function normalizeRolloutEditInput(input: unknown): unknown {
   }
 
   return normalized;
+}
+
+function normalizeRolloutEditInput(input: unknown): unknown {
+  if (typeof input === "string") {
+    const textFields = asEditTextFields(input);
+    const path = extractPatchPrimaryFilePath(input);
+    return {
+      ...(path ? { path } : {}),
+      ...(textFields.unifiedDiff ? { patch: textFields.unifiedDiff } : {}),
+      ...(textFields.newString ? { content: textFields.newString } : {}),
+    };
+  }
+  if (!isRecord(input)) {
+    return input;
+  }
+  return normalizeRolloutEditRecordInput(input);
 }
 
 function asEditFileOutputFields(text: string | undefined): { patch?: string; content?: string } {
@@ -628,11 +646,11 @@ function mapCommandExecutionItem(
   };
 }
 
-type CodexFileChangeEntry = {
+interface CodexFileChangeEntry {
   path: string;
   kind?: string;
   diff?: string;
-};
+}
 
 function parseFileChangePath(
   entry: Record<string, unknown>,
@@ -764,19 +782,18 @@ function mapFileChangeItem(
 ): CodexNormalizedToolCallEnvelope {
   const files = parseFileChangeEntries(item.changes, options);
 
-  const inputBase = {
-    ...(files.length > 0
+  const inputBase =
+    files.length > 0
       ? {
           files: files.map((file) => ({
             path: file.path,
             ...(file.kind !== undefined ? { kind: file.kind } : {}),
           })),
         }
-      : {}),
-  };
+      : {};
 
-  const output = toNullableObject({
-    ...(files.length > 0
+  const output = toNullableObject(
+    files.length > 0
       ? {
           files: files.map((file) => ({
             path: file.path,
@@ -786,8 +803,8 @@ function mapFileChangeItem(
               : asEditFileOutputFields(file.diff)),
           })),
         }
-      : {}),
-  });
+      : {},
+  );
 
   const name = "apply_patch";
   const error = item.error ?? null;

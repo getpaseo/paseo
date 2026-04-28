@@ -22,11 +22,17 @@ import {
 import { curateAgentActivity } from "./activity-curator.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
+import { isStoredAgentProviderAvailable } from "../persistence-hooks.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
 } from "./timeline-append.js";
-import { deletePaseoWorktree, type WorktreeConfig } from "../../utils/worktree.js";
+import { getPaseoWorktreesRoot, type WorktreeConfig } from "../../utils/worktree.js";
+import {
+  archivePaseoWorktree,
+  killTerminalsUnderPath,
+  type ArchivePaseoWorktreeDependencies,
+} from "../paseo-worktree-archive-service.js";
 import { WaitForAgentTracker } from "./wait-for-agent-tracker.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../voice-types.js";
@@ -61,6 +67,7 @@ import type {
   CreatePaseoWorktreeResult,
 } from "../paseo-worktree-service.js";
 import { toWorktreeRequestError } from "../worktree-errors.js";
+import { join } from "node:path";
 
 export interface AgentMcpServerOptions {
   agentManager: AgentManager;
@@ -71,6 +78,9 @@ export interface AgentMcpServerOptions {
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
   github?: GitHubService;
   workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
+  archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
+  emitWorkspaceUpdatesForCwds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForCwds"];
+  emitSessionMessage?: ArchivePaseoWorktreeDependencies["emit"];
   createPaseoWorktree?: CreatePaseoWorktreeFn;
   paseoHome?: string;
   /**
@@ -148,6 +158,52 @@ function resolveAgentListActivityTime(agent: AgentListItemPayload): number {
     parseTimestamp(agent.archivedAt),
     parseTimestamp(agent.createdAt),
   );
+}
+
+function resolveRegisteredProviderIds(
+  agentManager: AgentManager,
+  providerRegistry: Record<AgentProvider, ProviderDefinition> | null | undefined,
+): AgentProvider[] {
+  return providerRegistry
+    ? (Object.keys(providerRegistry) as AgentProvider[])
+    : agentManager.getRegisteredProviderIds();
+}
+
+interface ProviderSummary {
+  id: AgentProvider;
+  label: string;
+  description: string;
+  enabled: boolean;
+  modes: ProviderDefinition["modes"];
+  status: string;
+  error?: string;
+}
+
+async function resolveProviderSummary(
+  provider: ProviderDefinition,
+  logger: Logger,
+): Promise<ProviderSummary> {
+  const base = {
+    id: provider.id,
+    label: provider.label,
+    description: provider.description,
+    modes: provider.modes,
+  };
+  if (!provider.enabled) {
+    return { ...base, enabled: false, status: "unavailable" };
+  }
+  try {
+    const available = await provider.createClient(logger).isAvailable();
+    return { ...base, enabled: true, status: available ? "available" : "unavailable" };
+  } catch (availabilityError) {
+    return {
+      ...base,
+      enabled: true,
+      status: "unavailable",
+      error:
+        availabilityError instanceof Error ? availabilityError.message : String(availabilityError),
+    };
+  }
 }
 
 function compareAgentListItems(a: AgentListItemPayload, b: AgentListItemPayload): number {
@@ -280,13 +336,6 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     version: "2.0.0",
   });
 
-  const requireProviderRegistry = (): Record<AgentProvider, ProviderDefinition> => {
-    if (!providerRegistry) {
-      throw new Error("Provider registry is required to load stored agent records");
-    }
-    return providerRegistry;
-  };
-
   const resolveCallerAgent = () => {
     if (!callerAgentId) {
       return null;
@@ -298,7 +347,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return parentAgent;
   };
 
-  const resolveScopedCwd = (requestedCwd?: string, options?: { required?: boolean }): string => {
+  const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
       return resolveChildAgentCwd({
@@ -311,7 +360,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
     const trimmedCwd = requestedCwd?.trim();
     if (!trimmedCwd) {
-      if (options?.required) {
+      if (opts?.required) {
         throw new Error("cwd is required");
       }
       throw new Error("cwd is required when no caller agent is available");
@@ -320,64 +369,81 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return expandUserPath(trimmedCwd);
   };
 
+  const buildCallerAgentScheduleConfigExtras = (
+    callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
+  ): Record<string, unknown> => {
+    return {
+      ...(callerAgent.config.thinkingOptionId
+        ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
+        : {}),
+      ...(callerAgent.config.approvalPolicy
+        ? { approvalPolicy: callerAgent.config.approvalPolicy }
+        : {}),
+      ...(callerAgent.config.sandboxMode ? { sandboxMode: callerAgent.config.sandboxMode } : {}),
+      ...(typeof callerAgent.config.networkAccess === "boolean"
+        ? { networkAccess: callerAgent.config.networkAccess }
+        : {}),
+      ...(typeof callerAgent.config.webSearch === "boolean"
+        ? { webSearch: callerAgent.config.webSearch }
+        : {}),
+      ...(callerAgent.config.title ? { title: callerAgent.config.title } : {}),
+      ...(callerAgent.config.extra ? { extra: callerAgent.config.extra } : {}),
+      ...(callerAgent.config.systemPrompt ? { systemPrompt: callerAgent.config.systemPrompt } : {}),
+      ...(callerAgent.config.mcpServers ? { mcpServers: callerAgent.config.mcpServers } : {}),
+    };
+  };
+
+  const buildCallerAgentScheduleConfig = (
+    callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
+    params?: { provider?: string; cwd?: string },
+  ) => {
+    const hasProviderOverride = params?.provider !== undefined;
+    const resolvedProviderModel = hasProviderOverride
+      ? resolveScheduleProviderAndModel({
+          provider: params?.provider,
+          defaultProvider: callerAgent.provider,
+        })
+      : null;
+    const resolvedProvider = resolvedProviderModel?.provider ?? callerAgent.provider;
+    let resolvedModel: string | undefined;
+    if (resolvedProviderModel?.model) {
+      resolvedModel = resolvedProviderModel.model;
+    } else if (!hasProviderOverride && callerAgent.config.model) {
+      resolvedModel = callerAgent.config.model;
+    }
+    return {
+      provider: resolvedProvider,
+      cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : callerAgent.cwd,
+      ...(callerAgent.currentModeId
+        ? {
+            modeId: mapModeAcrossProviders(
+              callerAgent.currentModeId,
+              callerAgent.provider,
+              resolvedProvider,
+            ),
+          }
+        : {}),
+      ...(resolvedModel ? { model: resolvedModel } : {}),
+      ...buildCallerAgentScheduleConfigExtras(callerAgent),
+    };
+  };
+
   const resolveNewAgentScheduleTarget = (params?: { provider?: string; cwd?: string }) => {
+    if (!params?.provider?.trim()) {
+      throw new Error("provider is required when target is new-agent");
+    }
+
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
-      const hasProviderOverride = params?.provider !== undefined;
-      const resolvedProviderModel = hasProviderOverride
-        ? resolveScheduleProviderAndModel({
-            provider: params?.provider,
-            defaultProvider: callerAgent.provider,
-          })
-        : null;
-      const resolvedProvider = resolvedProviderModel?.provider ?? callerAgent.provider;
       return {
         type: "new-agent" as const,
-        config: {
-          provider: resolvedProvider,
-          cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : callerAgent.cwd,
-          ...(callerAgent.currentModeId
-            ? {
-                modeId: mapModeAcrossProviders(
-                  callerAgent.currentModeId,
-                  callerAgent.provider,
-                  resolvedProvider,
-                ),
-              }
-            : {}),
-          ...(resolvedProviderModel?.model
-            ? { model: resolvedProviderModel.model }
-            : !hasProviderOverride && callerAgent.config.model
-              ? { model: callerAgent.config.model }
-              : {}),
-          ...(callerAgent.config.thinkingOptionId
-            ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
-            : {}),
-          ...(callerAgent.config.approvalPolicy
-            ? { approvalPolicy: callerAgent.config.approvalPolicy }
-            : {}),
-          ...(callerAgent.config.sandboxMode
-            ? { sandboxMode: callerAgent.config.sandboxMode }
-            : {}),
-          ...(typeof callerAgent.config.networkAccess === "boolean"
-            ? { networkAccess: callerAgent.config.networkAccess }
-            : {}),
-          ...(typeof callerAgent.config.webSearch === "boolean"
-            ? { webSearch: callerAgent.config.webSearch }
-            : {}),
-          ...(callerAgent.config.title ? { title: callerAgent.config.title } : {}),
-          ...(callerAgent.config.extra ? { extra: callerAgent.config.extra } : {}),
-          ...(callerAgent.config.systemPrompt
-            ? { systemPrompt: callerAgent.config.systemPrompt }
-            : {}),
-          ...(callerAgent.config.mcpServers ? { mcpServers: callerAgent.config.mcpServers } : {}),
-        },
+        config: buildCallerAgentScheduleConfig(callerAgent, params),
       };
     }
 
     const resolvedProviderModel = resolveScheduleProviderAndModel({
       provider: params?.provider,
-      defaultProvider: "claude",
+      defaultProvider: params.provider as AgentProvider,
     });
     return {
       type: "new-agent" as const,
@@ -546,12 +612,114 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return server;
   }
 
+  interface ResolvedCreateAgentArgs {
+    provider: AgentProvider;
+    initialPrompt: string;
+    background: boolean;
+    normalizedTitle: string | null;
+    model: string | undefined;
+    thinking: string | undefined;
+    labels: Record<string, string> | undefined;
+    notifyOnFinish: boolean;
+    resolvedCwd: string;
+    resolvedMode: string | undefined;
+    worktreeConfig: WorktreeConfig | undefined;
+    shouldBootstrapWorktree: boolean | undefined;
+  }
+
+  const resolveCallerCreateAgentArgs = (
+    args: unknown,
+    parentAgentId: string,
+  ): ResolvedCreateAgentArgs => {
+    const callerArgs = agentToAgentCreateAgentArgsSchema.parse(args);
+    const resolvedProviderModel = resolveRequiredProviderModel(callerArgs.provider);
+    const parentAgent = agentManager.getAgent(parentAgentId);
+    if (!parentAgent) {
+      throw new Error(`Parent agent ${parentAgentId} not found`);
+    }
+    const provider = resolvedProviderModel.provider;
+    const resolvedCwd = resolveChildAgentCwd({
+      parentCwd: parentAgent.cwd,
+      requestedCwd: callerArgs.cwd,
+      lockedCwd: callerContext?.lockedCwd,
+      allowCustomCwd: callerContext?.allowCustomCwd ?? true,
+    });
+    const parentMode = parentAgent.currentModeId;
+    const resolvedMode = parentMode
+      ? mapModeAcrossProviders(parentMode, parentAgent.provider, provider)
+      : undefined;
+    return {
+      provider,
+      initialPrompt: callerArgs.initialPrompt,
+      background: callerArgs.background ?? false,
+      normalizedTitle: callerArgs.title.trim(),
+      model: resolvedProviderModel.model,
+      thinking: callerArgs.thinking,
+      labels: callerArgs.labels,
+      notifyOnFinish: callerArgs.notifyOnFinish ?? false,
+      resolvedCwd,
+      resolvedMode,
+      worktreeConfig: undefined,
+      shouldBootstrapWorktree: undefined,
+    };
+  };
+
+  const resolveTopLevelCreateAgentArgs = async (
+    args: unknown,
+  ): Promise<ResolvedCreateAgentArgs> => {
+    const topLevelArgs = topLevelCreateAgentArgsSchema.parse(args);
+    const resolvedProviderModel = resolveRequiredProviderModel(topLevelArgs.provider);
+    const { cwd, mode, worktreeName, baseBranch, refName, action, githubPrNumber } = topLevelArgs;
+    let resolvedCwd = expandUserPath(cwd);
+    let worktreeConfig: WorktreeConfig | undefined;
+    let shouldBootstrapWorktree: boolean | undefined;
+
+    if (worktreeName) {
+      if (!baseBranch && !refName && !action && githubPrNumber === undefined) {
+        throw new Error("baseBranch is required when creating a worktree");
+      }
+      const createdWorktree = await createMcpWorktree({
+        input: {
+          cwd: resolvedCwd,
+          worktreeSlug: worktreeName,
+          refName,
+          action,
+          githubPrNumber,
+          runSetup: false,
+          paseoHome: options.paseoHome,
+        },
+        createPaseoWorktree: options.createPaseoWorktree,
+        resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
+        workspaceGitService: options.workspaceGitService,
+        logger: options.logger,
+      });
+      resolvedCwd = createdWorktree.worktree.worktreePath;
+      worktreeConfig = createdWorktree.worktree;
+      shouldBootstrapWorktree = createdWorktree.created;
+    }
+
+    return {
+      provider: resolvedProviderModel.provider,
+      initialPrompt: topLevelArgs.initialPrompt,
+      background: topLevelArgs.background ?? false,
+      normalizedTitle: topLevelArgs.title.trim(),
+      model: resolvedProviderModel.model,
+      thinking: topLevelArgs.thinking,
+      labels: topLevelArgs.labels,
+      notifyOnFinish: topLevelArgs.notifyOnFinish ?? false,
+      resolvedCwd,
+      resolvedMode: mode,
+      worktreeConfig,
+      shouldBootstrapWorktree,
+    };
+  };
+
   server.registerTool(
     "create_agent",
     {
       title: "Create agent",
       description:
-        "Create an agent tied to a working directory. Requires provider/model, for example codex/gpt-5.4. Optionally run an initial prompt immediately or create a git worktree for the agent.",
+        "Create an agent tied to a working directory. Requires provider/model, for example codex/gpt-5.4. Do not guess; call list_providers and list_models first if uncertain. Optionally run an initial prompt immediately or create a git worktree for the agent.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -571,94 +739,29 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       },
     },
     async (args: unknown) => {
-      let provider: AgentProvider;
-      let initialPrompt: string;
-      let background = false;
-      let normalizedTitle: string | null;
-      let model: string | undefined;
-      let thinking: string | undefined;
-      let labels: Record<string, string> | undefined;
-      let notifyOnFinish = false;
-
-      let resolvedCwd: string;
-      let resolvedMode: string | undefined;
-      let worktreeConfig: WorktreeConfig | undefined;
-      let shouldBootstrapWorktree: boolean | undefined;
-
-      if (callerAgentId) {
-        const callerArgs = agentToAgentCreateAgentArgsSchema.parse(args);
-        const resolvedProviderModel = resolveRequiredProviderModel(callerArgs.provider);
-        provider = resolvedProviderModel.provider;
-        model = resolvedProviderModel.model;
-        initialPrompt = callerArgs.initialPrompt;
-        background = callerArgs.background ?? false;
-        normalizedTitle = callerArgs.title.trim();
-        thinking = callerArgs.thinking;
-        labels = callerArgs.labels;
-        notifyOnFinish = callerArgs.notifyOnFinish ?? false;
-
-        const parentAgent = agentManager.getAgent(callerAgentId);
-        if (!parentAgent) {
-          throw new Error(`Parent agent ${callerAgentId} not found`);
-        }
-        resolvedCwd = resolveChildAgentCwd({
-          parentCwd: parentAgent.cwd,
-          requestedCwd: callerArgs.cwd,
-          lockedCwd: callerContext?.lockedCwd,
-          allowCustomCwd: callerContext?.allowCustomCwd ?? true,
-        });
-        const parentMode = parentAgent.currentModeId;
-        if (parentMode) {
-          resolvedMode = mapModeAcrossProviders(parentMode, parentAgent.provider, provider);
-        }
-      } else {
-        const topLevelArgs = topLevelCreateAgentArgsSchema.parse(args);
-        const resolvedProviderModel = resolveRequiredProviderModel(topLevelArgs.provider);
-        provider = resolvedProviderModel.provider;
-        model = resolvedProviderModel.model;
-        initialPrompt = topLevelArgs.initialPrompt;
-        background = topLevelArgs.background ?? false;
-        normalizedTitle = topLevelArgs.title.trim();
-        thinking = topLevelArgs.thinking;
-        labels = topLevelArgs.labels;
-        notifyOnFinish = topLevelArgs.notifyOnFinish ?? false;
-        const { cwd, mode, worktreeName, baseBranch, refName, action, githubPrNumber } =
-          topLevelArgs;
-
-        resolvedCwd = expandUserPath(cwd);
-
-        if (worktreeName) {
-          if (!baseBranch && !refName && !action && githubPrNumber === undefined) {
-            throw new Error("baseBranch is required when creating a worktree");
-          }
-          const createdWorktree = await createMcpWorktree({
-            input: {
-              cwd: resolvedCwd,
-              worktreeSlug: worktreeName,
-              refName,
-              action,
-              githubPrNumber,
-              runSetup: false,
-              paseoHome: options.paseoHome,
-            },
-            createPaseoWorktree: options.createPaseoWorktree,
-            resolveDefaultBranch: baseBranch ? async () => baseBranch : undefined,
-            workspaceGitService: options.workspaceGitService,
-            logger: options.logger,
-          });
-          resolvedCwd = createdWorktree.worktree.worktreePath;
-          worktreeConfig = createdWorktree.worktree;
-          shouldBootstrapWorktree = createdWorktree.created;
-        }
-
-        resolvedMode = mode;
-      }
+      const resolved = callerAgentId
+        ? resolveCallerCreateAgentArgs(args, callerAgentId)
+        : await resolveTopLevelCreateAgentArgs(args);
+      const {
+        provider,
+        initialPrompt,
+        background,
+        normalizedTitle,
+        model,
+        thinking,
+        labels,
+        notifyOnFinish,
+        resolvedCwd,
+        resolvedMode,
+        worktreeConfig,
+        shouldBootstrapWorktree,
+      } = resolved;
 
       const childAgentDefaultLabels = callerContext?.childAgentDefaultLabels;
       const mergedLabels = {
         ...(callerAgentId ? { "paseo.parent-agent-id": callerAgentId } : {}),
-        ...(childAgentDefaultLabels ?? {}),
-        ...(labels ?? {}),
+        ...childAgentDefaultLabels,
+        ...labels,
       };
       const snapshot = await agentManager.createAgent(
         {
@@ -993,8 +1096,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
       const structuredSnapshot = buildStoredAgentPayload(
         record,
-        requireProviderRegistry(),
-        childLogger,
+        resolveRegisteredProviderIds(agentManager, providerRegistry),
       );
       return {
         content: [],
@@ -1041,10 +1143,15 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       );
       const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
       const storedRecords = await agentStorage.list();
+      const registeredProviderIds = resolveRegisteredProviderIds(agentManager, providerRegistry);
       const storedAgents = storedRecords
         .filter((record) => !record.internal && !liveIds.has(record.id))
         .filter((record) => includeArchived || !record.archivedAt)
-        .map((record) => buildStoredAgentPayload(record, requireProviderRegistry(), childLogger));
+        .filter(
+          (record) =>
+            includeArchived || isStoredAgentProviderAvailable(record, registeredProviderIds),
+        )
+        .map((record) => buildStoredAgentPayload(record, registeredProviderIds));
       const agents = [...liveAgents, ...storedAgents]
         .map(toAgentListItemPayload)
         .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
@@ -1194,9 +1301,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         ? (
             await Promise.all(
               terminalManager.listDirectories().map(async (directory) =>
-                (
-                  await terminalManager.getTerminals(directory)
-                ).map((terminal) => ({
+                (await terminalManager.getTerminals(directory)).map((terminal) => ({
                   id: terminal.id,
                   name: terminal.name,
                   cwd: terminal.cwd,
@@ -1574,26 +1679,23 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     "list_providers",
     {
       title: "List providers",
-      description: "List available agent providers and their modes.",
+      description: "List configured agent providers, availability, and their modes.",
       inputSchema: {},
       outputSchema: {
         providers: z.array(ProviderSummarySchema),
       },
     },
-    async () => ({
-      content: [],
-      structuredContent: ensureValidJson({
-        providers: Object.values(providerRegistry ?? {}).map((provider) => ({
-          id: provider.id,
-          label: provider.label,
-          modes: provider.modes.map((mode) => ({
-            id: mode.id,
-            label: mode.label,
-            ...(mode.description ? { description: mode.description } : {}),
-          })),
-        })),
-      }),
-    }),
+    async () => {
+      const providers = await Promise.all(
+        Object.values(providerRegistry ?? {}).map((provider) =>
+          resolveProviderSummary(provider, childLogger),
+        ),
+      );
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ providers }),
+      };
+    },
   );
 
   server.registerTool(
@@ -1617,6 +1719,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       const definition = providerRegistry[provider];
       if (!definition) {
         throw new Error(`Provider ${provider} is not configured`);
+      }
+      if (!definition.enabled) {
+        throw new Error(`Provider '${provider}' is disabled`);
       }
 
       const models = await definition.fetchModels({ cwd: resolveSnapshotCwd(), force: false });
@@ -1733,24 +1838,58 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
     async ({ cwd, worktreePath, worktreeSlug }) => {
       const repoRoot = resolveScopedCwd(cwd, { required: true });
-      await deletePaseoWorktree({
-        cwd: repoRoot,
-        worktreePath,
-        worktreeSlug,
-        paseoHome: options.paseoHome,
-      });
-      options.github?.invalidate({ cwd: repoRoot });
-      try {
-        await options.workspaceGitService?.getSnapshot(repoRoot, {
-          force: true,
-          reason: "archive-worktree",
-        });
-      } catch (error) {
-        options.logger.warn(
-          { err: error, cwd: repoRoot },
-          "Failed to force-refresh workspace git snapshot after archiving worktree",
-        );
+      if (!worktreePath && !worktreeSlug) {
+        throw new Error("worktreePath or worktreeSlug is required");
       }
+      if (!options.github) {
+        throw new Error("GitHub service is required to archive worktrees");
+      }
+      if (!options.workspaceGitService) {
+        throw new Error("WorkspaceGitService is required to archive worktrees");
+      }
+      if (!options.archiveWorkspaceRecord) {
+        throw new Error("Workspace registry archiver is required to archive worktrees");
+      }
+      if (!options.emitWorkspaceUpdatesForCwds) {
+        throw new Error("Workspace update emitter is required to archive worktrees");
+      }
+      if (!options.emitSessionMessage) {
+        throw new Error("Session message emitter is required to archive worktrees");
+      }
+
+      const targetPath =
+        worktreePath ??
+        join(await getPaseoWorktreesRoot(repoRoot, options.paseoHome), worktreeSlug!);
+
+      await archivePaseoWorktree(
+        {
+          paseoHome: options.paseoHome,
+          github: options.github,
+          workspaceGitService: options.workspaceGitService,
+          agentManager,
+          agentStorage,
+          archiveWorkspaceRecord: options.archiveWorkspaceRecord,
+          emit: options.emitSessionMessage,
+          emitWorkspaceUpdatesForCwds: options.emitWorkspaceUpdatesForCwds,
+          isPathWithinRoot: isSameOrDescendantPath,
+          killTerminalsUnderPath: (rootPath) =>
+            killTerminalsUnderPath(
+              {
+                terminalManager: terminalManager ?? null,
+                isPathWithinRoot: isSameOrDescendantPath,
+                killTrackedTerminal: () => {},
+                sessionLogger: childLogger,
+              },
+              rootPath,
+            ),
+          sessionLogger: childLogger,
+        },
+        {
+          targetPath,
+          repoRoot,
+          requestId: "mcp:archive_worktree",
+        },
+      );
 
       return {
         content: [],

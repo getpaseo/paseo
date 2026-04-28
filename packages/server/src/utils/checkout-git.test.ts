@@ -31,6 +31,7 @@ import {
   warmCheckoutShortstatInBackground,
 } from "./checkout-git.js";
 import {
+  GitHubCommandError,
   GitHubCliMissingError,
   type GitHubCurrentPullRequestStatus,
   type GitHubService,
@@ -192,6 +193,24 @@ describe("checkout git utilities", () => {
 
     const branch = await getCurrentBranch(emptyRepo);
     expect(branch).toBeNull();
+  });
+
+  it("returns the branch being rebased when HEAD is detached during a rebase", async () => {
+    execSync("git checkout -b feature/rebase-test", { cwd: repoDir });
+    writeFileSync(join(repoDir, "file.txt"), "feature\n");
+    execSync("git add file.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'feature change'", { cwd: repoDir });
+
+    execSync("git checkout main", { cwd: repoDir });
+    writeFileSync(join(repoDir, "file.txt"), "main\n");
+    execSync("git add file.txt", { cwd: repoDir });
+    execSync("git -c commit.gpgsign=false commit -m 'main change'", { cwd: repoDir });
+
+    execSync("git checkout feature/rebase-test", { cwd: repoDir });
+    expect(() => execSync("git rebase main", { cwd: repoDir, stdio: "pipe" })).toThrow();
+
+    const branch = await getCurrentBranch(repoDir);
+    expect(branch).toBe("feature/rebase-test");
   });
 
   it("handles status/diff/commit in a normal repo", async () => {
@@ -835,6 +854,18 @@ const x = 1;
     expect(status.mainRepoRoot).toBe(mainCheckoutDir);
   });
 
+  it("detects plain git worktrees from git alone", async () => {
+    const worktreeDir = join(tempDir, "plain-git-worktree");
+    execSync(`git worktree add -b feature/plain ${worktreeDir} main`, { cwd: repoDir });
+
+    const status = await getCheckoutStatus(worktreeDir, { paseoHome });
+    expect(status.isGit).toBe(true);
+    expect(status.repoRoot).toBe(worktreeDir);
+    expect(status.isPaseoOwnedWorktree).toBe(false);
+    expect(status.mainRepoRoot).toBe(repoDir);
+    expect(status.currentBranch).toBe("feature/plain");
+  });
+
   it("merges the current branch into base from a worktree checkout", async () => {
     const worktree = await createLegacyWorktreeForTest({
       branchName: "main",
@@ -1410,6 +1441,45 @@ const x = 1;
     });
   });
 
+  it("uses the tracked fork branch for PR worktree status lookup", async () => {
+    execSync("git checkout -b chethanuk/main", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+    execSync("git remote add paseo-pr-345 git@github.com:chethanuk/paseo.git", { cwd: repoDir });
+    execSync("git config branch.chethanuk/main.remote paseo-pr-345", { cwd: repoDir });
+    execSync("git config branch.chethanuk/main.merge refs/heads/main", { cwd: repoDir });
+
+    const requestedTargets: Array<{ headRef: string; headRepositoryOwner?: string }> = [];
+    const github = createGitHubServiceForStatus(
+      createPullRequestStatus({
+        number: 345,
+        url: "https://github.com/getpaseo/paseo/pull/345",
+        headRefName: "main",
+      }),
+      {
+        onStatus: () => {},
+      },
+    );
+    github.getCurrentPullRequestStatus = async (options) => {
+      requestedTargets.push({
+        headRef: options.headRef,
+        ...(options.headRepositoryOwner
+          ? { headRepositoryOwner: options.headRepositoryOwner }
+          : {}),
+      });
+      return createPullRequestStatus({
+        number: 345,
+        url: "https://github.com/getpaseo/paseo/pull/345",
+        headRefName: options.headRef,
+      });
+    };
+
+    const status = await getPullRequestStatus(repoDir, github);
+
+    expect(requestedTargets).toEqual([{ headRef: "main", headRepositoryOwner: "chethanuk" }]);
+    expect(status.status?.number).toBe(345);
+    expect(status.status?.headRefName).toBe("main");
+  });
+
   it("returns closed-unmerged PR status without marking it as merged", async () => {
     execSync("git checkout -b feature", { cwd: repoDir });
     execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
@@ -1473,6 +1543,75 @@ const x = 1;
       const second = await getPullRequestStatus(repoDir, github);
       expect(first.status?.url).toContain("/pull/1");
       expect(second.status?.url).toContain("/pull/2");
+      expect(callCount).toBe(2);
+    } finally {
+      __resetPullRequestStatusCacheForTests();
+    }
+  });
+
+  it("keeps stale PR status when a refresh hits a transient GitHub error", async () => {
+    execSync("git checkout -b feature", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+
+    __setPullRequestStatusCacheTtlForTests(50);
+    try {
+      let callCount = 0;
+      const github = createGitHubServiceForStatus(null);
+      github.getCurrentPullRequestStatus = async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return createPullRequestStatus({
+            url: "https://github.com/getpaseo/paseo/pull/123",
+          });
+        }
+        throw new GitHubCommandError({
+          args: ["pr", "view"],
+          cwd: repoDir,
+          exitCode: 1,
+          stderr: "could not resolve host: github.com",
+        });
+      };
+
+      const fresh = await getPullRequestStatus(repoDir, github);
+      await sleep(80);
+      const stale = await getPullRequestStatus(repoDir, github);
+
+      expect(stale).toEqual(fresh);
+      expect(stale.githubFeaturesEnabled).toBe(true);
+      expect(stale.status?.url).toContain("/pull/123");
+      expect(callCount).toBe(2);
+    } finally {
+      __resetPullRequestStatusCacheForTests();
+    }
+  });
+
+  it("clears stale PR status after a successful no-PR refresh", async () => {
+    execSync("git checkout -b feature", { cwd: repoDir });
+    execSync("git remote add origin https://github.com/getpaseo/paseo.git", { cwd: repoDir });
+
+    __setPullRequestStatusCacheTtlForTests(50);
+    try {
+      let callCount = 0;
+      const github = createGitHubServiceForStatus(null);
+      github.getCurrentPullRequestStatus = async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return createPullRequestStatus({
+            url: "https://github.com/getpaseo/paseo/pull/123",
+          });
+        }
+        return null;
+      };
+
+      const fresh = await getPullRequestStatus(repoDir, github);
+      await sleep(80);
+      const cleared = await getPullRequestStatus(repoDir, github);
+
+      expect(fresh.status?.url).toContain("/pull/123");
+      expect(cleared).toEqual({
+        githubFeaturesEnabled: true,
+        status: null,
+      });
       expect(callCount).toBe(2);
     } finally {
       __resetPullRequestStatusCacheForTests();
@@ -1643,23 +1782,50 @@ const x = 1;
     ).toThrow();
   });
 
-  it("throws if Paseo worktree base metadata is missing", async () => {
+  it("falls back to the repository default branch for base-dependent operations when metadata is missing", async () => {
     const worktree = await createLegacyWorktreeForTest({
-      branchName: "main",
+      branchName: "feature-default-base",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "missing-metadata",
       paseoHome,
     });
 
+    writeFileSync(join(worktree.worktreePath, "feature.txt"), "feature\n");
+    execSync("git add feature.txt", { cwd: worktree.worktreePath });
+    execSync("git -c commit.gpgsign=false commit -m 'feature commit'", {
+      cwd: worktree.worktreePath,
+    });
+
     const metadataPath = getPaseoWorktreeMetadataPath(worktree.worktreePath);
     rmSync(metadataPath, { force: true });
 
-    await expect(getCheckoutStatus(worktree.worktreePath, { paseoHome })).rejects.toThrow(/base/i);
-    await expect(
-      getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome }),
-    ).rejects.toThrow(/base/i);
-    await expect(mergeToBase(worktree.worktreePath, {}, { paseoHome })).rejects.toThrow(/base/i);
+    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome });
+    expect(baseDiff.diff).toContain("feature.txt");
+
+    const shortstat = await getCheckoutShortstat(worktree.worktreePath, { paseoHome });
+    expect(shortstat).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it("falls back to plain git checkout status when Paseo worktree metadata is missing", async () => {
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "missing-metadata-status-fallback",
+      paseoHome,
+    });
+
+    const metadataPath = getPaseoWorktreeMetadataPath(worktree.worktreePath);
+    rmSync(metadataPath, { force: true });
+
+    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    expect(status.isGit).toBe(true);
+    expect(status.currentBranch).toBe("feature");
+    expect(status.repoRoot).toBe(worktree.worktreePath);
+    expect(status.isPaseoOwnedWorktree).toBe(true);
+    expect(status.mainRepoRoot).toBe(repoDir);
+    expect(status.baseRef).toBe("main");
   });
 
   describe("parseWorktreeList", () => {

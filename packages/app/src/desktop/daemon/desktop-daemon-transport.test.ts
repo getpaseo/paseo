@@ -16,7 +16,7 @@ const desktopDaemonMock = vi.hoisted(() => {
   const openLocalTransportSession = vi.fn<(...args: unknown[]) => Promise<string>>();
   const listenToLocalTransportEvents = vi.fn(
     async (
-      handler: typeof eventHandler extends ((...args: infer A) => any) | null
+      handler: typeof eventHandler extends ((...args: infer A) => unknown) | null
         ? (...args: A) => void
         : never,
     ) => {

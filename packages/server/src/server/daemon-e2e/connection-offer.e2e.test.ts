@@ -260,7 +260,9 @@ describe("ConnectionOfferV2 (daemon E2E)", () => {
 
       expect(sawListeningLog).toBe(true);
     } catch (err) {
-      throw new Error(`failed; stdout so far:\\n${stdoutLines.join("")}\\n\\n${String(err)}`);
+      throw new Error(`failed; stdout so far:\\n${stdoutLines.join("")}\\n\\n${String(err)}`, {
+        cause: err,
+      });
     } finally {
       proc.kill();
       await rm(tempHome, { recursive: true, force: true });

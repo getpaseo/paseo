@@ -4,24 +4,29 @@ import type { AgentProvider } from "./agent-sdk-types.js";
 import { expandTilde } from "../../utils/path.js";
 import type { Logger } from "pino";
 
-type ResolveAgentModelOptions = {
+interface ResolveAgentModelOptions {
   provider: AgentProvider;
   requestedModel?: string | null;
   cwd?: string;
   logger: Logger;
-};
+}
 
 export async function resolveAgentModel(
   options: ResolveAgentModelOptions,
 ): Promise<string | undefined> {
-  const trimmed = options.requestedModel?.trim();
-  if (trimmed) {
-    return trimmed;
-  }
-
   try {
     const providerRegistry = buildProviderRegistry(options.logger);
-    const models = await providerRegistry[options.provider].fetchModels({
+    const providerDefinition = providerRegistry[options.provider];
+    if (!providerDefinition.enabled) {
+      throw new Error(`Provider '${options.provider}' is disabled`);
+    }
+
+    const trimmed = options.requestedModel?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+
+    const models = await providerDefinition.fetchModels({
       cwd: resolveSnapshotCwd(options.cwd ? expandTilde(options.cwd) : undefined),
       force: false,
     });

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
@@ -23,8 +23,9 @@ export function SettingsSection({
   style,
   children,
 }: SettingsSectionProps) {
+  const sectionStyle = useMemo(() => [settingsStyles.section, style], [style]);
   return (
-    <View style={[settingsStyles.section, style]} testID={testID}>
+    <View style={sectionStyle} testID={testID}>
       <View style={styles.header}>
         <Text style={settingsStyles.sectionHeaderTitle}>{title}</Text>
         {trailing}

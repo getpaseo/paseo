@@ -109,11 +109,10 @@ function parseChangelog(changelogText) {
       notesParts.push("", ...bodyLines);
     }
 
-    return {
-      ...heading,
+    return Object.assign({}, heading, {
       tag: `v${heading.version}`,
       notes: `${notesParts.join("\n").trim()}\n`,
-    };
+    });
   });
 }
 
@@ -139,6 +138,19 @@ function updateReleaseNotes({ releaseId, repo, notesPath }, execFileSync = nodeE
   );
 }
 
+function exposeGitHubContributorMentions(notes) {
+  return notes.replace(
+    /\[@([A-Za-z0-9-]+)\]\(https:\/\/github\.com\/([A-Za-z0-9-]+)\/?\)/g,
+    (match, labelLogin, profileLogin) => {
+      if (labelLogin.toLowerCase() !== profileLogin.toLowerCase()) {
+        return match;
+      }
+
+      return `@${profileLogin}`;
+    },
+  );
+}
+
 export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
   const execFileSync = deps.execFileSync ?? nodeExecFileSync;
   const args = parseArgs(argv);
@@ -156,6 +168,8 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
     console.log(`No matching changelog section found for ${targetTag}. Skipping.`);
     return;
   }
+
+  notes = exposeGitHubContributorMentions(notes);
 
   const tempDir = mkdtempSync(path.join(tmpdir(), "paseo-release-notes-"));
   const notesPath = path.join(tempDir, `${targetTag}-notes.md`);

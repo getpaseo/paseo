@@ -54,7 +54,9 @@ jobs:
           fi
 
           create_if_missing="false"
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "${INPUT_CREATE_IF_MISSING:-false}" = "true" ]; then
+          if [[ "$EVENT_NAME" = "push" && "$REF" == refs/tags/v* ]]; then
+            create_if_missing="true"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "${INPUT_CREATE_IF_MISSING:-false}" = "true" ]; then
             create_if_missing="true"
           fi
 

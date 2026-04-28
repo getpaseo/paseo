@@ -3,19 +3,19 @@ import { getDesktopHost } from "@/desktop/host";
 import { buildNotificationRoute, resolveNotificationTarget } from "./notification-routing";
 import { isNative } from "@/constants/platform";
 
-type OsNotificationPayload = {
+interface OsNotificationPayload {
   title: string;
   body?: string;
   data?: Record<string, unknown>;
-};
+}
 
-export type WebNotificationClickDetail = {
+export interface WebNotificationClickDetail {
   data?: Record<string, unknown>;
-};
+}
 
-type WebNotificationInstance = {
-  onclick?: ((event: Event) => void) | null;
-};
+interface WebNotificationInstance {
+  addEventListener: (type: "click", listener: (event: Event) => void) => void;
+}
 
 export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
 
@@ -51,7 +51,18 @@ function getWebNotificationConstructor(): {
     },
   ): unknown;
 } | null {
-  const NotificationConstructor = (globalThis as { Notification?: any }).Notification;
+  const NotificationConstructor = (
+    globalThis as {
+      Notification?: {
+        permission: string;
+        requestPermission?: () => Promise<string>;
+        new (
+          title: string,
+          options?: { body?: string; data?: Record<string, unknown>; icon?: string },
+        ): unknown;
+      };
+    }
+  ).Notification;
   return NotificationConstructor ?? null;
 }
 
@@ -144,12 +155,12 @@ function attachWebClickHandler(
   notification: WebNotificationInstance,
   data: Record<string, unknown> | undefined,
 ): void {
-  notification.onclick = () => {
+  notification.addEventListener("click", () => {
     const handledByApp = dispatchWebNotificationClick({ data });
     if (!handledByApp) {
       fallbackNavigateToNotificationTarget(data);
     }
-  };
+  });
 }
 
 export async function sendOsNotification(payload: OsNotificationPayload): Promise<boolean> {

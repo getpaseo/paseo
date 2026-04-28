@@ -8,9 +8,9 @@ interface SidebarCollapsedSectionsState {
   setProjectCollapsed: (projectKey: string, collapsed: boolean) => void;
 }
 
-type PersistedSidebarCollapsedSectionsState = {
+interface PersistedSidebarCollapsedSectionsState {
   collapsedProjectKeys?: string[];
-};
+}
 
 function serializeCollapsedProjectKeys(keys: Set<string>): string[] {
   return Array.from(keys);

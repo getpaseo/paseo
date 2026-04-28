@@ -8,12 +8,12 @@ import type { TTSConfig } from "./tts.js";
 export const DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 export const DEFAULT_OPENAI_TTS_MODEL = "tts-1";
 
-export type OpenAiSpeechProviderConfig = {
+export interface OpenAiSpeechProviderConfig {
   apiKey?: string;
   stt?: Partial<STTConfig> & { apiKey?: string };
   tts?: Partial<TTSConfig> & { apiKey?: string };
   realtimeTranscriptionModel?: string;
-};
+}
 
 const OpenAiTtsVoiceSchema = z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
 
@@ -45,48 +45,91 @@ const OpenAiSpeechResolutionSchema = z.object({
   ),
 });
 
+function isOpenAiProviderActive(provider: { enabled?: boolean; provider: string }): boolean {
+  return provider.enabled !== false && provider.provider === "openai";
+}
+
+function pickIfOpenAi<T>(
+  provider: { enabled?: boolean; provider: string },
+  value: T | undefined,
+): T | undefined {
+  return isOpenAiProviderActive(provider) ? value : undefined;
+}
+
+function firstDefined<T>(values: Array<T | null | undefined>): T | undefined {
+  for (const value of values) {
+    if (value !== undefined && value !== null) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function buildOpenAiSttInput(params: {
+  env: NodeJS.ProcessEnv;
+  persisted: PersistedConfig;
+  providers: RequestedSpeechProviders;
+}): Record<string, unknown> {
+  const { env, persisted, providers } = params;
+  return {
+    sttConfidenceThreshold: firstDefined<string | number>([
+      env.STT_CONFIDENCE_THRESHOLD,
+      persisted.features?.dictation?.stt?.confidenceThreshold,
+    ]),
+    sttModel: firstDefined<string>([
+      env.STT_MODEL,
+      pickIfOpenAi(providers.voiceStt, persisted.features?.voiceMode?.stt?.model),
+      pickIfOpenAi(providers.dictationStt, persisted.features?.dictation?.stt?.model),
+    ]),
+    realtimeTranscriptionModel: firstDefined<string>([
+      env.OPENAI_REALTIME_TRANSCRIPTION_MODEL,
+      pickIfOpenAi(providers.dictationStt, persisted.features?.dictation?.stt?.model),
+      DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
+    ]),
+  };
+}
+
+function buildOpenAiTtsInput(params: {
+  env: NodeJS.ProcessEnv;
+  persisted: PersistedConfig;
+  providers: RequestedSpeechProviders;
+}): Record<string, unknown> {
+  const { env, persisted, providers } = params;
+  return {
+    ttsVoice: firstDefined<string>([
+      env.TTS_VOICE,
+      pickIfOpenAi(providers.voiceTts, persisted.features?.voiceMode?.tts?.voice),
+      "alloy",
+    ]),
+    ttsModel: firstDefined<string>([
+      env.TTS_MODEL,
+      pickIfOpenAi(providers.voiceTts, persisted.features?.voiceMode?.tts?.model),
+      DEFAULT_OPENAI_TTS_MODEL,
+    ]),
+  };
+}
+
+function buildOpenAiResolutionInput(params: {
+  env: NodeJS.ProcessEnv;
+  persisted: PersistedConfig;
+  providers: RequestedSpeechProviders;
+}): Record<string, unknown> {
+  return {
+    apiKey: firstDefined<string>([
+      params.env.OPENAI_API_KEY,
+      params.persisted.providers?.openai?.apiKey,
+    ]),
+    ...buildOpenAiSttInput(params),
+    ...buildOpenAiTtsInput(params),
+  };
+}
+
 export function resolveOpenAiSpeechConfig(params: {
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
   providers: RequestedSpeechProviders;
 }): OpenAiSpeechProviderConfig | undefined {
-  const parsed = OpenAiSpeechResolutionSchema.parse({
-    apiKey: params.env.OPENAI_API_KEY ?? params.persisted.providers?.openai?.apiKey,
-    sttConfidenceThreshold:
-      params.env.STT_CONFIDENCE_THRESHOLD ??
-      params.persisted.features?.dictation?.stt?.confidenceThreshold,
-    sttModel:
-      params.env.STT_MODEL ??
-      (params.providers.voiceStt.enabled !== false &&
-      params.providers.voiceStt.provider === "openai"
-        ? params.persisted.features?.voiceMode?.stt?.model
-        : undefined) ??
-      (params.providers.dictationStt.enabled !== false &&
-      params.providers.dictationStt.provider === "openai"
-        ? params.persisted.features?.dictation?.stt?.model
-        : undefined),
-    ttsVoice:
-      params.env.TTS_VOICE ??
-      (params.providers.voiceTts.enabled !== false &&
-      params.providers.voiceTts.provider === "openai"
-        ? params.persisted.features?.voiceMode?.tts?.voice
-        : undefined) ??
-      "alloy",
-    ttsModel:
-      params.env.TTS_MODEL ??
-      (params.providers.voiceTts.enabled !== false &&
-      params.providers.voiceTts.provider === "openai"
-        ? params.persisted.features?.voiceMode?.tts?.model
-        : undefined) ??
-      DEFAULT_OPENAI_TTS_MODEL,
-    realtimeTranscriptionModel:
-      params.env.OPENAI_REALTIME_TRANSCRIPTION_MODEL ??
-      (params.providers.dictationStt.enabled !== false &&
-      params.providers.dictationStt.provider === "openai"
-        ? params.persisted.features?.dictation?.stt?.model
-        : undefined) ??
-      DEFAULT_OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-  });
+  const parsed = OpenAiSpeechResolutionSchema.parse(buildOpenAiResolutionInput(params));
 
   if (!parsed.apiKey) {
     return undefined;

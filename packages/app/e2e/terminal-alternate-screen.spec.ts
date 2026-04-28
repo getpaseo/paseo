@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import { TerminalE2EHarness, withTerminalInApp } from "./helpers/terminal-dsl";
+import { getTabTestIds } from "./helpers/launcher";
 import {
   installTerminalRenderProbe,
   readTerminalRenderProbe,
@@ -9,6 +10,53 @@ import {
   summarizeTerminalRenderProbe,
 } from "./helpers/terminal-probes";
 import { getTerminalBufferText, waitForTerminalContent } from "./helpers/terminal-perf";
+
+interface TerminalLayoutMetrics {
+  visibleSurfaceCount: number;
+  surfaceHeight: number;
+  rowCount: number;
+  rows: number | null;
+  cols: number | null;
+  renderedRowsHeight: number;
+  tabIds: string[];
+}
+
+async function readTerminalLayoutMetrics(page: Page): Promise<TerminalLayoutMetrics> {
+  const tabIds = await getTabTestIds(page);
+  return page.evaluate((currentTabIds) => {
+    const visibleSurfaces = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="terminal-surface"]'),
+    ).filter((candidate) => {
+      const rect = candidate.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    const surface = visibleSurfaces[0] ?? null;
+    const surfaceRect = surface?.getBoundingClientRect() ?? null;
+    // xterm.js exposes `.xterm-screen` regardless of renderer (DOM, canvas, WebGL),
+    // so use it as the canonical "rendered surface" rect rather than `.xterm-rows`
+    // which is only populated by the DOM renderer.
+    const xtermScreen = surface?.querySelector<HTMLElement>(".xterm-screen") ?? null;
+    const xtermScreenRect = xtermScreen?.getBoundingClientRect() ?? null;
+    const term = (
+      window as Window & {
+        __paseoTerminal?: {
+          rows?: number;
+          cols?: number;
+        };
+      }
+    ).__paseoTerminal;
+
+    return {
+      visibleSurfaceCount: visibleSurfaces.length,
+      surfaceHeight: surfaceRect?.height ?? 0,
+      rowCount: typeof term?.rows === "number" ? term.rows : 0,
+      rows: typeof term?.rows === "number" ? term.rows : null,
+      cols: typeof term?.cols === "number" ? term.cols : null,
+      renderedRowsHeight: xtermScreenRect?.height ?? 0,
+      tabIds: currentTabIds,
+    };
+  }, tabIds);
+}
 
 async function waitForAlternateScreenExit(page: Page, afterAlt: string, timeout: number) {
   let lastBufferText = "";
@@ -45,6 +93,7 @@ async function waitForAlternateScreenExit(page: Page, afterAlt: string, timeout:
         null,
         2,
       )}`,
+      { cause: error },
     );
   }
 
@@ -52,6 +101,8 @@ async function waitForAlternateScreenExit(page: Page, afterAlt: string, timeout:
 }
 
 test.describe("Terminal alternate-screen transitions", () => {
+  test.describe.configure({ timeout: 120_000 });
+
   let harness: TerminalE2EHarness;
 
   test.beforeAll(async () => {
@@ -78,7 +129,10 @@ test.describe("Terminal alternate-screen transitions", () => {
         `for i in $(seq 1 80); do echo HISTORY_$i; done; echo ${historyReady}\n`,
         { delay: 0 },
       );
-      await waitForTerminalContent(page, (text) => text.includes(historyReady), 10_000);
+      function hasHistoryReady(text: string): boolean {
+        return text.includes(historyReady);
+      }
+      await waitForTerminalContent(page, hasHistoryReady, 10_000);
 
       await resetTerminalRenderProbe(page);
       await page.waitForTimeout(500);
@@ -117,19 +171,79 @@ test.describe("Terminal alternate-screen transitions", () => {
       expect(finalBufferText).toContain(historyReady);
       expect(finalBufferText).toContain(afterAlt);
 
-      const suspiciousFrames = probe.frames.filter(
-        (frame) =>
+      function isSuspiciousFrame(frame: (typeof probe.frames)[number]): boolean {
+        return (
           frame.text.includes("$") &&
           !frame.text.includes(historyReady) &&
           !frame.text.includes(afterAlt) &&
           frame.nonEmptyRows <= 2 &&
-          (frame.firstNonEmptyRow ?? Number.POSITIVE_INFINITY) <= 1,
-      );
+          (frame.firstNonEmptyRow ?? Number.POSITIVE_INFINITY) <= 1
+        );
+      }
+      const suspiciousFrames = probe.frames.filter(isSuspiciousFrame);
 
       expect(
         suspiciousFrames,
         "normal-screen restore should not flash to a mostly blank prompt-at-top frame",
       ).toEqual([]);
+    });
+  });
+
+  test("opening vim in a new terminal fills the terminal surface", async ({ page }, testInfo) => {
+    test.setTimeout(60_000);
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await installTerminalRenderProbe(page);
+
+    await withTerminalInApp(page, harness, { name: "vim-layout" }, async () => {
+      await harness.setupPrompt(page);
+      const terminalSurface = harness.terminalSurface(page).first();
+      await expect(terminalSurface).toBeVisible({ timeout: 15_000 });
+      await terminalSurface.click();
+
+      const beforeVim = await readTerminalLayoutMetrics(page);
+
+      await startTerminalFrameSampling(page, 2_000);
+      await terminalSurface.pressSequentially("vim -Nu NONE -n\n", { delay: 0 });
+      await page.waitForTimeout(1_500);
+
+      const probe = await readTerminalRenderProbe(page);
+      const samples: TerminalLayoutMetrics[] = [];
+      for (let index = 0; index < 12; index += 1) {
+        samples.push(await readTerminalLayoutMetrics(page));
+        await page.waitForTimeout(50);
+      }
+
+      await testInfo.attach("reused-terminal-layout-metrics", {
+        body: JSON.stringify(
+          {
+            beforeVim,
+            probe: summarizeTerminalRenderProbe(probe),
+            samples,
+          },
+          null,
+          2,
+        ),
+        contentType: "application/json",
+      });
+
+      const firstSample = samples[0];
+      const finalSample = samples.at(-1);
+      expect(firstSample, "expected an initial layout sample").toBeTruthy();
+      expect(finalSample, "expected a final layout sample").toBeTruthy();
+
+      expect(
+        finalSample?.visibleSurfaceCount ?? 0,
+        "opening vim should leave exactly one visible terminal surface",
+      ).toBe(1);
+      expect(
+        finalSample?.renderedRowsHeight ?? 0,
+        "vim should render rows that fill most of the terminal surface",
+      ).toBeGreaterThan((finalSample?.surfaceHeight ?? 0) * 0.75);
+      expect(
+        finalSample?.rowCount ?? 0,
+        "vim should leave a substantial number of rendered rows",
+      ).toBeGreaterThan(Math.max(10, Math.floor((beforeVim.rowCount || 0) * 0.75)));
     });
   });
 });

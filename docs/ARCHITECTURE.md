@@ -53,17 +53,17 @@ The heart of Paseo. A Node.js process that:
 
 **Key modules:**
 
-| Module | Responsibility |
-|---|---|
-| `bootstrap.ts` | Daemon initialization: HTTP server, WS server, agent manager, storage, relay |
-| `websocket-server.ts` | WebSocket connection management, hello/welcome handshake, binary multiplexing |
-| `session.ts` | Per-client session state, timeline subscriptions, terminal operations |
-| `agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management |
-| `agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/` |
-| `agent/mcp-server.ts` | MCP server for sub-agent creation, permissions, timeouts |
-| `providers/` | Provider adapters: Claude (Agent SDK), Codex (AppServer), OpenCode |
-| `relay-transport.ts` | Outbound relay connection with E2E encryption |
-| `client/daemon-client.ts` | Client library for connecting to the daemon (used by CLI and app) |
+| Module                    | Responsibility                                                                |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| `bootstrap.ts`            | Daemon initialization: HTTP server, WS server, agent manager, storage, relay  |
+| `websocket-server.ts`     | WebSocket connection management, hello/welcome handshake, binary multiplexing |
+| `session.ts`              | Per-client session state, timeline subscriptions, terminal operations         |
+| `agent/agent-manager.ts`  | Agent lifecycle state machine, timeline tracking, subscriber management       |
+| `agent/agent-storage.ts`  | File-backed JSON persistence at `$PASEO_HOME/agents/`                         |
+| `agent/mcp-server.ts`     | MCP server for sub-agent creation, permissions, timeouts                      |
+| `providers/`              | Provider adapters: Claude (Agent SDK), Codex (AppServer), OpenCode            |
+| `relay-transport.ts`      | Outbound relay connection with E2E encryption                                 |
+| `client/daemon-client.ts` | Client library for connecting to the daemon (used by CLI and app)             |
 
 ### `packages/app` — Mobile + web client (Expo)
 
@@ -132,6 +132,7 @@ Server → Client:  WSWelcomeMessage { clientId, daemonVersion, sessionId, capab
 **Binary multiplexing:**
 
 Terminal I/O and agent streaming share the same connection via `BinaryMuxFrame`:
+
 - Channel 0: control messages
 - Channel 1: terminal data
 - 1-byte channel ID + 1-byte flags + variable payload
@@ -153,13 +154,14 @@ initializing → idle → running → idle (or error → closed)
 
 Each provider implements a common `AgentClient` interface:
 
-| Provider | Wraps | Session format |
-|---|---|---|
-| Claude | Anthropic Agent SDK | `~/.claude/projects/{cwd}/{session-id}.jsonl` |
-| Codex | CodexAppServer | `~/.codex/sessions/{date}/rollout-{ts}-{id}.jsonl` |
-| OpenCode | OpenCode CLI | Provider-managed |
+| Provider | Wraps               | Session format                                     |
+| -------- | ------------------- | -------------------------------------------------- |
+| Claude   | Anthropic Agent SDK | `~/.claude/projects/{cwd}/{session-id}.jsonl`      |
+| Codex    | CodexAppServer      | `~/.codex/sessions/{date}/rollout-{ts}-{id}.jsonl` |
+| OpenCode | OpenCode CLI        | Provider-managed                                   |
 
 All providers:
+
 - Handle their own authentication (Paseo does not manage API keys)
 - Support session resume via persistence handles
 - Map tool calls to a normalized `ToolCallDetail` type

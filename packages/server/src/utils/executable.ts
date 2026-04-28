@@ -1,7 +1,11 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { extname } from "node:path";
+import { spawnProcess } from "./spawn.js";
+import { isWindowsCommandScript } from "./windows-command.js";
+
+export { quoteWindowsArgument, quoteWindowsCommand } from "./windows-command.js";
 
 type Which = (command: string, options: { all: true }) => Promise<string[]>;
 
@@ -35,33 +39,28 @@ async function enumerateCandidates(name: string): Promise<string[]> {
   });
 }
 
-export function isWindowsCommandScript(executablePath: string): boolean {
-  const extension = extname(executablePath).toLowerCase();
-  return process.platform === "win32" && (extension === ".cmd" || extension === ".bat");
-}
-
 async function probeExecutable(executablePath: string): Promise<boolean> {
   return await new Promise((resolve) => {
-    let settled = false;
+    let pendingResolve: ((result: boolean) => void) | null = resolve;
     let started = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: NodeJS.Timeout | undefined;
 
     const settle = (result: boolean) => {
-      if (settled) {
+      if (!pendingResolve) {
         return;
       }
-      settled = true;
+      const fn = pendingResolve;
+      pendingResolve = null;
       if (timer) {
         clearTimeout(timer);
       }
-      resolve(result);
+      fn(result);
     };
 
     let child: ChildProcess;
     try {
-      child = spawn(executablePath, ["--version"], {
+      child = spawnProcess(executablePath, ["--version"], {
         stdio: "ignore",
-        windowsHide: true,
         // Windows batch shims (.cmd/.bat) require cmd.exe; native binaries do not.
         shell: isWindowsCommandScript(executablePath),
       });
@@ -77,8 +76,8 @@ async function probeExecutable(executablePath: string): Promise<boolean> {
         return;
       }
       settle(false);
-    }, PROBE_TIMEOUT_MS);
-    timer.unref?.();
+    }, PROBE_TIMEOUT_MS) as unknown as NodeJS.Timeout;
+    timer.unref();
 
     child.once("spawn", () => {
       started = true;
@@ -121,51 +120,11 @@ export async function findExecutable(name: string): Promise<string | null> {
   }
 
   const candidates = await enumerateCandidates(trimmed);
-  for (const candidate of candidates) {
-    if (await probeExecutable(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
+  const probeResults = await Promise.all(candidates.map((candidate) => probeExecutable(candidate)));
+  const firstMatch = probeResults.findIndex((result) => result);
+  return firstMatch === -1 ? null : candidates[firstMatch];
 }
 
 export async function isCommandAvailable(command: string): Promise<boolean> {
   return (await findExecutable(command)) !== null;
-}
-
-function escapeWindowsCmdValue(value: string): string {
-  if (process.platform !== "win32") return value;
-
-  const isQuoted = value.startsWith('"') && value.endsWith('"');
-  const unquoted = isQuoted ? value.slice(1, -1) : value;
-  const escaped = unquoted.replace(/%/g, "%%").replace(/([&|^<>()!])/g, "^$1");
-
-  if (isQuoted || /[\s"]/u.test(unquoted)) {
-    const quoted = escaped
-      .replace(/(\\*)"/g, (_match, slashes: string) => `${slashes}${slashes}\\"`)
-      .replace(/\\+$/u, (slashes) => `${slashes}${slashes}`);
-    return `"${quoted}"`;
-  }
-
-  return escaped;
-}
-
-/**
- * When spawning with `shell: true` on Windows, the command is passed to
- * `cmd.exe /d /s /c "command args"`. The `/s` strips outer quotes, so a
- * command path with spaces (e.g. `C:\Program Files\...`) is split at the
- * space. Wrapping it in quotes produces the correct `"C:\Program Files\..." args`.
- */
-export function quoteWindowsCommand(command: string): string {
-  return escapeWindowsCmdValue(command);
-}
-
-/**
- * `spawn(..., { shell: true })` on Windows also passes argv through `cmd.exe`.
- * Any argument containing spaces must be quoted or it will be split before the
- * child process sees it.
- */
-export function quoteWindowsArgument(argument: string): string {
-  return escapeWindowsCmdValue(argument);
 }

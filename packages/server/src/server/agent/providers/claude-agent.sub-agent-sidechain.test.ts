@@ -15,7 +15,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: sdkMocks.query,
 }));
 
-type QueryMock = {
+interface QueryMock {
   next: ReturnType<typeof vi.fn>;
   interrupt: ReturnType<typeof vi.fn>;
   return: ReturnType<typeof vi.fn>;
@@ -26,7 +26,7 @@ type QueryMock = {
   supportedCommands: ReturnType<typeof vi.fn>;
   rewindFiles: ReturnType<typeof vi.fn>;
   [Symbol.asyncIterator]: () => AsyncIterator<Record<string, unknown>, void>;
-};
+}
 
 function buildQueryMock(events: unknown[]): QueryMock {
   let index = 0;

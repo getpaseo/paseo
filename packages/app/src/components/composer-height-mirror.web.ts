@@ -83,12 +83,17 @@ export function useComposerHeightMirror({
     }
     ms.width = `${source.clientWidth}px`;
 
-    const { value, minHeight, maxHeight, onHeight } = paramsRef.current;
+    const {
+      value: currentValue,
+      minHeight: currentMinHeight,
+      maxHeight: currentMaxHeight,
+      onHeight: currentOnHeight,
+    } = paramsRef.current;
     // Trailing newline is collapsed by textarea measurement — pad with a space.
-    mirror.value = value.endsWith("\n") ? `${value} ` : value;
+    mirror.value = currentValue.endsWith("\n") ? `${currentValue} ` : currentValue;
 
-    const next = Math.max(minHeight, Math.min(maxHeight, mirror.scrollHeight));
-    onHeight(next);
+    const next = Math.max(currentMinHeight, Math.min(currentMaxHeight, mirror.scrollHeight));
+    currentOnHeight(next);
   }, [textareaRef]);
 
   useLayoutEffect(() => {

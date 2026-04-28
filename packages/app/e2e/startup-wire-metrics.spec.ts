@@ -7,13 +7,13 @@ import { waitForSidebarHydration } from "./helpers/workspace-ui";
 type WireDirection = "sent" | "received";
 type WirePhase = "startup" | "workspace_clicks";
 
-type ParsedWireMessage = {
+interface ParsedWireMessage {
   type: string | null;
   requestId: string | null;
   entryCount: number | null;
   hasMore: boolean | null;
   providerEntries: ProviderSnapshotWireEntry[] | null;
-};
+}
 
 type WireFrameRecord = ParsedWireMessage & {
   phase: WirePhase;
@@ -21,23 +21,23 @@ type WireFrameRecord = ParsedWireMessage & {
   bytes: number;
 };
 
-type ProviderSnapshotWireEntry = {
+interface ProviderSnapshotWireEntry {
   provider: string;
   status: string | null;
   modelCount: number;
   modeCount: number;
   bytes: number;
-};
+}
 
-type WebSocketFrameEvent = {
+interface WebSocketFrameEvent {
   requestId: string;
   response: {
     opcode: number;
     payloadData: string;
   };
-};
+}
 
-type WireSummary = {
+interface WireSummary {
   totalFrames: number;
   totalBytes: number;
   byDirection: Record<WireDirection, { frames: number; bytes: number }>;
@@ -84,7 +84,18 @@ type WireSummary = {
     copiedFiles: number | null;
     copiedBytes: number | null;
   };
-};
+}
+
+function extractWorkspaceTestIds(elements: Element[]): string[] {
+  const result: string[] = [];
+  for (const element of elements.slice(0, 3)) {
+    const value = element.getAttribute("data-testid");
+    if (value) {
+      result.push(value);
+    }
+  }
+  return result;
+}
 
 class WireMonitor {
   private phase: WirePhase = "startup";
@@ -368,7 +379,7 @@ function summarizeByType(records: WireFrameRecord[]): Array<{
     byType.set(type, current);
   }
   return [...byType.entries()]
-    .map(([type, value]) => ({ type, ...value }))
+    .map(([type, value]) => Object.assign({ type }, value))
     .sort((left, right) => right.bytes - left.bytes);
 }
 
@@ -499,12 +510,7 @@ test.describe("ad hoc startup wire metrics", () => {
 
     const workspaceTestIds = await page
       .locator('[data-testid^="sidebar-workspace-row-"]:visible')
-      .evaluateAll((elements) =>
-        elements
-          .slice(0, 3)
-          .map((element) => element.getAttribute("data-testid"))
-          .filter((value): value is string => Boolean(value)),
-      );
+      .evaluateAll(extractWorkspaceTestIds);
 
     monitor.setPhase("workspace_clicks");
     const clickedWorkspaces: WireSummary["clickedWorkspaces"] = [];

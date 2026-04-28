@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -9,6 +9,8 @@ import { normalizeHostPort } from "@/utils/daemon-endpoints";
 import { DaemonConnectionTestError, connectToDaemon } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+
+const FLEX_ONE_STYLE = { flex: 1 } as const;
 
 const styles = StyleSheet.create((theme) => ({
   field: {
@@ -158,6 +160,11 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     hostInputRef.current?.clear();
   }, []);
 
+  const connectIcon = useMemo(
+    () => <Link2 size={16} color={theme.colors.palette.white} />,
+    [theme.colors.palette.white],
+  );
+
   const handleClose = useCallback(() => {
     if (isSaving) return;
     clearInput();
@@ -214,13 +221,15 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       onSaved?.({ profile, serverId, hostname, isNewHost });
       handleClose();
     } catch (error) {
-      const { title, detail, raw } = buildConnectionFailureCopy(endpoint, error);
-      const combined =
-        raw && detail && raw !== detail
-          ? `${title}\n${detail}\nDetails: ${raw}`
-          : detail
-            ? `${title}\n${detail}`
-            : title;
+      const { title, detail, raw: rawDetail } = buildConnectionFailureCopy(endpoint, error);
+      let combined: string;
+      if (rawDetail && detail && rawDetail !== detail) {
+        combined = `${title}\n${detail}\nDetails: ${rawDetail}`;
+      } else if (detail) {
+        combined = `${title}\n${detail}`;
+      } else {
+        combined = title;
+      }
       setErrorMessage(combined);
       if (!isMobile) {
         // Desktop/web: also surface it as a dialog for quick visibility.
@@ -230,6 +239,18 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       setIsSaving(false);
     }
   }, [daemons, handleClose, isMobile, isSaving, onSaved, upsertDirectConnection]);
+
+  const handleChangeEndpoint = useCallback((next: string) => {
+    endpointRawRef.current = next;
+  }, []);
+
+  const handleSubmitEditing = useCallback(() => {
+    void handleSave();
+  }, [handleSave]);
+
+  const handleSavePress = useCallback(() => {
+    void handleSave();
+  }, [handleSave]);
 
   return (
     <AdaptiveModalSheet
@@ -247,9 +268,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           testID="direct-host-input"
           nativeID="direct-host-input"
           accessibilityLabel="direct-host-input"
-          onChangeText={(next) => {
-            endpointRawRef.current = next;
-          }}
+          onChangeText={handleChangeEndpoint}
           placeholder="hostname:port"
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
@@ -258,21 +277,26 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           keyboardType="url"
           editable={!isSaving}
           returnKeyType="done"
-          onSubmitEditing={() => void handleSave()}
+          onSubmitEditing={handleSubmitEditing}
         />
         {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
       </View>
 
       <View style={styles.actions}>
-        <Button style={{ flex: 1 }} variant="secondary" onPress={handleCancel} disabled={isSaving}>
+        <Button
+          style={FLEX_ONE_STYLE}
+          variant="secondary"
+          onPress={handleCancel}
+          disabled={isSaving}
+        >
           Cancel
         </Button>
         <Button
-          style={{ flex: 1 }}
+          style={FLEX_ONE_STYLE}
           variant="default"
-          onPress={() => void handleSave()}
+          onPress={handleSavePress}
           disabled={isSaving}
-          leftIcon={<Link2 size={16} color={theme.colors.palette.white} />}
+          leftIcon={connectIcon}
           testID="direct-host-submit"
         >
           {isSaving ? "Connecting..." : "Connect"}

@@ -1,8 +1,82 @@
 # Changelog
 
-## 0.1.60-beta.2 - 2026-04-22
+## 0.1.63 - 2026-04-28
 
 ### Added
+
+- Project settings page with a built-in `paseo.json` editor.
+- Cold start restores your last open workspace.
+- Tool call badges have a button to open the referenced file directly.
+- Open the current branch on GitHub from a workspace's open menu. ([#583](https://github.com/getpaseo/paseo/pull/583) by [@Myriad-Dreamin](https://github.com/Myriad-Dreamin))
+- Enable or disable providers from Settings without editing config files.
+- Paseo prompts you to configure a worktree setup script when one is missing.
+- Choose whether the daemon shuts down when you close the desktop app.
+
+### Improved
+
+- Provider settings and model selection have been redesigned.
+- Voice mode transcription endpoint is configurable for OpenAI-compatible providers. ([#570](https://github.com/getpaseo/paseo/pull/570) by [@yuruiz](https://github.com/yuruiz))
+- Adding a project no longer waits for GitHub PR status to load.
+- Startup splash screen is cleaner — just the logo with a subtle shimmer.
+- `paseo.json` setup and teardown accept a single command string, not just an array.
+- Archiving a worktree is instant instead of waiting for the backend to confirm.
+- Agent timelines and git diff lists no longer jump around while loading or streaming.
+
+### Fixed
+
+- `paseo loop run` and `paseo run` now respect the `--provider` and `--model` flags. ([#594](https://github.com/getpaseo/paseo/pull/594) by [@VincenzoRocchi](https://github.com/VincenzoRocchi))
+- Pi provider shows up when only DeepSeek or other non-OpenAI/Anthropic/OpenRouter API keys are set.
+- Custom models from `additionalModels` and `profileModels` are honored when picking a default for new agents.
+- File preview line numbers stay on one line past line 99.
+- Cmd+Q on macOS quits the desktop app instead of leaving it running in the background.
+- Terminal sessions recover cleanly after rendering hiccups, including the initial resize for nvim.
+- Terminal protocol query responses no longer leak into the browser.
+- Assistant link color matches the theme again.
+- File links with line numbers (like `foo.ts:42`) open correctly from assistant messages.
+- Claude's Grep results show up in the search detail body.
+- Reopening a worktree lands under the right project.
+- Agents from disabled or unavailable providers stay visible in history.
+- New CLI agents now require a provider instead of failing silently.
+- Git diff headers no longer truncate.
+- Provider diagnostic modal scrolls on short screens.
+- Provider diagnostics show the real error and underlying child-process output instead of a generic message.
+- Archived workspaces no longer interfere with working-directory resolution.
+- Triple-click on a message no longer extends the selection into adjacent bubbles.
+- The packaged desktop app preserves your zsh prompt.
+
+## 0.1.62 - 2026-04-23
+
+### Added
+
+- Sidebar warning when your app and daemon versions drift apart, with a shortcut to settings.
+
+### Improved
+
+- Workspaces appear in the sidebar immediately on startup instead of waiting for git registration.
+
+### Fixed
+
+- Pull request status resolves correctly for PRs opened from forks.
+- Installing the paseo CLI from the macOS desktop app now works in packaged builds.
+- Agents launched from the desktop app no longer inherit Electron-only environment variables.
+
+## 0.1.61 - 2026-04-23
+
+### Added
+
+- `additionalModels` option in provider config lets you add or relabel models without replacing the full list — entries merge with runtime-discovered models (ACP) or your static `models` list. See the [Providers docs](https://paseo.sh/docs/providers).
+- New [Providers docs page](https://paseo.sh/docs/providers) covering first-class providers and every custom provider config pattern in one place.
+
+### Improved
+
+- Pi loads your installed extensions on startup so their models show up in the model picker.
+- Resizing the explorer sidebar no longer rerenders the rest of the workspace.
+- Images in assistant messages (both file paths and inline data URLs) persist as local attachments and open in the file pane.
+
+## 0.1.60 - 2026-04-22
+
+### Added
+
 - Scripts and services per worktree — define named commands in `paseo.json`, and long-running services get supervised with their own ports and nice proxy URLs like `http://web.my-app.localhost:6767`. See the [worktrees guide](https://paseo.sh/docs/worktrees).
 - Launch scripts and services for a worktree directly from the workspace header.
 - New Setup tab in every workspace showing setup, teardown, and script progress live.
@@ -17,6 +91,7 @@
 - New-workspace picker ranks branches by recency with fast search.
 
 ### Improved
+
 - Workspace and tab switching are dramatically faster on desktop and mobile — you can keep many workspaces open in parallel without lag.
 - Agent streams render more smoothly during heavy tool output.
 - App startup routes through a stable connection and lands on the right screen without flicker.
@@ -28,8 +103,10 @@
 - Escape reliably interrupts the active agent.
 - Checking out a pull request from a fork lands on an owner-prefixed branch so multiple forks don't collide.
 - `paseo ls` defaults to active agents; pass `-a` to include archived.
+- GitHub branch and PR picker loads faster — queries are deferred until the picker opens.
 
 ### Fixed
+
 - Composer textarea shrinks back down after sending on web.
 - New workspace drafts clear after submit instead of sticking around.
 - Replacing a running agent cleans up the previous one without leaving it behind.
@@ -42,22 +119,30 @@
 - iOS image picker no longer leaves the screen unresponsive after cancelling.
 - Archiving a worktree recovers cleanly if a previous attempt was interrupted.
 - Images in agent messages with `~`-prefixed paths load instead of spinning forever.
+- Tool call blocks expand correctly on mobile while an agent is still streaming.
+- Timeline no longer stutters when catch-up and projected ranges overlap.
+- Codex no longer flashes idle when a replacement turn is in progress.
+- Branch state recovers correctly when a rebase is in progress.
+- Workspace hover card no longer clips near screen edges.
 
 ## 0.1.59 - 2026-04-16
 
 ### Added
+
 - Opus 4.7 in the Claude model picker, with a 1M-context variant.
 - Extra High reasoning effort for Opus 4.7, between High and Max.
 
 ## 0.1.58 - 2026-04-16
 
 ### Added
+
 - Markdown files render as formatted markdown in the file pane. ([#427](https://github.com/getpaseo/paseo/pull/427) by [@aaronflorey](https://github.com/aaronflorey))
 - Cmd+L (Ctrl+L on Windows/Linux) focuses the agent message input.
 - Provider models refresh on a freshness TTL; Settings shows last-updated time and any fetch errors. ([#426](https://github.com/getpaseo/paseo/pull/426))
 - `disallowedTools` option in provider config to block specific tools from an agent.
 
 ### Improved
+
 - Windows: agents launch reliably from npm `.cmd` shims, paths with spaces, and JSON config args — fixes `spawn EINVAL` startup errors. ([#454](https://github.com/getpaseo/paseo/pull/454))
 - OpenCode permission prompts include the requesting tool's context. ([#398](https://github.com/getpaseo/paseo/pull/398) by [@aaronflorey](https://github.com/aaronflorey))
 - OpenCode todo and compaction events render in the timeline. ([#429](https://github.com/getpaseo/paseo/pull/429) by [@aaronflorey](https://github.com/aaronflorey))
@@ -67,6 +152,7 @@
 - Native scrollbars match the active theme across all web views. ([#399](https://github.com/getpaseo/paseo/pull/399) by [@ethersh](https://github.com/ethersh))
 
 ### Fixed
+
 - Code file previews can be selected and copied on iOS. ([#447](https://github.com/getpaseo/paseo/pull/447) by [@muzhi1991](https://github.com/muzhi1991))
 - File preview no longer shows stale content when reopening the same file. ([#411](https://github.com/getpaseo/paseo/pull/411) by [@muzhi1991](https://github.com/muzhi1991))
 - File explorer reinitialises when the client reconnects after a page refresh. ([#442](https://github.com/getpaseo/paseo/pull/442) by [@1996fanrui](https://github.com/1996fanrui))
@@ -80,12 +166,14 @@
 ## 0.1.56 - 2026-04-14
 
 ### Fixed
+
 - Projects with empty git repositories (no commits yet) no longer crash the app on startup.
 - A single problematic project can no longer prevent the rest of your workspaces from loading.
 
 ## 0.1.55 - 2026-04-14
 
 ### Added
+
 - Provider profiles — define custom providers in your Paseo config that appear alongside built-ins. Override a built-in's binary, env, or models, or create entirely new providers. See the [configuration guide](https://github.com/getpaseo/paseo/blob/main/docs/CUSTOM-PROVIDERS.md).
 - ACP agent support — add any ACP-compatible agent to Paseo with `extends: "acp"` in your provider config. No code changes needed.
 - Choose provider and model when creating scheduled agents.
@@ -93,12 +181,14 @@
 - Cmd+, (Ctrl+, on Windows/Linux) opens settings.
 
 ### Improved
+
 - Git operations are dramatically faster — workspace status, PR checks, and branch data all use a shared cached snapshot service instead of shelling out to git on every request. Running 20+ workspaces simultaneously is now smooth.
 - Windows support — the daemon and CLI run natively on Windows with proper shell quoting, executable resolution, and path handling.
 - iPad and tablet layouts work correctly across all screen sizes.
 - IME composition (Chinese, Japanese, Korean input) no longer submits prematurely when pressing Enter.
 
 ### Fixed
+
 - Creating a worktree no longer briefly flashes it as a standalone project before placing it under the correct repository.
 - Worktree creation spinner stays visible throughout the process instead of disappearing on mouse-out.
 - Workspace navigation updates correctly when switching between workspaces in the same project.
@@ -108,13 +198,16 @@
 ## 0.1.54 - 2026-04-12
 
 ### Added
+
 - Inline image previews in agent messages — screenshots and images generated by agents render directly in the conversation instead of showing as raw markdown links.
 
 ### Improved
+
 - Paseo tools are no longer injected into agents by default — opt in from Settings when you need agent-to-agent orchestration.
 - Agent provider and mode are now resolved server-side, so CLI commands like `paseo run` use consistent defaults without client-side lookups.
 
 ### Fixed
+
 - Shift+Enter now correctly inserts a newline in agent terminal input instead of submitting.
 - Windows: MCP configuration is no longer mangled when spawning Claude agents.
 - Branch ahead/behind count no longer errors for branches with no remote tracking branch.
@@ -122,6 +215,7 @@
 ## 0.1.53 - 2026-04-12
 
 ### Added
+
 - Agents get Paseo tools automatically — every new agent gets access to terminals, schedules, worktrees, and other agents through MCP. Toggle it off in Settings under "Inject Paseo tools".
 - Git pull — pull remote changes directly from the workspace header. Promoted to the primary action when your branch is behind origin.
 - Child agent notifications — parent agents are automatically notified when a child agent finishes, errors, or needs permission approval.
@@ -130,6 +224,7 @@
 - Keyboard shortcut to cycle themes.
 
 ### Improved
+
 - Unavailable git actions now explain why in a toast instead of being silently greyed out.
 - Streaming markdown on mobile renders significantly faster.
 - Sidebar, branch switcher, and agent panel no longer re-render unnecessarily — noticeable on large workspaces.
@@ -137,6 +232,7 @@
 - Relay and pairing URLs are stripped from daemon logs.
 
 ### Fixed
+
 - Closed agent tabs no longer reappear after reconnecting.
 - Desktop notification badge counts match across all workspaces.
 - Host switcher status syncs correctly when switching between hosts.
@@ -144,11 +240,13 @@
 ## 0.1.52 - 2026-04-10
 
 ### Added
+
 - Theme selector — choose from six themes including Midnight, Claude, and Ghostty dark variants.
 - Branch switching — switch git branches directly from the workspace header, with automatic stash and restore for uncommitted changes.
 - Auto-download updates — desktop updates download silently in the background so they're ready to install when you are.
 
 ### Fixed
+
 - Layout now responds correctly when resizing the window or rotating a tablet — previously the app could get stuck in mobile layout on a large screen.
 - Terminal no longer causes massive memory spikes from snapshot thrashing during heavy output.
 - Typing in the terminal works reliably — special keys, Ctrl combos, and paste are handled natively by the terminal emulator.
@@ -161,11 +259,13 @@
 ## 0.1.51 - 2026-04-09
 
 ### Added
+
 - Image attachments for OpenCode — attach screenshots and images to OpenCode agent prompts.
 - WebStorm — added to the "Open in editor" list alongside Cursor, VS Code, and Zed.
 - Send behavior setting — choose whether pressing Enter while an agent is running interrupts immediately or queues your message.
 
 ### Fixed
+
 - Model selector no longer crashes on iPad.
 - Pairing now uses the correct hostname, fixing connection failures on some network setups.
 - OpenCode agents show the correct terminal state and refresh models reliably.
@@ -177,6 +277,7 @@
 ## 0.1.50 - 2026-04-07
 
 ### Added
+
 - Context window meter — see how much of the context window your agent has used, with color thresholds at 70% and 90%. Works with Claude Code, Codex, and OpenCode.
 - Open in editor — jump from any workspace straight into Cursor, VS Code, Zed, or your file manager. Paseo remembers your choice.
 - Side-by-side diffs — toggle between unified and split-column diff views, with a whitespace visibility option.
@@ -185,6 +286,7 @@
 - Background git fetch — ahead/behind counts in the Changes pane stay up to date automatically.
 
 ### Improved
+
 - Workspaces load instantly on connect instead of waiting for a full sync.
 - File explorer and diff pane remember which folders are expanded when you switch tabs.
 - Closing a workspace tab is now instant.
@@ -192,6 +294,7 @@
 - Reload agent moved away from the close button to prevent accidental taps.
 
 ### Fixed
+
 - Voice mode no longer drifts into false speech detection during long sessions.
 - Garbled overlapping text on plan cards.
 - Changes pane could show stale diffs when working with git worktrees.
@@ -204,6 +307,7 @@
 ## 0.1.49 - 2026-04-07
 
 ### Fixed
+
 - Models and providers now load reliably on first connect instead of requiring a manual refresh.
 - Model picker only shows models from the agent's own provider, not every provider on the server.
 - Model lists stay consistent regardless of which screen you open first.
@@ -211,17 +315,20 @@
 ## 0.1.48 - 2026-04-05
 
 ### Added
+
 - Provider diagnostics — tap a provider in Settings to see binary path, version, model count, and status at a glance. Helps troubleshoot why an agent type isn't available.
 - Provider snapshot system — daemon now pushes real-time provider availability and model lists to the app, replacing the old poll-based approach. Models and modes update live as providers come online or go offline.
 - Codex question handling — Codex agents can now ask the user questions mid-session (e.g. "which file?") and receive answers inline, matching the Claude Code question flow.
 - Reload tab action — right-click a workspace tab to reload its agent list without restarting the app.
 
 ### Improved
+
 - Model selector redesigned — grouped by provider with status badges, search, and better touch targets on mobile.
 - Enter key now submits question card answers and confirms dictation, matching the expected keyboard flow.
 - Removed noisy agent lifecycle toasts that fired on every state change.
 
 ### Fixed
+
 - Desktop app now resolves the user's full login shell environment at startup, fixing tools like `codex`, `node`, `bun`, and `direnv` not being found when Paseo is launched from Finder or Dock. Terminals spawned by Paseo now inherit the same PATH and environment variables as a normal terminal session. Approach adapted from VS Code's battle-tested shell environment resolution.
 - Input field on running agent screens now correctly receives keyboard focus.
 - Mobile model selector alignment and sizing.
@@ -229,6 +336,7 @@
 ## 0.1.47 - 2026-04-05
 
 ### Fixed
+
 - Voice TTS in Electron — sherpa now requests copied buffers and the voice MCP bridge sets `ELECTRON_RUN_AS_NODE`, preventing "external buffers not allowed" crashes.
 - QR pairing in desktop — CLI JSON output parsing now tolerates Node deprecation warnings in stdout.
 - STT segment race condition — segment ID and audio buffer are snapshotted before the async transcription call, so rapid commits no longer interleave.
@@ -237,6 +345,7 @@
 ## 0.1.46 - 2026-04-04
 
 ### Fixed
+
 - Voice activation in packaged builds — Silero VAD model is now copied out of the Electron asar archive so native code can read it.
 - App version sent in probe client hello so the daemon's version gate no longer hides Pi/Copilot from reconnected sessions.
 - `worktreeRoot` schema made backward-compatible for old clients and daemons that don't send the field.
@@ -245,6 +354,7 @@
 ## 0.1.45 - 2026-04-04
 
 ### Added
+
 - Pi (pi.dev) agent provider — connect Pi as a new ACP-based agent type with thinking levels and tool call support.
 - Copilot agent provider re-enabled after ACP compatibility fixes.
 - `paseo .` and `paseo <path>` open the desktop app with the given project, similar to `code .`.
@@ -257,11 +367,13 @@
 - Setup hint and paseo.sh link on the mobile welcome screen so new App Store users know what to do next.
 
 ### Improved
+
 - Desktop startup is faster — existing daemon connections are raced against bootstrap so the app is usable sooner.
 - Settings sections reordered for better grouping (integrations and daemon together).
 - Sidebar projects and workspaces now persist across sessions, with a context menu to remove projects.
 
 ### Fixed
+
 - Sidebar crash when switching iOS theme (Unistyles/Reanimated interaction).
 - Silero VAD crash caused by external buffer mode in CircularBuffer.
 - Bulk close now correctly archives stored agents instead of leaving orphans.
@@ -278,6 +390,7 @@
 ## 0.1.44 - 2026-04-03
 
 ### Fixed
+
 - Desktop app now stops the daemon cleanly before auto-update restarts.
 - Disabled claude-acp and copilot providers from the agent registry.
 - Keyboard focus scope resolution now checks multiple candidates for broader compatibility.
@@ -287,16 +400,19 @@
 ## 0.1.43 - 2026-04-02
 
 ### Added
+
 - Copilot agent support via ACP base provider — connect GitHub Copilot as a new agent type.
 - Searchable model favorites — quickly find and pin preferred models.
 - Slash command support for OpenCode agents.
 
 ### Improved
+
 - Refined model selector UX with better mobile sheet behavior.
 - Workspace status now uses amber alert styling for "needs input" state.
 - Themed scrollbar on message input for consistent styling.
 
 ### Fixed
+
 - Ctrl+C/V copy and paste now works correctly in the terminal on Windows and Linux.
 - Shell arguments with spaces are now properly quoted on Windows.
 - Claude models with 1M context support are now correctly reported.
@@ -304,11 +420,13 @@
 ## 0.1.42 - 2026-04-01
 
 ### Fixed
+
 - Fixed Claude Code failing to launch on Windows when installed to a path with spaces (e.g. `C:\Program Files\...`).
 
 ## 0.1.41 - 2026-04-01
 
 ### Fixed
+
 - Fixed agent spawning on Windows — all providers (Claude, Codex, OpenCode) now use shell mode so npm shims and `.cmd` wrappers resolve correctly.
 - Fixed terminal creation on Windows defaulting to a Unix shell instead of `cmd.exe`.
 - Fixed path handling across the app to support Windows drive-letter paths (`C:\...`) and UNC paths (`\\...`).
@@ -320,18 +438,22 @@
 - Removed the 40-item cap on activity timeline output so long agent sessions display their full history.
 
 ### Improved
+
 - Improved light mode theming with dedicated workspace background, scrollbar handle colors, and lighter shadows.
 - Window controls overlay on Windows/Linux reduced from 48px to 29px height for a more compact titlebar.
 
 ## 0.1.40 - 2026-04-01
 
 ### Added
+
 - Workspace tabs can now be closed in batches.
 
 ### Improved
+
 - Provider model lists are now cached per server and provider, reducing redundant model lookups in the UI.
 
 ### Fixed
+
 - OpenCode reasoning content no longer appears duplicated as assistant text.
 - Daemon no longer crashes when a Codex binary is missing or fails to spawn.
 - Archive tab now correctly reconciles agent visibility after archiving.
@@ -342,61 +464,73 @@
 ## 0.1.39 - 2026-03-30
 
 ### Added
+
 - **Terminal management from the CLI** — new `paseo terminal` command group lets you list, create, and interact with workspace terminals without leaving your terminal.
 - **Material file icons in the explorer** — the file explorer tree now shows language-specific icons (TypeScript, JSON, Markdown, etc.) so you can spot files at a glance.
 
 ### Fixed
+
 - Fixed iOS sidebar scroll flicker caused by redundant overflow clipping.
 - Centralized window controls padding into a shared hook, eliminating layout inconsistencies across platforms.
 
 ## 0.1.38 - 2026-03-30
 
 ### Fixed
+
 - Fixed daemon startup race where the app could time out connecting on first launch because the PID file advertised a listen address before the server was ready.
 - Fixed daemon log rotation losing startup traces — trace-level WebSocket logs no longer include full message payloads.
 
 ## 0.1.37 - 2026-03-29
 
 ### Added
+
 - Custom window controls on Windows and Linux — the native titlebar is replaced with overlay controls that match the app's design.
 - Desktop file logging with electron-log for easier debugging of daemon and app issues.
 
 ### Fixed
+
 - Fixed broken PATH propagation and Claude binary resolution on Windows.
 - Dictation errors now show a visible toast instead of failing silently.
 
 ## 0.1.36 - 2026-03-27
 
 ### Fixed
+
 - Fixed Windows drive-letter path handling across the codebase.
 - Fixed stale Nix hash with automatic lockfile-change detection.
 
 ### Added
+
 - Added metrics collection and terminal performance tests.
 
 ## 0.1.35 - 2026-03-26
 
 ### Improved
+
 - Faster app startup by redirecting to the welcome screen immediately and showing host connection status inline.
 - Codex file deletions now display correctly as removed lines in diffs.
 - OpenCode questions are now surfaced in the permission UI.
 
 ### Fixed
+
 - Fixed queued prompt dispatch after idle transition.
 - Replaced bash-only `mapfile` with a portable `while-read` loop in the chat script.
 
 ### Added
+
 - Added support for Nix and NixOS installation.
 
 ## 0.1.34 - 2026-03-25
 
 ### Added
+
 - Added `paseo archive` as a top-level alias for `paseo agent archive`.
 - Added the `PASEO_AGENT_ID` environment variable for Claude and Codex agents.
 - Added a redesigned command autocomplete with a detail card and dropdown styling.
 - Linked Android download surfaces to the Google Play Store.
 
 ### Improved
+
 - Autonomous turns now complete gracefully on interrupt instead of being canceled.
 - Thinking/model selection now always resolves to a real option instead of showing a generic Default choice.
 - Restored per-provider form preferences and removed the Auto model fallback.
@@ -405,6 +539,7 @@
 - Improved chat transcript readability.
 
 ### Fixed
+
 - Fixed `paseo send --no-wait` not taking effect.
 - Fixed stale abort results contaminating replacement turns after an interrupt.
 - Fixed Claude interrupt handling and autonomous wake reliability.
@@ -421,6 +556,7 @@
 ## 0.1.33 - 2026-03-23
 
 ### Fixed
+
 - Fixed the desktop app failing to reopen after closing on macOS — the daemon and agent processes were registering with Launch Services as instances of the main app, blocking subsequent launches.
 - Fixed dictation not working in the packaged desktop app — the microphone entitlement was missing from the hardened runtime configuration.
 - Fixed leaked Claude Code child processes when agents were closed — the SDK query stream was not being properly shut down.
@@ -429,6 +565,7 @@
 ## 0.1.32 - 2026-03-23
 
 ### Added
+
 - Fully rebindable keyboard shortcuts with chord support — all shortcuts are now declarative with proper Cmd (Mac) vs Ctrl (Windows/Linux) separation.
 - Migrated the desktop app from Tauri to Electron, with macOS notarization, code signing, and Linux Wayland support.
 - Added line numbers and word-wrap toggle to file previews.
@@ -438,6 +575,7 @@
 - Added status bar tooltips for project and agent status.
 
 ### Improved
+
 - Redesigned the mobile tab switcher as a compact header row with quick access to new agents and terminals.
 - Streamlined workspace creation — worktrees are now created inline with a single action instead of a multi-step flow.
 - Agent history now streams from disk on reconnect, so you see past messages immediately instead of a blank screen.
@@ -452,6 +590,7 @@
 - Better error messages from the daemon — RPC errors now include the actual underlying details.
 
 ### Fixed
+
 - Fixed user messages appearing as assistant output in the timeline when messages contained structured content blocks.
 - Fixed archived workspace routing so navigating to an archived session no longer breaks the app.
 - Fixed Linux AppImage failing to launch on Wayland-only desktops.
@@ -460,16 +599,19 @@
 ## 0.1.30 - 2026-03-19
 
 ### Added
+
 - Added terminal tabs, split pane controls, and drop previews for workspace layouts.
 - Added a combined model selector and agent mode visuals across key UI surfaces.
 - Added Open Graph metadata improvements for richer website sharing previews.
 
 ### Improved
+
 - Improved workspace navigation with better active-workspace tracking and keyboard-driven pane interactions.
 - Improved terminal scrollbar behavior, pane focus handling, and status bar/message input spacing.
 - Improved project picker path display and general workspace UI polish.
 
 ### Fixed
+
 - Fixed agent startup reliability by tightening PATH resolution and surfacing missing provider binaries in status.
 - Fixed workspace route syncing, drag hit areas, and git diff panel header styling regressions.
 - Fixed website mobile horizontal scrolling and ensured the workspace audio module builds during EAS installs.
@@ -477,30 +619,36 @@
 ## 0.1.28 - 2026-03-15
 
 ### Added
+
 - Added OpenCode build and plan modes.
 - Added website landing pages for Claude Code, Codex, and OpenCode.
 
 ### Improved
+
 - Improved the git action menu for more reliable repository actions.
 - Improved the mobile settings screen, workspace header actions, and welcome screen presentation.
 - Updated the website hero copy and added a sponsor callout section.
 
 ### Fixed
+
 - Fixed assistant file links so they open the correct workspace files from chat.
 
 ## 0.1.27 - 2026-03-13
 
 ### Added
+
 - Added voice runtime with new audio engine architecture for voice interactions.
 - Added Grep tool support in Claude tool-call mapping.
 - Added ability to open workspace files directly from agent chat messages.
 - Added desktop notifications via a custom native bridge.
 
 ### Improved
+
 - Improved image picker, markdown rendering, and UI interactions.
 - Improved shell environment detection using shell-env.
 
 ### Fixed
+
 - Fixed platform-specific markdown link rendering.
 - Fixed Linux AppImage CLI resource paths.
 - Fixed Codex replacement stream being killed by stale turn notifications.
@@ -508,15 +656,18 @@
 ## 0.1.26 - 2026-03-12
 
 ### Added
+
 - Added single-instance desktop behavior, Android APK download access, and refreshed splash screen styling.
 - Added bundled Codex and OpenCode binaries in the server so setup no longer depends on global installs.
 - Added Windows support with improved cross-platform shell execution.
 
 ### Improved
+
 - Improved desktop runtime behavior on Windows by suppressing console windows and defaulting app data to `~/.paseo`.
 - Added a Discord link to the website navigation.
 
 ### Fixed
+
 - Fixed desktop Claude agent startup from the managed runtime and rotated logs correctly on restart.
 - Fixed the home route to hide browser chrome when appropriate.
 - Fixed Expo Metro compatibility by updating the `exclusionList` import.
@@ -526,61 +677,79 @@
 ## 0.1.25 - 2026-03-11
 
 ### Fixed
+
 - Fixed desktop app failing to start the built-in daemon on fresh macOS installs. The DMG was not notarized and code-signing stripped entitlements from the bundled Node runtime, causing Gatekeeper to block execution.
 - Fixed Linux AppImage build by restoring the AppImage bundle format and stripping CUDA dependencies from onnxruntime.
 
 ## 0.1.24 - 2026-03-10
 
 ### Improved
+
 - Improved command center keyboard navigation and new tab shortcut.
 - Simplified desktop release pipeline for faster and more reliable builds.
 
 ## 0.1.21 - 2026-03-10
+
 ### Improved
+
 - Improved desktop release reliability by fixing the Windows managed-runtime build path during GitHub Actions releases.
 
 ### Fixed
+
 - Fixed a desktop release CI failure caused by a Unix-only server build script on Windows runners.
 - Fixed server CI to build the relay dependency before running tests, restoring relay E2EE test coverage on clean runners.
 - Fixed a Claude redesign test that depended on the local Claude CLI being installed.
 
 ## 0.1.20 - 2026-03-10
+
 ### Added
+
 - Added workspace sidebar git actions with quick diff stats and archive controls.
 - Added refreshed website downloads and homepage presentation for desktop installs.
 
 ### Improved
+
 - Desktop release packaging now rebuilds and validates the bundled managed runtime during CI, improving installer reliability for macOS users.
 - Improved desktop and web stream rendering, settings polish, and React 19.1.4 compatibility.
 
 ### Fixed
+
 - Fixed Claude interrupt/restart regressions and strengthened managed-daemon smoke coverage for desktop releases.
 
 ## 0.1.19 - 2026-03-09
+
 ### Added
+
 - Added a draft GitHub release flow so maintainers can upload and review desktop and Android release assets before publishing the final release.
 
 ## 0.1.18 - 2026-03-06
+
 ### Added
+
 - Added a desktop `Mod+W` shortcut to close the current tab.
 
 ### Improved
+
 - New and newly selected terminals now take focus automatically so you can type immediately.
 - Kept newly created workspaces and projects in a more stable order in the sidebar.
 - Improved project naming for GitHub remotes and expanded project icon discovery to Phoenix `priv/static` assets.
 - Updated the website desktop download link to use the universal macOS DMG.
 
 ### Fixed
+
 - Restored automatic agent metadata generation for Claude runs.
 
 ## 0.1.17 - 2026-03-06
+
 ### Added
+
 - New workspace-first navigation model with workspace tabs, file tabs, and sortable tab groups.
 - Keyboard shortcuts for workspace and tab navigation, with shortcut badges in the sidebar.
 - Workspace-level archive actions with improved worktree archiving flow and context menu support.
 - In-chat task notifications rendered as synthetic tool-call events for clearer status tracking.
 
 ### Improved
+
 - Desktop builds now ship as a universal macOS binary (Apple Silicon + Intel).
 - More reliable workspace routing and tab identity handling across refreshes and deep links.
 - Better sidebar drag-and-drop behavior with explicit drag handles and nested list interactions.
@@ -588,6 +757,7 @@
 - Stronger provider error surfacing and updated Claude model/runtime handling.
 
 ### Fixed
+
 - Fixed orphan workspace runs caused by non-canonical tab routes.
 - Fixed mobile terminal tab remount/routing restore issues.
 - Fixed agent metadata title/branch update reliability.
@@ -595,7 +765,9 @@
 - Fixed reversed edge-wheel scroll behavior in chat/tool stream views.
 
 ## 0.1.16 - 2026-02-22
+
 ### Added
+
 - Update the Paseo desktop app and local daemon directly from Settings.
 - Microphone and notification permission controls in Settings.
 - Thinking/reasoning mode — agents can use extended thinking when the provider supports it.
@@ -603,6 +775,7 @@
 - `paseo wait` now shows a snapshot of recent agent activity while you wait.
 
 ### Improved
+
 - Smoother streaming with less UI flicker and scroll jumping during long agent runs.
 - Faster agent sidebar list rendering.
 - Archiving an agent now stops it first instead of archiving a half-running session.
@@ -610,16 +783,20 @@
 - More reliable relay connections.
 
 ### Fixed
+
 - Fixed Claude background tasks desyncing the chat.
 - Fixed duplicate user messages appearing in the timeline.
 - Fixed a startup crash caused by an OpenCode SDK update.
 - Fixed spurious "needs attention" notifications from background agent activity.
 
 ## 0.1.15 - 2026-02-19
+
 ### Added
+
 - Added a public changelog page on the website so users can browse release notes.
 
 ### Improved
+
 - Redesigned the website get-started experience into a clearer two-step flow.
 - Simplified website GitHub navigation and changelog headings.
 - Improved app draft/new-agent UX with clearer working directory placeholder and empty-state messaging.
@@ -627,11 +804,14 @@
 - Hid empty filter groups in the left sidebar.
 
 ### Fixed
+
 - Fixed archived-agent navigation by redirecting archived agent routes to draft.
 - Fixed duplicate `/rewind` user-message behavior.
 
 ## 0.1.14 - 2026-02-19
+
 ### Added
+
 - Added Claude `/rewind` command support.
 - Added slash command access in the draft agent composer.
 - Added `@` workspace file autocomplete in chat prompts.
@@ -640,6 +820,7 @@
 - Added shared desktop/web overlay scroll handles, including file preview panes.
 
 ### Improved
+
 - Improved worktree flow after shipping, including better merged PR detection.
 - Improved draft workflow by enabling the explorer sidebar immediately after CWD selection.
 - Improved new worktree-agent defaults by prefilling CWD to the main repository.
@@ -649,6 +830,7 @@
 - Improved scrollbar visibility, drag interactions, tracking, and animation timing on web/desktop.
 
 ### Fixed
+
 - Fixed worktree archive/setup lifecycle issues, including terminal cleanup and archive timing.
 - Fixed worktree path collisions by hashing CWD for collision-safe worktree roots.
 - Fixed terminal sizing when switching back to an agent session.
@@ -662,25 +844,32 @@
 - Fixed daemon version badge visibility in settings when daemon version data is unavailable.
 
 ## 0.1.9 - 2026-02-17
+
 ### Improved
+
 - Unified structured-output generation through a single shared schema-validation and retry pipeline.
 - Reused provider availability checks for structured generation fallback selection.
 - Added structured generation waterfall ordering for internal metadata and git text generation: Claude Haiku, then Codex, then OpenCode.
 
 ### Fixed
+
 - Fixed CLI `run --output-schema` to use the shared structured-output path instead of ad-hoc JSON parsing.
 - Fixed `run --output-schema` failures where providers returned empty `lastMessage` by recovering from timeline assistant output.
 - Fixed internal commit message, pull request text, and agent metadata generation to follow one consistent structured pipeline.
 
 ## 0.1.8 - 2026-02-17
+
 ### Added
+
 - Added a cross-platform confirm dialog flow for daemon restarts.
 
 ### Improved
+
 - Simplified local speech bootstrap and daemon startup locking behavior.
 - Updated website hero copy to emphasize local execution.
 
 ### Fixed
+
 - Fixed stuck "send while running" recovery across app and server session handling.
 - Fixed Claude session identity preservation when reloading existing agents.
 - Fixed combobox option behavior and related interactions.
@@ -688,73 +877,93 @@
 - Fixed web tool-detail wheel event routing at scroll edges.
 
 ## 0.1.7 - 2026-02-16
+
 ### Added
+
 - Improved agent workspace flows with better directory suggestions.
 - Added iOS TestFlight and Android app access request forms on the website.
 
 ### Improved
+
 - Unified daemon startup behavior between dev and CLI paths for more predictable local runs.
 - Improved website app download and update guidance.
 
 ### Fixed
+
 - Prevented an initial desktop combobox `0,0` position flash.
 - Fixed CLI version output issues.
 - Hardened server runtime loading for local speech dependencies.
 
 ## 0.1.6 - 2026-02-16
+
 ### Notes
+
 - No major visible product changes in this patch release.
 
 ## 0.1.5 - 2026-02-16
+
 ### Added
+
 - Added terminal reattach support and better worktree terminal handling.
 - Added global keyboard shortcut help in the app.
 - Added sidebar host filtering and improved agent workflow controls.
 
 ### Improved
+
 - Improved worktree setup visibility by streaming setup progress.
 - Improved terminal streaming reliability and lifecycle handling.
 - Preserved explorer tab state so context survives navigation better.
 
 ## 0.1.4 - 2026-02-14
+
 ### Added
+
 - Added voice capability status reporting in the client.
 - Added background local speech model downloads with runtime gating.
 - Added adaptive dictation finish timing based on server-provided budgets.
 - Added relay reconnect behavior with grace periods and branch suggestions.
 
 ### Improved
+
 - Improved connection selection and agent hydration reliability.
 - Improved timeline loading with cursor-based fetch behavior.
 - Improved first-run experience by bootstrapping a default localhost connection.
 - Improved inline code rendering by auto-linkifying URLs.
 
 ### Fixed
+
 - Fixed Linux checkout diff watch behavior to avoid recursive watches.
 - Fixed stale relay client timer behavior.
 - Fixed unnecessary git diff header auto-scroll on collapse.
 
 ## 0.1.3 - 2026-02-12
+
 ### Added
+
 - Added CLI onboarding command.
 - Added CLI `--output-schema` support for structured agent output.
 - Added CLI agent metadata update support for names and labels.
 - Added provider availability detection with normalization of legacy default model IDs.
 
 ### Improved
+
 - Improved file explorer refresh feedback and unresolved checkout fallback handling.
 - Added better voice interrupt handling with a speech-start grace period.
 - Improved CLI defaults to list all non-archived agents by default.
 - Improved website UX with clearer install CTA and privacy policy access.
 
 ### Fixed
+
 - Fixed dev runner entry issues and sherpa TTS initialization behavior.
 
 ## 0.1.2 - 2026-02-11
+
 ### Notes
+
 - No major visible product changes in this patch release.
 
 ## 0.1.1 - 2026-02-11
 
 ### Added
+
 - Initial `0.1.x` release line.

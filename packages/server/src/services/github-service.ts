@@ -1,16 +1,17 @@
 import { z } from "zod";
 import type { GitHubSearchKind } from "../shared/messages.js";
 import { findExecutable } from "../utils/executable.js";
+import { resolveGitHubRemote } from "../utils/github-remote.js";
+import { runGitCommand } from "../utils/run-git-command.js";
 import { execCommand } from "../utils/spawn.js";
 
 const DEFAULT_GITHUB_CACHE_TTL_MS = 30_000;
 export const GITHUB_POLL_FAST_INTERVAL_MS = 20_000;
 export const GITHUB_POLL_SLOW_INTERVAL_MS = 120_000;
 export const GITHUB_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
-const GITHUB_ENV: NodeJS.ProcessEnv = {
-  ...process.env,
+const GITHUB_ENV = {
   GIT_TERMINAL_PROMPT: "0",
-};
+} as const;
 
 const LabelSchema = z.object({
   name: z.string().optional(),
@@ -481,6 +482,7 @@ export interface GitHubService {
     options: {
       cwd: string;
       headRef: string;
+      headRepositoryOwner?: string;
     } & GitHubReadOptions,
   ): Promise<GitHubCurrentPullRequestStatus | null>;
   getPullRequestTimeline(
@@ -642,46 +644,46 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     return request;
   }
 
-  async function run(args: string[], options: GitHubCommandRunnerOptions): Promise<string> {
+  async function run(args: string[], runOptions: GitHubCommandRunnerOptions): Promise<string> {
     const ghPath = await deps.resolveGhPath();
     if (!ghPath) {
       throw new GitHubCliMissingError();
     }
     try {
-      const result = await deps.runner(args, options);
+      const result = await deps.runner(args, runOptions);
       return result.stdout.trim();
     } catch (error) {
       throw normalizeGitHubCommandError(error, {
         args,
-        cwd: options.cwd,
+        cwd: runOptions.cwd,
       });
     }
   }
 
-  function getPollTargetKey(options: { cwd: string; headRef: string }): string {
+  function getPollTargetKey(target: { cwd: string; headRef: string }): string {
     return buildCacheKey({
-      cwd: options.cwd,
+      cwd: target.cwd,
       method: "getCurrentPullRequestStatus",
-      args: { headRef: options.headRef },
+      args: { headRef: target.headRef },
     });
   }
 
-  function updatePollTargetAfterSuccess(options: {
+  function updatePollTargetAfterSuccess(update: {
     cwd: string;
     headRef: string;
     status: GitHubCurrentPullRequestStatus | null;
     notify: boolean;
   }): void {
-    const target = pollTargets.get(getPollTargetKey(options));
+    const target = pollTargets.get(getPollTargetKey(update));
     if (!target) {
       return;
     }
 
-    target.latestStatus = options.status;
+    target.latestStatus = update.status;
     target.consecutiveErrors = 0;
-    if (options.notify) {
+    if (update.notify) {
       for (const callback of target.callbacks) {
-        callback(options.status);
+        callback(update.status);
       }
     }
     scheduleGitHubPoll(target);
@@ -739,91 +741,91 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   }
 
   api = {
-    listPullRequests(options) {
+    listPullRequests(input) {
       return cached({
-        cwd: options.cwd,
+        cwd: input.cwd,
         method: "listPullRequests",
-        args: { query: options.query ?? "", limit: options.limit ?? 20 },
-        readOptions: options,
+        args: { query: input.query ?? "", limit: input.limit ?? 20 },
+        readOptions: input,
         load: async () => {
           const stdout = await run(
             [
               "pr",
               "list",
               "--search",
-              options.query ?? "",
+              input.query ?? "",
               "--json",
               "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
               "--limit",
-              String(options.limit ?? 20),
+              String(input.limit ?? 20),
             ],
-            { cwd: options.cwd },
+            { cwd: input.cwd },
           );
           return parsePullRequestSummaries(stdout);
         },
       });
     },
 
-    listIssues(options) {
+    listIssues(input) {
       return cached({
-        cwd: options.cwd,
+        cwd: input.cwd,
         method: "listIssues",
-        args: { query: options.query ?? "", limit: options.limit ?? 20 },
-        readOptions: options,
+        args: { query: input.query ?? "", limit: input.limit ?? 20 },
+        readOptions: input,
         load: async () => {
           const stdout = await run(
             [
               "issue",
               "list",
               "--search",
-              options.query ?? "",
+              input.query ?? "",
               "--json",
               "number,title,url,state,body,labels,updatedAt",
               "--limit",
-              String(options.limit ?? 20),
+              String(input.limit ?? 20),
             ],
-            { cwd: options.cwd },
+            { cwd: input.cwd },
           );
           return parseIssueSummaries(stdout);
         },
       });
     },
 
-    getPullRequest(options) {
+    getPullRequest(input) {
       return cached({
-        cwd: options.cwd,
+        cwd: input.cwd,
         method: "getPullRequest",
-        args: { number: options.number },
-        readOptions: options,
+        args: { number: input.number },
+        readOptions: input,
         load: async () => {
           const stdout = await run(
             [
               "pr",
               "view",
-              String(options.number),
+              String(input.number),
               "--json",
               "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
             ],
-            { cwd: options.cwd },
+            { cwd: input.cwd },
           );
           return parsePullRequestSummary(stdout);
         },
       });
     },
 
-    async getPullRequestHeadRef(options) {
-      const pullRequest = await this.getPullRequest(options);
+    async getPullRequestHeadRef(input) {
+      const pullRequest = await this.getPullRequest(input);
       return pullRequest.headRefName;
     },
 
-    getPullRequestCheckoutTarget(options) {
+    getPullRequestCheckoutTarget(input) {
       return cached({
-        cwd: options.cwd,
+        cwd: input.cwd,
         method: "getPullRequestCheckoutTarget",
-        args: { number: options.number },
-        readOptions: options,
+        args: { number: input.number },
+        readOptions: input,
         load: async () => {
-          const repo = await getGitHubRepoView({ cwd: options.cwd, run });
+          const repo = await getGitHubRepoView({ cwd: input.cwd, run });
           const owner = repo?.owner?.login;
           const name = repo?.name;
           if (!owner || !name) {
@@ -841,45 +843,49 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               "-F",
               `name=${name}`,
               "-F",
-              `number=${options.number}`,
+              `number=${input.number}`,
             ],
-            { cwd: options.cwd },
+            { cwd: input.cwd },
           );
           return parsePullRequestCheckoutTarget(stdout);
         },
       });
     },
 
-    getCurrentPullRequestStatus(options) {
+    getCurrentPullRequestStatus(input) {
       return cached({
-        cwd: options.cwd,
+        cwd: input.cwd,
         method: "getCurrentPullRequestStatus",
-        args: { headRef: options.headRef },
-        readOptions: options,
+        args: {
+          headRef: input.headRef,
+          headRepositoryOwner: input.headRepositoryOwner,
+        },
+        readOptions: input,
         load: async () => {
           return resolveCurrentPullRequestView({
-            cwd: options.cwd,
-            headRef: options.headRef,
+            cwd: input.cwd,
+            headRef: input.headRef,
+            headRepositoryOwner: input.headRepositoryOwner,
             run,
           });
         },
       }).then((status) => {
         updatePollTargetAfterSuccess({
-          cwd: options.cwd,
-          headRef: options.headRef,
+          cwd: input.cwd,
+          headRef: input.headRef,
           status,
-          notify: options.reason === "self-heal-github",
+          notify: input.reason === "self-heal-github",
         });
         return status;
       });
     },
 
-    getPullRequestTimeline(options) {
+    getPullRequestTimeline(input) {
       return cached({
-        cwd: options.cwd,
+        cwd: input.cwd,
         method: "getPullRequestTimeline",
-        args: { prNumber: options.prNumber },
-        readOptions: options,
+        args: { prNumber: input.prNumber },
+        readOptions: input,
         load: async () => {
           try {
             const stdout = await run(
@@ -889,24 +895,24 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
                 "-f",
                 `query=${PULL_REQUEST_TIMELINE_QUERY}`,
                 "-F",
-                `owner=${options.repoOwner}`,
+                `owner=${input.repoOwner}`,
                 "-F",
-                `name=${options.repoName}`,
+                `name=${input.repoName}`,
                 "-F",
-                `number=${options.prNumber}`,
+                `number=${input.prNumber}`,
               ],
-              { cwd: options.cwd },
+              { cwd: input.cwd },
             );
             return parsePullRequestTimeline(stdout, {
-              prNumber: options.prNumber,
-              repoOwner: options.repoOwner,
-              repoName: options.repoName,
+              prNumber: input.prNumber,
+              repoOwner: input.repoOwner,
+              repoName: input.repoName,
             });
           } catch (error) {
             return {
-              prNumber: options.prNumber,
-              repoOwner: options.repoOwner,
-              repoName: options.repoName,
+              prNumber: input.prNumber,
+              repoOwner: input.repoOwner,
+              repoName: input.repoName,
               items: [],
               truncated: false,
               error: mapPullRequestTimelineError(error),
@@ -916,31 +922,31 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       });
     },
 
-    async searchIssuesAndPrs(options) {
-      if (options.force && !options.reason) {
+    async searchIssuesAndPrs(input) {
+      if (input.force && !input.reason) {
         throw new Error("GitHubService forced read requires a reason");
       }
 
-      const kinds = options.kinds ?? ["github-issue", "github-pr"];
+      const kinds = input.kinds ?? ["github-issue", "github-pr"];
       const shouldFetchIssues = kinds.includes("github-issue");
       const shouldFetchPullRequests = kinds.includes("github-pr");
-      const readOptions: GitHubReadOptions = options.force
-        ? { force: true, reason: options.reason }
-        : { force: false, reason: options.reason };
+      const readOptions: GitHubReadOptions = input.force
+        ? { force: true, reason: input.reason }
+        : { force: false, reason: input.reason };
       const [issuesResult, prsResult] = await Promise.allSettled([
         shouldFetchIssues
           ? this.listIssues({
-              cwd: options.cwd,
-              query: options.query,
-              limit: options.limit,
+              cwd: input.cwd,
+              query: input.query,
+              limit: input.limit,
               ...readOptions,
             })
           : Promise.resolve(null),
         shouldFetchPullRequests
           ? this.listPullRequests({
-              cwd: options.cwd,
-              query: options.query,
-              limit: options.limit,
+              cwd: input.cwd,
+              query: input.query,
+              limit: input.limit,
               ...readOptions,
             })
           : Promise.resolve(null),
@@ -1006,21 +1012,14 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return { items, githubFeaturesEnabled: true };
     },
 
-    async createPullRequest(options) {
-      const args = [
-        "api",
-        "-X",
-        "POST",
-        `repos/${options.repo}/pulls`,
-        "-f",
-        `title=${options.title}`,
-      ];
-      args.push("-f", `head=${options.head}`);
-      args.push("-f", `base=${options.base}`);
-      if (options.body) {
-        args.push("-f", `body=${options.body}`);
+    async createPullRequest(input) {
+      const args = ["api", "-X", "POST", `repos/${input.repo}/pulls`, "-f", `title=${input.title}`];
+      args.push("-f", `head=${input.head}`);
+      args.push("-f", `base=${input.base}`);
+      if (input.body) {
+        args.push("-f", `body=${input.body}`);
       }
-      const stdout = await run(args, { cwd: options.cwd });
+      const stdout = await run(args, { cwd: input.cwd });
       const parsed = z
         .object({
           url: z.string(),
@@ -1030,15 +1029,15 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return parsed;
     },
 
-    isAuthenticated(options) {
+    isAuthenticated(input) {
       return cached({
-        cwd: options.cwd,
+        cwd: input.cwd,
         method: "isAuthenticated",
         args: {},
-        readOptions: options,
+        readOptions: input,
         load: async () => {
           try {
-            await run(["auth", "status"], { cwd: options.cwd });
+            await run(["auth", "status"], { cwd: input.cwd });
             return true;
           } catch (error) {
             if (isGitHubAuthenticationError(error)) {
@@ -1053,13 +1052,13 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       });
     },
 
-    retainCurrentPullRequestStatusPoll(options) {
-      const key = getPollTargetKey(options);
+    retainCurrentPullRequestStatusPoll(input) {
+      const key = getPollTargetKey(input);
       let target = pollTargets.get(key);
       if (!target) {
         target = {
-          cwd: options.cwd,
-          headRef: options.headRef,
+          cwd: input.cwd,
+          headRef: input.headRef,
           retainCount: 0,
           timer: null,
           latestStatus: null,
@@ -1072,11 +1071,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
 
       const isNewlyRetained = target.retainCount === 0;
       target.retainCount += 1;
-      if (options.onStatus) {
-        target.callbacks.add(options.onStatus);
+      if (input.onStatus) {
+        target.callbacks.add(input.onStatus);
       }
-      if (options.onError) {
-        target.errorCallbacks.add(options.onError);
+      if (input.onError) {
+        target.errorCallbacks.add(input.onError);
       }
       if (isNewlyRetained) {
         scheduleImmediateGitHubPoll(target);
@@ -1091,11 +1090,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             return;
           }
           unsubscribed = true;
-          if (options.onStatus) {
-            target.callbacks.delete(options.onStatus);
+          if (input.onStatus) {
+            target.callbacks.delete(input.onStatus);
           }
-          if (options.onError) {
-            target.errorCallbacks.delete(options.onError);
+          if (input.onError) {
+            target.errorCallbacks.delete(input.onError);
           }
           target.retainCount -= 1;
           if (target.retainCount > 0) {
@@ -1107,16 +1106,16 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       };
     },
 
-    invalidate(options) {
+    invalidate(input) {
       // Local checkout mutations that can alter the current PR identity or PR status
       // must call this with the affected cwd before broadcasting fresh git state.
       for (const [key, entry] of cache.entries()) {
-        if (entry.cwd === options.cwd) {
+        if (entry.cwd === input.cwd) {
           cache.delete(key);
         }
       }
       for (const [key, entry] of inFlight.entries()) {
-        if (entry.cwd === options.cwd) {
+        if (entry.cwd === input.cwd) {
           inFlight.delete(key);
         }
       }
@@ -1167,7 +1166,7 @@ async function runGhCommand(
 ): Promise<GitHubCommandResult> {
   return execCommand("gh", args, {
     cwd: options.cwd,
-    env: GITHUB_ENV,
+    envOverlay: GITHUB_ENV,
     maxBuffer: 10 * 1024 * 1024,
   });
 }
@@ -1281,33 +1280,51 @@ function isNoPullRequestFoundError(error: unknown): boolean {
 async function resolveCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
+  headRepositoryOwner?: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<GitHubCurrentPullRequestStatus | null> {
   const viewCandidate = await tryCurrentPullRequestView(options);
-  if (viewCandidate && isCandidateForHeadRef(viewCandidate, options.headRef)) {
-    return viewCandidate.status;
+  const viewMatch = viewCandidate
+    ? pickPullRequestCandidate({
+        candidates: [viewCandidate],
+        headRef: options.headRef,
+        headRepositoryOwner: options.headRepositoryOwner,
+      })
+    : null;
+  if (viewMatch) {
+    return viewMatch.status;
   }
 
-  const repo = await getGitHubRepoView(options);
-  const forkOwner = repo?.owner?.login;
-  const parentOwner = repo?.parent?.owner?.login;
-  const parentName = repo?.parent?.name;
-  if (!forkOwner || !parentOwner || !parentName) {
-    return null;
+  let listHeadRef = options.headRef;
+  let listRepo: string | undefined;
+  let headRepositoryOwner = options.headRepositoryOwner;
+
+  if (!headRepositoryOwner) {
+    const repo = await getGitHubRepoView(options);
+    const forkOwner = repo?.owner?.login;
+    const parentOwner = repo?.parent?.owner?.login;
+    const parentName = repo?.parent?.name;
+    if (!forkOwner || !parentOwner || !parentName) {
+      return null;
+    }
+
+    listHeadRef = `${forkOwner}:${options.headRef}`;
+    listRepo = `${parentOwner}/${parentName}`;
+    headRepositoryOwner = forkOwner;
   }
 
-  const parentCandidates = await listCurrentPullRequestCandidates({
+  const candidates = await listCurrentPullRequestCandidates({
     cwd: options.cwd,
-    headRef: `${forkOwner}:${options.headRef}`,
+    headRef: listHeadRef,
     run: options.run,
-    repo: `${parentOwner}/${parentName}`,
+    repo: listRepo,
   });
-  const parentMatch = pickPullRequestCandidate({
-    candidates: parentCandidates,
+  const match = pickPullRequestCandidate({
+    candidates,
     headRef: options.headRef,
-    headRepositoryOwner: forkOwner,
+    headRepositoryOwner,
   });
-  return parentMatch?.status ?? null;
+  return match?.status ?? null;
 }
 
 async function tryCurrentPullRequestView(options: {
@@ -1644,8 +1661,14 @@ function toCurrentPullRequestStatus(
   const repoIdentity = parseGitHubPullRequestRepo(item.url);
   const mergedAt =
     typeof item.mergedAt === "string" && item.mergedAt.trim().length > 0 ? item.mergedAt : null;
-  const state =
-    mergedAt !== null ? "merged" : item.state.trim().length > 0 ? item.state.toLowerCase() : "";
+  let state: string;
+  if (mergedAt !== null) {
+    state = "merged";
+  } else if (item.state.trim().length > 0) {
+    state = item.state.toLowerCase();
+  } else {
+    state = "";
+  }
   const checks = parseStatusCheckRollup(item.statusCheckRollup);
   return {
     ...(typeof item.number === "number" ? { number: item.number } : {}),
@@ -1844,46 +1867,15 @@ function mapReviewDecision(value: unknown): PullRequestReviewDecision {
   return null;
 }
 
-export interface GitHubRepoRemoteUrlResolver {
-  resolveRepoRemoteUrl(cwd: string, options?: GitHubReadOptions): Promise<string | null>;
-}
-
-export async function resolveGitHubRepo(
-  cwd: string,
-  options: { workspaceGitService: GitHubRepoRemoteUrlResolver; readOptions?: GitHubReadOptions },
-): Promise<string | null> {
+export async function resolveGitHubRepo(cwd: string): Promise<string | null> {
   try {
-    const remoteUrl = await options.workspaceGitService.resolveRepoRemoteUrl(
+    const { stdout } = await runGitCommand(["config", "--get", "remote.origin.url"], {
       cwd,
-      options.readOptions,
-    );
-    return parseGitHubRepoFromRemote(remoteUrl?.trim() ?? "");
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    });
+    const remote = await resolveGitHubRemote({ remoteUrl: stdout.trim() });
+    return remote?.repo ?? null;
   } catch {
     return null;
   }
-}
-
-function parseGitHubRepoFromRemote(url: string): string | null {
-  if (!url) {
-    return null;
-  }
-  let cleaned = url;
-  if (cleaned.startsWith("git@github.com:")) {
-    cleaned = cleaned.slice("git@github.com:".length);
-  } else if (cleaned.startsWith("https://github.com/")) {
-    cleaned = cleaned.slice("https://github.com/".length);
-  } else if (cleaned.startsWith("http://github.com/")) {
-    cleaned = cleaned.slice("http://github.com/".length);
-  } else {
-    const marker = "github.com/";
-    const index = cleaned.indexOf(marker);
-    if (index === -1) {
-      return null;
-    }
-    cleaned = cleaned.slice(index + marker.length);
-  }
-  if (cleaned.endsWith(".git")) {
-    cleaned = cleaned.slice(0, -".git".length);
-  }
-  return cleaned.includes("/") ? cleaned : null;
 }

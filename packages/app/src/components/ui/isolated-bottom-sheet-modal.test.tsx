@@ -8,6 +8,12 @@ import {
   useIsolatedBottomSheetVisibility,
 } from "./isolated-bottom-sheet-modal";
 
+const SNAP_POINTS_50: (string | number)[] = ["50%"];
+const SNAP_POINTS_60: (string | number)[] = ["60%"];
+const SNAP_POINTS_90: (string | number)[] = ["90%"];
+
+function noop(): void {}
+
 const { modalMethods, modalProps } = vi.hoisted(() => ({
   modalMethods: {
     present: vi.fn(),
@@ -57,7 +63,7 @@ function Harness({ visible, onClose }: { visible: boolean; onClose: () => void }
     <IsolatedBottomSheetModal
       ref={sheetRef}
       index={0}
-      snapPoints={["50%"]}
+      snapPoints={SNAP_POINTS_50}
       onChange={handleSheetChange}
     >
       <div>Sheet content</div>
@@ -112,8 +118,8 @@ describe("IsolatedBottomSheetModal", () => {
 
   it("allows nested sheets inside a parent sheet without creating a sibling provider", () => {
     const { getAllByTestId } = render(
-      <IsolatedBottomSheetModal index={0} snapPoints={["90%"]}>
-        <IsolatedBottomSheetModal index={0} snapPoints={["60%"]} onChange={() => {}}>
+      <IsolatedBottomSheetModal index={0} snapPoints={SNAP_POINTS_90}>
+        <IsolatedBottomSheetModal index={0} snapPoints={SNAP_POINTS_60} onChange={noop}>
           <div>Nested model picker</div>
         </IsolatedBottomSheetModal>
       </IsolatedBottomSheetModal>,

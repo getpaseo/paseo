@@ -7,6 +7,7 @@ Deploy planners to create an implementation plan informed by research findings. 
 Every planner prompt must emphasize this: the default agent instinct is to bolt new code on top of existing code. Resist this.
 
 The right approach:
+
 1. Study the existing code — understand why it's shaped the way it is
 2. Design the target shape — what would the code look like if this feature had always existed?
 3. Identify the refactoring gap — what needs to change so the new feature slots in cleanly?
@@ -65,6 +66,7 @@ Challenge the plan:
 ## Multiple Planners (Order 3+)
 
 For cross-module tasks, deploy planners focusing on different slices:
+
 - One for backend phases
 - One for frontend phases
 - One for test strategy
@@ -74,6 +76,7 @@ Then deploy a plan-reviewer to challenge the combined plan.
 ## Iteration
 
 If the plan-reviewer finds significant issues, either:
+
 1. Send follow-up instructions via the Paseo **send agent prompt** tool to the planner
 2. Launch a new planner if the original is stale
 

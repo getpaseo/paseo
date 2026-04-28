@@ -7,9 +7,11 @@ import {
   AuthStorage,
   ModelRegistry,
   SessionManager,
-  createAgentSession,
+  createAgentSessionFromServices,
+  createAgentSessionServices,
   type AgentSession as PiAgentSession,
   type AgentSessionEvent,
+  type AgentSessionServices,
   type BashToolInput,
   type EditToolInput,
   type FindToolInput,
@@ -99,6 +101,11 @@ interface PiPersistenceMetadata {
 
 interface StartTurnResult {
   turnId: string;
+}
+
+interface PiDirectSessionResult {
+  session: PiAgentSession;
+  modelRegistry: ModelRegistry;
 }
 
 export type PiDirectSessionAdapter = Pick<
@@ -498,68 +505,41 @@ function normalizeLegacyEditArgs(rawArgs: unknown): EditToolInput | null {
   };
 }
 
+function parseEditToolArgs(rawArgs: unknown): PiTrackedToolCall {
+  const parsed = EditToolInputSchema.safeParse(rawArgs);
+  if (parsed.success) {
+    return { kind: "edit", toolName: "edit", args: parsed.data };
+  }
+  const legacyArgs = normalizeLegacyEditArgs(rawArgs);
+  if (legacyArgs) {
+    return { kind: "edit", toolName: "edit", args: legacyArgs };
+  }
+  return { kind: "unknown", toolName: "edit", args: rawArgs ?? null };
+}
+
+type SimpleToolKind = "bash" | "read" | "write" | "find" | "grep" | "ls";
+const SIMPLE_TOOL_SCHEMAS: {
+  [K in SimpleToolKind]: { safeParse: (data: unknown) => { success: boolean; data?: unknown } };
+} = {
+  bash: BashToolInputSchema,
+  read: ReadToolInputSchema,
+  write: WriteToolInputSchema,
+  find: FindToolInputSchema,
+  grep: GrepToolInputSchema,
+  ls: LsToolInputSchema,
+};
+
 function parseToolArgs(toolName: string, rawArgs: unknown): PiTrackedToolCall {
-  if (toolName === "bash") {
-    const parsed = BashToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "bash", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
-  if (toolName === "read") {
-    const parsed = ReadToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "read", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
   if (toolName === "edit") {
-    const parsed = EditToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "edit", toolName, args: parsed.data };
-    }
-
-    const legacyArgs = normalizeLegacyEditArgs(rawArgs);
-    if (legacyArgs) {
-      return { kind: "edit", toolName, args: legacyArgs };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
+    return parseEditToolArgs(rawArgs);
   }
-
-  if (toolName === "write") {
-    const parsed = WriteToolInputSchema.safeParse(rawArgs);
+  const schema = SIMPLE_TOOL_SCHEMAS[toolName as SimpleToolKind];
+  if (schema) {
+    const parsed = schema.safeParse(rawArgs);
     if (parsed.success) {
-      return { kind: "write", toolName, args: parsed.data };
+      return { kind: toolName as SimpleToolKind, toolName, args: parsed.data } as PiTrackedToolCall;
     }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
   }
-
-  if (toolName === "find") {
-    const parsed = FindToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "find", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
-  if (toolName === "grep") {
-    const parsed = GrepToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "grep", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
-  if (toolName === "ls") {
-    const parsed = LsToolInputSchema.safeParse(rawArgs);
-    if (parsed.success) {
-      return { kind: "ls", toolName, args: parsed.data };
-    }
-    return { kind: "unknown", toolName, args: rawArgs ?? null };
-  }
-
   return { kind: "unknown", toolName, args: rawArgs ?? null };
 }
 
@@ -643,13 +623,6 @@ function mapToolDetail(toolCall: PiTrackedToolCall, result?: PiToolResult): Tool
         output: parsedResult,
       };
   }
-}
-
-function stringifyUnknownError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return typeof error === "string" ? error : "Unknown Pi error";
 }
 
 function parseModelReference(modelId: string | null): PiModelReference | null {
@@ -777,7 +750,7 @@ function isPiRequestAbortError(error: unknown): boolean {
     return true;
   }
 
-  return /\brequest was aborted\b/i.test(stringifyUnknownError(error));
+  return /\brequest was aborted\b/i.test(toDiagnosticErrorMessage(error));
 }
 
 function resolveThinkingOptionId(
@@ -808,7 +781,13 @@ function findModelInRegistry(
   parsedReference: PiModelReference,
 ): Model<Api> | undefined {
   if (parsedReference.provider) {
-    return registry.find(parsedReference.provider, parsedReference.id);
+    return (
+      registry.find(parsedReference.provider, parsedReference.id) ??
+      createProviderModelFallback(registry, {
+        provider: parsedReference.provider,
+        id: parsedReference.id,
+      })
+    );
   }
 
   return registry.getAll().find((entry) => {
@@ -817,6 +796,32 @@ function findModelInRegistry(
     }
     return `${entry.provider}/${entry.id}` === parsedReference.id;
   });
+}
+
+function createProviderModelFallback(
+  registry: PiDirectModelRegistry,
+  parsedReference: { provider: string; id: string },
+): Model<Api> | undefined {
+  const providerDefault = registry
+    .getAll()
+    .find((model) => model.provider === parsedReference.provider);
+  if (!providerDefault) {
+    return undefined;
+  }
+
+  return {
+    id: parsedReference.id,
+    name: parsedReference.id,
+    api: providerDefault.api,
+    provider: parsedReference.provider,
+    baseUrl: providerDefault.baseUrl,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 16384,
+    compat: providerDefault.compat,
+  };
 }
 
 export class PiDirectAgentSession implements AgentSession {
@@ -864,38 +869,53 @@ export class PiDirectAgentSession implements AgentSession {
     error: unknown,
   ): void {
     const turnId = this.currentTurnIdForEvent();
+    const detail = mapToolDetail(toolCall, result);
+    const baseItem = {
+      type: "tool_call" as const,
+      callId: toolCallId,
+      name: toolCall.toolName,
+      detail,
+    };
+    const item =
+      status === "failed" ? { ...baseItem, status, error } : { ...baseItem, status, error: null };
     this.emit({
       type: "timeline",
       provider: PI_PROVIDER,
       turnId,
-      item:
-        status === "running"
-          ? {
-              type: "tool_call",
-              callId: toolCallId,
-              name: toolCall.toolName,
-              status,
-              detail: mapToolDetail(toolCall, result),
-              error: null,
-            }
-          : status === "completed"
-            ? {
-                type: "tool_call",
-                callId: toolCallId,
-                name: toolCall.toolName,
-                status,
-                detail: mapToolDetail(toolCall, result),
-                error: null,
-              }
-            : {
-                type: "tool_call",
-                callId: toolCallId,
-                name: toolCall.toolName,
-                status,
-                detail: mapToolDetail(toolCall, result),
-                error,
-              },
+      item,
     });
+  }
+
+  private handleMessageUpdate(
+    event: Extract<AgentSessionEvent, { type: "message_update" }>,
+    turnId: string | undefined,
+  ): void {
+    if (event.message.role !== "assistant") {
+      return;
+    }
+    if (event.assistantMessageEvent.type === "text_delta") {
+      this.emit({
+        type: "timeline",
+        provider: PI_PROVIDER,
+        turnId,
+        item: {
+          type: "assistant_message",
+          text: event.assistantMessageEvent.delta ?? "",
+        },
+      });
+      return;
+    }
+    if (event.assistantMessageEvent.type === "thinking_delta") {
+      this.emit({
+        type: "timeline",
+        provider: PI_PROVIDER,
+        turnId,
+        item: {
+          type: "reasoning",
+          text: event.assistantMessageEvent.delta ?? "",
+        },
+      });
+    }
   }
 
   private handleSessionEvent(event: AgentSessionEvent): void {
@@ -917,32 +937,7 @@ export class PiDirectAgentSession implements AgentSession {
         });
         return;
       case "message_update":
-        if (event.message.role !== "assistant") {
-          return;
-        }
-        if (event.assistantMessageEvent.type === "text_delta") {
-          this.emit({
-            type: "timeline",
-            provider: PI_PROVIDER,
-            turnId,
-            item: {
-              type: "assistant_message",
-              text: event.assistantMessageEvent.delta ?? "",
-            },
-          });
-          return;
-        }
-        if (event.assistantMessageEvent.type === "thinking_delta") {
-          this.emit({
-            type: "timeline",
-            provider: PI_PROVIDER,
-            turnId,
-            item: {
-              type: "reasoning",
-              text: event.assistantMessageEvent.delta ?? "",
-            },
-          });
-        }
+        this.handleMessageUpdate(event, turnId);
         return;
       case "tool_execution_start": {
         const toolCall = parseToolArgs(event.toolName, event.args);
@@ -1112,7 +1107,7 @@ export class PiDirectAgentSession implements AgentSession {
             type: "turn_canceled",
             provider: PI_PROVIDER,
             turnId: failedTurnId,
-            reason: stringifyUnknownError(error),
+            reason: toDiagnosticErrorMessage(error),
           });
           return;
         }
@@ -1120,7 +1115,7 @@ export class PiDirectAgentSession implements AgentSession {
           type: "turn_failed",
           provider: PI_PROVIDER,
           turnId: failedTurnId,
-          error: stringifyUnknownError(error),
+          error: toDiagnosticErrorMessage(error),
         });
       });
 
@@ -1158,25 +1153,21 @@ export class PiDirectAgentSession implements AgentSession {
 
       if (message.role === "assistant") {
         for (const content of message.content) {
-          if (content.type === "text") {
-            if (content.text) {
-              yield {
-                type: "timeline",
-                provider: PI_PROVIDER,
-                item: { type: "assistant_message", text: content.text },
-              };
-            }
+          if (content.type === "text" && content.text) {
+            yield {
+              type: "timeline",
+              provider: PI_PROVIDER,
+              item: { type: "assistant_message", text: content.text },
+            };
             continue;
           }
 
-          if (content.type === "thinking") {
-            if (content.thinking) {
-              yield {
-                type: "timeline",
-                provider: PI_PROVIDER,
-                item: { type: "reasoning", text: content.thinking },
-              };
-            }
+          if (content.type === "thinking" && content.thinking) {
+            yield {
+              type: "timeline",
+              provider: PI_PROVIDER,
+              item: { type: "reasoning", text: content.thinking },
+            };
             continue;
           }
 
@@ -1359,48 +1350,48 @@ export class PiDirectAgentClient implements AgentClient {
     this.runtimeSettings = options.runtimeSettings;
   }
 
-  private getModelRegistry(): ModelRegistry {
-    if (!this.modelRegistry) {
-      this.modelRegistry = ModelRegistry.create(AuthStorage.create());
-    }
-    return this.modelRegistry;
+  private async getSessionServices(cwd: string): Promise<AgentSessionServices> {
+    return createAgentSessionServices({
+      cwd,
+      ...(this.modelRegistry ? { modelRegistry: this.modelRegistry } : {}),
+    });
   }
 
-  private resolveConfiguredModel(modelId: string | null | undefined): Model<Api> | undefined {
+  private resolveConfiguredModel(
+    registry: PiDirectModelRegistry,
+    modelId: string | null | undefined,
+  ): Model<Api> | undefined {
     const parsedReference = parseModelReference(modelId ?? null);
     if (!parsedReference) {
       return undefined;
     }
 
-    const registry = this.getModelRegistry();
     return findModelInRegistry(registry, parsedReference);
   }
 
-  private async createSdkSession(config: AgentSessionConfig): Promise<PiAgentSession> {
+  private async createSdkSession(config: AgentSessionConfig): Promise<PiDirectSessionResult> {
     const thinkingLevel =
       normalizePiThinkingOption(config.thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL;
-    const modelRegistry = this.getModelRegistry();
-    const model = this.resolveConfiguredModel(config.model);
+    const services = await this.getSessionServices(config.cwd);
+    const model = this.resolveConfiguredModel(services.modelRegistry, config.model);
 
-    const sessionOptions = {
-      cwd: config.cwd,
-      modelRegistry,
+    const { session } = await createAgentSessionFromServices({
+      services,
       sessionManager: SessionManager.create(config.cwd),
       thinkingLevel,
       ...(model ? { model } : {}),
-    };
-    const { session } = await createAgentSession(sessionOptions);
+    });
     await session.bindExtensions({});
     applySystemPrompt(session, config.systemPrompt);
-    return session;
+    return { session, modelRegistry: services.modelRegistry };
   }
 
   async createSession(
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const session = await this.createSdkSession(config);
-    return new PiDirectAgentSession(session, this.getModelRegistry(), config);
+    const { session, modelRegistry } = await this.createSdkSession(config);
+    return new PiDirectAgentSession(session, modelRegistry, config);
   }
 
   async resumeSession(
@@ -1434,37 +1425,34 @@ export class PiDirectAgentClient implements AgentClient {
       modeId: overrides?.modeId,
     };
 
-    const model = this.resolveConfiguredModel(mergedConfig.model);
+    const services = await this.getSessionServices(mergedConfig.cwd);
+    const model = this.resolveConfiguredModel(services.modelRegistry, mergedConfig.model);
     const thinkingLevel = normalizePiThinkingOption(mergedConfig.thinkingOptionId);
-    const sessionOptions = {
-      cwd: mergedConfig.cwd,
-      modelRegistry: this.getModelRegistry(),
+    const { session } = await createAgentSessionFromServices({
+      services,
       sessionManager: resumedManager,
       ...(model ? { model } : {}),
       ...(thinkingLevel ? { thinkingLevel } : {}),
-    };
-    const { session } = await createAgentSession(sessionOptions);
+    });
     await session.bindExtensions({});
     applySystemPrompt(session, mergedConfig.systemPrompt);
-    return new PiDirectAgentSession(session, this.getModelRegistry(), mergedConfig);
+    return new PiDirectAgentSession(session, services.modelRegistry, mergedConfig);
   }
 
-  async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    // Pi Direct uses an in-process global registry; cwd/force are intentionally irrelevant.
-    const models = this.getModelRegistry()
-      .getAvailable()
-      .map((model) => ({
-        provider: PI_PROVIDER,
-        id: `${model.provider}/${model.id}`,
-        label: `${model.provider}/${model.name}`,
-        description: `${model.provider}/${model.id}`,
-        metadata: {
-          provider: model.provider,
-          modelId: model.id,
-        } satisfies AgentMetadata,
-        thinkingOptions: model.reasoning ? PI_THINKING_OPTIONS.map(mapThinkingOption) : undefined,
-        defaultThinkingOptionId: model.reasoning ? DEFAULT_PI_THINKING_LEVEL : undefined,
-      }));
+  async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
+    const services = await this.getSessionServices(options.cwd);
+    const models = services.modelRegistry.getAvailable().map((model) => ({
+      provider: PI_PROVIDER,
+      id: `${model.provider}/${model.id}`,
+      label: `${model.provider}/${model.name}`,
+      description: `${model.provider}/${model.id}`,
+      metadata: {
+        provider: model.provider,
+        modelId: model.id,
+      } satisfies AgentMetadata,
+      thinkingOptions: model.reasoning ? PI_THINKING_OPTIONS.map(mapThinkingOption) : undefined,
+      defaultThinkingOptionId: model.reasoning ? DEFAULT_PI_THINKING_LEVEL : undefined,
+    }));
 
     return transformPiModels(models);
   }
@@ -1483,12 +1471,8 @@ export class PiDirectAgentClient implements AgentClient {
       return false;
     }
 
-    return (
-      Boolean(process.env.OPENAI_API_KEY) ||
-      Boolean(process.env.ANTHROPIC_API_KEY) ||
-      Boolean(process.env.OPENROUTER_API_KEY) ||
-      existsSync(join(homedir(), ".pi", "agent", "auth.json"))
-    );
+    const registry = ModelRegistry.create(AuthStorage.create());
+    return registry.getAvailable().length > 0;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
@@ -1503,6 +1487,10 @@ export class PiDirectAgentClient implements AgentClient {
       const authConfigPath = join(homedir(), ".pi", "agent", "auth.json");
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
+      const registry = ModelRegistry.create(AuthStorage.create());
+      const configuredProviders = Array.from(
+        new Set(registry.getAvailable().map((model) => model.provider)),
+      ).sort();
 
       if (available) {
         try {
@@ -1522,16 +1510,8 @@ export class PiDirectAgentClient implements AgentClient {
           { label: "Binary", value: binary ?? "not found" },
           { label: "Version", value: version },
           {
-            label: "OPENAI_API_KEY",
-            value: process.env.OPENAI_API_KEY ? "set" : "not set",
-          },
-          {
-            label: "ANTHROPIC_API_KEY",
-            value: process.env.ANTHROPIC_API_KEY ? "set" : "not set",
-          },
-          {
-            label: "OPENROUTER_API_KEY",
-            value: process.env.OPENROUTER_API_KEY ? "set" : "not set",
+            label: "Configured providers",
+            value: configuredProviders.length > 0 ? configuredProviders.join(", ") : "none",
           },
           {
             label: "Auth config (~/.pi/agent/auth.json)",

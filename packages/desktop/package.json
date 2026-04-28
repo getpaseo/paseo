@@ -1,8 +1,18 @@
 {
   "name": "@getpaseo/desktop",
-  "version": "0.1.60-beta.2",
+  "version": "0.1.63",
   "private": true,
   "description": "Paseo desktop app (Electron wrapper)",
+  "homepage": "https://paseo.sh",
+  "license": "AGPL-3.0-or-later",
+  "author": {
+    "name": "Mohamed Boudra",
+    "email": "hello@moboudra.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/getpaseo/paseo.git"
+  },
   "main": "dist/main.js",
   "scripts": {
     "build": "npm --prefix ../.. run build:daemon && npm run build:main && electron-builder --config electron-builder.yml",
@@ -10,14 +20,15 @@
     "dev": "./scripts/dev.sh",
     "dev:win": "powershell ./scripts/dev.ps1",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@getpaseo/cli": "0.1.60-beta.2",
-    "@getpaseo/server": "0.1.60-beta.2",
+    "@getpaseo/cli": "*",
+    "@getpaseo/server": "*",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
-    "ws": "^8.14.2"
+    "ws": "^8.14.2",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "24.6.0",
@@ -26,16 +37,7 @@
     "electron-builder": "26.8.1",
     "typescript": "5.9.3",
     "unzip-crx-3": "^0.2.0",
+    "vitest": "^3.2.4",
     "wait-on": "8.0.5"
-  },
-  "homepage": "https://paseo.sh",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/getpaseo/paseo.git"
-  },
-  "author": {
-    "name": "Mohamed Boudra",
-    "email": "hello@moboudra.com"
-  },
-  "license": "AGPL-3.0-or-later"
+  }
 }

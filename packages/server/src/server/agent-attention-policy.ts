@@ -13,12 +13,12 @@ export interface NotificationPlan {
   shouldPush: boolean;
 }
 
-type ComputeNotificationPlanInput = {
+interface ComputeNotificationPlanInput {
   allStates: ClientPresenceState[];
   agentId: string;
   reason: AgentAttentionReason;
   nowMs: number;
-};
+}
 
 export function computeNotificationPlan({
   allStates,

@@ -37,12 +37,12 @@ export default function App() {
 }
 
 export function Testbed() {
-  const [audioInitialized, setAudioInitialized] = useState(false);
+  const [, setAudioInitialized] = useState(false);
   const [inputVolumeLevel, setInputVolumeLevel] = useState(0.0);
   const [outputVolumeLevel, setOutputVolumeLevel] = useState(0.0);
   const micMode = Platform.OS === "ios" ? getMicrophoneModeIOS() : "NO_MIC_MODE_IN_ANDROID";
 
-  const playAudio = () => {
+  const playAudio = useCallback(() => {
     for (const dataChunk of audioData) {
       for (const audioChunk of dataChunk.audio) {
         const buffer = Buffer.from(audioChunk, "base64");
@@ -50,7 +50,7 @@ export function Testbed() {
         playPCMData(pcmData);
       }
     }
-  };
+  }, []);
 
   const isRecording = useIsRecording();
 

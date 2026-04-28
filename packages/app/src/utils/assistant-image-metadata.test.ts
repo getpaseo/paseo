@@ -55,4 +55,15 @@ describe("assistant image metadata", () => {
       ),
     ).toBeGreaterThan(220);
   });
+
+  it("estimates image-only data-image markdown without caching the full payload as text", () => {
+    const source = `data:image/png;base64,${"a".repeat(512)}`;
+    setAssistantImageMetadata({ source }, { width: 1200, height: 800 });
+
+    const imageOnlyHeight = estimateAssistantMessageHeightFromCache(`![Screenshot](${source})`);
+    const mixedHeight = estimateAssistantMessageHeightFromCache(`Text\n\n![Screenshot](${source})`);
+
+    expect(imageOnlyHeight).toBeGreaterThan(220);
+    expect(mixedHeight).toBeGreaterThan(imageOnlyHeight ?? 0);
+  });
 });

@@ -1,14 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import {
-  mkdtempSync,
-  writeFileSync,
-  existsSync,
-  rmSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-} from "fs";
+import { test, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync, realpathSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
@@ -16,7 +7,7 @@ import { createMessageCollector, type MessageCollector } from "../test-utils/mes
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { deriveWorktreeProjectHash } from "../../utils/worktree.js";
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
-import type { AgentSnapshotPayload, SessionOutboundMessage } from "../messages.js";
+import type { SessionOutboundMessage } from "../messages.js";
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
@@ -35,7 +26,7 @@ function findTimelineToolCall(
     if (msg.payload.agentId !== agentId) {
       continue;
     }
-    const event = msg.payload.event as any;
+    const event = msg.payload.event as { type?: string; item?: AgentTimelineItem };
     if (event?.type !== "timeline") {
       continue;
     }
@@ -66,7 +57,7 @@ async function waitForTimelineToolCall(
     const msg = messages[i];
     if (msg?.type !== "agent_stream") continue;
     if (msg.payload.agentId !== agentId) continue;
-    const event = msg.payload.event as any;
+    const event = msg.payload.event as { type?: string; item?: AgentTimelineItem };
     if (event?.type !== "timeline") continue;
     const item = event.item as AgentTimelineItem;
     if (item?.type !== "tool_call") continue;
@@ -88,18 +79,6 @@ async function waitForPathExists(options: {
     timeoutMs: options.timeoutMs,
     label: `${options.label}: ${options.targetPath}`,
     predicate: () => existsSync(options.targetPath),
-  });
-}
-
-async function waitForPathRemoved(options: {
-  targetPath: string;
-  timeoutMs: number;
-  label: string;
-}): Promise<void> {
-  await waitForCondition({
-    timeoutMs: options.timeoutMs,
-    label: `removal of ${options.label}: ${options.targetPath}`,
-    predicate: () => !existsSync(options.targetPath),
   });
 }
 
@@ -159,648 +138,634 @@ function getWorktreeTerminalBootstrapEntries(
 const CODEX_TEST_MODEL = "gpt-5.4-mini";
 const CODEX_TEST_THINKING_OPTION_ID = "low";
 
-describe("daemon E2E", () => {
-  let ctx: DaemonTestContext;
-  let collector: MessageCollector;
+let ctx: DaemonTestContext;
+let collector: MessageCollector;
 
-  beforeEach(async () => {
-    ctx = await createDaemonTestContext();
-    collector = createMessageCollector(ctx.client);
+beforeEach(async () => {
+  ctx = await createDaemonTestContext();
+  collector = createMessageCollector(ctx.client);
+});
+
+afterEach(async () => {
+  collector.unsubscribe();
+  await ctx.cleanup();
+}, 60000);
+
+test("returns diff for modified file in git repo", async () => {
+  const cwd = tmpCwd();
+
+  // Initialize git repo
+  const { execSync } = await import("child_process");
+  execSync("git init -b main", { cwd, stdio: "pipe" });
+  execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
+  execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
+
+  // Create and commit a file
+  const testFile = path.join(cwd, "test.txt");
+  writeFileSync(testFile, "original content\n");
+  execSync("git add test.txt", { cwd, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+    cwd,
+    stdio: "pipe",
   });
 
-  afterEach(async () => {
-    collector.unsubscribe();
-    await ctx.cleanup();
-  }, 60000);
+  // Modify the file (creates unstaged changes)
+  writeFileSync(testFile, "modified content\n");
 
-  describe("getCheckoutDiff", () => {
-    test("returns diff for modified file in git repo", async () => {
-      const cwd = tmpCwd();
+  const result = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
+  expect(result.error).toBeNull();
+  expect(result.files.length).toBeGreaterThan(0);
+  const file = result.files.find((entry) => entry.path === "test.txt");
+  expect(file).toBeTruthy();
+  expect(file?.hunks.length).toBeGreaterThan(0);
+  rmSync(cwd, { recursive: true, force: true });
+}, 60000); // 1 minute timeout
 
-      // Initialize git repo
-      const { execSync } = await import("child_process");
-      execSync("git init -b main", { cwd, stdio: "pipe" });
-      execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
-      execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
+test("returns empty diff when no changes", async () => {
+  const cwd = tmpCwd();
 
-      // Create and commit a file
-      const testFile = path.join(cwd, "test.txt");
-      writeFileSync(testFile, "original content\n");
-      execSync("git add test.txt", { cwd, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
-        cwd,
-        stdio: "pipe",
-      });
+  // Initialize git repo with clean state
+  const { execSync } = await import("child_process");
+  execSync("git init -b main", { cwd, stdio: "pipe" });
+  execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
+  execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
 
-      // Modify the file (creates unstaged changes)
-      writeFileSync(testFile, "modified content\n");
-
-      const result = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
-      expect(result.error).toBeNull();
-      expect(result.files.length).toBeGreaterThan(0);
-      const file = result.files.find((entry) => entry.path === "test.txt");
-      expect(file).toBeTruthy();
-      expect(file?.hunks.length).toBeGreaterThan(0);
-      rmSync(cwd, { recursive: true, force: true });
-    }, 60000); // 1 minute timeout
-
-    test("returns empty diff when no changes", async () => {
-      const cwd = tmpCwd();
-
-      // Initialize git repo with clean state
-      const { execSync } = await import("child_process");
-      execSync("git init -b main", { cwd, stdio: "pipe" });
-      execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
-      execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
-
-      // Create and commit a file
-      const testFile = path.join(cwd, "test.txt");
-      writeFileSync(testFile, "content\n");
-      execSync("git add test.txt", { cwd, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
-        cwd,
-        stdio: "pipe",
-      });
-
-      const result = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
-
-      expect(result.error).toBeNull();
-      expect(result.files).toEqual([]);
-
-      rmSync(cwd, { recursive: true, force: true });
-    }, 60000); // 1 minute timeout
-
-    test("returns error for non-git directory", async () => {
-      const cwd = tmpCwd();
-      // Don't initialize git - just a regular directory
-
-      const result = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
-
-      expect(result.files).toEqual([]);
-      expect(result.error).toBeTruthy();
-      expect(result.error?.code).toBe("NOT_GIT_REPO");
-
-      rmSync(cwd, { recursive: true, force: true });
-    }, 60000); // 1 minute timeout
+  // Create and commit a file
+  const testFile = path.join(cwd, "test.txt");
+  writeFileSync(testFile, "content\n");
+  execSync("git add test.txt", { cwd, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+    cwd,
+    stdio: "pipe",
   });
 
-  describe("getCheckoutStatus", () => {
-    test("returns repo info for git repo with branch and dirty state", async () => {
-      const cwd = tmpCwd();
+  const result = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
 
-      // Initialize git repo
-      const { execSync } = await import("child_process");
-      execSync("git init -b main", { cwd, stdio: "pipe" });
-      execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
-      execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
+  expect(result.error).toBeNull();
+  expect(result.files).toEqual([]);
 
-      // Create and commit a file
-      const testFile = path.join(cwd, "test.txt");
-      writeFileSync(testFile, "original content\n");
-      execSync("git add test.txt", { cwd, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
-        cwd,
-        stdio: "pipe",
-      });
+  rmSync(cwd, { recursive: true, force: true });
+}, 60000); // 1 minute timeout
 
-      // Modify the file (makes repo dirty)
-      writeFileSync(testFile, "modified content\n");
+test("returns error for non-git directory", async () => {
+  const cwd = tmpCwd();
+  // Don't initialize git - just a regular directory
 
-      // Create agent in the git repo
-      const agent = await ctx.client.createAgent({
-        provider: "codex",
-        model: CODEX_TEST_MODEL,
-        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-        cwd,
-        title: "Git Repo Info Test",
-      });
+  const result = await ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
 
-      expect(agent.id).toBeTruthy();
-      expect(agent.status).toBe("idle");
+  expect(result.files).toEqual([]);
+  expect(result.error).toBeTruthy();
+  expect(result.error?.code).toBe("NOT_GIT_REPO");
 
-      // Get checkout status
-      const result = await ctx.client.getCheckoutStatus(cwd);
+  rmSync(cwd, { recursive: true, force: true });
+}, 60000); // 1 minute timeout
 
-      // Verify repo info returned without error
-      expect(result.error).toBeNull();
-      expect(result.isGit).toBe(true);
-      // macOS symlinks /var to /private/var, so we check containment
-      expect(result.repoRoot).toContain("daemon-e2e-");
-      expect(result.currentBranch).toBeTruthy();
-      expect(result.isDirty).toBe(true);
+test("returns repo info for git repo with branch and dirty state", async () => {
+  const cwd = tmpCwd();
 
-      // Cleanup
-      await ctx.client.deleteAgent(agent.id);
-      rmSync(cwd, { recursive: true, force: true });
-    }, 60000); // 1 minute timeout
+  // Initialize git repo
+  const { execSync } = await import("child_process");
+  execSync("git init -b main", { cwd, stdio: "pipe" });
+  execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
+  execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
 
-    test("returns clean state when no uncommitted changes", async () => {
-      const cwd = tmpCwd();
-
-      // Initialize git repo with clean state
-      const { execSync } = await import("child_process");
-      execSync("git init -b main", { cwd, stdio: "pipe" });
-      execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
-      execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
-
-      // Create and commit a file (no uncommitted changes)
-      const testFile = path.join(cwd, "test.txt");
-      writeFileSync(testFile, "content\n");
-      execSync("git add test.txt", { cwd, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
-        cwd,
-        stdio: "pipe",
-      });
-
-      // Create agent in the git repo
-      const agent = await ctx.client.createAgent({
-        provider: "codex",
-        model: CODEX_TEST_MODEL,
-        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-        cwd,
-        title: "Git Repo Info Clean Test",
-      });
-
-      expect(agent.id).toBeTruthy();
-
-      // Get checkout status
-      const result = await ctx.client.getCheckoutStatus(cwd);
-
-      expect(result.error).toBeNull();
-      expect(result.isGit).toBe(true);
-      expect(result.isDirty).toBe(false);
-      expect(result.currentBranch).toBeTruthy();
-
-      // Cleanup
-      await ctx.client.deleteAgent(agent.id);
-      rmSync(cwd, { recursive: true, force: true });
-    }, 60000); // 1 minute timeout
-
-    test("returns isGit false for non-git directory", async () => {
-      const cwd = tmpCwd();
-      // Don't initialize git - just a regular directory
-
-      // Create agent in a non-git directory
-      const agent = await ctx.client.createAgent({
-        provider: "codex",
-        model: CODEX_TEST_MODEL,
-        thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-        cwd,
-        title: "Git Repo Info Non-Git Test",
-      });
-
-      expect(agent.id).toBeTruthy();
-
-      // Get checkout status - should return isGit: false
-      const result = await ctx.client.getCheckoutStatus(cwd);
-
-      expect(result.isGit).toBe(false);
-
-      // Cleanup
-      await ctx.client.deleteAgent(agent.id);
-      rmSync(cwd, { recursive: true, force: true });
-    }, 60000); // 1 minute timeout
+  // Create and commit a file
+  const testFile = path.join(cwd, "test.txt");
+  writeFileSync(testFile, "original content\n");
+  execSync("git add test.txt", { cwd, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+    cwd,
+    stdio: "pipe",
   });
 
-  describe("worktree setup", () => {
-    test("runs paseo.json setup asynchronously and reports status via timeline tool_call", async () => {
-      const repoRoot = tmpCwd();
+  // Modify the file (makes repo dirty)
+  writeFileSync(testFile, "modified content\n");
 
-      const { execSync } = await import("child_process");
-      execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
-      execSync("git config user.email 'test@test.com'", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
-      execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+  // Create agent in the git repo
+  const agent = await ctx.client.createAgent({
+    provider: "codex",
+    model: CODEX_TEST_MODEL,
+    thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+    cwd,
+    title: "Git Repo Info Test",
+  });
 
-      writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
-      execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'initial'", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
-      execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+  expect(agent.id).toBeTruthy();
+  expect(agent.status).toBe("idle");
 
-      const setupCommand =
-        'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"';
-      writeFileSync(
-        path.join(repoRoot, "paseo.json"),
-        JSON.stringify({ worktree: { setup: [setupCommand] } }),
-      );
-      execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'add paseo.json'", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
+  // Get checkout status
+  const result = await ctx.client.getCheckoutStatus(cwd);
 
-      const agent = await withTimeout({
-        promise: ctx.client.createAgent({
-          provider: "codex",
-          model: CODEX_TEST_MODEL,
-          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd: repoRoot,
-          title: "Async Worktree Setup Test",
-          git: {
-            createWorktree: true,
-            createNewBranch: true,
-            baseBranch: "main",
-            newBranchName: "async-setup-test",
-            worktreeSlug: "async-setup-test",
-          },
-        }),
-        timeoutMs: 2500,
-        label: "createAgent should not block on setup",
-      });
+  // Verify repo info returned without error
+  expect(result.error).toBeNull();
+  expect(result.isGit).toBe(true);
+  // macOS symlinks /var to /private/var, so we check containment
+  expect(result.repoRoot).toContain("daemon-e2e-");
+  expect(result.currentBranch).toBeTruthy();
+  expect(result.isDirty).toBe(true);
 
-      expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
-      expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
+  // Cleanup
+  await ctx.client.deleteAgent(agent.id);
+  rmSync(cwd, { recursive: true, force: true });
+}, 60000); // 1 minute timeout
 
-      writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
+test("returns clean state when no uncommitted changes", async () => {
+  const cwd = tmpCwd();
 
-      const completed = await waitForTimelineToolCall(
-        collector.messages,
-        agent.id,
-        (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
-        20000,
-      );
+  // Initialize git repo with clean state
+  const { execSync } = await import("child_process");
+  execSync("git init -b main", { cwd, stdio: "pipe" });
+  execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
+  execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
 
-      expect(completed.callId).toBeTruthy();
-      expect(completed.detail.type).toBe("worktree_setup");
-      if (completed.detail.type === "worktree_setup") {
-        expect(completed.detail.commands.length).toBeGreaterThan(0);
-        expect(completed.detail.log.length).toBeGreaterThan(0);
-      }
-      expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(true);
+  // Create and commit a file (no uncommitted changes)
+  const testFile = path.join(cwd, "test.txt");
+  writeFileSync(testFile, "content\n");
+  execSync("git add test.txt", { cwd, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+    cwd,
+    stdio: "pipe",
+  });
 
-      await ctx.client.deleteAgent(agent.id);
-      rmSync(repoRoot, { recursive: true, force: true });
-    }, 60000);
+  // Create agent in the git repo
+  const agent = await ctx.client.createAgent({
+    provider: "codex",
+    model: CODEX_TEST_MODEL,
+    thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+    cwd,
+    title: "Git Repo Info Clean Test",
+  });
 
-    test("bootstraps configured worktree terminals after setup succeeds", async () => {
-      await withShell("/bin/sh", async () => {
-        const repoRoot = tmpCwd();
+  expect(agent.id).toBeTruthy();
 
-        const { execSync } = await import("child_process");
-        execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
-        execSync("git config user.email 'test@test.com'", {
-          cwd: repoRoot,
-          stdio: "pipe",
-        });
-        execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+  // Get checkout status
+  const result = await ctx.client.getCheckoutStatus(cwd);
 
-        writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
-        execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
-        execSync("git -c commit.gpgsign=false commit -m 'initial'", {
-          cwd: repoRoot,
-          stdio: "pipe",
-        });
-        execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+  expect(result.error).toBeNull();
+  expect(result.isGit).toBe(true);
+  expect(result.isDirty).toBe(false);
+  expect(result.currentBranch).toBeTruthy();
 
-        const setupCommand =
-          'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"; echo "$PASEO_WORKTREE_PORT" > "$PASEO_WORKTREE_PATH/setup-port.txt"';
-        writeFileSync(
-          path.join(repoRoot, "paseo.json"),
-          JSON.stringify({
-            worktree: {
-              setup: [setupCommand],
-              terminals: [
-                {
-                  name: "Dev Server",
-                  command: "tail -f /dev/null",
-                },
-                {
-                  command: "tail -f /dev/null",
-                },
-              ],
+  // Cleanup
+  await ctx.client.deleteAgent(agent.id);
+  rmSync(cwd, { recursive: true, force: true });
+}, 60000); // 1 minute timeout
+
+test("returns isGit false for non-git directory", async () => {
+  const cwd = tmpCwd();
+  // Don't initialize git - just a regular directory
+
+  // Create agent in a non-git directory
+  const agent = await ctx.client.createAgent({
+    provider: "codex",
+    model: CODEX_TEST_MODEL,
+    thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+    cwd,
+    title: "Git Repo Info Non-Git Test",
+  });
+
+  expect(agent.id).toBeTruthy();
+
+  // Get checkout status - should return isGit: false
+  const result = await ctx.client.getCheckoutStatus(cwd);
+
+  expect(result.isGit).toBe(false);
+
+  // Cleanup
+  await ctx.client.deleteAgent(agent.id);
+  rmSync(cwd, { recursive: true, force: true });
+}, 60000); // 1 minute timeout
+
+test("runs paseo.json setup asynchronously and reports status via timeline tool_call", async () => {
+  const repoRoot = tmpCwd();
+
+  const { execSync } = await import("child_process");
+  execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git config user.email 'test@test.com'", {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+
+  writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
+  execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+
+  const setupCommand =
+    'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"';
+  writeFileSync(
+    path.join(repoRoot, "paseo.json"),
+    JSON.stringify({ worktree: { setup: [setupCommand] } }),
+  );
+  execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'add paseo.json'", {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+
+  const agent = await withTimeout({
+    promise: ctx.client.createAgent({
+      provider: "codex",
+      model: CODEX_TEST_MODEL,
+      thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+      cwd: repoRoot,
+      title: "Async Worktree Setup Test",
+      git: {
+        createWorktree: true,
+        createNewBranch: true,
+        baseBranch: "main",
+        newBranchName: "async-setup-test",
+        worktreeSlug: "async-setup-test",
+      },
+    }),
+    timeoutMs: 2500,
+    label: "createAgent should not block on setup",
+  });
+
+  expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
+  expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
+
+  writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
+
+  const completed = await waitForTimelineToolCall(
+    collector.messages,
+    agent.id,
+    (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
+    20000,
+  );
+
+  expect(completed.callId).toBeTruthy();
+  expect(completed.detail.type).toBe("worktree_setup");
+  if (completed.detail.type === "worktree_setup") {
+    expect(completed.detail.commands.length).toBeGreaterThan(0);
+    expect(completed.detail.log.length).toBeGreaterThan(0);
+  }
+  expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(true);
+
+  await ctx.client.deleteAgent(agent.id);
+  rmSync(repoRoot, { recursive: true, force: true });
+}, 60000);
+
+test("bootstraps configured worktree terminals after setup succeeds", async () => {
+  await withShell("/bin/sh", async () => {
+    const repoRoot = tmpCwd();
+
+    const { execSync } = await import("child_process");
+    execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+    execSync("git config user.email 'test@test.com'", {
+      cwd: repoRoot,
+      stdio: "pipe",
+    });
+    execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+
+    writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
+    execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+    execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+      cwd: repoRoot,
+      stdio: "pipe",
+    });
+    execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+
+    const setupCommand =
+      'while [ ! -f "$PASEO_WORKTREE_PATH/allow-setup" ]; do sleep 0.05; done; echo "done" > "$PASEO_WORKTREE_PATH/setup-done.txt"; echo "$PASEO_WORKTREE_PORT" > "$PASEO_WORKTREE_PATH/setup-port.txt"';
+    writeFileSync(
+      path.join(repoRoot, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: [setupCommand],
+          terminals: [
+            {
+              name: "Dev Server",
+              command: "tail -f /dev/null",
             },
-          }),
-        );
-        execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
-        execSync("git -c commit.gpgsign=false commit -m 'add setup and terminals'", {
-          cwd: repoRoot,
-          stdio: "pipe",
-        });
-
-        const agent = await withTimeout({
-          promise: ctx.client.createAgent({
-            provider: "codex",
-            model: CODEX_TEST_MODEL,
-            thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-            cwd: repoRoot,
-            title: "Async Worktree Setup + Terminals Test",
-            git: {
-              createWorktree: true,
-              createNewBranch: true,
-              baseBranch: "main",
-              newBranchName: "async-setup-terminals-test",
-              worktreeSlug: "async-setup-terminals-test",
+            {
+              command: "tail -f /dev/null",
             },
-          }),
-          timeoutMs: 2500,
-          label: "createAgent should not block on setup",
-        });
+          ],
+        },
+      }),
+    );
+    execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+    execSync("git -c commit.gpgsign=false commit -m 'add setup and terminals'", {
+      cwd: repoRoot,
+      stdio: "pipe",
+    });
 
-        expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
-        expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
-        expect(existsSync(path.join(agent.cwd, "dev-terminal.txt"))).toBe(false);
-        expect(existsSync(path.join(agent.cwd, "lint-terminal.txt"))).toBe(false);
-
-        writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
-
-        await waitForTimelineToolCall(
-          collector.messages,
-          agent.id,
-          (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
-          20000,
-        );
-        const terminalsBootstrapToolCall = await waitForTimelineToolCall(
-          collector.messages,
-          agent.id,
-          (item) => item.name === "paseo_worktree_terminals" && item.status === "completed",
-          30000,
-        );
-        const bootstrappedTerminals = getWorktreeTerminalBootstrapEntries(
-          terminalsBootstrapToolCall,
-        );
-        expect(bootstrappedTerminals).toBeTruthy();
-        expect(bootstrappedTerminals?.length ?? 0).toBeGreaterThanOrEqual(2);
-        const failedBootstraps =
-          bootstrappedTerminals?.filter((terminal) => terminal.status === "failed") ?? [];
-        expect(failedBootstraps).toEqual([]);
-
-        const list = await ctx.client.listTerminals(agent.cwd);
-        expect(list.error).toBeUndefined();
-        expect(list.terminals.some((terminal) => terminal.name === "Dev Server")).toBe(true);
-        expect(list.terminals.length).toBeGreaterThanOrEqual(2);
-        await waitForPathExists({
-          targetPath: path.join(agent.cwd, "setup-port.txt"),
-          timeoutMs: 30000,
-          label: "setup runtime port marker",
-        });
-
-        const setupPort = readFileSync(path.join(agent.cwd, "setup-port.txt"), "utf8").trim();
-        expect(setupPort.length).toBeGreaterThan(0);
-
-        const createdTerminal = await ctx.client.createTerminal(agent.cwd, "Manual Port Check");
-        expect(createdTerminal.error).toBeNull();
-        expect(createdTerminal.terminal).toBeTruthy();
-        const manualTerminalId = createdTerminal.terminal?.id;
-        expect(manualTerminalId).toBeTruthy();
-        if (!manualTerminalId) {
-          throw new Error("Expected manual terminal id");
-        }
-        ctx.client.sendTerminalInput(manualTerminalId, {
-          type: "input",
-          data: 'echo "$PASEO_WORKTREE_PORT" > "$PASEO_WORKTREE_PATH/manual-terminal-port.txt"\r',
-        });
-        await waitForPathExists({
-          targetPath: path.join(agent.cwd, "manual-terminal-port.txt"),
-          timeoutMs: 30000,
-          label: "manual terminal runtime port marker",
-        });
-        const manualTerminalPort = readFileSync(
-          path.join(agent.cwd, "manual-terminal-port.txt"),
-          "utf8",
-        ).trim();
-        expect(manualTerminalPort).toBe(setupPort);
-
-        await ctx.client.deleteAgent(agent.id);
-        rmSync(repoRoot, { recursive: true, force: true });
-      });
-    }, 60000);
-
-    test("reports failures via timeline tool_call without deleting the created worktree", async () => {
-      const repoRoot = tmpCwd();
-
-      const { execSync } = await import("child_process");
-      execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
-      execSync("git config user.email 'test@test.com'", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
-      execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
-
-      writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
-      execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'initial'", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
-      execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
-
-      const setupCommand =
-        'echo "started" > "$PASEO_WORKTREE_PATH/setup-start.txt"; sleep 0.1; echo "boom" 1>&2; exit 7';
-      writeFileSync(
-        path.join(repoRoot, "paseo.json"),
-        JSON.stringify({
-          worktree: {
-            setup: [setupCommand],
-            terminals: [
-              {
-                name: "Should Not Start",
-                command: 'echo "should-not-run" > should-not-run.txt; tail -f /dev/null',
-              },
-            ],
-          },
-        }),
-      );
-      execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'add failing setup'", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
-
-      const agent = await withTimeout({
-        promise: ctx.client.createAgent({
-          provider: "codex",
-          model: CODEX_TEST_MODEL,
-          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd: repoRoot,
-          title: "Async Worktree Setup Failure Test",
-          git: {
-            createWorktree: true,
-            createNewBranch: true,
-            baseBranch: "main",
-            newBranchName: "async-setup-failure-test",
-            worktreeSlug: "async-setup-failure-test",
-          },
-        }),
-        timeoutMs: 2500,
-        label: "createAgent should not block on failing setup",
-      });
-
-      expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
-      expect(existsSync(agent.cwd)).toBe(true);
-
-      const started = await waitForTimelineToolCall(
-        collector.messages,
-        agent.id,
-        (item) => item.name === "paseo_worktree_setup" && item.status === "running",
-        10000,
-      );
-
-      const failed = await waitForTimelineToolCall(
-        collector.messages,
-        agent.id,
-        (item) =>
-          item.name === "paseo_worktree_setup" &&
-          item.callId === started.callId &&
-          item.status === "failed",
-        20000,
-      );
-
-      expect(existsSync(path.join(agent.cwd, "setup-start.txt"))).toBe(true);
-      expect(existsSync(path.join(agent.cwd, "should-not-run.txt"))).toBe(false);
-
-      expect(failed.detail.type).toBe("worktree_setup");
-      if (failed.detail.type === "worktree_setup") {
-        expect(Array.isArray(failed.detail.commands)).toBe(true);
-        expect(failed.detail.commands[0]?.exitCode).toBe(7);
-        expect(failed.detail.log).toContain("Exit 7");
-      }
-
-      await ctx.client.deleteAgent(agent.id);
-      rmSync(repoRoot, { recursive: true, force: true });
-    }, 60000);
-  });
-
-  describe("createAgent with worktree", () => {
-    test("creates agent in ~/.paseo/worktrees/{hash} when worktree is requested", async () => {
-      const cwd = tmpCwd();
-      const projectHash = await deriveWorktreeProjectHash(cwd);
-
-      const { execSync } = await import("child_process");
-      execSync("git init -b main", { cwd, stdio: "pipe" });
-      execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
-      execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
-
-      const testFile = path.join(cwd, "test.txt");
-      writeFileSync(testFile, "content\n");
-      execSync("git add test.txt", { cwd, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
-        cwd,
-        stdio: "pipe",
-      });
-
-      const agent = await ctx.client.createAgent({
+    const agent = await withTimeout({
+      promise: ctx.client.createAgent({
         provider: "codex",
         model: CODEX_TEST_MODEL,
         thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-        cwd,
-        title: "Worktree Agent Test",
+        cwd: repoRoot,
+        title: "Async Worktree Setup + Terminals Test",
         git: {
           createWorktree: true,
           createNewBranch: true,
-          newBranchName: "worktree-test",
-          worktreeSlug: "worktree-test",
           baseBranch: "main",
+          newBranchName: "async-setup-terminals-test",
+          worktreeSlug: "async-setup-terminals-test",
         },
-      });
+      }),
+      timeoutMs: 2500,
+      label: "createAgent should not block on setup",
+    });
 
-      expect(agent.id).toBeTruthy();
-      expect(agent.status).toBe("idle");
-      expect(realpathSync(agent.cwd)).toBe(
-        realpathSync(path.join(ctx.daemon.paseoHome, "worktrees", projectHash, "worktree-test")),
-      );
-      expect(existsSync(agent.cwd)).toBe(true);
+    expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
+    expect(existsSync(path.join(agent.cwd, "setup-done.txt"))).toBe(false);
+    expect(existsSync(path.join(agent.cwd, "dev-terminal.txt"))).toBe(false);
+    expect(existsSync(path.join(agent.cwd, "lint-terminal.txt"))).toBe(false);
 
-      await ctx.client.deleteAgent(agent.id);
-      rmSync(cwd, { recursive: true, force: true });
-    }, 60000);
+    writeFileSync(path.join(agent.cwd, "allow-setup"), "ok\n");
+
+    await waitForTimelineToolCall(
+      collector.messages,
+      agent.id,
+      (item) => item.name === "paseo_worktree_setup" && item.status === "completed",
+      20000,
+    );
+    const terminalsBootstrapToolCall = await waitForTimelineToolCall(
+      collector.messages,
+      agent.id,
+      (item) => item.name === "paseo_worktree_terminals" && item.status === "completed",
+      30000,
+    );
+    const bootstrappedTerminals = getWorktreeTerminalBootstrapEntries(terminalsBootstrapToolCall);
+    expect(bootstrappedTerminals).toBeTruthy();
+    expect(bootstrappedTerminals?.length ?? 0).toBeGreaterThanOrEqual(2);
+    const failedBootstraps =
+      bootstrappedTerminals?.filter((terminal) => terminal.status === "failed") ?? [];
+    expect(failedBootstraps).toEqual([]);
+
+    const list = await ctx.client.listTerminals(agent.cwd);
+    expect(list.error).toBeUndefined();
+    expect(list.terminals.some((terminal) => terminal.name === "Dev Server")).toBe(true);
+    expect(list.terminals.length).toBeGreaterThanOrEqual(2);
+    await waitForPathExists({
+      targetPath: path.join(agent.cwd, "setup-port.txt"),
+      timeoutMs: 30000,
+      label: "setup runtime port marker",
+    });
+
+    const setupPort = readFileSync(path.join(agent.cwd, "setup-port.txt"), "utf8").trim();
+    expect(setupPort.length).toBeGreaterThan(0);
+
+    const createdTerminal = await ctx.client.createTerminal(agent.cwd, "Manual Port Check");
+    expect(createdTerminal.error).toBeNull();
+    expect(createdTerminal.terminal).toBeTruthy();
+    const manualTerminalId = createdTerminal.terminal?.id;
+    expect(manualTerminalId).toBeTruthy();
+    if (!manualTerminalId) {
+      throw new Error("Expected manual terminal id");
+    }
+    ctx.client.sendTerminalInput(manualTerminalId, {
+      type: "input",
+      data: 'echo "$PASEO_WORKTREE_PORT" > "$PASEO_WORKTREE_PATH/manual-terminal-port.txt"\r',
+    });
+    await waitForPathExists({
+      targetPath: path.join(agent.cwd, "manual-terminal-port.txt"),
+      timeoutMs: 30000,
+      label: "manual terminal runtime port marker",
+    });
+    const manualTerminalPort = readFileSync(
+      path.join(agent.cwd, "manual-terminal-port.txt"),
+      "utf8",
+    ).trim();
+    expect(manualTerminalPort).toBe(setupPort);
+
+    await ctx.client.deleteAgent(agent.id);
+    rmSync(repoRoot, { recursive: true, force: true });
+  });
+}, 60000);
+
+test("reports failures via timeline tool_call without deleting the created worktree", async () => {
+  const repoRoot = tmpCwd();
+
+  const { execSync } = await import("child_process");
+  execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git config user.email 'test@test.com'", {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+
+  writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
+  execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+
+  const setupCommand =
+    'echo "started" > "$PASEO_WORKTREE_PATH/setup-start.txt"; sleep 0.1; echo "boom" 1>&2; exit 7';
+  writeFileSync(
+    path.join(repoRoot, "paseo.json"),
+    JSON.stringify({
+      worktree: {
+        setup: [setupCommand],
+        terminals: [
+          {
+            name: "Should Not Start",
+            command: 'echo "should-not-run" > should-not-run.txt; tail -f /dev/null',
+          },
+        ],
+      },
+    }),
+  );
+  execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'add failing setup'", {
+    cwd: repoRoot,
+    stdio: "pipe",
   });
 
-  describe("archivePaseoWorktree", () => {
-    test("archives worktree by running teardown commands and shutting down worktree terminals", async () => {
-      const repoRoot = tmpCwd();
-
-      const { execSync } = await import("child_process");
-      execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
-      execSync("git config user.email 'test@test.com'", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
-      execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
-
-      writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
-      execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'initial'", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
-      execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
-
-      const teardownMarkerPath = path.join(repoRoot, "teardown-marker.txt");
-      writeFileSync(
-        path.join(repoRoot, "paseo.json"),
-        JSON.stringify({
-          worktree: {
-            terminals: [
-              {
-                name: "Dev Server",
-                command: 'echo "dev-server" > dev-terminal.txt; tail -f /dev/null',
-              },
-            ],
-            teardown: [`echo "$PASEO_WORKTREE_PATH" > "${teardownMarkerPath}"`],
-          },
-        }),
-      );
-      execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
-      execSync("git -c commit.gpgsign=false commit -m 'add worktree terminal + teardown'", {
-        cwd: repoRoot,
-        stdio: "pipe",
-      });
-
-      const agent = await withTimeout({
-        promise: ctx.client.createAgent({
-          provider: "codex",
-          model: CODEX_TEST_MODEL,
-          thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
-          cwd: repoRoot,
-          title: "Worktree Archive Cleanup Test",
-          git: {
-            createWorktree: true,
-            createNewBranch: true,
-            baseBranch: "main",
-            newBranchName: "archive-cleanup-test",
-            worktreeSlug: "archive-cleanup-test",
-          },
-        }),
-        timeoutMs: 2500,
-        label: "createAgent should not block on setup",
-      });
-
-      await waitForCondition({
-        timeoutMs: 30000,
-        label: `worktree terminal bootstrap for ${agent.cwd}`,
-        predicate: async () => {
-          const directories = ctx.daemon.daemon.terminalManager.listDirectories();
-          if (!directories.includes(agent.cwd)) {
-            return false;
-          }
-          const terminals = await ctx.client.listTerminals(agent.cwd);
-          return terminals.terminals.some((terminal) => terminal.name === "Dev Server");
-        },
-      });
-
-      const beforeArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
-      expect(beforeArchiveDirectories).toContain(agent.cwd);
-
-      const archive = await ctx.client.archivePaseoWorktree({
-        worktreePath: agent.cwd,
-      });
-      expect(archive.error).toBeNull();
-      expect(archive.success).toBe(true);
-      expect(archive.removedAgents).toContain(agent.id);
-
-      expect(existsSync(agent.cwd)).toBe(false);
-      expect(existsSync(teardownMarkerPath)).toBe(true);
-      expect(readFileSync(teardownMarkerPath, "utf8").trim()).toBe(agent.cwd);
-
-      const afterArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
-      expect(afterArchiveDirectories).not.toContain(agent.cwd);
-
-      rmSync(repoRoot, { recursive: true, force: true });
-    }, 60000);
+  const agent = await withTimeout({
+    promise: ctx.client.createAgent({
+      provider: "codex",
+      model: CODEX_TEST_MODEL,
+      thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+      cwd: repoRoot,
+      title: "Async Worktree Setup Failure Test",
+      git: {
+        createWorktree: true,
+        createNewBranch: true,
+        baseBranch: "main",
+        newBranchName: "async-setup-failure-test",
+        worktreeSlug: "async-setup-failure-test",
+      },
+    }),
+    timeoutMs: 2500,
+    label: "createAgent should not block on failing setup",
   });
-});
+
+  expect(agent.cwd).toContain(path.join(".paseo", "worktrees"));
+  expect(existsSync(agent.cwd)).toBe(true);
+
+  const started = await waitForTimelineToolCall(
+    collector.messages,
+    agent.id,
+    (item) => item.name === "paseo_worktree_setup" && item.status === "running",
+    10000,
+  );
+
+  const failed = await waitForTimelineToolCall(
+    collector.messages,
+    agent.id,
+    (item) =>
+      item.name === "paseo_worktree_setup" &&
+      item.callId === started.callId &&
+      item.status === "failed",
+    20000,
+  );
+
+  expect(existsSync(path.join(agent.cwd, "setup-start.txt"))).toBe(true);
+  expect(existsSync(path.join(agent.cwd, "should-not-run.txt"))).toBe(false);
+
+  expect(failed.detail.type).toBe("worktree_setup");
+  if (failed.detail.type === "worktree_setup") {
+    expect(Array.isArray(failed.detail.commands)).toBe(true);
+    expect(failed.detail.commands[0]?.exitCode).toBe(7);
+    expect(failed.detail.log).toContain("Exit 7");
+  }
+
+  await ctx.client.deleteAgent(agent.id);
+  rmSync(repoRoot, { recursive: true, force: true });
+}, 60000);
+
+test("creates agent in ~/.paseo/worktrees/{hash} when worktree is requested", async () => {
+  const cwd = tmpCwd();
+  const projectHash = await deriveWorktreeProjectHash(cwd);
+
+  const { execSync } = await import("child_process");
+  execSync("git init -b main", { cwd, stdio: "pipe" });
+  execSync("git config user.email 'test@test.com'", { cwd, stdio: "pipe" });
+  execSync("git config user.name 'Test'", { cwd, stdio: "pipe" });
+
+  const testFile = path.join(cwd, "test.txt");
+  writeFileSync(testFile, "content\n");
+  execSync("git add test.txt", { cwd, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'Initial commit'", {
+    cwd,
+    stdio: "pipe",
+  });
+
+  const agent = await ctx.client.createAgent({
+    provider: "codex",
+    model: CODEX_TEST_MODEL,
+    thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+    cwd,
+    title: "Worktree Agent Test",
+    git: {
+      createWorktree: true,
+      createNewBranch: true,
+      newBranchName: "worktree-test",
+      worktreeSlug: "worktree-test",
+      baseBranch: "main",
+    },
+  });
+
+  expect(agent.id).toBeTruthy();
+  expect(agent.status).toBe("idle");
+  expect(realpathSync(agent.cwd)).toBe(
+    realpathSync(path.join(ctx.daemon.paseoHome, "worktrees", projectHash, "worktree-test")),
+  );
+  expect(existsSync(agent.cwd)).toBe(true);
+
+  await ctx.client.deleteAgent(agent.id);
+  rmSync(cwd, { recursive: true, force: true });
+}, 60000);
+
+test("archives worktree by running teardown commands and shutting down worktree terminals", async () => {
+  const repoRoot = tmpCwd();
+
+  const { execSync } = await import("child_process");
+  execSync("git init -b main", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git config user.email 'test@test.com'", {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  execSync("git config user.name 'Test'", { cwd: repoRoot, stdio: "pipe" });
+
+  writeFileSync(path.join(repoRoot, "file.txt"), "hello\n");
+  execSync("git add .", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'initial'", {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  execSync("git branch -M main", { cwd: repoRoot, stdio: "pipe" });
+
+  const teardownMarkerPath = path.join(repoRoot, "teardown-marker.txt");
+  writeFileSync(
+    path.join(repoRoot, "paseo.json"),
+    JSON.stringify({
+      worktree: {
+        terminals: [
+          {
+            name: "Dev Server",
+            command: 'echo "dev-server" > dev-terminal.txt; tail -f /dev/null',
+          },
+        ],
+        teardown: [`echo "$PASEO_WORKTREE_PATH" > "${teardownMarkerPath}"`],
+      },
+    }),
+  );
+  execSync("git add paseo.json", { cwd: repoRoot, stdio: "pipe" });
+  execSync("git -c commit.gpgsign=false commit -m 'add worktree terminal + teardown'", {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+
+  const agent = await withTimeout({
+    promise: ctx.client.createAgent({
+      provider: "codex",
+      model: CODEX_TEST_MODEL,
+      thinkingOptionId: CODEX_TEST_THINKING_OPTION_ID,
+      cwd: repoRoot,
+      title: "Worktree Archive Cleanup Test",
+      git: {
+        createWorktree: true,
+        createNewBranch: true,
+        baseBranch: "main",
+        newBranchName: "archive-cleanup-test",
+        worktreeSlug: "archive-cleanup-test",
+      },
+    }),
+    timeoutMs: 2500,
+    label: "createAgent should not block on setup",
+  });
+
+  await waitForCondition({
+    timeoutMs: 30000,
+    label: `worktree terminal bootstrap for ${agent.cwd}`,
+    predicate: async () => {
+      const directories = ctx.daemon.daemon.terminalManager.listDirectories();
+      if (!directories.includes(agent.cwd)) {
+        return false;
+      }
+      const terminals = await ctx.client.listTerminals(agent.cwd);
+      return terminals.terminals.some((terminal) => terminal.name === "Dev Server");
+    },
+  });
+
+  const beforeArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
+  expect(beforeArchiveDirectories).toContain(agent.cwd);
+
+  const archive = await ctx.client.archivePaseoWorktree({
+    worktreePath: agent.cwd,
+  });
+  expect(archive.error).toBeNull();
+  expect(archive.success).toBe(true);
+  expect(archive.removedAgents).toContain(agent.id);
+
+  expect(existsSync(agent.cwd)).toBe(false);
+  expect(existsSync(teardownMarkerPath)).toBe(true);
+  expect(readFileSync(teardownMarkerPath, "utf8").trim()).toBe(agent.cwd);
+
+  const afterArchiveDirectories = ctx.daemon.daemon.terminalManager.listDirectories();
+  expect(afterArchiveDirectories).not.toContain(agent.cwd);
+
+  rmSync(repoRoot, { recursive: true, force: true });
+}, 60000);

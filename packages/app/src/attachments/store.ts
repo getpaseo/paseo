@@ -7,9 +7,8 @@ let attachmentStorePromise: Promise<AttachmentStore> | null = null;
 async function createAttachmentStore(): Promise<AttachmentStore> {
   if (isWeb) {
     if (isElectronRuntime()) {
-      const { createDesktopAttachmentStore } = await import(
-        "../desktop/attachments/desktop-attachment-store"
-      );
+      const { createDesktopAttachmentStore } =
+        await import("../desktop/attachments/desktop-attachment-store");
       return createDesktopAttachmentStore();
     }
 

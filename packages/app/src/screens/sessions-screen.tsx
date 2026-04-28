@@ -47,6 +47,22 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
     return [...agents].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }, [agents]);
 
+  const handleBack = useCallback(() => {
+    router.navigate(buildHostOpenProjectRoute(serverId));
+  }, [serverId]);
+
+  const listFooterComponent = useMemo(
+    () =>
+      hasMore ? (
+        <View style={styles.footer}>
+          <Button variant="ghost" onPress={loadMore} disabled={isLoadingMore}>
+            {isLoadingMore ? "Loading..." : "Load more"}
+          </Button>
+        </View>
+      ) : null,
+    [hasMore, loadMore, isLoadingMore],
+  );
+
   return (
     <View style={styles.container}>
       <MenuHeader title="Sessions" />
@@ -54,35 +70,25 @@ function SessionsScreenContent({ serverId }: { serverId: string }) {
         <View style={styles.loadingContainer}>
           <LoadingSpinner size="large" color={theme.colors.foregroundMuted} />
         </View>
-      ) : sortedAgents.length === 0 ? (
+      ) : null}
+      {!isInitialLoad && sortedAgents.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>No sessions yet</Text>
-          <Button
-            variant="ghost"
-            leftIcon={ChevronLeft}
-            onPress={() => router.navigate(buildHostOpenProjectRoute(serverId))}
-          >
+          <Button variant="ghost" leftIcon={ChevronLeft} onPress={handleBack}>
             Back
           </Button>
         </View>
-      ) : (
+      ) : null}
+      {!isInitialLoad && sortedAgents.length > 0 ? (
         <AgentList
           agents={sortedAgents}
           showCheckoutInfo={false}
           isRefreshing={isManualRefresh && isRevalidating}
           onRefresh={handleRefresh}
-          listFooterComponent={
-            hasMore ? (
-              <View style={styles.footer}>
-                <Button variant="ghost" onPress={loadMore} disabled={isLoadingMore}>
-                  {isLoadingMore ? "Loading..." : "Load more"}
-                </Button>
-              </View>
-            ) : null
-          }
+          listFooterComponent={listFooterComponent}
           showAttentionIndicator={false}
         />
-      )}
+      ) : null}
     </View>
   );
 }

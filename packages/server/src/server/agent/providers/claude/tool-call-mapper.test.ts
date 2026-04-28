@@ -310,6 +310,25 @@ describe("claude tool-call mapper", () => {
     });
   });
 
+  it("maps Grep calls when output arrives as the claude-agent string wrapper", () => {
+    const item = expectMapped(
+      mapClaudeCompletedToolCall({
+        callId: "claude-grep-string-1",
+        name: "Grep",
+        input: { pattern: "MaskedView", output_mode: "files_with_matches" },
+        output: { output: "Found 2 files\nsrc/foo.tsx\nsrc/bar.tsx" },
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "search",
+      query: "MaskedView",
+      toolName: "grep",
+      content: "Found 2 files\nsrc/foo.tsx\nsrc/bar.tsx",
+      numFiles: 0,
+    });
+  });
+
   it("maps WebSearch calls with structured results", () => {
     const item = expectMapped(
       mapClaudeCompletedToolCall({

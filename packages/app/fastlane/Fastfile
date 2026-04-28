@@ -1,0 +1,42 @@
+default_platform(:ios)
+
+APP_IDENTIFIER = "sh.paseo"
+
+platform :ios do
+  desc "Submit the latest TestFlight build to App Store Review"
+  lane :submit_review do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_KEY_P8"),
+    )
+
+    build_number = latest_testflight_build_number(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+    )
+
+    wait_for_build_processing_to_be_complete(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      build_number: build_number.to_s,
+    )
+
+    deliver(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      build_number: build_number.to_s,
+      submit_for_review: true,
+      automatic_release: true,
+      force: true,
+      skip_binary_upload: true,
+      skip_screenshots: true,
+      skip_metadata: true,
+      precheck_include_in_app_purchases: false,
+      submission_information: {
+        add_id_info_uses_idfa: false,
+        export_compliance_uses_encryption: false,
+      },
+    )
+  end
+end

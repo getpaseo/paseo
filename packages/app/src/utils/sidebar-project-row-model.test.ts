@@ -13,6 +13,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     workspaceKey: "srv:ws-root",
     serverId: "srv",
     workspaceId: "ws-root",
+    projectKey: "project-1",
     workspaceDirectory: "/repo",
     projectKind: "git",
     workspaceKind: "checkout",

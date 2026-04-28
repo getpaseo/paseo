@@ -113,7 +113,7 @@ export function orderVisibleComboboxOptions(
   if (optionsPosition !== "above-search") {
     return visibleOptions;
   }
-  return [...visibleOptions].reverse();
+  return [...visibleOptions].toReversed();
 }
 
 export function getComboboxFallbackIndex(

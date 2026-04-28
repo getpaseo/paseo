@@ -172,20 +172,19 @@ describe("pull request timeline message schemas", () => {
     expect(parsed.payload.error).toEqual({ kind: "unknown", message: "x" });
   });
 
-  test.each([
-    "rate_limited",
-    "",
-    undefined,
-  ])("normalizes malformed error kind %j to unknown", (kind) => {
-    const parsed = PullRequestTimelineResponseSchema.parse({
-      type: "pull_request_timeline_response",
-      payload: {
-        error: { kind },
-      },
-    });
+  test.each(["rate_limited", "", undefined])(
+    "normalizes malformed error kind %j to unknown",
+    (kind) => {
+      const parsed = PullRequestTimelineResponseSchema.parse({
+        type: "pull_request_timeline_response",
+        payload: {
+          error: { kind },
+        },
+      });
 
-    expect(parsed.payload.error).toEqual({ kind: "unknown", message: "" });
-  });
+      expect(parsed.payload.error).toEqual({ kind: "unknown", message: "" });
+    },
+  );
 });
 
 describe("checkout PR status compatibility", () => {

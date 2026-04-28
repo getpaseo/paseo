@@ -165,6 +165,34 @@ describe("provider overrides (new format)", () => {
     ]);
   });
 
+  test("additionalModels array accepted", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: {
+        providers: {
+          zai: {
+            extends: "claude",
+            label: "ZAI",
+            additionalModels: [
+              {
+                id: "zai-fast",
+                label: "ZAI Fast",
+                isDefault: true,
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(parsed.agents?.providers?.zai?.additionalModels).toEqual([
+      {
+        id: "zai-fast",
+        label: "ZAI Fast",
+        isDefault: true,
+      },
+    ]);
+  });
+
   test("order field accepted", () => {
     const parsed = PersistedConfigSchema.parse({
       agents: {

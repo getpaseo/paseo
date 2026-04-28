@@ -1,19 +1,19 @@
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
-export type AgentTimelineRow = {
+export interface AgentTimelineRow {
   seq: number;
   timestamp: string;
   item: AgentTimelineItem;
-};
+}
 
-export type AgentTimelineCursor = {
+export interface AgentTimelineCursor {
   epoch: string;
   seq: number;
-};
+}
 
 export type AgentTimelineFetchDirection = "tail" | "before" | "after";
 
-export type AgentTimelineFetchOptions = {
+export interface AgentTimelineFetchOptions {
   direction?: AgentTimelineFetchDirection;
   cursor?: AgentTimelineCursor;
   /**
@@ -22,15 +22,15 @@ export type AgentTimelineFetchOptions = {
    * - 0: all rows in the selected window
    */
   limit?: number;
-};
+}
 
-export type AgentTimelineWindow = {
+export interface AgentTimelineWindow {
   minSeq: number;
   maxSeq: number;
   nextSeq: number;
-};
+}
 
-export type AgentTimelineFetchResult = {
+export interface AgentTimelineFetchResult {
   epoch: string;
   direction: AgentTimelineFetchDirection;
   reset: boolean;
@@ -40,7 +40,7 @@ export type AgentTimelineFetchResult = {
   hasOlder: boolean;
   hasNewer: boolean;
   rows: AgentTimelineRow[];
-};
+}
 
 export interface AgentTimelineStore {
   appendCommitted(

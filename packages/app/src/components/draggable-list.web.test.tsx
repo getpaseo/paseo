@@ -7,10 +7,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DraggableList } from "./draggable-list.web";
 
-type DndContextProps = {
+interface DndContextProps {
   onDragStart?: (event: { active: { id: string } }) => void;
   onDragCancel?: () => void;
-};
+}
 
 let latestDndContextProps: DndContextProps | null = null;
 
@@ -27,7 +27,7 @@ vi.mock("@dnd-kit/core", () => ({
 }));
 
 vi.mock("@dnd-kit/sortable", () => ({
-  SortableContext: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  SortableContext: ({ children }: React.PropsWithChildren) => children,
   arrayMove: <T,>(items: T[], from: number, to: number) => {
     const next = [...items];
     const [item] = next.splice(from, 1);
@@ -90,18 +90,28 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const DATA: string[] = ["alpha", "beta"];
+
+function keyExtractor(item: string): string {
+  return item;
+}
+
+function renderItem({ item, isActive }: { item: string; isActive: boolean }) {
+  return (
+    <div data-active={String(isActive)} data-testid={`item-${item}`}>
+      {item}
+    </div>
+  );
+}
+
 function renderList(): void {
   act(() => {
     root?.render(
       <DraggableList
-        data={["alpha", "beta"]}
-        keyExtractor={(item) => item}
+        data={DATA}
+        keyExtractor={keyExtractor}
         onDragEnd={vi.fn()}
-        renderItem={({ item, isActive }) => (
-          <div data-active={String(isActive)} data-testid={`item-${item}`}>
-            {item}
-          </div>
-        )}
+        renderItem={renderItem}
         scrollEnabled={false}
       />,
     );

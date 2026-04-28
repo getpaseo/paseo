@@ -38,6 +38,14 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function rawToText(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  if (raw && typeof (raw as { toString?: unknown }).toString === "function") {
+    return (raw as { toString(): string }).toString();
+  }
+  return "";
+}
+
 function spawnRelayDevServer(port: number): ChildProcess {
   return spawn(
     process.execPath,
@@ -69,28 +77,63 @@ function assertRelayStillRunning(relayProcess: ChildProcess): void {
   }
 }
 
+function tryConnect(port: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.end();
+      resolve();
+    });
+    socket.on("error", reject);
+  });
+}
+
 async function waitForServer(
   port: number,
   relayProcess: ChildProcess,
   timeout = 15000,
 ): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeout) {
+  const deadline = Date.now() + timeout;
+  async function poll(): Promise<void> {
+    if (Date.now() >= deadline) {
+      throw new Error(`Server did not start on port ${port} within ${timeout}ms`);
+    }
     assertRelayStillRunning(relayProcess);
     try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.connect(port, "127.0.0.1", () => {
-          socket.end();
-          resolve();
-        });
-        socket.on("error", reject);
-      });
+      await tryConnect(port);
       return;
     } catch {
       await sleep(100);
+      return poll();
     }
   }
-  throw new Error(`Server did not start on port ${port} within ${timeout}ms`);
+  return poll();
+}
+
+function probeRelayWebSocket(port: number): Promise<boolean> {
+  const serverId = `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const probeUrl = `ws://127.0.0.1:${port}/ws?serverId=${serverId}&role=server&v=2`;
+  return new Promise<boolean>((resolve) => {
+    const ws = new WebSocket(probeUrl);
+    let settled = false;
+    const settle = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      ws.terminate();
+      settle(false);
+    }, 5000);
+    ws.once("open", () => {
+      clearTimeout(timer);
+      ws.close(1000, "probe");
+      settle(true);
+    });
+    ws.once("error", () => {
+      clearTimeout(timer);
+      settle(false);
+    });
+  });
 }
 
 async function waitForRelayWebSocketReady(
@@ -98,33 +141,25 @@ async function waitForRelayWebSocketReady(
   relayProcess: ChildProcess,
   timeout = 60000,
 ): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeout) {
-    assertRelayStillRunning(relayProcess);
-    const serverId = `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    const probeUrl = `ws://127.0.0.1:${port}/ws?serverId=${serverId}&role=server&v=2`;
-    const opened = await new Promise<boolean>((resolve) => {
-      const ws = new WebSocket(probeUrl);
-      const timer = setTimeout(() => {
-        ws.terminate();
-        resolve(false);
-      }, 5000);
-      ws.once("open", () => {
-        clearTimeout(timer);
-        ws.close(1000, "probe");
-        resolve(true);
-      });
-      ws.once("error", () => {
-        clearTimeout(timer);
-        resolve(false);
-      });
-    });
-    if (opened) {
-      return;
+  const deadline = Date.now() + timeout;
+  async function poll(): Promise<void> {
+    if (Date.now() >= deadline) {
+      throw new Error(`Relay WebSocket endpoint not ready on port ${port} within ${timeout}ms`);
     }
+    assertRelayStillRunning(relayProcess);
+    const opened = await probeRelayWebSocket(port);
+    if (opened) return;
     await sleep(250);
+    return poll();
   }
-  throw new Error(`Relay WebSocket endpoint not ready on port ${port} within ${timeout}ms`);
+  return poll();
+}
+
+async function waitForProcessExit(relayProcess: ChildProcess, deadline: number): Promise<void> {
+  if (relayProcess.exitCode !== null) return;
+  if (Date.now() >= deadline) return;
+  await sleep(50);
+  return waitForProcessExit(relayProcess, deadline);
 }
 
 async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
@@ -133,20 +168,14 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
   }
 
   relayProcess.kill("SIGTERM");
-  const start = Date.now();
-  while (relayProcess.exitCode === null && Date.now() - start < SHUTDOWN_TIMEOUT_MS) {
-    await sleep(50);
-  }
+  await waitForProcessExit(relayProcess, Date.now() + SHUTDOWN_TIMEOUT_MS);
 
   if (relayProcess.exitCode !== null) {
     return;
   }
 
   relayProcess.kill("SIGKILL");
-  const killStart = Date.now();
-  while (relayProcess.exitCode === null && Date.now() - killStart < 2000) {
-    await sleep(50);
-  }
+  await waitForProcessExit(relayProcess, Date.now() + 2000);
 
   if (relayProcess.exitCode === null) {
     throw new Error("relay process did not exit after SIGTERM/SIGKILL");
@@ -161,21 +190,16 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
     relayPort = await getAvailablePort();
     relayProcess = spawnRelayDevServer(relayPort);
 
+    const hasContent = (line: string) => line.trim().length > 0;
     relayProcess.stdout?.on("data", (data: Buffer) => {
-      const lines = data
-        .toString()
-        .split("\n")
-        .filter((l) => l.trim());
+      const lines = data.toString().split("\n").filter(hasContent);
       for (const line of lines) {
         // eslint-disable-next-line no-console
         console.log(`[relay] ${line}`);
       }
     });
     relayProcess.stderr?.on("data", (data: Buffer) => {
-      const lines = data
-        .toString()
-        .split("\n")
-        .filter((l) => l.trim());
+      const lines = data.toString().split("\n").filter(hasContent);
       for (const line of lines) {
         // eslint-disable-next-line no-console
         console.error(`[relay] ${line}`);
@@ -199,169 +223,171 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
     }
   }, SHUTDOWN_TIMEOUT_MS);
 
-  it("full flow: daemon and client exchange encrypted messages through relay", {
-    timeout: 90_000,
-  }, async () => {
-    const serverId = "test-session-" + Date.now();
-    const connectionId = "clt_test_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+  it(
+    "full flow: daemon and client exchange encrypted messages through relay",
+    {
+      timeout: 90_000,
+    },
+    async () => {
+      const serverId = "test-session-" + Date.now();
+      const connectionId = "clt_test_" + Date.now() + "_" + Math.random().toString(36).slice(2);
 
-    // === DAEMON SIDE ===
-    // Generate keypair (public key goes in QR)
-    const daemonKeyPair = await generateKeyPair();
-    const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
+      // === DAEMON SIDE ===
+      // Generate keypair (public key goes in QR)
+      const daemonKeyPair = await generateKeyPair();
+      const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
 
-    // QR would contain: { serverId, daemonPubKeyB64, relay: { endpoint } }
+      // QR would contain: { serverId, daemonPubKeyB64, relay: { endpoint } }
 
-    // Daemon connects to relay as "server" control role
-    const daemonControlWs = new WebSocket(
-      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&v=2`,
-    );
+      // Daemon connects to relay as "server" control role
+      const daemonControlWs = new WebSocket(
+        `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&v=2`,
+      );
 
-    await new Promise<void>((resolve, reject) => {
-      daemonControlWs.on("open", resolve);
-      daemonControlWs.on("error", reject);
-    });
+      await new Promise<void>((resolve, reject) => {
+        daemonControlWs.on("open", resolve);
+        daemonControlWs.on("error", reject);
+      });
 
-    // === CLIENT SIDE ===
-    // Client scans QR, gets daemon's public key and session ID
-    // Client generates own keypair
-    const clientKeyPair = await generateKeyPair();
-    const clientPubKeyB64 = await exportPublicKey(clientKeyPair.publicKey);
+      // === CLIENT SIDE ===
+      // Client scans QR, gets daemon's public key and session ID
+      // Client generates own keypair
+      const clientKeyPair = await generateKeyPair();
+      const clientPubKeyB64 = await exportPublicKey(clientKeyPair.publicKey);
 
-    // Client imports daemon's public key and derives shared secret
-    const daemonPubKeyOnClient = await importPublicKey(daemonPubKeyB64);
-    const clientSharedKey = await deriveSharedKey(clientKeyPair.secretKey, daemonPubKeyOnClient);
+      // Client imports daemon's public key and derives shared secret
+      const daemonPubKeyOnClient = await importPublicKey(daemonPubKeyB64);
+      const clientSharedKey = await deriveSharedKey(clientKeyPair.secretKey, daemonPubKeyOnClient);
 
-    const waitForClientSeen = new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("timed out waiting for connected")), 5000);
-      const onMessage = (raw: unknown) => {
-        try {
-          const text =
-            typeof raw === "string"
-              ? raw
-              : raw && typeof (raw as any).toString === "function"
-                ? (raw as any).toString()
-                : "";
-          const msg = JSON.parse(text);
-          if (msg?.type === "connected" && msg.connectionId === connectionId) {
-            clearTimeout(timeout);
-            daemonControlWs.off("message", onMessage);
-            resolve();
-            return;
+      const waitForClientSeen = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("timed out waiting for connected")),
+          5000,
+        );
+        const onMessage = (raw: unknown) => {
+          try {
+            const text = rawToText(raw);
+            const msg = JSON.parse(text);
+            if (msg?.type === "connected" && msg.connectionId === connectionId) {
+              clearTimeout(timeout);
+              daemonControlWs.off("message", onMessage);
+              resolve();
+              return;
+            }
+            if (
+              msg?.type === "sync" &&
+              Array.isArray(msg.connectionIds) &&
+              msg.connectionIds.includes(connectionId)
+            ) {
+              clearTimeout(timeout);
+              daemonControlWs.off("message", onMessage);
+              resolve();
+            }
+          } catch {
+            // ignore
           }
-          if (
-            msg?.type === "sync" &&
-            Array.isArray(msg.connectionIds) &&
-            msg.connectionIds.includes(connectionId)
-          ) {
-            clearTimeout(timeout);
-            daemonControlWs.off("message", onMessage);
-            resolve();
-          }
-        } catch {
-          // ignore
-        }
-      };
-      daemonControlWs.on("message", onMessage);
-    });
+        };
+        daemonControlWs.on("message", onMessage);
+      });
 
-    // Client connects to relay as "client" role (must include connectionId)
-    const clientWs = new WebSocket(
-      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=client&connectionId=${connectionId}&v=2`,
-    );
+      // Client connects to relay as "client" role (must include connectionId)
+      const clientWs = new WebSocket(
+        `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=client&connectionId=${connectionId}&v=2`,
+      );
 
-    await new Promise<void>((resolve, reject) => {
-      clientWs.on("open", resolve);
-      clientWs.on("error", reject);
-    });
+      await new Promise<void>((resolve, reject) => {
+        clientWs.on("open", resolve);
+        clientWs.on("error", reject);
+      });
 
-    await waitForClientSeen;
+      await waitForClientSeen;
 
-    const daemonWs = new WebSocket(
-      `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&connectionId=${connectionId}&v=2`,
-    );
-    await new Promise<void>((resolve, reject) => {
-      daemonWs.on("open", resolve);
-      daemonWs.on("error", reject);
-    });
+      const daemonWs = new WebSocket(
+        `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&connectionId=${connectionId}&v=2`,
+      );
+      await new Promise<void>((resolve, reject) => {
+        daemonWs.on("open", resolve);
+        daemonWs.on("error", reject);
+      });
 
-    // Client sends hello with its public key (this message is NOT encrypted - it's the handshake)
-    const helloMsg = JSON.stringify({ type: "hello", key: clientPubKeyB64 });
-    clientWs.send(helloMsg);
+      // Client sends hello with its public key (this message is NOT encrypted - it's the handshake)
+      const helloMsg = JSON.stringify({ type: "hello", key: clientPubKeyB64 });
+      clientWs.send(helloMsg);
 
-    // === DAEMON RECEIVES HELLO ===
-    const daemonReceivedHello = await new Promise<string>((resolve) => {
-      daemonWs.once("message", (data) => resolve(data.toString()));
-    });
+      // === DAEMON RECEIVES HELLO ===
+      const daemonReceivedHello = await new Promise<string>((resolve) => {
+        daemonWs.once("message", (data) => resolve(data.toString()));
+      });
 
-    const hello = JSON.parse(daemonReceivedHello);
-    expect(hello.type).toBe("hello");
-    expect(hello.key).toBe(clientPubKeyB64);
+      const hello = JSON.parse(daemonReceivedHello);
+      expect(hello.type).toBe("hello");
+      expect(hello.key).toBe(clientPubKeyB64);
 
-    // Daemon imports client's public key and derives shared secret
-    const clientPubKeyOnDaemon = await importPublicKey(hello.key);
-    const daemonSharedKey = await deriveSharedKey(daemonKeyPair.secretKey, clientPubKeyOnDaemon);
+      // Daemon imports client's public key and derives shared secret
+      const clientPubKeyOnDaemon = await importPublicKey(hello.key);
+      const daemonSharedKey = await deriveSharedKey(daemonKeyPair.secretKey, clientPubKeyOnDaemon);
 
-    // === VERIFY BOTH HAVE SAME KEY - Exchange encrypted messages ===
+      // === VERIFY BOTH HAVE SAME KEY - Exchange encrypted messages ===
 
-    // Daemon sends encrypted "ready" message
-    const readyPlaintext = JSON.stringify({ type: "ready" });
-    const readyCiphertext = await encrypt(daemonSharedKey, readyPlaintext);
-    daemonWs.send(Buffer.from(readyCiphertext));
+      // Daemon sends encrypted "ready" message
+      const readyPlaintext = JSON.stringify({ type: "ready" });
+      const readyCiphertext = await encrypt(daemonSharedKey, readyPlaintext);
+      daemonWs.send(Buffer.from(readyCiphertext));
 
-    // Client receives and decrypts
-    const clientReceivedReady = await new Promise<Buffer>((resolve) => {
-      clientWs.once("message", (data) => resolve(data as Buffer));
-    });
-    const decryptedReady = await decrypt(
-      clientSharedKey,
-      clientReceivedReady.buffer.slice(
-        clientReceivedReady.byteOffset,
-        clientReceivedReady.byteOffset + clientReceivedReady.byteLength,
-      ),
-    );
-    expect(JSON.parse(decryptedReady as string)).toEqual({ type: "ready" });
+      // Client receives and decrypts
+      const clientReceivedReady = await new Promise<Buffer>((resolve) => {
+        clientWs.once("message", (data) => resolve(data as Buffer));
+      });
+      const decryptedReady = await decrypt(
+        clientSharedKey,
+        clientReceivedReady.buffer.slice(
+          clientReceivedReady.byteOffset,
+          clientReceivedReady.byteOffset + clientReceivedReady.byteLength,
+        ),
+      );
+      expect(JSON.parse(decryptedReady as string)).toEqual({ type: "ready" });
 
-    // Client sends encrypted message
-    const clientMessage = "Hello from client!";
-    const clientCiphertext = await encrypt(clientSharedKey, clientMessage);
-    clientWs.send(Buffer.from(clientCiphertext));
+      // Client sends encrypted message
+      const clientMessage = "Hello from client!";
+      const clientCiphertext = await encrypt(clientSharedKey, clientMessage);
+      clientWs.send(Buffer.from(clientCiphertext));
 
-    // Daemon receives and decrypts
-    const daemonReceivedMsg = await new Promise<Buffer>((resolve) => {
-      daemonWs.once("message", (data) => resolve(data as Buffer));
-    });
-    const decryptedClientMsg = await decrypt(
-      daemonSharedKey,
-      daemonReceivedMsg.buffer.slice(
-        daemonReceivedMsg.byteOffset,
-        daemonReceivedMsg.byteOffset + daemonReceivedMsg.byteLength,
-      ),
-    );
-    expect(decryptedClientMsg).toBe(clientMessage);
+      // Daemon receives and decrypts
+      const daemonReceivedMsg = await new Promise<Buffer>((resolve) => {
+        daemonWs.once("message", (data) => resolve(data as Buffer));
+      });
+      const decryptedClientMsg = await decrypt(
+        daemonSharedKey,
+        daemonReceivedMsg.buffer.slice(
+          daemonReceivedMsg.byteOffset,
+          daemonReceivedMsg.byteOffset + daemonReceivedMsg.byteLength,
+        ),
+      );
+      expect(decryptedClientMsg).toBe(clientMessage);
 
-    // Daemon sends encrypted response
-    const daemonMessage = "Hello from daemon!";
-    const daemonCiphertext = await encrypt(daemonSharedKey, daemonMessage);
-    daemonWs.send(Buffer.from(daemonCiphertext));
+      // Daemon sends encrypted response
+      const daemonMessage = "Hello from daemon!";
+      const daemonCiphertext = await encrypt(daemonSharedKey, daemonMessage);
+      daemonWs.send(Buffer.from(daemonCiphertext));
 
-    // Client receives and decrypts
-    const clientReceivedMsg = await new Promise<Buffer>((resolve) => {
-      clientWs.once("message", (data) => resolve(data as Buffer));
-    });
-    const decryptedDaemonMsg = await decrypt(
-      clientSharedKey,
-      clientReceivedMsg.buffer.slice(
-        clientReceivedMsg.byteOffset,
-        clientReceivedMsg.byteOffset + clientReceivedMsg.byteLength,
-      ),
-    );
-    expect(decryptedDaemonMsg).toBe(daemonMessage);
+      // Client receives and decrypts
+      const clientReceivedMsg = await new Promise<Buffer>((resolve) => {
+        clientWs.once("message", (data) => resolve(data as Buffer));
+      });
+      const decryptedDaemonMsg = await decrypt(
+        clientSharedKey,
+        clientReceivedMsg.buffer.slice(
+          clientReceivedMsg.byteOffset,
+          clientReceivedMsg.byteOffset + clientReceivedMsg.byteLength,
+        ),
+      );
+      expect(decryptedDaemonMsg).toBe(daemonMessage);
 
-    // Cleanup
-    daemonWs.close();
-    clientWs.close();
-  });
+      // Cleanup
+      daemonWs.close();
+      clientWs.close();
+    },
+  );
 
   it("relay only sees opaque bytes after handshake", { timeout: 90_000 }, async () => {
     const serverId = "opaque-test-" + Date.now();
@@ -389,12 +415,7 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
       const timeout = setTimeout(() => reject(new Error("timed out waiting for connected")), 5000);
       const onMessage = (raw: unknown) => {
         try {
-          const text =
-            typeof raw === "string"
-              ? raw
-              : raw && typeof (raw as any).toString === "function"
-                ? (raw as any).toString()
-                : "";
+          const text = rawToText(raw);
           const msg = JSON.parse(text);
           if (msg?.type === "connected" && msg.connectionId === connectionId) {
             clearTimeout(timeout);
@@ -462,8 +483,6 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
   });
 
   it("wrong key cannot decrypt", async () => {
-    const serverId = "wrong-key-test-" + Date.now();
-
     // Setup - daemon and client with correct keys
     const daemonKeyPair = await generateKeyPair();
     const clientKeyPair = await generateKeyPair();

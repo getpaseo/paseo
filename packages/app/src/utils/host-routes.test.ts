@@ -4,6 +4,8 @@ import {
   buildHostRootRoute,
   buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
+  buildProjectSettingsRoute,
+  buildProjectsSettingsRoute,
   decodeFilePathFromPathSegment,
   decodeWorkspaceIdFromPathSegment,
   encodeFilePathForPathSegment,
@@ -131,5 +133,30 @@ describe("workspace route parsing", () => {
     const encoded = encodeWorkspaceIdForPathSegment(id);
     expect(encoded).toBe("b64_dGVhbS9zZXR1cDppZCMx");
     expect(decodeWorkspaceIdFromPathSegment(encoded)).toBe("team/setup:id#1");
+  });
+});
+
+describe("projects settings routes", () => {
+  it("buildProjectsSettingsRoute returns /settings/projects", () => {
+    expect(buildProjectsSettingsRoute()).toBe("/settings/projects");
+  });
+
+  it("buildProjectSettingsRoute encodes a remote project key as a single segment", () => {
+    expect(buildProjectSettingsRoute("remote:github.com/acme/app")).toBe(
+      "/settings/projects/remote%3Agithub.com%2Facme%2Fapp",
+    );
+  });
+
+  it("buildProjectSettingsRoute encodes a local repo-root key", () => {
+    expect(buildProjectSettingsRoute("/Users/me/dev/paseo")).toBe(
+      "/settings/projects/%2FUsers%2Fme%2Fdev%2Fpaseo",
+    );
+  });
+
+  it("project keys round-trip through decodeURIComponent", () => {
+    const projectKey = "remote:github.com/acme/app";
+    const route = buildProjectSettingsRoute(projectKey);
+    const segment = route.slice("/settings/projects/".length);
+    expect(decodeURIComponent(segment)).toBe(projectKey);
   });
 });

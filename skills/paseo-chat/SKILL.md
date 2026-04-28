@@ -19,6 +19,7 @@ Load the **Paseo skill** first if you need CLI guidance for launching or messagi
 ## Rules
 
 When using chat:
+
 - create a room with `paseo chat create` if you need a new room
 - inspect available rooms with `paseo chat ls` and `paseo chat inspect`
 - post with `paseo chat post`
@@ -27,6 +28,7 @@ When using chat:
 - check chat often while working
 
 Mentions are active:
+
 - write mentions inline in the message body as `@<agent-id>` to notify a specific agent immediately
 - use `@everyone` to notify all non-archived, non-internal agents
 - notifications are sent to the target agent without blocking the chat post
@@ -99,10 +101,12 @@ paseo chat wait issue-456 --timeout 60s
 ## Defaults
 
 When creating a room:
+
 - choose a short slug: `issue-456`, `pr-143-review`, `relay-cleanup`
 - give it a clear purpose
 
 When using a room:
+
 - read only a bounded window before acting
 - post updates when they would help another agent or your future self
 - use `--reply-to` when responding to a specific message
@@ -112,6 +116,7 @@ When using a room:
 - your own agent ID is available via `$PASEO_AGENT_ID`
 
 Typical things to post:
+
 - status updates
 - blockers
 - handoffs

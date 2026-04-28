@@ -8,24 +8,18 @@ import type { PendingPermission } from "@/types/shared";
 import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
 import type {
-  AgentPermissionResponse,
   AgentPermissionRequest,
-  AgentSessionConfig,
   AgentFeature,
   AgentProvider,
   AgentMode,
   AgentCapabilityFlags,
-  AgentModelDefinition,
   AgentUsage,
   AgentPersistenceHandle,
 } from "@server/server/agent/agent-sdk-types";
 import type {
-  FileDownloadTokenResponse,
-  GitSetupOptions,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
-  AgentSnapshotPayload,
   WorkspaceDescriptorPayload,
 } from "@server/shared/messages";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
@@ -125,6 +119,9 @@ export interface WorkspaceDescriptor {
   status: WorkspaceDescriptorPayload["status"];
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
+  gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
+  githubRuntime?: WorkspaceDescriptorPayload["githubRuntime"];
+  project?: ProjectPlacementPayload;
 }
 
 export function normalizeWorkspaceDescriptor(
@@ -141,7 +138,10 @@ export function normalizeWorkspaceDescriptor(
     name: payload.name,
     status: payload.status,
     diffStat: payload.diffStat ?? null,
-    scripts: (payload.scripts ?? []).map((s) => ({ ...s })),
+    scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
+    gitRuntime: payload.gitRuntime,
+    githubRuntime: payload.githubRuntime,
+    project: payload.project,
   };
 }
 
@@ -224,13 +224,13 @@ export interface AgentFileExplorerState {
   selectedEntryPath: string | null;
 }
 
-export type DaemonServerInfo = {
+export interface DaemonServerInfo {
   serverId: string;
   hostname: string | null;
   version: string | null;
   capabilities?: ServerCapabilities;
   features?: ServerInfoStatusPayload["features"];
-};
+}
 
 export interface AgentTimelineCursorState {
   epoch: string;
@@ -468,6 +468,26 @@ function areServerInfoFeaturesEqual(
   return JSON.stringify(current ?? null) === JSON.stringify(next ?? null);
 }
 
+function isSessionServerInfoUnchanged(input: {
+  currentServerInfo: SessionState["serverInfo"] | undefined;
+  nextHostname: string | null;
+  nextVersion: string | null;
+  nextCapabilities: ServerCapabilities | undefined;
+  nextFeatures: ServerInfoStatusPayload["features"] | undefined;
+  nextServerId: string;
+}): boolean {
+  const { currentServerInfo, nextHostname, nextVersion, nextCapabilities, nextFeatures } = input;
+  const prevHostname = currentServerInfo?.hostname?.trim() || null;
+  const prevVersion = currentServerInfo?.version?.trim() || null;
+  return (
+    currentServerInfo?.serverId === input.nextServerId &&
+    prevHostname === nextHostname &&
+    prevVersion === nextVersion &&
+    areServerCapabilitiesEqual(currentServerInfo?.capabilities, nextCapabilities) &&
+    areServerInfoFeaturesEqual(currentServerInfo?.features, nextFeatures)
+  );
+}
+
 export const useSessionStore = create<SessionStore>()(
   subscribeWithSelector((set, get) => {
     const commitActivityUpdates: AgentLastActivityCommitter = (updates) => {
@@ -581,20 +601,19 @@ export const useSessionStore = create<SessionStore>()(
           }
 
           const nextHostname = info.hostname?.trim() || null;
-          const prevHostname = session.serverInfo?.hostname?.trim() || null;
           const nextVersion = info.version?.trim() || null;
-          const prevVersion = session.serverInfo?.version?.trim() || null;
           const nextCapabilities = info.capabilities;
-          const prevCapabilities = session.serverInfo?.capabilities;
           const nextFeatures = info.features;
-          const prevFeatures = session.serverInfo?.features;
 
           if (
-            session.serverInfo?.serverId === info.serverId &&
-            prevHostname === nextHostname &&
-            prevVersion === nextVersion &&
-            areServerCapabilitiesEqual(prevCapabilities, nextCapabilities) &&
-            areServerInfoFeaturesEqual(prevFeatures, nextFeatures)
+            isSessionServerInfoUnchanged({
+              currentServerInfo: session.serverInfo,
+              nextHostname,
+              nextVersion,
+              nextCapabilities,
+              nextFeatures,
+              nextServerId: info.serverId,
+            })
           ) {
             return prev;
           }

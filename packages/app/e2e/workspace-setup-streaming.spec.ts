@@ -19,7 +19,7 @@ function getServerId(): string {
   return serverId;
 }
 
-type WorkspaceScriptStarter = {
+interface WorkspaceScriptStarter {
   startWorkspaceScript(
     workspaceId: string,
     scriptName: string,
@@ -29,7 +29,7 @@ type WorkspaceScriptStarter = {
     terminalId: string | null;
     error: string | null;
   }>;
-};
+}
 
 /** Click the sidebar row for a workspace (by ID) and wait for navigation. */
 async function navigateToWorkspaceViaSidebar(
@@ -353,10 +353,11 @@ test.describe("Workspace setup streaming", () => {
         error: null,
       });
 
+      const findEditorTerminal = (terminal: { name: string }) => terminal.name === "editor";
       await expect
         .poll(async () => {
           const terminals = await client.listTerminals(workspaceDir);
-          return terminals.terminals.find((terminal) => terminal.name === "editor") ?? null;
+          return terminals.terminals.find(findEditorTerminal) ?? null;
         })
         .toMatchObject({
           id: expect.any(String),

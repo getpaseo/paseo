@@ -15,7 +15,7 @@ import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
 
-type PanelTestTheme = {
+interface PanelTestTheme {
   colors: {
     foreground: string;
     foregroundMuted: string;
@@ -31,7 +31,7 @@ type PanelTestTheme = {
   fontSize: Record<string, number>;
   fontWeight: Record<string, string>;
   iconSize: Record<string, number>;
-};
+}
 type PanelTestStyles = Record<string, unknown>;
 type PanelTestStyleFactory = (input: PanelTestTheme) => PanelTestStyles;
 
@@ -108,7 +108,7 @@ vi.mock("react-native-unistyles", () => {
     StyleSheet: {
       create: createPanelTestStyles,
     },
-    useUnistyles: () => ({ theme }),
+    withUnistyles: <T,>(component: T) => component,
   };
 });
 
@@ -294,6 +294,19 @@ function seedReadyAgent(agent: Agent = makeAgent()) {
   store.setAgentAuthoritativeHistoryApplied("server", "agent", true);
 }
 
+function buildTestPaneValue() {
+  return {
+    serverId: "server",
+    workspaceId: "workspace",
+    tabId: "agent-agent",
+    target: { kind: "agent" as const, agentId: "agent" },
+    openTab: vi.fn(),
+    closeCurrentTab: vi.fn(),
+    retargetCurrentTab: vi.fn(),
+    openFileInWorkspace: vi.fn(),
+  };
+}
+
 async function renderAgentPanel(
   root: Root,
   focus: PaneFocusContextValue = {
@@ -309,21 +322,11 @@ async function renderAgentPanel(
       mutations: { retry: false },
     },
   });
+  const paneValue = buildTestPaneValue();
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <PaneProvider
-          value={{
-            serverId: "server",
-            workspaceId: "workspace",
-            tabId: "agent-agent",
-            target: { kind: "agent", agentId: "agent" },
-            openTab: vi.fn(),
-            closeCurrentTab: vi.fn(),
-            retargetCurrentTab: vi.fn(),
-            openFileInWorkspace: vi.fn(),
-          }}
-        >
+        <PaneProvider value={paneValue}>
           <PaneFocusProvider value={focus}>
             <AgentPanel />
           </PaneFocusProvider>
@@ -390,6 +393,16 @@ async function updateCurrentAgentCwd(cwd: string) {
     });
     await Promise.resolve();
   });
+}
+
+function archiveSeededAgent(previous: Map<string, Agent>): Map<string, Agent> {
+  const current = previous.get("agent");
+  if (!current) {
+    throw new Error("Expected seeded agent");
+  }
+  const next = new Map(previous);
+  next.set("agent", { ...current, archivedAt: new Date("2026-04-20T00:00:02.000Z") });
+  return next;
 }
 
 describe("AgentPanel render isolation", () => {
@@ -470,15 +483,7 @@ describe("AgentPanel render isolation", () => {
     expect(composerRenderCount.mock.calls.length).toBeGreaterThan(composerBaseline);
 
     await act(async () => {
-      useSessionStore.getState().setAgents("server", (previous) => {
-        const current = previous.get("agent");
-        if (!current) {
-          throw new Error("Expected seeded agent");
-        }
-        const next = new Map(previous);
-        next.set("agent", { ...current, archivedAt: new Date("2026-04-20T00:00:02.000Z") });
-        return next;
-      });
+      useSessionStore.getState().setAgents("server", archiveSeededAgent);
       await Promise.resolve();
     });
 

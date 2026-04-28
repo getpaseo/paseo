@@ -7,13 +7,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { panelState, useSidebarWorkspacesListMock, theme } = vi.hoisted(() => {
-  const panelState = {
+  const hoistedPanelState = {
     isOpen: false,
     showMobileAgent: vi.fn(),
   };
 
   return {
-    panelState,
+    panelState: hoistedPanelState,
     useSidebarWorkspacesListMock: vi.fn(),
     theme: {
       spacing: { 0: 0, 0.5: 2, 1: 4, 1.5: 6, 2: 8, 3: 12, 4: 16, 5: 20 },
@@ -86,6 +86,7 @@ vi.mock("lucide-react-native", () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", { ...props, "data-icon": name });
   return {
+    FolderPlus: createIcon("FolderPlus"),
     MessagesSquare: createIcon("MessagesSquare"),
     Plus: createIcon("Plus"),
     Settings: createIcon("Settings"),

@@ -94,7 +94,7 @@ function expectNoShortcutResolution(input: {
   expect(result.nextChordState).toEqual(initialChordState());
 }
 
-type MatchingShortcutCase = {
+interface MatchingShortcutCase {
   name: string;
   event: Partial<KeyboardEvent>;
   context?: Partial<KeyboardShortcutContext>;
@@ -102,22 +102,22 @@ type MatchingShortcutCase = {
   payload?: unknown;
   preventDefault?: boolean;
   stopPropagation?: boolean;
-};
+}
 
-type NonMatchingShortcutCase = {
+interface NonMatchingShortcutCase {
   name: string;
   event: Partial<KeyboardEvent>;
   context?: Partial<KeyboardShortcutContext>;
-};
+}
 
-type HelpSectionCase = {
+interface HelpSectionCase {
   name: string;
   context: {
     isMac: boolean;
     isDesktop: boolean;
   };
   expectedKeys: Record<string, string[]>;
-};
+}
 
 describe("keyboard-shortcuts", () => {
   const matchingCases: MatchingShortcutCase[] = [
@@ -289,23 +289,19 @@ describe("keyboard-shortcuts", () => {
     },
   ];
 
-  it.each(matchingCases)("$name", ({
-    event,
-    context,
-    action,
-    payload,
-    preventDefault,
-    stopPropagation,
-  }) => {
-    expectShortcutResolution({
-      event,
-      context,
-      action,
-      ...(payload !== undefined ? { payload } : {}),
-      ...(preventDefault !== undefined ? { preventDefault } : {}),
-      ...(stopPropagation !== undefined ? { stopPropagation } : {}),
-    });
-  });
+  it.each(matchingCases)(
+    "$name",
+    ({ event, context, action, payload, preventDefault, stopPropagation }) => {
+      expectShortcutResolution({
+        event,
+        context,
+        action,
+        ...(payload !== undefined ? { payload } : {}),
+        ...(preventDefault !== undefined ? { preventDefault } : {}),
+        ...(stopPropagation !== undefined ? { stopPropagation } : {}),
+      });
+    },
+  );
 
   const nonMatchingCases: NonMatchingShortcutCase[] = [
     {

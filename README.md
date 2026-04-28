@@ -69,6 +69,7 @@ paseo
 This shows a QR code in the terminal. Connect from any client. This path is useful for servers and remote machines.
 
 For full setup and configuration, see:
+
 - [Docs](https://paseo.sh/docs)
 - [Configuration reference](https://paseo.sh/docs/configuration)
 
@@ -116,6 +117,7 @@ Then use them in any agent conversation:
 ## Development
 
 Quick monorepo package map:
+
 - `packages/server`: Paseo daemon (agent process orchestration, WebSocket API, MCP server)
 - `packages/app`: Expo client (iOS, Android, web)
 - `packages/cli`: `paseo` CLI for daemon and agent workflows
@@ -141,6 +143,12 @@ npm run build:daemon
 # repo-wide checks
 npm run typecheck
 ```
+
+<p align="center">
+  <a href="https://star-history.com/#getpaseo/paseo&Date">
+    <img src="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date" alt="Star history chart for getpaseo/paseo" width="100%">
+  </a>
+</p>
 
 ## License
 

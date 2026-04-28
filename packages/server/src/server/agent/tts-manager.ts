@@ -12,10 +12,10 @@ interface PendingPlayback {
   streamEnded: boolean;
 }
 
-type TtsSegment = {
+interface TtsSegment {
   index: number;
   text: string;
-};
+}
 
 type PreparedTtsSegment = TtsSegment & {
   format: string;
@@ -317,6 +317,7 @@ export class TTSManager {
         if (result.kind === "prepared") {
           this.destroySpeechStream(result.prepared.stream);
         }
+        return;
       });
     }
   }

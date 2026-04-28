@@ -1,3 +1,4 @@
+import { useCallback, useMemo } from "react";
 import { View, Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { RotateCw } from "lucide-react-native";
@@ -21,27 +22,54 @@ export function DesktopPermissionsSection() {
     sendTestNotification,
   } = useDesktopPermissions();
 
-  if (!isDesktopApp) {
-    return null;
-  }
+  const errorTextStyle = useMemo(
+    () => [styles.errorText, { color: theme.colors.destructive }],
+    [theme.colors.destructive],
+  );
+
+  const handleRefreshPress = useCallback(() => {
+    void refreshPermissions();
+  }, [refreshPermissions]);
+
+  const handleRequestNotifications = useCallback(() => {
+    void requestPermission("notifications");
+  }, [requestPermission]);
+
+  const handleRequestMicrophone = useCallback(() => {
+    void requestPermission("microphone");
+  }, [requestPermission]);
+
+  const handleSendTestNotification = useCallback(() => {
+    void sendTestNotification();
+  }, [sendTestNotification]);
 
   const isBusy = isRefreshing || requestingPermission !== null;
   const notificationsGranted = snapshot?.notifications.state === "granted";
 
-  const refreshButton = (
-    <Button
-      variant="ghost"
-      size="sm"
-      leftIcon={<RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />}
-      onPress={() => {
-        void refreshPermissions();
-      }}
-      disabled={isBusy}
-      accessibilityLabel="Refresh desktop permissions"
-    >
-      {isRefreshing ? "Refreshing..." : "Refresh"}
-    </Button>
+  const refreshIcon = useMemo(
+    () => <RotateCw size={theme.iconSize.md} color={theme.colors.foregroundMuted} />,
+    [theme.iconSize.md, theme.colors.foregroundMuted],
   );
+
+  const refreshButton = useMemo(
+    () => (
+      <Button
+        variant="ghost"
+        size="sm"
+        leftIcon={refreshIcon}
+        onPress={handleRefreshPress}
+        disabled={isBusy}
+        accessibilityLabel="Refresh desktop permissions"
+      >
+        {isRefreshing ? "Refreshing..." : "Refresh"}
+      </Button>
+    ),
+    [refreshIcon, handleRefreshPress, isBusy, isRefreshing],
+  );
+
+  if (!isDesktopApp) {
+    return null;
+  }
 
   return (
     <SettingsSection title="Permissions" trailing={refreshButton}>
@@ -50,29 +78,19 @@ export function DesktopPermissionsSection() {
           title="Notifications"
           status={snapshot?.notifications ?? null}
           isRequesting={requestingPermission === "notifications"}
-          onRequest={() => {
-            void requestPermission("notifications");
-          }}
+          onRequest={handleRequestNotifications}
           extraActionLabel="Test"
           isExtraActionBusy={isSendingTestNotification}
           isExtraActionDisabled={!notificationsGranted || isBusy}
-          onExtraAction={() => {
-            void sendTestNotification();
-          }}
+          onExtraAction={handleSendTestNotification}
         />
-        {testNotificationError ? (
-          <Text style={[styles.errorText, { color: theme.colors.destructive }]}>
-            {testNotificationError}
-          </Text>
-        ) : null}
+        {testNotificationError ? <Text style={errorTextStyle}>{testNotificationError}</Text> : null}
         <DesktopPermissionRow
           title="Microphone"
           showBorder
           status={snapshot?.microphone ?? null}
           isRequesting={requestingPermission === "microphone"}
-          onRequest={() => {
-            void requestPermission("microphone");
-          }}
+          onRequest={handleRequestMicrophone}
         />
       </View>
     </SettingsSection>

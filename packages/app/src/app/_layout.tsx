@@ -1,5 +1,8 @@
 import "@/styles/unistyles";
-import { polyfillCrypto } from "@/polyfills/crypto";
+import { PortalProvider } from "@gorhom/portal";
+import { QueryClientProvider } from "@tanstack/react-query";
+import * as Linking from "expo-linking";
+import * as Notifications from "expo-notifications";
 import {
   Stack,
   useGlobalSearchParams,
@@ -7,124 +10,110 @@ import {
   usePathname,
   useRouter,
 } from "expo-router";
-import { SafeAreaProvider } from "react-native-safe-area-context";
-import { KeyboardProvider } from "react-native-keyboard-controller";
-import { GestureHandlerRootView, Gesture, GestureDetector } from "react-native-gesture-handler";
-import { PortalProvider } from "@gorhom/portal";
-import { VoiceProvider } from "@/contexts/voice-context";
-import { useAppSettings } from "@/hooks/use-settings";
-import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
-import { useFaviconStatus } from "@/hooks/use-favicon-status";
-import { View, Text } from "react-native";
-import { UnistylesRuntime, useUnistyles } from "react-native-unistyles";
-import { QueryClientProvider } from "@tanstack/react-query";
-import {
-  getHostRuntimeStore,
-  useHosts,
-  useHostMutations,
-  useHostRuntimeClient,
-} from "@/runtime/host-runtime";
-import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
-import { loadSettingsFromStorage } from "@/hooks/use-settings";
-import { useColorScheme } from "@/hooks/use-color-scheme";
-import { useOpenProject } from "@/hooks/use-open-project";
-import { useStableEvent } from "@/hooks/use-stable-event";
-import { SessionProvider } from "@/contexts/session-context";
-import type { HostProfile } from "@/types/host-connection";
 import {
   createContext,
+  type ReactNode,
   useCallback,
   useContext,
-  useState,
   useEffect,
-  type ReactNode,
   useMemo,
   useRef,
+  useState,
+  useSyncExternalStore,
 } from "react";
-import { Platform } from "react-native";
-import * as Linking from "expo-linking";
-import * as Notifications from "expo-notifications";
-import { LeftSidebar } from "@/components/left-sidebar";
+import { View } from "react-native";
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
+import { Extrapolation, interpolate, runOnJS, useSharedValue } from "react-native-reanimated";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { CommandCenter } from "@/components/command-center";
+import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-source";
 import { DownloadToast } from "@/components/download-toast";
-import { UpdateBanner } from "@/desktop/updates/update-banner";
-import { ToastProvider } from "@/contexts/toast-context";
-import { usePanelStore } from "@/stores/panel-store";
-import { runOnJS, interpolate, Extrapolation, useSharedValue } from "react-native-reanimated";
-import {
-  SidebarAnimationProvider,
-  useSidebarAnimation,
-} from "@/contexts/sidebar-animation-context";
+import { QuittingOverlay } from "@/components/quitting-overlay";
+import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
+import { LeftSidebar } from "@/components/left-sidebar";
+import { ProjectPickerModal } from "@/components/project-picker-modal";
+import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
+import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
+import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
+import { isNative, isWeb } from "@/constants/platform";
 import {
   HorizontalScrollProvider,
   useHorizontalScrollOptional,
 } from "@/contexts/horizontal-scroll-context";
-import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
-import { CommandCenter } from "@/components/command-center";
-import { ProjectPickerModal } from "@/components/project-picker-modal";
-import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
-import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
-import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
-import { resolveActiveHost } from "@/utils/active-host";
-import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
-import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
-import { queryClient } from "@/query/query-client";
-import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
+import { SessionProvider } from "@/contexts/session-context";
 import {
-  WEB_NOTIFICATION_CLICK_EVENT,
-  type WebNotificationClickDetail,
-  ensureOsNotificationPermission,
-} from "@/utils/os-notifications";
+  SidebarAnimationProvider,
+  useSidebarAnimation,
+} from "@/contexts/sidebar-animation-context";
+import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
+import { ToastProvider } from "@/contexts/toast-context";
+import { VoiceProvider } from "@/contexts/voice-context";
+import { startHostRuntimeBootstrap } from "@/app/host-runtime-bootstrap";
+import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
-import { getDesktopHost } from "@/desktop/host";
 import { updateDesktopWindowControls } from "@/desktop/electron/window";
-import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
-import {
-  buildHostRootRoute,
-  mapPathnameToServer,
-  parseServerIdFromPathname,
-  parseHostAgentRouteFromPathname,
-  parseWorkspaceOpenIntent,
-  decodeWorkspaceIdFromPathSegment,
-} from "@/utils/host-routes";
-import { useSessionStore } from "@/stores/session-store";
-import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
+import { getDesktopHost } from "@/desktop/host";
+import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
+import { useActiveWorktreeNewAction } from "@/hooks/use-active-worktree-new-action";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useFaviconStatus } from "@/hooks/use-favicon-status";
+import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useOpenProject } from "@/hooks/use-open-project";
+import { useAppSettings } from "@/hooks/use-settings";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
-import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
+import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { polyfillCrypto } from "@/polyfills/crypto";
+import { queryClient } from "@/query/query-client";
+import {
+  getHostRuntimeStore,
+  useHostMutations,
+  useHostRuntimeClient,
+  useHosts,
+} from "@/runtime/host-runtime";
+import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import {
   addBrowserActiveWorkspaceLocationListener,
   syncNavigationActiveWorkspace,
 } from "@/stores/navigation-active-workspace-store";
-import { isWeb, isNative } from "@/constants/platform";
+import { usePanelStore } from "@/stores/panel-store";
+import { useSessionStore } from "@/stores/session-store";
+import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
+import type { HostProfile } from "@/types/host-connection";
+import { resolveActiveHost } from "@/utils/active-host";
+import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
+import {
+  buildHostRootRoute,
+  mapPathnameToServer,
+  parseHostAgentRouteFromPathname,
+  parseServerIdFromPathname,
+  parseWorkspaceOpenIntent,
+} from "@/utils/host-routes";
+import { buildNotificationRoute, resolveNotificationTarget } from "@/utils/notification-routing";
+import {
+  ensureOsNotificationPermission,
+  WEB_NOTIFICATION_CLICK_EVENT,
+  type WebNotificationClickDetail,
+} from "@/utils/os-notifications";
+import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
+import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 
 polyfillCrypto();
 
-export type HostRuntimeBootstrapState = {
-  phase: "starting-daemon" | "connecting" | "online" | "error";
-  error: string | null;
+export interface HostRuntimeBootstrapState {
+  splashError: string | null;
   retry: () => void;
-};
-
-function getRouteParamValue(value: string | string[] | undefined): string | undefined {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-  if (Array.isArray(value)) {
-    const firstValue = value[0];
-    if (typeof firstValue !== "string") {
-      return undefined;
-    }
-    const trimmed = firstValue.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-  return undefined;
+  hasGivenUpWaitingForHost: boolean;
+  storeReady: boolean;
 }
 
 const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
-  phase: "starting-daemon",
-  error: null,
+  splashError: null,
   retry: () => {},
+  hasGivenUpWaitingForHost: false,
+  storeReady: false,
 });
 
 function PushNotificationRouter() {
@@ -192,22 +181,22 @@ function PushNotificationRouter() {
             return;
           }
           removeDesktopNotificationListener = unlisten;
+          return;
         });
       }
 
-      const target = globalThis as unknown as EventTarget;
       const openFromWebClick = (event: Event) => {
         const customEvent = event as CustomEvent<WebNotificationClickDetail>;
         event.preventDefault();
         openNotification(customEvent.detail?.data);
       };
 
-      target.addEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
+      window.addEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
 
       return () => {
         cancelled = true;
         removeDesktopNotificationListener?.();
-        target.removeEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
+        window.removeEventListener(WEB_NOTIFICATION_CLICK_EVENT, openFromWebClick as EventListener);
       };
     }
 
@@ -241,6 +230,7 @@ function PushNotificationRouter() {
       if (response) {
         openFromResponse(response);
       }
+      return;
     });
 
     return () => {
@@ -281,115 +271,90 @@ function HostSessionManager() {
   );
 }
 
+export function useEarliestOnlineHostServerId(): string | null {
+  const store = getHostRuntimeStore();
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const unsubscribeAll = store.subscribeAll(listener);
+      const unsubscribeHostList = store.subscribeHostList(listener);
+      return () => {
+        unsubscribeAll();
+        unsubscribeHostList();
+      };
+    },
+    [store],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => store.getEarliestOnlineHostServerId(),
+    () => store.getEarliestOnlineHostServerId(),
+  );
+}
+
+function useDaemonStartLastError(): string | null {
+  const service = getDaemonStartService({ store: getHostRuntimeStore() });
+  return useSyncExternalStore(
+    (listener) => service.subscribe(listener),
+    () => service.getLastError(),
+    () => service.getLastError(),
+  );
+}
+
+function useDaemonStartIsRunning(): boolean {
+  const service = getDaemonStartService({ store: getHostRuntimeStore() });
+  return useSyncExternalStore(
+    (listener) => service.subscribe(listener),
+    () => service.isRunning(),
+    () => service.isRunning(),
+  );
+}
+
+const STARTUP_GIVE_UP_TIMEOUT_MS = 5_000;
+
 function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
-  const [phase, setPhase] = useState<HostRuntimeBootstrapState["phase"]>("starting-daemon");
-  const [error, setError] = useState<string | null>(null);
-  const [retryToken, setRetryToken] = useState(0);
-  const retry = useCallback(() => {
-    setPhase("starting-daemon");
-    setError(null);
-    setRetryToken((current) => current + 1);
+  useEffect(() => {
+    const store = getHostRuntimeStore();
+    const daemonStartService = getDaemonStartService({ store });
+    startHostRuntimeBootstrap({
+      store,
+      daemonStartService,
+      shouldStartDaemon: shouldUseDesktopDaemon(),
+    });
   }, []);
 
+  const anyOnlineHostServerId = useEarliestOnlineHostServerId();
+  const daemonStartError = useDaemonStartLastError();
+  const daemonStartIsRunning = useDaemonStartIsRunning();
+
+  const [hasGivenUpWaitingForHost, setHasGivenUpWaitingForHost] = useState(false);
   useEffect(() => {
-    let cancelled = false;
-    let cancelAnyOnline: (() => void) | null = null;
-    const shouldManageDesktop = shouldUseDesktopDaemon();
-    const store = getHostRuntimeStore();
-
-    const init = async () => {
-      const settings = await loadSettingsFromStorage();
-      const isDesktopManaged = shouldManageDesktop && settings.manageBuiltInDaemon;
-      await store.loadFromStorage();
-      if (isDesktopManaged) {
-        setPhase("starting-daemon");
-        setError(null);
-
-        let raceSettled = false;
-
-        const anyOnline = store.waitForAnyConnectionOnline();
-        cancelAnyOnline = anyOnline.cancel;
-
-        const bootstrapPromise = (async (): Promise<
-          { type: "online" } | { type: "error"; error: string }
-        > => {
-          try {
-            const bootstrapResult = await store.bootstrapDesktop();
-            if (!bootstrapResult.ok) {
-              return { type: "error", error: bootstrapResult.error };
-            }
-            if (!cancelled && !raceSettled) {
-              setPhase("connecting");
-            }
-            await store.addConnectionFromListenAndWaitForOnline({
-              listenAddress: bootstrapResult.listenAddress,
-              serverId: bootstrapResult.serverId,
-              hostname: bootstrapResult.hostname,
-            });
-            return { type: "online" };
-          } catch (err) {
-            return {
-              type: "error",
-              error: err instanceof Error ? err.message : String(err),
-            };
-          }
-        })();
-
-        const result = await Promise.race([
-          anyOnline.promise.then((): { type: "online" } => ({ type: "online" })),
-          bootstrapPromise,
-        ]);
-
-        raceSettled = true;
-        anyOnline.cancel();
-
-        if (!cancelled) {
-          if (result.type === "online") {
-            setPhase("online");
-            setError(null);
-          } else {
-            setPhase("error");
-            setError(result.error);
-          }
-        }
-      } else {
-        setPhase("connecting");
-        setError(null);
-        await store.bootstrap({ manageBuiltInDaemon: settings.manageBuiltInDaemon });
-        if (!cancelled) {
-          setPhase("online");
-          setError(null);
-        }
-      }
-    };
-
-    void init().catch((bootstrapError) => {
-      console.error("[HostRuntime] Failed to initialize store", bootstrapError);
-      if (cancelled) {
-        return;
-      }
-      if (shouldManageDesktop) {
-        setPhase("error");
-        setError(bootstrapError instanceof Error ? bootstrapError.message : String(bootstrapError));
-        return;
-      }
-      setPhase("online");
-      setError(null);
-    });
-
+    if (
+      anyOnlineHostServerId ||
+      daemonStartError ||
+      daemonStartIsRunning ||
+      hasGivenUpWaitingForHost
+    ) {
+      return;
+    }
+    const handle = setTimeout(() => {
+      setHasGivenUpWaitingForHost(true);
+    }, STARTUP_GIVE_UP_TIMEOUT_MS);
     return () => {
-      cancelled = true;
-      cancelAnyOnline?.();
+      clearTimeout(handle);
     };
-  }, [retryToken]);
+  }, [anyOnlineHostServerId, daemonStartError, daemonStartIsRunning, hasGivenUpWaitingForHost]);
+
+  const retry = useCallback(() => {
+    void getDaemonStartService({ store: getHostRuntimeStore() }).start();
+  }, []);
+
+  const splashError = !anyOnlineHostServerId ? daemonStartError : null;
+  const storeReady =
+    Boolean(anyOnlineHostServerId) || Boolean(splashError) || hasGivenUpWaitingForHost;
 
   const state = useMemo<HostRuntimeBootstrapState>(
-    () => ({
-      phase,
-      error,
-      retry,
-    }),
-    [error, phase, retry],
+    () => ({ splashError, retry, hasGivenUpWaitingForHost, storeReady }),
+    [splashError, retry, hasGivenUpWaitingForHost, storeReady],
   );
 
   return (
@@ -400,7 +365,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
 }
 
 export function useStoreReady(): boolean {
-  return useContext(HostRuntimeBootstrapContext).phase === "online";
+  return useContext(HostRuntimeBootstrapContext).storeReady;
 }
 
 export function useHostRuntimeBootstrapState(): HostRuntimeBootstrapState {
@@ -499,7 +464,8 @@ function AppContainer({
       </View>
       {isCompactLayout && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
-      <UpdateBanner />
+      <UpdateCalloutSource />
+      <WorktreeSetupCalloutSource />
       <CommandCenter />
       <ProjectPickerModal />
       <WorkspaceShortcutTargetsSubscriber
@@ -508,6 +474,7 @@ function AppContainer({
       />
       <WorkspaceSetupDialog />
       <KeyboardShortcutsDialog />
+      <QuittingOverlay />
     </View>
   );
 
@@ -678,9 +645,10 @@ function OfferLinkListener({
       void upsertDaemonFromOfferUrl(url)
         .then((profile) => {
           if (cancelled) return;
-          const serverId = (profile as any)?.serverId;
+          const serverId = (profile as { serverId?: unknown } | null)?.serverId;
           if (typeof serverId !== "string" || !serverId) return;
           router.replace(buildHostRootRoute(serverId));
+          return;
         })
         .catch((error) => {
           if (cancelled) return;
@@ -752,6 +720,7 @@ function OpenProjectListener() {
         if (!disposed && pending) {
           maybeOpenProject(pending);
         }
+        return;
       })
       .catch(() => undefined);
 
@@ -769,6 +738,7 @@ function OpenProjectListener() {
           return;
         }
         unlisten = dispose;
+        return;
       })
       .catch(() => undefined);
 
@@ -834,24 +804,30 @@ function FaviconStatusSync() {
   return null;
 }
 
+const AGENT_SCREEN_OPTIONS = { gestureEnabled: false };
+
 function RootStack() {
   const storeReady = useStoreReady();
   const { theme } = useUnistyles();
+  const stackScreenOptions = useMemo(
+    () => ({
+      headerShown: false,
+      animation: "none" as const,
+      contentStyle: {
+        backgroundColor: theme.colors.surface0,
+      },
+    }),
+    [theme.colors.surface0],
+  );
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        animation: "none",
-        contentStyle: {
-          backgroundColor: theme.colors.surface0,
-        },
-      }}
-    >
+    <Stack screenOptions={stackScreenOptions}>
       <Stack.Screen name="index" />
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
         <Stack.Screen name="settings/index" />
         <Stack.Screen name="settings/[section]" />
+        <Stack.Screen name="settings/projects/index" />
+        <Stack.Screen name="settings/projects/[projectKey]" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
       {/*
@@ -862,7 +838,7 @@ function RootStack() {
         outside this route-level native-stack API.
       */}
       <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
-      <Stack.Screen name="h/[serverId]/agent/[agentId]" options={{ gestureEnabled: false }} />
+      <Stack.Screen name="h/[serverId]/agent/[agentId]" options={AGENT_SCREEN_OPTIONS} />
       <Stack.Screen name="h/[serverId]/index" />
       <Stack.Screen name="h/[serverId]/sessions" />
       <Stack.Screen name="h/[serverId]/open-project" />
@@ -894,35 +870,59 @@ function NavigationActiveWorkspaceObserver() {
   return null;
 }
 
+function AppShell() {
+  return (
+    <SidebarAnimationProvider>
+      <HorizontalScrollProvider>
+        <OpenProjectListener />
+        <AppWithSidebar>
+          <RootStack />
+        </AppWithSidebar>
+      </HorizontalScrollProvider>
+    </SidebarAnimationProvider>
+  );
+}
+
+function RuntimeProviders({ children }: { children: ReactNode }) {
+  return (
+    <HostRuntimeBootstrapProvider>
+      <PushNotificationRouter />
+      <SidebarCalloutProvider>
+        <ToastProvider>
+          <ProvidersWrapper>{children}</ProvidersWrapper>
+        </ToastProvider>
+      </SidebarCalloutProvider>
+    </HostRuntimeBootstrapProvider>
+  );
+}
+
+function RootProviders({ children }: { children: ReactNode }) {
+  return (
+    <PortalProvider>
+      <SafeAreaProvider>
+        <KeyboardProvider>
+          <QueryProvider>{children}</QueryProvider>
+        </KeyboardProvider>
+      </SafeAreaProvider>
+    </PortalProvider>
+  );
+}
+
 export default function RootLayout() {
   const { theme } = useUnistyles();
+  const gestureRootStyle = useMemo(
+    () => ({ flex: 1, backgroundColor: theme.colors.surface0 }),
+    [theme.colors.surface0],
+  );
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
+    <GestureHandlerRootView style={gestureRootStyle}>
       <NavigationActiveWorkspaceObserver />
-      <PortalProvider>
-        <SafeAreaProvider>
-          <KeyboardProvider>
-            <QueryProvider>
-              <HostRuntimeBootstrapProvider>
-                <PushNotificationRouter />
-                <ToastProvider>
-                  <ProvidersWrapper>
-                    <SidebarAnimationProvider>
-                      <HorizontalScrollProvider>
-                        <OpenProjectListener />
-                        <AppWithSidebar>
-                          <RootStack />
-                        </AppWithSidebar>
-                      </HorizontalScrollProvider>
-                    </SidebarAnimationProvider>
-                  </ProvidersWrapper>
-                </ToastProvider>
-              </HostRuntimeBootstrapProvider>
-            </QueryProvider>
-          </KeyboardProvider>
-        </SafeAreaProvider>
-      </PortalProvider>
+      <RootProviders>
+        <RuntimeProviders>
+          <AppShell />
+        </RuntimeProviders>
+      </RootProviders>
     </GestureHandlerRootView>
   );
 }

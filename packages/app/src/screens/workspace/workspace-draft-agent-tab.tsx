@@ -19,6 +19,9 @@ import { encodeImages } from "@/utils/encode-images";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
+import type { DaemonClient } from "@server/client/daemon-client";
+import type { ComposerAttachment } from "@/attachments/types";
+import type { UserMessageImageAttachment } from "@/types/stream";
 import { isWeb } from "@/constants/platform";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
@@ -31,7 +34,235 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsToolInvocations: false,
 };
 
-type WorkspaceDraftAgentTabProps = {
+interface AutoSubmitConfig {
+  provider: string;
+  modeId: string | null;
+  model: string | null;
+  thinkingOptionId: string | null;
+  featureValues: Record<string, unknown>;
+}
+
+function resolveAutoSubmitConfig(
+  pending: {
+    provider: string;
+    modeId?: string | null;
+    model?: string | null;
+    thinkingOptionId?: string | null;
+    featureValues?: Record<string, unknown>;
+  } | null,
+): AutoSubmitConfig | null {
+  if (!pending) return null;
+  return {
+    provider: pending.provider,
+    modeId: pending.modeId ?? null,
+    model: pending.model ?? null,
+    thinkingOptionId: pending.thinkingOptionId ?? null,
+    featureValues: pending.featureValues ?? {},
+  };
+}
+
+function validateDraftSubmission(input: {
+  text: string;
+  allowsEmptyAutoSubmit: boolean;
+  composerState: {
+    providerDefinitions: unknown[];
+    selectedProvider: string | null;
+    isModelLoading: boolean;
+    effectiveModelId: string | null;
+  };
+  autoSubmitConfig: AutoSubmitConfig | null;
+  workspaceDirectory: string | null;
+  hasClient: boolean;
+}): string | null {
+  const {
+    text,
+    allowsEmptyAutoSubmit,
+    composerState,
+    autoSubmitConfig,
+    workspaceDirectory,
+    hasClient,
+  } = input;
+  if (!allowsEmptyAutoSubmit && !text.trim()) {
+    return "Initial prompt is required";
+  }
+  if (composerState.providerDefinitions.length === 0) {
+    return "No available providers on the selected host";
+  }
+  if (!(autoSubmitConfig?.provider ?? composerState.selectedProvider)) {
+    return "Select a model";
+  }
+  if (composerState.isModelLoading) {
+    return "Model defaults are still loading";
+  }
+  if (!(autoSubmitConfig?.model ?? composerState.effectiveModelId)) {
+    return "No model is available for the selected provider";
+  }
+  if (!workspaceDirectory) {
+    return "Workspace directory not found";
+  }
+  if (!hasClient) {
+    return "Host is not connected";
+  }
+  return null;
+}
+
+function resolveDraftModeIdOverride(input: {
+  autoSubmitConfig: AutoSubmitConfig | null;
+  modeOptionsCount: number;
+  selectedMode: string;
+}): { modeId: string } | Record<string, never> {
+  const { autoSubmitConfig, modeOptionsCount, selectedMode } = input;
+  if (autoSubmitConfig?.modeId) {
+    return { modeId: autoSubmitConfig.modeId };
+  }
+  if (modeOptionsCount > 0 && selectedMode !== "") {
+    return { modeId: selectedMode };
+  }
+  return {};
+}
+
+function resolveDraftModeId(input: {
+  autoSubmitConfig: AutoSubmitConfig | null;
+  modeOptionsCount: number;
+  selectedMode: string;
+}): string | null {
+  const { autoSubmitConfig, modeOptionsCount, selectedMode } = input;
+  if (autoSubmitConfig?.modeId !== undefined) {
+    return autoSubmitConfig.modeId;
+  }
+  if (modeOptionsCount > 0 && selectedMode !== "") {
+    return selectedMode;
+  }
+  return null;
+}
+
+async function submitDraftCreateRequest(input: {
+  attempt: { clientMessageId: string };
+  text: string;
+  images?: UserMessageImageAttachment[];
+  attachments?: ComposerAttachment[] | unknown;
+  client: DaemonClient | null;
+  workspaceDirectory: string | null;
+  workspaceExecutionAuthority: { workspaceId: string } | null;
+  autoSubmitConfig: AutoSubmitConfig | null;
+  composerState: {
+    selectedProvider: string | null;
+    selectedMode: string;
+    modeOptions: unknown[];
+    effectiveModelId: string | null;
+    effectiveThinkingOptionId: string | null;
+    featureValues: Record<string, unknown> | undefined;
+  };
+}): Promise<{ agentId: string | null; result: AgentSnapshotPayload }> {
+  const {
+    attempt,
+    text,
+    images,
+    attachments,
+    client,
+    workspaceDirectory,
+    workspaceExecutionAuthority,
+    autoSubmitConfig,
+    composerState,
+  } = input;
+
+  invariant(workspaceDirectory, "Workspace directory is required");
+  invariant(workspaceExecutionAuthority, "Workspace authority is required");
+  if (!client) {
+    throw new Error("Host is not connected");
+  }
+
+  const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
+  if (!provider) {
+    throw new Error("Select a model");
+  }
+  const modeIdOverride = resolveDraftModeIdOverride({
+    autoSubmitConfig,
+    modeOptionsCount: composerState.modeOptions.length,
+    selectedMode: composerState.selectedMode,
+  });
+  const config = buildWorkspaceDraftAgentConfig({
+    provider,
+    cwd: workspaceDirectory,
+    ...modeIdOverride,
+    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
+    thinkingOptionId:
+      autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
+    featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
+  });
+
+  const imagesData = await encodeImages(images);
+  const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
+  const result = await client.createAgent({
+    config,
+    workspaceId: workspaceExecutionAuthority.workspaceId,
+    ...(text ? { initialPrompt: text } : {}),
+    clientMessageId: attempt.clientMessageId,
+    ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
+    ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
+  });
+
+  return {
+    agentId: result.id,
+    result,
+  };
+}
+
+function buildDraftAgentSnapshot(input: {
+  attempt: { timestamp: Date };
+  serverId: string;
+  tabId: string;
+  workspaceDirectory: string | null;
+  autoSubmitConfig: AutoSubmitConfig | null;
+  composerState: {
+    effectiveModelId: string | null;
+    effectiveThinkingOptionId: string | null;
+    modeOptions: unknown[];
+    selectedMode: string;
+    selectedProvider: string | null;
+    statusControls: { features?: Agent["features"] };
+  };
+}): Agent {
+  const { attempt, serverId, tabId, workspaceDirectory, autoSubmitConfig, composerState } = input;
+  invariant(workspaceDirectory, "Workspace directory is required");
+  const now = attempt.timestamp;
+  const model = autoSubmitConfig?.model ?? (composerState.effectiveModelId || null);
+  const thinkingOptionId =
+    autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || null);
+  const modeId = resolveDraftModeId({
+    autoSubmitConfig,
+    modeOptionsCount: composerState.modeOptions.length,
+    selectedMode: composerState.selectedMode,
+  });
+  const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
+  if (!provider) {
+    throw new Error("Select a model");
+  }
+  return {
+    serverId,
+    id: tabId,
+    provider,
+    status: "running",
+    createdAt: now,
+    updatedAt: now,
+    lastUserMessageAt: now,
+    lastActivityAt: now,
+    capabilities: DRAFT_CAPABILITIES,
+    currentModeId: modeId,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    runtimeInfo: { provider, sessionId: null, model, modeId },
+    title: "Agent",
+    cwd: workspaceDirectory,
+    model,
+    features: composerState.statusControls.features,
+    thinkingOptionId,
+    labels: {},
+  };
+}
+
+interface WorkspaceDraftAgentTabProps {
   serverId: string;
   workspaceId: string;
   tabId: string;
@@ -39,7 +270,7 @@ type WorkspaceDraftAgentTabProps = {
   isPaneFocused: boolean;
   onCreated: (snapshot: AgentSnapshotPayload) => void;
   onOpenWorkspaceFile: (input: { filePath: string }) => void;
-};
+}
 
 export function WorkspaceDraftAgentTab({
   serverId,
@@ -91,15 +322,7 @@ export function WorkspaceDraftAgentTab({
   const consumePendingAutoSubmit = useWorkspaceDraftSubmissionStore(
     (state) => state.consumePending,
   );
-  const autoSubmitConfig = pendingAutoSubmit
-    ? {
-        provider: pendingAutoSubmit.provider,
-        modeId: pendingAutoSubmit.modeId ?? null,
-        model: pendingAutoSubmit.model ?? null,
-        thinkingOptionId: pendingAutoSubmit.thinkingOptionId ?? null,
-        featureValues: pendingAutoSubmit.featureValues,
-      }
-    : null;
+  const autoSubmitConfig = resolveAutoSubmitConfig(pendingAutoSubmit);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
 
   const {
@@ -112,30 +335,15 @@ export function WorkspaceDraftAgentTab({
     draftId,
     getPendingServerId: () => serverId,
     allowEmptyText: allowsEmptyAutoSubmit,
-    validateBeforeSubmit: ({ text }) => {
-      if (!allowsEmptyAutoSubmit && !text.trim()) {
-        return "Initial prompt is required";
-      }
-      if (composerState.providerDefinitions.length === 0) {
-        return "No available providers on the selected host";
-      }
-      if (!(autoSubmitConfig?.provider ?? composerState.selectedProvider)) {
-        return "Select a model";
-      }
-      if (composerState.isModelLoading) {
-        return "Model defaults are still loading";
-      }
-      if (!(autoSubmitConfig?.model ?? composerState.effectiveModelId)) {
-        return "No model is available for the selected provider";
-      }
-      if (!workspaceDirectory) {
-        return "Workspace directory not found";
-      }
-      if (!client) {
-        return "Host is not connected";
-      }
-      return null;
-    },
+    validateBeforeSubmit: ({ text }) =>
+      validateDraftSubmission({
+        text,
+        allowsEmptyAutoSubmit,
+        composerState,
+        autoSubmitConfig,
+        workspaceDirectory,
+        hasClient: Boolean(client),
+      }),
     onBeforeSubmit: () => {
       void composerState.persistFormPreferences();
       if (isWeb) {
@@ -143,85 +351,27 @@ export function WorkspaceDraftAgentTab({
       }
       Keyboard.dismiss();
     },
-    buildDraftAgent: (attempt) => {
-      invariant(workspaceDirectory, "Workspace directory is required");
-      const now = attempt.timestamp;
-      const model = autoSubmitConfig?.model ?? (composerState.effectiveModelId || null);
-      const thinkingOptionId =
-        autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || null);
-      const modeId =
-        autoSubmitConfig?.modeId ??
-        (composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
-          ? composerState.selectedMode
-          : null);
-      const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
-      if (!provider) {
-        throw new Error("Select a model");
-      }
-      return {
+    buildDraftAgent: (attempt) =>
+      buildDraftAgentSnapshot({
+        attempt,
         serverId,
-        id: tabId,
-        provider,
-        status: "running",
-        createdAt: now,
-        updatedAt: now,
-        lastUserMessageAt: now,
-        lastActivityAt: now,
-        capabilities: DRAFT_CAPABILITIES,
-        currentModeId: modeId,
-        availableModes: [],
-        pendingPermissions: [],
-        persistence: null,
-        runtimeInfo: { provider, sessionId: null, model, modeId },
-        title: "Agent",
-        cwd: workspaceDirectory,
-        model,
-        features: composerState.statusControls.features,
-        thinkingOptionId,
-        labels: {},
-      };
-    },
-    createRequest: async ({ attempt, text, images, attachments }) => {
-      invariant(workspaceDirectory, "Workspace directory is required");
-      invariant(workspaceExecutionAuthority, "Workspace authority is required");
-      if (!client) {
-        throw new Error("Host is not connected");
-      }
-
-      const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
-      if (!provider) {
-        throw new Error("Select a model");
-      }
-      const config = buildWorkspaceDraftAgentConfig({
-        provider,
-        cwd: workspaceDirectory,
-        ...(autoSubmitConfig?.modeId
-          ? { modeId: autoSubmitConfig.modeId }
-          : composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
-            ? { modeId: composerState.selectedMode }
-            : {}),
-        model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
-        thinkingOptionId:
-          autoSubmitConfig?.thinkingOptionId ??
-          (composerState.effectiveThinkingOptionId || undefined),
-        featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
-      });
-
-      const imagesData = await encodeImages(images);
-      const result = await client.createAgent({
-        config,
-        workspaceId: workspaceExecutionAuthority.workspaceId,
-        ...(text ? { initialPrompt: text } : {}),
-        clientMessageId: attempt.clientMessageId,
-        ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
-        ...(attachments && attachments.length > 0 ? { attachments } : {}),
-      });
-
-      return {
-        agentId: result.id,
-        result,
-      };
-    },
+        tabId,
+        workspaceDirectory,
+        autoSubmitConfig,
+        composerState,
+      }),
+    createRequest: async ({ attempt, text, images, attachments }) =>
+      submitDraftCreateRequest({
+        attempt,
+        text,
+        images,
+        attachments,
+        client,
+        workspaceDirectory,
+        workspaceExecutionAuthority,
+        autoSubmitConfig,
+        composerState,
+      }),
     onCreateSuccess: ({ result }) => {
       clearDraftInput("sent");
       onCreated(result);
@@ -230,11 +380,11 @@ export function WorkspaceDraftAgentTab({
 
   const isReadyForPendingAutoSubmit = Boolean(
     pendingAutoSubmit &&
-      draftInput.isHydrated &&
-      workspaceDirectory &&
-      client &&
-      !isSubmitting &&
-      !composerState.isModelLoading,
+    draftInput.isHydrated &&
+    workspaceDirectory &&
+    client &&
+    !isSubmitting &&
+    !composerState.isModelLoading,
   );
   const autoSubmitKeyRef = useRef<string | null>(null);
   useEffect(() => {
@@ -337,6 +487,39 @@ export function WorkspaceDraftAgentTab({
     [composerState],
   );
 
+  const inputAreaWrapperStyle = useMemo(
+    () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }],
+    [insets.bottom],
+  );
+
+  const handleDropdownCloseFocus = useCallback(() => {
+    focusInputRef.current?.();
+  }, []);
+  const composerStatusControls = useMemo(
+    () => ({
+      ...composerState.statusControls,
+      onSelectProvider: handleProviderSelectWithFocus,
+      onSelectMode: handleModeSelectWithFocus,
+      onSelectModel: handleModelSelectWithFocus,
+      onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
+      onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
+      onSetFeature: handleSetFeatureWithFocus,
+      onDropdownClose: handleDropdownCloseFocus,
+      disabled: isSubmitting,
+    }),
+    [
+      composerState.statusControls,
+      handleProviderSelectWithFocus,
+      handleModeSelectWithFocus,
+      handleModelSelectWithFocus,
+      handleProviderAndModelSelectWithFocus,
+      handleThinkingOptionSelectWithFocus,
+      handleSetFeatureWithFocus,
+      handleDropdownCloseFocus,
+      isSubmitting,
+    ],
+  );
+
   return (
     <FileDropZone onFilesDropped={handleFilesDropped}>
       <View style={styles.container}>
@@ -368,7 +551,7 @@ export function WorkspaceDraftAgentTab({
           )}
         </View>
 
-        <View style={[styles.inputAreaWrapper, { paddingBottom: insets.bottom }]}>
+        <View style={inputAreaWrapperStyle}>
           <Composer
             agentId={tabId}
             serverId={serverId}
@@ -386,17 +569,7 @@ export function WorkspaceDraftAgentTab({
             onAddImages={handleAddImagesCallback}
             onFocusInput={handleFocusInputCallback}
             commandDraftConfig={composerState.commandDraftConfig}
-            statusControls={{
-              ...composerState.statusControls,
-              onSelectProvider: handleProviderSelectWithFocus,
-              onSelectMode: handleModeSelectWithFocus,
-              onSelectModel: handleModelSelectWithFocus,
-              onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
-              onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
-              onSetFeature: handleSetFeatureWithFocus,
-              onDropdownClose: () => focusInputRef.current?.(),
-              disabled: isSubmitting,
-            }}
+            statusControls={composerStatusControls}
           />
         </View>
       </View>

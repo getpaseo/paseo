@@ -31,7 +31,7 @@ export interface StreamingTranscriptionEvent {
   isLowConfidence?: boolean;
 }
 
-export type StreamingTranscriptionSession = {
+export interface StreamingTranscriptionSession {
   /**
    * Required PCM16LE sample rate for `appendPcm16()`.
    * Callers are responsible for resampling before appending.
@@ -47,7 +47,7 @@ export type StreamingTranscriptionSession = {
   on(event: "committed", handler: (payload: StreamingTranscriptionCommittedEvent) => void): unknown;
   on(event: "transcript", handler: (payload: StreamingTranscriptionEvent) => void): unknown;
   on(event: "error", handler: (err: unknown) => void): unknown;
-};
+}
 
 export interface SpeechToTextProvider {
   id: "openai" | "local" | (string & {});

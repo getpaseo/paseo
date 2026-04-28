@@ -1,6 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { createDaemonTestContext, type DaemonTestContext } from "../../test-utils/index.js";
-import type { AgentSlashCommand } from "../agent-sdk-types.js";
 
 // Fake-daemon plumbing coverage: validates manager/client command wiring without a real Claude binary.
 describe("claude agent commands E2E", () => {

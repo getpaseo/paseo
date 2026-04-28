@@ -24,15 +24,16 @@ Maps role categories to `<agent-type>/<model>` strings. These map directly to th
 - The part before `/` is the `agentType` (e.g., `codex`, `claude`, `opencode`)
 - The part after `/` is the `model` (e.g., `gpt-5.4`, `opus`)
 
-| Category | Roles covered |
-|----------|--------------|
-| `impl` | impl, tester, refactorer |
-| `ui` | impl agents doing UI/styling work |
-| `research` | researcher |
-| `planning` | planner, plan-reviewer |
-| `audit` | auditor, qa |
+| Category   | Roles covered                     |
+| ---------- | --------------------------------- |
+| `impl`     | impl, tester, refactorer          |
+| `ui`       | impl agents doing UI/styling work |
+| `research` | researcher                        |
+| `planning` | planner, plan-reviewer            |
+| `audit`    | auditor, qa                       |
 
 If a category is missing, use these defaults:
+
 - `impl` -> `codex/gpt-5.4`
 - `ui` -> `claude/opus`
 - `research` -> `codex/gpt-5.4`
@@ -44,6 +45,7 @@ If a category is missing, use these defaults:
 Freeform array of natural language strings. The user states preferences and the orchestrator appends them here. Read these at startup and weave them into your behavior contextually.
 
 Examples:
+
 - "Prefer small, focused PRs over large bundled ones"
 - "Run E2E tests with Maestro, not Playwright"
 - "Always check mobile responsiveness"
