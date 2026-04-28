@@ -23,6 +23,59 @@ interface HubcodeConfig {
     teardown?: string[];
     terminals?: WorktreeTerminalConfig[];
   };
+  scripts?: Record<string, { command?: string; type?: string; port?: number } | undefined>;
+}
+
+export interface PlainScriptConfig {
+  type?: undefined;
+  command: string;
+  port?: undefined;
+}
+
+export interface ServiceScriptConfig {
+  type: "service";
+  command: string;
+  port?: number;
+}
+
+export type ScriptConfig = PlainScriptConfig | ServiceScriptConfig;
+
+export function isServiceScript(config: ScriptConfig): config is ServiceScriptConfig {
+  return "type" in config && config.type === "service";
+}
+
+export type WorktreeSource =
+  | { kind: "branch-off"; baseBranch: string; newBranchName: string }
+  | { kind: "checkout-branch"; branchName: string }
+  | {
+      kind: "checkout-github-pr";
+      githubPrNumber: number;
+      headRef: string;
+      baseRefName: string;
+      localBranchName?: string;
+      pushRemoteUrl?: string;
+    };
+
+export class BranchAlreadyCheckedOutError extends Error {
+  readonly branchName: string;
+
+  constructor(branchName: string) {
+    super(`Branch already checked out: ${branchName}`);
+    this.name = "BranchAlreadyCheckedOutError";
+    this.branchName = branchName;
+  }
+}
+
+export class UnknownBranchError extends Error {
+  readonly branchName: string;
+  readonly cwd: string;
+
+  constructor(params: { branchName: string; cwd: string }) {
+    super(`Unknown branch: ${params.branchName}`);
+    this.name = "UnknownBranchError";
+    this.branchName = params.branchName;
+    this.cwd = params.cwd;
+  }
 }
 
 const execAsync = promisify(exec);
@@ -121,12 +174,18 @@ export type HubcodeWorktreeOwnership = {
 };
 
 interface CreateWorktreeOptions {
-  branchName: string;
+  branchName?: string;
   cwd: string;
-  baseBranch: string;
+  baseBranch?: string;
   worktreeSlug?: string;
   runSetup?: boolean;
   hubcodeHome?: string;
+  /**
+   * Optional discriminated source describing how the worktree should be
+   * provisioned. When supplied, takes precedence over the legacy
+   * branchName/baseBranch fields used by older callers.
+   */
+  source?: WorktreeSource;
 }
 
 function readHubcodeConfig(repoRoot: string): HubcodeConfig | null {
@@ -870,20 +929,29 @@ export async function deleteHubcodeWorktree({
   cwd,
   worktreePath,
   worktreeSlug,
+  worktreesRoot,
   hubcodeHome,
 }: {
-  cwd: string;
+  cwd: string | null;
   worktreePath?: string;
   worktreeSlug?: string;
+  worktreesRoot?: string;
   hubcodeHome?: string;
 }): Promise<void> {
   if (!worktreePath && !worktreeSlug) {
     throw new Error("worktreePath or worktreeSlug is required");
   }
 
-  const worktreesRoot = await getHubcodeWorktreesRoot(cwd, hubcodeHome);
-  const resolvedRoot = normalizePathForOwnership(worktreesRoot) + sep;
-  const requestedPath = worktreePath ?? join(worktreesRoot, worktreeSlug!);
+  let resolvedWorktreesRoot: string;
+  if (worktreesRoot) {
+    resolvedWorktreesRoot = worktreesRoot;
+  } else if (cwd) {
+    resolvedWorktreesRoot = await getHubcodeWorktreesRoot(cwd, hubcodeHome);
+  } else {
+    throw new Error("cwd or worktreesRoot is required to delete a Hubcode worktree");
+  }
+  const resolvedRoot = normalizePathForOwnership(resolvedWorktreesRoot) + sep;
+  const requestedPath = worktreePath ?? join(resolvedWorktreesRoot, worktreeSlug!);
   const resolvedRequested = normalizePathForOwnership(requestedPath);
   const resolvedWorktree =
     (await resolveHubcodeWorktreeRootForCwd(requestedPath, { hubcodeHome }))?.worktreePath ??
@@ -903,17 +971,19 @@ export async function deleteHubcodeWorktree({
   // "is not a working tree" / "already exists". Tolerate that and prune
   // the admin side explicitly so the second attempt converges. (Paseo
   // 0.1.60 fix.)
-  try {
-    await runGitCommand(["worktree", "remove", resolvedWorktree, "--force"], {
-      cwd,
-      timeout: 120_000,
-    });
-  } catch {
-    // fall through — prune handles the admin side, rmSync the fs side.
-  }
+  if (cwd) {
+    try {
+      await runGitCommand(["worktree", "remove", resolvedWorktree, "--force"], {
+        cwd,
+        timeout: 120_000,
+      });
+    } catch {
+      // fall through — prune handles the admin side, rmSync the fs side.
+    }
 
-  // Prune always: clears dangling admin entries whether or not remove succeeded.
-  await runGitCommand(["worktree", "prune"], { cwd, timeout: 60_000 }).catch(() => undefined);
+    // Prune always: clears dangling admin entries whether or not remove succeeded.
+    await runGitCommand(["worktree", "prune"], { cwd, timeout: 60_000 }).catch(() => undefined);
+  }
 
   if (existsSync(resolvedWorktree)) {
     rmSync(resolvedWorktree, { recursive: true, force: true });
@@ -930,74 +1000,38 @@ export async function createWorktree({
   worktreeSlug,
   runSetup = true,
   hubcodeHome,
+  source,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> {
-  // Validate branch name
-  const validation = validateBranchSlug(branchName);
-  if (!validation.valid) {
-    throw new Error(`Invalid branch name: ${validation.error}`);
-  }
-
-  const normalizedBaseBranch = baseBranch ? normalizeBaseRefName(baseBranch) : "";
-  if (!normalizedBaseBranch) {
-    throw new Error("Base branch is required when creating a Hubcode worktree");
-  }
-  if (normalizedBaseBranch === "HEAD") {
-    throw new Error("Base branch cannot be HEAD when creating a Hubcode worktree");
-  }
-
-  // Resolve the base branch - prefer origin/{branch}, then fall back to local
-  let resolvedBaseBranch = normalizedBaseBranch;
-  try {
-    await runGitCommand(["rev-parse", "--verify", `origin/${normalizedBaseBranch}`], { cwd });
-    resolvedBaseBranch = `origin/${normalizedBaseBranch}`;
-  } catch {
-    try {
-      await runGitCommand(["rev-parse", "--verify", normalizedBaseBranch], { cwd });
-    } catch {
-      throw new Error(`Base branch not found: ${normalizedBaseBranch}`);
+  // Derive a discriminated source if not given. Legacy callers pass
+  // branchName/baseBranch which map to a "branch-off" source.
+  let resolvedSource: WorktreeSource;
+  if (source) {
+    resolvedSource = source;
+  } else {
+    if (!branchName) {
+      throw new Error("branchName is required when source is not provided");
     }
+    if (!baseBranch) {
+      throw new Error("baseBranch is required when source is not provided");
+    }
+    resolvedSource = {
+      kind: "branch-off",
+      baseBranch,
+      newBranchName: branchName,
+    };
   }
 
-  let worktreePath: string;
   const desiredSlug = worktreeSlug || generateWorktreeSlug();
+  const sourcePlan = await resolveWorktreeSourcePlan({
+    cwd,
+    source: resolvedSource,
+    desiredSlug,
+  });
 
-  worktreePath = join(await getHubcodeWorktreesRoot(cwd, hubcodeHome), desiredSlug);
+  let worktreePath = join(await getHubcodeWorktreesRoot(cwd, hubcodeHome), desiredSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
-  // Check if branch already exists
-  let branchExists = false;
-  try {
-    await runGitCommand(["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], {
-      cwd,
-    });
-    branchExists = true;
-  } catch {
-    branchExists = false;
-  }
-
-  // Always create a new branch for the worktree
-  // If branchName already exists, use it as base and create worktree-slug as branch name
-  // If branchName doesn't exist, create it from baseBranch (resolved to remote if needed)
-  const base = branchExists ? branchName : resolvedBaseBranch;
-  const candidateBranch = branchExists ? desiredSlug : branchName;
-
-  // Find unique branch name if collision
-  let newBranchName = candidateBranch;
-  let suffix = 1;
-  while (true) {
-    try {
-      await runGitCommand(["show-ref", "--verify", "--quiet", `refs/heads/${newBranchName}`], {
-        cwd,
-      });
-      // Branch exists, try with suffix
-      newBranchName = `${candidateBranch}-${suffix}`;
-      suffix++;
-    } catch {
-      break;
-    }
-  }
-
-  // Also handle worktree path collision
+  // Handle worktree path collision
   let finalWorktreePath = worktreePath;
   let pathSuffix = 1;
   while (existsSync(finalWorktreePath)) {
@@ -1005,24 +1039,300 @@ export async function createWorktree({
     pathSuffix++;
   }
 
-  await runGitCommand(["worktree", "add", finalWorktreePath, "-b", newBranchName, base], {
+  await runGitCommand(["worktree", "add", finalWorktreePath, ...sourcePlan.addArguments], {
     cwd,
     timeout: 120_000,
   });
   worktreePath = normalizePathForOwnership(finalWorktreePath);
 
-  writeHubcodeWorktreeMetadata(worktreePath, { baseRefName: normalizedBaseBranch });
+  if (sourcePlan.pushRemote) {
+    await configureWorktreePushRemote({
+      cwd,
+      branchName: sourcePlan.branchName,
+      remote: sourcePlan.pushRemote,
+    });
+  }
+
+  writeHubcodeWorktreeMetadata(worktreePath, { baseRefName: sourcePlan.metadataBaseRefName });
 
   if (runSetup) {
     await runWorktreeSetupCommands({
       worktreePath,
-      branchName: newBranchName,
+      branchName: sourcePlan.branchName,
       cleanupOnFailure: true,
     });
   }
 
   return {
-    branchName: newBranchName,
+    branchName: sourcePlan.branchName,
     worktreePath,
   };
+}
+
+interface ResolveWorktreeSourcePlanOptions {
+  cwd: string;
+  source: WorktreeSource;
+  desiredSlug: string;
+}
+
+interface WorktreeSourcePlan {
+  branchName: string;
+  metadataBaseRefName: string;
+  addArguments: string[];
+  pushRemote?: {
+    name: string;
+    url: string;
+    headRef: string;
+  };
+}
+
+async function resolveWorktreeSourcePlan({
+  cwd,
+  source,
+  desiredSlug,
+}: ResolveWorktreeSourcePlanOptions): Promise<WorktreeSourcePlan> {
+  switch (source.kind) {
+    case "branch-off": {
+      const branchName = source.newBranchName;
+      validateWorktreeBranchName(branchName);
+      const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
+      const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, normalizedBaseBranch);
+      const branchExists = await localBranchExists(cwd, branchName);
+      const base = branchExists ? branchName : resolvedBaseBranch;
+      const candidateBranch = branchExists ? desiredSlug : branchName;
+      const newBranchName = await resolveUniqueLocalBranchName(cwd, candidateBranch);
+
+      return {
+        branchName: newBranchName,
+        metadataBaseRefName: normalizedBaseBranch,
+        addArguments: ["-b", newBranchName, base],
+      };
+    }
+    case "checkout-branch": {
+      validateWorktreeBranchName(source.branchName);
+      if (!(await localBranchExists(cwd, source.branchName))) {
+        try {
+          await runGitCommand(["fetch", "origin", `${source.branchName}:${source.branchName}`], {
+            cwd,
+            timeout: 120_000,
+          });
+        } catch {
+          throw new UnknownBranchError({ branchName: source.branchName, cwd });
+        }
+      }
+      if (await isBranchCheckedOut(cwd, source.branchName)) {
+        throw new BranchAlreadyCheckedOutError(source.branchName);
+      }
+
+      return {
+        branchName: source.branchName,
+        metadataBaseRefName: source.branchName,
+        addArguments: [source.branchName],
+      };
+    }
+    case "checkout-github-pr": {
+      const localBranchCandidate = source.localBranchName ?? source.headRef;
+      validateWorktreeBranchName(localBranchCandidate);
+      const localBranchName = await resolveUniqueLocalBranchName(cwd, localBranchCandidate);
+      const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
+      await runGitCommand(
+        [
+          "fetch",
+          "origin",
+          `refs/pull/${source.githubPrNumber}/head:refs/heads/${localBranchName}`,
+          "--force",
+        ],
+        {
+          cwd,
+          timeout: 120_000,
+        },
+      );
+
+      return {
+        branchName: localBranchName,
+        metadataBaseRefName: normalizedBaseRefName,
+        addArguments: [localBranchName],
+        ...(source.pushRemoteUrl
+          ? {
+              pushRemote: {
+                name: `hubcode-pr-${source.githubPrNumber}`,
+                url: source.pushRemoteUrl,
+                headRef: source.headRef,
+              },
+            }
+          : {}),
+      };
+    }
+  }
+}
+
+async function configureWorktreePushRemote(options: {
+  cwd: string;
+  branchName: string;
+  remote: {
+    name: string;
+    url: string;
+    headRef: string;
+  };
+}): Promise<void> {
+  await runGitCommand(["config", `remote.${options.remote.name}.url`, options.remote.url], {
+    cwd: options.cwd,
+  });
+  await runGitCommand(
+    ["config", `remote.${options.remote.name}.push`, `HEAD:refs/heads/${options.remote.headRef}`],
+    { cwd: options.cwd },
+  );
+  await runGitCommand(["config", `branch.${options.branchName}.remote`, options.remote.name], {
+    cwd: options.cwd,
+  });
+  await runGitCommand(
+    ["config", `branch.${options.branchName}.merge`, `refs/heads/${options.remote.headRef}`],
+    { cwd: options.cwd },
+  );
+}
+
+function validateWorktreeBranchName(branchName: string): void {
+  const validation = validateBranchSlug(branchName);
+  if (!validation.valid) {
+    throw new Error(`Invalid branch name: ${validation.error}`);
+  }
+}
+
+function normalizeRequiredBaseBranch(baseBranch: string): string {
+  const normalizedBaseBranch = normalizeBaseRefName(baseBranch);
+  if (!normalizedBaseBranch) {
+    throw new Error("Base branch is required when creating a Hubcode worktree");
+  }
+  if (normalizedBaseBranch === "HEAD") {
+    throw new Error("Base branch cannot be HEAD when creating a Hubcode worktree");
+  }
+  return normalizedBaseBranch;
+}
+
+async function resolveBaseBranchForWorktree(
+  cwd: string,
+  normalizedBaseBranch: string,
+): Promise<string> {
+  try {
+    await runGitCommand(["rev-parse", "--verify", `origin/${normalizedBaseBranch}`], { cwd });
+    return `origin/${normalizedBaseBranch}`;
+  } catch {
+    try {
+      await runGitCommand(["rev-parse", "--verify", normalizedBaseBranch], { cwd });
+      return normalizedBaseBranch;
+    } catch {
+      throw new Error(`Base branch not found: ${normalizedBaseBranch}`);
+    }
+  }
+}
+
+async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {
+  try {
+    await runGitCommand(["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], {
+      cwd,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveUniqueLocalBranchName(cwd: string, candidateBranch: string): Promise<string> {
+  let newBranchName = candidateBranch;
+  let suffix = 1;
+  while (await localBranchExists(cwd, newBranchName)) {
+    newBranchName = `${candidateBranch}-${suffix}`;
+    suffix++;
+  }
+  return newBranchName;
+}
+
+async function isBranchCheckedOut(cwd: string, branchName: string): Promise<boolean> {
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+  });
+  const lines = stdout.split("\n");
+  const target = `branch refs/heads/${branchName}`;
+  return lines.some((line) => line.trim() === target);
+}
+
+interface ResolveExistingWorktreeForSlugOptions {
+  slug: string;
+  repoRoot: string;
+  hubcodeHome?: string;
+}
+
+export async function resolveExistingWorktreeForSlug({
+  slug,
+  repoRoot,
+  hubcodeHome,
+}: ResolveExistingWorktreeForSlugOptions): Promise<WorktreeConfig | null> {
+  const worktrees = await listHubcodeWorktrees({
+    cwd: repoRoot,
+    hubcodeHome,
+  });
+  const slugSuffix = `${sep}${slug}`;
+  const existingWorktree = worktrees.find((worktree) => worktree.path.endsWith(slugSuffix));
+  if (!existingWorktree) {
+    return null;
+  }
+
+  const { stdout } = await runGitCommand(["branch", "--show-current"], {
+    cwd: existingWorktree.path,
+    env: READ_ONLY_GIT_ENV,
+  });
+  const branchName = stdout.trim();
+  if (!branchName) {
+    throw new Error(`Unable to resolve branch for existing worktree: ${existingWorktree.path}`);
+  }
+
+  return {
+    branchName,
+    worktreePath: existingWorktree.path,
+  };
+}
+
+export function getScriptConfigs(repoRoot: string): Map<string, ScriptConfig> {
+  const config = readHubcodeConfig(repoRoot);
+  const scripts = config?.scripts;
+  if (!scripts || typeof scripts !== "object") {
+    return new Map();
+  }
+
+  const result = new Map<string, ScriptConfig>();
+  for (const [name, entry] of Object.entries(scripts)) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const rawCommand = entry.command;
+    if (typeof rawCommand !== "string") {
+      continue;
+    }
+    const command = rawCommand.trim();
+    if (!command) {
+      continue;
+    }
+
+    const scriptConfig: ScriptConfig =
+      entry.type === "service"
+        ? {
+            type: "service",
+            command,
+          }
+        : { command };
+
+    if (
+      isServiceScript(scriptConfig) &&
+      typeof entry.port === "number" &&
+      Number.isFinite(entry.port)
+    ) {
+      scriptConfig.port = entry.port;
+    }
+
+    result.set(name, scriptConfig);
+  }
+
+  return result;
 }

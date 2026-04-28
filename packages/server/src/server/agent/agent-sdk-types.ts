@@ -494,6 +494,11 @@ export interface AgentSession {
 
 export interface ListModelsOptions {
   cwd?: string;
+  /**
+   * When true, providers should refresh their cached model list rather than
+   * returning a previously fetched value.
+   */
+  force?: boolean;
 }
 
 export interface ListModesOptions {

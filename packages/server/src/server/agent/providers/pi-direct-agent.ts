@@ -796,7 +796,7 @@ function findModelInRegistry(
     );
   }
 
-  return registry.getAll().find((entry) => {
+  return registry.getAll().find((entry: any) => {
     if (entry.id === parsedReference.id) {
       return true;
     }
@@ -810,7 +810,7 @@ function createProviderModelFallback(
 ): Model<Api> | undefined {
   const providerDefault = registry
     .getAll()
-    .find((model) => model.provider === parsedReference.provider);
+    .find((model: any) => model.provider === parsedReference.provider);
   if (!providerDefault) {
     return undefined;
   }
@@ -848,7 +848,7 @@ export class PiDirectAgentSession implements AgentSession {
     this.lastKnownThinkingOptionId =
       normalizePiThinkingOption(config.thinkingOptionId) ?? session.thinkingLevel ?? null;
 
-    this.session.subscribe((event) => {
+    this.session.subscribe((event: any) => {
       this.handleSessionEvent(event);
     });
   }
@@ -1105,7 +1105,7 @@ export class PiDirectAgentSession implements AgentSession {
 
     void this.session
       .prompt(payload.text, payload.images ? { images: payload.images } : undefined)
-      .catch((error) => {
+      .catch((error: unknown) => {
         const failedTurnId = this.activeTurnId ?? turnId;
         this.activeTurnId = null;
         if (isPiRequestAbortError(error)) {
@@ -1446,8 +1446,8 @@ export class PiDirectAgentClient implements AgentClient {
   }
 
   async listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]> {
-    const services = await this.getSessionServices(options.cwd);
-    const models = services.modelRegistry.getAvailable().map((model) => ({
+    const services = await this.getSessionServices(options.cwd ?? process.cwd());
+    const models = services.modelRegistry.getAvailable().map((model: any) => ({
       provider: PI_PROVIDER,
       id: `${model.provider}/${model.id}`,
       label: `${model.provider}/${model.name}`,

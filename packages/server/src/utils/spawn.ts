@@ -8,6 +8,12 @@ const execFileAsync = promisify(execFile);
 interface ExecCommandOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Variables to overlay on top of `process.env` (or `env`, when provided).
+   * Useful for injecting just a few overrides without having to clone the
+   * whole environment manually at each call site.
+   */
+  envOverlay?: NodeJS.ProcessEnv;
   encoding?: BufferEncoding;
   timeout?: number;
   maxBuffer?: number;
@@ -44,9 +50,11 @@ export async function execCommand(
   const resolvedCommand = isWindows ? quoteWindowsCommand(command) : command;
   const resolvedArgs = isWindows ? args.map(quoteWindowsArgument) : args;
 
+  const baseEnv = options?.env ?? process.env;
+  const mergedEnv = options?.envOverlay ? { ...baseEnv, ...options.envOverlay } : options?.env;
   return execFileAsync(resolvedCommand, resolvedArgs, {
     cwd: options?.cwd,
-    env: options?.env,
+    env: mergedEnv,
     encoding: options?.encoding ?? "utf8",
     timeout: options?.timeout,
     maxBuffer: options?.maxBuffer,

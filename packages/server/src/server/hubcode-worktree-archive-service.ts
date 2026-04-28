@@ -14,7 +14,7 @@ type EmitSessionMessage = (message: SessionOutboundMessage) => void;
 export interface ArchiveHubcodeWorktreeDependencies {
   hubcodeHome?: string;
   github: GitHubService;
-  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "refresh">;
   agentManager: Pick<AgentManager, "listAgents" | "closeAgent">;
   agentStorage: Pick<AgentStorage, "list" | "remove">;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
@@ -127,10 +127,8 @@ export async function archiveHubcodeWorktree(
 
   if (options.repoRoot) {
     try {
-      await dependencies.workspaceGitService.getSnapshot(options.repoRoot, {
-        force: true,
-        reason: "archive-worktree",
-      });
+      await dependencies.workspaceGitService.refresh(options.repoRoot, { priority: "high" });
+      await dependencies.workspaceGitService.getSnapshot(options.repoRoot);
     } catch (error) {
       dependencies.sessionLogger?.warn(
         { err: error, cwd: options.repoRoot },

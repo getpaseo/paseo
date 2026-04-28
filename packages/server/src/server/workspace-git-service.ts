@@ -10,9 +10,14 @@ import {
   hasOriginRemote,
   resolveGhPath,
   resolveAbsoluteGitDir,
+  resolveRepositoryDefaultBranch,
 } from "../utils/checkout-git.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { normalizeWorkspaceId } from "./workspace-registry-model.js";
+import {
+  buildWorkspaceGitMetadataFromSnapshot,
+  type WorkspaceGitMetadata,
+} from "./workspace-git-metadata.js";
 
 const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 500;
 const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
@@ -59,6 +64,12 @@ export interface WorkspaceGitService {
   peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null;
   getSnapshot(cwd: string): Promise<WorkspaceGitRuntimeSnapshot>;
   refresh(cwd: string, options?: { priority?: "normal" | "high" }): Promise<void>;
+  resolveRepoRoot(cwd: string): Promise<string>;
+  resolveDefaultBranch(cwdOrRepoRoot: string): Promise<string | undefined>;
+  getWorkspaceGitMetadata(
+    cwd: string,
+    options?: { directoryName?: string },
+  ): Promise<WorkspaceGitMetadata>;
   dispose(): void;
 }
 
@@ -168,6 +179,42 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     await this.ensureWorkspaceTarget(cwd);
+  }
+
+  async resolveRepoRoot(cwd: string): Promise<string> {
+    const snapshot = await this.getSnapshot(cwd);
+    if (!snapshot.git.isGit) {
+      throw new Error("Create worktree requires a git repository");
+    }
+    const normalized = normalizeWorkspaceId(cwd);
+    return snapshot.git.isHubcodeOwnedWorktree
+      ? (snapshot.git.mainRepoRoot ?? snapshot.git.repoRoot ?? normalized)
+      : (snapshot.git.repoRoot ?? normalized);
+  }
+
+  async resolveDefaultBranch(cwdOrRepoRoot: string): Promise<string | undefined> {
+    const cwd = normalizeWorkspaceId(cwdOrRepoRoot);
+    const defaultBranch = await resolveRepositoryDefaultBranch(cwd);
+    return defaultBranch ?? undefined;
+  }
+
+  async getWorkspaceGitMetadata(
+    cwd: string,
+    options?: { directoryName?: string },
+  ): Promise<WorkspaceGitMetadata> {
+    const snapshot = await this.getSnapshot(cwd);
+    const normalized = normalizeWorkspaceId(cwd);
+    const directoryName =
+      options?.directoryName ?? normalized.split(/[\\/]/).findLast(Boolean) ?? cwd;
+    return buildWorkspaceGitMetadataFromSnapshot({
+      cwd: normalized,
+      directoryName,
+      isGit: snapshot.git.isGit,
+      repoRoot: snapshot.git.repoRoot,
+      mainRepoRoot: snapshot.git.mainRepoRoot,
+      currentBranch: snapshot.git.currentBranch,
+      remoteUrl: snapshot.git.remoteUrl,
+    });
   }
 
   dispose(): void {

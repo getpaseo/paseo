@@ -28,6 +28,10 @@ export interface TerminalManager {
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   getTerminal(id: string): TerminalSession | undefined;
   killTerminal(id: string): void;
+  killTerminalAndWait(
+    id: string,
+    options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
+  ): Promise<void>;
   listDirectories(): string[];
   killAll(): void;
   subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void;
@@ -184,6 +188,54 @@ export function createTerminalManager(): TerminalManager {
 
     killTerminal(id: string): void {
       removeSessionById(id, { kill: true });
+    },
+
+    async killTerminalAndWait(
+      id: string,
+      options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
+    ): Promise<void> {
+      const session = terminalsById.get(id);
+      if (!session) {
+        return;
+      }
+      const gracefulTimeoutMs = options?.gracefulTimeoutMs ?? 2000;
+      const forceTimeoutMs = options?.forceTimeoutMs ?? 1500;
+
+      const exited = new Promise<void>((resolveExit) => {
+        const unsubscribe = session.onExit(() => {
+          unsubscribe();
+          resolveExit();
+        });
+      });
+
+      // Graceful kill (signal sent by session.kill()).
+      try {
+        session.kill();
+      } catch {
+        // ignore — fall through to wait + force-cleanup.
+      }
+
+      const gracefulRace = await Promise.race([
+        exited.then(() => "exited" as const),
+        new Promise<"timeout">((resolveTimeout) =>
+          setTimeout(() => resolveTimeout("timeout"), gracefulTimeoutMs),
+        ),
+      ]);
+
+      if (gracefulRace !== "exited") {
+        // Force escalation: re-kill (process.kill in the underlying pty)
+        try {
+          session.kill();
+        } catch {
+          // ignore
+        }
+        await Promise.race([
+          exited,
+          new Promise<void>((resolveForce) => setTimeout(resolveForce, forceTimeoutMs)),
+        ]);
+      }
+
+      removeSessionById(id, { kill: false });
     },
 
     listDirectories(): string[] {

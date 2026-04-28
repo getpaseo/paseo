@@ -50,7 +50,7 @@ export async function createWorktreeCore(
       resolveDefaultBranch: (root) => resolveDefaultBranch(root, deps),
     },
   );
-  let normalizedSlug: string;
+  let normalizedSlug = "";
 
   switch (intent.kind) {
     case "branch-off": {

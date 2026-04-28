@@ -5,6 +5,8 @@ import { autoUpdater, type UpdateInfo } from "electron-updater";
 // Types
 // ---------------------------------------------------------------------------
 
+export type AppReleaseChannel = "stable" | "beta";
+
 export type AppUpdateCheckResult = {
   hasUpdate: boolean;
   readyToInstall: boolean;

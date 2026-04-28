@@ -3,9 +3,6 @@ import {
   HubcodeConfigRawSchema,
   HubcodeConfigRevisionSchema,
   ProjectConfigRpcErrorSchema,
-  type HubcodeConfigRaw,
-  type HubcodeConfigRevision,
-  type ProjectConfigRpcError,
 } from "../utils/hubcode-config-schema.js";
 export {
   HubcodeConfigRawSchema,
@@ -1026,6 +1023,57 @@ export const StartWorkspaceScriptResponseMessageSchema = z.object({
     error: z.string().nullable(),
   }),
 });
+
+export const WorkspaceScriptLifecycleSchema = z.enum(["running", "stopped"]);
+export const WorkspaceScriptHealthSchema = z.enum(["healthy", "unhealthy"]);
+
+export const WorkspaceScriptPayloadSchema = z.object({
+  scriptName: z.string(),
+  type: z.enum(["script", "service"]).optional().default("service"),
+  hostname: z.string(),
+  port: z.number().int().positive().nullable(),
+  proxyUrl: z.string().nullable().optional().default(null),
+  lifecycle: WorkspaceScriptLifecycleSchema,
+  health: WorkspaceScriptHealthSchema.nullable(),
+  exitCode: z.number().nullable().optional().default(null),
+  terminalId: z.string().nullable().optional().default(null),
+});
+
+export const ScriptStatusUpdateMessageSchema = z.object({
+  type: z.literal("script_status_update"),
+  payload: z.object({
+    workspaceId: z.string(),
+    scripts: z.array(WorkspaceScriptPayloadSchema),
+  }),
+});
+
+export const GitHubPrAttachmentSchema = z.object({
+  type: z.literal("github_pr"),
+  mimeType: z.literal("application/github-pr"),
+  number: z.number().int().positive(),
+  title: z.string(),
+  url: z.string(),
+  body: z.string().nullable().optional(),
+  baseRefName: z.string().nullable().optional(),
+  headRefName: z.string().nullable().optional(),
+});
+
+export const GitHubIssueAttachmentSchema = z.object({
+  type: z.literal("github_issue"),
+  mimeType: z.literal("application/github-issue"),
+  number: z.number().int().positive(),
+  title: z.string(),
+  url: z.string(),
+  body: z.string().nullable().optional(),
+});
+
+export const AgentAttachmentSchema = z.discriminatedUnion("type", [
+  GitHubPrAttachmentSchema,
+  GitHubIssueAttachmentSchema,
+]);
+export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+export type WorkspaceScriptPayload = z.infer<typeof WorkspaceScriptPayloadSchema>;
+export type ScriptStatusUpdateMessage = z.infer<typeof ScriptStatusUpdateMessageSchema>;
 
 export const WorkspaceSetupStatusRequestSchema = z.object({
   type: z.literal("workspace_setup_status_request"),
@@ -4439,6 +4487,7 @@ export type SessionOutboundMessage =
   | BrowserResizeResponse
   | BrowserLaunchedEvent
   | BrowserStateUpdate
+  | ScriptStatusUpdateMessage
   | BrowserCommand
   | BrowserActiveList
   | BrowserClosed

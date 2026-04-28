@@ -1,5 +1,9 @@
 import type { AgentManager } from "./agent/agent-manager.js";
-import type { AgentProvider, AgentSessionConfig } from "./agent/agent-sdk-types.js";
+import type {
+  AgentPersistenceHandle,
+  AgentProvider,
+  AgentSessionConfig,
+} from "./agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 
 type LoggerLike = {
@@ -82,6 +86,35 @@ export function buildSessionConfig(
     systemPrompt: overrides.systemPrompt,
     mcpServers: overrides.mcpServers,
   };
+}
+
+export function isStoredAgentProviderAvailable(
+  record: StoredAgentRecord,
+  validProviders: Iterable<AgentProvider>,
+): boolean {
+  return new Set(validProviders).has(record.provider);
+}
+
+export function toAgentPersistenceHandle(
+  validProviders: Iterable<AgentProvider>,
+  handle: StoredAgentRecord["persistence"],
+): AgentPersistenceHandle | null {
+  if (!handle) {
+    return null;
+  }
+  const provider = handle.provider;
+  if (!new Set(validProviders).has(provider as AgentProvider)) {
+    return null;
+  }
+  if (!handle.sessionId) {
+    return null;
+  }
+  return {
+    provider: provider as AgentProvider,
+    sessionId: handle.sessionId,
+    ...(handle.nativeHandle !== undefined ? { nativeHandle: handle.nativeHandle } : {}),
+    ...(handle.metadata !== undefined ? { metadata: handle.metadata } : {}),
+  } satisfies AgentPersistenceHandle;
 }
 
 export function extractTimestamps(record: StoredAgentRecord): {

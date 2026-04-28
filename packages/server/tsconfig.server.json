@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2023", "DOM"],
     "baseUrl": "./src",
     "paths": {
       "@server/*": ["./*"]
@@ -23,7 +23,7 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/server/**/*", "src/services/**/*"],
+  "include": ["src/server/**/*", "src/services/**/*", "src/types/**/*"],
   "exclude": [
     "node_modules",
     "dist",
