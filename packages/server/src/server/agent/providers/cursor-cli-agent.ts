@@ -30,7 +30,7 @@ import type {
   ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
-  applyProviderEnv,
+  createProviderEnv,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
@@ -209,7 +209,9 @@ function mapStreamJsonUsage(raw: unknown): AgentUsage | undefined {
 function parseListModelsFromStdout(stdout: string): AgentModelDefinition[] {
   const text = stripAnsi(stdout);
   const lines = text.split("\n");
-  const start = lines.findIndex((l) => l.trim().toLowerCase().startsWith("available models"));
+  const start = lines.findIndex((line: string) =>
+    line.trim().toLowerCase().startsWith("available models"),
+  );
   const slice = start >= 0 ? lines.slice(start + 1) : lines;
   const models: AgentModelDefinition[] = [];
   for (const line of slice) {
@@ -429,8 +431,37 @@ export class CursorCliAgentClient implements AgentClient {
     if (!cwd || typeof cwd !== "string") {
       throw new Error("Cursor resume requires cwd in overrides or persistence metadata");
     }
+    const metadata =
+      handle.metadata && typeof handle.metadata === "object" ? handle.metadata : undefined;
+    const persistedConfig: Partial<AgentSessionConfig> = {
+      ...(typeof metadata?.systemPrompt === "string" ? { systemPrompt: metadata.systemPrompt } : {}),
+      ...(typeof metadata?.modeId === "string" ? { modeId: metadata.modeId } : {}),
+      ...(typeof metadata?.model === "string" ? { model: metadata.model } : {}),
+      ...(typeof metadata?.thinkingOptionId === "string"
+        ? { thinkingOptionId: metadata.thinkingOptionId }
+        : {}),
+      ...(metadata?.featureValues && typeof metadata.featureValues === "object"
+        ? { featureValues: metadata.featureValues as Record<string, unknown> }
+        : {}),
+      ...(typeof metadata?.title === "string" || metadata?.title === null
+        ? { title: metadata.title }
+        : {}),
+      ...(typeof metadata?.approvalPolicy === "string"
+        ? { approvalPolicy: metadata.approvalPolicy }
+        : {}),
+      ...(typeof metadata?.sandboxMode === "string" ? { sandboxMode: metadata.sandboxMode } : {}),
+      ...(typeof metadata?.networkAccess === "boolean"
+        ? { networkAccess: metadata.networkAccess }
+        : {}),
+      ...(typeof metadata?.webSearch === "boolean" ? { webSearch: metadata.webSearch } : {}),
+      ...(metadata?.extra && typeof metadata.extra === "object" ? { extra: metadata.extra } : {}),
+      ...(metadata?.mcpServers && typeof metadata.mcpServers === "object"
+        ? { mcpServers: metadata.mcpServers as AgentSessionConfig["mcpServers"] }
+        : {}),
+      ...(typeof metadata?.internal === "boolean" ? { internal: metadata.internal } : {}),
+    };
     const merged: AgentSessionConfig = {
-      ...(handle.metadata as AgentSessionConfig),
+      ...persistedConfig,
       ...overrides,
       provider: CURSOR_PROVIDER,
       cwd,
@@ -450,10 +481,10 @@ export class CursorCliAgentClient implements AgentClient {
       cwd,
       encoding: "utf8",
       maxBuffer: 20_000_000,
-      env: applyProviderEnv(
-        process.env as Record<string, string | undefined>,
-        this.runtimeSettings,
-      ),
+      env: createProviderEnv({
+        baseEnv: process.env as Record<string, string | undefined>,
+        runtimeSettings: this.runtimeSettings,
+      }),
     });
     return parseListModelsFromStdout(stdout);
   }
@@ -769,13 +800,11 @@ export class CursorCliAgentSession implements AgentSession {
 
     const child = spawnProcess(command, argv, {
       cwd: this.config.cwd,
-      env: {
-        ...applyProviderEnv(
-          process.env as Record<string, string | undefined>,
-          this.runtimeSettings,
-        ),
-        ...(this.launchEnv ?? {}),
-      },
+      env: createProviderEnv({
+        baseEnv: process.env as Record<string, string | undefined>,
+        runtimeSettings: this.runtimeSettings,
+        overlays: [this.launchEnv],
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
 
