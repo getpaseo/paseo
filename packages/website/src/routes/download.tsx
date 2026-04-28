@@ -20,7 +20,7 @@ export const Route = createFileRoute("/download")({
   head: () => ({
     meta: pageMeta(
       "Download — Hubcode",
-      "Download the Hubcode desktop app for macOS, run the Web App in your browser, or install the CLI on any Unix-like host. Windows, Linux, iOS and Android desktop builds are on the way.",
+      "Download the Hubcode desktop app for macOS or Linux, run the Web App in your browser, or install the CLI on any Unix-like host. Windows, iOS and Android builds are on the way.",
     ),
   }),
   component: Download,
@@ -77,6 +77,17 @@ function Download() {
                 }
               />
               <Row
+                icon={<LinuxIcon className="h-5 w-5" />}
+                name="Linux"
+                note="x86_64 AppImage and Debian package."
+                actions={
+                  <>
+                    <PrimaryPill href={urls.linuxAppImage} label="AppImage" />
+                    <SecondaryPill href={urls.linuxDeb} label="DEB" />
+                  </>
+                }
+              />
+              <Row
                 icon={<GlobeIcon className="h-5 w-5" />}
                 name="Web App"
                 note="Runs in any modern browser. Connects to your local daemon over LAN or the optional E2E relay."
@@ -119,13 +130,6 @@ function Download() {
                 icon={<WindowsIcon className="h-5 w-5 text-white/50" />}
                 name="Windows"
                 note="Use the CLI for now."
-                actions={<ComingSoonPill />}
-                dim
-              />
-              <Row
-                icon={<LinuxIcon className="h-5 w-5 text-white/50" />}
-                name="Linux"
-                note="AppImage / deb / rpm builds coming. Use the CLI for now."
                 actions={<ComingSoonPill />}
                 dim
               />

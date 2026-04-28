@@ -60,7 +60,6 @@ export function getDownloadOptions(version: string): DownloadOption[] {
       label: "Linux",
       href: urls.linuxAppImage,
       icon: LinuxIcon,
-      comingSoon: true,
     },
   ];
 }
