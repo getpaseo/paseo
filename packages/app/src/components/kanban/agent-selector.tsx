@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from "react";
-import { View, Text, Pressable } from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { View, Text, Pressable, Alert } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronDown, MessageSquare, Terminal, Wrench } from "lucide-react-native";
 import { getCliProvider } from "@server/shared/cli-provider-registry";
@@ -7,6 +7,9 @@ import { CliAgentIcon } from "@/components/icons/cli-agent-icon";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { getProviderIcon } from "@/components/provider-icons";
 import type { CliAgentStatus } from "@/hooks/use-cli-agents";
+import { useHubcodeModels } from "@/hooks/use-hubcode-models";
+import { authServerBaseUrl } from "@/desktop/auth/web-auth-api";
+import { openExternalUrl } from "@/utils/open-external-url";
 
 export type AgentMode = "native" | "cli";
 
@@ -50,6 +53,10 @@ interface AgentSelectorProps {
   disabled?: boolean;
   cliAgents?: CliAgentStatus[];
   availableNativeProviders?: NativeProviderId[];
+  /** When true, renders a compact pill trigger instead of the large card. */
+  compact?: boolean;
+  /** When true (with compact), renders icon + chevron only — no label. */
+  iconOnly?: boolean;
 }
 
 function buildOptionId(mode: AgentMode, id: string): string {
@@ -70,10 +77,36 @@ export function AgentSelector({
   disabled = false,
   cliAgents = [],
   availableNativeProviders,
+  compact = false,
+  iconOnly = false,
 }: AgentSelectorProps) {
   const { theme } = useUnistyles();
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
+  const { bundle: hubcodeBundle, requiresSignIn: hubcodeRequiresSignIn } = useHubcodeModels();
+
+  const hubcodeStatus = useMemo<
+    "available" | "requires-signin" | "requires-upgrade" | "hidden"
+  >(() => {
+    if (hubcodeRequiresSignIn) return "requires-signin";
+    if (!hubcodeBundle) return "hidden";
+    if (hubcodeBundle.requiresUpgrade) return "requires-upgrade";
+    return "available";
+  }, [hubcodeBundle, hubcodeRequiresSignIn]);
+
+  const handleHubcodeUnavailable = useCallback(() => {
+    if (hubcodeStatus === "requires-signin") {
+      void openExternalUrl(`${authServerBaseUrl()}/sign-in/web`).catch(() => {});
+      return;
+    }
+    if (hubcodeStatus === "requires-upgrade") {
+      Alert.alert(
+        "Upgrade required",
+        "The Hubcode agent is available on Pro and Enterprise plans. Upgrade your plan to unlock it.",
+        [{ text: "OK" }],
+      );
+    }
+  }, [hubcodeStatus]);
 
   const options = useMemo<AgentOption[]>(() => {
     const nativeOptions: AgentOption[] = (
@@ -92,6 +125,32 @@ export function AgentSelector({
       sectionLabel: getSectionLabel("native"),
       installed: true,
     }));
+
+    if (hubcodeStatus !== "hidden") {
+      const hubcodeOption: AgentOption = {
+        id: buildOptionId("native", "hubcode"),
+        selectionId: buildOptionId("native", "hubcode"),
+        agentId: "hubcode",
+        mode: "native",
+        label: "Hubcode",
+        description:
+          hubcodeStatus === "available"
+            ? "Curated multi-model routing"
+            : hubcodeStatus === "requires-signin"
+              ? "Sign in to unlock"
+              : "Upgrade to Pro to unlock",
+        subtitle:
+          hubcodeStatus === "available"
+            ? "Built-in — your plan's combos"
+            : hubcodeStatus === "requires-signin"
+              ? "Sign in to Hubcode"
+              : "Available on Pro & Enterprise",
+        modeLabel: getModeLabel("native"),
+        sectionLabel: getSectionLabel("native"),
+        installed: hubcodeStatus === "available",
+      };
+      nativeOptions.unshift(hubcodeOption);
+    }
 
     const cliOptions: AgentOption[] = cliAgents.map((agent) => ({
       id: buildOptionId("cli", agent.id),
@@ -125,7 +184,7 @@ export function AgentSelector({
         showSectionHeader: index === 0,
       })),
     ];
-  }, [availableNativeProviders, cliAgents]);
+  }, [availableNativeProviders, cliAgents, hubcodeStatus]);
 
   const selectedOptionId = buildOptionId(value.mode, value.id);
   const selectedOption =
@@ -149,58 +208,108 @@ export function AgentSelector({
 
   return (
     <View ref={anchorRef} collapsable={false}>
-      <Pressable
-        onPress={() => {
-          if (!disabled) {
-            setIsOpen(true);
-          }
-        }}
-        style={({ pressed, hovered }) => [
-          styles.trigger,
-          hovered && styles.triggerHovered,
-          pressed && styles.triggerPressed,
-          disabled && styles.triggerDisabled,
-        ]}
-      >
-        <View style={styles.triggerIconWrap}>
+      {compact ? (
+        <Pressable
+          onPress={() => {
+            if (!disabled) {
+              setIsOpen(true);
+            }
+          }}
+          style={({ pressed, hovered }) => [
+            styles.compactTrigger,
+            hovered && styles.compactTriggerHovered,
+            pressed && styles.compactTriggerPressed,
+            disabled && styles.triggerDisabled,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={`Select agent (${selectedOption.label})`}
+        >
           {selectedOption.mode === "native" && SelectedIcon ? (
-            <SelectedIcon size={16} color={theme.colors.foreground} />
+            <SelectedIcon size={14} color={theme.colors.foregroundMuted} />
           ) : (
-            <CliAgentIcon icon={selectedOption.cliIcon} size={16} color={theme.colors.foreground} />
+            <CliAgentIcon
+              icon={selectedOption.cliIcon}
+              size={14}
+              color={theme.colors.foregroundMuted}
+            />
           )}
-        </View>
-        <View style={styles.triggerTextWrap}>
-          <View style={styles.triggerTopRow}>
-            <Text style={styles.triggerLabel} numberOfLines={1}>
+          {!iconOnly ? (
+            <Text style={styles.compactTriggerLabel} numberOfLines={1}>
               {selectedOption.label}
             </Text>
-            <View
-              style={[
-                styles.modeBadge,
-                selectedOption.mode === "cli" ? styles.modeBadgeCli : styles.modeBadgeNative,
-              ]}
-            >
-              {selectedOption.mode === "cli" ? (
-                <Terminal size={11} color={theme.colors.foregroundMuted} />
-              ) : (
-                <MessageSquare size={11} color={theme.colors.foregroundMuted} />
-              )}
-              <Text style={styles.modeBadgeText}>{selectedOption.modeLabel}</Text>
-            </View>
+          ) : null}
+          {!iconOnly && selectedOption.mode === "cli" ? (
+            <Terminal size={11} color={theme.colors.foregroundMuted} />
+          ) : null}
+          <ChevronDown size={14} color={theme.colors.foregroundMuted} />
+        </Pressable>
+      ) : (
+        <Pressable
+          onPress={() => {
+            if (!disabled) {
+              setIsOpen(true);
+            }
+          }}
+          style={({ pressed, hovered }) => [
+            styles.trigger,
+            hovered && styles.triggerHovered,
+            pressed && styles.triggerPressed,
+            disabled && styles.triggerDisabled,
+          ]}
+        >
+          <View style={styles.triggerIconWrap}>
+            {selectedOption.mode === "native" && SelectedIcon ? (
+              <SelectedIcon size={16} color={theme.colors.foreground} />
+            ) : (
+              <CliAgentIcon
+                icon={selectedOption.cliIcon}
+                size={16}
+                color={theme.colors.foreground}
+              />
+            )}
           </View>
-          <Text style={styles.triggerDescription} numberOfLines={1}>
-            {selectedOption.description ?? selectedOption.sectionLabel}
-          </Text>
-        </View>
-        <ChevronDown size={16} color={theme.colors.foregroundMuted} />
-      </Pressable>
+          <View style={styles.triggerTextWrap}>
+            <View style={styles.triggerTopRow}>
+              <Text style={styles.triggerLabel} numberOfLines={1}>
+                {selectedOption.label}
+              </Text>
+              <View
+                style={[
+                  styles.modeBadge,
+                  selectedOption.mode === "cli" ? styles.modeBadgeCli : styles.modeBadgeNative,
+                ]}
+              >
+                {selectedOption.mode === "cli" ? (
+                  <Terminal size={11} color={theme.colors.foregroundMuted} />
+                ) : (
+                  <MessageSquare size={11} color={theme.colors.foregroundMuted} />
+                )}
+                <Text style={styles.modeBadgeText}>{selectedOption.modeLabel}</Text>
+              </View>
+            </View>
+            <Text style={styles.triggerDescription} numberOfLines={1}>
+              {selectedOption.description ?? selectedOption.sectionLabel}
+            </Text>
+          </View>
+          <ChevronDown size={16} color={theme.colors.foregroundMuted} />
+        </Pressable>
+      )}
 
       <Combobox
         options={options}
         value={selectedOptionId}
         onSelect={(optionId) => {
           const nextOption = options.find((option) => option.selectionId === optionId);
-          if (!nextOption || !nextOption.installed) {
+          if (!nextOption) return;
+          if (
+            nextOption.mode === "native" &&
+            nextOption.agentId === "hubcode" &&
+            hubcodeStatus !== "available"
+          ) {
+            handleHubcodeUnavailable();
+            return;
+          }
+          if (!nextOption.installed) {
             return;
           }
           onChange({
@@ -319,6 +428,25 @@ export const AGENT_CONFIG: Record<string, { name: string; label: string }> = Obj
 );
 
 const styles = StyleSheet.create((theme) => ({
+  compactTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1] + 2,
+    borderRadius: theme.borderRadius.full,
+  },
+  compactTriggerHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  compactTriggerPressed: {
+    backgroundColor: theme.colors.surface0,
+  },
+  compactTriggerLabel: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foregroundMuted,
+  },
   trigger: {
     minHeight: 64,
     flexDirection: "row",

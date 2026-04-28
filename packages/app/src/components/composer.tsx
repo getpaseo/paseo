@@ -78,6 +78,10 @@ import { AttachmentPill } from "@/components/attachment-pill";
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
+import { useIntegrationStatus } from "@/hooks/use-integration-status";
+import { INTEGRATION_REGISTRY } from "@/types/kanban";
+import type { IntegrationId } from "@/types/kanban";
+import { IntegrationIcon } from "@/components/kanban/integration-context";
 
 interface QueuedMessage {
   id: string;
@@ -780,6 +784,13 @@ interface ComposerProps {
   statusControls?: DraftAgentStatusBarProps;
   /** Extra styles merged onto the message input wrapper (e.g. elevated background). */
   inputWrapperStyle?: import("react-native").ViewStyle;
+  /** Fires when the user picks an integration item (Linear/Jira/etc.) from the
+   * "+" → "Add issue or PR" menu. The parent should track this so the issue
+   * context can be persisted with the workspace. */
+  onSelectIntegrationItem?: (input: {
+    integrationId: IntegrationId;
+    item: Record<string, unknown>;
+  }) => void;
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
@@ -970,6 +981,7 @@ export function Composer({
   onAttentionPromptSend,
   statusControls,
   inputWrapperStyle,
+  onSelectIntegrationItem,
 }: ComposerProps) {
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
@@ -1014,6 +1026,12 @@ export function Composer({
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
+  const [activeIntegrationPicker, setActiveIntegrationPicker] = useState<IntegrationId | null>(
+    null,
+  );
+  const [integrationSearchQuery, setIntegrationSearchQuery] = useState("");
+  const [integrationItems, setIntegrationItems] = useState<Array<Record<string, unknown>>>([]);
+  const [isIntegrationLoading, setIsIntegrationLoading] = useState(false);
   const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
   const attachButtonRef = useRef<View | null>(null);
   const messageInputRef = useRef<MessageInputRef>(null);
@@ -1476,8 +1494,36 @@ export function Composer({
     [githubSearchItems, githubSearchQueryTrimmed],
   );
 
-  const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(
-    () => [
+  const integrationStatus = useIntegrationStatus(serverId);
+  const connectedNonGithubIntegrations = useMemo(
+    () =>
+      INTEGRATION_REGISTRY.filter(
+        (entry) => entry.id !== "github" && integrationStatus.isConnected(entry.id),
+      ),
+    [integrationStatus],
+  );
+
+  const handleOpenIntegrationPicker = useCallback(
+    async (integrationId: IntegrationId) => {
+      if (!client) return;
+      setActiveIntegrationPicker(integrationId);
+      setIntegrationSearchQuery("");
+      setIntegrationItems([]);
+      setIsIntegrationLoading(true);
+      try {
+        const result = await client.fetchIntegrationItems({ integrationId, cwd });
+        setIntegrationItems(result.items ?? []);
+      } catch {
+        setIntegrationItems([]);
+      } finally {
+        setIsIntegrationLoading(false);
+      }
+    },
+    [client, cwd],
+  );
+
+  const attachmentMenuItems = useMemo<AttachmentMenuItem[]>(() => {
+    const items: AttachmentMenuItem[] = [
       {
         id: "image",
         label: "Add image",
@@ -1494,9 +1540,19 @@ export function Composer({
           setIsGithubPickerOpen(true);
         },
       },
-    ],
-    [handlePickImage],
-  );
+    ];
+    for (const integration of connectedNonGithubIntegrations) {
+      items.push({
+        id: `integration-${integration.id}`,
+        label: `Add ${integration.name} issue`,
+        icon: <IntegrationIcon integration={integration.id} size={ICON_SIZE.md} />,
+        onSelect: () => {
+          void handleOpenIntegrationPicker(integration.id);
+        },
+      });
+    }
+    return items;
+  }, [handlePickImage, connectedNonGithubIntegrations, handleOpenIntegrationPicker]);
 
   const handleToggleGithubItem = useCallback(
     (item: GitHubSearchItem) => {
@@ -1543,6 +1599,92 @@ export function Composer({
     },
     [setGithubSearchQuery],
   );
+
+  // Debounced search for the active integration picker.
+  useEffect(() => {
+    if (!activeIntegrationPicker || !client) return;
+    const trimmed = integrationSearchQuery.trim();
+    if (!trimmed) return;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const result = await client.searchIntegration({
+            integrationId: activeIntegrationPicker,
+            query: trimmed,
+            cwd,
+            limit: 20,
+          });
+          setIntegrationItems(result.items ?? []);
+        } catch {
+          // ignore — keep current items
+        }
+      })();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [activeIntegrationPicker, integrationSearchQuery, client, cwd]);
+
+  const integrationOptions: ComboboxOption[] = useMemo(() => {
+    return integrationItems.map((item, index) => {
+      const id = String(
+        item.identifier ?? item.key ?? item.number ?? item.id ?? `integration-item-${index}`,
+      );
+      const title = String(item.title ?? item.previewText ?? item.name ?? "Untitled");
+      const eyebrow = String(item.identifier ?? item.key ?? item.number ?? "");
+      return {
+        id,
+        label: eyebrow ? `${eyebrow} — ${title}` : title,
+        description: integrationSearchQuery.trim() || undefined,
+      };
+    });
+  }, [integrationItems, integrationSearchQuery]);
+
+  const handleSelectIntegrationItem = useCallback(
+    (optionId: string) => {
+      const item = integrationItems.find((candidate, index) => {
+        const id = String(
+          candidate.identifier ??
+            candidate.key ??
+            candidate.number ??
+            candidate.id ??
+            `integration-item-${index}`,
+        );
+        return id === optionId;
+      });
+      if (!item) return;
+      const identifier = String(item.identifier ?? item.key ?? item.number ?? item.id ?? "");
+      const title = String(item.title ?? item.previewText ?? item.name ?? "");
+      const url = String(item.url ?? item.webUrl ?? item.html_url ?? "");
+      const reference = url
+        ? `[${identifier}${title ? `: ${title}` : ""}](${url})`
+        : `${identifier}${title ? `: ${title}` : ""}`;
+      const prefix = userInput.length > 0 && !userInput.endsWith(" ") ? " " : "";
+      setUserInput(`${userInput}${prefix}${reference} `);
+      // Notify the parent so it can track the structured selection (used to
+      // populate issueContext/issueMetadata when the workspace is created).
+      if (activeIntegrationPicker) {
+        onSelectIntegrationItem?.({ integrationId: activeIntegrationPicker, item });
+      }
+      setActiveIntegrationPicker(null);
+      setIntegrationSearchQuery("");
+      setIntegrationItems([]);
+    },
+    [integrationItems, setUserInput, userInput, activeIntegrationPicker, onSelectIntegrationItem],
+  );
+
+  const handleIntegrationPickerOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      setActiveIntegrationPicker(null);
+      setIntegrationSearchQuery("");
+      setIntegrationItems([]);
+      setIsIntegrationLoading(false);
+    }
+  }, []);
+
+  const activeIntegrationLabel = useMemo(() => {
+    if (!activeIntegrationPicker) return "";
+    const entry = INTEGRATION_REGISTRY.find((i) => i.id === activeIntegrationPicker);
+    return entry?.name ?? activeIntegrationPicker;
+  }, [activeIntegrationPicker]);
 
   const renderGithubPickerOption = useCallback(
     ({ option, active }: { option: ComboboxOption; selected: boolean; active: boolean }) => {
@@ -1674,6 +1816,20 @@ export function Composer({
               anchorRef={attachButtonRef}
               emptyText={githubEmptyText}
               renderOption={renderGithubPickerOption}
+            />
+            <Combobox
+              options={integrationOptions}
+              value=""
+              onSelect={handleSelectIntegrationItem}
+              searchable
+              searchPlaceholder={`Search ${activeIntegrationLabel.toLowerCase()} issues...`}
+              title={`Attach ${activeIntegrationLabel} issue`}
+              open={activeIntegrationPicker !== null}
+              onOpenChange={handleIntegrationPickerOpenChange}
+              onSearchQueryChange={setIntegrationSearchQuery}
+              desktopPlacement="top-start"
+              anchorRef={attachButtonRef}
+              emptyText={isIntegrationLoading ? "Loading..." : "No issues found."}
             />
           </View>
         </View>

@@ -1142,12 +1142,16 @@ export default function SettingsScreen() {
   const { theme } = useUnistyles();
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const params = useLocalSearchParams<{ editHost?: string; serverId?: string }>();
-  const routeServerId = typeof params.serverId === "string" ? params.serverId.trim() : "";
+  const paramServerId = typeof params.serverId === "string" ? params.serverId.trim() : "";
   const { settings, isLoading: settingsLoading, updateSettings } = useAppSettings();
   const { daemons, renameHost, removeHost, removeConnection } = {
     daemons: useHosts(),
     ...useHostMutations(),
   };
+  // Fall back to the first connected host so global settings (Task Integrations,
+  // Providers, etc.) work without requiring a host in the URL.
+  const routeServerId =
+    paramServerId.length > 0 ? paramServerId : (daemons[0]?.serverId ?? "");
   const [isAddHostMethodVisible, setIsAddHostMethodVisible] = useState(false);
   const [isDirectHostVisible, setIsDirectHostVisible] = useState(false);
   const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);

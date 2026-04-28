@@ -355,6 +355,24 @@ export function buildHostOpenProjectRoute(serverId: string) {
   return `${base}/open-project` as const;
 }
 
+export function parseHostProjectKanbanRouteFromPathname(
+  pathname: string,
+): { serverId: string; projectId: string } | null {
+  const pathOnly = stripSearchAndHash(pathname);
+  const match = pathOnly.match(/^\/h\/([^/]+)\/project\/([^/]+)\/kanban\/?$/);
+  if (!match) {
+    return null;
+  }
+
+  const serverId = trimNonEmpty(decodeSegment(match[1]));
+  const projectId = trimNonEmpty(decodeSegment(match[2]));
+  if (!serverId || !projectId) {
+    return null;
+  }
+
+  return { serverId, projectId };
+}
+
 export function buildHostProjectKanbanRoute(serverId: string, projectId: string) {
   const base = buildHostRootRoute(serverId);
   const normalizedProjectId = trimNonEmpty(projectId);

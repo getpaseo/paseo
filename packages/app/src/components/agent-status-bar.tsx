@@ -15,6 +15,7 @@ import {
 } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
+import { AgentSelector } from "@/components/kanban/agent-selector";
 import { HubcodeSignInPill } from "@/components/billing/hubcode-signin-pill";
 import { useHubcodeModels } from "@/hooks/use-hubcode-models";
 import { useSessionStore } from "@/stores/session-store";
@@ -113,6 +114,13 @@ export interface DraftAgentStatusBarProps {
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
   disabled?: boolean;
+  /** When provided, an AgentSelector chip is rendered at the start of the bar
+   * so the user can switch between GUI providers and CLI agents (Codex, etc.). */
+  cliAgents?: import("@/hooks/use-cli-agents").CliAgentStatus[];
+  agentSelection?: import("./kanban/agent-selector").AgentSelection;
+  onAgentSelectionChange?: (
+    selection: import("./kanban/agent-selector").AgentSelection,
+  ) => void;
 }
 
 interface AgentStatusBarProps {
@@ -1144,6 +1152,9 @@ export function DraftAgentStatusBar({
   onDropdownClose,
   onModelSelectorOpen,
   disabled = false,
+  cliAgents,
+  agentSelection,
+  onAgentSelectionChange,
 }: DraftAgentStatusBarProps) {
   const { preferences, updatePreferences } = useFormPreferences();
 
@@ -1172,42 +1183,63 @@ export function DraftAgentStatusBar({
   const effectiveSelectedThinkingOption =
     selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
 
+  const showAgentSelector = Boolean(
+    cliAgents && cliAgents.length > 0 && agentSelection && onAgentSelectionChange,
+  );
+  const isCliAgentSelected = agentSelection?.mode === "cli";
+
   if (platformIsWeb) {
     return (
       <View style={styles.container}>
-        <CombinedModelSelector
-          providerDefinitions={providerDefinitions}
-          allProviderModels={allProviderModels}
-          selectedProvider={selectedProvider}
-          selectedModel={selectedModel}
-          onSelect={onSelectProviderAndModel}
-          favoriteKeys={favoriteKeys}
-          onToggleFavorite={(provider, modelId) => {
-            void updatePreferences((current) =>
-              toggleFavoriteModel({ preferences: current, provider, modelId }),
-            ).catch((error) => {
-              console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
-            });
-          }}
-          isLoading={isAllModelsLoading}
-          disabled={disabled}
-          onOpen={onModelSelectorOpen}
-          onClose={onDropdownClose}
-        />
-        <ControlledStatusBar
-          provider={selectedProvider}
-          providerDefinitions={providerDefinitions}
-          modeOptions={mappedModeOptions}
-          selectedModeId={effectiveSelectedMode}
-          onSelectMode={onSelectMode}
-          thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
-          selectedThinkingOptionId={effectiveSelectedThinkingOption}
-          onSelectThinkingOption={onSelectThinkingOption}
-          features={features}
-          onSetFeature={onSetFeature}
-          onDropdownClose={onDropdownClose}
-          disabled={disabled}
-        />
+        {showAgentSelector ? (
+          <AgentSelector
+            value={agentSelection!}
+            onChange={onAgentSelectionChange!}
+            cliAgents={cliAgents}
+            disabled={disabled}
+            compact
+          />
+        ) : (
+          <CombinedModelSelector
+            providerDefinitions={providerDefinitions}
+            allProviderModels={allProviderModels}
+            selectedProvider={selectedProvider}
+            selectedModel={selectedModel}
+            onSelect={onSelectProviderAndModel}
+            favoriteKeys={favoriteKeys}
+            onToggleFavorite={(provider, modelId) => {
+              void updatePreferences((current) =>
+                toggleFavoriteModel({ preferences: current, provider, modelId }),
+              ).catch((error) => {
+                console.warn("[DraftAgentStatusBar] toggle favorite model failed", error);
+              });
+            }}
+            isLoading={isAllModelsLoading}
+            disabled={disabled}
+            onOpen={onModelSelectorOpen}
+            onClose={onDropdownClose}
+          />
+        )}
+        {!isCliAgentSelected ? (
+          <ControlledStatusBar
+            provider={selectedProvider}
+            providerDefinitions={providerDefinitions}
+            modeOptions={mappedModeOptions}
+            selectedModeId={effectiveSelectedMode}
+            onSelectMode={onSelectMode}
+            thinkingOptions={
+              !showAgentSelector && mappedThinkingOptions.length > 0
+                ? mappedThinkingOptions
+                : undefined
+            }
+            selectedThinkingOptionId={effectiveSelectedThinkingOption}
+            onSelectThinkingOption={onSelectThinkingOption}
+            features={!showAgentSelector ? features : undefined}
+            onSetFeature={onSetFeature}
+            onDropdownClose={onDropdownClose}
+            disabled={disabled}
+          />
+        ) : null}
       </View>
     );
   }

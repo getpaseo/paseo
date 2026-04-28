@@ -3098,6 +3098,10 @@ export const WorkspaceDescriptorPayloadSchema = z.object({
   projectId: z.string(),
   projectDisplayName: z.string(),
   projectRootPath: z.string(),
+  /** Absolute path to the workspace's working directory (worktree or
+   * checkout). Optional for backward compatibility with daemons that don't
+   * yet emit it, but the app relies on it for execution authority. */
+  workspaceDirectory: z.string().optional(),
   projectKind: z.enum(["git", "non_git"]),
   workspaceKind: z.enum(["local_checkout", "worktree", "directory"]),
   name: z.string(),

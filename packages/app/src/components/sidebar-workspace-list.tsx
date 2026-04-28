@@ -25,7 +25,7 @@ import React, {
 } from "react";
 import { router, usePathname, type Href } from "expo-router";
 import { navigateToWorkspace } from "@/hooks/use-workspace-navigation";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { type GestureType } from "react-native-gesture-handler";
 import * as Clipboard from "expo-clipboard";
@@ -35,6 +35,7 @@ import {
   CircleAlert,
   ChevronDown,
   ChevronRight,
+  Columns3,
   Copy,
   ExternalLink,
   FolderPlus,
@@ -56,7 +57,9 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { projectIconQueryKey } from "@/hooks/use-project-icon-query";
 import {
   buildHostNewWorkspaceRoute,
+  buildHostProjectKanbanRoute,
   buildProjectSettingsRoute,
+  parseHostProjectKanbanRouteFromPathname,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
 import {
@@ -81,6 +84,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SyncedLoader } from "@/components/synced-loader";
 import { useToast } from "@/contexts/toast-context";
+import { useKanbanStore } from "@/stores/kanban-store";
 import { useCheckoutGitActionsStore } from "@/stores/checkout-git-actions-store";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { decideLongPressMove } from "@/utils/sidebar-gesture-arbitration";
@@ -1305,6 +1309,48 @@ function ProjectHeaderRow({
   );
 }
 
+interface ProjectKanbanRowProps {
+  selected: boolean;
+  count: number;
+  onPress: () => void;
+}
+
+function ProjectKanbanRow({ selected, count, onPress }: ProjectKanbanRowProps) {
+  const { theme } = useUnistyles();
+  const [isHovered, setIsHovered] = useState(false);
+
+  return (
+    <View onPointerEnter={() => setIsHovered(true)} onPointerLeave={() => setIsHovered(false)}>
+      <Pressable
+        accessibilityRole="link"
+        style={({ pressed }) => [
+          styles.projectKanbanRow,
+          selected && styles.sidebarRowSelected,
+          isHovered && styles.workspaceRowHovered,
+          pressed && styles.workspaceRowPressed,
+        ]}
+        onPress={onPress}
+      >
+        <View style={styles.workspaceRowMain}>
+          <View style={styles.workspaceRowLeft}>
+            <View style={styles.projectKanbanIconSlot}>
+              <Columns3 size={14} color={theme.colors.foregroundMuted} />
+            </View>
+            <Text style={styles.workspaceBranchText} numberOfLines={1}>
+              Tasks
+            </Text>
+          </View>
+          {count > 0 ? (
+            <View style={styles.projectKanbanCountBadge}>
+              <Text style={styles.projectKanbanCountText}>{count}</Text>
+            </View>
+          ) : null}
+        </View>
+      </Pressable>
+    </View>
+  );
+}
+
 function WorkspaceRowInner({
   workspace,
   selected,
@@ -2054,6 +2100,29 @@ function ProjectBlock({
     enabled: selectionEnabled,
   });
 
+  // Kanban task count = workspaces in this project that show on the kanban
+  // (worktrees or anything explicitly tagged with kanbanStatus). Reads from
+  // session store so it stays in sync with the kanban screen instead of the
+  // legacy persisted kanban-store.
+  const kanbanTasksCount = useSessionStore((state) => {
+    if (!serverId) return 0;
+    const workspaces = state.sessions[serverId]?.workspaces;
+    if (!workspaces) return 0;
+    let count = 0;
+    for (const workspace of workspaces.values()) {
+      if (workspace.projectId !== project.projectKey) continue;
+      if (workspace.kanbanStatus || workspace.workspaceKind === "worktree") {
+        count++;
+      }
+    }
+    return count;
+  });
+  const isProjectKanbanActive = useMemo(() => {
+    if (!currentPathname || !serverId) return false;
+    const parsed = parseHostProjectKanbanRouteFromPathname(currentPathname);
+    return parsed?.serverId === serverId && parsed?.projectId === project.projectKey;
+  }, [currentPathname, serverId, project.projectKey]);
+
   const renderWorkspaceRow = useCallback(
     (
       item: SidebarWorkspaceEntry,
@@ -2225,18 +2294,29 @@ function ProjectBlock({
           />
 
           {!collapsed ? (
-            <DraggableList
-              testID={`sidebar-workspace-list-${project.projectKey}`}
-              data={project.workspaces}
-              keyExtractor={workspaceKeyExtractor}
-              renderItem={renderWorkspace}
-              onDragEnd={handleWorkspaceDragEnd}
-              scrollEnabled={false}
-              useDragHandle
-              nestable={useNestable}
-              simultaneousGestureRef={parentGestureRef}
-              containerStyle={styles.workspaceListContainer}
-            />
+            <>
+              <ProjectKanbanRow
+                selected={isProjectKanbanActive}
+                count={kanbanTasksCount}
+                onPress={() => {
+                  if (!serverId) return;
+                  onWorkspacePress?.();
+                  router.navigate(buildHostProjectKanbanRoute(serverId, project.projectKey));
+                }}
+              />
+              <DraggableList
+                testID={`sidebar-workspace-list-${project.projectKey}`}
+                data={project.workspaces}
+                keyExtractor={workspaceKeyExtractor}
+                renderItem={renderWorkspace}
+                onDragEnd={handleWorkspaceDragEnd}
+                scrollEnabled={false}
+                useDragHandle
+                nestable={useNestable}
+                simultaneousGestureRef={parentGestureRef}
+                containerStyle={styles.workspaceListContainer}
+              />
+            </>
           ) : null}
         </>
       )}
@@ -2585,6 +2665,38 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[1],
   },
   workspaceListContainer: {},
+  projectKanbanRow: {
+    minHeight: 32,
+    paddingVertical: 6,
+    paddingLeft: theme.spacing[3] + theme.spacing[3],
+    paddingRight: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    flexDirection: "column" as const,
+    alignItems: "stretch" as const,
+    justifyContent: "center" as const,
+    gap: theme.spacing[1],
+  },
+  projectKanbanIconSlot: {
+    width: WORKSPACE_STATUS_DOT_WIDTH,
+    height: 16,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    flexShrink: 0,
+  },
+  projectKanbanCountBadge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  },
+  projectKanbanCountText: {
+    fontSize: 11,
+    color: theme.colors.foregroundMuted,
+    fontWeight: theme.fontWeight.medium,
+  },
   emptyContainer: {
     marginHorizontal: theme.spacing[2],
     marginTop: theme.spacing[4],

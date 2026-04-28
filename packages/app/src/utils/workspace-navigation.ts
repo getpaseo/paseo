@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { generateDraftId } from "@/stores/draft-keys";
 import {
@@ -39,4 +40,19 @@ export function prepareWorkspaceTab(input: PrepareWorkspaceTabInput) {
   }
 
   return buildHostWorkspaceRoute(input.serverId, input.workspaceId);
+}
+
+interface NavigateToPreparedWorkspaceTabInput extends PrepareWorkspaceTabInput {
+  /** "push" pushes a new history entry; "replace" overwrites current. Default "push". */
+  navigationMethod?: "push" | "replace";
+}
+
+export function navigateToPreparedWorkspaceTab(input: NavigateToPreparedWorkspaceTabInput): string {
+  const route = prepareWorkspaceTab(input);
+  if (input.navigationMethod === "replace") {
+    router.replace(route as never);
+  } else {
+    router.push(route as never);
+  }
+  return route;
 }

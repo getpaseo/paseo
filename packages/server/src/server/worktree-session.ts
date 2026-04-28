@@ -627,6 +627,19 @@ export async function handleCreateHubcodeWorktreeRequest(
       },
       "create_hubcode_worktree: issue data from request",
     );
+    // Create the worktree on disk BEFORE registering the workspace, since
+    // registerPendingWorktreeWorkspace auto-enables indexing — and indexing
+    // (crg build_or_update_graph) immediately reads from `worktreePath`. If
+    // the directory hasn't been created yet, the tool fails with
+    // "repo_root is not an existing directory".
+    await createAgentWorktree({
+      cwd: repoRoot,
+      branchName: normalizedSlug,
+      baseBranch,
+      worktreeSlug: normalizedSlug,
+      hubcodeHome: dependencies.hubcodeHome,
+    });
+
     const workspace = await dependencies.registerPendingWorktreeWorkspace({
       repoRoot,
       worktreePath,
@@ -640,14 +653,6 @@ export async function handleCreateHubcodeWorktreeRequest(
       agentProvider: request.agentProvider,
       agentMode: request.agentMode,
       orgId: request.orgId,
-    });
-
-    await createAgentWorktree({
-      cwd: repoRoot,
-      branchName: normalizedSlug,
-      baseBranch,
-      worktreeSlug: normalizedSlug,
-      hubcodeHome: dependencies.hubcodeHome,
     });
 
     const descriptor = await dependencies.describeWorkspaceRecord(workspace);

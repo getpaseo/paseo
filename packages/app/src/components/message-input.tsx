@@ -39,6 +39,12 @@ import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWebElementScrollbar } from "@/components/use-web-scrollbar";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -51,9 +57,22 @@ import { isWeb } from "@/constants/platform";
 
 export type ImageAttachment = AttachmentMetadata;
 
+export interface AttachmentMenuItem {
+  id: string;
+  label: string;
+  icon?: React.ReactNode;
+  onSelect: () => void;
+  disabled?: boolean;
+}
+
 export interface MessagePayload {
   text: string;
   images?: ImageAttachment[];
+  /** Composer-flow attachments (images + GitHub items). Optional — legacy
+   * MessageInput callers don't populate this. */
+  attachments?: unknown[];
+  /** Composer working directory at submission time (set by composer flows). */
+  cwd?: string;
   /** When true, bypasses queue and sends immediately even if agent is running */
   forceSend?: boolean;
 }
@@ -65,7 +84,19 @@ export interface MessageInputProps {
   isSubmitDisabled?: boolean;
   isSubmitLoading?: boolean;
   images?: ImageAttachment[];
+  /** Composer-flow attachments (images + GitHub items). Forwarded as-is on
+   * submit so the parent can persist structured issue context, etc. */
+  attachments?: unknown[];
+  /** Composer working directory; forwarded on submit payload. */
+  cwd?: string;
   onPickImages?: () => void;
+  /**
+   * When provided, renders a "+" attachment button that opens a menu with
+   * these items. Replaces the standalone paperclip button.
+   */
+  attachmentMenuItems?: AttachmentMenuItem[];
+  /** Forwarded ref to the attach button (used as anchor for picker popovers). */
+  onAttachButtonRef?: (node: View | null) => void;
   onAddImages?: (images: ImageAttachment[]) => void;
   onRemoveImage?: (index: number) => void;
   client: DaemonClient | null;
@@ -197,7 +228,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     isSubmitDisabled = false,
     isSubmitLoading = false,
     images = [],
+    attachments,
+    cwd,
     onPickImages,
+    attachmentMenuItems,
+    onAttachButtonRef,
     onAddImages,
     onRemoveImage,
     client,
@@ -366,6 +401,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
           onSubmit({
             text: nextValue,
             images: imageAttachments,
+            ...(attachments && attachments.length > 0 ? { attachments } : {}),
+            ...(cwd ? { cwd } : {}),
             forceSend: isAgentRunning || undefined,
           });
         }
@@ -379,7 +416,16 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         });
       }
     },
-    [onChangeText, onSubmit, onQueue, images, isAgentRunning, defaultSendBehavior],
+    [
+      onChangeText,
+      onSubmit,
+      onQueue,
+      images,
+      attachments,
+      cwd,
+      isAgentRunning,
+      defaultSendBehavior,
+    ],
   );
 
   const handleDictationError = useCallback(
@@ -579,10 +625,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
   const handleSendMessage = useCallback(() => {
     const trimmed = value.trim();
-    if (!trimmed && images.length === 0) return;
-    const payload = {
+    const hasAttachments = (attachments?.length ?? 0) > 0;
+    if (!trimmed && images.length === 0 && !hasAttachments) return;
+    const payload: MessagePayload = {
       text: trimmed,
       images: images.length > 0 ? images : undefined,
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      ...(cwd ? { cwd } : {}),
       forceSend: isAgentRunning || undefined,
     };
     onSubmit(payload);
@@ -601,7 +650,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         textarea.style.height = `${MIN_INPUT_HEIGHT}px`;
       }
     }
-  }, [value, images, onSubmit, isAgentRunning, onHeightChange, getWebTextArea]);
+  }, [value, images, attachments, cwd, onSubmit, isAgentRunning, onHeightChange, getWebTextArea]);
 
   const handleQueueMessage = useCallback(() => {
     if (!onQueue) return;
@@ -1049,7 +1098,38 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         <View style={styles.buttonRow}>
           {/* Left: attachment button + leftContent slot */}
           <View style={styles.leftButtonGroup}>
-            {onPickImages && (
+            {attachmentMenuItems && attachmentMenuItems.length > 0 ? (
+              <View ref={onAttachButtonRef} collapsable={false}>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  testID="message-input-attach-button"
+                  disabled={!isConnected || disabled}
+                  accessibilityLabel="Add attachment"
+                  accessibilityRole="button"
+                  style={({ hovered }) => [
+                    styles.attachButton,
+                    hovered && styles.iconButtonHovered,
+                    (!isConnected || disabled) && styles.buttonDisabled,
+                  ]}
+                >
+                  <Plus size={buttonIconSize} color={theme.colors.foreground} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="start" offset={8}>
+                  {attachmentMenuItems.map((item) => (
+                    <DropdownMenuItem
+                      key={item.id}
+                      testID={`message-input-attachment-menu-item-${item.id}`}
+                      onSelect={item.onSelect}
+                      disabled={item.disabled}
+                      leading={item.icon as React.ReactElement | null | undefined}
+                    >
+                      {item.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              </View>
+            ) : onPickImages ? (
               <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild>
                   <Pressable
@@ -1070,7 +1150,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                   <Text style={styles.tooltipText}>Attach images</Text>
                 </TooltipContent>
               </Tooltip>
-            )}
+            ) : null}
             {leftContent}
           </View>
 

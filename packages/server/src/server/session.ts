@@ -6213,6 +6213,8 @@ export class Session {
       projectId: workspace.projectId,
       projectDisplayName: resolvedProjectRecord?.displayName ?? workspace.projectId,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
+      // Fork's UI requires this to look up the worktree directory for execution.
+      workspaceDirectory: workspace.cwd,
       projectKind: resolvedProjectRecord?.kind ?? "non_git",
       workspaceKind: workspace.kind,
       name: workspace.displayName,

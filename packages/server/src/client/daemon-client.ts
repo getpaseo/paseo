@@ -1262,10 +1262,6 @@ export class DaemonClient {
     }
   }
 
-  clearAgentAttention(agentId: string | string[]): void {
-    this.sendSessionMessage({ type: "clear_agent_attention", agentId });
-  }
-
   sendHeartbeat(params: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
@@ -5199,28 +5195,15 @@ export class DaemonClient {
     });
   }
 
-  async clearAgentAttention(agentId: string | string[]): Promise<void> {
-    const requestId = this.createRequestId();
-    const message = SessionInboundMessageSchema.parse({
-      type: "clear_agent_attention",
-      agentId,
-      requestId,
-    });
-    await this.sendRequest({
-      requestId,
-      message,
-      timeout: 15000,
-      options: { skipQueue: true },
-      select: (msg) => {
-        if (msg.type !== "clear_agent_attention_response") {
-          return null;
-        }
-        if (msg.payload.requestId !== requestId) {
-          return null;
-        }
-        return msg.payload;
-      },
-    });
+  /**
+   * Notify the daemon to clear the attention bit on an agent. Fire-and-forget:
+   * the daemon may or may not emit a `clear_agent_attention_response`, but
+   * callers don't need to wait for it (it's a UI hint, not a transactional
+   * RPC). Awaiting the response with a 15s timeout caused unhandled rejections
+   * when the response wasn't emitted (e.g. older daemon builds).
+   */
+  clearAgentAttention(agentId: string | string[]): void {
+    this.sendSessionMessage({ type: "clear_agent_attention", agentId });
   }
 
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {
