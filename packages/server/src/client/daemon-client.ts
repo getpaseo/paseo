@@ -82,7 +82,12 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "../server/agent/agent-sdk-types.js";
-import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
+import type {
+  MutableDaemonConfig,
+  MutableDaemonConfigPatch,
+  HubcodeConfigRaw,
+  HubcodeConfigRevision,
+} from "../shared/messages.js";
 import type { EmbeddingProvider, ExposeToEntry, IndexingState } from "../server/indexing/types.js";
 import type { IndexingToolDetection } from "../server/indexing/detector.js";
 import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
@@ -273,6 +278,20 @@ type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
+type ReadProjectConfigPayload = Extract<
+  SessionOutboundMessage,
+  { type: "read_project_config_response" }
+>["payload"];
+type WriteProjectConfigPayload = Extract<
+  SessionOutboundMessage,
+  { type: "write_project_config_response" }
+>["payload"];
+export interface WriteProjectConfigInput {
+  repoRoot: string;
+  config: HubcodeConfigRaw;
+  expectedRevision: HubcodeConfigRevision | null;
+  requestId?: string;
+}
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
@@ -383,6 +402,25 @@ export type FetchAgentsOptions = Omit<FetchAgentsRequest, "type" | "requestId"> 
 };
 export type FetchAgentsEntry = FetchAgentsPayload["entries"][number];
 export type FetchAgentsPageInfo = FetchAgentsPayload["pageInfo"];
+type GitHubSearchPayload = Extract<
+  SessionOutboundMessage,
+  { type: "github_search_response" }
+>["payload"];
+type GitHubSearchRequest = Extract<SessionInboundMessage, { type: "github_search_request" }>;
+
+type FetchAgentHistoryPayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_agent_history_response" }
+>["payload"];
+type FetchAgentHistoryRequest = Extract<
+  SessionInboundMessage,
+  { type: "fetch_agent_history_request" }
+>;
+export type FetchAgentHistoryOptions = Omit<FetchAgentHistoryRequest, "type" | "requestId"> & {
+  requestId?: string;
+};
+export type FetchAgentHistoryEntry = FetchAgentHistoryPayload["entries"][number];
+export type FetchAgentHistoryPageInfo = FetchAgentHistoryPayload["pageInfo"];
 type FetchWorkspacesPayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_workspaces_response" }
@@ -5010,6 +5048,204 @@ export class DaemonClient {
         if (msg.requestId !== requestId) return null;
         return { agents: msg.agents, installedIds: msg.installedIds };
       },
+    });
+  }
+
+  async pullRequestTimeline(
+    options: { cwd: string; prNumber: number; repoOwner: string; repoName: string },
+    requestId?: string,
+  ): Promise<{
+    items: import("../shared/messages.js").PullRequestTimelineItem[];
+    truncated: boolean;
+    error: { kind: "not_found" | "forbidden" | "unknown"; message: string } | null;
+    githubFeaturesEnabled: boolean;
+  }> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "pull_request_timeline_request",
+      cwd: options.cwd,
+      prNumber: options.prNumber,
+      repoOwner: options.repoOwner,
+      repoName: options.repoName,
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "pull_request_timeline_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return {
+          items: msg.payload.items ?? [],
+          truncated: msg.payload.truncated ?? false,
+          error: msg.payload.error ?? null,
+          githubFeaturesEnabled: msg.payload.githubFeaturesEnabled ?? true,
+        };
+      },
+    });
+  }
+
+  async startWorkspaceScript(
+    workspaceId: string,
+    scriptName: string,
+    requestId?: string,
+  ): Promise<{
+    workspaceId: string;
+    scriptName: string;
+    terminalId: string | null;
+    error: string | null;
+  }> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "start_workspace_script_request",
+      workspaceId,
+      scriptName,
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "start_workspace_script_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async fetchWorkspaceSetupStatus(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<{
+    workspaceId: string;
+    snapshot: import("../shared/messages.js").WorkspaceSetupSnapshot | null;
+  }> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "workspace_setup_status_request",
+      workspaceId,
+      requestId: resolvedRequestId,
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "workspace_setup_status_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return { workspaceId: msg.payload.workspaceId, snapshot: msg.payload.snapshot };
+      },
+    });
+  }
+
+  async searchGitHub(
+    options: { cwd: string; query: string; limit?: number; kinds?: GitHubSearchRequest["kinds"] },
+    requestId?: string,
+  ): Promise<GitHubSearchPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "github_search_request",
+        cwd: options.cwd,
+        query: options.query,
+        limit: options.limit,
+        kinds: options.kinds,
+      },
+      responseType: "github_search_response",
+      timeout: 15000,
+    });
+  }
+
+  async fetchAgentHistory(options?: FetchAgentHistoryOptions): Promise<FetchAgentHistoryPayload> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "fetch_agent_history_request",
+      requestId: resolvedRequestId,
+      ...(options?.filter ? { filter: options.filter } : {}),
+      ...(options?.sort ? { sort: options.sort } : {}),
+      ...(options?.page ? { page: options.page } : {}),
+    });
+    return this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 10000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "fetch_agent_history_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async clearAgentAttention(agentId: string | string[]): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "clear_agent_attention",
+      agentId,
+      requestId,
+    });
+    await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "clear_agent_attention_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+  }
+
+  async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "read_project_config_request",
+        repoRoot,
+      },
+      responseType: "read_project_config_response",
+      timeout: 10000,
+    });
+  }
+
+  async writeProjectConfig(input: WriteProjectConfigInput): Promise<WriteProjectConfigPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "write_project_config_request",
+        repoRoot: input.repoRoot,
+        config: input.config,
+        expectedRevision: input.expectedRevision,
+      },
+      responseType: "write_project_config_response",
+      timeout: 10000,
     });
   }
 }

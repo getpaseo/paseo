@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import type { WorkspaceDescriptorPayload } from "@server/shared/messages";
 import {
-  mergeWorkspaceSnapshotWithExisting,
   normalizeWorkspaceDescriptor,
   useSessionStore,
+  type WorkspaceDescriptor,
 } from "@/stores/session-store";
+import {
+  useWorkspaceStructure,
+  type WorkspaceStructureProject,
+} from "@/stores/session-store-hooks";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
-import { useSharedWorkspaceScope } from "@/stores/shared-session-store";
-import { useActiveOrgId } from "@/stores/active-org-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
-import type { WorkspaceDescriptorPayload } from "@server/shared/messages";
-import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 
 const EMPTY_ORDER: string[] = [];
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
-const EMPTY_WORKSPACE_ORDER_SCOPE: Record<string, string[]> = {};
 
 export type SidebarStateBucket = WorkspaceDescriptor["status"];
 
@@ -22,10 +21,16 @@ export interface SidebarWorkspaceEntry {
   workspaceKey: string;
   serverId: string;
   workspaceId: string;
+  projectKey: string;
+  projectRootPath?: string;
+  workspaceDirectory?: string;
+  projectKind: WorkspaceDescriptor["projectKind"];
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
   statusBucket: SidebarStateBucket;
   diffStat: { additions: number; deletions: number } | null;
+  scripts: WorkspaceDescriptor["scripts"];
+  hasRunningScripts: boolean;
 }
 
 export interface SidebarProjectEntry {
@@ -33,17 +38,7 @@ export interface SidebarProjectEntry {
   projectName: string;
   projectKind: WorkspaceDescriptor["projectKind"];
   iconWorkingDir: string;
-  statusBucket: SidebarStateBucket;
-  activeCount: number;
-  totalWorkspaces: number;
   workspaces: SidebarWorkspaceEntry[];
-  /**
-   * True when none of this project's workspaces have an orgId — i.e. they
-   * were registered before the user joined an organization, or the daemon is
-   * being used standalone. Surfaced as a "Global" badge so the user knows
-   * they aren't sharable through the active org until promoted.
-   */
-  isGlobal: boolean;
 }
 
 export interface SidebarWorkspacesListResult {
@@ -54,122 +49,70 @@ export interface SidebarWorkspacesListResult {
   refreshAll: () => void;
 }
 
-const SIDEBAR_BUCKET_PRIORITY: Record<SidebarStateBucket, number> = {
-  done: 0,
-  attention: 1,
-  running: 2,
-  failed: 3,
-  needs_input: 4,
-};
-
-function aggregateBucket(
-  current: SidebarStateBucket,
-  candidate: SidebarStateBucket,
-): SidebarStateBucket {
-  return SIDEBAR_BUCKET_PRIORITY[candidate] > SIDEBAR_BUCKET_PRIORITY[current]
-    ? candidate
-    : current;
-}
-
-function compareWorkspaceBaseline(
-  left: SidebarWorkspaceEntry,
-  right: SidebarWorkspaceEntry,
-): number {
-  const nameDelta = left.name.localeCompare(right.name, undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-  if (nameDelta !== 0) {
-    return nameDelta;
-  }
-
-  return left.workspaceId.localeCompare(right.workspaceId, undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-}
-
-function compareProjectBaseline(left: SidebarProjectEntry, right: SidebarProjectEntry): number {
-  return left.projectName.localeCompare(right.projectName, undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-}
-
-export function buildSidebarProjectsFromWorkspaces(input: {
+function createStructuralWorkspaceEntry(input: {
   serverId: string;
-  workspaces: Iterable<WorkspaceDescriptor>;
-  projectOrder: string[];
-  workspaceOrderByScope: Record<string, string[]>;
+  project: WorkspaceStructureProject;
+  workspaceId: string;
+}): SidebarWorkspaceEntry {
+  return {
+    workspaceKey: `${input.serverId}:${input.workspaceId}`,
+    serverId: input.serverId,
+    workspaceId: input.workspaceId,
+    projectKey: input.project.projectKey,
+    projectRootPath: input.project.iconWorkingDir,
+    workspaceDirectory: undefined,
+    projectKind: input.project.projectKind,
+    workspaceKind: "checkout",
+    name: input.workspaceId,
+    statusBucket: "done",
+    diffStat: null,
+    scripts: [],
+    hasRunningScripts: false,
+  };
+}
+
+export function createSidebarWorkspaceEntry(input: {
+  serverId: string;
+  workspace: WorkspaceDescriptor;
+}): SidebarWorkspaceEntry {
+  return {
+    workspaceKey: `${input.serverId}:${input.workspace.id}`,
+    serverId: input.serverId,
+    workspaceId: input.workspace.id,
+    projectKey: input.workspace.project?.projectKey ?? input.workspace.projectId,
+    projectRootPath: input.workspace.projectRootPath,
+    workspaceDirectory: input.workspace.workspaceDirectory,
+    projectKind: input.workspace.projectKind,
+    workspaceKind: input.workspace.workspaceKind,
+    name: input.workspace.name,
+    statusBucket: input.workspace.status,
+    diffStat: input.workspace.diffStat,
+    scripts: input.workspace.scripts,
+    hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
+  };
+}
+
+export function buildSidebarProjectsFromStructure(input: {
+  serverId: string;
+  projects: WorkspaceStructureProject[];
 }): SidebarProjectEntry[] {
-  const byProject = new Map<string, SidebarProjectEntry>();
-
-  for (const workspace of input.workspaces) {
-    const project =
-      byProject.get(workspace.projectId) ??
-      ({
-        projectKey: workspace.projectId,
-        projectName:
-          workspace.projectDisplayName || projectDisplayNameFromProjectId(workspace.projectId),
-        projectKind: workspace.projectKind,
-        iconWorkingDir: workspace.projectRootPath || workspace.id,
-        statusBucket: "done",
-        activeCount: 0,
-        totalWorkspaces: 0,
-        workspaces: [],
-        // Initialized true; flipped to false the moment we see any workspace
-        // belonging to an org. Stays true if all workspaces are global.
-        isGlobal: true,
-      } satisfies SidebarProjectEntry);
-
-    if (workspace.orgId) {
-      project.isGlobal = false;
-    }
-
-    const row: SidebarWorkspaceEntry = {
-      workspaceKey: `${input.serverId}:${workspace.id}`,
-      serverId: input.serverId,
-      workspaceId: workspace.id,
-      workspaceKind: workspace.workspaceKind,
-      name: workspace.name,
-      statusBucket: workspace.status,
-      diffStat: workspace.diffStat,
-    };
-
-    project.workspaces.push(row);
-    project.totalWorkspaces += 1;
-    if (workspace.status !== "done") {
-      project.activeCount += 1;
-    }
-    project.statusBucket = aggregateBucket(project.statusBucket, workspace.status);
-
-    byProject.set(workspace.projectId, project);
+  if (input.projects.length === 0) {
+    return EMPTY_PROJECTS;
   }
 
-  const baselineProjects = Array.from(byProject.values()).map((project) => {
-    const baselineWorkspaces = [...project.workspaces];
-    baselineWorkspaces.sort(compareWorkspaceBaseline);
-
-    const workspaceOrderScopeKey = getWorkspaceOrderScopeKey(input.serverId, project.projectKey);
-    const orderedWorkspaces = applyStoredOrdering({
-      items: baselineWorkspaces,
-      storedOrder: input.workspaceOrderByScope[workspaceOrderScopeKey] ?? EMPTY_ORDER,
-      getKey: (workspace) => workspace.workspaceKey,
-    });
-
-    return {
-      ...project,
-      workspaces: orderedWorkspaces,
-    };
-  });
-
-  baselineProjects.sort(compareProjectBaseline);
-
-  return applyStoredOrdering({
-    items: baselineProjects,
-    storedOrder: input.projectOrder,
-    getKey: (project) => project.projectKey,
-  });
+  return input.projects.map((project) => ({
+    projectKey: project.projectKey,
+    projectName: project.projectName,
+    projectKind: project.projectKind,
+    iconWorkingDir: project.iconWorkingDir,
+    workspaces: project.workspaceKeys.map((workspaceId) =>
+      createStructuralWorkspaceEntry({
+        serverId: input.serverId,
+        project,
+        workspaceId,
+      }),
+    ),
+  }));
 }
 
 export function applyStoredOrdering<T>(input: {
@@ -236,10 +179,6 @@ export function appendMissingOrderKeys(input: {
   return [...input.currentOrder, ...missingKeys];
 }
 
-function getWorkspaceOrderScopeKey(serverId: string, projectKey: string): string {
-  return `${serverId.trim()}::${projectKey.trim()}`;
-}
-
 function toWorkspaceDescriptor(payload: WorkspaceDescriptorPayload): WorkspaceDescriptor {
   return normalizeWorkspaceDescriptor(payload);
 }
@@ -254,20 +193,14 @@ export function useSidebarWorkspacesList(options?: {
     const value = options?.serverId;
     return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
   }, [options?.serverId]);
+  const isActive = Boolean(serverId) && options?.enabled !== false;
   const persistedProjectOrder = useSidebarOrderStore((state) =>
-    serverId ? (state.projectOrderByServerId[serverId] ?? EMPTY_ORDER) : EMPTY_ORDER,
-  );
-  const persistedWorkspaceOrderByScope = useSidebarOrderStore((state) =>
-    serverId ? state.workspaceOrderByServerAndProject : EMPTY_WORKSPACE_ORDER_SCOPE,
-  );
-
-  const isActive = Boolean(serverId);
-  const sessionWorkspaces = useSessionStore((state) =>
-    isActive && serverId ? (state.sessions[serverId]?.workspaces ?? null) : null,
+    isActive && serverId ? (state.projectOrderByServerId[serverId] ?? EMPTY_ORDER) : EMPTY_ORDER,
   );
   const hasHydratedWorkspaces = useSessionStore((state) =>
     isActive && serverId ? (state.sessions[serverId]?.hasHydratedWorkspaces ?? false) : false,
   );
+  const workspaceStructure = useWorkspaceStructure(isActive ? serverId : null);
 
   const connectionStatus = useSyncExternalStore(
     (onStoreChange) =>
@@ -288,58 +221,21 @@ export function useSidebarWorkspacesList(options?: {
     },
   );
 
-  const sharedScope = useSharedWorkspaceScope();
-  const activeOrgId = useActiveOrgId();
-
   const projects = useMemo(() => {
-    if (!sessionWorkspaces || sessionWorkspaces.size === 0 || !serverId) {
+    if (!serverId || workspaceStructure.projects.length === 0) {
       return EMPTY_PROJECTS;
     }
-
-    // When the viewer entered via a workspace-share link, restrict the sidebar to only
-    // the specific workspace they were granted access to.
-    const scopeServerMatches = sharedScope.serverId === null || sharedScope.serverId === serverId;
-    const baseIter: Iterable<WorkspaceDescriptor> =
-      sharedScope.workspaceId && scopeServerMatches
-        ? (() => {
-            const filtered: WorkspaceDescriptor[] = [];
-            for (const ws of sessionWorkspaces.values()) {
-              if (ws.id === sharedScope.workspaceId) filtered.push(ws);
-            }
-            return filtered;
-          })()
-        : sessionWorkspaces.values();
-
-    // Scope by active organization, but always include "global" workspaces
-    // (no orgId) so users who started using the app pre-signup don't lose
-    // their work the moment they create or join an org. Globals are surfaced
-    // with a "Global" badge in the project row so it's clear they aren't
-    // tied to the current org and can be promoted later.
-    const iter: Iterable<WorkspaceDescriptor> = activeOrgId
-      ? (() => {
-          const filtered: WorkspaceDescriptor[] = [];
-          for (const ws of baseIter) {
-            if (ws.orgId === activeOrgId || !ws.orgId) filtered.push(ws);
-          }
-          return filtered;
-        })()
-      : baseIter;
-
-    return buildSidebarProjectsFromWorkspaces({
+    return buildSidebarProjectsFromStructure({
       serverId,
-      workspaces: iter,
-      projectOrder: persistedProjectOrder,
-      workspaceOrderByScope: persistedWorkspaceOrderByScope,
+      projects: workspaceStructure.projects,
     });
-  }, [
-    activeOrgId,
-    persistedProjectOrder,
-    persistedWorkspaceOrderByScope,
-    serverId,
-    sessionWorkspaces,
-    sharedScope.serverId,
-    sharedScope.workspaceId,
-  ]);
+  }, [serverId, workspaceStructure]);
+
+  useEffect(() => {
+    if (!serverId) {
+      return;
+    }
+  }, [connectionStatus, hasHydratedWorkspaces, projects, serverId]);
 
   useEffect(() => {
     if (!serverId || projects.length === 0) {
@@ -355,9 +251,9 @@ export function useSidebarWorkspacesList(options?: {
     }
 
     for (const project of projects) {
-      const workspaceOrderScopeKey = getWorkspaceOrderScopeKey(serverId, project.projectKey);
-      const persistedWorkspaceOrder =
-        persistedWorkspaceOrderByScope[workspaceOrderScopeKey] ?? EMPTY_ORDER;
+      const persistedWorkspaceOrder = useSidebarOrderStore
+        .getState()
+        .getWorkspaceOrder(serverId, project.projectKey);
       const nextWorkspaceOrder = appendMissingOrderKeys({
         currentOrder: persistedWorkspaceOrder,
         visibleKeys: project.workspaces.map((workspace) => workspace.workspaceKey),
@@ -368,7 +264,7 @@ export function useSidebarWorkspacesList(options?: {
           .setWorkspaceOrder(serverId, project.projectKey, nextWorkspaceOrder);
       }
     }
-  }, [persistedProjectOrder, persistedWorkspaceOrderByScope, projects, serverId]);
+  }, [persistedProjectOrder, projects, serverId]);
 
   const refreshAll = useCallback(() => {
     if (!isActive || !serverId || connectionStatus !== "online") {
@@ -380,7 +276,6 @@ export function useSidebarWorkspacesList(options?: {
     }
     void (async () => {
       const next = new Map<string, WorkspaceDescriptor>();
-      const existingWorkspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
       let cursor: string | null = null;
       try {
         while (true) {
@@ -390,13 +285,7 @@ export function useSidebarWorkspacesList(options?: {
           });
           for (const entry of payload.entries) {
             const workspace = toWorkspaceDescriptor(entry);
-            next.set(
-              workspace.id,
-              mergeWorkspaceSnapshotWithExisting({
-                incoming: workspace,
-                existing: existingWorkspaces?.get(workspace.id),
-              }),
-            );
+            next.set(workspace.id, workspace);
           }
           if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) {
             break;
@@ -406,15 +295,17 @@ export function useSidebarWorkspacesList(options?: {
         const store = useSessionStore.getState();
         store.setWorkspaces(serverId, next);
         store.setHasHydratedWorkspaces(serverId, true);
-      } catch {
+      } catch (error) {
+        console.error("[WorkspaceFetch][sidebar-refresh] failed", {
+          serverId,
+          cursor,
+          error,
+        });
         // ignore explicit refresh failures; hook keeps existing data
       }
     })();
   }, [connectionStatus, isActive, runtime, serverId]);
 
-  // Don't gate the loading state on `connectionStatus === "online"` — cached
-  // workspaces should render immediately on startup instead of showing a
-  // spinner while the daemon connection is still coming up. (Paseo PR #542.)
   const isLoading = isActive && Boolean(serverId) && !hasHydratedWorkspaces;
   const isInitialLoad = isLoading && projects.length === 0;
   const isRevalidating = false;

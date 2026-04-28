@@ -2,9 +2,16 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { stat, mkdir } from "fs/promises";
+import { realpathSync } from "node:fs";
 import { exec, spawn } from "node:child_process";
 import { promisify } from "util";
 import { basename, join, resolve, sep } from "path";
+import {
+  readHubcodeConfigForEdit,
+  writeHubcodeConfigForEdit,
+  type ProjectConfigRpcError,
+} from "../utils/hubcode-config-file.js";
+import { createGitHubService } from "../services/github-service.js";
 import { homedir } from "node:os";
 import { z } from "zod";
 import type { ToolSet } from "ai";
@@ -691,6 +698,10 @@ export class Session {
   private peakInflightRequests = 0;
   private readonly checkoutDiffSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitSubscriptions = new Map<string, () => void>();
+  private readonly workspaceSetupSnapshots = new Map<
+    string,
+    import("../shared/messages.js").WorkspaceSetupSnapshot
+  >();
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
     handler: VoiceSpeakHandler,
@@ -2044,6 +2055,26 @@ export class Session {
             await this.handleFetchAgents(msg);
             break;
 
+          case "fetch_agent_history_request":
+            await this.handleFetchAgentHistory(msg);
+            break;
+
+          case "github_search_request":
+            await this.handleGitHubSearchRequest(msg);
+            break;
+
+          case "workspace_setup_status_request":
+            await this.handleWorkspaceSetupStatusRequest(msg);
+            break;
+
+          case "start_workspace_script_request":
+            await this.handleStartWorkspaceScriptRequest(msg);
+            break;
+
+          case "pull_request_timeline_request":
+            await this.handlePullRequestTimelineRequest(msg);
+            break;
+
           case "fetch_workspaces_request":
             await this.handleFetchWorkspacesRequest(msg);
             break;
@@ -2098,6 +2129,14 @@ export class Session {
                 config: this.daemonConfigStore.patch(msg.config),
               },
             });
+            break;
+
+          case "read_project_config_request":
+            await this.handleReadProjectConfigRequest(msg);
+            break;
+
+          case "write_project_config_request":
+            await this.handleWriteProjectConfigRequest(msg);
             break;
 
           case "set_hubcode_auth_session_request":
@@ -2368,7 +2407,7 @@ export class Session {
             break;
 
           case "clear_agent_attention":
-            await this.handleClearAgentAttention(msg.agentId);
+            await this.handleClearAgentAttention(msg.agentId, msg.requestId);
             break;
 
           case "client_heartbeat":
@@ -4505,7 +4544,10 @@ export class Session {
   /**
    * Handle clearing agent attention flag
    */
-  private async handleClearAgentAttention(agentId: string | string[]): Promise<void> {
+  private async handleClearAgentAttention(
+    agentId: string | string[],
+    requestId?: string,
+  ): Promise<void> {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
     // Use allSettled so one missing/archived/timed-out agent doesn't abort the
@@ -4521,6 +4563,25 @@ export class Session {
           "Failed to clear agent attention (non-fatal)",
         );
       }
+    }
+
+    if (requestId) {
+      const agents = (
+        await Promise.all(
+          agentIds.map(async (id) => {
+            const agent = this.agentManager.getAgent(id);
+            return agent ? this.buildAgentPayload(agent) : null;
+          }),
+        )
+      ).filter((payload): payload is NonNullable<typeof payload> => payload !== null);
+      this.emit({
+        type: "clear_agent_attention_response",
+        payload: {
+          requestId,
+          agentId,
+          agents,
+        },
+      });
     }
   }
 
@@ -6029,7 +6090,10 @@ export class Session {
   }
 
   private async listFetchAgentsEntries(
-    request: Extract<SessionInboundMessage, { type: "fetch_agents_request" }>,
+    request: Extract<
+      SessionInboundMessage,
+      { type: "fetch_agents_request" } | { type: "fetch_agent_history_request" }
+    >,
   ): Promise<{
     entries: FetchAgentsResponseEntry[];
     pageInfo: FetchAgentsResponsePageInfo;
@@ -10789,6 +10853,275 @@ export class Session {
       });
     }
   }
+
+  private async handlePullRequestTimelineRequest(
+    request: Extract<SessionInboundMessage, { type: "pull_request_timeline_request" }>,
+  ): Promise<void> {
+    const { cwd, prNumber, repoOwner, repoName, requestId } = request;
+    const github = createGitHubService();
+    try {
+      const result = await github.getPullRequestTimeline({
+        cwd: expandTilde(cwd),
+        prNumber,
+        repoOwner,
+        repoName,
+      });
+      this.emit({
+        type: "pull_request_timeline_response",
+        payload: {
+          cwd,
+          prNumber,
+          items: result.items,
+          truncated: result.truncated,
+          error: result.error,
+          requestId,
+          githubFeaturesEnabled: result.githubFeaturesEnabled,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "pull_request_timeline_response",
+        payload: {
+          cwd,
+          prNumber,
+          items: [],
+          truncated: false,
+          error: {
+            kind: "unknown",
+            message: error instanceof Error ? error.message : String(error),
+          },
+          requestId,
+          githubFeaturesEnabled: true,
+        },
+      });
+    }
+  }
+
+  private async handleStartWorkspaceScriptRequest(
+    request: Extract<SessionInboundMessage, { type: "start_workspace_script_request" }>,
+  ): Promise<void> {
+    // TODO: full integration with WorkspaceScriptRuntimeStore + terminal manager.
+    // For now respond with error so UI shows "feature not yet wired".
+    this.emit({
+      type: "start_workspace_script_response",
+      payload: {
+        requestId: request.requestId,
+        workspaceId: request.workspaceId,
+        scriptName: request.scriptName,
+        terminalId: null,
+        error: "Workspace scripts runtime not yet wired in this build",
+      },
+    });
+  }
+
+  private async handleWorkspaceSetupStatusRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace_setup_status_request" }>,
+  ): Promise<void> {
+    const snapshot = this.workspaceSetupSnapshots.get(request.workspaceId) ?? null;
+    this.emit({
+      type: "workspace_setup_status_response",
+      payload: {
+        requestId: request.requestId,
+        workspaceId: request.workspaceId,
+        snapshot,
+      },
+    });
+  }
+
+  private async handleGitHubSearchRequest(
+    msg: Extract<SessionInboundMessage, { type: "github_search_request" }>,
+  ): Promise<void> {
+    const { cwd, query, limit, kinds, requestId } = msg;
+    const github = createGitHubService();
+    try {
+      const resolvedCwd = expandTilde(cwd);
+      const result = await github.searchIssuesAndPrs({
+        cwd: resolvedCwd,
+        query,
+        limit,
+        kinds,
+      });
+      this.emit({
+        type: "github_search_response",
+        payload: {
+          items: result.items,
+          githubFeaturesEnabled: result.githubFeaturesEnabled,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "github_search_response",
+        payload: {
+          items: [],
+          githubFeaturesEnabled: true,
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleFetchAgentHistory(
+    request: Extract<SessionInboundMessage, { type: "fetch_agent_history_request" }>,
+  ): Promise<void> {
+    try {
+      const payload = await this.listFetchAgentsEntries(request);
+      this.emit({
+        type: "fetch_agent_history_response",
+        payload: {
+          requestId: request.requestId,
+          ...payload,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Failed to handle fetch_agent_history_request");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: request.requestId,
+          code: "fetch_agent_history_failed",
+          message: error instanceof Error ? error.message : "Failed to fetch agent history",
+        },
+      });
+    }
+  }
+
+  private async handleReadProjectConfigRequest(
+    msg: Extract<SessionInboundMessage, { type: "read_project_config_request" }>,
+  ): Promise<void> {
+    const repoRoot = await resolveKnownProjectRootForConfig({
+      repoRoot: msg.repoRoot,
+      projectRegistry: this.projectRegistry,
+    });
+    if (!repoRoot) {
+      this.emitProjectConfigReadFailure(msg, { code: "project_not_found" });
+      return;
+    }
+
+    const result = readHubcodeConfigForEdit(repoRoot);
+    if (!result.ok) {
+      this.emitProjectConfigReadFailure(msg, result.error, repoRoot);
+      return;
+    }
+
+    this.emit({
+      type: "read_project_config_response",
+      payload: {
+        requestId: msg.requestId,
+        repoRoot,
+        ok: true,
+        config: result.config,
+        revision: result.revision,
+      },
+    });
+  }
+
+  private async handleWriteProjectConfigRequest(
+    msg: Extract<SessionInboundMessage, { type: "write_project_config_request" }>,
+  ): Promise<void> {
+    const repoRoot = await resolveKnownProjectRootForConfig({
+      repoRoot: msg.repoRoot,
+      projectRegistry: this.projectRegistry,
+    });
+    if (!repoRoot) {
+      this.emitProjectConfigWriteFailure(msg, { code: "project_not_found" });
+      return;
+    }
+
+    const result = writeHubcodeConfigForEdit({
+      repoRoot,
+      config: msg.config,
+      expectedRevision: msg.expectedRevision,
+    });
+    if (!result.ok) {
+      this.emitProjectConfigWriteFailure(msg, result.error, repoRoot);
+      return;
+    }
+
+    this.emit({
+      type: "write_project_config_response",
+      payload: {
+        requestId: msg.requestId,
+        repoRoot,
+        ok: true,
+        config: result.config,
+        revision: result.revision,
+      },
+    });
+  }
+
+  private emitProjectConfigReadFailure(
+    msg: Extract<SessionInboundMessage, { type: "read_project_config_request" }>,
+    error: ProjectConfigRpcError,
+    repoRoot = msg.repoRoot,
+  ): void {
+    this.emit({
+      type: "read_project_config_response",
+      payload: {
+        requestId: msg.requestId,
+        repoRoot,
+        ok: false,
+        error,
+      },
+    });
+  }
+
+  private emitProjectConfigWriteFailure(
+    msg: Extract<SessionInboundMessage, { type: "write_project_config_request" }>,
+    error: ProjectConfigRpcError,
+    repoRoot = msg.repoRoot,
+  ): void {
+    this.emit({
+      type: "write_project_config_response",
+      payload: {
+        requestId: msg.requestId,
+        repoRoot,
+        ok: false,
+        error,
+      },
+    });
+  }
+}
+
+interface ResolveKnownProjectRootForConfigInput {
+  repoRoot: string;
+  projectRegistry: { list: () => Promise<Array<{ rootPath: string; archivedAt: string | null }>> };
+}
+
+async function resolveKnownProjectRootForConfig(
+  input: ResolveKnownProjectRootForConfigInput,
+): Promise<string | null> {
+  const requestedRoot = canonicalizeConfigRoot(input.repoRoot);
+  const projects = await input.projectRegistry.list();
+  for (const project of projects) {
+    if (project.archivedAt !== null) {
+      continue;
+    }
+    const projectRoot = canonicalizeConfigRoot(project.rootPath);
+    if (requestedRoot === projectRoot) {
+      return projectRoot;
+    }
+  }
+  return null;
+}
+
+function canonicalizeConfigRoot(repoRoot: string): string {
+  const resolved = resolve(repoRoot);
+  try {
+    return stripTrailingPathSeparators(realpathSync(resolved));
+  } catch {
+    return stripTrailingPathSeparators(resolved);
+  }
+}
+
+function stripTrailingPathSeparators(path: string): string {
+  let normalized = path;
+  while (normalized.length > 1 && normalized.endsWith(sep)) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
 }
 
 function deriveRepoDirectoryName(remoteUrl: string): string {

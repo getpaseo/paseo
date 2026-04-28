@@ -28,6 +28,7 @@ import {
   Zap,
   Network,
   Sparkles,
+  FolderTree,
 } from "lucide-react-native";
 import { useAppSettings, type AppSettings, type SendBehavior } from "@/hooks/use-settings";
 import { THEME_SWATCHES, type ThemeName } from "@/styles/theme";
@@ -90,6 +91,7 @@ import { HooksSection } from "@/screens/settings/hooks-section";
 import { CommandsSection } from "@/screens/settings/commands-section";
 import { RulesSection } from "@/screens/settings/rules-section";
 import { AccountSection } from "@/desktop/components/account-section";
+import ProjectsScreen from "@/screens/projects-screen";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { PlanUpgradeSection } from "@/components/plan-upgrade-section";
 
@@ -100,6 +102,7 @@ import { PlanUpgradeSection } from "@/components/plan-upgrade-section";
 type SettingsSectionId =
   | "account"
   | "hosts"
+  | "projects"
   | "general"
   | "plan"
   | "shortcuts"
@@ -129,6 +132,7 @@ function getSettingsSections(context: {
 }): SettingsSectionDef[] {
   const sections: SettingsSectionDef[] = [
     { id: "hosts", label: "Hosts", icon: Server },
+    { id: "projects", label: "Projects", icon: FolderTree },
     { id: "general", label: "General", icon: Settings },
     { id: "task-integrations", label: "Task Integrations", icon: Plug },
     { id: "permissions", label: "Permissions", icon: Shield },
@@ -884,6 +888,8 @@ function SettingsSectionContent({
       return <AccountSection />;
     case "hosts":
       return <HostsSection {...hostsProps} />;
+    case "projects":
+      return <ProjectsScreen view={{ kind: "projects" }} />;
     case "general":
       return <GeneralSection {...generalProps} />;
     case "plan":

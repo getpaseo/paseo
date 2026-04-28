@@ -490,13 +490,11 @@ function AppContainer({
   }, [settings.theme, updateSettings]);
 
   const isCompactLayout = useIsCompactFormFactor();
-  const chromeEnabled = chromeEnabledOverride ?? daemons.length > 0;
   const shortcutsPathname = usePathname();
-  // `chromeEnabled` is false on /settings (no active server in the path), which
-  // also disables global shortcuts there. Keep keyboard shortcuts alive on
-  // Settings so Cmd+B, Cmd+., theme cycle, etc. still work. (Paseo commit
-  // f483e62; TODO: split chrome/shortcut gating properly.)
-  const keyboardShortcutsEnabled = chromeEnabled || shortcutsPathname.startsWith("/settings");
+  const chromeEnabled =
+    chromeEnabledOverride ??
+    (daemons.length > 0 || shortcutsPathname.startsWith("/settings"));
+  const keyboardShortcutsEnabled = chromeEnabled;
 
   useEffect(() => {
     const bp = UnistylesRuntime.breakpoint;
@@ -927,7 +925,9 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
   // the app shell so the magenta org rail and left sidebar remain visible.
   const isChatRoute = pathname === "/chat" || pathname.startsWith("/chat/");
   const isLibraryRoute = pathname === "/library" || pathname.startsWith("/library/");
-  const shouldShowAppChrome = activeServerId !== null || isChatRoute || isLibraryRoute;
+  const isSettingsRoute = pathname === "/settings" || pathname.startsWith("/settings/");
+  const shouldShowAppChrome =
+    activeServerId !== null || isChatRoute || isLibraryRoute || isSettingsRoute;
 
   useEffect(() => {
     if (!activeServerId || hosts.length === 0) {
@@ -1077,7 +1077,7 @@ function RootStack() {
     >
       <Stack.Protected guard={storeReady}>
         <Stack.Screen name="welcome" />
-        <Stack.Screen name="settings" />
+        <Stack.Screen name="settings/index" />
         <Stack.Screen name="pair-scan" />
       </Stack.Protected>
       <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />

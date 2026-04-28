@@ -1,4 +1,22 @@
 import { z } from "zod";
+import {
+  HubcodeConfigRawSchema,
+  HubcodeConfigRevisionSchema,
+  ProjectConfigRpcErrorSchema,
+  type HubcodeConfigRaw,
+  type HubcodeConfigRevision,
+  type ProjectConfigRpcError,
+} from "../utils/hubcode-config-schema.js";
+export {
+  HubcodeConfigRawSchema,
+  HubcodeConfigRevisionSchema,
+  ProjectConfigRpcErrorSchema,
+} from "../utils/hubcode-config-schema.js";
+export type {
+  HubcodeConfigRaw,
+  HubcodeConfigRevision,
+  ProjectConfigRpcError,
+} from "../utils/hubcode-config-schema.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "../server/agent/agent-title-limits.js";
 import { AgentProviderSchema } from "../server/agent/provider-manifest.js";
@@ -877,6 +895,213 @@ export const SetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("set_daemon_config_request"),
   requestId: z.string(),
   config: MutableDaemonConfigPatchSchema,
+});
+
+export const ReadProjectConfigRequestMessageSchema = z.object({
+  type: z.literal("read_project_config_request"),
+  requestId: z.string(),
+  repoRoot: z.string(),
+});
+
+export const WorktreeSetupCommandSnapshotSchema = z.object({
+  index: z.number().int().positive(),
+  command: z.string(),
+  cwd: z.string(),
+  log: z.string().optional().default(""),
+  status: z.enum(["running", "completed", "failed"]),
+  exitCode: z.number().nullable(),
+  durationMs: z.number().nonnegative().optional(),
+});
+
+export const WorktreeSetupDetailPayloadSchema = z.object({
+  type: z.literal("worktree_setup"),
+  worktreePath: z.string(),
+  branchName: z.string(),
+  log: z.string(),
+  commands: z.array(WorktreeSetupCommandSnapshotSchema),
+  truncated: z.boolean().optional(),
+});
+
+export const WorkspaceSetupSnapshotSchema = z.object({
+  status: z.enum(["running", "completed", "failed"]),
+  detail: WorktreeSetupDetailPayloadSchema,
+  error: z.string().nullable(),
+});
+
+export const PullRequestTimelineRequestSchema = z.object({
+  type: z.literal("pull_request_timeline_request"),
+  cwd: z.string(),
+  prNumber: z.number(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  requestId: z.string(),
+});
+
+const PullRequestTimelineKnownErrorSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("not_found"), message: z.string().optional().default("") }),
+  z.object({ kind: z.literal("forbidden"), message: z.string().optional().default("") }),
+  z.object({ kind: z.literal("unknown"), message: z.string().optional().default("") }),
+]);
+
+const PullRequestTimelineErrorSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { kind: "unknown", message: "" };
+  }
+  const error = value as Record<string, unknown>;
+  if (error.kind === "not_found" || error.kind === "forbidden" || error.kind === "unknown") {
+    return error;
+  }
+  return { ...error, kind: "unknown" };
+}, PullRequestTimelineKnownErrorSchema);
+
+const PullRequestTimelineReviewItemSchema = z.object({
+  id: z.string().optional().default(""),
+  kind: z.literal("review"),
+  author: z.string().optional().default("unknown"),
+  body: z.string().optional().default(""),
+  createdAt: z.number().optional().default(0),
+  url: z.string().optional().default(""),
+  reviewState: z
+    .enum(["approved", "changes_requested", "commented"])
+    .optional()
+    .default("commented"),
+});
+
+const PullRequestTimelineCommentItemSchema = z.object({
+  id: z.string().optional().default(""),
+  kind: z.literal("comment"),
+  author: z.string().optional().default("unknown"),
+  body: z.string().optional().default(""),
+  createdAt: z.number().optional().default(0),
+  url: z.string().optional().default(""),
+});
+
+export const PullRequestTimelineItemSchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return value;
+    }
+    const item = value as Record<string, unknown>;
+    if (item.kind === "review" || item.kind === "comment") {
+      return item;
+    }
+    return { ...item, kind: "comment" };
+  },
+  z.discriminatedUnion("kind", [
+    PullRequestTimelineReviewItemSchema,
+    PullRequestTimelineCommentItemSchema,
+  ]),
+);
+
+export const PullRequestTimelineResponseSchema = z.object({
+  type: z.literal("pull_request_timeline_response"),
+  payload: z
+    .object({
+      cwd: z.string().optional().default(""),
+      prNumber: z.number().nullable().optional().default(null),
+      items: z.array(PullRequestTimelineItemSchema).optional().default([]),
+      truncated: z.boolean().optional().default(false),
+      error: PullRequestTimelineErrorSchema.nullable().optional().default(null),
+      requestId: z.string().optional().default(""),
+      githubFeaturesEnabled: z.boolean().optional().default(true),
+    })
+    .optional()
+    .default({}),
+});
+
+export const StartWorkspaceScriptRequestSchema = z.object({
+  type: z.literal("start_workspace_script_request"),
+  workspaceId: z.string(),
+  scriptName: z.string(),
+  requestId: z.string(),
+});
+
+export const StartWorkspaceScriptResponseMessageSchema = z.object({
+  type: z.literal("start_workspace_script_response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    scriptName: z.string(),
+    terminalId: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const WorkspaceSetupStatusRequestSchema = z.object({
+  type: z.literal("workspace_setup_status_request"),
+  workspaceId: z.string(),
+  requestId: z.string(),
+});
+
+export const WorkspaceSetupStatusResponseMessageSchema = z.object({
+  type: z.literal("workspace_setup_status_response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    snapshot: WorkspaceSetupSnapshotSchema.nullable(),
+  }),
+});
+
+export const GitHubSearchItemSchema = z.object({
+  kind: z.enum(["issue", "pr"]),
+  number: z.number(),
+  title: z.string(),
+  url: z.string(),
+  state: z.string(),
+  body: z.string().nullable(),
+  labels: z.array(z.string()),
+  baseRefName: z.string().nullable().optional(),
+  headRefName: z.string().nullable().optional(),
+  updatedAt: z.string().optional(),
+});
+
+export const GitHubSearchKindSchema = z.enum(["github-issue", "github-pr"]);
+
+export const GitHubSearchRequestSchema = z.object({
+  type: z.literal("github_search_request"),
+  cwd: z.string(),
+  query: z.string(),
+  limit: z.number().int().min(1).max(50).optional(),
+  kinds: z.array(GitHubSearchKindSchema).optional(),
+  requestId: z.string(),
+});
+
+export const GitHubSearchResponseSchema = z.object({
+  type: z.literal("github_search_response"),
+  payload: z.object({
+    items: z.array(GitHubSearchItemSchema),
+    githubFeaturesEnabled: z.boolean(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const FetchAgentHistoryRequestMessageSchema = z.object({
+  type: z.literal("fetch_agent_history_request"),
+  requestId: z.string(),
+  filter: AgentDirectoryFilterSchema.optional(),
+  sort: z
+    .array(
+      z.object({
+        key: z.enum(["status_priority", "created_at", "updated_at", "title"]),
+        direction: z.enum(["asc", "desc"]),
+      }),
+    )
+    .optional(),
+  page: z
+    .object({
+      limit: z.number().int().positive().max(200),
+      cursor: z.string().min(1).optional(),
+    })
+    .optional(),
+});
+
+export const WriteProjectConfigRequestMessageSchema = z.object({
+  type: z.literal("write_project_config_request"),
+  requestId: z.string(),
+  repoRoot: z.string(),
+  config: HubcodeConfigRawSchema,
+  expectedRevision: HubcodeConfigRevisionSchema.nullable(),
 });
 
 // Pushes the user's auth-server session token to the daemon so the Hubcode
@@ -2157,6 +2382,13 @@ const _sessionInboundRaw: any = z.union([
   WaitForFinishRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
+  ReadProjectConfigRequestMessageSchema,
+  WriteProjectConfigRequestMessageSchema,
+  FetchAgentHistoryRequestMessageSchema,
+  GitHubSearchRequestSchema,
+  StartWorkspaceScriptRequestSchema,
+  PullRequestTimelineRequestSchema,
+  WorkspaceSetupStatusRequestSchema,
   SetHubcodeAuthSessionRequestMessageSchema,
   DictationStreamStartMessageSchema,
   DictationStreamChunkMessageSchema,
@@ -2315,6 +2547,13 @@ export type SessionInboundMessage =
   | WaitForFinishRequest
   | GetDaemonConfigRequestMessage
   | SetDaemonConfigRequestMessage
+  | ReadProjectConfigRequestMessage
+  | WriteProjectConfigRequestMessage
+  | FetchAgentHistoryRequestMessage
+  | GitHubSearchRequest
+  | StartWorkspaceScriptRequest
+  | PullRequestTimelineRequest
+  | WorkspaceSetupStatusRequest
   | SetHubcodeAuthSessionRequestMessage
   | DictationStreamStartMessage
   | DictationStreamChunkMessage
@@ -2790,6 +3029,26 @@ export const ProjectPlacementPayloadSchema = z.object({
   checkout: ProjectCheckoutLitePayloadSchema,
 });
 
+const AgentDirectoryResponseEntrySchema = z.object({
+  agent: AgentSnapshotPayloadSchema,
+  project: ProjectPlacementPayloadSchema,
+});
+
+const AgentDirectoryPageInfoSchema = z.object({
+  nextCursor: z.string().nullable(),
+  prevCursor: z.string().nullable(),
+  hasMore: z.boolean(),
+});
+
+export const FetchAgentHistoryResponseMessageSchema = z.object({
+  type: z.literal("fetch_agent_history_response"),
+  payload: z.object({
+    requestId: z.string(),
+    entries: z.array(AgentDirectoryResponseEntrySchema),
+    pageInfo: AgentDirectoryPageInfoSchema,
+  }),
+});
+
 const WorkspaceGitRuntimePayloadSchema = z
   .object({
     currentBranch: z.string().nullable().optional(),
@@ -3089,6 +3348,53 @@ export const SetDaemonConfigResponseMessageSchema = z.object({
       config: MutableDaemonConfigSchema,
     })
     .passthrough(),
+});
+
+export const ClearAgentAttentionResponseMessageSchema = z.object({
+  type: z.literal("clear_agent_attention_response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string().or(z.array(z.string())),
+    agents: z.array(AgentSnapshotPayloadSchema),
+  }),
+});
+
+export const ReadProjectConfigResponseMessageSchema = z.object({
+  type: z.literal("read_project_config_response"),
+  payload: z.discriminatedUnion("ok", [
+    z.object({
+      requestId: z.string(),
+      repoRoot: z.string(),
+      ok: z.literal(true),
+      config: HubcodeConfigRawSchema.nullable(),
+      revision: HubcodeConfigRevisionSchema.nullable(),
+    }),
+    z.object({
+      requestId: z.string(),
+      repoRoot: z.string(),
+      ok: z.literal(false),
+      error: ProjectConfigRpcErrorSchema,
+    }),
+  ]),
+});
+
+export const WriteProjectConfigResponseMessageSchema = z.object({
+  type: z.literal("write_project_config_response"),
+  payload: z.discriminatedUnion("ok", [
+    z.object({
+      requestId: z.string(),
+      repoRoot: z.string(),
+      ok: z.literal(true),
+      config: HubcodeConfigRawSchema,
+      revision: HubcodeConfigRevisionSchema,
+    }),
+    z.object({
+      requestId: z.string(),
+      repoRoot: z.string(),
+      ok: z.literal(false),
+      error: ProjectConfigRpcErrorSchema,
+    }),
+  ]),
 });
 
 export const AgentPermissionRequestMessageSchema = z.object({
@@ -3857,6 +4163,14 @@ const _sessionOutboundRaw: any = z.union([
   SetVoiceModeResponseMessageSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
+  ClearAgentAttentionResponseMessageSchema,
+  FetchAgentHistoryResponseMessageSchema,
+  GitHubSearchResponseSchema,
+  StartWorkspaceScriptResponseMessageSchema,
+  PullRequestTimelineResponseSchema,
+  WorkspaceSetupStatusResponseMessageSchema,
+  ReadProjectConfigResponseMessageSchema,
+  WriteProjectConfigResponseMessageSchema,
   SetHubcodeAuthSessionResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
@@ -4022,6 +4336,14 @@ export type SessionOutboundMessage =
   | SetVoiceModeResponseMessage
   | GetDaemonConfigResponseMessage
   | SetDaemonConfigResponseMessage
+  | ClearAgentAttentionResponseMessage
+  | FetchAgentHistoryResponseMessage
+  | GitHubSearchResponse
+  | StartWorkspaceScriptResponseMessage
+  | PullRequestTimelineResponse
+  | WorkspaceSetupStatusResponseMessage
+  | ReadProjectConfigResponseMessage
+  | WriteProjectConfigResponseMessage
   | SetHubcodeAuthSessionResponseMessage
   | SetAgentModeResponseMessage
   | SetAgentModelResponseMessage
@@ -4467,6 +4789,43 @@ export type ArchiveAgentRequestMessage = z.infer<typeof ArchiveAgentRequestMessa
 export type SetVoiceModeMessage = z.infer<typeof SetVoiceModeMessageSchema>;
 export type GetDaemonConfigRequestMessage = z.infer<typeof GetDaemonConfigRequestMessageSchema>;
 export type SetDaemonConfigRequestMessage = z.infer<typeof SetDaemonConfigRequestMessageSchema>;
+export type ReadProjectConfigRequestMessage = z.infer<typeof ReadProjectConfigRequestMessageSchema>;
+export type WriteProjectConfigRequestMessage = z.infer<
+  typeof WriteProjectConfigRequestMessageSchema
+>;
+export type ClearAgentAttentionResponseMessage = z.infer<
+  typeof ClearAgentAttentionResponseMessageSchema
+>;
+export type FetchAgentHistoryRequestMessage = z.infer<
+  typeof FetchAgentHistoryRequestMessageSchema
+>;
+export type FetchAgentHistoryResponseMessage = z.infer<
+  typeof FetchAgentHistoryResponseMessageSchema
+>;
+export type GitHubSearchItem = z.infer<typeof GitHubSearchItemSchema>;
+export type GitHubSearchKind = z.infer<typeof GitHubSearchKindSchema>;
+export type GitHubSearchRequest = z.infer<typeof GitHubSearchRequestSchema>;
+export type GitHubSearchResponse = z.infer<typeof GitHubSearchResponseSchema>;
+export type WorktreeSetupCommandSnapshot = z.infer<typeof WorktreeSetupCommandSnapshotSchema>;
+export type WorktreeSetupDetailPayload = z.infer<typeof WorktreeSetupDetailPayloadSchema>;
+export type WorkspaceSetupSnapshot = z.infer<typeof WorkspaceSetupSnapshotSchema>;
+export type WorkspaceSetupStatusRequest = z.infer<typeof WorkspaceSetupStatusRequestSchema>;
+export type WorkspaceSetupStatusResponseMessage = z.infer<
+  typeof WorkspaceSetupStatusResponseMessageSchema
+>;
+export type StartWorkspaceScriptRequest = z.infer<typeof StartWorkspaceScriptRequestSchema>;
+export type StartWorkspaceScriptResponseMessage = z.infer<
+  typeof StartWorkspaceScriptResponseMessageSchema
+>;
+export type PullRequestTimelineRequest = z.infer<typeof PullRequestTimelineRequestSchema>;
+export type PullRequestTimelineResponse = z.infer<typeof PullRequestTimelineResponseSchema>;
+export type PullRequestTimelineItem = z.infer<typeof PullRequestTimelineItemSchema>;
+export type ReadProjectConfigResponseMessage = z.infer<
+  typeof ReadProjectConfigResponseMessageSchema
+>;
+export type WriteProjectConfigResponseMessage = z.infer<
+  typeof WriteProjectConfigResponseMessageSchema
+>;
 export type SetHubcodeAuthSessionRequestMessage = z.infer<
   typeof SetHubcodeAuthSessionRequestMessageSchema
 >;
