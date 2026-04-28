@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentCommandsQuery, type DraftCommandConfig } from "./use-agent-commands-query";
@@ -185,6 +185,12 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   );
   const showFileAutocomplete = activeFileMention !== null;
   const fileFilterQuery = activeFileMention?.query ?? "";
+  const [debouncedFileFilterQuery, setDebouncedFileFilterQuery] = useState(fileFilterQuery);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedFileFilterQuery(fileFilterQuery), 180);
+    return () => clearTimeout(timer);
+  }, [fileFilterQuery]);
 
   const normalizedDraftConfig = useMemo(
     () => normalizeDraftCommandConfig(draftConfig),
@@ -229,14 +235,21 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   });
 
   const fileSuggestionsQuery = useQuery({
-    queryKey: ["directorySuggestions", serverId, autocompleteCwd, fileFilterQuery, true, true],
+    queryKey: [
+      "directorySuggestions",
+      serverId,
+      autocompleteCwd,
+      debouncedFileFilterQuery,
+      true,
+      true,
+    ],
     queryFn: async (): Promise<DirectorySuggestionEntry[]> => {
       if (!client) {
         throw new Error("Daemon client unavailable");
       }
       const response = await client.getDirectorySuggestions({
         cwd: autocompleteCwd,
-        query: fileFilterQuery,
+        query: debouncedFileFilterQuery,
         limit: 50,
         includeFiles: true,
         includeDirectories: true,

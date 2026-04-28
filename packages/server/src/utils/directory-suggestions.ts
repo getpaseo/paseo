@@ -73,7 +73,16 @@ const directoryListCache = new Map<string, DirectoryListCacheEntry>();
 const workspaceEntryListCache = new Map<string, WorkspaceEntryListCacheEntry>();
 const NO_SEGMENT_INDEX = Number.MAX_SAFE_INTEGER;
 const NO_MATCH_OFFSET = Number.MAX_SAFE_INTEGER;
-const WORKSPACE_IGNORED_DIRECTORY_NAMES = new Set(["node_modules"]);
+const WORKSPACE_IGNORED_DIRECTORY_NAMES = new Set([
+  "node_modules",
+  "dist",
+  "build",
+  "target",
+  "out",
+  "coverage",
+  "vendor",
+  "__pycache__",
+]);
 
 export async function searchHomeDirectories(
   options: SearchHomeDirectoriesOptions,
