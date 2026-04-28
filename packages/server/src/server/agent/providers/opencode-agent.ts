@@ -236,22 +236,6 @@ function toOpenCodeMcpConfig(config: McpServerConfig): OpenCodeMcpConfig {
   };
 }
 
-function stringifyUnknownError(error: unknown): string {
-  if (typeof error === "string") {
-    return error;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
-}
-
-function normalizeTurnFailureError(error: unknown): string {
-  const normalized = stringifyUnknownError(error).trim();
-  return normalized.length > 0 ? normalized : "Unknown error";
-}
-
 type TerminalTurnEvent = Extract<
   AgentStreamEvent,
   { type: "turn_completed" | "turn_failed" | "turn_canceled" }
@@ -262,7 +246,7 @@ function toTerminalTurnEvent(event: AgentStreamEvent): TerminalTurnEvent | null 
     return {
       type: "turn_failed",
       provider: "opencode",
-      error: normalizeTurnFailureError(event.error),
+      error: toDiagnosticErrorMessage(event.error),
     };
   }
   if (event.type === "turn_completed" || event.type === "turn_canceled") {
@@ -297,7 +281,7 @@ async function reconcileOpenCodeSessionClose(params: {
       logger.warn(
         {
           sessionId,
-          error: normalizeTurnFailureError(response.error),
+          error: toDiagnosticErrorMessage(response.error),
         },
         "Failed to abort OpenCode session during close",
       );
@@ -306,7 +290,7 @@ async function reconcileOpenCodeSessionClose(params: {
     logger.warn(
       {
         sessionId,
-        error: normalizeTurnFailureError(error),
+        error: toDiagnosticErrorMessage(error),
       },
       "Failed to abort OpenCode session during close",
     );
@@ -322,7 +306,7 @@ async function reconcileOpenCodeSessionClose(params: {
       logger.warn(
         {
           sessionId,
-          error: normalizeTurnFailureError(response.error),
+          error: toDiagnosticErrorMessage(response.error),
         },
         "Failed to archive OpenCode session during close",
       );
@@ -331,7 +315,7 @@ async function reconcileOpenCodeSessionClose(params: {
     logger.warn(
       {
         sessionId,
-        error: normalizeTurnFailureError(error),
+        error: toDiagnosticErrorMessage(error),
       },
       "Failed to archive OpenCode session during close",
     );
@@ -356,7 +340,7 @@ function isOpenCodeHeadersTimeoutFailure(error: unknown): boolean {
       continue;
     }
 
-    const normalized = stringifyUnknownError(current).trim().toLowerCase();
+    const normalized = toDiagnosticErrorMessage(current).trim().toLowerCase();
     if (normalized) {
       diagnostics.add(normalized);
     }
@@ -391,7 +375,7 @@ function isOpenCodeHeadersTimeoutFailure(error: unknown): boolean {
 }
 
 function isAlreadyPresentMcpError(error: unknown): boolean {
-  const normalized = stringifyUnknownError(error).toLowerCase();
+  const normalized = toDiagnosticErrorMessage(error).toLowerCase();
   return MCP_ALREADY_PRESENT_ERROR_TOKENS.some((token) => normalized.includes(token));
 }
 
@@ -982,14 +966,37 @@ export class OpenCodeServerManager {
       );
 
       let started = false;
+      let stderrBuffer = "";
+      let stdoutBuffer = "";
+      const STARTUP_BUFFER_CAP = 8192;
+      const appendCapped = (current: string, chunk: string): string => {
+        if (current.length >= STARTUP_BUFFER_CAP) {
+          return current;
+        }
+        const remaining = STARTUP_BUFFER_CAP - current.length;
+        return current + chunk.slice(0, remaining);
+      };
+      const buildStartupErrorMessage = (headline: string): string => {
+        const sections = [headline];
+        const stderrTrimmed = stderrBuffer.trim();
+        if (stderrTrimmed.length > 0) {
+          sections.push(`stderr: ${stderrTrimmed}`);
+        }
+        const stdoutTrimmed = stdoutBuffer.trim();
+        if (stdoutTrimmed.length > 0) {
+          sections.push(`stdout: ${stdoutTrimmed}`);
+        }
+        return sections.join("\n");
+      };
       const timeout = setTimeout(() => {
         if (!started) {
-          reject(new Error("OpenCode server startup timeout"));
+          reject(new Error(buildStartupErrorMessage("OpenCode server startup timeout")));
         }
       }, 30_000);
 
       serverProcess.stdout?.on("data", (data: Buffer) => {
         const output = data.toString();
+        stdoutBuffer = appendCapped(stdoutBuffer, output);
         if (output.includes("listening on") && !started) {
           started = true;
           clearTimeout(timeout);
@@ -1004,18 +1011,21 @@ export class OpenCodeServerManager {
       });
 
       serverProcess.stderr?.on("data", (data: Buffer) => {
-        this.logger.error({ stderr: data.toString().trim() }, "OpenCode server stderr");
+        const output = data.toString();
+        stderrBuffer = appendCapped(stderrBuffer, output);
+        this.logger.error({ stderr: output.trim() }, "OpenCode server stderr");
       });
 
       serverProcess.on("error", (error) => {
         clearTimeout(timeout);
-        reject(error);
+        const headline = error instanceof Error ? error.message : String(error);
+        reject(new Error(buildStartupErrorMessage(headline)));
       });
 
       serverProcess.on("exit", (code) => {
         if (!started) {
           clearTimeout(timeout);
-          reject(new Error(`OpenCode server exited with code ${code}`));
+          reject(new Error(buildStartupErrorMessage(`OpenCode server exited with code ${code}`)));
         }
         if (this.currentServer?.process === serverProcess) {
           this.currentServer = null;
@@ -1304,7 +1314,7 @@ export class OpenCodeAgentClient implements AgentClient {
         const { url } = await this.serverManager.ensureRunning();
         serverStatus = `Running (${url})`;
       } catch (error) {
-        serverStatus = `Unavailable (${normalizeTurnFailureError(error)})`;
+        serverStatus = `Unavailable (${toDiagnosticErrorMessage(error)})`;
       }
 
       if (available) {
@@ -1613,7 +1623,7 @@ export function translateOpenCodeEvent(
         events.push({
           type: "turn_failed",
           provider: "opencode",
-          error: normalizeTurnFailureError(event.properties.error),
+          error: toDiagnosticErrorMessage(event.properties.error),
         });
       }
       break;
@@ -1930,7 +1940,7 @@ function appendOpenCodeSessionStatus(
     events.push({
       type: "turn_failed",
       provider: "opencode",
-      error: normalizeTurnFailureError(status.message),
+      error: toDiagnosticErrorMessage(status.message),
     });
   }
   // "retry" and "busy" are transient — no terminal event.
@@ -2164,7 +2174,7 @@ class OpenCodeAgentSession implements AgentSession {
               );
               return;
             }
-            const errorMsg = normalizeTurnFailureError(response.error);
+            const errorMsg = toDiagnosticErrorMessage(response.error);
             this.finishForegroundTurn(
               { type: "turn_failed", provider: "opencode", error: errorMsg },
               turnId,
@@ -2190,7 +2200,7 @@ class OpenCodeAgentSession implements AgentSession {
             return;
           }
           this.finishForegroundTurn(
-            { type: "turn_failed", provider: "opencode", error: normalizeTurnFailureError(err) },
+            { type: "turn_failed", provider: "opencode", error: toDiagnosticErrorMessage(err) },
             turnId,
           );
         });
@@ -2219,7 +2229,7 @@ class OpenCodeAgentSession implements AgentSession {
               {
                 type: "turn_failed",
                 provider: "opencode",
-                error: normalizeTurnFailureError(promptResponse.error),
+                error: toDiagnosticErrorMessage(promptResponse.error),
               },
               turnId,
             );
@@ -2231,7 +2241,7 @@ class OpenCodeAgentSession implements AgentSession {
             {
               type: "turn_failed",
               provider: "opencode",
-              error: normalizeTurnFailureError(error),
+              error: toDiagnosticErrorMessage(error),
             },
             turnId,
           );
@@ -2296,7 +2306,7 @@ class OpenCodeAgentSession implements AgentSession {
           {
             type: "turn_failed",
             provider: "opencode",
-            error: normalizeTurnFailureError(error),
+            error: toDiagnosticErrorMessage(error),
           },
           turnId,
         );
@@ -2689,7 +2699,7 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     throw new Error(
-      `Failed to ${operation} OpenCode MCP server '${name}': ${stringifyUnknownError(error)}`,
+      `Failed to ${operation} OpenCode MCP server '${name}': ${toDiagnosticErrorMessage(error)}`,
     );
   }
 

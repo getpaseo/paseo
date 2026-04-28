@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.1.63-beta.4",
+  "version": "0.1.63-beta.5",
   "description": "Paseo backend server",
   "files": [
     "dist/server",
@@ -58,8 +58,8 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
-    "@getpaseo/highlight": "0.1.63-beta.4",
-    "@getpaseo/relay": "0.1.63-beta.4",
+    "@getpaseo/highlight": "0.1.63-beta.5",
+    "@getpaseo/relay": "0.1.63-beta.5",
     "@isaacs/ttlcache": "^2.1.4",
     "@mariozechner/pi-agent-core": "^0.70.2",
     "@mariozechner/pi-ai": "^0.70.2",

@@ -1,12 +1,13 @@
 # Changelog
 
-## 0.1.63-beta.4 - 2026-04-27
+## 0.1.63-beta.5 - 2026-04-28
 
 ### Added
 
 - Project settings page with a built-in `paseo.json` editor.
 - Cold start restores your last open workspace.
 - Tool call badges have a button to open the referenced file directly.
+- Open the current branch on GitHub from a workspace's open menu. ([#583](https://github.com/getpaseo/paseo/pull/583) by [@Myriad-Dreamin](https://github.com/Myriad-Dreamin))
 - Enable or disable providers from Settings without editing config files.
 - Paseo prompts you to configure a worktree setup script when one is missing.
 
@@ -35,6 +36,9 @@
 - New CLI agents now require a provider instead of failing silently.
 - Git diff headers no longer truncate.
 - Provider diagnostic modal scrolls on short screens.
+- Provider diagnostics show the real error and underlying child-process output instead of a generic message.
+- Archived workspaces no longer interfere with working-directory resolution.
+- Triple-click on a message no longer extends the selection into adjacent bubbles.
 - The packaged desktop app preserves your zsh prompt.
 
 ## 0.1.62 - 2026-04-23

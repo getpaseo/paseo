@@ -318,6 +318,7 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     flexDirection: "row",
     justifyContent: "flex-end",
     paddingHorizontal: theme.spacing[2],
+    userSelect: isWeb ? "text" : "auto",
   },
   content: {
     alignItems: "flex-end",
@@ -492,6 +493,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   container: {
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[3],
+    userSelect: isWeb ? "text" : "auto",
   },
   containerCompactTop: {
     paddingTop: 0,

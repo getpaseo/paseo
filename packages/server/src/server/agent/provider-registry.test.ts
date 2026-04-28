@@ -905,4 +905,72 @@ describe("model merging", () => {
       },
     ]);
   });
+
+  test("built-in createClient().listModels() honors profile model replacement (issue #579)", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "runtime-default",
+        label: "Runtime Default",
+        isDefault: true,
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          models: [
+            {
+              id: "profile-fast",
+              label: "Profile Fast",
+              isDefault: true,
+            },
+          ],
+        },
+      },
+    });
+
+    const client = registry.claude.createClient(logger);
+    const models = await client.listModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models.map((model) => model.id)).toEqual(["profile-fast"]);
+    expect(models.find((model) => model.isDefault)?.id).toBe("profile-fast");
+  });
+
+  test("built-in createClient().listModels() honors additionalModels default (issue #579)", async () => {
+    mockState.runtimeModels.set("claude", [
+      {
+        provider: "claude",
+        id: "runtime-default",
+        label: "Runtime Default",
+        isDefault: true,
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          additionalModels: [
+            {
+              id: "profile-default",
+              label: "Profile Default",
+              isDefault: true,
+            },
+          ],
+        },
+      },
+    });
+
+    const client = registry.claude.createClient(logger);
+    const models = await client.listModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    const defaultModel = models.find((model) => model.isDefault) ?? models[0];
+    expect(defaultModel?.id).toBe("profile-default");
+  });
 });

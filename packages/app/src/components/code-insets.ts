@@ -2,11 +2,14 @@ import type { Theme } from "@/styles/theme";
 
 /**
  * Compute the pixel width for a line-number gutter based on the highest
- * line number that will be displayed. Minimum width accommodates 2 digits.
+ * line number that will be displayed and the gutter font size. Minimum
+ * width accommodates 2 digits. The 0.62 factor approximates monospace
+ * digit width as a fraction of font size.
  */
-export function lineNumberGutterWidth(maxLineNumber: number): number {
+export function lineNumberGutterWidth(maxLineNumber: number, fontSize: number): number {
   const digits = Math.max(2, String(maxLineNumber).length);
-  return digits * 8 + 12;
+  const digitWidth = Math.ceil(fontSize * 0.62);
+  return digits * digitWidth + 12;
 }
 
 export function getCodeInsets(theme: Theme) {

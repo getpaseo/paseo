@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.1.63-beta.4",
+  "version": "0.1.63-beta.5",
   "private": true,
   "main": "index.ts",
   "scripts": {

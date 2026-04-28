@@ -144,6 +144,12 @@ npm run build:daemon
 npm run typecheck
 ```
 
+<p align="center">
+  <a href="https://star-history.com/#getpaseo/paseo&Date">
+    <img src="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date" alt="Star history chart for getpaseo/paseo" width="100%">
+  </a>
+</p>
+
 ## License
 
 AGPL-3.0

@@ -235,7 +235,9 @@ function DiffGutterCell({
   );
   return (
     <View style={containerStyle}>
-      <Text style={textStyle}>{formatDiffGutterText(lineNumber)}</Text>
+      <Text numberOfLines={1} style={textStyle}>
+        {formatDiffGutterText(lineNumber)}
+      </Text>
     </View>
   );
 }
@@ -350,7 +352,9 @@ function DiffLineView({
   return (
     <View style={containerStyle}>
       <View style={gutterStyle}>
-        <Text style={gutterTextStyle}>{formatDiffGutterText(lineNumber)}</Text>
+        <Text numberOfLines={1} style={gutterTextStyle}>
+          {formatDiffGutterText(lineNumber)}
+        </Text>
       </View>
       {line.type !== "header" && visibleTokens ? (
         <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
@@ -403,7 +407,9 @@ function SplitDiffLine({
   return (
     <View style={containerStyle}>
       <View style={gutterStyle}>
-        <Text style={gutterTextStyle}>{formatDiffGutterText(line?.lineNumber ?? null)}</Text>
+        <Text numberOfLines={1} style={gutterTextStyle}>
+          {formatDiffGutterText(line?.lineNumber ?? null)}
+        </Text>
       </View>
       {visibleTokens ? (
         <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
@@ -624,6 +630,7 @@ function DiffFileBody({
 }) {
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const [bodyWidth, setBodyWidth] = useState(0);
+  const { theme } = useUnistyles();
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -660,7 +667,7 @@ function DiffFileBody({
             hunk.newStart + hunk.newCount,
           );
         }
-        const gutterWidth = lineNumberGutterWidth(maxLineNo);
+        const gutterWidth = lineNumberGutterWidth(maxLineNo, theme.fontSize.xs);
 
         if (layout === "split") {
           const rows = buildSplitDiffRows(file);

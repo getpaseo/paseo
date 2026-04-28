@@ -308,7 +308,12 @@ function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): Agen
   };
 }
 
-function wrapClientProvider(provider: AgentProvider, inner: AgentClient): AgentClient {
+function wrapClientProvider(
+  provider: AgentProvider,
+  inner: AgentClient,
+  profileModels: ProviderProfileModel[],
+  additionalModels: ProviderProfileModel[],
+): AgentClient {
   const listPersistedAgents = inner.listPersistedAgents?.bind(inner);
 
   return {
@@ -343,7 +348,7 @@ function wrapClientProvider(provider: AgentProvider, inner: AgentClient): AgentC
         ),
       ),
     listModels: async (options) =>
-      (await inner.listModels(options)).map((model) => mapModel(provider, model)),
+      mergeModels(provider, profileModels, additionalModels, await inner.listModels(options)),
     listModes: inner.listModes?.bind(inner),
     listPersistedAgents: listPersistedAgents
       ? async (options?: ListPersistedAgentsOptions) =>
@@ -398,7 +403,12 @@ function createResolvedProviderClient(
   resolved: ResolvedProvider,
 ): AgentClient {
   const inner = resolved.createBaseClient(logger);
-  return inner.provider === provider ? inner : wrapClientProvider(provider, inner);
+  const hasModelOverrides =
+    resolved.profileModels.length > 0 || resolved.additionalModels.length > 0;
+  if (inner.provider === provider && !hasModelOverrides) {
+    return inner;
+  }
+  return wrapClientProvider(provider, inner, resolved.profileModels, resolved.additionalModels);
 }
 
 function buildResolvedBuiltinProviders(

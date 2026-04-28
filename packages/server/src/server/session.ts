@@ -4,7 +4,7 @@ import { TTLCache } from "@isaacs/ttlcache";
 import pMemoize from "p-memoize";
 import { realpathSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
-import { resolve, sep } from "path";
+import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { z } from "zod";
 import type { ToolSet } from "ai";
@@ -6261,6 +6261,7 @@ export class Session {
     let bestMatch: PersistedWorkspaceRecord | null = null;
     for (const workspace of workspaces) {
       if (workspace.cwd === userHome) continue;
+      if (workspace.archivedAt) continue;
       const prefix = workspace.cwd.endsWith(sep) ? workspace.cwd : `${workspace.cwd}${sep}`;
       if (!normalizedCwd.startsWith(prefix)) {
         continue;
@@ -6562,11 +6563,36 @@ export class Session {
   }
 
   private async findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
+    const inputCwd = normalizePersistedWorkspaceId(cwd);
     const normalizedCwd = await this.resolveWorkspaceDirectory(cwd);
     const existingWorkspace = await this.findExactWorkspaceByDirectory(normalizedCwd, {
       refreshGit: false,
     });
     if (existingWorkspace) {
+      if (existingWorkspace.archivedAt && inputCwd !== normalizedCwd) {
+        const timestamp = new Date().toISOString();
+        const displayName = basename(inputCwd) || inputCwd;
+        const projectRecord = createPersistedProjectRecord({
+          projectId: inputCwd,
+          rootPath: inputCwd,
+          kind: "non_git",
+          displayName,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        await this.projectRegistry.upsert(projectRecord);
+        const workspaceRecord = createPersistedWorkspaceRecord({
+          workspaceId: inputCwd,
+          projectId: projectRecord.projectId,
+          cwd: inputCwd,
+          kind: "directory",
+          displayName,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        await this.workspaceRegistry.upsert(workspaceRecord);
+        return workspaceRecord;
+      }
       return this.reclassifyOrUnarchiveWorkspaceForDirectory({
         workspace: existingWorkspace,
         project: await this.projectRegistry.get(existingWorkspace.projectId),
