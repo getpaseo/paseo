@@ -1,12 +1,12 @@
 name = "hubcode-website"
-account_id = "10ed39a1dbf316e30abd0c409bed40d6"
+account_id = "a1e483b1766c1900991d27e8ca4ac70a"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 main = "@tanstack/react-start/server-entry"
 
 routes = [
-  { pattern = "hubcode.ai", custom_domain = true },
-  { pattern = "www.hubcode.ai", custom_domain = true }
+  { pattern = "hubcode.ai", custom_domain = true, override_existing_dns_record = true },
+  { pattern = "www.hubcode.ai", custom_domain = true, override_existing_dns_record = true }
 ]
 
 [observability]
