@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/getpaseo-paseo-badge.png)](https://mseep.ai/app/getpaseo-paseo)
+
 <p align="center">
   <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
 </p>
