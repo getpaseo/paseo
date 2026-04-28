@@ -17,7 +17,12 @@ const SILERO_MIN_SPEECH_DURATION = 0.1;
 
 // Our boundary detection thresholds (in milliseconds).
 const DEFAULT_CONFIRM_MS = 800;
-const DEFAULT_SILENCE_MS = 1000;
+// 500ms balances "wait for natural pauses between words" (~150-300ms) against
+// "users don't want to wait too long after stopping". 1000ms (the prior default)
+// caused chronic non-finalization because residual room noise / acoustic echo
+// from TTS playback re-triggered the VAD inside the silence window, oscillating
+// speaking ⇄ ending and never reaching speech_stopped.
+const DEFAULT_SILENCE_MS = 500;
 
 type SherpaVadHandle = {
   acceptWaveform(samples: Float32Array): void;

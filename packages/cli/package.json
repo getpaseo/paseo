@@ -1,6 +1,6 @@
 {
   "name": "@hubcode/cli",
-  "version": "2.7.2",
+  "version": "2.7.3",
   "description": "Control Claude Code, Codex, and OpenCode agents from your terminal — part of Hubcode.",
   "type": "module",
   "license": "AGPL-3.0-or-later",

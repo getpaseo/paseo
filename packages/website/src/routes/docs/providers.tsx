@@ -11,7 +11,8 @@ export const Route = createFileRoute("/docs/providers")({
   component: Providers,
 });
 
-const CUSTOM_PROVIDERS_URL = "https://github.com/hubtool/hubcode/blob/main/docs/CUSTOM-PROVIDERS.md";
+const CUSTOM_PROVIDERS_URL =
+  "https://github.com/hubtool/hubcode/blob/main/docs/CUSTOM-PROVIDERS.md";
 
 function Providers() {
   return (

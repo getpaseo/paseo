@@ -1,7 +1,7 @@
 {
   "name": "@hubcode/app",
   "main": "index.ts",
-  "version": "2.7.2",
+  "version": "2.7.3",
   "private": true,
   "scripts": {
     "start": "expo start",
