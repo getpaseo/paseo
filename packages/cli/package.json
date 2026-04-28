@@ -47,8 +47,8 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",
-    "@hubcode/relay": "2.7.2",
-    "@hubcode/server": "2.7.2",
+    "@hubcode/relay": "2.7.3",
+    "@hubcode/server": "2.7.3",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
     "mime-types": "^2.1.35",
