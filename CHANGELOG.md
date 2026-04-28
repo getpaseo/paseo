@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.7.3 - 2026-04-28
+
+### Added
+
+This is the first numbered Hubcode release. Highlights:
+
+- **Per-project kanban** — every git worktree becomes a card on a To-do / In-progress / Ready-for-review board. New worktrees auto-appear in **To-do**; counts show in the sidebar.
+- **Composer attachment menu** — the new "+" button in the chat composer attaches images, GitHub issues / PRs, and items from any connected integration as structured context.
+- **Issue tracker integrations** — GitHub, Linear, Jira, GitLab, Forgejo, Plain, and Sentry. Linked issue context (`issueContext` + `issueMetadata`) is persisted on the workspace so the agent and kanban both know what's being worked on.
+- **New-workspace flow** — pick a GUI or CLI agent, edit the branch name inline, attach an issue, write a prompt — workspace, kanban card, and metadata are all created together.
+- **Live shared sessions** — invite a teammate into an agent run with a built-in voice / video room, brokered through your daemon.
+- **Hubtool agent** — optional curated multi-model agent routed through the Hubcode backend on a single Pro / Enterprise subscription. Free users see the entry with an upgrade CTA next to their installed agents.
+- **CLI agents in the picker** — Codex CLI, Claude CLI, Gemini CLI and any installed CLI agent can be selected directly from the composer.
+- **Plans page** — Free / Pro / Enterprise tiers documented at `/pricing`, with the curated Hubtool combos, org chat, audit log, SSO and the rest gated by plan.
+- **Brand new website** — full rebrand to the Hubcode magenta palette, feature-driven landing page, refreshed hero screenshots.
+
+### Improved
+- VAD silence threshold lowered to 500 ms so realtime voice finalizes turns reliably (previous 1000 ms window allowed acoustic echo to keep the VAD oscillating).
+- Workspace descriptor now carries `workspaceDirectory` so clients no longer hit "Workspace directory is missing" after a worktree is created.
+- Worktree creation runs before pending-workspace registration, so background indexing no longer starts on a directory that doesn't exist yet.
+- `clearAgentAttention` is fire-and-forget again — the prior 15s response timeout caused unhandled rejections.
+
+### Fixed
+- Composer attachments and `cwd` are now forwarded through `MessageInput` so GitHub-issue and integration picks actually persist on the created workspace.
+- Selecting a CLI agent in the new-workspace screen launches that CLI instead of always falling back to the GUI agent.
+- Kanban no longer hides workspaces created in the active org (the `orgId` filter was over-eager).
+- Sidebar task count is sourced from the session store so it stays in sync with the kanban screen.
+
+### Platforms
+- Mac (Apple Silicon and Intel), Web, and CLI are the active install paths.
+- Windows and Linux desktop builds are marked **Coming soon** — install via the CLI on those platforms for now.
+- iOS and Android apps are **Coming soon**.
+
+---
+
 ## 0.1.54 - 2026-04-12
 
 ### Added

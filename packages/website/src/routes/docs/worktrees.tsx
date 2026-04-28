@@ -1,0 +1,310 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { pageMeta } from "~/meta";
+
+export const Route = createFileRoute("/docs/worktrees")({
+  head: () => ({
+    meta: pageMeta(
+      "Git Worktrees - Hubcode Docs",
+      "Run agents in isolated git worktrees for parallel feature development.",
+    ),
+  }),
+  component: Worktrees,
+});
+
+function Code({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="bg-card border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto">
+      {children}
+    </div>
+  );
+}
+
+function Worktrees() {
+  return (
+    <div className="space-y-10">
+      <div>
+        <h1 className="text-3xl font-medium font-title mb-4">Git Worktrees</h1>
+        <p className="text-white/60 leading-relaxed">
+          Git worktrees let you have multiple working directories from the same repository. Hubcode
+          uses them to run agents in isolated branches without switching contexts.
+        </p>
+      </div>
+
+      {/* Why worktrees */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Why worktrees?</h2>
+        <p className="text-white/60 leading-relaxed">
+          Without worktrees, running multiple agents on the same repo means they share the working
+          directory. One agent's changes interfere with another's. You can't safely run parallel
+          tasks.
+        </p>
+        <p className="text-white/60 leading-relaxed">
+          With worktrees, each agent gets its own directory and branch. They can work simultaneously
+          without conflict. When an agent finishes, you review the diff, merge the branch, and
+          archive the worktree.
+        </p>
+      </section>
+
+      {/* Directory structure */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Directory structure</h2>
+        <p className="text-white/60 leading-relaxed">
+          Hubcode creates worktrees under{" "}
+          <code className="font-mono">$HUBCODE_HOME/worktrees/</code>, organized by a short hash of
+          the source checkout path:
+        </p>
+        <Code>
+          <pre className="text-white/80">{`~/.hubcode/worktrees/
+├── 1vnnm9k3/
+│   ├── tidy-fox/            # random slug
+│   └── bold-owl/            # random slug
+└── 4k8q2d1p/
+    └── swift-hare/          # random slug`}</pre>
+        </Code>
+        <p className="text-white/60 leading-relaxed">
+          The hash avoids collisions between repositories that share the same directory or remote
+          name. Worktree directory names are random slugs — the branch name is separate and chosen
+          when you first launch an agent in the worktree.
+        </p>
+      </section>
+
+      {/* Branches */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Branches</h2>
+        <p className="text-white/60 leading-relaxed">
+          When you create a worktree, Hubcode generates a random directory name. The branch name is
+          set when you first launch an agent — Hubcode generates one automatically.
+        </p>
+        <p className="text-white/60 leading-relaxed">
+          This means the worktree directory and branch are independent. You can rename the branch
+          later without affecting the worktree path.
+        </p>
+      </section>
+
+      {/* Multiple agents */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Multiple agents per worktree</h2>
+        <p className="text-white/60 leading-relaxed">
+          You can launch multiple agents into the same worktree. They share the working directory
+          and branch, which is useful when you want agents to collaborate on the same feature or
+          when one agent hands off to another.
+        </p>
+        <p className="text-white/60 leading-relaxed">
+          Be mindful of conflicts — agents working on the same files simultaneously can step on each
+          other. This works best when agents have distinct responsibilities or run sequentially.
+        </p>
+      </section>
+
+      {/* hubcode.json */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Lifecycle hooks with hubcode.json</h2>
+        <p className="text-white/60 leading-relaxed">
+          When Hubcode creates a worktree, it's a fresh checkout. Dependencies aren't installed,
+          config files aren't copied. You can automate setup by creating a{" "}
+          <code className="font-mono">hubcode.json</code> file in your repository root:
+        </p>
+        <Code>
+          <pre className="text-white/80">{`{
+  "worktree": {
+    "setup": [
+      "npm ci",
+      "cp \\"$HUBCODE_SOURCE_CHECKOUT_PATH/.env\\" \\"$HUBCODE_WORKTREE_PATH/.env\\""
+    ]
+  }
+}`}</pre>
+        </Code>
+        <p className="text-white/60 leading-relaxed">
+          The <code className="font-mono">setup</code> array contains shell commands that run after
+          the worktree is created. Use it to install dependencies, copy local config files, or run
+          any other initialization.
+        </p>
+        <p className="text-white/60 leading-relaxed">
+          You can also add a <code className="font-mono">teardown</code> array for cleanup commands
+          that run before Hubcode removes the worktree directory during archive:
+        </p>
+        <Code>
+          <pre className="text-white/80">{`{
+  "worktree": {
+    "teardown": [
+      "pkill -f \\"vite --port $HUBCODE_WORKTREE_PORT\\" || true",
+      "rm -rf \\"$HUBCODE_WORKTREE_PATH/.cache\\""
+    ]
+  }
+}`}</pre>
+        </Code>
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 text-white/80">
+          <strong>Important:</strong> Setup commands come from{" "}
+          <code className="font-mono">hubcode.json</code> in the selected base branch. If you pick{" "}
+          <code className="font-mono">main</code>, Hubcode reads the committed file on{" "}
+          <code className="font-mono">main</code>. Local or uncommitted changes in another branch
+          are not used for that worktree.
+        </div>
+      </section>
+
+      {/* Environment variables */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Environment variables</h2>
+        <p className="text-white/60 leading-relaxed">
+          Setup and teardown commands have access to these environment variables:
+        </p>
+        <ul className="text-white/60 space-y-2 list-disc list-inside">
+          <li>
+            <code className="font-mono">$HUBCODE_SOURCE_CHECKOUT_PATH</code> — your source checkout
+            path (original repository root)
+          </li>
+          <li>
+            <code className="font-mono">$HUBCODE_ROOT_PATH</code> — legacy alias of{" "}
+            <code className="font-mono">$HUBCODE_SOURCE_CHECKOUT_PATH</code>
+          </li>
+          <li>
+            <code className="font-mono">$HUBCODE_WORKTREE_PATH</code> — the new worktree directory
+          </li>
+          <li>
+            <code className="font-mono">$HUBCODE_BRANCH_NAME</code> — the branch name created
+          </li>
+          <li>
+            <code className="font-mono">$HUBCODE_WORKTREE_PORT</code> — the worktree port, when
+            runtime metadata exists
+          </li>
+        </ul>
+        <p className="text-white/60 leading-relaxed">
+          Use <code className="font-mono">$HUBCODE_SOURCE_CHECKOUT_PATH</code> to copy files that
+          shouldn't be in git (like <code className="font-mono">.env</code>) from your source
+          checkout to the worktree.
+        </p>
+        <p className="text-white/60 leading-relaxed">
+          <code className="font-mono">$HUBCODE_WORKTREE_PORT</code> is available when the worktree
+          was bootstrapped with a port. That makes it useful for both starting services in setup and
+          stopping them again in teardown.
+        </p>
+      </section>
+
+      {/* Teardown */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Teardown</h2>
+        <p className="text-white/60 leading-relaxed">
+          Teardown runs during archive, before Hubcode removes the worktree directory. Use it for
+          cleanup that needs access to the worktree path or its assigned port.
+        </p>
+        <p className="text-white/60 leading-relaxed">
+          Common uses include stopping dev servers on{" "}
+          <code className="font-mono">$HUBCODE_WORKTREE_PORT</code>, deleting generated files, or
+          deregistering services tied to that worktree.
+        </p>
+        <Code>
+          <pre className="text-white/80">{`{
+  "worktree": {
+    "setup": [
+      "npm ci",
+      "nohup npm run dev -- --port $HUBCODE_WORKTREE_PORT > \\"$HUBCODE_WORKTREE_PATH/dev.log\\" 2>&1 &"
+    ],
+    "teardown": [
+      "pkill -f \\"npm run dev -- --port $HUBCODE_WORKTREE_PORT\\" || true",
+      "rm -f \\"$HUBCODE_WORKTREE_PATH/dev.log\\""
+    ]
+  }
+}`}</pre>
+        </Code>
+      </section>
+
+      {/* Common patterns */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Common patterns</h2>
+
+        <h3 className="text-lg font-medium mt-6">Node.js / npm</h3>
+        <Code>
+          <pre className="text-white/80">{`{
+  "worktree": {
+    "setup": ["npm ci"]
+  }
+}`}</pre>
+        </Code>
+
+        <h3 className="text-lg font-medium mt-6">Python / Poetry</h3>
+        <Code>
+          <pre className="text-white/80">{`{
+  "worktree": {
+    "setup": ["poetry install"]
+  }
+}`}</pre>
+        </Code>
+
+        <h3 className="text-lg font-medium mt-6">Copy environment files</h3>
+        <Code>
+          <pre className="text-white/80">{`{
+  "worktree": {
+    "setup": [
+      "npm ci",
+      "cp \\"$HUBCODE_SOURCE_CHECKOUT_PATH/.env\\" \\"$HUBCODE_WORKTREE_PATH/.env\\"",
+      "cp \\"$HUBCODE_SOURCE_CHECKOUT_PATH/.env.local\\" \\"$HUBCODE_WORKTREE_PATH/.env.local\\""
+    ]
+  }
+}`}</pre>
+        </Code>
+
+        <h3 className="text-lg font-medium mt-6">Run database migrations</h3>
+        <Code>
+          <pre className="text-white/80">{`{
+  "worktree": {
+    "setup": [
+      "npm ci",
+      "cp \\"$HUBCODE_SOURCE_CHECKOUT_PATH/.env\\" \\"$HUBCODE_WORKTREE_PATH/.env\\"",
+      "npm run db:migrate"
+    ]
+  }
+}`}</pre>
+        </Code>
+      </section>
+
+      {/* Workflow */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Workflow</h2>
+        <p className="text-white/60 leading-relaxed">The typical workflow is:</p>
+        <ol className="text-white/60 space-y-2 list-decimal list-inside">
+          <li>Create a worktree — Hubcode creates the directory and runs setup</li>
+          <li>Launch an agent — Hubcode creates or assigns a branch</li>
+          <li>Agent works in isolation — changes stay in its worktree</li>
+          <li>Review the diff — compare against the base branch</li>
+          <li>Merge or discard — if approved, merge the branch; otherwise archive</li>
+          <li>Archive the worktree — cleans up the directory and optionally the branch</li>
+        </ol>
+        <p className="text-white/60 leading-relaxed">
+          You can run multiple agents in different worktrees simultaneously. Each worktree has its
+          own branch and working directory.
+        </p>
+      </section>
+
+      {/* CLI reference */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">CLI reference</h2>
+        <p className="text-white/60 leading-relaxed">Create an agent in a new worktree:</p>
+        <Code>
+          <pre className="text-white/80">{`hubcode run --worktree feature-auth --base main "implement auth"`}</pre>
+        </Code>
+        <p className="text-white/60 leading-relaxed">List all worktrees:</p>
+        <Code>
+          <pre className="text-white/80">{`hubcode worktree ls`}</pre>
+        </Code>
+        <p className="text-white/60 leading-relaxed">
+          Archive a worktree (stops agents, removes directory):
+        </p>
+        <Code>
+          <pre className="text-white/80">{`hubcode worktree archive feature-auth`}</pre>
+        </Code>
+      </section>
+
+      {/* Metadata */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-medium">Metadata</h2>
+        <p className="text-white/60 leading-relaxed">
+          Hubcode stores metadata in each worktree's git directory to track the base branch. This is
+          used for diff operations and to know what branch to merge into.
+        </p>
+        <p className="text-white/60 leading-relaxed">
+          You don't need to manage this manually — Hubcode handles it when creating and archiving
+          worktrees.
+        </p>
+      </section>
+    </div>
+  );
+}

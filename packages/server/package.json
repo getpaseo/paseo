@@ -1,6 +1,6 @@
 {
   "name": "@hubcode/server",
-  "version": "2.7.2",
+  "version": "2.7.3",
   "description": "Hubcode daemon: agent lifecycle, WebSocket API, and MCP server for local AI coding agents.",
   "type": "module",
   "license": "AGPL-3.0-or-later",
