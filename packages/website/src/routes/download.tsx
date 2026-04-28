@@ -20,7 +20,7 @@ export const Route = createFileRoute("/download")({
   head: () => ({
     meta: pageMeta(
       "Download — Hubcode",
-      "Download the Hubcode desktop app for macOS or Linux, run the Web App in your browser, or install the CLI on any Unix-like host. Windows, iOS and Android builds are on the way.",
+      "Download the Hubcode desktop app for macOS, Windows, or Linux, run the Web App in your browser, or install the CLI on any Unix-like host. iOS and Android apps are on the way.",
     ),
   }),
   component: Download,
@@ -77,13 +77,20 @@ function Download() {
                 }
               />
               <Row
+                icon={<WindowsIcon className="h-5 w-5" />}
+                name="Windows"
+                note="Unsigned installer — Windows SmartScreen may warn on first launch."
+                actions={<PrimaryPill href={urls.windowsExe} label="Download .exe" />}
+              />
+              <Row
                 icon={<LinuxIcon className="h-5 w-5" />}
                 name="Linux"
-                note="x86_64 AppImage and Debian package."
+                note="x86_64 AppImage, Debian and RPM packages."
                 actions={
                   <>
                     <PrimaryPill href={urls.linuxAppImage} label="AppImage" />
                     <SecondaryPill href={urls.linuxDeb} label="DEB" />
+                    <SecondaryPill href={urls.linuxRpm} label="RPM" />
                   </>
                 }
               />
@@ -126,13 +133,6 @@ function Download() {
               <h2 className="text-xl font-medium text-white/80">Coming soon</h2>
             </div>
             <div className="divide-y divide-white/5">
-              <Row
-                icon={<WindowsIcon className="h-5 w-5 text-white/50" />}
-                name="Windows"
-                note="Use the CLI for now."
-                actions={<ComingSoonPill />}
-                dim
-              />
               <Row
                 icon={<AppleIcon className="h-5 w-5 text-white/50" />}
                 name="iOS"

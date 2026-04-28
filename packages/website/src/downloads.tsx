@@ -53,7 +53,6 @@ export function getDownloadOptions(version: string): DownloadOption[] {
       label: "Windows",
       href: urls.windowsExe,
       icon: WindowsIcon,
-      comingSoon: true,
     },
     {
       platform: "linux",
