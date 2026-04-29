@@ -57,6 +57,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import {
   buildModelRows,
   buildSelectedTriggerLabel,
+  buildSuggestedRows,
   matchesSearch,
   resolveProviderLabel,
   type SelectorModelRow,
@@ -341,6 +342,48 @@ function FavoritesSection({
   );
 }
 
+function SuggestedSection({
+  suggestedRows,
+  selectedProvider,
+  selectedModel,
+  favoriteKeys,
+  onSelect,
+  canSelectProvider,
+  onToggleFavorite,
+}: {
+  suggestedRows: SelectorModelRow[];
+  selectedProvider: string;
+  selectedModel: string;
+  favoriteKeys: Set<string>;
+  onSelect: (provider: string, modelId: string) => void;
+  canSelectProvider: (provider: string) => boolean;
+  onToggleFavorite?: (provider: string, modelId: string) => void;
+}) {
+  if (suggestedRows.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.favoritesContainer}>
+      <View style={styles.sectionHeading}>
+        <Text style={styles.sectionHeadingText}>Suggested</Text>
+      </View>
+      {suggestedRows.map((row) => (
+        <SelectableModelRow
+          key={row.favoriteKey}
+          row={row}
+          isSelected={row.provider === selectedProvider && row.modelId === selectedModel}
+          isFavorite={favoriteKeys.has(row.favoriteKey)}
+          disabled={!canSelectProvider(row.provider)}
+          elevated
+          onSelect={onSelect}
+          onToggleFavorite={onToggleFavorite}
+        />
+      ))}
+    </View>
+  );
+}
+
 interface GroupProviderButtonProps {
   providerId: string;
   providerLabel: string;
@@ -515,6 +558,16 @@ function SelectorContent({
     () => partitionRows(visibleRows, favoriteKeys),
     [favoriteKeys, visibleRows],
   );
+  const suggestedRows = useMemo(
+    () =>
+      buildSuggestedRows({
+        rows: visibleRows,
+        selectedProvider,
+        selectedModel,
+        favoriteKeys,
+      }),
+    [favoriteKeys, selectedModel, selectedProvider, visibleRows],
+  );
 
   // Group ALL visible rows by provider — favorites are a cross-cutting view,
   // not a partition. A model being favorited doesn't remove it from its provider.
@@ -531,7 +584,8 @@ function SelectorContent({
     );
   }, [allGroupedRows, normalizedQuery, view.kind]);
 
-  const hasResults = favoriteRows.length > 0 || filteredGroupedRows.length > 0;
+  const hasResults =
+    favoriteRows.length > 0 || suggestedRows.length > 0 || filteredGroupedRows.length > 0;
 
   return (
     <View>
@@ -546,6 +600,16 @@ function SelectorContent({
           onToggleFavorite={onToggleFavorite}
         />
       ) : null}
+
+      <SuggestedSection
+        suggestedRows={suggestedRows}
+        selectedProvider={selectedProvider}
+        selectedModel={selectedModel}
+        favoriteKeys={favoriteKeys}
+        onSelect={onSelect}
+        canSelectProvider={canSelectProvider}
+        onToggleFavorite={onToggleFavorite}
+      />
 
       {filteredGroupedRows.length > 0 ? (
         <GroupedProviderRows

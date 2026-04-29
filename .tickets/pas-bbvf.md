@@ -1,6 +1,6 @@
 ---
 id: pas-bbvf
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-04-28T14:06:42Z
@@ -32,3 +32,9 @@ Acceptance criteria:
 - After a resumed agent's timeline is available, the active agent pane renders the timeline without requiring tab switches or unrelated UI updates.
 - The empty placeholder is only shown for genuinely empty agents.
 - Add a focused app/store test for a resumed agent receiving authoritative history while its pane is already mounted, if practical.
+
+Implementation notes:
+
+- Added a focused AgentPanel test showing a mounted pane renders authoritative history as soon as stream tail state is updated.
+- The original stale-pane path did not reproduce in that focused store/render test.
+- The resume path now also seeds resumed external sessions with persisted preview timeline items, so resumed OpenCode panes avoid the empty placeholder while authoritative hydration catches up.

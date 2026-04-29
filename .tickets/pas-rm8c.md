@@ -1,6 +1,6 @@
 ---
 id: pas-rm8c
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-04-27T16:37:10Z
@@ -28,3 +28,9 @@ Acceptance criteria:
 - Resumed sessions should not show an empty-chat placeholder while history is still hydrating.
 - The UI should show an explicit loading/history hydration state or partial skeleton.
 - The resume path should avoid waiting on unrelated provider/workspace refresh work where practical.
+
+Implementation notes:
+
+- When an external OpenCode session is resumed from the workspace draft tab, Paseo now seeds the resumed agent's stream tail with the persisted-session preview timeline returned by `fetchPersistedAgents`.
+- This preview is intentionally not marked as authoritative history; normal timeline hydration still replaces/catches up afterward.
+- The pane no longer looks like a new empty agent during the authoritative history gap when persisted preview history is available.

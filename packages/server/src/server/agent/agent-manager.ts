@@ -3147,11 +3147,11 @@ export class AgentManager {
       normalized.model = trimmed.length > 0 && trimmed !== "default" ? trimmed : undefined;
     }
 
-    if (resolveDefaultModel) {
+    if (resolveDefaultModel && normalized.provider !== "opencode") {
       await this.populateDefaultModel(normalized);
     }
 
-    if (!normalized.modeId) {
+    if (!normalized.modeId && normalized.provider !== "opencode") {
       try {
         normalized.modeId =
           getAgentProviderDefinition(normalized.provider).defaultModeId ?? undefined;

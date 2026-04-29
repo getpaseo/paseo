@@ -71,8 +71,10 @@ export interface UseAgentFormStateResult {
   selectedProvider: AgentProvider | null;
   setProviderFromUser: (provider: AgentProvider) => void;
   selectedMode: string;
+  selectedModeIsExplicit: boolean;
   setModeFromUser: (modeId: string) => void;
   selectedModel: string;
+  selectedModelIsExplicit: boolean;
   setModelFromUser: (modelId: string) => void;
   selectedThinkingOptionId: string;
   setThinkingOptionFromUser: (thinkingOptionId: string) => void;
@@ -252,6 +254,9 @@ function resolveModelField(input: {
   }
   if (preferredModel) {
     return !availableModels || isValidModel(preferredModel) ? preferredModel : defaultModelId;
+  }
+  if (provider === "opencode") {
+    return defaultModelId;
   }
   return "";
 }
@@ -512,6 +517,16 @@ function buildAllProviderModels(
   return map;
 }
 
+function resolveProviderPrefs(input: {
+  provider: AgentProvider | null;
+  preferences: FormPreferences | null;
+}): ProviderPrefs | undefined {
+  if (!input.provider) {
+    return undefined;
+  }
+  return input.preferences?.providerPreferences?.[input.provider];
+}
+
 async function persistProviderPreferences(input: {
   provider: AgentProvider;
   formState: FormState;
@@ -535,6 +550,39 @@ async function persistProviderPreferences(input: {
           : {}),
       },
     }),
+  );
+}
+
+function isExplicitModeSelection(input: {
+  modeId: string;
+  initialValues: FormInitialValues | undefined;
+  providerPrefs: ProviderPrefs | undefined;
+  userModified: boolean;
+  providerDef: AgentProviderDefinition | undefined;
+}): boolean {
+  const validModeIds = input.providerDef?.modes.map((m) => m.id) ?? [];
+  if (input.userModified) {
+    return input.modeId.trim().length > 0;
+  }
+  if (
+    typeof input.initialValues?.modeId === "string" &&
+    input.initialValues.modeId.length > 0 &&
+    validModeIds.includes(input.initialValues.modeId)
+  ) {
+    return true;
+  }
+  return Boolean(input.providerPrefs?.mode && validModeIds.includes(input.providerPrefs.mode));
+}
+
+function isExplicitModelSelection(input: {
+  initialValues: FormInitialValues | undefined;
+  providerPrefs: ProviderPrefs | undefined;
+  userModified: boolean;
+}): boolean {
+  return (
+    input.userModified ||
+    normalizeSelectedModelId(input.initialValues?.model).length > 0 ||
+    normalizeSelectedModelId(input.providerPrefs?.model).length > 0
   );
 }
 
@@ -913,6 +961,19 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const agentDefinition = formState.provider
     ? providerDefinitionMap.get(formState.provider)
     : undefined;
+  const providerPrefs = resolveProviderPrefs({ provider: formState.provider, preferences });
+  const selectedModeIsExplicit = isExplicitModeSelection({
+    modeId: formState.modeId,
+    initialValues: combinedInitialValues,
+    providerPrefs,
+    userModified: userModified.modeId,
+    providerDef: agentDefinition,
+  });
+  const selectedModelIsExplicit = isExplicitModelSelection({
+    initialValues: combinedInitialValues,
+    providerPrefs,
+    userModified: userModified.model,
+  });
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
   const resolvedModelId = effectiveModel?.id ?? formState.model;
   const availableThinkingOptionsRaw = effectiveModel?.thinkingOptions;
@@ -933,8 +994,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       selectedProvider: formState.provider,
       setProviderFromUser,
       selectedMode: formState.modeId,
+      selectedModeIsExplicit,
       setModeFromUser,
       selectedModel: resolvedModelId,
+      selectedModelIsExplicit,
       setModelFromUser,
       selectedThinkingOptionId: formState.thinkingOptionId,
       setThinkingOptionFromUser,
@@ -962,7 +1025,9 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       formState.serverId,
       formState.provider,
       formState.modeId,
+      selectedModeIsExplicit,
       resolvedModelId,
+      selectedModelIsExplicit,
       formState.thinkingOptionId,
       formState.workingDir,
       setSelectedServerId,
@@ -1001,7 +1066,10 @@ export const __private__ = {
   buildProviderDefinitionMapForStatuses,
   combineInitialValues,
   mergeSelectedComposerPreferences,
+  resolveProviderPrefs,
   resolveDefaultModel,
   resolveFormState,
   resolveThinkingOptionId,
+  isExplicitModeSelection,
+  isExplicitModelSelection,
 };

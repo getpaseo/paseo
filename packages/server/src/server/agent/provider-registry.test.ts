@@ -654,6 +654,56 @@ describe("model merging", () => {
     ]);
   });
 
+  test("OpenCode profile models merge into runtime discovery instead of replacing it", async () => {
+    mockState.runtimeModels.set("opencode", [
+      {
+        provider: "opencode",
+        id: "opencode/gpt-5.5",
+        label: "Runtime GPT-5.5",
+      },
+      {
+        provider: "opencode",
+        id: "anthropic/claude-sonnet-4-6",
+        label: "Claude Sonnet 4.6",
+        isDefault: true,
+      },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        opencode: {
+          models: [
+            {
+              id: "opencode/gpt-5.5",
+              label: "Configured GPT-5.5",
+              isDefault: true,
+            },
+          ],
+        },
+      },
+    });
+
+    const models = await registry.opencode.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models).toEqual([
+      {
+        provider: "opencode",
+        id: "opencode/gpt-5.5",
+        label: "Configured GPT-5.5",
+        isDefault: true,
+      },
+      {
+        provider: "opencode",
+        id: "anthropic/claude-sonnet-4-6",
+        label: "Claude Sonnet 4.6",
+        isDefault: false,
+      },
+    ]);
+  });
+
   test("profile isDefault preserved without runtime models", async () => {
     mockState.runtimeModels.set("claude", [
       {

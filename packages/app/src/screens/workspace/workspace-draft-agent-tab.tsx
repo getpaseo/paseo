@@ -16,20 +16,20 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
-import type { Agent } from "@/stores/session-store";
+import { type Agent, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { encodeImages } from "@/utils/encode-images";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
-import type { AgentSnapshotPayload } from "@server/shared/messages";
+import type { AgentSnapshotPayload, AgentStreamEventPayload } from "@server/shared/messages";
 import type { DaemonClient, FetchPersistedAgentsEntry } from "@server/client/daemon-client";
 import type { ComposerAttachment, WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useWorkspaceAttachments,
   useWorkspaceAttachmentScopeKey,
 } from "@/attachments/workspace-attachments-store";
-import type { UserMessageImageAttachment } from "@/types/stream";
+import { hydrateStreamState, type UserMessageImageAttachment } from "@/types/stream";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 
@@ -121,16 +121,37 @@ function validateDraftSubmission(input: {
 function resolveDraftModeIdOverride(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   modeOptionsCount: number;
+  provider: string;
   selectedMode: string;
+  selectedModeIsExplicit: boolean;
 }): { modeId: string } | Record<string, never> {
-  const { autoSubmitConfig, modeOptionsCount, selectedMode } = input;
+  const { autoSubmitConfig, modeOptionsCount, provider, selectedMode, selectedModeIsExplicit } =
+    input;
   if (autoSubmitConfig?.modeId) {
     return { modeId: autoSubmitConfig.modeId };
+  }
+  if (provider === "opencode" && !selectedModeIsExplicit) {
+    return {};
   }
   if (modeOptionsCount > 0 && selectedMode !== "") {
     return { modeId: selectedMode };
   }
   return {};
+}
+
+function resolveDraftModelOverride(input: {
+  autoSubmitConfig: AutoSubmitConfig | null;
+  provider: string;
+  effectiveModelId: string | null;
+  selectedModelIsExplicit: boolean;
+}): string | undefined {
+  if (input.autoSubmitConfig?.model) {
+    return input.autoSubmitConfig.model;
+  }
+  if (input.provider === "opencode" && !input.selectedModelIsExplicit) {
+    return undefined;
+  }
+  return input.effectiveModelId || undefined;
 }
 
 function resolveDraftModeId(input: {
@@ -163,6 +184,41 @@ function formatExternalSessionUpdatedAt(value: string): string {
 function isRecentlyActiveExternalSession(session: FetchPersistedAgentsEntry): boolean {
   const updatedAt = Date.parse(session.lastActivityAt);
   return Number.isFinite(updatedAt) && Date.now() - updatedAt < RECENT_EXTERNAL_SESSION_MS;
+}
+
+function buildExternalSessionPreviewStreamItems(session: FetchPersistedAgentsEntry) {
+  const timestamp = new Date(session.lastActivityAt);
+  const fallbackTimestamp = Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
+  return hydrateStreamState(
+    session.timeline.map((item) => ({
+      event: {
+        type: "timeline",
+        provider: session.provider,
+        item,
+      } satisfies AgentStreamEventPayload,
+      timestamp: fallbackTimestamp,
+    })),
+    { source: "canonical" },
+  );
+}
+
+function seedResumedExternalSessionPreview(input: {
+  serverId: string;
+  agent: AgentSnapshotPayload;
+  session: FetchPersistedAgentsEntry;
+}): void {
+  const previewItems = buildExternalSessionPreviewStreamItems(input.session);
+  if (previewItems.length === 0) {
+    return;
+  }
+  useSessionStore.getState().setAgentStreamTail(input.serverId, (previous) => {
+    if (previous.has(input.agent.id)) {
+      return previous;
+    }
+    const next = new Map(previous);
+    next.set(input.agent.id, previewItems);
+    return next;
+  });
 }
 
 function ExternalSessionRow({
@@ -290,9 +346,10 @@ function useWorkspaceExternalSessions(input: {
         title: session.title,
       });
     },
-    onSuccess: (agent) => {
+    onSuccess: (agent, session) => {
       toast.show("Session resumed", { variant: "success" });
       onCreated(agent);
+      seedResumedExternalSessionPreview({ serverId, agent, session });
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Failed to resume session");
@@ -326,9 +383,11 @@ async function submitDraftCreateRequest(input: {
   composerState: {
     selectedProvider: string | null;
     selectedMode: string;
+    selectedModeIsExplicit: boolean;
     modeOptions: unknown[];
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
+    selectedModelIsExplicit: boolean;
     featureValues: Record<string, unknown> | undefined;
   };
 }): Promise<{ agentId: string | null; result: AgentSnapshotPayload }> {
@@ -357,13 +416,20 @@ async function submitDraftCreateRequest(input: {
   const modeIdOverride = resolveDraftModeIdOverride({
     autoSubmitConfig,
     modeOptionsCount: composerState.modeOptions.length,
+    provider,
     selectedMode: composerState.selectedMode,
+    selectedModeIsExplicit: composerState.selectedModeIsExplicit,
   });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
     cwd: workspaceDirectory,
     ...modeIdOverride,
-    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
+    model: resolveDraftModelOverride({
+      autoSubmitConfig,
+      provider,
+      effectiveModelId: composerState.effectiveModelId,
+      selectedModelIsExplicit: composerState.selectedModelIsExplicit,
+    }),
     thinkingOptionId:
       autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
     featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
@@ -797,6 +863,10 @@ export function WorkspaceDraftAgentTab({
     </FileDropZone>
   );
 }
+
+export const __private__ = {
+  buildExternalSessionPreviewStreamItems,
+};
 
 const styles = StyleSheet.create((theme) => ({
   container: {

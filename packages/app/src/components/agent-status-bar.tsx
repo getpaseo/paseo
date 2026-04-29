@@ -633,7 +633,7 @@ function ControlledStatusBar({
   const modePressableStyle = useMemo(
     () =>
       makeBadgePressableStyle(
-        styles.modeIconBadge,
+        styles.modeBadge,
         styles.disabledBadge,
         disabled || !canSelectMode,
         openSelector === "mode",
@@ -729,6 +729,7 @@ function ControlledStatusBar({
           comboboxModeOptions={comboboxModeOptions}
           comboboxThinkingOptions={comboboxThinkingOptions}
           displayProvider={displayProvider}
+          displayMode={displayMode}
           displayModel={displayModel}
           displayThinking={displayThinking}
           ModeIconComponent={ModeIconComponent}
@@ -834,6 +835,7 @@ interface DesktopStatusBarContentProps {
   comboboxModeOptions: ComboboxOption[];
   comboboxThinkingOptions: ComboboxOption[];
   displayProvider: string;
+  displayMode: string;
   displayModel: string;
   displayThinking: string;
   ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
@@ -897,6 +899,7 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     comboboxModeOptions,
     comboboxThinkingOptions,
     displayProvider,
+    displayMode,
     displayModel,
     displayThinking,
     ModeIconComponent,
@@ -1038,6 +1041,8 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
                 ) : (
                   <ShieldCheck size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
                 )}
+                <Text style={styles.modeBadgeText}>{displayMode}</Text>
+                <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
               </Pressable>
             </TooltipTrigger>
             <TooltipContent side="top" align="center" offset={8}>

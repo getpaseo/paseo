@@ -11,7 +11,7 @@ import type { MessagePayload } from "@/components/message-input";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import type { StreamItem } from "@/types/stream";
-import { WorkspaceDraftAgentTab } from "./workspace-draft-agent-tab";
+import { __private__, WorkspaceDraftAgentTab } from "./workspace-draft-agent-tab";
 
 const {
   createAgentMock,
@@ -130,8 +130,10 @@ vi.mock("@/hooks/use-agent-input-draft", () => ({
         providerDefinitions: [{ id: "codex", label: "Codex" }],
         selectedProvider: "codex",
         selectedMode: "",
+        selectedModeIsExplicit: false,
         modeOptions: [],
         selectedModel: "gpt-5.4",
+        selectedModelIsExplicit: true,
         availableModels: [{ id: "gpt-5.4", label: "GPT-5.4" }],
         allProviderModels: {},
         isAllModelsLoading: false,
@@ -314,6 +316,33 @@ function renderDraftTab() {
 }
 
 describe("WorkspaceDraftAgentTab", () => {
+  it("builds preview stream items from a resumed external session timeline", () => {
+    const items = __private__.buildExternalSessionPreviewStreamItems({
+      provider: "opencode",
+      sessionId: "ses_1234567890",
+      cwd: "/repo/.paseo/worktrees/workspace-1",
+      title: "Existing session",
+      lastActivityAt: "2026-04-20T00:00:00.000Z",
+      persistence: {
+        provider: "opencode",
+        sessionId: "ses_1234567890",
+      },
+      timeline: [
+        {
+          type: "user_message",
+          text: "pick up here",
+        },
+      ],
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: "user_message",
+        text: "pick up here",
+      }),
+    ]);
+  });
+
   it("clears the composer while an auto-submitted new-workspace prompt is shown in the stream", async () => {
     const createAgent = createDeferredPromise<{ id: string }>();
     createAgentMock.mockImplementationOnce(async () => await createAgent.promise);

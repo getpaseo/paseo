@@ -355,6 +355,25 @@ function updateCurrentAgentStream(text: string) {
   });
 }
 
+function applyAuthoritativeHistoryForMountedAgent(text: string) {
+  act(() => {
+    const store = useSessionStore.getState();
+    store.setAgentStreamTail("server", (previous) => {
+      const next = new Map(previous);
+      next.set("agent", [
+        {
+          kind: "user_message",
+          id: `message-${text}`,
+          text,
+          timestamp: new Date("2026-04-20T00:00:01.000Z"),
+        },
+      ]);
+      return next;
+    });
+    store.setAgentAuthoritativeHistoryApplied("server", "agent", true);
+  });
+}
+
 function makePendingPermission(agentId: string, requestId: string): PendingPermission {
   const request: AgentPermissionRequest = {
     id: requestId,
@@ -450,6 +469,25 @@ describe("AgentPanel render isolation", () => {
     expect(latestStreamText.current).toBe("stream-only update");
     expect(streamRenderCount).toHaveBeenCalledTimes(streamBaseline + 1);
     expect(composerRenderCount).toHaveBeenCalledTimes(composerBaseline);
+  });
+
+  it("renders authoritative history applied after the pane is mounted", async () => {
+    seedReadyAgent();
+    useSessionStore.getState().setAgentAuthoritativeHistoryApplied("server", "agent", false);
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await renderAgentPanel(root, {
+      isWorkspaceFocused: true,
+      isPaneFocused: true,
+      isInteractive: true,
+    });
+    expect(latestStreamText.current).toBeNull();
+
+    applyAuthoritativeHistoryForMountedAgent("resumed history");
+
+    expect(latestStreamText.current).toBe("resumed history");
   });
 
   it("does not advertise the composer as focused when its workspace is hidden", async () => {
