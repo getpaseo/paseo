@@ -17,8 +17,7 @@ interface FakeGeneration {
   retired: boolean;
 }
 
-// TODO(port-paseo): generation rotation API (manager.acquire / release) is paseo-only.
-describe.skip("OpenCodeServerManager generations", () => {
+describe("OpenCodeServerManager generations", () => {
   test("rotation creates a new current server without killing a referenced old server", async () => {
     const manager = createTestManager();
     const first = createGeneration(4101);

@@ -574,12 +574,21 @@ export const __openCodeInternals = {
   resolveOpenCodeSelectedModelContextWindow,
 };
 
+interface OpenCodeServerGeneration {
+  process: ChildProcess;
+  port: number;
+  url: string;
+  refCount: number;
+  retired: boolean;
+}
+
 export class OpenCodeServerManager {
   private static instance: OpenCodeServerManager | null = null;
   private static exitHandlerRegistered = false;
-  private server: ChildProcess | null = null;
-  private port: number | null = null;
-  private startPromise: Promise<{ port: number; url: string }> | null = null;
+  private currentServer: OpenCodeServerGeneration | null = null;
+  private retiredServers = new Set<OpenCodeServerGeneration>();
+  private startPromise: Promise<OpenCodeServerGeneration> | null = null;
+  private forcedRefreshPromise: Promise<OpenCodeServerGeneration> | null = null;
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
@@ -618,9 +627,7 @@ export class OpenCodeServerManager {
 
     const cleanup = () => {
       const instance = OpenCodeServerManager.instance;
-      if (instance?.server && !instance.server.killed) {
-        instance.server.kill("SIGTERM");
-      }
+      void instance?.shutdown();
     };
 
     process.on("exit", cleanup);
@@ -628,36 +635,112 @@ export class OpenCodeServerManager {
     process.on("SIGINT", cleanup);
   }
 
+  /**
+   * Backwards-compatible helper: starts (or reuses) a server and immediately
+   * releases the implicit reference. Callers that need to keep the server
+   * alive across an async boundary should use {@link acquire} instead.
+   */
   async ensureRunning(): Promise<{ port: number; url: string }> {
+    const acquisition = await this.acquire({ force: false });
+    acquisition.release();
+    return acquisition.server;
+  }
+
+  /**
+   * Acquire a reference to a running OpenCode server. Each call increments a
+   * refcount that pins the underlying generation; callers MUST invoke the
+   * returned `release()` exactly once (idempotent) when they are done. A
+   * server is only killed once its refcount drops to zero AND it has been
+   * retired (or `shutdown()` was called).
+   */
+  async acquire(options: { force: boolean }): Promise<{
+    server: { port: number; url: string };
+    release: () => void;
+  }> {
+    const server = options.force
+      ? await this.getForcedRefreshServer()
+      : await this.getCurrentServer();
+    server.refCount += 1;
+    let released = false;
+    return {
+      server: { port: server.port, url: server.url },
+      release: () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        server.refCount -= 1;
+        this.cleanupRetiredServers();
+      },
+    };
+  }
+
+  private async getForcedRefreshServer(): Promise<OpenCodeServerGeneration> {
+    if (this.forcedRefreshPromise) {
+      return this.forcedRefreshPromise;
+    }
+
+    this.forcedRefreshPromise = Promise.resolve()
+      .then(async () => {
+        await this.rotateCurrentServer();
+        return this.getCurrentServer();
+      })
+      .finally(() => {
+        this.forcedRefreshPromise = null;
+      });
+    return this.forcedRefreshPromise;
+  }
+
+  private async getCurrentServer(): Promise<OpenCodeServerGeneration> {
     if (this.startPromise) {
       return this.startPromise;
     }
 
-    if (this.server && this.port && !this.server.killed) {
-      return { port: this.port, url: `http://127.0.0.1:${this.port}` };
+    if (this.currentServer && !this.currentServer.process.killed) {
+      return this.currentServer;
     }
 
     this.startPromise = this.startServer();
     try {
       const result = await this.startPromise;
+      if (!result.retired) {
+        this.currentServer = result;
+      }
       return result;
     } finally {
       this.startPromise = null;
     }
   }
 
-  private async startServer(): Promise<{ port: number; url: string }> {
-    this.port = await findAvailablePort();
-    const url = `http://127.0.0.1:${this.port}`;
+  private async rotateCurrentServer(): Promise<void> {
+    const existing = this.currentServer;
+    if (existing) {
+      existing.retired = true;
+      this.retiredServers.add(existing);
+      this.currentServer = null;
+      this.cleanupRetiredServers();
+    }
+    if (this.startPromise) {
+      const pending = await this.startPromise;
+      pending.retired = true;
+      this.retiredServers.add(pending);
+      this.currentServer = null;
+      this.cleanupRetiredServers();
+    }
+  }
+
+  private async startServer(): Promise<OpenCodeServerGeneration> {
+    const port = await findAvailablePort();
+    const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await resolveProviderCommandPrefix(
       this.runtimeSettings?.command,
       resolveOpenCodeBinary,
     );
 
     return new Promise((resolve, reject) => {
-      this.server = spawnProcess(
+      const serverProcess = spawnProcess(
         launchPrefix.command,
-        [...launchPrefix.args, "serve", "--port", String(this.port)],
+        [...launchPrefix.args, "serve", "--port", String(port)],
         {
           stdio: ["ignore", "pipe", "pipe"],
           env: applyProviderEnv(process.env, this.runtimeSettings),
@@ -671,51 +754,88 @@ export class OpenCodeServerManager {
         }
       }, 30_000);
 
-      this.server.stdout?.on("data", (data: Buffer) => {
+      serverProcess.stdout?.on("data", (data: Buffer) => {
         const output = data.toString();
         if (output.includes("listening on") && !started) {
           started = true;
           clearTimeout(timeout);
-          resolve({ port: this.port!, url });
+          resolve({
+            process: serverProcess,
+            port,
+            url,
+            refCount: 0,
+            retired: false,
+          });
         }
       });
 
-      this.server.stderr?.on("data", (data: Buffer) => {
+      serverProcess.stderr?.on("data", (data: Buffer) => {
         this.logger.error({ stderr: data.toString().trim() }, "OpenCode server stderr");
       });
 
-      this.server.on("error", (error) => {
+      serverProcess.on("error", (error) => {
         clearTimeout(timeout);
         reject(error);
       });
 
-      this.server.on("exit", (code) => {
+      serverProcess.on("exit", (code) => {
         if (!started) {
           clearTimeout(timeout);
           reject(new Error(`OpenCode server exited with code ${code}`));
         }
-        this.server = null;
-        this.port = null;
+        if (this.currentServer?.process === serverProcess) {
+          this.currentServer = null;
+        }
+        for (const retired of Array.from(this.retiredServers)) {
+          if (retired.process === serverProcess) {
+            this.retiredServers.delete(retired);
+          }
+        }
       });
     });
   }
 
   async shutdown(): Promise<void> {
-    if (this.server && !this.server.killed) {
-      this.server.kill("SIGTERM");
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => {
-          this.server?.kill("SIGKILL");
-          resolve();
-        }, 5000);
-        this.server?.on("exit", () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
+    const servers = [
+      ...(this.currentServer ? [this.currentServer] : []),
+      ...Array.from(this.retiredServers),
+    ];
+    await Promise.all(servers.map((server) => this.killServer(server)));
+    this.currentServer = null;
+    this.retiredServers.clear();
+  }
+
+  private cleanupRetiredServers(): void {
+    for (const server of Array.from(this.retiredServers)) {
+      if (server.refCount === 0) {
+        this.retiredServers.delete(server);
+        void this.killServer(server);
+      }
     }
-    this.server = null;
-    this.port = null;
+  }
+
+  private async killServer(server: OpenCodeServerGeneration): Promise<void> {
+    if (server.process.killed) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      let pendingResolve: (() => void) | null = resolve;
+      const settle = () => {
+        if (!pendingResolve) return;
+        const fn = pendingResolve;
+        pendingResolve = null;
+        fn();
+      };
+      const timeout = setTimeout(() => {
+        server.process.kill("SIGKILL");
+        settle();
+      }, 5000);
+      server.process.on("exit", () => {
+        clearTimeout(timeout);
+        settle();
+      });
+      server.process.kill("SIGTERM");
+    });
   }
 }
 
@@ -739,40 +859,47 @@ export class OpenCodeAgentClient implements AgentClient {
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
-    const { url } = await this.serverManager.ensureRunning();
+    const acquisition = await this.serverManager.acquire({ force: false });
+    const { url } = acquisition.server;
     const client = createOpencodeClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
     });
 
-    // Set a timeout for session creation to fail fast
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("OpenCode session.create timed out after 10s")), 10_000);
-    });
+    try {
+      // Set a timeout for session creation to fail fast
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("OpenCode session.create timed out after 10s")), 10_000);
+      });
 
-    const response = await Promise.race([
-      client.session.create({ directory: openCodeConfig.cwd }),
-      timeoutPromise,
-    ]);
+      const response = await Promise.race([
+        client.session.create({ directory: openCodeConfig.cwd }),
+        timeoutPromise,
+      ]);
 
-    if (response.error) {
-      throw new Error(`Failed to create OpenCode session: ${JSON.stringify(response.error)}`);
+      if (response.error) {
+        throw new Error(`Failed to create OpenCode session: ${JSON.stringify(response.error)}`);
+      }
+
+      const session = response.data;
+      if (!session) {
+        throw new Error("OpenCode session creation returned no data");
+      }
+
+      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+
+      return new OpenCodeAgentSession(
+        openCodeConfig,
+        client,
+        session.id,
+        this.logger,
+        new Map(this.modelContextWindows),
+        acquisition.release,
+      );
+    } catch (error) {
+      acquisition.release();
+      throw error;
     }
-
-    const session = response.data;
-    if (!session) {
-      throw new Error("OpenCode session creation returned no data");
-    }
-
-    await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
-
-    return new OpenCodeAgentSession(
-      openCodeConfig,
-      client,
-      session.id,
-      this.logger,
-      new Map(this.modelContextWindows),
-    );
   }
 
   async resumeSession(
@@ -791,21 +918,28 @@ export class OpenCodeAgentClient implements AgentClient {
       ...overrides,
     };
     const openCodeConfig = this.assertConfig(config);
-    const { url } = await this.serverManager.ensureRunning();
+    const acquisition = await this.serverManager.acquire({ force: false });
+    const { url } = acquisition.server;
     const client = createOpencodeClient({
       baseUrl: url,
       directory: openCodeConfig.cwd,
     });
 
-    await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
+    try {
+      await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
 
-    return new OpenCodeAgentSession(
-      openCodeConfig,
-      client,
-      handle.sessionId,
-      this.logger,
-      new Map(this.modelContextWindows),
-    );
+      return new OpenCodeAgentSession(
+        openCodeConfig,
+        client,
+        handle.sessionId,
+        this.logger,
+        new Map(this.modelContextWindows),
+        acquisition.release,
+      );
+    } catch (error) {
+      acquisition.release();
+      throw error;
+    }
   }
 
   async listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]> {
@@ -1346,12 +1480,14 @@ class OpenCodeAgentSession implements AgentSession {
   private activeForegroundTurnId: string | null = null;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
   private selectedModelContextWindowMaxTokens: number | undefined;
+  private releaseServer: (() => void) | null;
   constructor(
     config: OpenCodeAgentConfig,
     client: OpencodeClient,
     sessionId: string,
     logger: Logger,
     modelContextWindowsByModelKey: ReadonlyMap<string, number> = new Map(),
+    releaseServer?: () => void,
   ) {
     this.config = config;
     this.client = client;
@@ -1359,6 +1495,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.logger = logger;
     this.modelContextWindowsByModelKey = modelContextWindowsByModelKey;
     this.currentMode = normalizeOpenCodeModeId(config.modeId);
+    this.releaseServer = releaseServer ?? null;
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       config.model,
     );
@@ -1931,9 +2068,14 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
-    this.abortController?.abort();
-    this.subscribers.clear();
-    this.activeForegroundTurnId = null;
+    try {
+      this.abortController?.abort();
+      this.subscribers.clear();
+      this.activeForegroundTurnId = null;
+    } finally {
+      this.releaseServer?.();
+      this.releaseServer = null;
+    }
   }
 
   private parseSlashCommandInput(text: string): { commandName: string; args?: string } | null {
