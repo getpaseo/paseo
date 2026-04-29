@@ -105,8 +105,7 @@ describe("DaemonConfigStore", () => {
     });
   });
 
-  // TODO(port-paseo): DaemonConfigStore.patch should persist `additionalModels` onto provider overrides.
-  test.skip("patch persists provider additional models into config.json", () => {
+  test("patch persists provider additional models into config.json", () => {
     const hubcodeHome = mkdtempSync(path.join(tmpdir(), "hubcode-daemon-config-store-"));
     tempDirs.push(hubcodeHome);
 

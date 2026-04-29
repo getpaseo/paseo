@@ -450,6 +450,43 @@ describe("ProviderSnapshotManager", () => {
     manager.destroy();
   });
 
+  test("getSnapshot triggers a background refresh once the cached entry is past the TTL", async () => {
+    const { registry, handles } = createRegistry([
+      createMockProvider({
+        provider: "codex",
+        fetchModels: async () => [createModel("codex", "gpt-5.2")],
+        fetchModes: async () => [createMode("auto")],
+      }),
+    ]);
+    const manager = new ProviderSnapshotManager(registry, createTestLogger());
+
+    manager.getSnapshot(projectCwd);
+    await vi.waitFor(() => {
+      expect(getProviderEntry(manager.getSnapshot(projectCwd), "codex")?.status).toBe("ready");
+    });
+    expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(1);
+
+    // Rewrite the cached fetchedAt to a value older than the 1h TTL — the
+    // next read should return immediately from cache *and* schedule a refresh.
+    const stale = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const internal = manager as unknown as {
+      snapshots: Map<string, Map<AgentProvider, ProviderSnapshotEntry>>;
+    };
+    const cwdMap = internal.snapshots.get(resolve(projectCwd));
+    const entry = cwdMap?.get("codex");
+    if (cwdMap && entry) {
+      cwdMap.set("codex", { ...entry, fetchedAt: stale });
+    }
+
+    manager.getSnapshot(projectCwd);
+
+    await vi.waitFor(() => {
+      expect(handles.codex?.fetchModels).toHaveBeenCalledTimes(2);
+    });
+
+    manager.destroy();
+  });
+
   test("snapshot entries include label and description from the registry", async () => {
     const models = deferred<AgentModelDefinition[]>();
     const modes = deferred<AgentMode[]>();

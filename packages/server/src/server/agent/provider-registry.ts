@@ -68,6 +68,9 @@ type ResolvedProvider = {
   definition: AgentProviderDefinition;
   runtimeSettings?: ProviderRuntimeSettings;
   profileModels: ProviderProfileModel[];
+  // User-declared add-ons that should join the dynamically discovered model
+  // catalog (rather than replace it like profileModels does).
+  additionalModels: ProviderProfileModel[];
   enabled: boolean;
   createBaseClient: (logger: Logger) => AgentClient;
 };
@@ -223,16 +226,23 @@ function mapModel(provider: AgentProvider, model: AgentModelDefinition): AgentMo
 function mergeModels(
   provider: AgentProvider,
   profileModels: ProviderProfileModel[],
+  additionalModels: ProviderProfileModel[],
   runtimeModels: AgentModelDefinition[],
 ): AgentModelDefinition[] {
-  if (profileModels.length === 0) {
-    return runtimeModels.map((model) => mapModel(provider, model));
+  const baseModels =
+    profileModels.length === 0
+      ? runtimeModels.map((model) => mapModel(provider, model))
+      : profileModels.map((model) => ({ ...model, provider }));
+
+  if (additionalModels.length === 0) {
+    return baseModels;
   }
 
-  return profileModels.map((model) => ({
-    ...model,
-    provider,
-  }));
+  // Drop any user-declared duplicates (by id) so the user-supplied entry
+  // wins — they may have customized label/description.
+  const additionalIds = new Set(additionalModels.map((model) => model.id));
+  const deduped = baseModels.filter((model) => !additionalIds.has(model.id));
+  return [...deduped, ...additionalModels.map((model) => ({ ...model, provider }))];
 }
 
 function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {
@@ -329,7 +339,12 @@ function createRegistryEntry(
       return inner.provider === provider ? inner : wrapClientProvider(provider, inner);
     },
     fetchModels: async (options?: ListModelsOptions) =>
-      mergeModels(provider, resolved.profileModels, await modelClient.listModels(options)),
+      mergeModels(
+        provider,
+        resolved.profileModels,
+        resolved.additionalModels,
+        await modelClient.listModels(options),
+      ),
     fetchModes: async (options?: ListModesOptions) => {
       const modes = modelClient.listModes
         ? await modelClient.listModes(options)
@@ -368,6 +383,7 @@ function buildResolvedBuiltinProviders(
       definition: applyOverrideToDefinition(definition, override),
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override?.models ?? [],
+      additionalModels: toAdditionalProfileModels(override?.additionalModels),
       enabled: override?.enabled !== false,
       createBaseClient: (logger) =>
         factory(logger, mergedRuntimeSettings, hookService, guiMcpRegistry),
@@ -411,6 +427,7 @@ function addDerivedProviders(
         ),
         runtimeSettings: toRuntimeSettings(override),
         profileModels: override.models ?? [],
+        additionalModels: toAdditionalProfileModels(override.additionalModels),
         enabled: override.enabled !== false,
         createBaseClient: (logger) =>
           new GenericACPAgentClient({
@@ -440,11 +457,25 @@ function addDerivedProviders(
       definition: createDerivedDefinition(providerId, baseDefinition, override),
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override.models ?? [],
+      additionalModels: toAdditionalProfileModels(override.additionalModels),
       enabled: override.enabled !== false,
       createBaseClient: (logger) =>
         baseFactory(logger, mergedRuntimeSettings, hookService, guiMcpRegistry),
     });
   }
+}
+
+function toAdditionalProfileModels(
+  additionalModels: ProviderOverride["additionalModels"] | undefined,
+): ProviderProfileModel[] {
+  if (!additionalModels) {
+    return [];
+  }
+  return additionalModels.map((model) => ({
+    id: model.id,
+    label: model.label && model.label.trim().length > 0 ? model.label : model.id,
+    ...(model.description ? { description: model.description } : {}),
+  }));
 }
 
 export function buildProviderRegistry(

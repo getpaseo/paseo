@@ -56,6 +56,14 @@ export const ProviderProfileModelSchema = z
   })
   .strict();
 
+export const ProviderAdditionalModelSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().optional(),
+    description: z.string().optional(),
+  })
+  .strict();
+
 export const ProviderOverrideSchema = z
   .object({
     extends: z.string().optional(),
@@ -64,6 +72,9 @@ export const ProviderOverrideSchema = z
     command: z.array(z.string().min(1)).min(1).optional(),
     env: z.record(z.string()).optional(),
     models: z.array(ProviderProfileModelSchema).optional(),
+    // User-declared extra models that join the provider's discovered catalog.
+    // Persisted on disk and merged into model picker results at runtime.
+    additionalModels: z.array(ProviderAdditionalModelSchema).optional(),
     enabled: z.boolean().optional(),
     order: z.number().optional(),
   })

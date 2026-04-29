@@ -8,6 +8,11 @@ import type { ProviderDefinition } from "./provider-registry.js";
 
 const DEFAULT_CWD_KEY = "__default__";
 
+// Provider model lists are refreshed at most once per hour. Anything older
+// triggers a background refresh on the next read; the stale snapshot is still
+// returned so the client paints immediately and updates over the change event.
+export const PROVIDER_SNAPSHOT_TTL_MS = 60 * 60 * 1000;
+
 type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd?: string) => void;
 
 export class ProviderSnapshotManager {
@@ -29,7 +34,29 @@ export class ProviderSnapshotManager {
       void this.warmUp(cwd);
       return entriesToArray(loadingEntries);
     }
+    // Background-refresh stale entries past the TTL. The current (stale)
+    // snapshot is returned to the caller; refreshed values flow through the
+    // "change" event once each provider lookup completes.
+    if (this.isSnapshotStale(entries)) {
+      void this.warmUp(cwd);
+    }
     return entriesToArray(entries);
+  }
+
+  private isSnapshotStale(entries: Map<AgentProvider, ProviderSnapshotEntry>): boolean {
+    const now = Date.now();
+    for (const entry of entries.values()) {
+      // Only "ready" entries carry fetchedAt — loading/unavailable/error
+      // entries shouldn't trigger TTL refresh on every read.
+      if (entry.status !== "ready" || !entry.fetchedAt) {
+        continue;
+      }
+      const fetchedMs = Date.parse(entry.fetchedAt);
+      if (Number.isFinite(fetchedMs) && now - fetchedMs > PROVIDER_SNAPSHOT_TTL_MS) {
+        return true;
+      }
+    }
+    return false;
   }
 
   refresh(cwd?: string): void {

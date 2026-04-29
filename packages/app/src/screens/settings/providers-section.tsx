@@ -12,6 +12,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { ChevronRight, RotateCw } from "lucide-react-native";
+import { formatAge } from "@/utils/pr-pane-data";
 
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
 type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];
@@ -68,6 +69,18 @@ function ProviderRow({
       : null;
   const modelCount = entry.models?.length ?? 0;
   const providerStatus = getProviderStatus(entry.status, enabled, modelCount);
+  // Show "Updated 2m ago" only for ready entries that carry a fetchedAt; this
+  // is the user's signal that the model list is fresh (TTL is 1h server-side).
+  const fetchedAtLabel = useMemo(() => {
+    if (!enabled || entry.status !== "ready" || typeof entry.fetchedAt !== "string") {
+      return null;
+    }
+    const fetchedMs = Date.parse(entry.fetchedAt);
+    if (!Number.isFinite(fetchedMs)) {
+      return null;
+    }
+    return `Updated ${formatAge(fetchedMs)}`;
+  }, [enabled, entry.fetchedAt, entry.status]);
 
   const handlePress = useCallback(() => {
     onPress(def.id);
@@ -115,6 +128,11 @@ function ProviderRow({
               {providerError ? (
                 <Text style={styles.errorText} numberOfLines={3}>
                   {providerError}
+                </Text>
+              ) : null}
+              {fetchedAtLabel ? (
+                <Text style={styles.fetchedAtText} numberOfLines={1}>
+                  {fetchedAtLabel}
                 </Text>
               ) : null}
             </View>
@@ -349,6 +367,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorText: {
     color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing[1],
+  },
+  fetchedAtText: {
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },

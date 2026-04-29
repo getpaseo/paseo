@@ -145,6 +145,13 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
     icon: "ShieldCheck",
     colorTier: "planning",
   },
+  {
+    id: "full-access",
+    label: "Full Access",
+    description: "Auto-approve all tool permission prompts (use with caution)",
+    icon: "ShieldAlert",
+    colorTier: "dangerous",
+  },
 ];
 
 export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [

@@ -63,6 +63,11 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsToolInvocations: true,
 };
 
+// Hubcode-only synthetic mode. The OpenCode SDK does not advertise this agent;
+// when selected we keep the underlying request running in "build" mode and
+// auto-resolve every tool permission prompt locally.
+export const OPENCODE_FULL_ACCESS_MODE_ID = "full-access";
+
 const DEFAULT_MODES: AgentMode[] = [
   {
     id: "build",
@@ -74,7 +79,16 @@ const DEFAULT_MODES: AgentMode[] = [
     label: "Plan",
     description: "Read-only planning mode that avoids file edits",
   },
+  {
+    id: OPENCODE_FULL_ACCESS_MODE_ID,
+    label: "Full Access",
+    description: "Auto-approve all tool permission prompts (use with caution)",
+  },
 ];
+
+function isOpenCodeFullAccessMode(modeId: string | null | undefined): boolean {
+  return typeof modeId === "string" && modeId.trim() === OPENCODE_FULL_ACCESS_MODE_ID;
+}
 
 type OpenCodeAgentConfig = AgentSessionConfig & { provider: "opencode" };
 type OpenCodeMessageRole = "user" | "assistant";
@@ -279,6 +293,21 @@ function normalizeOpenCodeModeId(modeId: string | null | undefined): string {
     return "build";
   }
   return trimmed;
+}
+
+// Hubcode's "full-access" is a synthetic mode the OpenCode SDK doesn't know
+// about. When sending the underlying request, fall back to "build" — the
+// auto-approval is handled by Hubcode locally in the event pipeline.
+function resolveOpenCodeAgentForRequest(modeId: string): string {
+  return isOpenCodeFullAccessMode(modeId) ? "build" : modeId;
+}
+
+function withOpenCodeFullAccessMode(modes: AgentMode[]): AgentMode[] {
+  if (modes.some((mode) => mode.id === OPENCODE_FULL_ACCESS_MODE_ID)) {
+    return modes;
+  }
+  const fullAccess = DEFAULT_MODES.find((mode) => mode.id === OPENCODE_FULL_ACCESS_MODE_ID);
+  return fullAccess ? [...modes, fullAccess] : modes;
 }
 
 function sortOpenCodeModes(modes: AgentMode[]): AgentMode[] {
@@ -1037,7 +1066,9 @@ export class OpenCodeAgentClient implements AgentClient {
             : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
       }));
 
-    return discovered.length > 0 ? sortOpenCodeModes(discovered) : DEFAULT_MODES;
+    return discovered.length > 0
+      ? sortOpenCodeModes(withOpenCodeFullAccessMode(discovered))
+      : DEFAULT_MODES;
   }
 
   async listPersistedAgents(
@@ -1641,7 +1672,7 @@ class OpenCodeAgentSession implements AgentSession {
     const model = this.parseModel(this.config.model);
     const thinkingOptionId = this.config.thinkingOptionId;
     const effectiveVariant = thinkingOptionId ?? undefined;
-    const effectiveMode = normalizeOpenCodeModeId(this.currentMode);
+    const effectiveMode = resolveOpenCodeAgentForRequest(normalizeOpenCodeModeId(this.currentMode));
 
     const turnId = this.createTurnId();
     this.activeForegroundTurnId = turnId;
@@ -1977,7 +2008,9 @@ class OpenCodeAgentSession implements AgentSession {
             }));
 
     this.availableModesCache =
-      discoveredModes.length > 0 ? sortOpenCodeModes(discoveredModes) : DEFAULT_MODES;
+      discoveredModes.length > 0
+        ? sortOpenCodeModes(withOpenCodeFullAccessMode(discoveredModes))
+        : DEFAULT_MODES;
     return this.availableModesCache;
   }
 
@@ -2212,8 +2245,17 @@ class OpenCodeAgentSession implements AgentSession {
       },
     });
 
+    const fullAccess = isOpenCodeFullAccessMode(this.currentMode);
+    const filtered: AgentStreamEvent[] = [];
     for (const translatedEvent of translated) {
       if (translatedEvent.type === "permission_requested") {
+        // In full-access mode, transparently auto-approve every tool prompt so
+        // the agent never blocks waiting on the user. Question prompts are
+        // intentionally left for the user — they are not tool permissions.
+        if (fullAccess && translatedEvent.request.kind === "tool") {
+          void this.autoApproveOpenCodePermission(translatedEvent.request.id);
+          continue;
+        }
         this.pendingPermissions.set(translatedEvent.request.id, translatedEvent.request);
       }
       if (translatedEvent.type === "turn_completed") {
@@ -2224,9 +2266,26 @@ class OpenCodeAgentSession implements AgentSession {
         this.accumulatedUsage =
           contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
       }
+      filtered.push(translatedEvent);
     }
 
-    return translated;
+    return filtered;
+  }
+
+  private async autoApproveOpenCodePermission(requestID: string): Promise<void> {
+    try {
+      await this.client.permission.reply({
+        requestID,
+        directory: this.config.cwd,
+        // "always" so OpenCode caches the decision for the rest of the session,
+        // matching what an unattended Full Access toggle implies.
+        reply: "always",
+      });
+    } catch (error) {
+      // Don't crash the event loop if reply fails — log and move on. The
+      // permission will eventually surface as pending if OpenCode retries.
+      console.warn(`[opencode-agent] auto-approve permission ${requestID} failed:`, error);
+    }
   }
 
   private resolveSelectedModelContextWindowMaxTokens(): number | undefined {

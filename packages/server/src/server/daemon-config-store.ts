@@ -157,6 +157,21 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   mutable: MutableDaemonConfig;
 }): PersistedConfig {
   const { persisted, mutable } = params;
+
+  // Top-level `providers` patches (passthrough on MutableDaemonConfigSchema)
+  // funnel into `agents.providers` overrides on disk. Each provider's override
+  // is fully replaced when the patch supplies it — that's how we get
+  // delete-by-omission semantics for fields like additionalModels.
+  const providerOverridesPatch = isRecord((mutable as Record<string, unknown>).providers)
+    ? ((mutable as Record<string, unknown>).providers as Record<string, unknown>)
+    : undefined;
+
+  const nextAgents = applyProviderOverridesPatch({
+    agents: persisted.agents,
+    providerOverridesPatch,
+    cliProvidersPatch: mutable.agents?.cliProviders,
+  });
+
   return {
     ...persisted,
     daemon: {
@@ -166,15 +181,65 @@ function mergeMutableConfigIntoPersistedConfig(params: {
         injectIntoAgents: mutable.mcp.injectIntoAgents,
       },
     },
-    agents:
-      mutable.agents?.cliProviders !== undefined
-        ? {
-            ...persisted.agents,
-            cliProviders:
-              Object.keys(mutable.agents.cliProviders).length > 0
-                ? mutable.agents.cliProviders
-                : undefined,
-          }
-        : persisted.agents,
+    agents: nextAgents,
   };
+}
+
+function applyProviderOverridesPatch(params: {
+  agents: PersistedConfig["agents"];
+  providerOverridesPatch: Record<string, unknown> | undefined;
+  cliProvidersPatch: NonNullable<MutableDaemonConfig["agents"]>["cliProviders"];
+}): PersistedConfig["agents"] {
+  const { agents, providerOverridesPatch, cliProvidersPatch } = params;
+
+  const hasProviderOverridesPatch = providerOverridesPatch !== undefined;
+  const hasCliProvidersPatch = cliProvidersPatch !== undefined;
+  if (!hasProviderOverridesPatch && !hasCliProvidersPatch) {
+    return agents;
+  }
+
+  // Merge provider override patches one provider at a time. Within a single
+  // provider entry the patch wins field-by-field — passing a fresh
+  // additionalModels array fully replaces the stored array (no element-level
+  // merge), matching the user-intent of "this is my new list".
+  const nextProviders: Record<string, Record<string, unknown>> | undefined =
+    hasProviderOverridesPatch
+      ? mergeProviderOverrides(
+          (agents as { providers?: Record<string, Record<string, unknown>> } | undefined)
+            ?.providers,
+          providerOverridesPatch,
+        )
+      : (agents as { providers?: Record<string, Record<string, unknown>> } | undefined)?.providers;
+
+  const nextCliProviders = hasCliProvidersPatch
+    ? Object.keys(cliProvidersPatch ?? {}).length > 0
+      ? cliProvidersPatch
+      : undefined
+    : agents?.cliProviders;
+
+  // Casting back to PersistedConfig["agents"] — the runtime shape is broader
+  // than the static type because the persisted schema accepts ProviderOverride
+  // entries directly. Schema validation on the next save catches anything off.
+  return {
+    ...(agents ?? {}),
+    ...(nextProviders !== undefined ? { providers: nextProviders } : {}),
+    ...(nextCliProviders !== undefined ? { cliProviders: nextCliProviders } : {}),
+  } as PersistedConfig["agents"];
+}
+
+function mergeProviderOverrides(
+  current: Record<string, Record<string, unknown>> | undefined,
+  patch: Record<string, unknown>,
+): Record<string, Record<string, unknown>> {
+  const next: Record<string, Record<string, unknown>> = { ...(current ?? {}) };
+  for (const [providerId, providerPatch] of Object.entries(patch)) {
+    if (!isRecord(providerPatch)) {
+      continue;
+    }
+    const existing = next[providerId];
+    next[providerId] = isRecord(existing)
+      ? { ...existing, ...providerPatch }
+      : { ...providerPatch };
+  }
+  return next;
 }
