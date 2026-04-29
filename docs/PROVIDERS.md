@@ -16,6 +16,10 @@ Implement the `AgentClient` and `AgentSession` interfaces yourself. This gives f
 
 Existing direct providers: `claude`, `codex`, `opencode`.
 
+### Jules (remote async)
+
+Jules is integrated as a direct provider with async polling semantics. It runs in Google cloud against a GitHub repo (resolved from local `origin`) and requires the local `jules` CLI plus `jules login`. For MVP, the integration is read-mostly: create session, poll activity, and render PR-ready timeline cards. `interrupt()` detaches local polling only (it does not cancel the remote Jules run).
+
 ---
 
 ## ACP Provider Checklist

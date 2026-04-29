@@ -258,6 +258,10 @@ export function curateAgentActivity(
         flushBuffers(lines, buffers);
         lines.push("[Compacted]");
         break;
+      case "pr_ready":
+        flushBuffers(lines, buffers);
+        lines.push(`[PR Ready] ${item.title ?? item.branch} - ${item.url}`);
+        break;
     }
   }
 

@@ -305,6 +305,7 @@ export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string }
   | { type: "assistant_message"; text: string }
   | { type: "reasoning"; text: string }
+  | { type: "pr_ready"; url: string; branch: string; title?: string; summary?: string }
   | ToolCallTimelineItem
   | { type: "todo"; items: { text: string; completed: boolean }[] }
   | { type: "error"; message: string }

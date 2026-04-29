@@ -492,6 +492,13 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, z.ZodT
       type: z.literal("reasoning"),
       text: z.string(),
     }),
+    z.object({
+      type: z.literal("pr_ready"),
+      url: z.string(),
+      branch: z.string(),
+      title: z.string().optional(),
+      summary: z.string().optional(),
+    }),
     ToolCallTimelineItemPayloadSchema,
     z.object({
       type: z.literal("todo"),

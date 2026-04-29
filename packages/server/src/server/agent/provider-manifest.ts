@@ -215,6 +215,14 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     defaultModeId: "agent",
     modes: CURSOR_MODES,
   },
+  {
+    id: "jules",
+    label: "Jules",
+    description:
+      "Google's async cloud coding agent. Operates on GitHub repos and produces PRs. Requires `jules login`.",
+    defaultModeId: null,
+    modes: [],
+  },
 ];
 
 export const DEV_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [

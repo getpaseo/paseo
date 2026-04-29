@@ -50,6 +50,7 @@ export type StreamItem =
   | ToolCallItem
   | TodoListItem
   | ActivityLogItem
+  | PrReadyItem
   | CompactionItem;
 
 export type UserMessageImageAttachment = AttachmentMetadata;
@@ -140,6 +141,16 @@ export interface CompactionItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+}
+
+export interface PrReadyItem {
+  kind: "pr_ready";
+  id: string;
+  timestamp: Date;
+  url: string;
+  branch: string;
+  title?: string;
+  summary?: string;
 }
 
 export interface TodoEntry {
@@ -677,6 +688,19 @@ function reduceTimelineEvent(
     }
     case "compaction":
       return finalizeActiveThoughts(reduceTimelineCompaction(state, item, timestamp));
+    case "pr_ready":
+      return finalizeActiveThoughts([
+        ...state,
+        {
+          kind: "pr_ready",
+          id: createTimelineId("pr_ready", item.url, timestamp),
+          timestamp,
+          url: item.url,
+          branch: item.branch,
+          title: item.title,
+          summary: item.summary,
+        },
+      ]);
     default:
       return state;
   }
@@ -761,6 +785,8 @@ function getEventItemKind(event: AgentStreamEventPayload): StreamItem["kind"] | 
       return "todo_list";
     case "error":
       return "activity_log";
+    case "pr_ready":
+      return "pr_ready";
     default:
       return null;
   }

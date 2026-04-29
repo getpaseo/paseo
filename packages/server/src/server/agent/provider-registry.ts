@@ -28,6 +28,7 @@ import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
 import { PiDirectAgentClient } from "./providers/pi-direct-agent.js";
 import { CursorCliAgentClient } from "./providers/cursor-cli-agent.js";
+import { JulesAgentClient } from "./providers/jules-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
@@ -95,6 +96,12 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
     new CursorCliAgentClient({
       logger,
       runtimeSettings: runtimeSettings,
+    }),
+  jules: (logger, runtimeSettings, options) =>
+    new JulesAgentClient({
+      logger,
+      runtimeSettings,
+      workspaceGitService: options?.workspaceGitService,
     }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
 };

@@ -16,6 +16,7 @@ import {
   Pressable,
   Platform,
   ActivityIndicator,
+  Linking,
   type PressableStateCallbackType,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -181,6 +182,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const streamHead = useSessionStore((state) =>
       state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId),
     );
+    const sessionAgent = useSessionStore((state) => state.sessions[resolvedServerId]?.agents?.get(agentId));
 
     const workspaceRoot = agent.cwd?.trim() || "";
     const workspaceId = resolveWorkspaceIdByExecutionDirectory({
@@ -547,6 +549,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           case "todo_list":
             return <TodoListCard items={item.items} />;
 
+          case "pr_ready":
+            return (
+              <Pressable style={stylesheet.prReadyCard} onPress={() => void Linking.openURL(item.url)}>
+                <Text style={stylesheet.prReadyTitle}>{item.title ?? item.branch}</Text>
+                <Text style={stylesheet.prReadyMeta} numberOfLines={1}>
+                  {item.url}
+                </Text>
+                {item.summary ? (
+                  <Text style={stylesheet.prReadySummary} numberOfLines={3}>
+                    {item.summary}
+                  </Text>
+                ) : null}
+              </Pressable>
+            );
+
           case "compaction":
             return <CompactionMarker status={item.status} preTokens={item.preTokens} />;
 
@@ -603,6 +620,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const showWorkingIndicator = agent.status === "running";
+    const showJulesRemoteBadge =
+      sessionAgent?.provider === "jules" &&
+      agent.status === "running" &&
+      Date.now() - sessionAgent.lastActivityAt.getTime() > 30_000;
     const pendingPermissionsNode = useMemo(
       () =>
         pendingPermissionItems.length > 0 ? (
@@ -619,9 +640,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         showWorkingIndicator ? (
           <View style={stylesheet.bottomBarWrapper}>
             <WorkingIndicator />
+            {showJulesRemoteBadge ? (
+              <Text style={stylesheet.syncingIndicatorText}>Jules is working remotely...</Text>
+            ) : null}
           </View>
         ) : null,
-      [showWorkingIndicator],
+      [showJulesRemoteBadge, showWorkingIndicator, stylesheet],
     );
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       return {
@@ -1190,6 +1214,27 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   permissionsContainer: {
     gap: theme.spacing[2],
+  },
+  prReadyCard: {
+    borderWidth: 1,
+    borderColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing[3],
+    gap: theme.spacing[1],
+    backgroundColor: theme.colors.surface0,
+  },
+  prReadyTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  prReadyMeta: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  prReadySummary: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   listHeaderContent: {
     gap: theme.spacing[3],
