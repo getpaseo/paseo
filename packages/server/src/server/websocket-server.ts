@@ -718,7 +718,14 @@ export class VoiceAssistantWebSocketServer {
         }
         this.sendBinaryToConnection(connection, frame);
       },
-      getOutboundBufferedBytes: () => connection?.ws?.bufferedAmount ?? 0,
+      getOutboundBufferedBytes: () => {
+        if (!connection) return 0;
+        let total = 0;
+        for (const sock of connection.sockets) {
+          total += sock.bufferedAmount ?? 0;
+        }
+        return total;
+      },
       onLifecycleIntent: (intent) => {
         this.onLifecycleIntent?.(intent);
       },
