@@ -3,16 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
-// TODO(port-paseo): paseo exports applyMutableProviderConfigToOverrides + persists enabled/additionalModels through DaemonConfigStore; fork doesn't yet.
-import { DaemonConfigStore } from "./daemon-config-store.js";
+import { DaemonConfigStore, mergeProviderOverrides } from "./daemon-config-store.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 
-describe.skip("applyMutableProviderConfigToOverrides", () => {
-  // Stub: paseo-only export. Real impl missing in fork.
-  const applyMutableProviderConfigToOverrides = (..._args: unknown[]): unknown => undefined;
+describe("mergeProviderOverrides", () => {
   test("merges mutable provider fields onto provider overrides", () => {
     expect(
-      applyMutableProviderConfigToOverrides(
+      mergeProviderOverrides(
         {
           gemini: {
             extends: "acp",
@@ -60,8 +57,7 @@ describe("DaemonConfigStore", () => {
     }
   });
 
-  // TODO(port-paseo): DaemonConfigStore.patch should persist `enabled` flag onto provider overrides.
-  test.skip("patch persists provider enabled flags into config.json", () => {
+  test("patch persists provider enabled flags into config.json", () => {
     const hubcodeHome = mkdtempSync(path.join(tmpdir(), "hubcode-daemon-config-store-"));
     tempDirs.push(hubcodeHome);
 

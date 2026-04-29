@@ -149,6 +149,21 @@ jobs:
 
           npm run build --workspace="$DESKTOP_WORKSPACE" -- --publish "$publish_mode" --mac --${{ matrix.electron_arch }} "${publish_args[@]}"
 
+      # Atomicity: electron-builder's `--publish always` uploaded latest-mac.yml
+      # alongside the dmg/zip in each per-arch job. With both arm64 and x64
+      # matrix legs racing to upload, an Apple Silicon user polling for updates
+      # between the two uploads could end up with the x64-only manifest and
+      # then auto-update to an Intel build (rosetta, 100%+ CPU). Delete the
+      # per-arch manifests now so finalize-mac-manifest is the only writer of
+      # latest-mac.yml on the release.
+      - name: Remove per-arch latest-mac.yml from release
+        if: env.IS_SMOKE_TAG != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete-asset "$RELEASE_TAG" latest-mac.yml \
+            --repo "${{ github.repository }}" --yes 2>/dev/null || true
+
       - name: Upload manifest artifact
         if: env.IS_SMOKE_TAG != 'true'
         uses: actions/upload-artifact@v4

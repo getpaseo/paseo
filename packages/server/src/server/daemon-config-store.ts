@@ -227,7 +227,7 @@ function applyProviderOverridesPatch(params: {
   } as PersistedConfig["agents"];
 }
 
-function mergeProviderOverrides(
+export function mergeProviderOverrides(
   current: Record<string, Record<string, unknown>> | undefined,
   patch: Record<string, unknown>,
 ): Record<string, Record<string, unknown>> {
