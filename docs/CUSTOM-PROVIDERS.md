@@ -364,6 +364,30 @@ Required fields for ACP providers:
 
 Ref: [Gemini CLI ACP mode docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/acp-mode.md)
 
+### Example: Dirac
+
+[Dirac](https://dirac.run) is an autonomous coding agent CLI by Dirac Delta Labs with file editing, command execution, browser automation, and MCP support. It supports ACP via the `--acp` flag.
+
+1. Install: `npm install -g dirac` or see [Dirac docs](https://github.com/dirac-run/dirac)
+2. Add to config.json:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "dirac": {
+        "extends": "acp",
+        "label": "Dirac",
+        "description": "Autonomous coding agent CLI by Dirac Delta Labs",
+        "command": ["dirac", "--acp"]
+      }
+    }
+  }
+}
+```
+
+Ref: [Dirac agent registry](https://github.com/dirac-run/dirac/blob/master/agent-registry/dirac/agent.json)
+
 ### Example: Hermes (Nous Research)
 
 [Hermes](https://github.com/NousResearch/hermes-agent) is an open-source coding agent by Nous Research with persistent memory and multi-provider LLM support. It supports ACP via the `acp` subcommand.
@@ -527,7 +551,7 @@ Use `disallowedTools` to disable unsupported tools:
 
 ### Valid `extends` values
 
-Built-in providers: `claude`, `codex`, `copilot`, `opencode`, `pi`
+Built-in providers: `claude`, `codex`, `copilot`, `dirac`, `opencode`, `pi`
 
 Special value: `acp` — creates a generic ACP provider (requires `command`)
 
@@ -574,6 +598,13 @@ A config.json with multiple custom providers:
         "extends": "acp",
         "label": "Google Gemini",
         "command": ["gemini", "--acp"]
+      },
+
+      "dirac": {
+        "extends": "acp",
+        "label": "Dirac",
+        "description": "Autonomous coding agent CLI by Dirac Delta Labs",
+        "command": ["dirac", "--acp"]
       },
 
       "hermes": {
