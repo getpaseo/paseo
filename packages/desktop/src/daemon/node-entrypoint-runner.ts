@@ -16,13 +16,13 @@ export async function main(): Promise<void> {
   await import(pathToFileURL(entryPath).href);
 }
 
-// Auto-invoke only when launched as the script (not when imported by tests).
-// `require.main === module` is the CommonJS-compatible "is this the entry"
-// check; `import.meta` would also work but the desktop tsconfig still emits
-// CJS so we can't use it here.
-declare const require: NodeJS.Require;
-declare const module: NodeJS.Module;
-if (typeof require !== "undefined" && require.main === module) {
+// Auto-invoke only when the runner was spawned in production mode — the
+// desktop main process always passes "bare" or "node-script" as argv[2].
+// Vitest / vitest-import paths never have that, so the test file can import
+// `{ main }` without running the body. This is more reliable than
+// `require.main === module`, which can be fooled by asar/fork spawn modes.
+const productionArgvMode = process.argv[2];
+if (productionArgvMode === "bare" || productionArgvMode === "node-script") {
   void main().catch((error) => {
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
     process.stderr.write(`${message}\n`);
