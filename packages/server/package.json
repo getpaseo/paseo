@@ -1,6 +1,6 @@
 {
   "name": "@hubcode/server",
-  "version": "2.7.3",
+  "version": "2.7.4",
   "description": "Hubcode daemon: agent lifecycle, WebSocket API, and MCP server for local AI coding agents.",
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -87,8 +87,8 @@
     "@ai-sdk/openai": "2.0.52",
     "@anthropic-ai/claude-agent-sdk": "^0.2.11",
     "@deepgram/sdk": "^3.4.0",
-    "@hubcode/highlight": "2.7.3",
-    "@hubcode/relay": "2.7.3",
+    "@hubcode/highlight": "2.7.4",
+    "@hubcode/relay": "2.7.4",
     "@isaacs/ttlcache": "^2.1.4",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.2.6",
