@@ -4,6 +4,7 @@ import { open as openFile, readFile as readFileAsync, stat as statFile } from "f
 import { TTLCache } from "@isaacs/ttlcache";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
 import { parseAndHighlightDiff } from "../server/utils/diff-highlighter.js";
+import type { GitHubService } from "../services/github-service.js";
 import { findExecutable } from "./executable.js";
 import { runGitCommand } from "./run-git-command.js";
 import { childEnv } from "./child-env.js";
@@ -194,6 +195,120 @@ export async function listBranchSuggestions(
 
   const ordered = sortBranchSuggestions(filteredNames, branchMeta, query);
   return ordered.slice(0, limit);
+}
+
+// Ported from paseo. Optional cache-bypass + reason hints for read APIs that
+// memoize results. Pass `force: true` together with a `reason` to skip the
+// in-process cache; `reason` flows into observability for self-heal traces.
+export interface CheckoutReadCacheOptions {
+  force?: boolean;
+  reason?: string;
+}
+
+// Ported from paseo. Currently only the type is exposed for downstream consumers
+// (e.g. WorkspaceGitServiceImpl in Pass 2). `listBranchSuggestions` still returns
+// `string[]` so existing callers and message schema (`branches: string[]`) keep
+// working unchanged.
+export interface BranchSuggestion {
+  name: string;
+  committerDate: number;
+  hasLocal: boolean;
+  hasRemote: boolean;
+}
+
+export interface LocalBranchCheckoutResolution {
+  kind: "local";
+  name: string;
+}
+
+export interface RemoteOnlyBranchCheckoutResolution {
+  kind: "remote-only";
+  name: string;
+  remoteRef: string;
+}
+
+export interface NotFoundBranchCheckoutResolution {
+  kind: "not-found";
+}
+
+export type BranchCheckoutResolution =
+  | LocalBranchCheckoutResolution
+  | RemoteOnlyBranchCheckoutResolution
+  | NotFoundBranchCheckoutResolution;
+
+export async function resolveBranchCheckout(
+  cwd: string,
+  name: string,
+): Promise<BranchCheckoutResolution> {
+  await requireGitRepo(cwd);
+
+  const normalized = normalizeBranchSuggestionName(name);
+  if (!normalized) {
+    return { kind: "not-found" };
+  }
+
+  const localRef = `refs/heads/${normalized}`;
+  const localResult = await runGitCommand(["rev-parse", "--verify", "--quiet", localRef], {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+    acceptExitCodes: [0, 1],
+  });
+  const hasLocal = localResult.exitCode === 0;
+  if (hasLocal) {
+    return { kind: "local", name: normalized };
+  }
+
+  const remoteRef = `origin/${normalized}`;
+  const remoteRefPath = `refs/remotes/${remoteRef}`;
+  const remoteResult = await runGitCommand(["rev-parse", "--verify", "--quiet", remoteRefPath], {
+    cwd,
+    env: READ_ONLY_GIT_ENV,
+    acceptExitCodes: [0, 1],
+  });
+  const hasRemote = remoteResult.exitCode === 0;
+  if (hasRemote) {
+    return { kind: "remote-only", name: normalized, remoteRef };
+  }
+
+  return { kind: "not-found" };
+}
+
+export type BranchCheckoutSource = "local" | "remote";
+
+export interface CheckoutExistingBranchResult {
+  source: BranchCheckoutSource;
+}
+
+export interface CheckoutResolvedBranchInput {
+  cwd: string;
+  resolution: BranchCheckoutResolution;
+  requestedBranch?: string;
+}
+
+export async function checkoutResolvedBranch(
+  input: CheckoutResolvedBranchInput,
+): Promise<CheckoutExistingBranchResult> {
+  const { cwd, resolution } = input;
+
+  switch (resolution.kind) {
+    case "local": {
+      const { stdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+      const current = stdout.trim();
+      if (current === resolution.name) {
+        return { source: "local" };
+      }
+
+      await runGitCommand(["checkout", resolution.name], { cwd });
+      return { source: "local" };
+    }
+    case "remote-only":
+      await runGitCommand(["checkout", "-b", resolution.name, "--track", resolution.remoteRef], {
+        cwd,
+      });
+      return { source: "remote" };
+    case "not-found":
+      throw new Error(`Branch not found: ${input.requestedBranch ?? "unknown"}`);
+  }
 }
 
 async function listCheckoutFileChanges(
@@ -1243,6 +1358,11 @@ export interface CheckoutShortstat {
 export async function getCheckoutShortstat(
   cwd: string,
   context?: CheckoutContext,
+  // Ported from paseo: additive `force`/`reason` hints. The fork doesn't yet
+  // memoize shortstat results, so the option is currently unused — Pass 2 plus
+  // a future cache port will consume it. Accepting it now keeps the call sites
+  // in WorkspaceGitServiceImpl forward-compatible.
+  _options?: CheckoutReadCacheOptions,
 ): Promise<CheckoutShortstat | null> {
   try {
     await requireGitRepo(cwd);
@@ -1946,7 +2066,16 @@ export async function createPullRequest(
   return { url: parsed.url, number: parsed.number };
 }
 
-export async function getPullRequestStatus(cwd: string): Promise<PullRequestStatusResult> {
+export async function getPullRequestStatus(
+  cwd: string,
+  // Ported from paseo: additive `github` + `options` parameters so Pass 2
+  // (WorkspaceGitServiceImpl) can inject a shared GitHubService and pass
+  // force/reason hints. The fork still resolves PR status via direct `gh`
+  // invocation under the hood, so `github` and `options` are accepted but
+  // unused for now — they exist purely to keep call sites forward-compatible.
+  _github?: GitHubService,
+  _options?: CheckoutReadCacheOptions,
+): Promise<PullRequestStatusResult> {
   const cacheKey = getPullRequestStatusCacheKey(cwd);
   const cached = pullRequestStatusCache.get(cacheKey);
   if (cached) {
