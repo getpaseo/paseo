@@ -1009,8 +1009,12 @@ function MicToggle({ compact }: { compact?: boolean }) {
   const size = compact ? 13 : 16;
   return (
     <TrackToggle source={Track.Source.Microphone} className={cls} showIcon={false}>
-      <Mic size={size} color="#fafafa" className="hc-icon-on" />
-      <MicOff size={size} color="#fafafa" className="hc-icon-off" />
+      <span className="hc-icon-on" style={{ display: "inline-flex" }}>
+        <Mic size={size} color="#fafafa" />
+      </span>
+      <span className="hc-icon-off" style={{ display: "inline-flex" }}>
+        <MicOff size={size} color="#fafafa" />
+      </span>
     </TrackToggle>
   );
 }
@@ -1020,8 +1024,12 @@ function CamToggle({ compact }: { compact?: boolean }) {
   const size = compact ? 13 : 16;
   return (
     <TrackToggle source={Track.Source.Camera} className={cls} showIcon={false}>
-      <Video size={size} color="#fafafa" className="hc-icon-on" />
-      <VideoOff size={size} color="#fafafa" className="hc-icon-off" />
+      <span className="hc-icon-on" style={{ display: "inline-flex" }}>
+        <Video size={size} color="#fafafa" />
+      </span>
+      <span className="hc-icon-off" style={{ display: "inline-flex" }}>
+        <VideoOff size={size} color="#fafafa" />
+      </span>
     </TrackToggle>
   );
 }

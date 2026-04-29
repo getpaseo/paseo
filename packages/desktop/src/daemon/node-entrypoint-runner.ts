@@ -17,13 +17,12 @@ export async function main(): Promise<void> {
 }
 
 // Auto-invoke only when launched as the script (not when imported by tests).
-const isEntrypoint =
-  typeof process !== "undefined" &&
-  Array.isArray(process.argv) &&
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
-
-if (isEntrypoint) {
+// `require.main === module` is the CommonJS-compatible "is this the entry"
+// check; `import.meta` would also work but the desktop tsconfig still emits
+// CJS so we can't use it here.
+declare const require: NodeJS.Require;
+declare const module: NodeJS.Module;
+if (typeof require !== "undefined" && require.main === module) {
   void main().catch((error) => {
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
     process.stderr.write(`${message}\n`);

@@ -50,7 +50,7 @@ export function defaultDetectorEnv(): DetectorEnv {
   const pathDirs = pathEnv.split(path.delimiter).filter(Boolean);
   const pathExts =
     process.platform === "win32"
-      ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").map((e) => e.toLowerCase())
+      ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").map((e: string) => e.toLowerCase())
       : [""];
   return { pathDirs, pathExts, platform: process.platform };
 }

@@ -68,8 +68,17 @@ let claudeModelsFromJson: ProviderModel[] = [];
 
 const ctx = await createE2ETestContext({ timeout: 120000 });
 
-async function runProviderModelsJson(provider: string): Promise<ProviderModel[]> {
+async function runProviderModelsJson(provider: string): Promise<ProviderModel[] | null> {
   const transientNeedles = ["transport closed", "timed out", "timeout", "socket", "econn"];
+  // Skip when the provider CLI binary isn't installed on the host (common on
+  // GitHub-hosted CI runners that don't pre-install Codex / OpenCode / Claude
+  // Code). Returning null lets callers branch into a soft-skip path.
+  const missingBinaryNeedles = [
+    "binary not found",
+    "not in path",
+    "is not installed",
+    "could not locate",
+  ];
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     const result = await ctx.hubcode(["provider", "models", provider, "--json"]);
@@ -79,8 +88,13 @@ async function runProviderModelsJson(provider: string): Promise<ProviderModel[]>
 
     const combined = `${result.stdout}\n${result.stderr}`;
     const normalized = combined.toLowerCase();
-    const isTransient = transientNeedles.some((needle) => normalized.includes(needle));
 
+    if (missingBinaryNeedles.some((needle) => normalized.includes(needle))) {
+      console.log(`⚠️  ${provider} CLI not installed on this host — skipping models check.`);
+      return null;
+    }
+
+    const isTransient = transientNeedles.some((needle) => normalized.includes(needle));
     if (!isTransient || attempt === 3) {
       assert.fail(`provider models ${provider} should exit 0\n${combined}`);
     }
@@ -188,30 +202,38 @@ try {
   {
     console.log("Test 5: provider models claude lists canonical model aliases");
     const data = await runProviderModelsJson("claude");
-    assertClaudeModels(data);
-    console.log("✓ provider models claude lists canonical model aliases\n");
+    if (data === null) {
+      console.log("⚠ skipped (claude binary not on PATH)\n");
+    } else {
+      assertClaudeModels(data);
+      console.log("✓ provider models claude lists canonical model aliases\n");
+    }
   }
 
   // Test 6: provider models codex includes concrete codex model IDs
   {
     console.log("Test 6: provider models codex includes concrete codex model IDs");
     const data = await runProviderModelsJson("codex");
-    assert(data.length >= 1, "codex model list should not be empty");
-    const ids = data.map((m) => m.id);
-    assert.strictEqual(new Set(ids).size, ids.length, "codex model IDs should be unique");
-    assert(
-      ids.every((id) => id.startsWith("gpt-")),
-      "all codex model IDs should be from the gpt family",
-    );
-    assert(
-      ids.some((id) => id.includes("codex")),
-      "codex model list should include at least one codex-optimized model",
-    );
-    assert(
-      data.every((m) => m.model && m.id && m.description),
-      "every codex model should have model, id, and description fields",
-    );
-    console.log("✓ provider models codex includes concrete codex model IDs\n");
+    if (data === null) {
+      console.log("⚠ skipped (codex binary not on PATH)\n");
+    } else {
+      assert(data.length >= 1, "codex model list should not be empty");
+      const ids = data.map((m) => m.id);
+      assert.strictEqual(new Set(ids).size, ids.length, "codex model IDs should be unique");
+      assert(
+        ids.every((id) => id.startsWith("gpt-")),
+        "all codex model IDs should be from the gpt family",
+      );
+      assert(
+        ids.some((id) => id.includes("codex")),
+        "codex model list should include at least one codex-optimized model",
+      );
+      assert(
+        data.every((m) => m.model && m.id && m.description),
+        "every codex model should have model, id, and description fields",
+      );
+      console.log("✓ provider models codex includes concrete codex model IDs\n");
+    }
   }
 
   // Test 7: provider models opencode returns namespaced model IDs
