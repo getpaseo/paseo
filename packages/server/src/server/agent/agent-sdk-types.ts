@@ -78,6 +78,8 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   defaultModeId?: string | null;
+  // Ported from paseo. App settings UI reads this; backward-compatible optional.
+  enabled?: boolean;
 }
 
 export type AgentFeatureToggle = {

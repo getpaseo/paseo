@@ -68,8 +68,22 @@ export function useProjects(): UseProjectsResult {
     [hosts],
   );
 
+  // Include the serverIds in the query key so the query re-runs once hosts
+  // hydrate. Without this, if `hostInputs` is `[]` on first mount (hosts
+  // still loading) the query caches an empty result against the static
+  // `["projects"]` key and never refetches when hosts arrive — the sidebar
+  // (which subscribes to WS workspace updates directly) shows the projects
+  // while Settings → Projects stays stuck on "No projects yet".
+  const hostKey = useMemo(
+    () =>
+      hostInputs
+        .map((h) => h.serverId)
+        .sort()
+        .join("|"),
+    [hostInputs],
+  );
   const projectsQuery = useQuery({
-    queryKey: projectsQueryKey,
+    queryKey: [...projectsQueryKey, hostKey] as const,
     queryFn: async () => {
       const results = await Promise.all(
         hostInputs.map(async (host): Promise<HostWorkspacesResult> => {

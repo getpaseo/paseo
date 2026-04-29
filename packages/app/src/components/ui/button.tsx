@@ -91,6 +91,7 @@ export function Button({
   style,
   textStyle,
   disabled,
+  loading,
   accessibilityRole,
   ...props
 }: PropsWithChildren<
@@ -100,6 +101,7 @@ export function Button({
     leftIcon?: LeftIcon;
     style?: StyleProp<ViewStyle>;
     textStyle?: StyleProp<TextStyle>;
+    loading?: boolean;
   }
 >) {
   const [hovered, setHovered] = useState(false);
@@ -168,7 +170,7 @@ export function Button({
     <Pressable
       {...props}
       accessibilityRole={accessibilityRole ?? "button"}
-      disabled={disabled}
+      disabled={disabled || loading}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       style={({ pressed }) => [

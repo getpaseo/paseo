@@ -468,7 +468,14 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         if (queue && queue.length > 0) {
           const [next, ...rest] = queue;
           if (sendAgentMessageRef.current) {
-            void sendAgentMessageRef.current(agent.id, next.text, next.images);
+            // queue stores ComposerAttachment[]; pull just the images for the
+            // legacy sendAgentMessage signature until the queue/send flow is
+            // unified on attachments.
+            const queuedImages = next.attachments
+              .filter((attachment) => attachment.kind === "image")
+              .map((attachment) => (attachment.kind === "image" ? attachment.metadata : null))
+              .filter((image): image is NonNullable<typeof image> => image !== null);
+            void sendAgentMessageRef.current(agent.id, next.text, queuedImages);
           }
           setQueuedMessages(serverId, (prev) => {
             const updated = new Map(prev);

@@ -1285,8 +1285,7 @@ function ProjectHeaderRow({
 
   // Strip role/tabIndex from dnd-kit so the outer wrapper doesn't become a
   // <button> (which would nest with our inner Pressable buttons on web).
-  const { role: _dndRole, tabIndex: _dndTabIndex, ...dndAttrs } =
-    dragHandleProps?.attributes ?? {};
+  const { role: _dndRole, tabIndex: _dndTabIndex, ...dndAttrs } = dragHandleProps?.attributes ?? {};
   return (
     <View
       {...dndAttrs}
@@ -1426,8 +1425,11 @@ function WorkspaceRowInner({
   );
   // Strip role/tabIndex from dnd-kit so the outer wrapper doesn't become a
   // <button> (which would nest with our inner Pressable buttons on web).
-  const { role: _wsDndRole, tabIndex: _wsDndTabIndex, ...wsDndAttrs } =
-    dragHandleProps?.attributes ?? {};
+  const {
+    role: _wsDndRole,
+    tabIndex: _wsDndTabIndex,
+    ...wsDndAttrs
+  } = dragHandleProps?.attributes ?? {};
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
       <View
@@ -1893,7 +1895,7 @@ function FlattenedProjectRow({
     return null;
   }
 
-  if (project.projectKind === "directory") {
+  if (project.projectKind === "non_git") {
     return (
       <NonGitProjectRowWithMenu
         project={project}
@@ -2384,8 +2386,8 @@ export function SidebarWorkspaceList({
       select: toProjectIconDataUri,
       enabled: Boolean(
         getHostRuntimeStore().getClient(request.serverId) &&
-        isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(request.serverId)) &&
-        request.cwd,
+          isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(request.serverId)) &&
+          request.cwd,
       ),
       staleTime: Infinity,
       gcTime: 1000 * 60 * 60,

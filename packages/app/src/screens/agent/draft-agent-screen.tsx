@@ -57,6 +57,8 @@ import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
+import { useCliAgents } from "@/hooks/use-cli-agents";
+import { defaultAgentSelection, type AgentSelection } from "@/components/kanban/agent-selector";
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
 import { isWeb } from "@/constants/platform";
 
@@ -235,6 +237,43 @@ function DraftAgentScreenContent({
     isCreateFlow: true,
     onlineServerIds,
   });
+
+  // Agent selector (the dropdown that lets users pick a different provider —
+  // Claude / Codex / OpenCode / Hubcode / detected CLI agents — at draft time).
+  // The DraftAgentStatusBar only renders the selector when `cliAgents` is
+  // non-empty AND `agentSelection`/`onAgentSelectionChange` are wired; otherwise
+  // it falls back to a model-only picker. Without this hook the dropdown
+  // disappeared in #screenshot — users could only switch models within their
+  // current provider.
+  const { agents: cliAgentsList } = useCliAgents(selectedServerId ?? null);
+  const [agentSelection, setAgentSelection] = useState<AgentSelection>(() => ({
+    id: selectedProvider || "claude",
+    mode: "native",
+    label: selectedProvider || "Claude Code",
+  }));
+  // Keep agentSelection in sync when the underlying provider state changes
+  // (e.g. after preferences hydrate or another control changes provider).
+  useEffect(() => {
+    setAgentSelection((prev) =>
+      prev.mode === "native" && prev.id !== selectedProvider
+        ? { id: selectedProvider, mode: "native", label: prev.label }
+        : prev,
+    );
+  }, [selectedProvider]);
+  const handleAgentSelectionChange = useCallback(
+    (next: AgentSelection) => {
+      setAgentSelection(next);
+      // Native providers map directly to the form's provider state so
+      // model lists / mode options recompute. CLI agents keep the form
+      // provider untouched (the submit flow branches on agentSelection.mode).
+      if (next.mode === "native") {
+        setProviderFromUser(next.id as AgentProvider);
+      }
+    },
+    [setProviderFromUser],
+  );
+  void defaultAgentSelection; // referenced for future reset paths
+
   const isMobile = useIsCompactFormFactor();
   const mobileView = usePanelStore((state) => state.mobileView);
   const desktopFileExplorerOpen = usePanelStore((state) => state.desktop.fileExplorerOpen);
@@ -1273,6 +1312,13 @@ function DraftAgentScreenContent({
                   onSetFeature: setDraftFeatureValue,
                   onModelSelectorOpen: invalidateProviderModels,
                   disabled: isSubmitting,
+                  // Wires the agent picker (Claude / Codex / OpenCode /
+                  // Hubcode / detected CLI agents). DraftAgentStatusBar gates
+                  // the selector on `cliAgents.length > 0 && agentSelection
+                  // && onAgentSelectionChange` — all three required.
+                  cliAgents: cliAgentsList,
+                  agentSelection,
+                  onAgentSelectionChange: handleAgentSelectionChange,
                 }}
               />
             )}

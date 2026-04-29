@@ -26,7 +26,10 @@ test("updates an existing release body through the release id API", () => {
     const execFileSync = (command, args, options) => {
       calls.push({ args, command, options });
 
-      if (args[0] === "api" && args[1] === "repos/gethubcode/hubcode/releases/tags/v0.1.60-beta.1") {
+      if (
+        args[0] === "api" &&
+        args[1] === "repos/gethubcode/hubcode/releases/tags/v0.1.60-beta.1"
+      ) {
         return JSON.stringify({ id: 311163621 });
       }
 
@@ -76,7 +79,10 @@ test("converts contributor profile links to mentions in synced release notes", (
     let syncedNotes = "";
 
     const execFileSync = (command, args) => {
-      if (args[0] === "api" && args[1] === "repos/gethubcode/hubcode/releases/tags/v0.1.60-beta.1") {
+      if (
+        args[0] === "api" &&
+        args[1] === "repos/gethubcode/hubcode/releases/tags/v0.1.60-beta.1"
+      ) {
         return JSON.stringify({ id: 311163621 });
       }
 

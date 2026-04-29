@@ -30,7 +30,13 @@ export type DraftLifecycleState = "active" | "abandoned" | "sent";
 interface DraftRecord {
   input: {
     text: string;
-    images: PersistedDraftImage[];
+    // The fork persists images directly; paseo persists composer attachments.
+    // Both fields are accepted for forward/backward-compat — runtime hydration
+    // still reads images. Tests that simulate the new shape only set
+    // attachments + cwd.
+    images?: PersistedDraftImage[];
+    attachments?: unknown[];
+    cwd?: string;
   };
   lifecycle: DraftLifecycleState;
   updatedAt: number;
@@ -147,12 +153,13 @@ function toDraftInputIfReady(record: DraftRecord | null | undefined): DraftInput
   if (record.lifecycle !== "active") {
     return undefined;
   }
-  if (hasLegacyImages(record.input.images)) {
+  const images = record.input.images ?? [];
+  if (hasLegacyImages(images)) {
     return undefined;
   }
   return {
     text: record.input.text,
-    images: (record.input.images as AttachmentMetadata[]).map(normalizeAttachmentMetadata),
+    images: (images as AttachmentMetadata[]).map(normalizeAttachmentMetadata),
   };
 }
 
@@ -163,7 +170,7 @@ function collectReferencedAttachmentIdsFromState(state: DraftStoreState): Set<st
     if (draftRecord.lifecycle !== "active") {
       continue;
     }
-    for (const image of draftRecord.input.images) {
+    for (const image of draftRecord.input.images ?? []) {
       if (isAttachmentMetadata(image)) {
         referencedIds.add(image.id);
       }
@@ -172,7 +179,7 @@ function collectReferencedAttachmentIdsFromState(state: DraftStoreState): Set<st
 
   const modalRecord = state.createModalDraft;
   if (modalRecord?.lifecycle === "active") {
-    for (const image of modalRecord.input.images) {
+    for (const image of modalRecord.input.images ?? []) {
       if (isAttachmentMetadata(image)) {
         referencedIds.add(image.id);
       }
@@ -250,8 +257,12 @@ async function runAttachmentGc(): Promise<void> {
   for (const session of Object.values(sessions)) {
     for (const queue of session.queuedMessages.values()) {
       for (const queuedMessage of queue) {
-        for (const image of queuedMessage.images ?? []) {
-          referencedIds.add(image.id);
+        // Queued messages now carry ComposerAttachment[] instead of a flat
+        // images array. Walk the attachments and pull image metadata ids.
+        for (const attachment of queuedMessage.attachments ?? []) {
+          if (attachment.kind === "image") {
+            referencedIds.add(attachment.metadata.id);
+          }
         }
       }
     }
@@ -305,7 +316,7 @@ function scheduleAttachmentGc(): void {
 async function migrateAllLegacyDrafts(): Promise<void> {
   const state = useDraftStore.getState();
   const keys = Object.entries(state.drafts)
-    .filter(([, record]) => hasLegacyImages(record.input.images))
+    .filter(([, record]) => hasLegacyImages(record.input.images ?? []))
     .map(([draftKey]) => draftKey);
 
   for (const draftKey of keys) {
@@ -481,7 +492,7 @@ export const useDraftStore = create<DraftStore>()(
           return ready;
         }
 
-        const migratedImages = await migrateLegacyImages(current.input.images);
+        const migratedImages = await migrateLegacyImages(current.input.images ?? []);
         const migratedDraft: DraftInput = {
           text: current.input.text,
           images: migratedImages,

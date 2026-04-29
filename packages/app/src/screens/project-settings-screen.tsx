@@ -174,6 +174,13 @@ function ProjectSettingsBody({
     <View style={styles.body}>
       <BackToProjectsButton />
 
+      {/*
+        Wrap header + form in the same `settingsStyles.card` the index route
+        uses for the projects list. Without this, the detail page lost the
+        rounded panel framing while the rest of Settings still has it,
+        making the page feel like it changed layout when navigating in/out
+        of a project.
+      */}
       <View style={styles.headerBlock}>
         <View style={styles.titleRow}>
           <ProjectTitleIcon host={selectedHost} projectName={project.projectName} />

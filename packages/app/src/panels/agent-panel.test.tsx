@@ -299,6 +299,7 @@ function buildTestPaneValue() {
     serverId: "server",
     workspaceId: "workspace",
     tabId: "agent-agent",
+    isPaneFocused: false,
     target: { kind: "agent" as const, agentId: "agent" },
     openTab: vi.fn(),
     closeCurrentTab: vi.fn(),

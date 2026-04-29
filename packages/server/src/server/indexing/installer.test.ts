@@ -31,7 +31,7 @@ describe("planInstallStrategy", () => {
     });
     expect(s.kind).toBe("pipx");
     if (s.kind === "pipx") {
-      expect(s.args).toEqual(["install", "code-review-graph"]);
+      expect(s.args).toEqual(["install", "git+https://github.com/hubtool/code-review-graph.git"]);
     }
   });
 
@@ -108,7 +108,7 @@ describe("runCrgInstall (streaming)", () => {
         python3Available: false,
         platform: "linux",
         runCommand: makeFakeRun({
-          "pipx install code-review-graph": [
+          "pipx install git+https://github.com/hubtool/code-review-graph.git": [
             { kind: "stdout", text: "Downloading…\n" },
             { kind: "stdout", text: "Installed.\n" },
             { kind: "exit", exitCode: 0 },
@@ -132,7 +132,7 @@ describe("runCrgInstall (streaming)", () => {
         python3Available: false,
         platform: "linux",
         runCommand: makeFakeRun({
-          "pipx install code-review-graph": [
+          "pipx install git+https://github.com/hubtool/code-review-graph.git": [
             { kind: "stderr", text: "pip not found\n" },
             { kind: "exit", exitCode: 1 },
           ],
@@ -157,7 +157,9 @@ describe("runCrgInstall (streaming)", () => {
         runCommand: makeFakeRun({
           "brew install pipx": [{ kind: "exit", exitCode: 1 }],
           // This should never be reached:
-          "pipx install code-review-graph": [{ kind: "exit", exitCode: 0 }],
+          "pipx install git+https://github.com/hubtool/code-review-graph.git": [
+            { kind: "exit", exitCode: 0 },
+          ],
         }),
       }),
     );
@@ -178,7 +180,9 @@ describe("runCrgInstall (streaming)", () => {
         runCommand: makeFakeRun({
           "brew install pipx": [{ kind: "exit", exitCode: 0 }],
           "pipx ensurepath": [{ kind: "exit", exitCode: 0 }],
-          "pipx install code-review-graph": [{ kind: "exit", exitCode: 0 }],
+          "pipx install git+https://github.com/hubtool/code-review-graph.git": [
+            { kind: "exit", exitCode: 0 },
+          ],
         }),
       }),
     );

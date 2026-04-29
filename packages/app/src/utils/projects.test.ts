@@ -10,6 +10,11 @@ function placement(input: {
   remoteUrl: string | null;
   mainRepoRoot?: string | null;
 }): ProjectPlacementPayload {
+  // The placement union differentiates non-hubcode (mainRepoRoot:null) and
+  // hubcode-owned (mainRepoRoot:string) variants. The test fixture always
+  // builds non-owned placements, but some specs override mainRepoRoot to
+  // verify hostRepoRoot derivation. We cast through unknown so callers can
+  // pass either shape without us redeclaring the union here.
   return {
     projectKey: input.projectKey,
     projectName: input.projectName,
@@ -22,7 +27,7 @@ function placement(input: {
       isHubcodeOwnedWorktree: false,
       mainRepoRoot: input.mainRepoRoot ?? null,
     },
-  };
+  } as unknown as ProjectPlacementPayload;
 }
 
 function workspace(input: {

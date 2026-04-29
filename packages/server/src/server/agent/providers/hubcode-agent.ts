@@ -95,7 +95,9 @@ export class HubcodeUpgradeRequiredError extends Error {
 }
 
 export class HubcodeClaudeCodeNotInstalledError extends Error {
-  constructor(message = "Hubcode requires the bundled Claude Code runtime. Install it from Settings → Providers.") {
+  constructor(
+    message = "Hubcode requires the bundled Claude Code runtime. Install it from Settings → Providers.",
+  ) {
     super(message);
     this.name = "HubcodeClaudeCodeNotInstalledError";
   }
@@ -317,7 +319,11 @@ export class HubcodeAgentClient implements AgentClient {
       launchContext,
       { isResume: true },
     );
-    const inner = await this.claudeClient.resumeSession(handle, decoratedConfig, decoratedLaunchContext);
+    const inner = await this.claudeClient.resumeSession(
+      handle,
+      decoratedConfig,
+      decoratedLaunchContext,
+    );
     return new HubcodeAgentSession(inner);
   }
 
@@ -334,8 +340,7 @@ export class HubcodeAgentClient implements AgentClient {
     decoratedLaunchContext: AgentLaunchContext;
     comboName: string;
   }> {
-    const token =
-      launchContext?.env?.HUBCODE_SESSION_TOKEN ?? readTokenFromEnv();
+    const token = launchContext?.env?.HUBCODE_SESSION_TOKEN ?? readTokenFromEnv();
     if (!token) {
       throw new Error("Missing Hubcode session token — sign in before selecting a Hubcode combo.");
     }

@@ -12,7 +12,13 @@
  * resizes. We clip the view to those pixel bounds on the main window.
  */
 
-import { BrowserWindow, WebContentsView, ipcMain, type IpcMainInvokeEvent } from "electron";
+import {
+  BrowserWindow,
+  WebContentsView,
+  ipcMain,
+  nativeTheme,
+  type IpcMainInvokeEvent,
+} from "electron";
 
 interface ManagedView {
   browserId: string;
@@ -91,6 +97,21 @@ export function registerBrowserViewIpc(): void {
         view.setBackgroundColor("#0e0e0e");
       } catch {
         // older Electron versions may not expose setBackgroundColor
+      }
+
+      // Re-pin nativeTheme.themeSource. Creating a WebContentsView with a
+      // new session/partition causes Chromium to re-evaluate
+      // `prefers-color-scheme` across all webContents in the process — the
+      // renderer's media query briefly flips, and unistyles (adaptive mode)
+      // re-themes the whole app from dark to light. Forcing themeSource
+      // back to its boot value here keeps the renderer stable across
+      // browser-view creations. See main.ts where the boot value is set.
+      try {
+        if (nativeTheme.themeSource === "system") {
+          nativeTheme.themeSource = nativeTheme.shouldUseDarkColors ? "dark" : "light";
+        }
+      } catch {
+        // nativeTheme may be unavailable on certain platforms
       }
       const managed: ManagedView = {
         browserId,

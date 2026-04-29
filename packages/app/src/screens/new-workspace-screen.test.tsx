@@ -935,7 +935,9 @@ describe("NewWorkspaceScreen picker payload", () => {
       workspace: typeof createdWorkspace;
       error: null;
     }>();
-    mockClient.createHubcodeWorktree.mockImplementationOnce(async () => await createWorktree.promise);
+    mockClient.createHubcodeWorktree.mockImplementationOnce(
+      async () => await createWorktree.promise,
+    );
     renderScreen();
     await flush();
 

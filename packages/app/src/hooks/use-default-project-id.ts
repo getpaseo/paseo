@@ -17,7 +17,7 @@ export function useDefaultProjectId(): string | null {
 
   return useMemo(() => {
     if (projects.length === 0) return null;
-    const withActive = projects.find((p) => p.activeCount > 0);
+    const withActive = projects.find((p) => p.workspaces.some((w) => w.statusBucket === "running"));
     return (withActive ?? projects[0])?.projectKey ?? null;
   }, [projects]);
 }

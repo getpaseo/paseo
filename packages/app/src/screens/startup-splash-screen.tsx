@@ -89,6 +89,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     textAlign: "center",
   },
+  // Without the "Welcome" headline above, the tagline ended up flush against
+  // the logo. Restore the breathing room the title used to provide.
+  taglineUnderLogo: {
+    marginTop: theme.spacing[8],
+  },
   titleError: {
     textAlign: "left",
   },
@@ -274,9 +279,13 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
       <View style={styles.container}>
         <TitlebarDragRegion />
         <View style={styles.centeredContent}>
+          {/*
+            The Hubcode logo wordmark already says "hubcode", so the
+            "Welcome to Hubcode" headline was duplicating it visually right
+            below. Drop the title and keep only the tagline + progress.
+          */}
           <HubcodeLogo size={96} />
-          <Text style={styles.title}>Welcome to Hubcode</Text>
-          <Text style={styles.tagline}>{TAGLINE}</Text>
+          <Text style={[styles.tagline, styles.taglineUnderLogo]}>{TAGLINE}</Text>
           <View style={styles.progressSteps}>
             {progressSteps.map((step) => (
               <View key={step.key} style={styles.progressStepRow}>

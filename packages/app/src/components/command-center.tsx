@@ -250,8 +250,8 @@ export function CommandCenter() {
                                   style={[styles.subtitle, { color: theme.colors.foregroundMuted }]}
                                   numberOfLines={1}
                                 >
-                                  {project.totalWorkspaces} workspace
-                                  {project.totalWorkspaces === 1 ? "" : "s"}
+                                  {project.workspaces.length} workspace
+                                  {project.workspaces.length === 1 ? "" : "s"}
                                 </Text>
                               </View>
                             </View>

@@ -13,11 +13,13 @@ function workspace(
     projectId: input.projectId ?? "project-1",
     projectDisplayName: input.projectDisplayName ?? "Project",
     projectRootPath: input.projectRootPath ?? "/repo",
+    workspaceDirectory: input.workspaceDirectory ?? input.projectRootPath ?? "/repo",
     projectKind: input.projectKind ?? "git",
     workspaceKind: input.workspaceKind ?? "worktree",
     name: input.name ?? input.id,
     status: input.status ?? "done",
     diffStat: input.diffStat ?? null,
+    scripts: input.scripts ?? [],
   };
 }
 

@@ -83,6 +83,7 @@ export const baseColors = {
   // Amber scale
   amber: {
     500: "#f59e0b",
+    700: "#b45309",
   },
 
   // Yellow scale
@@ -117,7 +118,24 @@ const darkDiffColors = {
 };
 
 // Semantic color tokens - Layer-based system
+// Status colors — semantic signals for success/danger/warning/merged. Used by
+// check statuses, PR states, and review decisions. Ported from paseo for typecheck parity.
+const lightStatusColors = {
+  statusSuccess: "#15803d", // green-700
+  statusDanger: "#b91c1c", // red-700
+  statusWarning: "#d97706", // amber-600
+  statusMerged: "#7c3aed", // purple-600
+};
+
+const darkStatusColors = {
+  statusSuccess: "#16a34a", // green-600
+  statusDanger: "#dc2626", // red-600
+  statusWarning: "#f59e0b", // amber-500
+  statusMerged: "#9333ea", // purple-600
+};
+
 const lightSemanticColors = {
+  ...lightStatusColors,
   // Surfaces (layers) - shifted one step lighter
   surface0: "#ffffff", // App background
   surface1: "#fafafa", // Subtle hover (was zinc-100, now zinc-50)
@@ -246,6 +264,7 @@ const darkTerminalAnsi = {
 
 function buildDarkSemanticColors(tint: DarkThemeConfig) {
   return {
+    ...darkStatusColors,
     surface0: tint.surface0,
     surface1: tint.surface1,
     surface2: tint.surface2,
@@ -411,6 +430,7 @@ const commonTheme = {
   spacing: {
     0: 0,
     1: 4,
+    1.5: 6,
     2: 8,
     3: 12,
     4: 16,

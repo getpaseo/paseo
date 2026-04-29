@@ -25,7 +25,10 @@ export type KeyboardActionId =
   | "workspace.pane.close"
   | "workspace.terminal.new"
   | "worktree.new"
-  | "worktree.archive";
+  | "worktree.archive"
+  // Ported from paseo. Composer dispatches this when the user interrupts a
+  // running agent via keyboard.
+  | "agent.interrupt";
 
 export type KeyboardActionDefinition =
   | { id: "message-input.focus"; scope: KeyboardActionScope }
@@ -52,7 +55,8 @@ export type KeyboardActionDefinition =
   | { id: "workspace.pane.close"; scope: KeyboardActionScope }
   | { id: "workspace.terminal.new"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
-  | { id: "worktree.archive"; scope: KeyboardActionScope };
+  | { id: "worktree.archive"; scope: KeyboardActionScope }
+  | { id: "agent.interrupt"; scope: KeyboardActionScope };
 
 export type KeyboardActionHandler = {
   handlerId: string;

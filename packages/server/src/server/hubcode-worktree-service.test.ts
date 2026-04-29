@@ -8,7 +8,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { GitHubService } from "../services/github-service.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
-import { createHubcodeWorktree, type CreateHubcodeWorktreeDeps } from "./hubcode-worktree-service.js";
+import {
+  createHubcodeWorktree,
+  type CreateHubcodeWorktreeDeps,
+} from "./hubcode-worktree-service.js";
 import { createWorktreeCoreDeps } from "./worktree-core.js";
 
 const cleanupPaths: string[] = [];

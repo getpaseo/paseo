@@ -127,8 +127,10 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "~19.2.0",
     "@types/ws": "^8.18.1",
+    "@vitest/browser": "^3.2.4",
     "eas-cli": "^16.24.1",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",

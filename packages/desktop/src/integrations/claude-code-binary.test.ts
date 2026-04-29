@@ -109,13 +109,7 @@ describe("getClaudeHomeDir()", () => {
 // -----------------------------------------------------------------------
 
 function primeClaudeCodeAtVersion(version: string) {
-  const pkgDir = path.join(
-    fakeUserData,
-    "claude",
-    "node_modules",
-    "@anthropic-ai",
-    "claude-code",
-  );
+  const pkgDir = path.join(fakeUserData, "claude", "node_modules", "@anthropic-ai", "claude-code");
   mkdirSync(pkgDir, { recursive: true });
   writeFileSync(
     path.join(pkgDir, "package.json"),
@@ -130,12 +124,7 @@ function primeClaudeCodeAtVersion(version: string) {
 
 function primeNodeBinary() {
   const isWindows = process.platform === "win32";
-  const nodeDir = path.join(
-    fakeUserData,
-    "runtime",
-    "node-v22.11.0",
-    isWindows ? "" : "bin",
-  );
+  const nodeDir = path.join(fakeUserData, "runtime", "node-v22.11.0", isWindows ? "" : "bin");
   mkdirSync(nodeDir, { recursive: true });
   writeFileSync(path.join(nodeDir, isWindows ? "node.exe" : "node"), "");
 }

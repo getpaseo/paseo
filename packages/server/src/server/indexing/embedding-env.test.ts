@@ -54,6 +54,7 @@ describe("buildEmbeddingEnv", () => {
       },
     ]);
     expect(snapshot.env).toEqual({
+      CRG_EMBEDDINGS_PROVIDER: "openai-compat",
       CRG_OPENAI_BASE_URL: "http://localhost:11434/v1",
       CRG_OPENAI_MODEL: "nomic-embed-text",
       CRG_OPENAI_API_KEY: "dummy",
@@ -73,7 +74,10 @@ describe("buildEmbeddingEnv", () => {
         }),
       },
     ]);
-    expect(snapshot.env).toEqual({ CRG_EMBEDDING_MODEL: "BAAI/bge-base-en-v1.5" });
+    expect(snapshot.env).toEqual({
+      CRG_EMBEDDINGS_PROVIDER: "local",
+      CRG_EMBEDDING_MODEL: "BAAI/bge-base-en-v1.5",
+    });
   });
 
   it("emits a CRG_HUBCODE_LOCAL marker for the hubcode-local provider", () => {
@@ -83,7 +87,11 @@ describe("buildEmbeddingEnv", () => {
         state: makeState({ kind: "hubcode-local" }),
       },
     ]);
-    expect(snapshot.env).toEqual({ CRG_HUBCODE_LOCAL: "1" });
+    expect(snapshot.env).toEqual({
+      CRG_HUBCODE_LOCAL: "1",
+      CRG_EMBEDDINGS_PROVIDER: "openai-compat",
+      CRG_ACCEPT_CLOUD_EMBEDDINGS: "1",
+    });
     expect(snapshot.source.providerKind).toBe("hubcode-local");
   });
 

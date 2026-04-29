@@ -31,7 +31,7 @@ describe("workspace-setup-store", () => {
       serverId: "server-1",
       sourceDirectory: "/Users/test/project",
       creationMethod: "create_worktree",
-      navigationMethod: "navigate",
+      navigationMethod: "push",
     });
 
     useWorkspaceSetupStore.getState().clearWorkspaceSetup();

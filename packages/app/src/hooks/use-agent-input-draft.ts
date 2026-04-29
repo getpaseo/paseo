@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AttachmentMetadata } from "@/attachments/types";
+import type { AttachmentMetadata, ComposerAttachment } from "@/attachments/types";
 import { useDraftStore } from "@/stores/draft-store";
 import { useAgentFormState, type FormInitialValues } from "./use-agent-form-state";
 import type { DraftAgentStatusBarProps } from "@/components/agent-status-bar";
@@ -76,13 +76,24 @@ export function useAgentInputDraft(
         composer?: ComposerConfig;
       },
 ): AgentInputDraft & {
-  attachments: AttachmentMetadata[];
-  setAttachments: (updater: ImageUpdater) => void;
+  attachments: ComposerAttachment[];
+  setAttachments: (
+    updater: ComposerAttachment[] | ((prev: ComposerAttachment[]) => ComposerAttachment[]),
+  ) => void;
   cwd: string;
+  setCwd: (cwd: string) => void;
   composerState: ComposerStateExposed | null;
 } {
   const draftKey = typeof input === "string" ? input : input.draftKey;
-  const initialCwd = typeof input === "object" ? (input.initialCwd ?? "") : "";
+  const passedInitialCwd = typeof input === "object" ? (input.initialCwd ?? "") : "";
+  const [cwdState, setCwdState] = useState<string>(passedInitialCwd);
+  const initialCwd = cwdState;
+  // Reset the cwd state whenever the caller-provided initialCwd changes
+  // (e.g. switching workspaces). Wrapped in an effect to avoid setState in
+  // render.
+  useEffect(() => {
+    setCwdState(passedInitialCwd);
+  }, [passedInitialCwd]);
   const composerConfig = typeof input === "object" ? input.composer : undefined;
   const [text, setText] = useState("");
   const [images, setImagesState] = useState<AttachmentMetadata[]>([]);
@@ -243,6 +254,36 @@ export function useAgentInputDraft(
     };
   }, [composerConfig, formState, initialCwd]);
 
+  // Adapt the legacy images-only state to the ComposerAttachment[] shape used
+  // by the composer + paseo-style screens. The fork's draft-store still
+  // persists images only — github_search_item attachments are dropped on
+  // save and are filtered out on load until the persistence layer follows.
+  const attachments = useMemo<ComposerAttachment[]>(
+    () => images.map((metadata) => ({ kind: "image", metadata })),
+    [images],
+  );
+
+  const setAttachments = useCallback(
+    (updater: ComposerAttachment[] | ((prev: ComposerAttachment[]) => ComposerAttachment[])) => {
+      setImagesState((previousImages) => {
+        const previousAttachments: ComposerAttachment[] = previousImages.map((metadata) => ({
+          kind: "image",
+          metadata,
+        }));
+        const nextAttachments =
+          typeof updater === "function" ? updater(previousAttachments) : updater;
+        const nextImages: AttachmentMetadata[] = [];
+        for (const attachment of nextAttachments) {
+          if (attachment.kind === "image") {
+            nextImages.push(attachment.metadata);
+          }
+        }
+        return nextImages;
+      });
+    },
+    [],
+  );
+
   return {
     text,
     setText,
@@ -251,9 +292,101 @@ export function useAgentInputDraft(
     clear,
     isHydrated,
     // Aliases for the new composer API used by hubcode upstream screens.
-    attachments: images,
-    setAttachments: setImages,
+    attachments,
+    setAttachments,
     cwd: initialCwd,
+    setCwd: setCwdState,
     composerState,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Test surface (kept under __private__ so unit tests can exercise pure helpers
+// without us re-exporting them publicly).
+// ---------------------------------------------------------------------------
+
+type DraftKeyResolverInput = { selectedServerId: string | null };
+
+function resolveDraftKey(input: {
+  draftKey: string | ((input: DraftKeyResolverInput) => string);
+  selectedServerId: string | null;
+}): string {
+  if (typeof input.draftKey === "function") {
+    return input.draftKey({ selectedServerId: input.selectedServerId });
+  }
+  return input.draftKey;
+}
+
+interface AgentModelDefinitionLite {
+  provider: string;
+  id: string;
+  defaultThinkingOptionId?: string;
+}
+
+function resolveEffectiveComposerModelId(input: {
+  selectedModel: string;
+  availableModels: AgentModelDefinitionLite[];
+}): string {
+  return input.selectedModel.trim();
+}
+
+function resolveEffectiveComposerThinkingOptionId(input: {
+  selectedThinkingOptionId: string;
+  availableModels: AgentModelDefinitionLite[];
+  effectiveModelId: string;
+}): string {
+  const selectedThinkingOptionId = input.selectedThinkingOptionId.trim();
+  if (selectedThinkingOptionId) {
+    return selectedThinkingOptionId;
+  }
+
+  const selectedModelDefinition =
+    input.availableModels.find((model) => model.id === input.effectiveModelId) ?? null;
+  return selectedModelDefinition?.defaultThinkingOptionId ?? "";
+}
+
+interface DraftComposerCommandConfig {
+  provider: string;
+  cwd: string;
+  modeId?: string;
+  model?: string;
+  thinkingOptionId?: string;
+  featureValues?: Record<string, unknown>;
+}
+
+function buildDraftComposerCommandConfig(input: {
+  provider: string | null;
+  cwd: string;
+  modeOptions: ReadonlyArray<{ id: string; label: string }>;
+  selectedMode: string;
+  effectiveModelId: string;
+  effectiveThinkingOptionId: string;
+  featureValues?: Record<string, unknown>;
+}): DraftComposerCommandConfig | undefined {
+  const cwd = input.cwd.trim();
+  if (!input.provider || !cwd) {
+    return undefined;
+  }
+
+  return {
+    provider: input.provider,
+    cwd,
+    ...(input.modeOptions.length > 0 && input.selectedMode !== ""
+      ? { modeId: input.selectedMode }
+      : {}),
+    ...(input.effectiveModelId ? { model: input.effectiveModelId } : {}),
+    ...(input.effectiveThinkingOptionId
+      ? { thinkingOptionId: input.effectiveThinkingOptionId }
+      : {}),
+    ...(input.featureValues ? { featureValues: input.featureValues } : {}),
+  };
+}
+
+export const __private__ = {
+  hasDraftContent,
+  areImagesEqual,
+  resolveDraftKey,
+  resolveEffectiveComposerModelId,
+  resolveEffectiveComposerThinkingOptionId,
+  buildDraftComposerCommandConfig,
+};

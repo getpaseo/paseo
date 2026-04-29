@@ -33,7 +33,9 @@ test("openProject reclassifies an existing directory workspace into its parent g
   const previousSupervised = process.env.HUBCODE_SUPERVISED;
   process.env.HUBCODE_SUPERVISED = "0";
   try {
-    const repoRoot = realpathSync(mkdtempSync(path.join(os.tmpdir(), "hubcode-open-project-repo-")));
+    const repoRoot = realpathSync(
+      mkdtempSync(path.join(os.tmpdir(), "hubcode-open-project-repo-")),
+    );
     const worktreeRoot = realpathSync(
       mkdtempSync(path.join(os.tmpdir(), "hubcode-open-project-worktree-")),
     );

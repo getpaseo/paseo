@@ -277,7 +277,7 @@ export function WorkspaceSetupDialog() {
       try {
         setPendingAction("chat");
         setErrorMessage(null);
-        const ensuredWorkspace = await ensureWorkspace({ cwd, attachments });
+        const ensuredWorkspace = await ensureWorkspace({ cwd: cwd ?? "", attachments });
         const connectedClient = withConnectedClient();
         if (!composerState) {
           throw new Error("Workspace setup composer state is required");

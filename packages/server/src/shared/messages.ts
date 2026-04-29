@@ -12,6 +12,7 @@ export {
 export type {
   HubcodeConfigRaw,
   HubcodeConfigRevision,
+  HubcodeScriptEntryRaw,
   ProjectConfigRpcError,
 } from "../utils/hubcode-config-schema.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
@@ -260,7 +261,7 @@ const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z.object({
   defaultThinkingOptionId: z.string().optional(),
 });
 
-const ProviderSnapshotEntrySchema: z.ZodType<ProviderSnapshotEntry> = z.object({
+export const ProviderSnapshotEntrySchema: z.ZodType<ProviderSnapshotEntry> = z.object({
   provider: AgentProviderSchema,
   status: ProviderStatusSchema,
   error: z.string().optional(),
@@ -270,6 +271,8 @@ const ProviderSnapshotEntrySchema: z.ZodType<ProviderSnapshotEntry> = z.object({
   label: z.string().optional(),
   description: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
+  // Backward-compatible: older daemons/clients didn't send `enabled`; default to true.
+  enabled: z.boolean().default(true),
 });
 
 const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z.object({
@@ -846,6 +849,50 @@ export const FetchAgentRequestMessageSchema = z.object({
   agentId: z.string(),
 });
 
+export const GitHubPrAttachmentSchema = z.object({
+  type: z.literal("github_pr"),
+  mimeType: z.literal("application/github-pr"),
+  number: z.number().int().positive(),
+  title: z.string(),
+  url: z.string(),
+  body: z.string().nullable().optional(),
+  baseRefName: z.string().nullable().optional(),
+  headRefName: z.string().nullable().optional(),
+});
+
+export const GitHubIssueAttachmentSchema = z.object({
+  type: z.literal("github_issue"),
+  mimeType: z.literal("application/github-issue"),
+  number: z.number().int().positive(),
+  title: z.string(),
+  url: z.string(),
+  body: z.string().nullable().optional(),
+});
+
+export const AgentAttachmentSchema = z.discriminatedUnion("type", [
+  GitHubPrAttachmentSchema,
+  GitHubIssueAttachmentSchema,
+]);
+export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+
+// Strips unknown attachment kinds so old daemons stay forward-compatible with new
+// attachment types from newer clients (and vice versa).
+function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const normalized: AgentAttachment[] = [];
+  for (const item of input) {
+    const parsed = AgentAttachmentSchema.safeParse(item);
+    if (parsed.success) {
+      normalized.push(parsed.data);
+    }
+  }
+  return normalized;
+}
+
+const AgentAttachmentsSchema = z.unknown().transform(normalizeAgentAttachments).optional();
+
 export const SendAgentMessageRequestSchema = z.object({
   type: z.literal("send_agent_message_request"),
   requestId: z.string(),
@@ -873,6 +920,7 @@ export const SendAgentMessageRequestSchema = z.object({
       avatarUrl: z.string(),
     })
     .optional(),
+  attachments: AgentAttachmentsSchema,
 });
 
 export const WaitForFinishRequestSchema = z.object({
@@ -924,6 +972,20 @@ export const WorkspaceSetupSnapshotSchema = z.object({
   detail: WorktreeSetupDetailPayloadSchema,
   error: z.string().nullable(),
 });
+
+// Ported from paseo. The fork's daemon doesn't currently emit this variant, but the
+// app/e2e code expects it in the SessionOutboundMessage union.
+export const WorkspaceSetupProgressMessageSchema = z.object({
+  type: z.literal("workspace_setup_progress"),
+  payload: z.object({
+    workspaceId: z.string(),
+    status: z.enum(["running", "completed", "failed"]),
+    detail: WorktreeSetupDetailPayloadSchema,
+    error: z.string().nullable(),
+  }),
+});
+export type WorkspaceSetupProgressMessage = z.infer<typeof WorkspaceSetupProgressMessageSchema>;
+export type WorkspaceSetupProgressPayload = WorkspaceSetupProgressMessage["payload"];
 
 export const PullRequestTimelineRequestSchema = z.object({
   type: z.literal("pull_request_timeline_request"),
@@ -1047,31 +1109,6 @@ export const ScriptStatusUpdateMessageSchema = z.object({
   }),
 });
 
-export const GitHubPrAttachmentSchema = z.object({
-  type: z.literal("github_pr"),
-  mimeType: z.literal("application/github-pr"),
-  number: z.number().int().positive(),
-  title: z.string(),
-  url: z.string(),
-  body: z.string().nullable().optional(),
-  baseRefName: z.string().nullable().optional(),
-  headRefName: z.string().nullable().optional(),
-});
-
-export const GitHubIssueAttachmentSchema = z.object({
-  type: z.literal("github_issue"),
-  mimeType: z.literal("application/github-issue"),
-  number: z.number().int().positive(),
-  title: z.string(),
-  url: z.string(),
-  body: z.string().nullable().optional(),
-});
-
-export const AgentAttachmentSchema = z.discriminatedUnion("type", [
-  GitHubPrAttachmentSchema,
-  GitHubIssueAttachmentSchema,
-]);
-export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
 export type WorkspaceScriptPayload = z.infer<typeof WorkspaceScriptPayloadSchema>;
 export type ScriptStatusUpdateMessage = z.infer<typeof ScriptStatusUpdateMessageSchema>;
 
@@ -1208,6 +1245,11 @@ const GitSetupOptionsSchema = z.object({
   newBranchName: z.string().optional(),
   createWorktree: z.boolean().optional(),
   worktreeSlug: z.string().optional(),
+  // Intent fields ported from paseo so newer clients can request a checkout
+  // or branch-off as part of agent creation.
+  refName: z.string().min(1).optional(),
+  action: z.enum(["branch-off", "checkout"]).optional(),
+  githubPrNumber: z.number().int().positive().optional(),
 });
 
 export type GitSetupOptions = z.infer<typeof GitSetupOptionsSchema>;
@@ -1229,6 +1271,7 @@ export const CreateAgentRequestMessageSchema = z.object({
     .optional(),
   git: GitSetupOptionsSchema.optional(),
   labels: z.record(z.string()).default({}),
+  attachments: AgentAttachmentsSchema,
   requestId: z.string(),
 });
 
@@ -1603,6 +1646,11 @@ export const CreateHubcodeWorktreeRequestSchema = z.object({
   agentProvider: z.string().optional(),
   agentMode: z.enum(["native", "cli"]).optional(),
   orgId: z.string().optional(),
+  // Attachments + checkout intent ported from paseo. All optional/forward-compatible.
+  attachments: AgentAttachmentsSchema,
+  refName: z.string().min(1).optional(),
+  action: z.enum(["branch-off", "checkout"]).optional(),
+  githubPrNumber: z.number().int().positive().optional(),
 });
 
 // TODO(2026-07): Remove once most clients are on >=0.1.50 and support arbitrary editor ids.
@@ -3141,39 +3189,51 @@ const WorkspaceGitHubRuntimePayloadSchema = z
   .optional()
   .nullable();
 
-export const WorkspaceDescriptorPayloadSchema = z.object({
-  id: z.string(),
-  projectId: z.string(),
-  projectDisplayName: z.string(),
-  projectRootPath: z.string(),
-  /** Absolute path to the workspace's working directory (worktree or
-   * checkout). Optional for backward compatibility with daemons that don't
-   * yet emit it, but the app relies on it for execution authority. */
-  workspaceDirectory: z.string().optional(),
-  projectKind: z.enum(["git", "non_git"]),
-  workspaceKind: z.enum(["local_checkout", "worktree", "directory"]),
-  name: z.string(),
-  status: WorkspaceStateBucketSchema,
-  activityAt: z.string().nullable(),
-  diffStat: z
-    .object({
-      additions: z.number(),
-      deletions: z.number(),
-    })
-    .nullable()
-    .optional(),
-  gitRuntime: WorkspaceGitRuntimePayloadSchema,
-  githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
-  // Issue/integration data (optional — backward-compatible with older clients/daemons)
-  issueContext: WorkspaceIssueContextPayloadSchema.optional(),
-  issueMetadata: z.record(z.string(), z.unknown()).optional(),
-  prompt: z.string().optional(),
-  autoApprove: z.boolean().optional(),
-  kanbanStatus: WorkspaceKanbanStatusPayloadSchema.optional(),
-  agentProvider: z.string().optional(),
-  agentMode: z.enum(["native", "cli"]).optional(),
-  orgId: z.string().optional(),
-});
+export const WorkspaceDescriptorPayloadSchema = z
+  .object({
+    id: z.string(),
+    projectId: z.string(),
+    projectDisplayName: z.string(),
+    projectRootPath: z.string(),
+    /** Absolute path to the workspace's working directory (worktree or
+     * checkout). Optional for backward compatibility with daemons that don't
+     * yet emit it, but the app relies on it for execution authority. */
+    workspaceDirectory: z.string().optional(),
+    projectKind: z.enum(["git", "non_git"]),
+    workspaceKind: z.enum(["local_checkout", "worktree", "directory"]),
+    name: z.string(),
+    status: WorkspaceStateBucketSchema,
+    activityAt: z.string().nullable(),
+    diffStat: z
+      .object({
+        additions: z.number(),
+        deletions: z.number(),
+      })
+      .nullable()
+      .optional(),
+    scripts: z.array(WorkspaceScriptPayloadSchema).optional().default([]),
+    gitRuntime: WorkspaceGitRuntimePayloadSchema,
+    githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
+    // Issue/integration data (optional — backward-compatible with older clients/daemons)
+    issueContext: WorkspaceIssueContextPayloadSchema.optional(),
+    issueMetadata: z.record(z.string(), z.unknown()).optional(),
+    prompt: z.string().optional(),
+    autoApprove: z.boolean().optional(),
+    kanbanStatus: WorkspaceKanbanStatusPayloadSchema.optional(),
+    agentProvider: z.string().optional(),
+    agentMode: z.enum(["native", "cli"]).optional(),
+    orgId: z.string().optional(),
+    // Optional project placement attached when the daemon has resolved a
+    // ProjectPlacement for the workspace. Older daemons omit it, hence the
+    // .nullable().optional() shape. Mirrors the upstream paseo schema.
+    project: ProjectPlacementPayloadSchema.nullable().optional(),
+  })
+  .transform((workspace) => ({
+    ...workspace,
+    // Older daemons may omit workspaceDirectory; fall back to projectRootPath so
+    // newer clients always have an execution path.
+    workspaceDirectory: workspace.workspaceDirectory ?? workspace.projectRootPath,
+  }));
 
 export const AgentUpdateMessageSchema = z.object({
   type: z.literal("agent_update"),
@@ -3646,12 +3706,32 @@ export const CheckoutPrCreateResponseSchema = z.object({
 });
 
 const CheckoutPrStatusSchema = z.object({
+  number: z.number().optional(),
   url: z.string(),
   title: z.string(),
   state: z.string(),
   baseRefName: z.string(),
   headRefName: z.string(),
   isMerged: z.boolean(),
+  // Ported from paseo. All optional for backward compatibility with daemons that
+  // don't yet emit them.
+  isDraft: z.boolean().optional().default(false),
+  checks: z
+    .array(
+      z.object({
+        name: z.string(),
+        status: z.string(),
+        url: z.string().nullable(),
+        workflow: z.string().optional(),
+        duration: z.string().optional(),
+      }),
+    )
+    .optional()
+    .default([]),
+  checksStatus: z.string().optional(),
+  reviewDecision: z.string().nullable().optional(),
+  repoOwner: z.string().optional(),
+  repoName: z.string().optional(),
 });
 
 export const CheckoutPrStatusResponseSchema = z.object({
@@ -3728,6 +3808,17 @@ export const BranchSuggestionsResponseSchema = z.object({
   type: z.literal("branch_suggestions_response"),
   payload: z.object({
     branches: z.array(z.string()),
+    // Ported from paseo. Optional for backward compatibility with older daemons.
+    branchDetails: z
+      .array(
+        z.object({
+          name: z.string(),
+          committerDate: z.number(),
+          hasLocal: z.boolean().optional(),
+          hasRemote: z.boolean().optional(),
+        }),
+      )
+      .optional(),
     error: z.string().nullable(),
     requestId: z.string(),
   }),
@@ -4488,6 +4579,7 @@ export type SessionOutboundMessage =
   | BrowserLaunchedEvent
   | BrowserStateUpdate
   | ScriptStatusUpdateMessage
+  | WorkspaceSetupProgressMessage
   | BrowserCommand
   | BrowserActiveList
   | BrowserClosed
@@ -4849,9 +4941,7 @@ export type WriteProjectConfigRequestMessage = z.infer<
 export type ClearAgentAttentionResponseMessage = z.infer<
   typeof ClearAgentAttentionResponseMessageSchema
 >;
-export type FetchAgentHistoryRequestMessage = z.infer<
-  typeof FetchAgentHistoryRequestMessageSchema
->;
+export type FetchAgentHistoryRequestMessage = z.infer<typeof FetchAgentHistoryRequestMessageSchema>;
 export type FetchAgentHistoryResponseMessage = z.infer<
   typeof FetchAgentHistoryResponseMessageSchema
 >;

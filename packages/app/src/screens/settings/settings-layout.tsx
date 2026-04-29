@@ -136,10 +136,7 @@ export function SettingsLayout({ selectedSectionId, children }: SettingsLayoutPr
                     color={isSelected ? theme.colors.foreground : theme.colors.foregroundMuted}
                   />
                   <Text
-                    style={[
-                      styles.sidebarLabel,
-                      isSelected && { color: theme.colors.foreground },
-                    ]}
+                    style={[styles.sidebarLabel, isSelected && { color: theme.colors.foreground }]}
                     numberOfLines={1}
                   >
                     {section.label}

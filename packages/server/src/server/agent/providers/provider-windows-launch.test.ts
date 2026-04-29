@@ -193,23 +193,26 @@ describe.runIf(process.platform === "win32")("Windows provider launch parity", (
     });
   });
 
-  test.each(providerLaunchCases)(
-    "$provider launches a cmd shim from a path with spaces through spawnProcess",
-    async ({ binaryName, args, shell }) => {
-      const fixture = makeFixture(binaryName, args);
+  test.each(
+    providerLaunchCases,
+  )("$provider launches a cmd shim from a path with spaces through spawnProcess", async ({
+    binaryName,
+    args,
+    shell,
+  }) => {
+    const fixture = makeFixture(binaryName, args);
 
-      const result = await runProviderFixture({
-        command: fixture.shim,
-        args: fixture.expectedArgs,
-        expectedArgs: fixture.expectedArgs,
-        shell,
-      });
+    const result = await runProviderFixture({
+      command: fixture.shim,
+      args: fixture.expectedArgs,
+      expectedArgs: fixture.expectedArgs,
+      shell,
+    });
 
-      expect(result.error).toBeNull();
-      expect(result.code).toBe(0);
-      expect(result.signal).toBeNull();
-      expect(result.stderr).toBe("");
-      expect(result.stdout.trim()).toBe("ARGV_OK");
-    },
-  );
+    expect(result.error).toBeNull();
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe("ARGV_OK");
+  });
 });

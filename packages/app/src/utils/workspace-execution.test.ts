@@ -18,7 +18,7 @@ function createWorkspace(
     projectRootPath: input.projectRootPath ?? "/repo",
     workspaceDirectory: input.workspaceDirectory ?? "/repo",
     projectKind: input.projectKind ?? "git",
-    workspaceKind: input.workspaceKind ?? "checkout",
+    workspaceKind: input.workspaceKind ?? "local_checkout",
     name: input.name ?? "main",
     status: input.status ?? "running",
     diffStat: input.diffStat ?? null,

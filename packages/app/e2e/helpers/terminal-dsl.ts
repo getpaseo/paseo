@@ -68,7 +68,7 @@ export class TerminalE2EHarness {
 
   async openTerminal(page: Page, input: { terminalId: string }): Promise<void> {
     await navigateToTerminal(page, {
-      workspaceId: this.workspaceId,
+      cwd: this.tempRepo.path,
       terminalId: input.terminalId,
     });
   }

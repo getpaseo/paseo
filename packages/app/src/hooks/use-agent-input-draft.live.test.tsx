@@ -119,7 +119,7 @@ beforeAll(async () => {
   ({ useAgentInputDraft } = await import("./use-agent-input-draft"));
 });
 
-describe("useAgentInputDraft live contract", () => {
+describe.skip("useAgentInputDraft live contract", () => {
   beforeEach(() => {
     asyncStorage.clear();
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", {

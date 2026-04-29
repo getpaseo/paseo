@@ -109,6 +109,18 @@ export interface AdaptiveModalSheetProps {
   snapPoints?: string[];
   stackBehavior?: "push" | "switch" | "replace";
   testID?: string;
+  // Ported from paseo so callers (workspace-setup-dialog, project-settings,
+  // pair-device-modal) can pass these. The fork's body doesn't render them yet,
+  // but accepting them keeps the type contract permissive.
+  subtitle?: ReactNode;
+  desktopMaxWidth?: number;
+  // Callers (workspace-setup-dialog) pass strongly-typed callbacks like
+  // `(files: ImageAttachment[]) => void`. We accept a more specific element
+  // type via generics so the typed callback is assignable to the prop. The
+  // runtime fork doesn't dispatch anything to onFilesDropped yet — this is a
+  // type-only contract for paseo-compat.
+  // biome-ignore lint/suspicious/noExplicitAny: contravariance escape hatch
+  onFilesDropped?: (files: any[]) => void;
 }
 
 export function AdaptiveModalSheet({

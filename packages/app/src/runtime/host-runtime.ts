@@ -1398,6 +1398,33 @@ export class HostRuntimeStore {
     return this.upsertConnectionFromOffer(offer, label);
   }
 
+  /**
+   * Add (or update) a host whose listen address comes from a freshly-spawned
+   * desktop daemon. Like {@link addConnectionFromListenAndWaitForOnline} but
+   * does not block waiting for the connection to come online — used by the
+   * DaemonStartService which has its own backoff/listener loop.
+   */
+  async upsertConnectionFromListen(input: {
+    listenAddress: string;
+    serverId: string;
+    hostname: string | null;
+  }): Promise<HostProfile> {
+    const normalizedListenAddress = input.listenAddress.trim();
+    const serverId = input.serverId.trim();
+    const connection = connectionFromListen(normalizedListenAddress);
+    if (!connection) {
+      throw new Error(`Unsupported listen address: ${input.listenAddress}`);
+    }
+    if (!serverId) {
+      throw new Error("Desktop daemon did not return a server id.");
+    }
+    return this.upsertHostConnection({
+      serverId,
+      label: input.hostname ?? undefined,
+      connection,
+    });
+  }
+
   async addConnectionFromListenAndWaitForOnline(input: {
     listenAddress: string;
     serverId: string;

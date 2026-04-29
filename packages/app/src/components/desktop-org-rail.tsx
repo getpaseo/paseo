@@ -7,6 +7,7 @@ import {
   Info,
   LogIn,
   Plus,
+  QrCode,
   Search,
   Settings as SettingsIcon,
   Sparkles,
@@ -30,6 +31,7 @@ import { getIsElectron } from "@/constants/platform";
 import { DESKTOP_TRAFFIC_LIGHT_HEIGHT, DESKTOP_TRAFFIC_LIGHT_WIDTH } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { Button } from "@/components/ui/button";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { useOrganizations } from "@/desktop/hooks/use-organizations";
@@ -154,6 +156,7 @@ export function DesktopOrgRail() {
   const isInSharedSession = useIsSharedRecipient();
   const sharedSessionActive = useIsInSharedSession();
   const [modalOpen, setModalOpen] = useState(false);
+  const [pairOpen, setPairOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const myStatus = useChatStore((s) => s.myStatus);
   const [name, setName] = useState("");
@@ -388,6 +391,17 @@ export function DesktopOrgRail() {
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {getIsElectron() ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Pair a device"
+          style={({ hovered = false }) => [styles.bottomTile, hovered && styles.itemHovered]}
+          onPress={() => setPairOpen(true)}
+        >
+          <QrCode size={14} color="rgba(255,255,255,0.85)" />
+        </Pressable>
+      ) : null}
+
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Settings"
@@ -396,6 +410,8 @@ export function DesktopOrgRail() {
       >
         <SettingsIcon size={14} color="rgba(255,255,255,0.85)" />
       </Pressable>
+
+      <PairDeviceModal visible={pairOpen} onClose={() => setPairOpen(false)} />
 
       <AdaptiveModalSheet
         visible={modalOpen}

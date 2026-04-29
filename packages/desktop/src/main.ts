@@ -53,10 +53,7 @@ import {
   restartDaemonIfDesktopManaged,
   broadcastClaudeCodeProgress,
 } from "./daemon/daemon-manager.js";
-import {
-  ensureClaudeCode,
-  getClaudeCodeStatus,
-} from "./integrations/claude-code-binary.js";
+import { ensureClaudeCode, getClaudeCodeStatus } from "./integrations/claude-code-binary.js";
 import {
   parseCliPassthroughArgsFromArgv,
   runCliPassthroughCommand,

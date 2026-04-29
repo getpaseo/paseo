@@ -26,8 +26,8 @@ describe("parseHostAgentRouteFromPathname", () => {
 
 describe("workspace route parsing", () => {
   it("encodes workspace IDs as base64url (no padding)", () => {
-    expect(encodeWorkspaceIdForPathSegment("/tmp/repo")).toBe("L3RtcC9yZXBv");
-    expect(decodeWorkspaceIdFromPathSegment("L3RtcC9yZXBv")).toBe("/tmp/repo");
+    expect(encodeWorkspaceIdForPathSegment("/tmp/repo")).toBe("b64_L3RtcC9yZXBv");
+    expect(decodeWorkspaceIdFromPathSegment("b64_L3RtcC9yZXBv")).toBe("/tmp/repo");
   });
 
   it("encodes file paths as base64url (no padding)", () => {
@@ -50,7 +50,9 @@ describe("workspace route parsing", () => {
   });
 
   it("builds base64url workspace routes", () => {
-    expect(buildHostWorkspaceRoute("local", "/tmp/repo")).toBe("/h/local/workspace/L3RtcC9yZXBv");
+    expect(buildHostWorkspaceRoute("local", "/tmp/repo")).toBe(
+      "/h/local/workspace/b64_L3RtcC9yZXBv",
+    );
   });
 
   it("builds host root routes", () => {
@@ -82,7 +84,7 @@ describe("workspace route parsing", () => {
 
   it("uses the plain workspace route when workspace context is provided", () => {
     expect(buildHostAgentDetailRoute("local", "agent-1", "/tmp/repo")).toBe(
-      "/h/local/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1",
+      "/h/local/workspace/b64_L3RtcC9yZXBv?open=agent%3Aagent-1",
     );
   });
 

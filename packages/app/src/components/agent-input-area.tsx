@@ -6,6 +6,7 @@ import {
   notifyLocalUserTyping,
 } from "@/stores/shared-session-store";
 import { useState, useEffect, useRef, useCallback } from "react";
+import type { ComposerAttachment } from "@/attachments/types";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
@@ -70,10 +71,14 @@ import { submitAgentInput } from "@/components/agent-input-submit";
 import { useAppSettings } from "@/hooks/use-settings";
 import { isWeb, isNative } from "@/constants/platform";
 
+// Aligned with the store's queue shape after the ComposerAttachment migration.
+// Older code paths in this file reference `images` — preserved as an optional
+// alias so legacy code can read it without a wider refactor.
 type QueuedMessage = {
   id: string;
   text: string;
   images?: ImageAttachment[];
+  attachments: ComposerAttachment[];
 };
 
 type ImageListUpdater = ImageAttachment[] | ((prev: ImageAttachment[]) => ImageAttachment[]);
@@ -363,10 +368,14 @@ export function AgentInputArea({
     const trimmedMessage = message.trim();
     if (!trimmedMessage && !imageAttachments?.length) return;
 
-    const newItem = {
+    const newItem: QueuedMessage = {
       id: generateMessageId(),
       text: trimmedMessage,
       images: imageAttachments,
+      // Legacy path: the new queue contract requires `attachments`. Existing image
+      // attachments are kept under `images` for backward compat; structured
+      // ComposerAttachment objects aren't created here.
+      attachments: [],
     };
 
     setQueuedMessages(serverId, (prev: Map<string, QueuedMessage[]>) => {
@@ -569,7 +578,7 @@ export function AgentInputArea({
 
     updateQueue((current) => current.filter((q) => q.id !== id));
     setUserInput(item.text);
-    setSelectedImages(item.images ?? []);
+    setSelectedImages((item as QueuedMessage).images ?? []);
   }
 
   async function handleSendQueuedNow(id: string) {
@@ -581,7 +590,7 @@ export function AgentInputArea({
 
     // Reuse the regular send path; server-side send atomically interrupts any active run.
     try {
-      await submitMessage(item.text, item.images);
+      await submitMessage(item.text, (item as QueuedMessage).images);
     } catch (error) {
       updateQueue((current) => [item, ...current]);
       setSendError(error instanceof Error ? error.message : "Failed to send message");

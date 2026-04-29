@@ -213,7 +213,12 @@ function downloadToFile(
     https
       .get(url, (res) => {
         // Follow up to 5 redirects.
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        if (
+          res.statusCode &&
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
           file.close();
           fs.unlink(dest).catch(() => undefined);
           resolve(downloadToFile(res.headers.location, dest, onProgress));
@@ -252,7 +257,11 @@ function downloadToFile(
   });
 }
 
-async function extractTarGz(archivePath: string, destParent: string, expectedTopDir: string): Promise<string> {
+async function extractTarGz(
+  archivePath: string,
+  destParent: string,
+  expectedTopDir: string,
+): Promise<string> {
   await fs.mkdir(destParent, { recursive: true });
   await tar.x({
     file: archivePath,
@@ -265,7 +274,11 @@ async function extractTarGz(archivePath: string, destParent: string, expectedTop
   return extracted;
 }
 
-async function extractZip(archivePath: string, destParent: string, expectedTopDir: string): Promise<string> {
+async function extractZip(
+  archivePath: string,
+  destParent: string,
+  expectedTopDir: string,
+): Promise<string> {
   // Windows .zip extraction via PowerShell's Expand-Archive — ships with
   // every supported Windows version, no extra deps. We avoid pulling a
   // heavy unzip lib (unzipper, adm-zip) since Windows is the only platform
@@ -422,7 +435,9 @@ function runNpmInstall(nodeBinary: string, installDir: string): Promise<void> {
       if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`npm install exited with code ${code}: ${stderr.trim() || "(no stderr)"}`));
+        reject(
+          new Error(`npm install exited with code ${code}: ${stderr.trim() || "(no stderr)"}`),
+        );
       }
     });
   });
@@ -440,7 +455,8 @@ async function ensureInstallScaffold(installDir: string): Promise<void> {
           name: "hubcode-claude-host",
           private: true,
           version: "0.0.0",
-          description: "Isolated install host for @anthropic-ai/claude-code used by the Hubcode agent.",
+          description:
+            "Isolated install host for @anthropic-ai/claude-code used by the Hubcode agent.",
         },
         null,
         2,
@@ -462,7 +478,10 @@ export async function ensureClaudeCode(opts: EnsureOpts = {}): Promise<ClaudeCod
   opts.onProgress?.({ phase: "checking", label: "Checking installed runtime" });
   const installedVersion = await readInstalledClaudeVersion();
 
-  if (installedVersion === PINNED_CLAUDE_CODE_VERSION && (await pathExists(getClaudeBinaryPath()))) {
+  if (
+    installedVersion === PINNED_CLAUDE_CODE_VERSION &&
+    (await pathExists(getClaudeBinaryPath()))
+  ) {
     opts.onProgress?.({ phase: "complete", label: "Hubcode runtime ready" });
     return {
       installed: true,

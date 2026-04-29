@@ -33,6 +33,9 @@ function getOpenIntentTarget(openIntent: WorkspaceOpenIntent): WorkspaceTabTarge
   if (openIntent.kind === "file") {
     return { kind: "file", path: openIntent.path };
   }
+  if (openIntent.kind === "setup") {
+    return { kind: "setup", workspaceId: openIntent.workspaceId };
+  }
   return { kind: "draft", draftId: openIntent.draftId };
 }
 

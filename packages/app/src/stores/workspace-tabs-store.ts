@@ -7,7 +7,11 @@ export type WorkspaceTabTarget =
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "file"; path: string }
-  | { kind: "browser"; browserId: string; url?: string };
+  | { kind: "browser"; browserId: string; url?: string }
+  // Ported from paseo. The "setup" tab is shown while a worktree is being set up.
+  // The fork's tab reconciliation may not yet emit this kind, but consumers
+  // (setup-panel, workspace pane content) reference it.
+  | { kind: "setup"; workspaceId: string };
 
 export type WorkspaceTab = {
   tabId: string;
@@ -103,6 +107,9 @@ function buildDeterministicTabId(target: WorkspaceTabTarget): string {
   }
   if (target.kind === "browser") {
     return `browser_${target.browserId}`;
+  }
+  if (target.kind === "setup") {
+    return `setup_${target.workspaceId}`;
   }
   return `file_${target.path}`;
 }

@@ -92,6 +92,7 @@ import { CommandsSection } from "@/screens/settings/commands-section";
 import { RulesSection } from "@/screens/settings/rules-section";
 import { AccountSection } from "@/desktop/components/account-section";
 import ProjectsScreen from "@/screens/projects-screen";
+import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { PlanUpgradeSection } from "@/components/plan-upgrade-section";
 
@@ -600,7 +601,7 @@ function ProvidersSection({ routeServerId, isDesktopApp }: ProvidersSectionProps
           <Text style={settingsStyles.sectionHeaderTitle}>Providers</Text>
           {hasServer && isConnected ? (
             <Pressable
-              onPress={refresh}
+              onPress={() => refresh()}
               disabled={isFetching}
               style={[settingsStyles.sectionHeaderLink, isFetching ? { opacity: 0.5 } : null]}
             >
@@ -651,9 +652,7 @@ function ProvidersSection({ routeServerId, isDesktopApp }: ProvidersSectionProps
                       </Text>
                     ) : null}
                     {def.id === "hubcode" && isDesktopApp && claudeInstaller.isInstalling ? (
-                      <ClaudeCodeInstallProgressLine
-                        progress={claudeInstaller.progress}
-                      />
+                      <ClaudeCodeInstallProgressLine progress={claudeInstaller.progress} />
                     ) : null}
                     {def.id === "hubcode" &&
                     isDesktopApp &&
@@ -860,6 +859,13 @@ function HubcodeRuntimeAttributionRow() {
 
 interface SettingsSectionContentProps {
   sectionId: SettingsSectionId;
+  /**
+   * When set, the projects section renders the detail view for this project
+   * instead of the list. Used by the `/settings/projects/[projectKey]` route
+   * to keep the same Settings shell (sidebar layout, header) for the detail
+   * page rather than swapping in a parallel SettingsLayout.
+   */
+  projectKey?: string | null;
   hostsProps: HostsSectionProps;
   generalProps: GeneralSectionProps;
   providersProps: ProvidersSectionProps;
@@ -873,6 +879,7 @@ interface SettingsSectionContentProps {
 
 function SettingsSectionContent({
   sectionId,
+  projectKey,
   hostsProps,
   generalProps,
   providersProps,
@@ -889,7 +896,11 @@ function SettingsSectionContent({
     case "hosts":
       return <HostsSection {...hostsProps} />;
     case "projects":
-      return <ProjectsScreen view={{ kind: "projects" }} />;
+      return projectKey ? (
+        <ProjectSettingsScreen projectKey={projectKey} />
+      ) : (
+        <ProjectsScreen view={{ kind: "projects" }} />
+      );
     case "general":
       return <GeneralSection {...generalProps} />;
     case "plan":
@@ -931,18 +942,44 @@ function SettingsSectionContent({
 // Layouts
 // ---------------------------------------------------------------------------
 
-interface SettingsLayoutProps {
+interface SettingsLayoutPropsBase {
+  /**
+   * Initial section to land on when the route doesn't carry a `?tab=` param
+   * (e.g. `/settings/projects` lands on the Projects section). Cleared by
+   * any user click on a different sidebar entry — does not relock.
+   */
+  initialSectionIdOverride?: SettingsSectionId;
+  /**
+   * Hard-locks the sidebar onto a section. Used for routes like
+   * `/settings/projects/[projectKey]` where the section is implicit in the
+   * pathname and any other selection would lose the URL context. User
+   * clicks on other sidebar entries are ignored while this is set.
+   */
+  forcedSectionId?: SettingsSectionId;
+}
+
+interface SettingsLayoutProps extends SettingsLayoutPropsBase {
   sections: SettingsSectionDef[];
   sectionContentProps: Omit<SettingsSectionContentProps, "sectionId">;
 }
 
-function SettingsMobileLayout({ sections, sectionContentProps }: SettingsLayoutProps) {
+function SettingsMobileLayout({
+  sections,
+  sectionContentProps,
+  forcedSectionId,
+}: SettingsLayoutProps) {
   const insets = useSafeAreaInsets();
+  // When the route forces a specific section (e.g. a project detail
+  // permalink), render just that one — otherwise the page would stack the
+  // entire settings tree above the detail.
+  const visibleSections = forcedSectionId
+    ? sections.filter((s) => s.id === forcedSectionId)
+    : sections;
 
   return (
     <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: insets.bottom }}>
       <View style={styles.content}>
-        {sections.map((section) => (
+        {visibleSections.map((section) => (
           <SettingsSectionContent
             key={section.id}
             sectionId={section.id}
@@ -954,29 +991,44 @@ function SettingsMobileLayout({ sections, sectionContentProps }: SettingsLayoutP
   );
 }
 
-function SettingsDesktopLayout({ sections, sectionContentProps }: SettingsLayoutProps) {
+function SettingsDesktopLayout({
+  sections,
+  sectionContentProps,
+  forcedSectionId,
+  initialSectionIdOverride,
+}: SettingsLayoutProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const tabParams = useLocalSearchParams<{ tab?: string }>();
   const requestedTab = typeof tabParams.tab === "string" ? tabParams.tab : null;
-  // Default to "account" — signed-in users land on their account view, and
-  // signed-out users land on the Sign in card (also lives in AccountSection)
-  // so logging in is a one-click discovery from Settings. An explicit
-  // `?tab=` param always wins.
+  // Resolution order, highest priority first:
+  //   1. forcedSectionId — pathname is the source of truth (detail routes).
+  //   2. requestedTab — explicit `?tab=` query param.
+  //   3. initialSectionIdOverride — from the route, used only on first mount.
+  //   4. "account" / "hosts" fallback.
   const hasAccount = sections.some((s) => s.id === "account");
-  const initialSectionId: SettingsSectionId = sections.some((s) => s.id === requestedTab)
-    ? (requestedTab as SettingsSectionId)
-    : hasAccount
-      ? "account"
-      : "hosts";
+  const initialSectionId: SettingsSectionId = forcedSectionId
+    ? forcedSectionId
+    : sections.some((s) => s.id === requestedTab)
+      ? (requestedTab as SettingsSectionId)
+      : initialSectionIdOverride && sections.some((s) => s.id === initialSectionIdOverride)
+        ? initialSectionIdOverride
+        : hasAccount
+          ? "account"
+          : "hosts";
   const [selectedSectionId, setSelectedSectionId] = useState<SettingsSectionId>(initialSectionId);
-  // Keep the selection in sync when the `tab` param changes (e.g., user
-  // clicks the Account shortcut in the org rail while Settings is already open).
+  // Re-sync only on forcedSectionId or `?tab=` changes — the initial override
+  // is intentionally not in this effect's deps so user clicks on the sidebar
+  // are not undone by the route re-rendering with the same override.
   useEffect(() => {
+    if (forcedSectionId) {
+      setSelectedSectionId(forcedSectionId);
+      return;
+    }
     if (!requestedTab) return;
     if (!sections.some((s) => s.id === requestedTab)) return;
     setSelectedSectionId(requestedTab as SettingsSectionId);
-  }, [requestedTab, sections]);
+  }, [forcedSectionId, requestedTab, sections]);
 
   return (
     <View style={desktopStyles.row}>
@@ -1138,9 +1190,31 @@ function DesktopAppUpdateRow() {
 // Main screen
 // ---------------------------------------------------------------------------
 
-export default function SettingsScreen() {
+// SettingsView is accepted for API compatibility with route entry points
+// (they pass `view={{kind:"root"|"section"|...}}`). The fork's SettingsScreen
+// does not use it at runtime — it derives selection from the URL query string —
+// but the prop must be accepted so callers typecheck.
+export type SettingsView =
+  | { kind: "root" }
+  | { kind: "section"; section: string }
+  | { kind: "host"; serverId: string }
+  | { kind: "projects" }
+  | { kind: "project"; projectKey: string };
+
+export interface SettingsScreenProps {
+  view?: SettingsView;
+}
+
+export default function SettingsScreen({ view }: SettingsScreenProps = {}) {
   const { theme } = useUnistyles();
   const voiceAudioEngine = useVoiceAudioEngineOptional();
+  // Surface the project detail when the route is `/settings/projects/[projectKey]`.
+  // The view prop carries the projectKey so the section content can render
+  // ProjectSettingsScreen instead of the projects list, while still living
+  // inside the same SettingsScreen shell (sidebar, header, layout) — without
+  // this the detail route used to mount SettingsLayout standalone and the
+  // sidebar's visual format diverged from the index route.
+  const projectKey = view && view.kind === "project" ? view.projectKey : null;
   const params = useLocalSearchParams<{ editHost?: string; serverId?: string }>();
   const paramServerId = typeof params.serverId === "string" ? params.serverId.trim() : "";
   const { settings, isLoading: settingsLoading, updateSettings } = useAppSettings();
@@ -1150,8 +1224,7 @@ export default function SettingsScreen() {
   };
   // Fall back to the first connected host so global settings (Task Integrations,
   // Providers, etc.) work without requiring a host in the URL.
-  const routeServerId =
-    paramServerId.length > 0 ? paramServerId : (daemons[0]?.serverId ?? "");
+  const routeServerId = paramServerId.length > 0 ? paramServerId : (daemons[0]?.serverId ?? "");
   const [isAddHostMethodVisible, setIsAddHostMethodVisible] = useState(false);
   const [isDirectHostVisible, setIsDirectHostVisible] = useState(false);
   const [isPasteLinkVisible, setIsPasteLinkVisible] = useState(false);
@@ -1374,6 +1447,7 @@ export default function SettingsScreen() {
   };
 
   const sectionContentProps: Omit<SettingsSectionContentProps, "sectionId"> = {
+    projectKey,
     hostsProps,
     generalProps,
     providersProps,
@@ -1393,13 +1467,33 @@ export default function SettingsScreen() {
     );
   }
 
+  // The detail route (`/settings/projects/[key]`) hard-locks the sidebar —
+  // the URL points to a specific project and any sidebar click would lose
+  // that context. The index route (`/settings/projects`) only seeds the
+  // initial section so users still see Projects on landing but can click
+  // Account/Hosts/etc. and have it stick.
+  const forcedSectionId: SettingsSectionId | undefined =
+    view && view.kind === "project" ? "projects" : undefined;
+  const initialSectionIdOverride: SettingsSectionId | undefined =
+    view && view.kind === "projects" ? "projects" : undefined;
+
   return (
     <View style={styles.container}>
       <MenuHeader title="Settings" />
       {isCompactLayout ? (
-        <SettingsMobileLayout sections={sections} sectionContentProps={sectionContentProps} />
+        <SettingsMobileLayout
+          sections={sections}
+          sectionContentProps={sectionContentProps}
+          forcedSectionId={forcedSectionId}
+          initialSectionIdOverride={initialSectionIdOverride}
+        />
       ) : (
-        <SettingsDesktopLayout sections={sections} sectionContentProps={sectionContentProps} />
+        <SettingsDesktopLayout
+          sections={sections}
+          sectionContentProps={sectionContentProps}
+          forcedSectionId={forcedSectionId}
+          initialSectionIdOverride={initialSectionIdOverride}
+        />
       )}
     </View>
   );

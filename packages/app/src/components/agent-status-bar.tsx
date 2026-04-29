@@ -118,9 +118,7 @@ export interface DraftAgentStatusBarProps {
    * so the user can switch between GUI providers and CLI agents (Codex, etc.). */
   cliAgents?: import("@/hooks/use-cli-agents").CliAgentStatus[];
   agentSelection?: import("./kanban/agent-selector").AgentSelection;
-  onAgentSelectionChange?: (
-    selection: import("./kanban/agent-selector").AgentSelection,
-  ) => void;
+  onAgentSelectionChange?: (selection: import("./kanban/agent-selector").AgentSelection) => void;
 }
 
 interface AgentStatusBarProps {

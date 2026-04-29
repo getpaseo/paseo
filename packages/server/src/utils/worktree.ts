@@ -200,22 +200,27 @@ function readHubcodeConfig(repoRoot: string): HubcodeConfig | null {
   }
 }
 
-export function getWorktreeSetupCommands(repoRoot: string): string[] {
-  const config = readHubcodeConfig(repoRoot);
-  const setupCommands = config?.worktree?.setup;
-  if (!setupCommands || setupCommands.length === 0) {
+// Normalizes a hubcode.json `setup`/`teardown` field into a list of commands.
+// The field can be a single string ("npm install") or a heterogeneous array
+// (e.g. mixed strings + accidental nulls/numbers). Anything non-string is dropped.
+function normalizeLifecycleCommands(value: unknown): string[] {
+  if (typeof value === "string") {
+    return value.trim().length > 0 ? [value] : [];
+  }
+  if (!Array.isArray(value)) {
     return [];
   }
-  return setupCommands.filter((cmd) => typeof cmd === "string" && cmd.trim().length > 0);
+  return value.filter((cmd): cmd is string => typeof cmd === "string" && cmd.trim().length > 0);
+}
+
+export function getWorktreeSetupCommands(repoRoot: string): string[] {
+  const config = readHubcodeConfig(repoRoot);
+  return normalizeLifecycleCommands(config?.worktree?.setup);
 }
 
 export function getWorktreeTeardownCommands(repoRoot: string): string[] {
   const config = readHubcodeConfig(repoRoot);
-  const teardownCommands = config?.worktree?.teardown;
-  if (!teardownCommands || teardownCommands.length === 0) {
-    return [];
-  }
-  return teardownCommands.filter((cmd) => typeof cmd === "string" && cmd.trim().length > 0);
+  return normalizeLifecycleCommands(config?.worktree?.teardown);
 }
 
 export function getWorktreeTerminalSpecs(repoRoot: string): WorktreeTerminalConfig[] {

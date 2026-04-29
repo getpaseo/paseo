@@ -349,7 +349,7 @@ function buildComposerConfig(input: {
   isConnected: boolean;
   workspaceDirectory: string | null;
   sourceDirectory: string;
-}): Parameters<typeof useAgentInputDraft>[0]["composer"] {
+}): Extract<Parameters<typeof useAgentInputDraft>[0], { draftKey: string }>["composer"] {
   const { serverId, isConnected, workspaceDirectory, sourceDirectory } = input;
   return {
     initialServerId: serverId || null,
@@ -389,8 +389,9 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
   // The DraftInput store still uses the legacy `images` shape; extract image
   // attachments from the upstream-style composer attachments.
   const images = (attachments ?? [])
-    .filter((attachment): attachment is Extract<ComposerAttachment, { kind: "image" }> =>
-      attachment.kind === "image",
+    .filter(
+      (attachment): attachment is Extract<ComposerAttachment, { kind: "image" }> =>
+        attachment.kind === "image",
     )
     .map((attachment) => attachment.metadata);
   useDraftStore.getState().saveDraftInput({
@@ -664,11 +665,9 @@ export function NewWorkspaceScreen({
         if (!item) continue;
         const identifier = String(item.identifier ?? item.key ?? item.number ?? item.id ?? "");
         if (!identifier) continue;
-        const contextKey =
-          integrationId === "plain" ? "plainThreadId" : `${integrationId}IssueId`;
+        const contextKey = integrationId === "plain" ? "plainThreadId" : `${integrationId}IssueId`;
         issueContext[contextKey] = identifier;
-        const metadataKey =
-          integrationId === "plain" ? "plainThread" : `${integrationId}Issue`;
+        const metadataKey = integrationId === "plain" ? "plainThread" : `${integrationId}Issue`;
         issueMetadata[metadataKey] = item;
       }
 
@@ -760,15 +759,7 @@ export function NewWorkspaceScreen({
         toast.error(message);
       }
     },
-    [
-      agentSelection,
-      composerState,
-      draftKey,
-      ensureWorkspace,
-      launchCliAgent,
-      serverId,
-      toast,
-    ],
+    [agentSelection, composerState, draftKey, ensureWorkspace, launchCliAgent, serverId, toast],
   );
 
   const workspaceTitle = computeWorkspaceTitle(workspace, displayName, sourceDirectory);
@@ -900,10 +891,7 @@ export function NewWorkspaceScreen({
           />
           <Animated.View testID="new-workspace-ref-picker-row" style={optionsRowStyle}>
             <View style={styles.branchNameWrap}>
-              <GitBranch
-                size={theme.iconSize.sm}
-                color={theme.colors.foregroundMuted}
-              />
+              <GitBranch size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
               <TextInput
                 value={branchName}
                 onChangeText={setBranchName}

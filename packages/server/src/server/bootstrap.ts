@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer as createHTTPServer } from "http";
 import { createReadStream, unlinkSync, existsSync } from "fs";
-import { stat } from "fs/promises";
+import { mkdir, stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
@@ -715,6 +715,25 @@ export async function createHubcodeDaemon(
                 `Reindex still running after ${Math.round(at / 1000)}s`,
               );
             }, at),
+          );
+        }
+
+        // CRG's _validate_repo_root rejects any cwd that has neither `.git`
+        // nor `.code-review-graph` — a hard guard against arbitrary FS
+        // traversal. Users who run Hubcode against a non-git workspace
+        // (extracted tarball, scratch dir, downloaded release) would see:
+        //   "repo_root does not look like a project root (no .git or
+        //    .code-review-graph directory found)"
+        // and the indexing UI hang at 0%. Pre-create the marker dir so the
+        // validator passes; CRG will populate it with its sqlite store on
+        // the first build anyway, and `ensureCrgGitignore` (above) keeps it
+        // out of source control.
+        try {
+          await mkdir(path.join(cwd, ".code-review-graph"), { recursive: true });
+        } catch (err) {
+          reindexLog.warn(
+            { err, cwd },
+            "Could not pre-create .code-review-graph dir; CRG validator may reject",
           );
         }
 

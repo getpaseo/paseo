@@ -10,6 +10,11 @@ import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 
 export type SendBehavior = "interrupt" | "queue";
 
+// Release channel for the desktop auto-updater. Exposed here so non-desktop
+// modules (settings UI, e2e fixtures) can reference the type without depending
+// on the desktop bundle.
+export type ReleaseChannel = "stable" | "beta";
+
 const VALID_THEMES = new Set<string>([...Object.keys(THEME_TO_UNISTYLES), "auto"]);
 
 export interface AppSettings {

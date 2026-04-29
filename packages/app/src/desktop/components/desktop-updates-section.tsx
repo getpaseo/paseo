@@ -20,11 +20,16 @@ import {
 import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 
 export interface LocalDaemonSectionProps {
-  appVersion: string | null;
-  showLifecycleControls: boolean;
+  // Made optional so tests can render <LocalDaemonSection /> without props.
+  // Production callers always pass these explicitly.
+  appVersion?: string | null;
+  showLifecycleControls?: boolean;
 }
 
-export function LocalDaemonSection({ appVersion, showLifecycleControls }: LocalDaemonSectionProps) {
+export function LocalDaemonSection({
+  appVersion = null,
+  showLifecycleControls = false,
+}: LocalDaemonSectionProps = {}) {
   const { theme } = useUnistyles();
   const showSection = shouldUseDesktopDaemon();
   const { settings, updateSettings } = useAppSettings();

@@ -6,7 +6,16 @@ import {
   Image,
   type PressableStateCallbackType,
 } from "react-native";
-import { useState, useEffect, useRef, useCallback, useMemo, memo, type ReactElement } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  memo,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
@@ -941,7 +950,9 @@ function ComposerVoiceModeButton({
         accessibilityRole="button"
         style={realtimeVoiceButtonStyle}
       >
-        {renderTriggerContent}
+        {/* TooltipTrigger forwards refs to a Pressable; callable children are valid at runtime
+            but the typing here doesn't admit them, so cast through unknown. */}
+        {renderTriggerContent as unknown as ReactNode}
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <View style={styles.tooltipRow}>
@@ -1202,10 +1213,10 @@ export function Composer({
         // transport is disconnected, because the parent decides the failure mode.
         canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
         queueMessage: ({ message: queuedText, attachments: queuedAttachments }) => {
-          queueMessage(queuedText, queuedAttachments);
+          queueMessage(queuedText, (queuedAttachments ?? []) as ComposerAttachment[]);
         },
         submitMessage: async ({ message: submitText, attachments: submitAttachments }) => {
-          await submitMessage(submitText, submitAttachments);
+          await submitMessage(submitText, (submitAttachments ?? []) as ComposerAttachment[]);
         },
         clearDraft,
         setUserInput,
@@ -1237,7 +1248,11 @@ export function Composer({
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
       }
-      void sendMessageWithContent(payload.text, payload.attachments, payload.forceSend);
+      void sendMessageWithContent(
+        payload.text,
+        (payload.attachments ?? []) as ComposerAttachment[],
+        payload.forceSend,
+      );
     },
     [blurOnSubmit, sendMessageWithContent],
   );
@@ -1371,7 +1386,7 @@ export function Composer({
 
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
-      queueMessage(payload.text, payload.attachments);
+      queueMessage(payload.text, (payload.attachments ?? []) as ComposerAttachment[]);
     },
     [queueMessage],
   );

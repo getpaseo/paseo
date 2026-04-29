@@ -114,8 +114,8 @@ vi.mock("@/constants/platform", () => ({
 vi.mock("@/stores/panel-store", () => ({
   MIN_SIDEBAR_WIDTH: 260,
   MAX_SIDEBAR_WIDTH: 420,
-  selectIsAgentListOpen: (state: typeof panelState) => state.isOpen,
-  usePanelStore: (selector: (state: typeof panelState) => unknown) => selector(panelState),
+  selectIsAgentListOpen: (state: { isOpen: boolean }) => state.isOpen,
+  usePanelStore: (selector: (state: { isOpen: boolean }) => unknown) => selector(panelState),
 }));
 
 vi.mock("@/runtime/host-runtime", () => ({

@@ -68,6 +68,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   if (target.kind === "browser") {
     return `browser_${target.browserId}`;
   }
+  if (target.kind === "setup") {
+    return `setup_${target.workspaceId}`;
+  }
   return `file_${target.path}`;
 }
 

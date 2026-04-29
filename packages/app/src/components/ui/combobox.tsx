@@ -66,6 +66,13 @@ export interface ComboboxProps {
   title?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /**
+   * If true, the combobox stays open when the user picks an option (used by
+   * the GitHub picker which lets the user toggle multiple selections at once).
+   * Currently consumed for typing only — the existing onSelect callback is
+   * responsible for keeping/closing the popover.
+   */
+  keepOpenOnSelect?: boolean;
   enableDismissOnClose?: boolean;
   stackBehavior?: "push" | "switch" | "replace";
   desktopPlacement?: "top-start" | "bottom-start";

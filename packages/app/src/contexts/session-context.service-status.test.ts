@@ -15,7 +15,7 @@ function workspace(input: {
     projectRootPath: "/repo",
     workspaceDirectory: input.workspaceDirectory ?? "/repo/main",
     projectKind: "git",
-    workspaceKind: "checkout",
+    workspaceKind: "local_checkout",
     name: "main",
     status: "running",
     diffStat: null,

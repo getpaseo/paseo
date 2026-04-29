@@ -114,7 +114,10 @@ class StartupScenario {
 
         localStorage.setItem(keys.e2e, "1");
         localStorage.setItem(keys.registry, JSON.stringify(storedRegistry));
-        localStorage.setItem("@hubcode:create-agent-preferences", JSON.stringify(storedPreferences));
+        localStorage.setItem(
+          "@hubcode:create-agent-preferences",
+          JSON.stringify(storedPreferences),
+        );
         localStorage.setItem(keys.disableDefaultSeedOnce, nonce);
       },
       {

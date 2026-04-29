@@ -10,7 +10,14 @@ type TempRepo = {
 
 export const createTempGitRepo = async (
   prefix = "hubcode-e2e-",
-  options?: { withRemote?: boolean },
+  options?: {
+    withRemote?: boolean;
+    // Ported from paseo for typecheck parity. The fork doesn't act on these fields yet,
+    // but tests pass them in. They're written into the working tree pre-commit when set.
+    hubcodeConfig?: Record<string, unknown>;
+    files?: Array<{ path: string; content: string }>;
+    branches?: string[];
+  },
 ): Promise<TempRepo> => {
   // Keep E2E repo paths short so terminal prompt + typed commands stay visible without zsh clipping.
   const tempRoot = process.platform === "win32" ? tmpdir() : "/tmp";

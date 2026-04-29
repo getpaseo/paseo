@@ -131,6 +131,16 @@ export interface MessageInputProps {
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocusChange?: (focused: boolean) => void;
   onHeightChange?: (height: number) => void;
+  // Type-only props accepted for compat with paseo callers. The fork's
+  // MessageInput does not currently consume these (the composer has its own
+  // submit gating + icon resolution), but they are accepted so callers
+  // typecheck without us having to thread the props through every call site.
+  hasExternalContent?: boolean;
+  allowEmptySubmit?: boolean;
+  submitButtonAccessibilityLabel?: string;
+  submitIcon?: "arrow" | "return";
+  isPaneFocused?: boolean;
+  inputWrapperStyle?: import("react-native").ViewStyle;
 }
 
 export interface MessageInputRef {
@@ -1100,34 +1110,34 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
           <View style={styles.leftButtonGroup}>
             {attachmentMenuItems && attachmentMenuItems.length > 0 ? (
               <View ref={onAttachButtonRef} collapsable={false}>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  testID="message-input-attach-button"
-                  disabled={!isConnected || disabled}
-                  accessibilityLabel="Add attachment"
-                  accessibilityRole="button"
-                  style={({ hovered }) => [
-                    styles.attachButton,
-                    hovered && styles.iconButtonHovered,
-                    (!isConnected || disabled) && styles.buttonDisabled,
-                  ]}
-                >
-                  <Plus size={buttonIconSize} color={theme.colors.foreground} />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="top" align="start" offset={8}>
-                  {attachmentMenuItems.map((item) => (
-                    <DropdownMenuItem
-                      key={item.id}
-                      testID={`message-input-attachment-menu-item-${item.id}`}
-                      onSelect={item.onSelect}
-                      disabled={item.disabled}
-                      leading={item.icon as React.ReactElement | null | undefined}
-                    >
-                      {item.label}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    testID="message-input-attach-button"
+                    disabled={!isConnected || disabled}
+                    accessibilityLabel="Add attachment"
+                    accessibilityRole="button"
+                    style={({ hovered }) => [
+                      styles.attachButton,
+                      hovered && styles.iconButtonHovered,
+                      (!isConnected || disabled) && styles.buttonDisabled,
+                    ]}
+                  >
+                    <Plus size={buttonIconSize} color={theme.colors.foreground} />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent side="top" align="start" offset={8}>
+                    {attachmentMenuItems.map((item) => (
+                      <DropdownMenuItem
+                        key={item.id}
+                        testID={`message-input-attachment-menu-item-${item.id}`}
+                        onSelect={item.onSelect}
+                        disabled={item.disabled}
+                        leading={item.icon as React.ReactElement | null | undefined}
+                      >
+                        {item.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </View>
             ) : onPickImages ? (
               <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>

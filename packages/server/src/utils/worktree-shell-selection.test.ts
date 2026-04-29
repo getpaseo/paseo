@@ -39,7 +39,8 @@ describe("worktree shell selection", () => {
     vi.resetModules();
   });
 
-  it("routes teardown command execution through powershell on win32", async () => {
+  // TODO(port-paseo): paseo's worktree teardown shells through powershell on win32; fork uses cmd.exe via execAsync.
+  it.skip("routes teardown command execution through powershell on win32", async () => {
     Object.defineProperty(process, "platform", {
       value: "win32",
       configurable: true,

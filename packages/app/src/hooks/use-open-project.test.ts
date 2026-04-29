@@ -1,3 +1,4 @@
+import type { DaemonClient } from "@server/client/daemon-client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@react-native-async-storage/async-storage", () => {
@@ -75,15 +76,15 @@ describe("openProjectDirectly", () => {
             projectDisplayName: "project",
             projectRootPath: WORKSPACE_ID,
             workspaceDirectory: WORKSPACE_ID,
-            projectKind: "git" as const,
-            workspaceKind: "checkout" as const,
+            projectKind: "git",
+            workspaceKind: "checkout",
             name: "project",
-            status: "done" as const,
+            status: "done",
             activityAt: null,
             diffStat: null,
             scripts: [],
           },
-        })),
+        })) as unknown as DaemonClient["openProject"],
       },
       mergeWorkspaces: useSessionStore.getState().mergeWorkspaces,
       setHasHydratedWorkspaces: useSessionStore.getState().setHasHydratedWorkspaces,

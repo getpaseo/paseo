@@ -32,19 +32,29 @@ type ProviderModel = {
 
 const EXPECTED_CLAUDE_MODELS = [
   {
+    id: "claude-opus-4-7[1m]",
+    model: "Opus 4.7 1M",
+    descriptionFragment: "1M context window",
+  },
+  {
+    id: "claude-opus-4-7",
+    model: "Opus 4.7",
+    descriptionFragment: "most capable",
+  },
+  {
     id: "claude-opus-4-6[1m]",
     model: "Opus 4.6 1M",
     descriptionFragment: "1M context window",
   },
   {
+    id: "claude-opus-4-6",
+    model: "Opus 4.6",
+    descriptionFragment: "Previous Opus",
+  },
+  {
     id: "claude-sonnet-4-6",
     model: "Sonnet 4.6",
     descriptionFragment: "Best for everyday tasks",
-  },
-  {
-    id: "claude-opus-4-6",
-    model: "Opus 4.6",
-    descriptionFragment: "Most capable",
   },
   {
     id: "claude-haiku-4-5",
@@ -205,24 +215,33 @@ try {
   }
 
   // Test 7: provider models opencode returns namespaced model IDs
+  // Skipped when the opencode binary isn't on PATH (e.g. local dev without
+  // OpenCode installed) — the daemon legitimately reports the provider as
+  // unavailable and there is nothing meaningful to assert here.
   {
     console.log("Test 7: provider models opencode returns namespaced model IDs");
-    const data = await runProviderModelsJson("opencode");
-    assert(data.length >= 1, "opencode model list should not be empty");
-    const ids = data.map((m) => m.id);
-    assert(
-      data.every((m) => m.id.includes("/")),
-      "opencode model IDs should be provider-namespaced",
-    );
-    assert(
-      ids.some((id) => id.startsWith("opencode/")),
-      "opencode output should include at least one first-party opencode model",
-    );
-    assert(
-      data.every((m) => m.model && m.id && m.description !== undefined),
-      "every opencode model should have model, id, and description fields",
-    );
-    console.log("✓ provider models opencode returns namespaced model IDs\n");
+    const probe = await ctx.hubcode(["provider", "models", "opencode", "--json"]);
+    const probeOutput = probe.stdout + probe.stderr;
+    if (probeOutput.includes("OpenCode binary not found")) {
+      console.log("⚠ skipped (opencode binary not on PATH)\n");
+    } else {
+      const data = await runProviderModelsJson("opencode");
+      assert(data.length >= 1, "opencode model list should not be empty");
+      const ids = data.map((m) => m.id);
+      assert(
+        data.every((m) => m.id.includes("/")),
+        "opencode model IDs should be provider-namespaced",
+      );
+      assert(
+        ids.some((id) => id.startsWith("opencode/")),
+        "opencode output should include at least one first-party opencode model",
+      );
+      assert(
+        data.every((m) => m.model && m.id && m.description !== undefined),
+        "every opencode model should have model, id, and description fields",
+      );
+      console.log("✓ provider models opencode returns namespaced model IDs\n");
+    }
   }
 
   // Test 8: provider models unknown fails with error

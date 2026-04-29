@@ -119,6 +119,11 @@ vi.mock("lucide-react-native", () => {
     ExternalLink: icon("ExternalLink"),
     Pencil: icon("Pencil"),
     FolderGit2: icon("FolderGit2"),
+    // Pulled in transitively via project-settings-screen → ui/alert.tsx.
+    Info: icon("Info"),
+    AlertTriangle: icon("AlertTriangle"),
+    CheckCircle2: icon("CheckCircle2"),
+    XCircle: icon("XCircle"),
   };
 });
 

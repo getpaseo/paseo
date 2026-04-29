@@ -11,9 +11,11 @@ function createWorkspace(
     projectRootPath: input.projectRootPath ?? "/tmp/repo",
     projectKind: input.projectKind ?? "git",
     workspaceKind: input.workspaceKind ?? "local_checkout",
+    workspaceDirectory: input.workspaceDirectory ?? input.projectRootPath ?? "/tmp/repo",
     name: input.name ?? "main",
     status: input.status ?? "done",
     diffStat: input.diffStat ?? null,
+    scripts: input.scripts ?? [],
   };
 }
 

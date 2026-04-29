@@ -1263,12 +1263,14 @@ function CollapsedProjectMonogram({
             pressed && styles.collapsedRailBtnPressed,
           ]}
         >
-          {project.totalWorkspaces > 0 ? (
+          {project.workspaces.length > 0 ? (
             <Text style={styles.collapsedMonogramText}>{initial}</Text>
           ) : (
             <Folder size={16} color={theme.colors.foregroundMuted} strokeWidth={1.75} />
           )}
-          {project.activeCount > 0 ? <View style={styles.collapsedMonogramDot} /> : null}
+          {project.workspaces.some((w) => w.statusBucket === "running") ? (
+            <View style={styles.collapsedMonogramDot} />
+          ) : null}
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="right" align="center" offset={8}>

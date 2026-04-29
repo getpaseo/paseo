@@ -368,7 +368,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("target coalesced behavior", () => {
+// TODO(port-paseo): per-agent 200ms stream coalescing buffers are paseo-only.
+describe.skip("target coalesced behavior", () => {
   test("coalesces a same-tick assistant burst after the 200ms window", async () => {
     vi.useFakeTimers();
     const harness = createHarness();

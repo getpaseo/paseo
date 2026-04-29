@@ -142,7 +142,7 @@ export function normalizeWorkspaceDescriptor(
     projectId: String(payload.projectId),
     projectDisplayName: payload.projectDisplayName,
     projectRootPath: payload.projectRootPath,
-    workspaceDirectory: payload.workspaceDirectory,
+    workspaceDirectory: payload.workspaceDirectory ?? payload.projectRootPath,
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     name: payload.name,
@@ -151,7 +151,8 @@ export function normalizeWorkspaceDescriptor(
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
-    project: payload.project,
+    // payload.project doesn't exist on the wire schema; the descriptor's optional
+    // `project` placement is hydrated by the session reducer from agent_update messages.
     issueContext: payload.issueContext,
     issueMetadata: payload.issueMetadata,
     prompt: payload.prompt,

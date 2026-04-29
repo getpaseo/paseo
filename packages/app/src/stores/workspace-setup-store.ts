@@ -2,7 +2,7 @@ import type { SessionOutboundMessage } from "@server/shared/messages";
 import { create } from "zustand";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 
-export type WorkspaceSetupNavigationMethod = "navigate" | "replace";
+export type WorkspaceSetupNavigationMethod = "push" | "replace";
 export type WorkspaceCreationMethod = "open_project" | "create_worktree";
 
 export interface PendingWorkspaceSetup {

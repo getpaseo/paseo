@@ -67,7 +67,11 @@ export function planInstallStrategy(deps: {
   platform: NodeJS.Platform;
 }): InstallStrategy {
   if (deps.pipxAvailable) {
-    return { kind: "pipx", command: "pipx", args: ["install", "git+https://github.com/hubtool/code-review-graph.git"] };
+    return {
+      kind: "pipx",
+      command: "pipx",
+      args: ["install", "git+https://github.com/hubtool/code-review-graph.git"],
+    };
   }
   if (deps.platform === "darwin" && deps.brewAvailable) {
     return {
@@ -75,7 +79,10 @@ export function planInstallStrategy(deps: {
       steps: [
         { command: "brew", args: ["install", "pipx"] },
         { command: "pipx", args: ["ensurepath"] },
-        { command: "pipx", args: ["install", "git+https://github.com/hubtool/code-review-graph.git"] },
+        {
+          command: "pipx",
+          args: ["install", "git+https://github.com/hubtool/code-review-graph.git"],
+        },
       ],
     };
   }
@@ -94,7 +101,10 @@ export function planInstallStrategy(deps: {
           args: ["-m", "pip", "install", "--user", "--break-system-packages", "pipx"],
         },
         { command: "python3", args: ["-m", "pipx", "ensurepath"] },
-        { command: "python3", args: ["-m", "pipx", "install", "git+https://github.com/hubtool/code-review-graph.git"] },
+        {
+          command: "python3",
+          args: ["-m", "pipx", "install", "git+https://github.com/hubtool/code-review-graph.git"],
+        },
       ],
     };
   }

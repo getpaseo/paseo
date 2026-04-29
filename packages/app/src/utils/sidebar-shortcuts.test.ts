@@ -11,10 +11,14 @@ function workspace(serverId: string, cwd: string): SidebarWorkspaceEntry {
     workspaceKey: `${serverId}:${cwd}`,
     serverId,
     workspaceId: cwd,
+    projectKey: "p",
+    projectKind: "git",
     workspaceKind: "local_checkout",
     name: cwd,
     statusBucket: "done",
     diffStat: null,
+    scripts: [],
+    hasRunningScripts: false,
   };
 }
 

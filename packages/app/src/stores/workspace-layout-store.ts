@@ -57,6 +57,9 @@ interface WorkspaceLayoutStore {
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
   openTab: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
+  /** Alias of openTab that also focuses the new tab. The fork's openTab
+   *  already focuses by default, so this is a paseo-compat shim. */
+  openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
   retargetTab: (workspaceKey: string, tabId: string, target: WorkspaceTabTarget) => string | null;
@@ -182,6 +185,11 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         }));
 
         return result.tabId;
+      },
+      openTabFocused: (workspaceKey, target) => {
+        // openTab already focuses the newly opened tab; this method exists
+        // as a paseo-compat alias.
+        return get().openTab(workspaceKey, target);
       },
       closeTab: (workspaceKey, tabId) => {
         const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);

@@ -65,6 +65,45 @@ export async function expectWorkspaceHeader(
   });
 }
 
+/**
+ * Wait for the sidebar to show at least one project row, indicating that the
+ * WebSocket connection is up and workspace hydration has completed.
+ * Ported from paseo.
+ */
+export async function waitForSidebarHydration(page: Page, timeout = 60_000): Promise<void> {
+  await page
+    .locator('[data-testid^="sidebar-project-row-"]')
+    .first()
+    .waitFor({ state: "visible", timeout });
+}
+
+/**
+ * Assert that the given workspace row is selected in the sidebar.
+ * Ported from paseo.
+ */
+export async function expectSidebarWorkspaceSelected(input: {
+  page: Page;
+  serverId: string;
+  workspaceId: string;
+  selected?: boolean;
+}): Promise<void> {
+  const row = workspaceRowLocator(input.page, input.serverId, input.workspaceId);
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  const expected = input.selected === false ? "false" : "true";
+
+  const hasDataSelected = await row.getAttribute("data-selected");
+  if (hasDataSelected !== null) {
+    await expect(row).toHaveAttribute("data-selected", expected, {
+      timeout: 30_000,
+    });
+    return;
+  }
+
+  await expect(row).toHaveAttribute("aria-selected", expected, {
+    timeout: 30_000,
+  });
+}
+
 export async function seedWorkspaceActivity(page: Page, marker: string): Promise<void> {
   const input = page.getByRole("textbox", { name: "Message agent..." });
   await expect(input).toBeEditable({ timeout: 30_000 });

@@ -10,13 +10,25 @@ export function providersSnapshotQueryKey(serverId: string | null) {
   return ["providersSnapshot", serverId] as const;
 }
 
-interface UseProvidersSnapshotResult {
+export interface UseProvidersSnapshotResult {
   entries: ProviderSnapshotEntry[] | undefined;
   isLoading: boolean;
   isFetching: boolean;
+  /** Alias of isFetching exposed for paseo-compat callers/tests. */
+  isRefreshing: boolean;
   error: string | null;
   supportsSnapshot: boolean;
-  refresh: () => void;
+  /**
+   * Force the daemon to refresh provider state. The optional providers list
+   * is forwarded to the daemon when set; if omitted, the daemon refreshes all.
+   */
+  refresh: (providers?: string[]) => void;
+  /**
+   * Refresh-if-stale convenience used by selectors. The fork triggers an
+   * unconditional refresh — callers historically passed the provider id to
+   * scope the refetch.
+   */
+  refetchIfStale: (provider?: string) => void;
   invalidate: () => void;
 }
 
@@ -60,12 +72,29 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
     });
   }, [client, isConnected, serverId, queryClient, queryKey, supportsSnapshot]);
 
-  const refresh = useCallback(() => {
-    if (!client) {
-      return;
-    }
-    void client.refreshProvidersSnapshot();
-  }, [client]);
+  const refresh = useCallback(
+    (providers?: string[]) => {
+      if (!client) {
+        return;
+      }
+      if (providers && providers.length > 0) {
+        void client.refreshProvidersSnapshot({ providers });
+      } else {
+        void client.refreshProvidersSnapshot();
+      }
+    },
+    [client],
+  );
+
+  const refetchIfStale = useCallback(
+    (_provider?: string) => {
+      // The hook's TanStack query already governs staleness via staleTime;
+      // exposed for paseo-compat callers that want to opportunistically
+      // refresh a single provider's row.
+      void queryClient.invalidateQueries({ queryKey });
+    },
+    [queryClient, queryKey],
+  );
 
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey });
@@ -75,9 +104,11 @@ export function useProvidersSnapshot(serverId: string | null): UseProvidersSnaps
     entries: snapshotQuery.data?.entries ?? undefined,
     isLoading: snapshotQuery.isLoading,
     isFetching: snapshotQuery.isFetching,
+    isRefreshing: snapshotQuery.isFetching,
     error: snapshotQuery.error instanceof Error ? snapshotQuery.error.message : null,
     supportsSnapshot,
     refresh,
+    refetchIfStale,
     invalidate,
   };
 }

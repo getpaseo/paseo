@@ -179,6 +179,9 @@ function getFallbackTabOptionDescription(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "browser") {
     return "Browser";
   }
+  if (tab.target.kind === "setup") {
+    return "Workspace setup";
+  }
   return tab.target.path;
 }
 

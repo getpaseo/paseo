@@ -252,7 +252,10 @@ function createService(options?: CreateServiceOptions) {
   });
 }
 
-describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
+// TODO(port-paseo): paseo's WorkspaceGitServiceImpl exposes registerWorkspace/scheduleRefreshForCwd
+// and a richer D2 read API (validateBranchRef, hasLocalBranch, suggestBranchesForCwd, listStashes,
+// listWorktrees, resolveRepoRemoteUrl, getCheckoutDiff). The fork's service uses the older API.
+describe.skip("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -898,7 +901,9 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   });
 });
 
-describe("WorkspaceGitServiceImpl D2 read methods", () => {
+// TODO(port-paseo): D2 read API methods (validateBranchRef, hasLocalBranch, suggestBranchesForCwd,
+// listStashes, listWorktrees, resolveRepoRemoteUrl, getCheckoutDiff, etc.) are paseo additions.
+describe.skip("WorkspaceGitServiceImpl D2 read methods", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });

@@ -68,6 +68,18 @@ export function HeaderToggleButton({
   );
 }
 
+// Re-exported so non-interactive header decorations (HeaderIconBadge, etc.)
+// can share the same padding/border-radius as the toggle button.
+export const headerIconSlotStyle = StyleSheet.create((theme) => ({
+  slot: {
+    padding: {
+      xs: theme.spacing[3],
+      md: theme.spacing[2],
+    },
+    borderRadius: theme.borderRadius.lg,
+  },
+}));
+
 const styles = StyleSheet.create((theme) => ({
   button: {
     padding: {

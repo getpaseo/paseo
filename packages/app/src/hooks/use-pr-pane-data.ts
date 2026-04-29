@@ -100,7 +100,9 @@ export function usePrPaneData({
     timelineUnsupported,
   });
 
-  const timelineQuery = useQuery<PullRequestTimeline, Error>({
+  // Cast: daemonClient.pullRequestTimeline returns a partial subset of the wire
+  // payload, but consumers (mapPrPaneData) only read fields shared by both shapes.
+  const timelineQuery = useQuery<PullRequestTimeline, Error, PullRequestTimeline>({
     queryKey: prPaneTimelineQueryKey({ serverId, cwd, prNumber }),
     queryFn: async () => {
       if (!daemonClient || prNumber === null || repoOwner === null || repoName === null) {
@@ -108,12 +110,12 @@ export function usePrPaneData({
       }
 
       try {
-        return await daemonClient.pullRequestTimeline({
+        return (await daemonClient.pullRequestTimeline({
           cwd,
           prNumber,
           repoOwner,
           repoName,
-        });
+        })) as unknown as PullRequestTimeline;
       } catch (error) {
         if (unsupportedKey && isUnsupportedTimelineError(error)) {
           unsupportedTimelineKeys.add(unsupportedKey);

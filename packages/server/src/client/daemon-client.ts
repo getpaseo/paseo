@@ -222,6 +222,9 @@ export type SendMessageOptions = {
   messageId?: string;
   images?: Array<{ data: string; mimeType: string }>;
   author?: { userId: string; username: string; avatarUrl: string };
+  // Ported from paseo. The composer passes structured ComposerAttachment objects;
+  // the daemon-client implementation will convert these to images on send.
+  attachments?: unknown[];
 };
 
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
@@ -234,11 +237,35 @@ export type CreateAgentRequestOptions = {
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: CreateAgentRequestMessage["images"];
+  // Ported from paseo so callers can attach structured ComposerAttachment lists.
+  attachments?: unknown[];
+  // Ported from paseo so the workspace setup dialog can reference an existing
+  // workspace by id when creating a fresh agent inside it.
+  workspaceId?: string;
   git?: GitSetupOptions;
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
 } & AgentConfigOverrides;
+
+// Ported from paseo. App callers (new-workspace screens, workspace-setup-dialog)
+// import this from `@server/client/daemon-client`. The fork's actual server type
+// lives in `server/hubcode-worktree-service.ts`; we re-shape it here as the
+// subset of the request fields these clients pass.
+export interface CreateHubcodeWorktreeInput {
+  cwd: string;
+  worktreeSlug?: string;
+  attachments?: unknown[];
+  refName?: string;
+  action?: string;
+  githubPrNumber?: number | null;
+  workspaceName?: string;
+  prompt?: string;
+  autoApprove?: boolean;
+  agentProvider?: string;
+  agentMode?: "native" | "cli";
+  orgId?: string;
+}
 
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 type SubscribeCheckoutDiffPayload = Extract<
@@ -3469,6 +3496,11 @@ export class DaemonClient {
   async refreshProvidersSnapshot(options?: {
     cwd?: string;
     requestId?: string;
+    /**
+     * Providers to refresh; the daemon currently re-derives the full list, so
+     * this is forwarded only as a hint and may be ignored by older daemons.
+     */
+    providers?: string[];
   }): Promise<RefreshProvidersSnapshotPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,

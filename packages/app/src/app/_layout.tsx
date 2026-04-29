@@ -492,8 +492,7 @@ function AppContainer({
   const isCompactLayout = useIsCompactFormFactor();
   const shortcutsPathname = usePathname();
   const chromeEnabled =
-    chromeEnabledOverride ??
-    (daemons.length > 0 || shortcutsPathname.startsWith("/settings"));
+    chromeEnabledOverride ?? (daemons.length > 0 || shortcutsPathname.startsWith("/settings"));
   const keyboardShortcutsEnabled = chromeEnabled;
 
   useEffect(() => {
@@ -926,8 +925,17 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
   const isChatRoute = pathname === "/chat" || pathname.startsWith("/chat/");
   const isLibraryRoute = pathname === "/library" || pathname.startsWith("/library/");
   const isSettingsRoute = pathname === "/settings" || pathname.startsWith("/settings/");
+  // While the daemon is still booting / connecting, hide the org rail +
+  // sidebar so the splash screen has the whole viewport. Otherwise the
+  // search bar would float above the "Welcome" splash on first load and
+  // the empty sidebar would render an extra surface behind it. Once the
+  // daemon goes online — or fails — the chrome decision falls back to
+  // route-based detection.
+  const bootstrapState = useHostRuntimeBootstrapState();
+  const isAppBooting =
+    bootstrapState.phase === "starting-daemon" || bootstrapState.phase === "connecting";
   const shouldShowAppChrome =
-    activeServerId !== null || isChatRoute || isLibraryRoute || isSettingsRoute;
+    !isAppBooting && (activeServerId !== null || isChatRoute || isLibraryRoute || isSettingsRoute);
 
   useEffect(() => {
     if (!activeServerId || hosts.length === 0) {

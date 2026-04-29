@@ -31,3 +31,39 @@ export function usePaneContext(): PaneContextValue {
   invariant(value, "PaneContext is required");
   return value;
 }
+
+// Pane focus split (kept as a separate context for tests/components that consume only focus).
+export interface PaneFocusContextValue {
+  isWorkspaceFocused: boolean;
+  isPaneFocused: boolean;
+  isInteractive: boolean;
+}
+
+const PaneFocusContext = createContext<PaneFocusContextValue | null>(null);
+
+export function createPaneFocusContextValue(input: {
+  isWorkspaceFocused: boolean;
+  isPaneFocused: boolean;
+}): PaneFocusContextValue {
+  return {
+    isWorkspaceFocused: input.isWorkspaceFocused,
+    isPaneFocused: input.isPaneFocused,
+    isInteractive: input.isWorkspaceFocused && input.isPaneFocused,
+  };
+}
+
+export function PaneFocusProvider({
+  value,
+  children,
+}: {
+  value: PaneFocusContextValue;
+  children: ReactNode;
+}) {
+  return <PaneFocusContext.Provider value={value}>{children}</PaneFocusContext.Provider>;
+}
+
+export function usePaneFocus(): PaneFocusContextValue {
+  const value = useContext(PaneFocusContext);
+  invariant(value, "PaneFocusContext is required");
+  return value;
+}

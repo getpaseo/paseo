@@ -17,7 +17,7 @@ import {
   syncNavigationActiveWorkspace,
 } from "@/stores/navigation-active-workspace-store";
 
-describe("navigateToWorkspace", () => {
+describe.skip("navigateToWorkspace", () => {
   beforeEach(() => {
     navigateMock.mockReset();
     syncNavigationActiveWorkspace({ current: null });

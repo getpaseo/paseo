@@ -38,7 +38,7 @@ describe("buildNotificationRoute", () => {
         agentId: "agent-1",
         workspaceId: "/tmp/repo",
       }),
-    ).toBe("/h/srv-1/workspace/L3RtcC9yZXBv?open=agent%3Aagent-1");
+    ).toBe("/h/srv-1/workspace/b64_L3RtcC9yZXBv?open=agent%3Aagent-1");
   });
 
   it("routes directly to server-scoped agent path when both ids are present", () => {

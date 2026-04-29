@@ -8,6 +8,19 @@ import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 export type TerminalPerfDaemonClient = {
   connect(): Promise<void>;
   close(): Promise<void>;
+  // Ported type-only from paseo so e2e helpers compile. Runtime support depends on the
+  // bundled daemon client; tests calling these are not part of the production fast path.
+  openProject(cwd: string): Promise<{
+    workspace: { id: string; name: string; projectRootPath: string } | null;
+    error: string | null;
+  }>;
+  createAgent(options: {
+    provider: string;
+    cwd: string;
+    title?: string;
+    modeId?: string;
+  }): Promise<{ id: string; status: string }>;
+  sendAgentMessage(agentId: string, text: string): Promise<void>;
   createTerminal(
     cwd: string,
     name?: string,

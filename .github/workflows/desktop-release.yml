@@ -1,9 +1,13 @@
 name: Desktop Release
 
 on:
-  # Manual-only — run via `gh workflow run desktop-release.yml -f tag=vX.Y.Z`.
-  # Auto-trigger on tag push was disabled because the upstream paseo workflow
-  # depends on Apple Developer / Expo / @boudra npm secrets we don't have here.
+  push:
+    tags:
+      - 'v*'
+      - 'desktop-v*'
+      - 'desktop-macos-v*'
+      - 'desktop-linux-v*'
+      - 'desktop-windows-v*'
   workflow_dispatch:
     inputs:
       tag:

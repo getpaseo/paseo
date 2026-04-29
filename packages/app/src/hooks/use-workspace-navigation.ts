@@ -13,7 +13,17 @@ import { useSessionStore } from "@/stores/session-store";
  * If there is already an active (non-archived) agent running in the workspace,
  * navigates directly to that agent instead of showing the blank "New Agent" state.
  */
-export function navigateToWorkspace(serverId: string, workspaceId: string) {
+export interface NavigateToWorkspaceOptions {
+  currentPathname?: string | null;
+}
+
+export function navigateToWorkspace(
+  serverId: string,
+  workspaceId: string,
+  // Accepted for type-compat with paseo callers; the fork doesn't use the
+  // retained-workspace switch path, so this option is currently a no-op.
+  _options: NavigateToWorkspaceOptions = {},
+) {
   // If there's already an active agent in this workspace, navigate to it directly
   const agents = useSessionStore.getState().sessions[serverId]?.agents;
   if (agents) {
@@ -32,8 +42,11 @@ export function navigateToWorkspace(serverId: string, workspaceId: string) {
 
 export function useWorkspaceNavigation() {
   return {
-    navigateToWorkspace: useCallback((serverId: string, workspaceId: string) => {
-      navigateToWorkspace(serverId, workspaceId);
-    }, []),
+    navigateToWorkspace: useCallback(
+      (serverId: string, workspaceId: string, options?: NavigateToWorkspaceOptions) => {
+        navigateToWorkspace(serverId, workspaceId, options);
+      },
+      [],
+    ),
   };
 }

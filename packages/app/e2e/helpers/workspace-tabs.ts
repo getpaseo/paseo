@@ -22,6 +22,48 @@ export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
   });
 }
 
+function visibleTestId(page: Page, testId: string) {
+  return page.getByTestId(testId).filter({ visible: true });
+}
+
+/**
+ * Returns the workspace agent tab IDs (e.g. "workspace-tab-agent_<id>") that are
+ * currently visible in the tab strip. Ported from paseo.
+ */
+export async function getVisibleWorkspaceAgentTabIds(page: Page): Promise<string[]> {
+  const tabs = page.locator('[data-testid^="workspace-tab-agent_"]').filter({ visible: true });
+  const count = await tabs.count();
+  const ids: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const testId = await tabs.nth(index).getAttribute("data-testid");
+    if (testId && !ids.includes(testId)) {
+      ids.push(testId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Assert that the only visible workspace agent tabs are the ones for the given
+ * agent ids. Ported from paseo.
+ */
+export async function expectOnlyWorkspaceAgentTabsVisible(
+  page: Page,
+  expectedAgentIds: string[],
+): Promise<void> {
+  const expected = new Set(expectedAgentIds.map((id) => `workspace-tab-agent_${id}`));
+  const visible = await getVisibleWorkspaceAgentTabIds(page);
+  const unexpected = visible.filter((id) => !expected.has(id));
+
+  expect(unexpected).toEqual([]);
+  expect(visible.length).toBe(expected.size);
+  for (const expectedId of expectedAgentIds) {
+    await expect(visibleTestId(page, `workspace-tab-agent_${expectedId}`).first()).toBeVisible({
+      timeout: 30_000,
+    });
+  }
+}
+
 export async function ensureWorkspaceAgentPaneVisible(page: Page): Promise<void> {
   const toggle = page.getByTestId("workspace-explorer-toggle").first();
   if (!(await toggle.isVisible().catch(() => false))) {

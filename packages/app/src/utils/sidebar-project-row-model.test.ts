@@ -13,10 +13,14 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     workspaceKey: "srv:/repo",
     serverId: "srv",
     workspaceId: "/repo",
+    projectKey: "project-1",
+    projectKind: "git",
     workspaceKind: "directory",
     name: "hubcode",
     statusBucket: "done",
     diffStat: null,
+    scripts: [],
+    hasRunningScripts: false,
     ...overrides,
   };
 }

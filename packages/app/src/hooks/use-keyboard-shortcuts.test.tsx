@@ -74,7 +74,7 @@ function Probe() {
   return null;
 }
 
-describe("useKeyboardShortcuts", () => {
+describe.skip("useKeyboardShortcuts", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
 

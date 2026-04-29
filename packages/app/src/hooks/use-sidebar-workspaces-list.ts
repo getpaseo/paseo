@@ -39,6 +39,13 @@ export interface SidebarProjectEntry {
   projectKind: WorkspaceDescriptor["projectKind"];
   iconWorkingDir: string;
   workspaces: SidebarWorkspaceEntry[];
+  // Aggregate fields used by paseo-shaped consumers (sidebar shortcuts,
+  // collapsed-projects badge, etc.). Optional so structural-only builds keep
+  // working without us recomputing aggregates per render.
+  statusBucket?: SidebarStateBucket;
+  activeCount?: number;
+  totalWorkspaces?: number;
+  isGlobal?: boolean;
 }
 
 export interface SidebarWorkspacesListResult {
@@ -62,7 +69,7 @@ function createStructuralWorkspaceEntry(input: {
     projectRootPath: input.project.iconWorkingDir,
     workspaceDirectory: undefined,
     projectKind: input.project.projectKind,
-    workspaceKind: "checkout",
+    workspaceKind: "local_checkout",
     name: input.workspaceId,
     statusBucket: "done",
     diffStat: null,
@@ -90,6 +97,42 @@ export function createSidebarWorkspaceEntry(input: {
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
   };
+}
+
+/**
+ * Legacy paseo-shaped helper retained for tests. Groups workspace descriptors
+ * into project entries using the existing per-workspace projectKey heuristic.
+ */
+export function buildSidebarProjectsFromWorkspaces(input: {
+  serverId: string;
+  workspaces: WorkspaceDescriptor[];
+  projectOrder?: string[];
+  workspaceOrderByScope?: Record<string, string[]>;
+}): SidebarProjectEntry[] {
+  if (input.workspaces.length === 0) {
+    return EMPTY_PROJECTS;
+  }
+  const byProject = new Map<string, SidebarProjectEntry>();
+  for (const workspace of input.workspaces) {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: input.serverId,
+      workspace,
+    });
+    const projectKey = entry.projectKey;
+    let project = byProject.get(projectKey);
+    if (!project) {
+      project = {
+        projectKey,
+        projectName: workspace.projectDisplayName,
+        projectKind: workspace.projectKind,
+        iconWorkingDir: workspace.projectRootPath,
+        workspaces: [],
+      };
+      byProject.set(projectKey, project);
+    }
+    project.workspaces.push(entry);
+  }
+  return Array.from(byProject.values());
 }
 
 export function buildSidebarProjectsFromStructure(input: {

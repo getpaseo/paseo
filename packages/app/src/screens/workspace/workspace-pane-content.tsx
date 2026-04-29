@@ -15,7 +15,10 @@ export interface BuildWorkspacePaneContentModelInput {
   tab: WorkspaceTabDescriptor;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
-  isPaneFocused: boolean;
+  // Optional in the input shape — when omitted (e.g. tests, or paseo-style
+  // callers that pass focus separately to <WorkspacePaneContent />), the model
+  // defaults to false and lets the wrapper component override it via props.
+  isPaneFocused?: boolean;
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
@@ -42,7 +45,7 @@ export function buildWorkspacePaneContentModel({
       serverId: normalizedServerId,
       workspaceId: normalizedWorkspaceId,
       tabId: tab.tabId,
-      isPaneFocused,
+      isPaneFocused: isPaneFocused ?? false,
       target: tab.target,
       openTab: onOpenTab,
       closeCurrentTab: onCloseCurrentTab,
@@ -54,6 +57,11 @@ export function buildWorkspacePaneContentModel({
 
 export interface WorkspacePaneContentProps {
   content: WorkspacePaneContentModel;
+  // Accepted for paseo-compat tests/callers that thread focus state down to
+  // the wrapper rather than baking it into the model. The wrapper currently
+  // forwards them via the model's pane context — these are type-only stubs.
+  isPaneFocused?: boolean;
+  isWorkspaceFocused?: boolean;
 }
 
 export function WorkspacePaneContent({ content }: WorkspacePaneContentProps) {

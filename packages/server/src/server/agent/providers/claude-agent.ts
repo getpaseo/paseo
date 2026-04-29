@@ -422,11 +422,26 @@ function coerceToolResultContentToString(content: unknown): string {
   return deterministicStringify(content);
 }
 
+/**
+ * Voice mode wraps spoken transcripts in `<spoken-input>...</spoken-input>`
+ * tags so the LLM can distinguish dictation from typed input. The tags are
+ * useful in the model prompt but should never reach the UI bubbles or the
+ * persisted history shown to humans — strip them at the source so every
+ * downstream extractor (user_message, assistant echo, history replay) emits
+ * plain prose.
+ */
+function stripSpokenInputMarkup(text: string): string {
+  return text
+    .replace(/<\/?spoken[-_]input>/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function normalizeClaudeTranscriptText(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
-  const normalized = value.trim();
+  const normalized = stripSpokenInputMarkup(value.trim());
   return normalized.length > 0 ? normalized : null;
 }
 
@@ -491,7 +506,7 @@ function isClaudeTranscriptNoiseContent(content: unknown): boolean {
 
 export function extractUserMessageText(content: unknown): string | null {
   if (typeof content === "string") {
-    const normalized = content.trim();
+    const normalized = stripSpokenInputMarkup(content.trim());
     if (!normalized || isClaudeTranscriptNoiseText(normalized)) {
       return null;
     }
@@ -509,16 +524,16 @@ export function extractUserMessageText(content: unknown): string | null {
     }
     const text = typeof block.text === "string" ? block.text : undefined;
     if (text && text.trim()) {
-      const trimmed = text.trim();
-      if (!isClaudeTranscriptNoiseText(trimmed)) {
+      const trimmed = stripSpokenInputMarkup(text.trim());
+      if (trimmed && !isClaudeTranscriptNoiseText(trimmed)) {
         parts.push(trimmed);
       }
       continue;
     }
     const input = typeof block.input === "string" ? block.input : undefined;
     if (input && input.trim()) {
-      const trimmed = input.trim();
-      if (!isClaudeTranscriptNoiseText(trimmed)) {
+      const trimmed = stripSpokenInputMarkup(input.trim());
+      if (trimmed && !isClaudeTranscriptNoiseText(trimmed)) {
         parts.push(trimmed);
       }
     }

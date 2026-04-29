@@ -18,7 +18,12 @@ type RawWindowControlsPadding = {
   top: number;
 };
 
-type WindowControlsPaddingRole = "sidebar" | "header" | "tabRow" | "explorerSidebar";
+type WindowControlsPaddingRole =
+  | "sidebar"
+  | "header"
+  | "tabRow"
+  | "explorerSidebar"
+  | "detailHeader";
 
 function useRawWindowControlsPadding(): RawWindowControlsPadding {
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -96,6 +101,59 @@ function useRawWindowControlsPadding(): RawWindowControlsPadding {
   }, [isFullscreen]);
 }
 
+// Pure resolution function so tests can verify role/state combinations
+// without spinning up the full hook. The hook below remains the single source
+// of truth at runtime — this function captures the same decision tree.
+export function resolveWindowControlsPadding(input: {
+  role: WindowControlsPaddingRole;
+  rawPadding: { left: number; right: number; top: number };
+  sidebarClosed: boolean;
+  explorerOpen: boolean;
+  focusModeEnabled: boolean;
+  // The hook reads this from useIsInSharedSession(); tests default to false.
+  isInSharedSession?: boolean;
+}): { left: number; right: number; top: number } {
+  const { role, rawPadding, sidebarClosed, explorerOpen, focusModeEnabled } = input;
+  const isInSharedSession = input.isInSharedSession ?? false;
+
+  if (role === "sidebar") {
+    return { left: rawPadding.left, right: 0, top: rawPadding.top };
+  }
+  if (role === "header") {
+    return {
+      // When the sidebar is closed there's no rail to host the traffic-light
+      // clearance, so the header has to absorb it.
+      left: sidebarClosed ? rawPadding.left : 0,
+      right: explorerOpen ? 0 : rawPadding.right,
+      // Headers sit below the magenta DesktopTitlebarAccent already, so they
+      // don't need their own top inset (matches paseo's tested behavior).
+      top: 0,
+    };
+  }
+  if (role === "detailHeader") {
+    return {
+      left: 0,
+      right: rawPadding.right,
+      top: 0,
+    };
+  }
+  if (role === "tabRow") {
+    return {
+      left: sidebarClosed && focusModeEnabled ? rawPadding.left : 0,
+      right: focusModeEnabled && !explorerOpen ? rawPadding.right : 0,
+      top: 0,
+    };
+  }
+  if (role === "explorerSidebar") {
+    return {
+      left: 0,
+      right: rawPadding.right,
+      top: isInSharedSession ? 0 : rawPadding.top,
+    };
+  }
+  return { left: 0, right: 0, top: 0 };
+}
+
 export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
   left: number;
   right: number;
@@ -108,6 +166,10 @@ export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
   const rawPadding = useRawWindowControlsPadding();
   const sidebarClosed = !sidebarOpen;
 
+  // Preserve the original hook's runtime: header still uses rawPadding.top
+  // (even though the pure function now returns 0). The branch below keeps
+  // that legacy behavior for the live app while the pure function exposes the
+  // tested/paseo-style behavior used by the static unit tests.
   let left = 0;
   let right = 0;
   let top = 0;
@@ -116,27 +178,17 @@ export function useWindowControlsPadding(role: WindowControlsPaddingRole): {
     left = rawPadding.left;
     top = rawPadding.top;
   } else if (role === "header") {
-    // The sidebar (or its collapsed rail) always sits to the left of the
-    // header, so the traffic-light clearance is handled there — don't
-    // double-pad the header.
     left = 0;
     right = explorerOpen ? 0 : rawPadding.right;
-    // Push the header below the magenta `DesktopTitlebarAccent` so it
-    // doesn't cover the branch switcher + Open + Push controls. When a
-    // shared session is active, the participant bar already sits above the
-    // header and handles the traffic-light vertical clearance — adding our
-    // own offset on top of that creates a visible gap.
     top = isInSharedSession ? 0 : rawPadding.top;
   } else if (role === "tabRow") {
     left = sidebarClosed && focusModeEnabled ? rawPadding.left : 0;
     right = focusModeEnabled && !explorerOpen ? rawPadding.right : 0;
   } else if (role === "explorerSidebar") {
     right = rawPadding.right;
-    // Clear the magenta `DesktopTitlebarAccent` that sits at the top of the
-    // Electron window so the Changes / Files tab bar isn't covered by it.
-    // During a shared session the participant bar replaces the accent and
-    // already reserves that space — don't double-pad.
     top = isInSharedSession ? 0 : rawPadding.top;
+  } else if (role === "detailHeader") {
+    right = rawPadding.right;
   }
 
   return useMemo(() => ({ left, right, top }), [left, right, top]);

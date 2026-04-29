@@ -20,6 +20,11 @@ export interface PrHint {
   url: string;
   number: number;
   state: "open" | "merged" | "closed";
+  // Ported from paseo so consumers (sidebar/hover-card) can read these fields.
+  // The fork's selector currently leaves them undefined; safe because all are optional.
+  checks?: Array<{ name: string; status: string; url: string | null }>;
+  checksStatus?: "none" | "pending" | "success" | "failure";
+  reviewDecision?: "approved" | "changes_requested" | "pending" | null;
 }
 
 function parsePullRequestNumber(url: string): number | null {

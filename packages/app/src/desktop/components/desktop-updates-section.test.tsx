@@ -17,14 +17,15 @@ const { alertMock, confirmDialogMock, settingsState, daemonStatusState } = vi.ho
         keepRunningAfterQuit: true,
       },
     },
-    updateSettings: vi.fn<
-      (updates: {
-        daemon?: {
-          manageBuiltInDaemon?: boolean;
-          keepRunningAfterQuit?: boolean;
-        };
-      }) => Promise<void>
-    >(),
+    updateSettings:
+      vi.fn<
+        (updates: {
+          daemon?: {
+            manageBuiltInDaemon?: boolean;
+            keepRunningAfterQuit?: boolean;
+          };
+        }) => Promise<void>
+      >(),
   },
   daemonStatusState: {
     data: {
