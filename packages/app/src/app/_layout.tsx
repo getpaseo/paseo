@@ -577,7 +577,7 @@ function AppContainer({
             {children}
           </View>
         </View>
-        <DesktopTitlebarAccent />
+        {chromeEnabled ? <DesktopTitlebarAccent /> : null}
       </View>
       {isCompactLayout && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
