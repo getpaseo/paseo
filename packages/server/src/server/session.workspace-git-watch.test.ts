@@ -23,9 +23,11 @@ function createWorkspaceRuntimeSnapshot(
       remoteUrl: "https://github.com/acme/repo.git",
       isHubcodeOwnedWorktree: false,
       isDirty: false,
+      baseRef: "main",
       aheadBehind: { ahead: 0, behind: 0 },
       aheadOfOrigin: 0,
       behindOfOrigin: 0,
+      hasRemote: true,
       diffStat: { additions: 1, deletions: 0 },
     },
     github: {

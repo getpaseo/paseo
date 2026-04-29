@@ -31,9 +31,11 @@ function createSnapshot(
       remoteUrl: "https://github.com/acme/repo.git",
       isHubcodeOwnedWorktree: false,
       isDirty: false,
+      baseRef: "main",
       aheadBehind: { ahead: 0, behind: 0 },
       aheadOfOrigin: 0,
       behindOfOrigin: 0,
+      hasRemote: true,
       diffStat: { additions: 1, deletions: 0 },
     },
     github: {
@@ -333,7 +335,12 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(subscription.initial.github.pullRequest?.title).toBe("Before refresh");
 
     service.refresh("/tmp/repo");
-    await (service as any).workspaceTargets.get("/tmp/repo")?.refreshPromise;
+    {
+      const state = (service as any).workspaceTargets.get("/tmp/repo")?.refreshState;
+      if (state?.status === "in-flight") {
+        await state.promise;
+      }
+    }
     await flushPromises();
 
     expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
@@ -401,11 +408,21 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(subscription.initial.git.currentBranch).toBe("main");
 
     service.refresh("/tmp/repo");
-    await (service as any).workspaceTargets.get("/tmp/repo")?.refreshPromise;
+    {
+      const state = (service as any).workspaceTargets.get("/tmp/repo")?.refreshState;
+      if (state?.status === "in-flight") {
+        await state.promise;
+      }
+    }
     await flushPromises();
 
     service.refresh("/tmp/repo");
-    await (service as any).workspaceTargets.get("/tmp/repo")?.refreshPromise;
+    {
+      const state = (service as any).workspaceTargets.get("/tmp/repo")?.refreshState;
+      if (state?.status === "in-flight") {
+        await state.promise;
+      }
+    }
     await flushPromises();
 
     expect(listener).toHaveBeenCalledTimes(1);
