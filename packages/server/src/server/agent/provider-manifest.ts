@@ -123,6 +123,30 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const KIMI_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "default",
+    label: "Always Ask",
+    description: "Prompts for permission before executing tools",
+    icon: "ShieldCheck",
+    colorTier: "safe",
+  },
+  {
+    id: "bypassPermissions",
+    label: "YOLO",
+    description: "Automatically approves all operations (--yolo mode)",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+  },
+  {
+    id: "plan",
+    label: "Plan",
+    description: "Read-only analysis without file edits (--plan mode)",
+    icon: "ShieldCheck",
+    colorTier: "planning",
+  },
+];
+
 const MOCK_LOAD_TEST_MODES: AgentProviderModeDefinition[] = [
   {
     id: "load-test",
@@ -175,6 +199,13 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
       enabled: true,
       defaultModeId: "build",
     },
+  },
+  {
+    id: "kimi",
+    label: "Kimi",
+    description: "Moonshot AI's Kimi Code CLI with ACP support, reasoning, and MCP tools",
+    defaultModeId: "default",
+    modes: KIMI_MODES,
   },
   {
     id: "pi",
