@@ -38,6 +38,7 @@ import {
   type DesktopCommandHandler,
 } from "../settings/desktop-settings-commands.js";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
+import { isRunningUnderARM64Translation } from "../system/arm64-translation.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
 const PID_POLL_INTERVAL_MS = 100;
@@ -525,6 +526,10 @@ async function resolveRequestedReleaseChannel(
 export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
   return {
     ...createDesktopSettingsCommandHandlers({ settingsStore: getDesktopSettingsStore() }),
+    desktop_get_runtime_info: () => ({
+      appVersion: resolveDesktopAppVersion(),
+      runningUnderARM64Translation: isRunningUnderARM64Translation(),
+    }),
     desktop_daemon_status: () => resolveDesktopDaemonStatus(),
     start_desktop_daemon: () => startDaemon(),
     stop_desktop_daemon: () => stopDesktopDaemon(),

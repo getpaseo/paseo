@@ -92,4 +92,31 @@ describe("desktop-updates helpers", () => {
     expect(diagnostics).toContain("STDOUT:\nstdout text");
     expect(diagnostics).toContain("STDERR:\nstderr text");
   });
+
+  it("parses runtime info defensively", async () => {
+    const { parseDesktopRuntimeInfo } = await loadModuleForPlatform("web");
+
+    expect(
+      parseDesktopRuntimeInfo({
+        appVersion: " 0.1.64 ",
+        runningUnderARM64Translation: true,
+      }),
+    ).toEqual({
+      appVersion: "0.1.64",
+      runningUnderARM64Translation: true,
+    });
+    expect(parseDesktopRuntimeInfo(null)).toEqual({
+      appVersion: null,
+      runningUnderARM64Translation: false,
+    });
+  });
+
+  it("builds the direct Apple Silicon DMG URL from a version", async () => {
+    const { buildMacAppleSiliconDownloadUrl } = await loadModuleForPlatform("web");
+
+    expect(buildMacAppleSiliconDownloadUrl("v0.1.64")).toBe(
+      "https://github.com/getpaseo/paseo/releases/download/v0.1.64/Paseo-0.1.64-arm64.dmg",
+    );
+    expect(buildMacAppleSiliconDownloadUrl(null)).toBeNull();
+  });
 });

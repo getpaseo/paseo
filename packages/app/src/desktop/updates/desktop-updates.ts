@@ -17,6 +17,11 @@ export interface DesktopAppUpdateInstallResult {
   message: string;
 }
 
+export interface DesktopRuntimeInfo {
+  appVersion: string | null;
+  runningUnderARM64Translation: boolean;
+}
+
 export type DesktopReleaseChannel = "stable" | "beta";
 
 export interface LocalDaemonUpdateResult {
@@ -29,6 +34,8 @@ export interface LocalDaemonVersionResult {
   version: string | null;
   error: string | null;
 }
+
+const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/getpaseo/paseo/releases/download";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -69,6 +76,25 @@ export function parseLocalDaemonVersionResult(raw: unknown): LocalDaemonVersionR
 export async function getLocalDaemonVersion(): Promise<LocalDaemonVersionResult> {
   const result = await invokeDesktopCommand<unknown>("get_local_daemon_version");
   return parseLocalDaemonVersionResult(result);
+}
+
+export function parseDesktopRuntimeInfo(raw: unknown): DesktopRuntimeInfo {
+  if (!isRecord(raw)) {
+    return {
+      appVersion: null,
+      runningUnderARM64Translation: false,
+    };
+  }
+
+  return {
+    appVersion: toStringOrNull(raw.appVersion),
+    runningUnderARM64Translation: raw.runningUnderARM64Translation === true,
+  };
+}
+
+export async function getDesktopRuntimeInfo(): Promise<DesktopRuntimeInfo> {
+  const result = await invokeDesktopCommand<unknown>("desktop_get_runtime_info");
+  return parseDesktopRuntimeInfo(result);
 }
 
 export async function checkDesktopAppUpdate({
@@ -151,6 +177,15 @@ export function formatVersionWithPrefix(version: string | null | undefined): str
   }
 
   return value.startsWith("v") ? value : `v${value}`;
+}
+
+export function buildMacAppleSiliconDownloadUrl(version: string | null | undefined): string | null {
+  const normalizedVersion = normalizeVersionForComparison(version);
+  if (!normalizedVersion) {
+    return null;
+  }
+
+  return `${RELEASE_DOWNLOAD_BASE_URL}/v${normalizedVersion}/Paseo-${normalizedVersion}-arm64.dmg`;
 }
 
 export function buildDaemonUpdateDiagnostics(result: LocalDaemonUpdateResult): string {
