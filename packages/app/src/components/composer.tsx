@@ -726,7 +726,6 @@ function ReviewAttachmentPill({
   onOpen,
   onRemove,
 }: ReviewAttachmentPillProps) {
-  const { theme } = useUnistyles();
   const label =
     attachment.commentCount === 1
       ? "Review · 1 comment"
@@ -748,7 +747,7 @@ function ReviewAttachmentPill({
     >
       <View style={styles.githubPillBody}>
         <View style={styles.githubPillIcon}>
-          <CircleDot size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          <ThemedCircleDot size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
         </View>
         <Text style={styles.githubPillText} numberOfLines={1}>
           {label}
