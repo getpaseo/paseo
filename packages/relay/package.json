@@ -1,6 +1,6 @@
 {
   "name": "@hubcode/relay",
-  "version": "2.7.5",
+  "version": "2.7.6",
   "description": "End-to-end encrypted relay for secure remote access to Hubcode daemons.",
   "type": "module",
   "license": "AGPL-3.0-or-later",
