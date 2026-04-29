@@ -60,15 +60,28 @@ export async function runCommand(input: RunCommandInput): Promise<RunCommandResu
     const child = spawn("/bin/sh", ["-c", input.command], {
       cwd: input.cwd,
       env: childEnv(input.env ?? {}),
+      // Detach so `sh` becomes the leader of its own process group; otherwise
+      // killing `sh` leaves grandchildren (e.g. `sleep`) running with shared
+      // stdio, and `child.on("close")` blocks until the grandchild exits
+      // naturally — the test would observe durationMs ≈ 5s instead of <200ms.
+      detached: true,
     });
 
     const timer = setTimeout(() => {
       timedOut = true;
-      // SIGKILL instead of SIGTERM — long-running processes (npm, cargo)
-      // sometimes swallow SIGTERM and keep running; this guarantees exit.
+      // SIGKILL the whole process group (negative pid = group leader's group).
+      // SIGKILL guarantees exit even when long-running tools (npm, cargo)
+      // swallow SIGTERM.
       try {
-        child.kill("SIGKILL");
-      } catch {}
+        if (child.pid !== undefined) {
+          process.kill(-child.pid, "SIGKILL");
+        } else {
+          child.kill("SIGKILL");
+        }
+      } catch {
+        // Process may have already exited between the timer firing and the
+        // kill — that's fine, the close handler will still resolve.
+      }
     }, timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer) => {
