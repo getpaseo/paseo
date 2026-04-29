@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import { getCheckoutStatusLite } from "../utils/checkout-git.js";
+import { getCheckoutStatusLite, getMainRepoRoot } from "../utils/checkout-git.js";
 import type { ProjectCheckoutLitePayload, ProjectPlacementPayload } from "../shared/messages.js";
 import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 
@@ -73,7 +73,6 @@ function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
 export function deriveProjectGroupingKey(options: {
   cwd: string;
   remoteUrl: string | null;
-  isHubcodeOwnedWorktree: boolean;
   mainRepoRoot: string | null;
 }): string {
   const remoteKey = deriveRemoteProjectKey(options.remoteUrl);
@@ -81,8 +80,11 @@ export function deriveProjectGroupingKey(options: {
     return remoteKey;
   }
 
+  // Group every git worktree (whether or not it was created via hubcode) under
+  // the main repo root. The placement layer is responsible for resolving the
+  // main repo for any non-bare worktree before calling this helper.
   const mainRepoRoot = options.mainRepoRoot?.trim();
-  if (options.isHubcodeOwnedWorktree && mainRepoRoot) {
+  if (mainRepoRoot) {
     return mainRepoRoot;
   }
 
@@ -120,7 +122,7 @@ export function deriveProjectRootPath(input: {
   cwd: string;
   checkout: ProjectCheckoutLitePayload;
 }): string {
-  if (input.checkout.isGit && input.checkout.isHubcodeOwnedWorktree) {
+  if (input.checkout.isGit && input.checkout.mainRepoRoot) {
     return input.checkout.mainRepoRoot;
   }
   return input.cwd;
@@ -134,7 +136,10 @@ export function deriveWorkspaceKind(checkout: ProjectCheckoutLitePayload): Persi
   if (!checkout.isGit) {
     return "directory";
   }
-  return checkout.isHubcodeOwnedWorktree ? "worktree" : "local_checkout";
+  // A git checkout is a worktree (vs the main local checkout) iff we have a
+  // separate main repo root recorded for it. The placement layer resolves the
+  // main repo for any non-bare git worktree, regardless of hubcode ownership.
+  return checkout.mainRepoRoot ? "worktree" : "local_checkout";
 }
 
 export async function detectStaleWorkspaces(
@@ -158,7 +163,7 @@ export async function buildProjectPlacementForCwd(input: {
 }): Promise<ProjectPlacementPayload> {
   const normalizedCwd = normalizeWorkspaceId(input.cwd);
   const checkout = await getCheckoutStatusLite(normalizedCwd, { hubcodeHome: input.hubcodeHome })
-    .then((status): ProjectCheckoutLitePayload => {
+    .then(async (status): Promise<ProjectCheckoutLitePayload> => {
       if (!status.isGit) {
         return {
           cwd: normalizedCwd,
@@ -180,6 +185,36 @@ export async function buildProjectPlacementForCwd(input: {
           worktreeRoot: status.worktreeRoot,
           isHubcodeOwnedWorktree: true,
           mainRepoRoot: status.mainRepoRoot,
+        };
+      }
+
+      // For non-hubcode git checkouts, also resolve the main repo root so that
+      // regular `git worktree add` worktrees get grouped under their parent
+      // repo and reported with kind="worktree". The shared schema currently
+      // only allows `mainRepoRoot` to be set when `isHubcodeOwnedWorktree=true`,
+      // so we reuse that union here. Downstream consumers that need to
+      // distinguish hubcode-owned worktrees from any-git-worktree must consult
+      // `isHubcodeOwnedWorktreeCwd` directly rather than rely on the placement
+      // payload.
+      let mainRepoRoot: string | null = null;
+      try {
+        const candidate = await getMainRepoRoot(normalizedCwd);
+        if (candidate && candidate !== status.worktreeRoot) {
+          mainRepoRoot = candidate;
+        }
+      } catch {
+        // Fall back to the bare-checkout shape if main-repo discovery fails.
+      }
+
+      if (mainRepoRoot) {
+        return {
+          cwd: normalizedCwd,
+          isGit: true,
+          currentBranch: status.currentBranch,
+          remoteUrl: status.remoteUrl,
+          worktreeRoot: status.worktreeRoot,
+          isHubcodeOwnedWorktree: true,
+          mainRepoRoot,
         };
       }
 
@@ -208,7 +243,6 @@ export async function buildProjectPlacementForCwd(input: {
   const projectKey = deriveProjectGroupingKey({
     cwd: checkout.worktreeRoot ?? normalizedCwd,
     remoteUrl: checkout.remoteUrl,
-    isHubcodeOwnedWorktree: checkout.isHubcodeOwnedWorktree,
     mainRepoRoot: checkout.mainRepoRoot,
   });
 

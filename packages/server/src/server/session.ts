@@ -247,6 +247,10 @@ function clientSupportsFlexibleEditorIds(appVersion: string | null): boolean {
 }
 
 const MAX_TERMINAL_STREAM_SLOTS = 256;
+// Outbound WS bufferedAmount above which we stop streaming raw terminal output and
+// fall back to a single Snapshot frame. 1 MiB is enough headroom for normal bursts
+// without letting a paused/slow client balloon memory under multi-MB pty floods.
+const TERMINAL_STREAM_BACKPRESSURE_BYTES = 1 * 1024 * 1024;
 
 function deriveInitialAgentTitle(prompt: string): string | null {
   const firstContentLine = prompt
@@ -410,6 +414,8 @@ export type SessionOptions = {
   appVersion: string | null;
   onMessage: (msg: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
+  /** Outbound WS bufferedAmount in bytes; used to trigger terminal-snapshot fallback under backpressure. */
+  getOutboundBufferedBytes?: () => number;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
@@ -596,6 +602,7 @@ export class Session {
   private readonly sessionId: string;
   private readonly onMessage: (msg: SessionOutboundMessage) => void;
   private readonly onBinaryMessage: ((frame: Uint8Array) => void) | null;
+  private readonly getOutboundBufferedBytes: (() => number) | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private readonly sessionLogger: pino.Logger;
   private readonly hubcodeHome: string;
@@ -723,6 +730,7 @@ export class Session {
       appVersion,
       onMessage,
       onBinaryMessage,
+      getOutboundBufferedBytes,
       onLifecycleIntent,
       logger,
       downloadTokenStore,
@@ -760,6 +768,7 @@ export class Session {
     this.sessionId = uuidv4();
     this.onMessage = onMessage;
     this.onBinaryMessage = onBinaryMessage ?? null;
+    this.getOutboundBufferedBytes = getOutboundBufferedBytes ?? null;
     this.onLifecycleIntent = onLifecycleIntent ?? null;
     this.downloadTokenStore = downloadTokenStore;
     this.pushTokenStore = pushTokenStore;
@@ -3897,6 +3906,7 @@ export class Session {
         sessionLogger: this.sessionLogger,
         checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
         createBranchFromBase: (params) => this.createBranchFromBase(params),
+        workspaceGitService: this.workspaceGitService,
       },
       config,
       gitOptions,
@@ -7155,6 +7165,7 @@ export class Session {
     return handleCreateWorktreeRequest(
       {
         hubcodeHome: this.hubcodeHome,
+        workspaceGitService: this.workspaceGitService,
         describeWorkspaceRecord: (workspace) => this.describeWorkspaceRecordWithGitData(workspace),
         emit: (message) => this.emit(message),
         registerPendingWorktreeWorkspace: (options) =>
@@ -9916,6 +9927,17 @@ export class Session {
         return;
       }
       if (activeStream.needsSnapshot || message.data.length === 0) {
+        return;
+      }
+      // Backpressure fallback: if the outbound socket has buffered more than
+      // TERMINAL_STREAM_BACKPRESSURE_BYTES, stop streaming raw output and
+      // queue a fresh snapshot. The snapshot path only sends the visible
+      // viewport, which is bounded — safer than letting bufferedAmount grow
+      // unbounded while the client is paused.
+      const buffered = this.getOutboundBufferedBytes?.() ?? 0;
+      if (buffered > TERMINAL_STREAM_BACKPRESSURE_BYTES) {
+        activeStream.needsSnapshot = true;
+        this.trySendTerminalSnapshot(activeStream);
         return;
       }
       this.emitBinary(

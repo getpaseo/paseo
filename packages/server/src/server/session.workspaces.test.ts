@@ -62,6 +62,44 @@ function makeAgent(input: {
   };
 }
 
+function createRealWorkspaceGitServiceForTests() {
+  const noop = createNoopWorkspaceGitService();
+  return {
+    ...noop,
+    getSnapshot: async (cwd: string) => {
+      // Lazy-import so the inline helper doesn't pollute module-level imports.
+      const { getCheckoutStatusLite } = await import("../utils/checkout-git.js");
+      const checkout = await getCheckoutStatusLite(cwd, {});
+      return {
+        cwd,
+        git: {
+          isGit: checkout.isGit,
+          repoRoot: checkout.isGit ? checkout.worktreeRoot : null,
+          mainRepoRoot: checkout.isGit ? checkout.mainRepoRoot : null,
+          currentBranch: checkout.isGit ? checkout.currentBranch : null,
+          remoteUrl: checkout.isGit ? checkout.remoteUrl : null,
+          isHubcodeOwnedWorktree: checkout.isGit ? checkout.isHubcodeOwnedWorktree : false,
+          isDirty: null,
+          aheadBehind: null,
+          aheadOfOrigin: null,
+          behindOfOrigin: null,
+          diffStat: null,
+        },
+        github: {
+          featuresEnabled: false,
+          pullRequest: null,
+          error: null,
+          refreshedAt: null,
+        },
+      };
+    },
+    resolveDefaultBranch: async (cwd: string) => {
+      const { resolveRepositoryDefaultBranch } = await import("../utils/checkout-git.js");
+      return resolveRepositoryDefaultBranch(cwd);
+    },
+  };
+}
+
 function createNoopWorkspaceGitService() {
   return {
     subscribe: async (params: { cwd: string }) => ({
@@ -1132,7 +1170,13 @@ describe("workspace aggregation", () => {
 
   test("create hubcode worktree request returns a registered workspace descriptor", async () => {
     const emitted: Array<{ type: string; payload: unknown }> = [];
-    const session = createSessionForWorkspaceTests() as any;
+    // Use a real workspace git service so the worktree handler can resolve the
+    // git snapshot + default branch through the real on-disk repository the
+    // test creates below.
+    const realWorkspaceGitService = createRealWorkspaceGitServiceForTests();
+    const session = createSessionForWorkspaceTests({
+      workspaceGitService: realWorkspaceGitService as any,
+    }) as any;
     const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "session-worktree-test-")));
     const repoDir = path.join(tempDir, "repo");
     const hubcodeHome = path.join(tempDir, "hubcode-home");

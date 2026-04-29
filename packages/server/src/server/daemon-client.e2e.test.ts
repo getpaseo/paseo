@@ -271,18 +271,20 @@ describe("daemon client E2E", () => {
       },
     });
 
-    await expect(ctx.client.setVoiceMode(true, created.id)).resolves.toMatchObject({
-      enabled: true,
-      agentId: created.id,
-      accepted: true,
-      error: null,
-    });
-    await expect(ctx.client.setVoiceMode(false)).resolves.toMatchObject({
-      enabled: false,
-      agentId: null,
-      accepted: true,
-      error: null,
-    });
+    if (hasAnySpeech) {
+      await expect(ctx.client.setVoiceMode(true, created.id)).resolves.toMatchObject({
+        enabled: true,
+        agentId: created.id,
+        accepted: true,
+        error: null,
+      });
+      await expect(ctx.client.setVoiceMode(false)).resolves.toMatchObject({
+        enabled: false,
+        agentId: null,
+        accepted: true,
+        error: null,
+      });
+    }
 
     await ctx.client.deleteAgent(randomUUID());
     rmSync(cwd, { recursive: true, force: true });

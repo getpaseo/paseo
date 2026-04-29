@@ -206,6 +206,7 @@ interface CreateServiceOptions {
   resolveBranchCheckout?: ReturnType<typeof vi.fn>;
   resolveRepositoryDefaultBranch?: ReturnType<typeof vi.fn>;
   listBranchSuggestions?: ReturnType<typeof vi.fn>;
+  listBranchSuggestionsRich?: ReturnType<typeof vi.fn>;
   listHubcodeWorktrees?: ReturnType<typeof vi.fn>;
   github?: GitHubService;
   resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
@@ -230,6 +231,7 @@ function buildDefaultServiceDeps() {
     resolveBranchCheckout: vi.fn(async () => ({ kind: "not-found" })),
     resolveRepositoryDefaultBranch: vi.fn(async () => "main"),
     listBranchSuggestions: vi.fn(async () => []),
+    listBranchSuggestionsRich: vi.fn(async () => []),
     listHubcodeWorktrees: vi.fn(async () => []),
     github: createGitHubServiceStub(),
     resolveAbsoluteGitDir: vi.fn(async () => "/tmp/repo/.git"),
@@ -1041,20 +1043,16 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
 
   test("suggestBranchesForCwd cold-loads, warms, forces, and coalesces per query", async () => {
     let nowMs = 0;
-    // Fork-divergence: fork's listBranchSuggestions returns string[]; the service wraps each name
-    // into a {name, committerDate:0, hasLocal:false, hasRemote:false} record. Adjust the mock and
-    // expectation to match that wrapping.
-    const branchNames = ["feature"];
-    const expectedSuggestions = [
-      { name: "feature", committerDate: 0, hasLocal: false, hasRemote: false },
+    const richSuggestions = [
+      { name: "feature", committerDate: 100, hasLocal: true, hasRemote: false },
     ];
-    const suggestionsDeferred = createDeferred<typeof branchNames>();
-    const listBranchSuggestions = vi
+    const suggestionsDeferred = createDeferred<typeof richSuggestions>();
+    const listBranchSuggestionsRich = vi
       .fn()
       .mockImplementationOnce(async () => suggestionsDeferred.promise)
-      .mockResolvedValue(branchNames);
+      .mockResolvedValue(richSuggestions);
     const service = createService({
-      listBranchSuggestions,
+      listBranchSuggestionsRich,
       now: () => new Date(nowMs),
     });
 
@@ -1065,23 +1063,20 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     });
     await flushPromises();
 
-    expect(listBranchSuggestions).toHaveBeenCalledTimes(1);
-    suggestionsDeferred.resolve(branchNames);
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      expectedSuggestions,
-      expectedSuggestions,
-    ]);
+    expect(listBranchSuggestionsRich).toHaveBeenCalledTimes(1);
+    suggestionsDeferred.resolve(richSuggestions);
+    await expect(Promise.all([first, second])).resolves.toEqual([richSuggestions, richSuggestions]);
 
     nowMs = 1_000;
     await service.suggestBranchesForCwd("/tmp/repo", { query: "feat", limit: 5 });
-    expect(listBranchSuggestions).toHaveBeenCalledTimes(1);
+    expect(listBranchSuggestionsRich).toHaveBeenCalledTimes(1);
 
     await service.suggestBranchesForCwd(
       "/tmp/repo",
       { query: "feat", limit: 5 },
       { force: true, reason: "test" },
     );
-    expect(listBranchSuggestions).toHaveBeenCalledTimes(2);
+    expect(listBranchSuggestionsRich).toHaveBeenCalledTimes(2);
 
     service.dispose();
   });

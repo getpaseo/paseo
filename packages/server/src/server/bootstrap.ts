@@ -1497,6 +1497,13 @@ export async function createHubcodeDaemon(
       }
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
+        // Forcibly tear down idle keep-alive sockets that callers (e.g.
+        // browsers, undici fetch) leave behind. Without this, `httpServer.close()`
+        // waits for the server-side keep-alive timeout to expire, which can
+        // hang test cleanup well past the afterEach timeout.
+        const closeAllConnections = (httpServer as unknown as { closeAllConnections?: () => void })
+          .closeAllConnections;
+        closeAllConnections?.call(httpServer);
       });
       // Clean up socket files
       if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {

@@ -3,10 +3,10 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type pino from "pino";
 import type { SubscribeCheckoutDiffRequest, SessionOutboundMessage } from "./messages.js";
-import { getCheckoutDiff } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { READ_ONLY_GIT_ENV, resolveCheckoutGitDir, toCheckoutError } from "./checkout-git-utils.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 const CHECKOUT_DIFF_WATCH_DEBOUNCE_MS = 150;
 const CHECKOUT_DIFF_FALLBACK_REFRESH_MS = 5_000;
@@ -46,12 +46,24 @@ type CheckoutDiffWatchTarget = {
 
 export class CheckoutDiffManager {
   private readonly logger: pino.Logger;
-  private readonly hubcodeHome: string;
   private readonly targets = new Map<string, CheckoutDiffWatchTarget>();
+  // Wired post-construction by VoiceAssistantWebSocketServer because the git
+  // service is built inside that constructor while the diff manager is built
+  // earlier in bootstrap.ts. Once set, all diff reads route through the
+  // service's TTL-cached `getCheckoutDiff`, sharing results with other
+  // consumers (session.ts, indexing, etc.).
+  private workspaceGitService: WorkspaceGitService | null = null;
 
   constructor(options: { logger: pino.Logger; hubcodeHome: string }) {
     this.logger = options.logger.child({ module: "checkout-diff-manager" });
-    this.hubcodeHome = options.hubcodeHome;
+    // hubcodeHome was previously forwarded to the bare `getCheckoutDiff`
+    // utility; the service-mediated path resolves the same context internally,
+    // so we accept the field for backward compatibility but no longer use it.
+    void options.hubcodeHome;
+  }
+
+  setWorkspaceGitService(service: WorkspaceGitService): void {
+    this.workspaceGitService = service;
   }
 
   async subscribe(
@@ -70,6 +82,11 @@ export class CheckoutDiffManager {
       target.latestPayload ??
       (await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
         diffCwd: target.diffCwd,
+        // First subscribe for this target must reflect the current state on
+        // disk, not a value the WorkspaceGitService TTL cache happens to hold
+        // from an earlier consumer (e.g. a one-shot getCheckoutDiff just
+        // before a commit).
+        force: true,
       }));
     target.latestPayload = initial;
     target.latestFingerprint = JSON.stringify(initial);
@@ -201,19 +218,29 @@ export class CheckoutDiffManager {
   private async computeCheckoutDiffSnapshot(
     cwd: string,
     compare: CheckoutDiffCompareInput,
-    options?: { diffCwd?: string },
+    options?: { diffCwd?: string; force?: boolean },
   ): Promise<CheckoutDiffSnapshotPayload> {
     const diffCwd = options?.diffCwd ?? cwd;
+    if (!this.workspaceGitService) {
+      // Defensive: setWorkspaceGitService is called immediately after the diff
+      // manager is constructed (in VoiceAssistantWebSocketServer's ctor), so
+      // any caller hitting this path before that wiring is a bug.
+      throw new Error("CheckoutDiffManager is missing its workspace git service");
+    }
     try {
-      const diffResult = await getCheckoutDiff(
+      const diffResult = await this.workspaceGitService.getCheckoutDiff(
         diffCwd,
         {
           mode: compare.mode,
-          baseRef: compare.baseRef,
-          ignoreWhitespace: compare.ignoreWhitespace,
+          ...(compare.baseRef !== undefined ? { baseRef: compare.baseRef } : {}),
+          ...(compare.ignoreWhitespace === true ? { ignoreWhitespace: true } : {}),
           includeStructured: true,
         },
-        { hubcodeHome: this.hubcodeHome },
+        // Refresh paths (fs watcher, fallback interval, scheduleRefreshForCwd)
+        // must bypass the WorkspaceGitService TTL cache; otherwise the second
+        // read within the TTL window returns the previous snapshot, the
+        // fingerprint matches, and no checkout_diff_update event is emitted.
+        options?.force ? { force: true, reason: "checkout-diff-manager-refresh" } : undefined,
       );
       const files = [...(diffResult.structured ?? [])];
       files.sort((a, b) => {
@@ -245,6 +272,7 @@ export class CheckoutDiffManager {
         target.refreshQueued = false;
         const snapshot = await this.computeCheckoutDiffSnapshot(target.cwd, target.compare, {
           diffCwd: target.diffCwd,
+          force: true,
         });
         target.latestPayload = snapshot;
         const fingerprint = JSON.stringify(snapshot);

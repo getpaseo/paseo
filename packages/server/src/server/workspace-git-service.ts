@@ -10,12 +10,14 @@ import {
   type BranchSuggestion,
   type CheckoutDiffCompare,
   type CheckoutDiffResult,
+  type CheckoutShortstat,
   getCheckoutDiff,
   getCheckoutShortstat,
   getCheckoutStatus,
   getPullRequestStatus,
   hasOriginRemote,
   listBranchSuggestions,
+  listBranchSuggestionsRich,
   resolveAbsoluteGitDir,
   resolveBranchCheckout,
   resolveGhPath,
@@ -134,6 +136,10 @@ export interface WorkspaceGitService {
     options: CheckoutDiffCompare,
     readOptions?: WorkspaceGitReadOptions,
   ): Promise<CheckoutDiffResult>;
+  getCheckoutShortstat(
+    cwd: string,
+    options?: WorkspaceGitReadOptions,
+  ): Promise<CheckoutShortstat | null>;
   validateBranchRef(
     cwd: string,
     ref: string,
@@ -264,6 +270,7 @@ interface WorkspaceGitServiceDependencies {
   resolveBranchCheckout: typeof resolveBranchCheckout;
   resolveRepositoryDefaultBranch: typeof resolveRepositoryDefaultBranch;
   listBranchSuggestions: typeof listBranchSuggestions;
+  listBranchSuggestionsRich: typeof listBranchSuggestionsRich;
   listHubcodeWorktrees: typeof listHubcodeWorktrees;
   resolveGhPath: typeof resolveGhPath;
   github: GitHubService;
@@ -337,6 +344,7 @@ function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies 
     resolveBranchCheckout,
     resolveRepositoryDefaultBranch,
     listBranchSuggestions,
+    listBranchSuggestionsRich,
     listHubcodeWorktrees,
     resolveGhPath,
     github: createGitHubService(),
@@ -389,6 +397,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly checkoutDiffCache = new Map<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<CheckoutDiffResult>
+  >();
+  // Shortstat returns `CheckoutShortstat | null` (null is a real "no diff base"
+  // signal, not a cache miss). The auxiliary cache entries treat `value: null`
+  // as "not yet loaded", so wrap the result in a sentinel object.
+  private readonly checkoutShortstatCache = new Map<
+    string,
+    WorkspaceGitAuxiliaryReadCacheEntry<{ result: CheckoutShortstat | null }>
   >();
 
   constructor(options: WorkspaceGitServiceOptions) {
@@ -487,6 +502,31 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
   }
 
+  async getCheckoutShortstat(
+    cwd: string,
+    options?: WorkspaceGitReadOptions,
+  ): Promise<CheckoutShortstat | null> {
+    const normalizedCwd = normalizeWorkspaceId(cwd);
+    const key = JSON.stringify(["checkout-shortstat", normalizedCwd]);
+    const wrapped = await this.readAuxiliaryCache(
+      this.checkoutShortstatCache,
+      key,
+      options,
+      async () => {
+        const result = await this.deps.getCheckoutShortstat(
+          normalizedCwd,
+          { hubcodeHome: this.hubcodeHome },
+          {
+            force: options?.force === true,
+            ...(options?.reason ? { reason: options.reason } : {}),
+          },
+        );
+        return { result };
+      },
+    );
+    return wrapped.result;
+  }
+
   private normalizeCheckoutDiffOptions(options: CheckoutDiffCompare): CheckoutDiffCompare {
     return {
       mode: options.mode,
@@ -548,20 +588,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const query = options?.query ?? "";
     const limit = options?.limit;
     const key = JSON.stringify(["branch-suggestions", normalizedCwd, query, limit ?? null]);
-    return this.readAuxiliaryCache(this.branchSuggestionsCache, key, readOptions, async () => {
-      // Fork's `listBranchSuggestions` returns `string[]`, not the richer
-      // `BranchSuggestion[]` paseo provides. Adapt by wrapping each name in a
-      // suggestion record with placeholder metadata. A future port can swap
-      // this for a richer `git for-each-ref` walk; consumers of this method
-      // don't exist yet in the fork (Pass 3 wires them up).
-      const names = await this.deps.listBranchSuggestions(normalizedCwd, options);
-      return names.map<WorkspaceGitBranchSuggestion>((name) => ({
-        name,
-        committerDate: 0,
-        hasLocal: false,
-        hasRemote: false,
-      }));
-    });
+    return this.readAuxiliaryCache(this.branchSuggestionsCache, key, readOptions, () =>
+      this.deps.listBranchSuggestionsRich(normalizedCwd, options),
+    );
   }
 
   listStashes(

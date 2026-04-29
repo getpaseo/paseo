@@ -111,6 +111,12 @@ describe("CheckoutDiffManager Linux watchers", () => {
       logger: logger as any,
       hubcodeHome: "/tmp/hubcode-test",
     });
+    // The diff manager now routes through WorkspaceGitService.getCheckoutDiff;
+    // wire a thin stub that delegates to the existing getCheckoutDiff mock so
+    // this test keeps asserting on the watcher fan-out.
+    manager.setWorkspaceGitService({
+      getCheckoutDiff: getCheckoutDiffMock,
+    } as any);
 
     const subscription = await manager.subscribe(
       {

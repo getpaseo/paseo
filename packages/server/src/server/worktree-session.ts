@@ -20,7 +20,7 @@ import type {
 import { normalizeWorkspaceId as normalizePersistedWorkspaceId } from "./workspace-registry-model.js";
 import { createAgentWorktree } from "./worktree-bootstrap.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
-import { getCheckoutStatusLite, resolveRepositoryDefaultBranch } from "../utils/checkout-git.js";
+import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { expandTilde } from "../utils/path.js";
 import {
   computeWorktreePath,
@@ -57,6 +57,7 @@ type BuildAgentSessionConfigDependencies = {
     baseBranch: string;
     newBranchName: string;
   }) => Promise<void>;
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "resolveDefaultBranch">;
 };
 
 type ArchiveHubcodeWorktreeDependencies = {
@@ -110,6 +111,7 @@ type CreateHubcodeWorktreeInBackgroundDependencies = {
 
 type HandleCreateHubcodeWorktreeRequestDependencies = {
   hubcodeHome?: string;
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "resolveDefaultBranch">;
   describeWorkspaceRecord: (
     workspace: PersistedWorkspaceRecord,
   ) => Promise<WorkspaceDescriptorPayload>;
@@ -187,7 +189,8 @@ export async function buildAgentSessionConfig(
     );
 
     const baseBranch =
-      normalized.baseBranch ?? (await resolveGitCreateBaseBranch(cwd, dependencies.hubcodeHome));
+      normalized.baseBranch ??
+      (await resolveGitCreateBaseBranch(cwd, dependencies.workspaceGitService));
     const createdWorktree = await createAgentWorktree({
       branchName: targetBranch,
       cwd,
@@ -199,7 +202,8 @@ export async function buildAgentSessionConfig(
     worktreeConfig = createdWorktree;
   } else if (normalized.createNewBranch) {
     const baseBranch =
-      normalized.baseBranch ?? (await resolveGitCreateBaseBranch(cwd, dependencies.hubcodeHome));
+      normalized.baseBranch ??
+      (await resolveGitCreateBaseBranch(cwd, dependencies.workspaceGitService));
     await dependencies.createBranchFromBase({
       cwd,
       baseBranch,
@@ -286,15 +290,22 @@ export function assertSafeGitRef(ref: string, label: string): void {
 
 export async function resolveGitCreateBaseBranch(
   cwd: string,
-  hubcodeHome?: string,
+  workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "resolveDefaultBranch">,
 ): Promise<string> {
-  const checkout = await getCheckoutStatusLite(cwd, { hubcodeHome });
-  if (!checkout.isGit) {
+  // The runtime snapshot already exposes isGit / isHubcodeOwnedWorktree /
+  // mainRepoRoot, the same fields the old getCheckoutStatusLite call used —
+  // route through the service so reads share its TTL cache instead of shelling
+  // out a fresh `git rev-parse` here.
+  const snapshot = await workspaceGitService.getSnapshot(cwd);
+  if (!snapshot.git.isGit) {
     throw new Error("Cannot create a worktree outside a git repository");
   }
 
-  const repoRoot = checkout.isHubcodeOwnedWorktree ? checkout.mainRepoRoot : cwd;
-  const baseBranch = await resolveRepositoryDefaultBranch(repoRoot);
+  const repoRoot =
+    snapshot.git.isHubcodeOwnedWorktree && snapshot.git.mainRepoRoot
+      ? snapshot.git.mainRepoRoot
+      : cwd;
+  const baseBranch = await workspaceGitService.resolveDefaultBranch(repoRoot);
   if (!baseBranch) {
     throw new Error("Unable to resolve repository default branch");
   }
@@ -589,15 +600,16 @@ export async function handleCreateHubcodeWorktreeRequest(
   request: Extract<SessionInboundMessage, { type: "create_hubcode_worktree_request" }>,
 ): Promise<void> {
   try {
-    const checkout = await getCheckoutStatusLite(request.cwd, {
-      hubcodeHome: dependencies.hubcodeHome,
-    });
-    if (!checkout.isGit) {
+    const snapshot = await dependencies.workspaceGitService.getSnapshot(request.cwd);
+    if (!snapshot.git.isGit) {
       throw new Error("Create worktree requires a git repository");
     }
 
-    const repoRoot = checkout.isHubcodeOwnedWorktree ? checkout.mainRepoRoot : request.cwd;
-    const baseBranch = await resolveRepositoryDefaultBranch(repoRoot);
+    const repoRoot =
+      snapshot.git.isHubcodeOwnedWorktree && snapshot.git.mainRepoRoot
+        ? snapshot.git.mainRepoRoot
+        : request.cwd;
+    const baseBranch = await dependencies.workspaceGitService.resolveDefaultBranch(repoRoot);
     if (!baseBranch) {
       throw new Error("Unable to resolve repository default branch");
     }

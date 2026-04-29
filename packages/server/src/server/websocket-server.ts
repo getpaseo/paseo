@@ -420,6 +420,7 @@ export class VoiceAssistantWebSocketServer {
       logger: this.logger,
       hubcodeHome,
     });
+    this.checkoutDiffManager.setWorkspaceGitService?.(this.workspaceGitService);
     this.downloadTokenStore = downloadTokenStore;
     this.hubcodeHome = hubcodeHome;
     this.daemonConfigStore = daemonConfigStore;
@@ -717,6 +718,7 @@ export class VoiceAssistantWebSocketServer {
         }
         this.sendBinaryToConnection(connection, frame);
       },
+      getOutboundBufferedBytes: () => connection?.ws?.bufferedAmount ?? 0,
       onLifecycleIntent: (intent) => {
         this.onLifecycleIntent?.(intent);
       },

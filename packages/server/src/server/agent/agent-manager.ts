@@ -1161,11 +1161,21 @@ export class AgentManager {
   async emitLiveTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.touchUpdatedAt(agent);
-    this.dispatchStream(agentId, {
-      type: "timeline",
-      item,
-      provider: agent.provider,
-    });
+    // Live (provisional) updates don't get a seq because they aren't committed
+    // to the timeline, but they still belong to the current epoch. Emitting the
+    // epoch lets reconnect-aware consumers reject stale provisional rows from
+    // a previous epoch.
+    this.dispatchStream(
+      agentId,
+      {
+        type: "timeline",
+        item,
+        provider: agent.provider,
+      },
+      {
+        epoch: this.ensureTimelineState(agent).epoch,
+      },
+    );
   }
 
   streamAgent(
@@ -2341,6 +2351,20 @@ export class AgentManager {
     }
 
     if (!options?.fromHistory && isForegroundEvent && isTurnTerminalEvent(event)) {
+      // Before the turn finalizes (which transitions the agent to idle and
+      // unblocks any `wait_for_finish_request`), flush any permission
+      // resolutions still buffered behind an in-flight `respondToPermission`
+      // call. The awaiting caller will defensively re-flush in its post-await
+      // path, but providers that emit `turn_completed` immediately after
+      // `permission_resolved` (notably the test fake) would otherwise race
+      // ahead and let `wait_for_finish_response` reach the client first.
+      if (agent.bufferedPermissionResolutions.size > 0) {
+        const buffered = Array.from(agent.bufferedPermissionResolutions.entries());
+        agent.bufferedPermissionResolutions.clear();
+        for (const [, bufferedEvent] of buffered) {
+          this.dispatchStream(agent.id, bufferedEvent);
+        }
+      }
       this.finalizeForegroundTurn(agent);
     }
 
@@ -2569,7 +2593,15 @@ export class AgentManager {
           }
         }
       }
-      subscriber.callback(event);
+      try {
+        subscriber.callback(event);
+      } catch (error) {
+        // Isolate subscriber failures so a single throwing listener can't
+        // halt dispatch for downstream subscribers (e.g. wait_for_finish
+        // resolvers). Log at debug level — subscriber crashes are typically
+        // self-inflicted (caller-supplied callbacks) and not actionable here.
+        this.logger.debug({ err: error }, "agent-manager subscriber callback threw");
+      }
     }
   }
 

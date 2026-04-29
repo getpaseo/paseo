@@ -119,7 +119,7 @@ async function listGitRefs(cwd: string, refPrefix: string): Promise<GitRef[]> {
 
 function sortBranchSuggestions(
   branchNames: string[],
-  branchMeta: Map<string, { isLocal: boolean; committerDate: number }>,
+  branchMeta: Map<string, { hasLocal: boolean; hasRemote: boolean; committerDate: number }>,
   query: string,
 ): string[] {
   const normalizedQuery = query.trim().toLowerCase();
@@ -145,10 +145,10 @@ function sortBranchSuggestions(
   });
 }
 
-export async function listBranchSuggestions(
+export async function listBranchSuggestionsRich(
   cwd: string,
   options?: { query?: string; limit?: number },
-): Promise<string[]> {
+): Promise<BranchSuggestion[]> {
   await requireGitRepo(cwd);
 
   const requestedLimit = options?.limit ?? 50;
@@ -160,14 +160,21 @@ export async function listBranchSuggestions(
     listGitRefs(cwd, "refs/remotes/origin"),
   ]);
 
-  const branchMeta = new Map<string, { isLocal: boolean; committerDate: number }>();
+  // Track local and remote presence independently so the rich return preserves
+  // the full BranchSuggestion shape (a branch can exist as both local and
+  // remote, and the consumer needs to know).
+  const branchMeta = new Map<
+    string,
+    { hasLocal: boolean; hasRemote: boolean; committerDate: number }
+  >();
 
   for (const ref of localRefs) {
     const normalized = normalizeBranchSuggestionName(ref.name);
     if (!normalized) continue;
     const existing = branchMeta.get(normalized);
     branchMeta.set(normalized, {
-      isLocal: true,
+      hasLocal: true,
+      hasRemote: existing?.hasRemote ?? false,
       committerDate: Math.max(ref.committerDate, existing?.committerDate ?? 0),
     });
   }
@@ -176,14 +183,11 @@ export async function listBranchSuggestions(
     const normalized = normalizeBranchSuggestionName(ref.name);
     if (!normalized) continue;
     const existing = branchMeta.get(normalized);
-    if (!existing) {
-      branchMeta.set(normalized, { isLocal: false, committerDate: ref.committerDate });
-    } else {
-      branchMeta.set(normalized, {
-        ...existing,
-        committerDate: Math.max(ref.committerDate, existing.committerDate),
-      });
-    }
+    branchMeta.set(normalized, {
+      hasLocal: existing?.hasLocal ?? false,
+      hasRemote: true,
+      committerDate: Math.max(ref.committerDate, existing?.committerDate ?? 0),
+    });
   }
 
   const filteredNames = Array.from(branchMeta.keys()).filter((name) =>
@@ -193,8 +197,24 @@ export async function listBranchSuggestions(
     return [];
   }
 
-  const ordered = sortBranchSuggestions(filteredNames, branchMeta, query);
-  return ordered.slice(0, limit);
+  const ordered = sortBranchSuggestions(filteredNames, branchMeta, query).slice(0, limit);
+  return ordered.map<BranchSuggestion>((name) => {
+    const meta = branchMeta.get(name);
+    return {
+      name,
+      committerDate: meta?.committerDate ?? 0,
+      hasLocal: meta?.hasLocal ?? false,
+      hasRemote: meta?.hasRemote ?? false,
+    };
+  });
+}
+
+export async function listBranchSuggestions(
+  cwd: string,
+  options?: { query?: string; limit?: number },
+): Promise<string[]> {
+  const rich = await listBranchSuggestionsRich(cwd, options);
+  return rich.map((entry) => entry.name);
 }
 
 // Ported from paseo. Optional cache-bypass + reason hints for read APIs that

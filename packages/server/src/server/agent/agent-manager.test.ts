@@ -1376,8 +1376,11 @@ describe("AgentManager", () => {
       eventType: "timeline",
       itemType: "assistant_message",
     });
+    // Live (provisional) updates omit `seq` because they aren't committed,
+    // but they still carry the current `epoch` so reconnect-aware consumers
+    // can reject stale provisional rows from a previous epoch.
     expect(streamEvents[0]?.seq).toBeUndefined();
-    expect(streamEvents[0]?.epoch).toBeUndefined();
+    expect(typeof streamEvents[0]?.epoch).toBe("string");
 
     expect(manager.getTimeline(snapshot.id)).toEqual([]);
     const fetched = manager.fetchTimeline(snapshot.id, {
