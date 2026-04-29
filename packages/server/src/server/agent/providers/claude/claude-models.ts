@@ -7,13 +7,22 @@ const CLAUDE_THINKING_OPTIONS = [
   { id: "max", label: "Max" },
 ] as const;
 
+// Opus 4.7 supports an additional "Extra High" tier between High and Max.
+const CLAUDE_OPUS_47_THINKING_OPTIONS = [
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "extra-high", label: "Extra High" },
+  { id: "max", label: "Max" },
+] as const;
+
 const CLAUDE_MODELS: AgentModelDefinition[] = [
   {
     provider: "claude",
     id: "claude-opus-4-7[1m]",
     label: "Opus 4.7 1M",
     description: "Opus 4.7 with 1M context window",
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
+    thinkingOptions: [...CLAUDE_OPUS_47_THINKING_OPTIONS],
   },
   {
     provider: "claude",
@@ -21,7 +30,7 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
     label: "Opus 4.7",
     description: "Opus 4.7 · Latest Opus, most capable for complex work",
     isDefault: true,
-    thinkingOptions: [...CLAUDE_THINKING_OPTIONS],
+    thinkingOptions: [...CLAUDE_OPUS_47_THINKING_OPTIONS],
   },
   {
     provider: "claude",

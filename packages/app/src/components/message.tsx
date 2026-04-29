@@ -536,6 +536,17 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     textAlign: "center",
   },
+  imageOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.surface0,
+    paddingHorizontal: theme.spacing[4],
+  },
 }));
 
 const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
@@ -607,6 +618,14 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
     [aspectRatio],
   );
 
+  // Track resolved-image loading state. Even after we have a uri the network or
+  // file fetch can still be in-flight or fail; without this the user sees a
+  // blank rectangle (paseo 0.1.65-beta.1).
+  const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
+  useEffect(() => {
+    setLoadStatus("loading");
+  }, [uri]);
+
   return (
     <View style={[assistantMessageStylesheet.imageFrame, containerStyle]}>
       <View style={surfaceStyle}>
@@ -615,7 +634,19 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
           style={assistantMessageStylesheet.image}
           resizeMode="contain"
           accessibilityLabel={alt}
+          onLoad={() => setLoadStatus("loaded")}
+          onError={() => setLoadStatus("error")}
         />
+        {loadStatus === "loading" ? (
+          <View style={assistantMessageStylesheet.imageOverlay}>
+            <ActivityIndicator size="small" />
+          </View>
+        ) : null}
+        {loadStatus === "error" ? (
+          <View style={assistantMessageStylesheet.imageOverlay}>
+            <Text style={assistantMessageStylesheet.imageErrorText}>Image unavailable</Text>
+          </View>
+        ) : null}
       </View>
     </View>
   );

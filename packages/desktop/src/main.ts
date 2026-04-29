@@ -52,7 +52,10 @@ import {
   registerDaemonManager,
   restartDaemonIfDesktopManaged,
   broadcastClaudeCodeProgress,
+  stopDaemonIfDesktopManaged,
 } from "./daemon/daemon-manager.js";
+import { createBeforeQuitHandler } from "./daemon/quit-lifecycle.js";
+import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
 import { ensureClaudeCode, getClaudeCodeStatus } from "./integrations/claude-code-binary.js";
 import {
   parseCliPassthroughArgsFromArgv,
@@ -484,9 +487,22 @@ void bootstrap().catch((error) => {
   process.exit(1);
 });
 
-app.on("before-quit", () => {
-  closeAllTransportSessions();
-});
+app.on(
+  "before-quit",
+  createBeforeQuitHandler({
+    app,
+    closeTransportSessions: () => closeAllTransportSessions(),
+    stopDesktopManagedDaemonIfNeeded: async () => {
+      const settings = await getDesktopSettingsStore().get();
+      if (settings.daemon.keepRunningAfterQuit) return false;
+      return await stopDaemonIfDesktopManaged();
+    },
+    onStopError: (error) => {
+      const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      process.stderr.write(`[before-quit] daemon stop failed: ${message}\n`);
+    },
+  }),
+);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

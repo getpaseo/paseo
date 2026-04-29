@@ -408,6 +408,18 @@ export async function restartDaemonIfDesktopManaged(): Promise<void> {
   await restartDaemon();
 }
 
+/**
+ * Stop the daemon if (and only if) it was spawned by this desktop instance.
+ * Returns true when a stop actually ran. Used by the before-quit handler
+ * when the user has disabled "keep daemon running after quit".
+ */
+export async function stopDaemonIfDesktopManaged(): Promise<boolean> {
+  const status = await resolveStatus();
+  if (status.status !== "running" || !status.desktopManaged) return false;
+  await stopDaemon();
+  return true;
+}
+
 function getDaemonLogs(): DesktopDaemonLogs {
   const logPath = logFilePath();
   return {

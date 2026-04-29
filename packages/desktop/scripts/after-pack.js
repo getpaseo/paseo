@@ -3,8 +3,17 @@ const path = require("path");
 
 const EXECUTABLE_NAME = "Hubcode";
 const WRAPPER_MODE = 0o755;
+// `--no-sandbox` is only required for AppImage runs — AppImages can't ship a
+// SUID chrome-sandbox helper. .deb and .rpm install chrome-sandbox properly,
+// so they should run with the standard renderer sandbox. Detect the AppImage
+// runtime via the APPIMAGE env var that the AppImage runtime exports.
 const WRAPPER_SCRIPT = `#!/bin/bash
-exec "$(dirname "$(readlink -f "$0")")/${EXECUTABLE_NAME}.bin" --no-sandbox "$@"
+BIN="$(dirname "$(readlink -f "$0")")/${EXECUTABLE_NAME}.bin"
+if [ -n "$APPIMAGE" ]; then
+  exec "$BIN" --no-sandbox "$@"
+else
+  exec "$BIN" "$@"
+fi
 `;
 
 // electron-builder arch enum → Node.js arch string
@@ -131,12 +140,9 @@ exports.default = async function afterPack(context) {
 
   if (platform !== "linux") return;
 
-  const chromeSandbox = path.join(context.appOutDir, "chrome-sandbox");
-  if (fs.existsSync(chromeSandbox)) {
-    fs.unlinkSync(chromeSandbox);
-    console.log("Removed chrome-sandbox from Linux build");
-  }
-
+  // Keep chrome-sandbox in the build — .deb/.rpm post-install steps mark it
+  // SUID for the standard renderer sandbox. AppImage runs fall back to
+  // --no-sandbox via the wrapper below when $APPIMAGE is set.
   const executablePath = path.join(context.appOutDir, EXECUTABLE_NAME);
   const wrappedBinaryPath = path.join(context.appOutDir, `${EXECUTABLE_NAME}.bin`);
 
