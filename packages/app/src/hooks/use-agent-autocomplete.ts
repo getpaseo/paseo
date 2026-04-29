@@ -42,14 +42,14 @@ const LOCAL_COMMAND_OPTIONS = [
     type: "local_command" as const,
     id: "q",
     label: "/q",
-    description: "Detach from Paseo and leave the provider session resumable",
+    description: "Paseo local - detach and leave the provider session resumable",
     kind: "command" as const,
   },
   {
     type: "local_command" as const,
     id: "exit",
     label: "/exit",
-    description: "Detach from Paseo and leave the provider session resumable",
+    description: "Paseo local - detach and leave the provider session resumable",
     kind: "command" as const,
   },
 ] satisfies AgentAutocompleteOption[];
@@ -190,24 +190,72 @@ function buildCommandAutocompleteOptions(input: {
   query: string;
 }): AgentAutocompleteOption[] {
   const filterLower = input.query.toLowerCase();
-  const localMatches = LOCAL_COMMAND_OPTIONS.filter((cmd) =>
-    cmd.id.toLowerCase().includes(filterLower),
+  const providerOptions = input.commands.map((cmd) => ({
+    type: "command" as const,
+    id: cmd.name,
+    label: `/${cmd.name}`,
+    description: formatCommandDescription(cmd),
+    kind: "command" as const,
+  }));
+  return orderCommandAutocompleteOptions(
+    [...LOCAL_COMMAND_OPTIONS, ...providerOptions],
+    filterLower,
   );
-  const providerMatches = input.commands.filter((cmd) =>
-    cmd.name.toLowerCase().includes(filterLower),
-  );
-  const orderedProviderMatches = orderAutocompleteOptions(providerMatches);
-  return [
-    ...localMatches,
-    ...orderedProviderMatches.map((cmd) => ({
-      type: "command" as const,
-      id: cmd.name,
-      label: `/${cmd.name}`,
-      detail: cmd.argumentHint || undefined,
-      description: cmd.description,
-      kind: "command" as const,
-    })),
-  ];
+}
+
+function formatCommandDescription(command: CommandSuggestion): string {
+  const description = command.description.trim();
+  const argumentHint = command.argumentHint?.trim() ?? "";
+  if (!argumentHint) {
+    return description;
+  }
+  return description ? `${description} - ${argumentHint}` : argumentHint;
+}
+
+function getCommandMatchRank(commandName: string, query: string): number | null {
+  if (!query) {
+    return 0;
+  }
+  const normalized = commandName.toLowerCase();
+  if (normalized === query) {
+    return 0;
+  }
+  if (normalized.startsWith(query)) {
+    return 1;
+  }
+  if (normalized.includes(query)) {
+    return 2;
+  }
+  return null;
+}
+
+function orderCommandAutocompleteOptions(
+  options: AgentAutocompleteOption[],
+  query: string,
+): AgentAutocompleteOption[] {
+  return options
+    .map((option, index) => ({ option, index, rank: getCommandMatchRank(option.id, query) }))
+    .filter(
+      (entry): entry is { option: AgentAutocompleteOption; index: number; rank: number } =>
+        entry.rank !== null,
+    )
+    .sort((left, right) => {
+      if (left.rank !== right.rank) {
+        return left.rank - right.rank;
+      }
+      if (left.option.type !== right.option.type) {
+        return left.option.type === "local_command" ? -1 : 1;
+      }
+      return left.index - right.index;
+    })
+    .map((entry) => entry.option);
+}
+
+function buildPresentedCommandAutocompleteOptions(input: {
+  commands: CommandSuggestion[];
+  query: string;
+}): AgentAutocompleteOption[] {
+  return orderAutocompleteOptions(buildCommandAutocompleteOptions(input));
 }
 
 export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAutocompleteResult {
@@ -325,7 +373,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     }
 
     if (mode === "command") {
-      return buildCommandAutocompleteOptions({ commands, query: commandFilterQuery });
+      return buildPresentedCommandAutocompleteOptions({ commands, query: commandFilterQuery });
     }
 
     if (mode === "file" && activeFileMention) {
@@ -403,4 +451,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
 
 export const __private__ = {
   buildCommandAutocompleteOptions,
+  buildPresentedCommandAutocompleteOptions,
+  formatCommandDescription,
+  orderCommandAutocompleteOptions,
 };

@@ -1,6 +1,6 @@
 ---
 id: pas-id4i
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-04-28T14:09:42Z
@@ -41,3 +41,10 @@ Acceptance criteria:
 - Typing `/exit` selects the local `/exit` command by default.
 - Provider commands still appear and remain selectable.
 - Above-input visual ordering and keyboard navigation remain intuitive.
+
+Implementation notes:
+
+- Logical command ranking now runs before above-input presentation ordering.
+- Ranking is exact, then prefix, then substring.
+- Local commands and provider commands share one ranked list, with local commands winning ties.
+- Above-input presentation reverses the ranked list so the best logical match is nearest the composer and selected by the existing fallback index.

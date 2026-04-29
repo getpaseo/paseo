@@ -17,6 +17,7 @@ describe("useAgentAutocomplete command options", () => {
       type: "local_command",
       id: "q",
       label: "/q",
+      description: expect.stringContaining("Paseo local"),
     });
     expect(options.map((option) => option.label)).toContain("/quick-review");
   });
@@ -34,5 +35,54 @@ describe("useAgentAutocomplete command options", () => {
         label: "/exit",
       }),
     ]);
+  });
+
+  it("orders exact, prefix, then substring command matches predictably", () => {
+    const options = __private__.buildCommandAutocompleteOptions({
+      query: "test",
+      commands: [
+        { name: "contest", description: "Substring" },
+        { name: "test", description: "Exact" },
+        { name: "test-run", description: "Prefix" },
+      ],
+    });
+
+    expect(options.map((option) => option.label)).toEqual(["/test", "/test-run", "/contest"]);
+  });
+
+  it("places the best command at the fallback-selected above-input position", () => {
+    const options = __private__.buildPresentedCommandAutocompleteOptions({
+      query: "q",
+      commands: [
+        {
+          name: "quick-review",
+          description: "Provider command",
+        },
+      ],
+    });
+
+    expect(options.at(-1)).toMatchObject({
+      type: "local_command",
+      id: "q",
+      label: "/q",
+    });
+  });
+
+  it("shows command argument hints in descriptions", () => {
+    const options = __private__.buildCommandAutocompleteOptions({
+      query: "review",
+      commands: [
+        {
+          name: "review",
+          description: "Review a change",
+          argumentHint: "<target>",
+        },
+      ],
+    });
+
+    expect(options[0]).toMatchObject({
+      label: "/review",
+      description: "Review a change - <target>",
+    });
   });
 });
