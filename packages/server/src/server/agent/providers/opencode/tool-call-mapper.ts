@@ -80,6 +80,7 @@ const OpencodeKnownToolNameSchema = z.union([
   z.literal("apply_patch"),
   z.literal("apply_diff"),
   z.literal("search"),
+  z.literal("glob"),
   z.literal("web_search"),
 ]);
 
@@ -126,7 +127,12 @@ const OpencodeToolCallPass2Schema = z.discriminatedUnion("toolKind", [
 type OpencodeToolCallPass2 = z.infer<typeof OpencodeToolCallPass2Schema>;
 
 function toToolCallTimelineItem(normalized: OpencodeToolCallPass2): ToolCallTimelineItem {
-  const detail = deriveOpencodeToolDetail(normalized.name, normalized.input, normalized.output);
+  const detail = deriveOpencodeToolDetail(
+    normalized.name,
+    normalized.input,
+    normalized.output,
+    normalized.error,
+  );
   if (normalized.status === "failed") {
     return {
       type: "tool_call",

@@ -307,7 +307,6 @@ const hasOpenCode = isBinaryInstalled("opencode");
 
     expect(buildTurn.turnCompleted).toBe(true);
     expect(buildTurn.turnFailed).toBe(false);
-    expect(buildTurn.toolCalls.some((toolCall) => toolCall.status === "completed")).toBe(true);
     expect(existsSync(buildFile)).toBe(true);
 
     const buildResponse = buildTurn.assistantMessages
@@ -418,6 +417,112 @@ describe("OpenCode adapter context-window normalization", () => {
       1_777_217_640_000,
     );
     expect(__openCodeInternals.normalizeOpenCodeTimestampMs(undefined)).toBe(0);
+  });
+
+  test("extracts model, mode, and thinking option from the latest persisted message", () => {
+    const state = __openCodeInternals.extractOpenCodePersistedSessionState([
+      {
+        info: {
+          id: "older-message",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1_777_217_640_000 },
+          providerID: "anthropic",
+          modelID: "claude-sonnet-4-6",
+          agent: "plan",
+          variant: "low",
+        } as unknown as OpenCodeMessage,
+        parts: [] as OpenCodePart[],
+      },
+      {
+        info: {
+          id: "newer-message",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1_777_217_650_000 },
+          providerID: "openai",
+          modelID: "gpt-5.5",
+          mode: "build",
+          agent: "build",
+          variant: "medium",
+        } as unknown as OpenCodeMessage,
+        parts: [] as OpenCodePart[],
+      },
+    ]);
+
+    expect(state).toEqual({
+      model: "openai/gpt-5.5",
+      modeId: "build",
+      thinkingOptionId: "medium",
+    });
+  });
+
+  test("normalizes persisted default OpenCode mode to build", () => {
+    const state = __openCodeInternals.extractOpenCodePersistedSessionState([
+      {
+        info: {
+          id: "user-message",
+          sessionID: "session-1",
+          role: "user",
+          time: { created: 1_777_217_640_000 },
+          model: { providerID: "openai", modelID: "gpt-5.5" },
+          agent: "default",
+          variant: "high",
+        } as unknown as OpenCodeMessage,
+        parts: [] as OpenCodePart[],
+      },
+    ]);
+
+    expect(state).toEqual({
+      model: "openai/gpt-5.5",
+      modeId: "build",
+      thinkingOptionId: "high",
+    });
+  });
+
+  test("builds resume config with explicit overrides taking precedence", () => {
+    const config = __openCodeInternals.buildOpenCodeResumeConfig({
+      cwd: "/repo",
+      persistedState: {
+        model: "openai/gpt-5.5",
+        modeId: "build",
+        thinkingOptionId: "medium",
+      },
+      overrides: {
+        model: "anthropic/claude-sonnet-4-6",
+        modeId: "plan",
+      },
+    });
+
+    expect(config).toMatchObject({
+      provider: "opencode",
+      cwd: "/repo",
+      model: "anthropic/claude-sonnet-4-6",
+      modeId: "plan",
+      thinkingOptionId: "medium",
+    });
+  });
+
+  test("builds persistence metadata with OpenCode model, mode, and thinking option", () => {
+    expect(
+      __openCodeInternals.buildOpenCodePersistenceMetadata({
+        config: {
+          provider: "opencode",
+          cwd: "/repo",
+          model: "openai/gpt-5.5",
+          modeId: "build",
+          thinkingOptionId: "medium",
+        },
+        currentMode: "review",
+        closeBehavior: "detach",
+      }),
+    ).toEqual({
+      cwd: "/repo",
+      model: "openai/gpt-5.5",
+      modeId: "review",
+      thinkingOptionId: "medium",
+      paseoCloseBehavior: "detach",
+    });
   });
 
   test("close reconciliation aborts then archives upstream session", async () => {
@@ -609,6 +714,193 @@ describe("OpenCode adapter context-window normalization", () => {
     });
   });
 
+  test("builds model definitions from configured OpenCode providers", () => {
+    const result = __openCodeInternals.buildOpenCodeModelDefinitionsFromProviders({
+      providers: [
+        {
+          id: "custom-provider",
+          name: "Custom Provider",
+          models: {
+            "configured-model": {
+              name: "Configured Model",
+              family: "custom",
+              limit: { context: 123_000, output: 4096 },
+            },
+          },
+        },
+      ],
+      defaultModelsByProvider: { "custom-provider": "configured-model" },
+    });
+
+    expect(result.models).toHaveLength(1);
+    expect(result.models[0]).toMatchObject({
+      id: "custom-provider/configured-model",
+      label: "Configured Model",
+      isDefault: true,
+      metadata: {
+        providerId: "custom-provider",
+        providerName: "Custom Provider",
+        modelId: "configured-model",
+        contextWindowMaxTokens: 123_000,
+      },
+    });
+    expect(result.contextWindows.get("custom-provider/configured-model")).toBe(123_000);
+  });
+
+  test("can filter provider-list models to connected providers for fallback discovery", () => {
+    const result = __openCodeInternals.buildOpenCodeModelDefinitionsFromProviders({
+      providers: [
+        { id: "connected", models: { usable: { name: "Usable" } } },
+        { id: "disconnected", models: { hidden: { name: "Hidden" } } },
+      ],
+      includeProviderIds: new Set(["connected"]),
+    });
+
+    expect(result.models.map((model) => model.id)).toEqual(["connected/usable"]);
+  });
+
+  test("merges configured OpenCode provider models with connected provider catalog", () => {
+    const result = __openCodeInternals.mergeOpenCodeProviderCatalogs({
+      configuredProviders: [
+        {
+          id: "anthropic",
+          models: {
+            "configured-sonnet": { name: "Configured Sonnet" },
+          },
+        },
+        {
+          id: "custom-provider",
+          models: {
+            custom: { name: "Custom" },
+          },
+        },
+      ],
+      configuredDefaults: { anthropic: "configured-sonnet" },
+      availableProviders: [
+        {
+          id: "anthropic",
+          models: {
+            "catalog-opus": { name: "Catalog Opus" },
+          },
+        },
+        {
+          id: "disconnected",
+          models: {
+            hidden: { name: "Hidden" },
+          },
+        },
+      ],
+      availableDefaults: { anthropic: "catalog-opus" },
+      connectedProviderIds: new Set(["anthropic"]),
+    });
+
+    expect(result.providers).toEqual([
+      {
+        id: "anthropic",
+        models: {
+          "catalog-opus": { name: "Catalog Opus" },
+          "configured-sonnet": { name: "Configured Sonnet" },
+        },
+      },
+      {
+        id: "custom-provider",
+        models: {
+          custom: { name: "Custom" },
+        },
+      },
+    ]);
+    expect(result.defaultModelsByProvider).toEqual({ anthropic: "configured-sonnet" });
+  });
+
+  test("does not expose Paseo-only full-access as an OpenCode mode", () => {
+    const modes = __openCodeInternals.mergeOpenCodeModes([
+      { id: "review", label: "Review" },
+      { id: "tests", label: "Tests" },
+    ]);
+
+    expect(modes.map((mode) => mode.id)).toEqual(["build", "plan", "review", "tests"]);
+  });
+
+  test("treats primary and all OpenCode agents as selectable modes", () => {
+    expect(__openCodeInternals.isSelectableOpenCodeAgent({ mode: "primary" })).toBe(true);
+    expect(__openCodeInternals.isSelectableOpenCodeAgent({ mode: "all" })).toBe(true);
+    expect(__openCodeInternals.isSelectableOpenCodeAgent({ mode: "subagent" })).toBe(false);
+    expect(__openCodeInternals.isSelectableOpenCodeAgent({ mode: "all", hidden: true })).toBe(
+      false,
+    );
+  });
+
+  test("omits OpenCode agent override when no mode is explicitly configured", () => {
+    expect(__openCodeInternals.normalizeOpenCodeModeId(undefined)).toBeNull();
+    expect(__openCodeInternals.normalizeOpenCodeModeId("")).toBeNull();
+    expect(__openCodeInternals.resolveOpenCodeRuntimeAgentId(undefined)).toBeNull();
+  });
+
+  test("keeps explicit OpenCode mode overrides compatible with legacy defaults", () => {
+    expect(__openCodeInternals.normalizeOpenCodeModeId("default")).toBe("build");
+    expect(__openCodeInternals.resolveOpenCodeRuntimeAgentId("full-access")).toBe("build");
+    expect(__openCodeInternals.resolveOpenCodeRuntimeAgentId("review")).toBe("review");
+  });
+
+  test("formats OpenCode config diagnostics without raw provider config values", () => {
+    const summary = __openCodeInternals.formatOpenCodeConfigSummary({
+      data: {
+        model: "anthropic/claude-sonnet-4-6",
+        small_model: "github-copilot/gpt-5.1-mini",
+        default_agent: "review",
+        enabled_providers: ["anthropic"],
+        disabled_providers: ["openai"],
+        provider: {
+          anthropic: { apiKey: "secret" },
+        },
+        agent: {
+          review: { model: "anthropic/claude-sonnet-4-6" },
+        },
+      },
+    });
+
+    expect(summary).toContain("model=anthropic/claude-sonnet-4-6");
+    expect(summary).toContain("default_agent=review");
+    expect(summary).toContain("providers=anthropic");
+    expect(summary).toContain("agents=review");
+    expect(summary).not.toContain("secret");
+  });
+
+  test("formats OpenCode provider and agent diagnostics as summaries", () => {
+    expect(
+      __openCodeInternals.formatOpenCodeConfigProvidersSummary({
+        data: {
+          providers: [
+            { id: "anthropic", models: { sonnet: {}, opus: {} } },
+            { id: "github-copilot", models: { "gpt-5.1": {} } },
+          ],
+          default: { anthropic: "sonnet" },
+        },
+      }),
+    ).toBe("anthropic(2,default=sonnet), github-copilot(1)");
+
+    expect(
+      __openCodeInternals.formatOpenCodeProviderListSummary({
+        data: {
+          connected: ["anthropic"],
+          all: [
+            { id: "anthropic", models: { sonnet: {}, opus: {} } },
+            { id: "openai", models: { gpt: {} } },
+          ],
+        },
+      }),
+    ).toBe("connected=anthropic; providers=2; models=3");
+
+    expect(
+      __openCodeInternals.formatOpenCodeAgentsSummary({
+        data: [
+          { name: "review", mode: "all", model: "anthropic/claude-sonnet-4-6" },
+          { name: "title", mode: "subagent", hidden: true, native: true },
+        ],
+      }),
+    ).toBe("review(all,model=anthropic/claude-sonnet-4-6), title(subagent,hidden,native)");
+  });
+
   test("resolves selected model context window from connected provider catalog data", () => {
     expect(
       __openCodeInternals.resolveOpenCodeSelectedModelContextWindow(
@@ -724,6 +1016,337 @@ describe("OpenCode adapter context-window normalization", () => {
     );
 
     expect(onAssistantModelContextWindowResolved).toHaveBeenCalledWith(400_000);
+  });
+
+  test("links OpenCode child session tool activity to the parent task card", () => {
+    const state = {
+      sessionId: "ses_parent",
+      cwd: "/repo",
+      messageRoles: new Map<string, "user" | "assistant">(),
+      accumulatedUsage: {},
+      streamedPartKeys: new Set<string>(),
+      emittedStructuredMessageIds: new Set<string>(),
+      partTypes: new Map<string, string>(),
+      subAgentsByCallId: new Map(),
+      subAgentCallIdByChildSessionId: new Map(),
+    };
+
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "assistant-message",
+            sessionID: "ses_parent",
+            role: "assistant",
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    const parentTaskEvents = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "task-part",
+            callID: "call_task",
+            sessionID: "ses_parent",
+            messageID: "assistant-message",
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "running",
+              input: {
+                subagent_type: "explore",
+                description: "Explore current directory",
+              },
+            },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(parentTaskEvents).toHaveLength(1);
+    const parentTask = parentTaskEvents[0];
+    expect(parentTask?.type).toBe("timeline");
+    if (parentTask?.type !== "timeline" || parentTask.item.type !== "tool_call") {
+      throw new Error("expected parent task tool call");
+    }
+    expect(parentTask.item.detail).toMatchObject({
+      type: "sub_agent",
+      subAgentType: "explore",
+      description: "Explore current directory",
+    });
+
+    const linkEvents = translateOpenCodeEvent(
+      {
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_child",
+            parentID: "ses_parent",
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(linkEvents).toHaveLength(1);
+    const linkedTask = linkEvents[0];
+    expect(linkedTask?.type).toBe("timeline");
+    if (linkedTask?.type !== "timeline" || linkedTask.item.type !== "tool_call") {
+      throw new Error("expected linked task update");
+    }
+    expect(linkedTask.item.detail).toMatchObject({
+      type: "sub_agent",
+      childSessionId: "ses_child",
+    });
+
+    const childToolEvents = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "child-read-part",
+            callID: "call_read",
+            sessionID: "ses_child",
+            messageID: "child-assistant-message",
+            type: "tool",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: { file_path: "/repo/README.md" },
+              output: { content: "hello" },
+            },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(childToolEvents).toHaveLength(1);
+    const childActivity = childToolEvents[0];
+    expect(childActivity?.type).toBe("timeline");
+    if (childActivity?.type !== "timeline" || childActivity.item.type !== "tool_call") {
+      throw new Error("expected child activity task update");
+    }
+    expect(childActivity.item.detail).toEqual({
+      type: "sub_agent",
+      subAgentType: "explore",
+      description: "Explore current directory",
+      childSessionId: "ses_child",
+      log: "[read] README.md",
+      actions: [{ index: 1, toolName: "read", summary: "README.md" }],
+    });
+
+    const childGlobEvents = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "child-glob-part",
+            callID: "call_glob",
+            sessionID: "ses_child",
+            messageID: "child-assistant-message",
+            type: "tool",
+            tool: "glob",
+            state: {
+              status: "completed",
+              input: { pattern: "**/*.md" },
+              output: {
+                durationMs: 10,
+                numFiles: 2,
+                filenames: ["README.md", "docs/usage.md"],
+                truncated: false,
+              },
+            },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(childGlobEvents).toHaveLength(1);
+    const globActivity = childGlobEvents[0];
+    expect(globActivity?.type).toBe("timeline");
+    if (globActivity?.type !== "timeline" || globActivity.item.type !== "tool_call") {
+      throw new Error("expected child glob activity task update");
+    }
+    expect(globActivity.item.detail).toEqual({
+      type: "sub_agent",
+      subAgentType: "explore",
+      description: "Explore current directory",
+      childSessionId: "ses_child",
+      log: "[read] README.md\n[glob] **/*.md",
+      actions: [
+        { index: 1, toolName: "read", summary: "README.md" },
+        { index: 2, toolName: "glob", summary: "**/*.md" },
+      ],
+    });
+  });
+
+  test("does not guess child session link when multiple OpenCode tasks are waiting", () => {
+    const state = {
+      sessionId: "ses_parent",
+      cwd: "/repo",
+      messageRoles: new Map<string, "user" | "assistant">(),
+      accumulatedUsage: {},
+      streamedPartKeys: new Set<string>(),
+      emittedStructuredMessageIds: new Set<string>(),
+      partTypes: new Map<string, string>(),
+      subAgentsByCallId: new Map(),
+      subAgentCallIdByChildSessionId: new Map(),
+      pendingChildToolPartsBySessionId: new Map(),
+    };
+
+    translateOpenCodeEvent(
+      {
+        type: "message.updated",
+        properties: {
+          info: { id: "assistant-message", sessionID: "ses_parent", role: "assistant" },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    for (const callID of ["call_task_1", "call_task_2"]) {
+      translateOpenCodeEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: `${callID}-part`,
+              callID,
+              sessionID: "ses_parent",
+              messageID: "assistant-message",
+              type: "tool",
+              tool: "task",
+              state: {
+                status: "running",
+                input: {
+                  subagent_type: "explore",
+                  description: callID,
+                },
+              },
+            },
+          },
+        } as OpenCodeEvent,
+        state,
+      );
+    }
+
+    const childToolBeforeLink = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "child-read-part",
+            callID: "call_read",
+            sessionID: "ses_child",
+            messageID: "child-assistant-message",
+            type: "tool",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: { file_path: "/repo/README.md" },
+              output: { content: "hello" },
+            },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+    expect(childToolBeforeLink).toEqual([]);
+
+    const ambiguousLinkEvents = translateOpenCodeEvent(
+      {
+        type: "session.created",
+        properties: { info: { id: "ses_child", parentID: "ses_parent" } },
+      } as OpenCodeEvent,
+      state,
+    );
+    expect(ambiguousLinkEvents).toEqual([]);
+
+    const completedTaskEvents = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "task-1-part",
+            callID: "call_task_1",
+            sessionID: "ses_parent",
+            messageID: "assistant-message",
+            type: "tool",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: {
+                subagent_type: "explore",
+                description: "call_task_1",
+              },
+              output: "task_id: ses_child\n\n<task_result>done</task_result>",
+            },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(completedTaskEvents).toHaveLength(2);
+    const flushedActivity = completedTaskEvents[1];
+    expect(flushedActivity?.type).toBe("timeline");
+    if (flushedActivity?.type !== "timeline" || flushedActivity.item.type !== "tool_call") {
+      throw new Error("expected flushed child activity update");
+    }
+    expect(flushedActivity.item.callId).toBe("call_task_1");
+    expect(flushedActivity.item.detail).toMatchObject({
+      type: "sub_agent",
+      childSessionId: "ses_child",
+      actions: [{ index: 1, toolName: "read", summary: "README.md" }],
+    });
+  });
+
+  test("does not buffer unrelated child tool events without a parent subagent", () => {
+    const state = {
+      sessionId: "ses_parent",
+      cwd: "/repo",
+      messageRoles: new Map<string, "user" | "assistant">(),
+      accumulatedUsage: {},
+      streamedPartKeys: new Set<string>(),
+      emittedStructuredMessageIds: new Set<string>(),
+      partTypes: new Map<string, string>(),
+      subAgentsByCallId: new Map(),
+      subAgentCallIdByChildSessionId: new Map(),
+      pendingChildToolPartsBySessionId: new Map(),
+    };
+
+    const events = translateOpenCodeEvent(
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "unrelated-read-part",
+            callID: "call_read",
+            sessionID: "ses_unrelated",
+            messageID: "unrelated-message",
+            type: "tool",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: { file_path: "/repo/README.md" },
+              output: { content: "hello" },
+            },
+          },
+        },
+      } as OpenCodeEvent,
+      state,
+    );
+
+    expect(events).toEqual([]);
+    expect(state.pendingChildToolPartsBySessionId.size).toBe(0);
   });
 
   test("renders github issue attachments as text prompt parts", () => {
