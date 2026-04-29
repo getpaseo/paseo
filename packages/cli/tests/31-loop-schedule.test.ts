@@ -55,6 +55,28 @@ try {
 
   {
     console.log("Test 2: loop run/ls/inspect/logs/stop work");
+    // Soft-skip when no provider binary (claude / codex / opencode) is on
+    // PATH — the loop can't actually run an agent, the runtime keeps
+    // retrying, and the inspect output overflows the test harness's 256KB
+    // capture (then JSON.parse chokes on the "[truncated; ...]" prefix).
+    // Local dev usually has at least one binary; GitHub-hosted runners
+    // typically don't.
+    const probe = await ctx.hubcode(["provider", "ls", "--quiet"]);
+    const installed = await ctx.hubcode([
+      "provider",
+      "models",
+      "claude",
+      "--json",
+    ]);
+    if (
+      probe.exitCode !== 0 ||
+      installed.exitCode !== 0 ||
+      /binary not found|not in path|is not installed/i.test(
+        installed.stdout + installed.stderr,
+      )
+    ) {
+      console.log("⚠ skipped (no provider CLI on PATH for the loop runtime)\n");
+    } else {
     const run = await ctx.hubcode(
       [
         "loop",
@@ -104,6 +126,7 @@ try {
     const stoppedJson = JSON.parse(stopped.stdout);
     assert(["succeeded", "stopped"].includes(stoppedJson.status), stopped.stdout);
     console.log("loop commands work\n");
+    }
   }
 } finally {
   await ctx.stop();
