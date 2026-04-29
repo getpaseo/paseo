@@ -738,10 +738,17 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private sendToClient(ws: WebSocketLike, message: WSOutboundMessage): void {
-    // WebSocket.OPEN = 1
-    if (ws.readyState === 1) {
+    // WebSocket.OPEN = 1. The check is a fast path; the socket can still
+    // transition to closed between here and ws.send(), so guard the send too —
+    // a synchronous throw here would propagate as an uncaughtException.
+    if (ws.readyState !== 1) {
+      return;
+    }
+    try {
       ws.send(JSON.stringify(message));
       this.recordOutboundMessage(message, ws);
+    } catch (err) {
+      this.logger.warn({ err }, "ws_send_failed");
     }
   }
 
@@ -749,8 +756,12 @@ export class VoiceAssistantWebSocketServer {
     if (ws.readyState !== 1) {
       return;
     }
-    ws.send(frame);
-    this.recordOutboundBinaryFrame(ws);
+    try {
+      ws.send(frame);
+      this.recordOutboundBinaryFrame(ws);
+    } catch (err) {
+      this.logger.warn({ err }, "ws_send_binary_failed");
+    }
   }
 
   private sendToConnection(connection: SessionConnection, message: WSOutboundMessage): void {

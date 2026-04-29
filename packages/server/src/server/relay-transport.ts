@@ -396,7 +396,7 @@ async function attachEncryptedSocket(
   metadata?: ExternalSocketMetadata,
 ): Promise<void> {
   try {
-    const relayTransport = createRelayTransportAdapter(socket);
+    const relayTransport = createRelayTransportAdapter(socket, logger);
     const emitter = new EventEmitter();
     const channel = await createDaemonChannel(relayTransport, daemonKeyPair, {
       onmessage: (data) => emitter.emit("message", data),
@@ -418,9 +418,18 @@ async function attachEncryptedSocket(
   }
 }
 
-function createRelayTransportAdapter(socket: WebSocket): RelayTransport {
+function createRelayTransportAdapter(socket: WebSocket, logger: pino.Logger): RelayTransport {
   const relayTransport: RelayTransport = {
-    send: (data) => socket.send(data),
+    send: (data) => {
+      try {
+        socket.send(data);
+      } catch (err) {
+        // Socket likely transitioned to closed between checks; let onclose/onerror
+        // drive cleanup. Without this guard the synchronous throw would propagate
+        // up as an uncaughtException and take down the daemon.
+        logger.warn({ err }, "relay_socket_send_failed");
+      }
+    },
     close: (code?: number, reason?: string) => socket.close(code, reason),
     onmessage: null,
     onclose: null,
