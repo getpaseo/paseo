@@ -186,7 +186,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-type RenderOptions = {
+interface RenderOptions {
   visible?: boolean;
   initialValue?: string;
   title?: string;
@@ -197,7 +197,7 @@ type RenderOptions = {
   validate?: (value: string) => string | null;
   transform?: (value: string) => string;
   maxLength?: number;
-};
+}
 
 function renderModal(options: RenderOptions = {}): void {
   const {

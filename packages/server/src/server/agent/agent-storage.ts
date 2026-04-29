@@ -123,10 +123,11 @@ export class AgentStorage {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
       if (this.deleting.has(agentId)) {
-        return;
+        return undefined;
       }
 
       await this.writeRecord(record);
+      return undefined;
     });
 
     const tracked = next.finally(() => {

@@ -12,11 +12,9 @@ import type {
   AgentClient,
   AgentMode,
   AgentModelDefinition,
-  AgentTimelineItem,
   ListModesOptions,
   ListModelsOptions,
 } from "./agent/agent-sdk-types.js";
-import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderDefinition } from "./agent/provider-registry.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
@@ -29,7 +27,6 @@ interface SessionHandlerInternals {
   handleCheckoutPullRequest(params: unknown): Promise<unknown>;
   handleCheckoutPushRequest(params: unknown): Promise<unknown>;
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
-  handleImportAgentRequest(params: unknown): Promise<unknown>;
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   handleValidateBranchRequest(params: unknown): Promise<unknown>;
@@ -65,10 +62,6 @@ const checkoutGitMocks = vi.hoisted(() => ({
 
 const agentResponseMocks = vi.hoisted(() => ({
   generateStructuredAgentResponseWithFallback: vi.fn(),
-}));
-
-const agentMetadataMocks = vi.hoisted(() => ({
-  scheduleAgentMetadataGeneration: vi.fn(),
 }));
 
 const spawnMocks = vi.hoisted(() => ({
@@ -178,14 +171,6 @@ vi.mock("./agent/agent-response-loop.js", async (importOriginal) => {
     ...actual,
     generateStructuredAgentResponseWithFallback:
       agentResponseMocks.generateStructuredAgentResponseWithFallback,
-  };
-});
-
-vi.mock("./agent/agent-metadata-generator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./agent/agent-metadata-generator.js")>();
-  return {
-    ...actual,
-    scheduleAgentMetadataGeneration: agentMetadataMocks.scheduleAgentMetadataGeneration,
   };
 });
 
@@ -595,87 +580,6 @@ function createTerminalManagerStub(options?: { setTerminalTitle?: ReturnType<typ
 
 afterEach(() => {
   vi.clearAllMocks();
-});
-
-describe("session agent import", () => {
-  test("sets a provisional title and schedules auto-title generation from the first hydrated user message", async () => {
-    const messages: unknown[] = [];
-    const cwd = "/tmp/imported-agent";
-    const timeline: AgentTimelineItem[] = [
-      { type: "user_message", text: "Investigate flaky checkout status\n\ninclude logs" },
-      { type: "assistant_message", text: "I will inspect the checkout flow." },
-    ];
-    const snapshot = {
-      id: "00000000-0000-4000-8000-000000000632",
-      provider: "codex",
-      cwd,
-      capabilities: TEST_CAPABILITIES,
-      config: { provider: "codex", cwd },
-      createdAt: new Date("2026-04-30T00:00:00.000Z"),
-      updatedAt: new Date("2026-04-30T00:00:00.000Z"),
-      availableModes: [],
-      currentModeId: null,
-      pendingPermissions: new Map(),
-      bufferedPermissionResolutions: new Map(),
-      inFlightPermissionResponses: new Set(),
-      pendingReplacement: false,
-      persistence: {
-        provider: "codex",
-        sessionId: "thread-imported",
-        nativeHandle: "thread-imported",
-        metadata: { provider: "codex", cwd },
-      },
-      historyPrimed: true,
-      lastUserMessageAt: null,
-      attention: { requiresAttention: false },
-      foregroundTurnWaiters: new Set(),
-      finalizedForegroundTurnIds: new Set(),
-      unsubscribeSession: null,
-      internal: false,
-      labels: {},
-      lifecycle: "closed",
-      session: null,
-      activeForegroundTurnId: null,
-    } satisfies ManagedAgent;
-    const agentManager = {
-      listAgents: vi.fn(() => []),
-      subscribe: vi.fn(() => () => {}),
-      findPersistedAgent: vi.fn().mockResolvedValue(null),
-      resumeAgentFromPersistence: vi.fn().mockResolvedValue(snapshot),
-      hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
-      getTimeline: vi.fn().mockReturnValue(timeline),
-      setTitle: vi.fn().mockResolvedValue(undefined),
-      notifyAgentState: vi.fn(),
-    };
-    const agentStorage = {
-      list: vi.fn().mockResolvedValue([]),
-      get: vi.fn().mockResolvedValue(null),
-    };
-    const session = createSessionForTest({ messages });
-    Object.assign(session, { agentManager, agentStorage });
-
-    await asSessionInternals(session).handleImportAgentRequest({
-      type: "import_agent_request",
-      provider: "codex",
-      sessionId: "thread-imported",
-      cwd,
-      requestId: "import-thread",
-    });
-
-    expect(agentManager.setTitle).toHaveBeenCalledWith(
-      snapshot.id,
-      "Investigate flaky checkout status",
-    );
-    expect(agentMetadataMocks.scheduleAgentMetadataGeneration).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentManager,
-        agentId: snapshot.id,
-        cwd,
-        initialPrompt: "Investigate flaky checkout status\n\ninclude logs",
-        explicitTitle: null,
-      }),
-    );
-  });
 });
 
 describe("session PR status payload normalization", () => {
@@ -1921,7 +1825,7 @@ describe("session checkout rename branch handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await (session as any).handleCheckoutRenameBranchRequest({
+    await session.handleMessage({
       type: "checkout_rename_branch_request",
       cwd: "/tmp/repo",
       branch: "Feature Name",
@@ -1955,7 +1859,7 @@ describe("session checkout rename branch handling", () => {
     const session = createSessionForTest({ workspaceGitService, messages });
     checkoutGitMocks.renameCurrentBranch.mockRejectedValue(new Error("branch already exists"));
 
-    await (session as any).handleCheckoutRenameBranchRequest({
+    await session.handleMessage({
       type: "checkout_rename_branch_request",
       cwd: "/tmp/repo",
       branch: "feature/new-name",
@@ -2007,7 +1911,7 @@ describe("session checkout rename branch handling", () => {
       currentBranch: "feature/new-name",
     });
 
-    await (session as any).handleCheckoutRenameBranchRequest({
+    await session.handleMessage({
       type: "checkout_rename_branch_request",
       cwd: "/tmp/repo",
       branch: "feature/new-name",
@@ -2042,7 +1946,7 @@ describe("session terminal rename handling", () => {
     const terminalManager = createTerminalManagerStub();
     const session = createSessionForTest({ terminalManager, messages });
 
-    await (session as any).terminalController.dispatch({
+    await session.handleMessage({
       type: "rename_terminal_request",
       terminalId: "terminal-1",
       title: "   ",
@@ -2065,7 +1969,7 @@ describe("session terminal rename handling", () => {
     const terminalManager = createTerminalManagerStub();
     const session = createSessionForTest({ terminalManager, messages });
 
-    await (session as any).terminalController.dispatch({
+    await session.handleMessage({
       type: "rename_terminal_request",
       terminalId: "terminal-1",
       title: "x".repeat(201),
@@ -2090,7 +1994,7 @@ describe("session terminal rename handling", () => {
     });
     const session = createSessionForTest({ terminalManager, messages });
 
-    await (session as any).terminalController.dispatch({
+    await session.handleMessage({
       type: "rename_terminal_request",
       terminalId: "missing-terminal",
       title: "Renamed terminal",
@@ -2118,7 +2022,7 @@ describe("session terminal rename handling", () => {
     });
     const session = createSessionForTest({ terminalManager, messages });
 
-    await (session as any).terminalController.dispatch({
+    await session.handleMessage({
       type: "rename_terminal_request",
       terminalId: "terminal-1",
       title: "  Renamed terminal  ",

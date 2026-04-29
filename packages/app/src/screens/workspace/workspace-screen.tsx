@@ -42,7 +42,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
-import { RenameModal } from "@/components/rename-modal";
 import { SplitContainer } from "@/components/split-container";
 import { SourceControlPanelIcon } from "@/components/icons/source-control-panel-icon";
 import { WorkspaceGitActions } from "@/screens/workspace/workspace-git-actions";
@@ -95,6 +94,7 @@ import {
   WorkspaceTabOptionRow,
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
+import { useWorkspaceTabRename } from "@/screens/workspace/use-workspace-tab-rename";
 import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
@@ -1876,11 +1876,13 @@ function WorkspaceScreenContent({
 
   const [_hoveredTabKey, setHoveredTabKey] = useState<string | null>(null);
   const [hoveredCloseTabKey, setHoveredCloseTabKey] = useState<string | null>(null);
-  const [renamingTab, setRenamingTab] = useState<{
-    kind: "terminal" | "agent";
-    id: string;
-    currentTitle: string;
-  } | null>(null);
+  const { handleRenameTab, renameModal } = useWorkspaceTabRename({
+    client,
+    normalizedServerId,
+    queryClient,
+    terminalsData: terminalsQuery.data,
+    terminalsQueryKey,
+  });
 
   const tabByKey = useMemo(() => {
     const map = new Map<string, WorkspaceTabDescriptor>();
@@ -2145,60 +2147,6 @@ function WorkspaceScreenContent({
     },
     [client, isConnected, toast],
   );
-
-  const handleRenameTab = useCallback(
-    (tab: WorkspaceTabDescriptor) => {
-      if (tab.target.kind === "terminal") {
-        const { terminalId } = tab.target;
-        const terminal =
-          terminalsQuery.data?.terminals.find((entry) => entry.id === terminalId) ?? null;
-        const currentTitle = terminal?.title ?? terminal?.name ?? "";
-        setRenamingTab({ kind: "terminal", id: terminalId, currentTitle });
-        return;
-      }
-      if (tab.target.kind === "agent") {
-        const { agentId } = tab.target;
-        const agent =
-          useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
-        const currentTitle = agent?.title ?? "";
-        setRenamingTab({ kind: "agent", id: agentId, currentTitle });
-      }
-    },
-    [normalizedServerId, terminalsQuery.data],
-  );
-
-  const handleRenameModalSubmit = useCallback(
-    async (nextTitle: string) => {
-      if (!renamingTab) return;
-      if (!client) {
-        throw new Error("Host is not connected");
-      }
-      const trimmed = nextTitle.trim();
-      if (renamingTab.kind === "terminal") {
-        const result = await client.renameTerminal({
-          terminalId: renamingTab.id,
-          title: trimmed,
-        });
-        if (!result.success) {
-          throw new Error(result.error ?? "Failed to rename terminal");
-        }
-        void queryClient.invalidateQueries({ queryKey: terminalsQueryKey });
-        return;
-      }
-      await client.updateAgent(renamingTab.id, { name: trimmed });
-      void queryClient.invalidateQueries({
-        queryKey: ["sidebarAgentsList", normalizedServerId],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["allAgents", normalizedServerId],
-      });
-    },
-    [client, normalizedServerId, queryClient, renamingTab, terminalsQueryKey],
-  );
-
-  const handleRenameModalClose = useCallback(() => {
-    setRenamingTab(null);
-  }, []);
 
   const handleCopyWorkspacePath = useCallback(async () => {
     if (!workspaceDirectory) {
@@ -3092,20 +3040,7 @@ function WorkspaceScreenContent({
           />
         ) : null}
       </View>
-      <RenameModal
-        visible={renamingTab !== null}
-        title={renamingTab?.kind === "terminal" ? "Rename terminal" : "Rename agent"}
-        initialValue={renamingTab?.currentTitle ?? ""}
-        submitLabel="Rename"
-        maxLength={200}
-        onClose={handleRenameModalClose}
-        onSubmit={handleRenameModalSubmit}
-        testID={
-          renamingTab
-            ? `workspace-tab-rename-modal-${renamingTab.kind}-${renamingTab.id}`
-            : undefined
-        }
-      />
+      {renameModal}
     </View>
   );
 }

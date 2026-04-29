@@ -27,11 +27,11 @@ type ManagedAgentOverrides = Omit<
   attention?: ManagedAgent["attention"];
 };
 
-type Deferred<T> = {
+interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
-};
+}
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;

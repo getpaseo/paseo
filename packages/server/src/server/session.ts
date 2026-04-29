@@ -992,7 +992,7 @@ export class Session {
 
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     const descriptor = await this.describeWorkspaceRecordWithGitData(workspace);
-    await this.syncWorkspaceGitObservers([descriptor]);
+    this.syncWorkspaceGitObservers([descriptor]);
   }
 
   async emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void> {
@@ -2033,12 +2033,6 @@ export class Session {
         return this.handleCheckoutSwitchBranchRequest(msg);
       case "checkout_rename_branch_request":
         return this.handleCheckoutRenameBranchRequest(msg);
-      case "stash_save_request":
-        return this.handleStashSaveRequest(msg);
-      case "stash_pop_request":
-        return this.handleStashPopRequest(msg);
-      case "stash_list_request":
-        return this.handleStashListRequest(msg);
       case "checkout_commit_request":
         return this.handleCheckoutCommitRequest(msg);
       case "checkout_merge_request":
@@ -2057,6 +2051,19 @@ export class Session {
         return this.handlePullRequestTimelineRequest(msg);
       case "github_search_request":
         return this.handleGitHubSearchRequest(msg);
+      default:
+        return this.dispatchStashMessage(msg);
+    }
+  }
+
+  private dispatchStashMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "stash_save_request":
+        return this.handleStashSaveRequest(msg);
+      case "stash_pop_request":
+        return this.handleStashPopRequest(msg);
+      case "stash_list_request":
+        return this.handleStashListRequest(msg);
       default:
         return undefined;
     }
@@ -4741,18 +4748,20 @@ export class Session {
     this.onBranchChanged?.(target.workspaceId, previousBranchName, branchName);
   }
 
-  private async syncWorkspaceGitObservers(
-    workspaces: Iterable<WorkspaceDescriptorPayload>,
-  ): Promise<void> {
+  private syncWorkspaceGitObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void {
     for (const workspace of workspaces) {
-      await this.syncWorkspaceGitObserver(workspace.workspaceDirectory, {
+      this.syncWorkspaceGitObserver(workspace.workspaceDirectory, {
         isGit: workspace.projectKind === "git",
+        workspaceId: workspace.id,
       });
       this.rememberWorkspaceGitDescriptorState(workspace.workspaceDirectory, workspace);
     }
   }
 
-  private async syncWorkspaceGitObserver(cwd: string, options: { isGit: boolean }): Promise<void> {
+  private syncWorkspaceGitObserver(
+    cwd: string,
+    options: { isGit: boolean; workspaceId: string },
+  ): void {
     const normalizedCwd = normalizePersistedWorkspaceId(cwd);
     if (!options.isGit) {
       this.removeWorkspaceGitSubscription(normalizedCwd);
@@ -4763,13 +4772,9 @@ export class Session {
       return;
     }
 
-    const workspaceId = this.resolveRegisteredWorkspaceIdForCwd(
-      normalizedCwd,
-      await this.workspaceRegistry.list(),
-    );
     const target: WorkspaceGitWatchTarget = {
       cwd: normalizedCwd,
-      workspaceId,
+      workspaceId: options.workspaceId,
       watchers: [],
       debounceTimer: null,
       refreshPromise: null,
@@ -6956,7 +6961,7 @@ export class Session {
       }
 
       const payload = await this.listFetchWorkspacesEntries(request);
-      await this.syncWorkspaceGitObservers(payload.entries);
+      this.syncWorkspaceGitObservers(payload.entries);
       this.sessionLogger.debug(
         {
           requestId: request.requestId,

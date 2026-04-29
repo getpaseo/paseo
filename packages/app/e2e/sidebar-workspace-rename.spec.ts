@@ -77,26 +77,27 @@ test.describe("Sidebar workspace rename", () => {
       expect(workspace.name).toBe("main");
 
       const renameRequests: Array<{ branch: string; cwd: string }> = [];
-      page.on("websocket", (ws) => {
-        ws.on("framesent", (frame) => {
-          const raw = frame.payload;
-          const text = typeof raw === "string" ? raw : raw.toString("utf8");
-          try {
-            const outer = JSON.parse(text) as {
-              type?: string;
-              message?: { type?: string; cwd?: unknown; branch?: unknown };
-            };
-            const inner = outer.message;
-            if (outer.type === "session" && inner?.type === "checkout_rename_branch_request") {
-              renameRequests.push({
-                branch: String(inner.branch ?? ""),
-                cwd: String(inner.cwd ?? ""),
-              });
-            }
-          } catch {
-            // Ignore non-JSON and binary frames.
+      const handleFrame = (frame: { payload: string | Buffer }): void => {
+        const raw = frame.payload;
+        const text = typeof raw === "string" ? raw : raw.toString("utf8");
+        try {
+          const outer = JSON.parse(text) as {
+            type?: string;
+            message?: { type?: string; cwd?: unknown; branch?: unknown };
+          };
+          const inner = outer.message;
+          if (outer.type === "session" && inner?.type === "checkout_rename_branch_request") {
+            renameRequests.push({
+              branch: String(inner.branch ?? ""),
+              cwd: String(inner.cwd ?? ""),
+            });
           }
-        });
+        } catch {
+          // Ignore non-JSON and binary frames.
+        }
+      };
+      page.on("websocket", (ws) => {
+        ws.on("framesent", handleFrame);
       });
 
       await gotoAppShell(page);
