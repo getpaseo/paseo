@@ -1,6 +1,6 @@
 {
   "name": "@hubcode/cli",
-  "version": "2.7.4",
+  "version": "2.7.5",
   "description": "Control Claude Code, Codex, and OpenCode agents from your terminal — part of Hubcode.",
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -47,8 +47,8 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.0",
-    "@hubcode/relay": "2.7.4",
-    "@hubcode/server": "2.7.4",
+    "@hubcode/relay": "2.7.5",
+    "@hubcode/server": "2.7.5",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
     "mime-types": "^2.1.35",
