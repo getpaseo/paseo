@@ -104,6 +104,10 @@ export function RenameModal({
     onClose();
   }, [isPending, onClose]);
 
+  const handleSubmitVoid = useCallback(() => {
+    void handleSubmit();
+  }, [handleSubmit]);
+
   const submitDisabled = isPending || draft === initialValue || computeError(draft) !== null;
   const inputTestID = testID ? `${testID}-input` : undefined;
   const errorTestID = testID ? `${testID}-error` : undefined;
@@ -123,7 +127,7 @@ export function RenameModal({
           autoCorrect={false}
           editable={!isPending}
           maxLength={maxLength}
-          onSubmitEditing={() => void handleSubmit()}
+          onSubmitEditing={handleSubmitVoid}
           style={styles.input}
           testID={inputTestID}
         />
@@ -136,7 +140,7 @@ export function RenameModal({
           <Button
             variant="secondary"
             size="sm"
-            style={{ flex: 1 }}
+            style={styles.actionButton}
             onPress={handleCancel}
             disabled={isPending}
             testID={cancelTestID}
@@ -145,8 +149,8 @@ export function RenameModal({
           </Button>
           <Button
             size="sm"
-            style={{ flex: 1 }}
-            onPress={() => void handleSubmit()}
+            style={styles.actionButton}
+            onPress={handleSubmitVoid}
             disabled={submitDisabled}
             testID={submitTestID}
           >
@@ -181,5 +185,8 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  actionButton: {
+    flex: 1,
   },
 }));

@@ -27,7 +27,7 @@ interface SessionInternals {
     lastEmittedByWorkspaceId: Map<string, unknown>;
   };
   buildWorkspaceDescriptorMap: () => Promise<Map<string, unknown>>;
-  syncWorkspaceGitObserver(cwd: string, details: { isGit: boolean }): Promise<void>;
+  syncWorkspaceGitObserver(cwd: string, details: { isGit: boolean; workspaceId: string }): void;
   listAgentPayloads: () => Promise<unknown[]>;
 }
 
@@ -320,7 +320,7 @@ describe("workspace git watch targets", () => {
 
     sessionAny.buildWorkspaceDescriptorMap = async () => new Map([[descriptor.id, descriptor]]);
 
-    await sessionAny.syncWorkspaceGitObserver(REPO_CWD, { isGit: true });
+    sessionAny.syncWorkspaceGitObserver(REPO_CWD, { isGit: true, workspaceId: "ws-10" });
 
     expect(workspaceGitService.registerWorkspace).toHaveBeenCalledWith(
       { cwd: REPO_CWD },
@@ -379,7 +379,7 @@ describe("workspace git watch targets", () => {
       lastEmittedByWorkspaceId: new Map(),
     };
 
-    await sessionAny.syncWorkspaceGitObserver(REPO_CWD, { isGit: true });
+    sessionAny.syncWorkspaceGitObserver(REPO_CWD, { isGit: true, workspaceId: "ws-10" });
     emitted.length = 0;
 
     subscriptions[0]?.listener(
@@ -452,7 +452,7 @@ describe("workspace git watch targets", () => {
         onBranchChanged: handleBranchChange,
       },
     );
-    const sessionAny = session as any;
+    const sessionAny = session as unknown as SessionInternals;
     seedGitWorkspace({
       projects,
       workspaces,
@@ -462,7 +462,7 @@ describe("workspace git watch targets", () => {
       name: "old-branch",
     });
 
-    await sessionAny.syncWorkspaceGitObserver("/tmp/repo", { isGit: true });
+    sessionAny.syncWorkspaceGitObserver("/tmp/repo", { isGit: true, workspaceId: "ws-10" });
 
     subscriptions[0]?.listener(
       createWorkspaceRuntimeSnapshot("/tmp/repo", {
@@ -510,7 +510,7 @@ describe("workspace git watch targets", () => {
       lastEmittedByWorkspaceId: new Map(),
     };
 
-    await sessionAny.syncWorkspaceGitObserver(REPO_CWD, { isGit: true });
+    sessionAny.syncWorkspaceGitObserver(REPO_CWD, { isGit: true, workspaceId: "ws-10" });
     emitted.length = 0;
 
     subscriptions[0]?.listener(

@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { RenameModal } from "@/components/rename-modal";
 import { Button } from "@/components/ui/button";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Switch } from "@/components/ui/switch";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
@@ -189,10 +188,13 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
     [host.label, host.serverId, renameHost],
   );
 
+  const openEditor = useCallback(() => setIsEditing(true), []);
+  const closeEditor = useCallback(() => setIsEditing(false), []);
+
   return (
     <>
       <Pressable
-        onPress={() => setIsEditing(true)}
+        onPress={openEditor}
         hitSlop={8}
         style={styles.identityEditButton}
         accessibilityRole="button"
@@ -208,7 +210,7 @@ export function HostRenameButton({ host }: { host: HostProfile }) {
         initialValue={host.label}
         placeholder="My Host"
         submitLabel="Save"
-        onClose={() => setIsEditing(false)}
+        onClose={closeEditor}
         onSubmit={handleSubmit}
         testID="host-page-rename-modal"
       />

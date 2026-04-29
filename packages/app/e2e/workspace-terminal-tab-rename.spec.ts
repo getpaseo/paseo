@@ -2,11 +2,11 @@ import { test, expect, type Page } from "./fixtures";
 import { createTempGitRepo } from "./helpers/workspace";
 import { connectTerminalClient, navigateToTerminal } from "./helpers/terminal-perf";
 
-type RenameTerminalFrame = {
+interface RenameTerminalFrame {
   terminalId: string;
   title: string;
   requestId: string;
-};
+}
 
 function captureRenameTerminalFrames(page: Page): RenameTerminalFrame[] {
   const captured: RenameTerminalFrame[] = [];

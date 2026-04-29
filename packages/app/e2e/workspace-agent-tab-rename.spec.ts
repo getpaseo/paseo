@@ -9,11 +9,11 @@ import {
 import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 
-type UpdateAgentFrame = {
+interface UpdateAgentFrame {
   agentId: string;
   name: string;
   requestId: string;
-};
+}
 
 function getServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
