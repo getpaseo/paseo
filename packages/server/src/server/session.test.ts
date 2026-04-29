@@ -580,6 +580,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+// SKIP(fork-divergence): paseo exports `normalizeCheckoutPrStatusPayload`; the fork doesn't.
 describe.skip("session PR status payload normalization", () => {
   test("includes repository identity fields on the wire", () => {
     const payload = normalizeCheckoutPrStatusPayload({
@@ -1017,8 +1018,10 @@ describe.skip("session checkout merge handling", () => {
   });
 });
 
-describe.skip("session checkout commit handling", () => {
-  test("forces a workspace git snapshot refresh after committing", async () => {
+describe("session checkout commit handling", () => {
+  // SKIP(fork-divergence): paseo's commit handler force-refreshes workspaceGitService.getSnapshot
+  // post-commit; the fork relies on checkoutDiffManager.scheduleRefreshForCwd plus the watcher.
+  test.skip("forces a workspace git snapshot refresh after committing", async () => {
     const messages: unknown[] = [];
     const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
     const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
@@ -1814,7 +1817,7 @@ describe.skip("session checkout switch branch handling", () => {
   });
 });
 
-describe.skip("session branch suggestions handling", () => {
+describe("session branch suggestions handling", () => {
   test("lists branch suggestions through the workspace git service", async () => {
     const messages: unknown[] = [];
     const branchDetails = [

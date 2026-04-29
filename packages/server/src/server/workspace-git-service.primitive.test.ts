@@ -138,6 +138,8 @@ function createSnapshot(
         isMerged: false,
       },
       error: null,
+      // Fork-only field: ISO timestamp of the last GitHub probe attempt.
+      refreshedAt: "2026-04-12T00:00:00.000Z",
     },
   };
 
@@ -158,6 +160,10 @@ function createSnapshot(
         overrides?.github && "error" in overrides.github
           ? (overrides.github.error ?? null)
           : base.github.error,
+      refreshedAt:
+        overrides?.github && "refreshedAt" in overrides.github
+          ? (overrides.github.refreshedAt ?? null)
+          : base.github.refreshedAt,
     },
   };
 }
@@ -252,10 +258,7 @@ function createService(options?: CreateServiceOptions) {
   });
 }
 
-// TODO(port-paseo): paseo's WorkspaceGitServiceImpl exposes registerWorkspace/scheduleRefreshForCwd
-// and a richer D2 read API (validateBranchRef, hasLocalBranch, suggestBranchesForCwd, listStashes,
-// listWorktrees, resolveRepoRemoteUrl, getCheckoutDiff). The fork's service uses the older API.
-describe.skip("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
+describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -445,6 +448,8 @@ describe.skip("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
         currentBranch: "feature",
         diffStat: { additions: 4, deletions: 2 },
       },
+      // Fork-only: refreshedAt reflects the refresh tick (initial+16s).
+      github: { refreshedAt: new Date(nowMs).toISOString() },
     });
     await expect(Promise.all([first, second])).resolves.toEqual([freshSnapshot, freshSnapshot]);
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
@@ -555,7 +560,9 @@ describe.skip("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     service.dispose();
   });
 
-  test("internal min-gap throttles back-to-back non-forced refreshes", async () => {
+  // SKIP(fork-divergence): the fork's `refresh()` intentionally sets bypassThrottle:true so an
+  // explicit refresh() recomputes; paseo throttles even explicit refreshes within the min-gap.
+  test.skip("internal min-gap throttles back-to-back non-forced refreshes", async () => {
     let nowMs = 0;
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
     const service = createService({
@@ -901,9 +908,7 @@ describe.skip("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
   });
 });
 
-// TODO(port-paseo): D2 read API methods (validateBranchRef, hasLocalBranch, suggestBranchesForCwd,
-// listStashes, listWorktrees, resolveRepoRemoteUrl, getCheckoutDiff, etc.) are paseo additions.
-describe.skip("WorkspaceGitServiceImpl D2 read methods", () => {
+describe("WorkspaceGitServiceImpl D2 read methods", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -1036,12 +1041,18 @@ describe.skip("WorkspaceGitServiceImpl D2 read methods", () => {
 
   test("suggestBranchesForCwd cold-loads, warms, forces, and coalesces per query", async () => {
     let nowMs = 0;
-    const suggestions = [{ name: "feature", committerDate: 1, hasLocal: true, hasRemote: false }];
-    const suggestionsDeferred = createDeferred<typeof suggestions>();
+    // Fork-divergence: fork's listBranchSuggestions returns string[]; the service wraps each name
+    // into a {name, committerDate:0, hasLocal:false, hasRemote:false} record. Adjust the mock and
+    // expectation to match that wrapping.
+    const branchNames = ["feature"];
+    const expectedSuggestions = [
+      { name: "feature", committerDate: 0, hasLocal: false, hasRemote: false },
+    ];
+    const suggestionsDeferred = createDeferred<typeof branchNames>();
     const listBranchSuggestions = vi
       .fn()
       .mockImplementationOnce(async () => suggestionsDeferred.promise)
-      .mockResolvedValue(suggestions);
+      .mockResolvedValue(branchNames);
     const service = createService({
       listBranchSuggestions,
       now: () => new Date(nowMs),
@@ -1055,8 +1066,11 @@ describe.skip("WorkspaceGitServiceImpl D2 read methods", () => {
     await flushPromises();
 
     expect(listBranchSuggestions).toHaveBeenCalledTimes(1);
-    suggestionsDeferred.resolve(suggestions);
-    await expect(Promise.all([first, second])).resolves.toEqual([suggestions, suggestions]);
+    suggestionsDeferred.resolve(branchNames);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expectedSuggestions,
+      expectedSuggestions,
+    ]);
 
     nowMs = 1_000;
     await service.suggestBranchesForCwd("/tmp/repo", { query: "feat", limit: 5 });
@@ -1294,7 +1308,8 @@ describe.skip("WorkspaceGitServiceImpl D2 read methods", () => {
       service.getWorkspaceGitMetadata("/tmp/repo", { directoryName: "Local Repo" }),
     ).resolves.toEqual({
       projectKind: "git",
-      projectDisplayName: "gethubcode/hubcode",
+      // Fork-divergence: derived owner/repo from the actual remote URL ("hubtool/hubcode").
+      projectDisplayName: "hubtool/hubcode",
       workspaceDisplayName: "feature/service-metadata",
       gitRemote: "https://github.com/hubtool/hubcode.git",
       isWorktree: false,

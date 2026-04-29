@@ -173,9 +173,7 @@ import { PushTokenStore } from "./push/token-store.js";
 import { type WorktreeConfig } from "../utils/worktree.js";
 import { runAsyncWorktreeBootstrap } from "./worktree-bootstrap.js";
 import {
-  getCheckoutDiff,
   getCheckoutStatus,
-  listBranchSuggestions,
   commitChanges,
   mergeToBase,
   mergeFromBase,
@@ -4146,11 +4144,10 @@ export class Session {
   }
 
   private async generateCommitMessage(cwd: string): Promise<string> {
-    const diff = await getCheckoutDiff(
-      cwd,
-      { mode: "uncommitted", includeStructured: true },
-      { hubcodeHome: this.hubcodeHome },
-    );
+    const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
+      mode: "uncommitted",
+      includeStructured: true,
+    });
     const schema = z.object({
       message: z
         .string()
@@ -4215,15 +4212,11 @@ export class Session {
     title: string;
     body: string;
   }> {
-    const diff = await getCheckoutDiff(
-      cwd,
-      {
-        mode: "base",
-        baseRef,
-        includeStructured: true,
-      },
-      { hubcodeHome: this.hubcodeHome },
-    );
+    const diff = await this.workspaceGitService.getCheckoutDiff(cwd, {
+      mode: "base",
+      baseRef,
+      includeStructured: true,
+    });
     const schema = z.object({
       title: z.string().min(1).max(72),
       body: z.string().min(1),
@@ -4905,11 +4898,15 @@ export class Session {
 
     try {
       const resolvedCwd = expandTilde(cwd);
-      const branches = await listBranchSuggestions(resolvedCwd, { query, limit });
+      const branchDetails = await this.workspaceGitService.suggestBranchesForCwd(resolvedCwd, {
+        query,
+        limit,
+      });
       this.emit({
         type: "branch_suggestions_response",
         payload: {
-          branches,
+          branches: branchDetails.map((entry) => entry.name),
+          branchDetails,
           error: null,
           requestId,
         },
