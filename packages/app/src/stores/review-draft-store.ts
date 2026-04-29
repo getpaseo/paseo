@@ -128,6 +128,26 @@ function createDraftComment(input: ReviewDraftCommentInput): ReviewDraftComment 
   };
 }
 
+function applyCommentUpdates(
+  comment: ReviewDraftComment,
+  targetId: string,
+  updates: Partial<Pick<ReviewDraftComment, "body">>,
+  updatedAt: string,
+): ReviewDraftComment {
+  if (comment.id !== targetId) {
+    return comment;
+  }
+  return {
+    id: comment.id,
+    filePath: comment.filePath,
+    side: comment.side,
+    lineNumber: comment.lineNumber,
+    body: updates.body ?? comment.body,
+    createdAt: comment.createdAt,
+    updatedAt,
+  };
+}
+
 function normalizePersistedState(state: unknown): ReviewDraftStoreState {
   if (!state || typeof state !== "object") {
     return { drafts: {}, activeModesByScope: {} };
@@ -213,17 +233,12 @@ export const useReviewDraftStore = create<ReviewDraftStore>()(
       updateComment: ({ key, id, updates, updatedAt }) => {
         set((state) => {
           const comments = state.drafts[key] ?? [];
+          const nextUpdatedAt = updatedAt ?? new Date().toISOString();
           return {
             drafts: {
               ...state.drafts,
               [key]: comments.map((comment) =>
-                comment.id === id
-                  ? {
-                      ...comment,
-                      ...updates,
-                      updatedAt: updatedAt ?? new Date().toISOString(),
-                    }
-                  : comment,
+                applyCommentUpdates(comment, id, updates, nextUpdatedAt),
               ),
             },
           };
@@ -405,6 +420,6 @@ export function useReviewAttachmentSnapshot(input: {
         comments,
         diffFiles: input.diffFiles,
       }),
-    [comments, input.cwd, input.mode, input.baseRef, input.diffFiles],
+    [comments, input.key, input.cwd, input.mode, input.baseRef, input.diffFiles],
   );
 }

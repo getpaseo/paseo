@@ -19,13 +19,13 @@ import {
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 
 const { mockClient } = vi.hoisted(() => {
-  const mockClient = {
+  const client = {
     getCheckoutStatus: vi.fn(),
     subscribeCheckoutDiff: vi.fn(),
     unsubscribeCheckoutDiff: vi.fn(),
     on: vi.fn(() => () => {}),
   };
-  return { mockClient };
+  return { mockClient: client };
 });
 
 vi.mock("@/runtime/host-runtime", () => ({

@@ -1,11 +1,34 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { MessageCircle, Pencil, Trash2 } from "lucide-react-native";
-import { Pressable, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
+import {
+  Pressable,
+  type PressableStateCallbackType,
+  Text,
+  TextInput,
+  type TextStyle,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ReviewDraftComment } from "@/stores/review-draft-store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
+
+type PressableState = PressableStateCallbackType & { hovered?: boolean };
+
+function iconButtonStyle({ hovered, pressed }: PressableState): StyleProp<ViewStyle> {
+  return [styles.iconButton, (hovered || pressed) && styles.iconButtonHovered];
+}
+
+function iconButtonDestructiveStyle({ hovered, pressed }: PressableState): StyleProp<ViewStyle> {
+  return [styles.iconButton, (hovered || pressed) && styles.iconButtonDestructiveHovered];
+}
+
+function ghostButtonStyle({ hovered, pressed }: PressableState): StyleProp<ViewStyle> {
+  return [styles.ghostButton, (hovered || pressed) && styles.ghostButtonHovered];
+}
 
 export const INLINE_REVIEW_COMMENT_HEIGHT = 72;
 export const INLINE_REVIEW_EDITOR_HEIGHT = 132;
@@ -134,21 +157,33 @@ export function InlineReviewGutterCell({
   const canComment = Boolean(reviewTarget);
   const hasComments = comments.length > 0;
 
+  const handlePress = useCallback(() => {
+    if (reviewTarget) {
+      onStartComment(reviewTarget);
+    }
+  }, [reviewTarget, onStartComment]);
+
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableState): StyleProp<ViewStyle> => [
+      style,
+      canComment && (hovered || pressed) && styles.gutterHovered,
+    ],
+    [style, canComment],
+  );
+
+  const labelStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [styles.gutterLabel, hasComments && styles.gutterLabelActive],
+    [hasComments],
+  );
+
   return (
     <Pressable
       accessibilityRole={canComment ? "button" : undefined}
       accessibilityLabel={canComment ? "Add review comment" : undefined}
       hitSlop={canComment ? SMALL_ACTION_HIT_SLOP : undefined}
       disabled={!canComment}
-      onPress={() => {
-        if (reviewTarget) {
-          onStartComment(reviewTarget);
-        }
-      }}
-      style={({ hovered, pressed }) => [
-        style,
-        canComment && (hovered || pressed) && styles.gutterHovered,
-      ]}
+      onPress={handlePress}
+      style={pressableStyle}
     >
       {({ hovered, pressed }) => {
         const showAction =
@@ -156,7 +191,7 @@ export function InlineReviewGutterCell({
           (hovered || pressed || isNative || showPersistentAction || hasComments || isEditorOpen);
         return (
           <View style={styles.gutterInner}>
-            <View style={[styles.gutterLabel, hasComments && styles.gutterLabelActive]}>
+            <View style={labelStyle}>
               {showAction ? (
                 <MessageCircle
                   size={13}
@@ -189,7 +224,6 @@ export function InlineReviewThread({
   pinToViewport?: boolean;
   testID?: string;
 }) {
-  const { theme } = useUnistyles();
   const comments = reviewActions.commentsByTarget.get(reviewTarget.key) ?? [];
   const editor = isInlineReviewEditorForTarget(reviewActions.editor, reviewTarget)
     ? reviewActions.editor
@@ -198,67 +232,96 @@ export function InlineReviewThread({
   const editingExisting =
     editingCommentId !== null && comments.some((comment) => comment.id === editingCommentId);
 
-  const renderEditor = () =>
-    editor ? (
-      <InlineReviewEditor
-        key={editingCommentId ?? "new"}
-        initialBody={editor.body}
-        onCancel={reviewActions.onCancelEditor}
-        onSave={reviewActions.onSaveEditor}
-        testID="inline-review-editor"
-      />
-    ) : null;
+  const editorElement = editor ? (
+    <InlineReviewEditor
+      key={editingCommentId ?? "new"}
+      initialBody={editor.body}
+      onCancel={reviewActions.onCancelEditor}
+      onSave={reviewActions.onSaveEditor}
+      testID="inline-review-editor"
+    />
+  ) : null;
+
+  const containerStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [
+      styles.threadContainer,
+      getInlineReviewThreadViewportStyle({ viewportWidth, pinToViewport }),
+      { minHeight: height },
+    ],
+    [viewportWidth, pinToViewport, height],
+  );
 
   return (
-    <View
-      style={[
-        styles.threadContainer,
-        getInlineReviewThreadViewportStyle({ viewportWidth, pinToViewport }),
-        { minHeight: height },
-      ]}
-      testID={testID}
-    >
+    <View style={containerStyle} testID={testID}>
       {comments.map((comment) => {
         if (comment.id === editingCommentId) {
-          return <React.Fragment key={comment.id}>{renderEditor()}</React.Fragment>;
+          return <React.Fragment key={comment.id}>{editorElement}</React.Fragment>;
         }
         return (
-          <View key={comment.id} style={styles.commentBlock}>
-            <Text style={styles.commentBody} numberOfLines={2}>
-              {comment.body}
-            </Text>
-            <View style={styles.commentActions}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Edit review comment"
-                testID={`review-comment-edit-${comment.id}`}
-                hitSlop={SMALL_ACTION_HIT_SLOP}
-                onPress={() => reviewActions.onEditComment(reviewTarget, comment)}
-                style={({ hovered, pressed }) => [
-                  styles.iconButton,
-                  (hovered || pressed) && styles.iconButtonHovered,
-                ]}
-              >
-                <Pencil size={14} color={theme.colors.foregroundMuted} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Delete review comment"
-                testID={`review-comment-delete-${comment.id}`}
-                hitSlop={SMALL_ACTION_HIT_SLOP}
-                onPress={() => reviewActions.onDeleteComment(comment.id)}
-                style={({ hovered, pressed }) => [
-                  styles.iconButton,
-                  (hovered || pressed) && styles.iconButtonDestructiveHovered,
-                ]}
-              >
-                <Trash2 size={14} color={theme.colors.destructive} />
-              </Pressable>
-            </View>
-          </View>
+          <CommentRow
+            key={comment.id}
+            comment={comment}
+            reviewTarget={reviewTarget}
+            onEditComment={reviewActions.onEditComment}
+            onDeleteComment={reviewActions.onDeleteComment}
+          />
         );
       })}
-      {editor && !editingExisting ? renderEditor() : null}
+      {editor && !editingExisting ? editorElement : null}
+    </View>
+  );
+}
+
+function CommentRow({
+  comment,
+  reviewTarget,
+  onEditComment,
+  onDeleteComment,
+}: {
+  comment: ReviewDraftComment;
+  reviewTarget: ReviewableDiffTarget;
+  onEditComment: (target: ReviewableDiffTarget, comment: ReviewDraftComment) => void;
+  onDeleteComment: (id: string) => void;
+}) {
+  const { theme } = useUnistyles();
+
+  const handleEdit = useCallback(
+    () => onEditComment(reviewTarget, comment),
+    [onEditComment, reviewTarget, comment],
+  );
+
+  const handleDelete = useCallback(
+    () => onDeleteComment(comment.id),
+    [onDeleteComment, comment.id],
+  );
+
+  return (
+    <View style={styles.commentBlock}>
+      <Text style={styles.commentBody} numberOfLines={2}>
+        {comment.body}
+      </Text>
+      <View style={styles.commentActions}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Edit review comment"
+          testID={`review-comment-edit-${comment.id}`}
+          hitSlop={SMALL_ACTION_HIT_SLOP}
+          onPress={handleEdit}
+          style={iconButtonStyle}
+        >
+          <Pencil size={14} color={theme.colors.foregroundMuted} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Delete review comment"
+          testID={`review-comment-delete-${comment.id}`}
+          hitSlop={SMALL_ACTION_HIT_SLOP}
+          onPress={handleDelete}
+          style={iconButtonDestructiveStyle}
+        >
+          <Trash2 size={14} color={theme.colors.destructive} />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -300,6 +363,24 @@ export function InlineReviewEditor({
     inputRef.current?.focus();
   }, []);
 
+  const handleFocus = useCallback(() => setIsFocused(true), []);
+  const handleBlur = useCallback(() => setIsFocused(false), []);
+  const handleSave = useCallback(() => onSave(trimmedBody), [onSave, trimmedBody]);
+
+  const inputStyle = useMemo<StyleProp<TextStyle>>(
+    () => [styles.editorInput, isFocused && styles.editorInputFocused],
+    [isFocused],
+  );
+
+  const saveButtonStyle = useCallback(
+    ({ hovered, pressed }: PressableState): StyleProp<ViewStyle> => [
+      styles.saveButton,
+      !canSave && styles.saveButtonDisabled,
+      canSave && (hovered || pressed) && styles.saveButtonHovered,
+    ],
+    [canSave],
+  );
+
   return (
     <View style={styles.editorBlock} testID={testID}>
       <TextInput
@@ -311,9 +392,9 @@ export function InlineReviewEditor({
         multiline
         value={body}
         onChangeText={setBody}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
-        style={[styles.editorInput, isFocused && styles.editorInputFocused]}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        style={inputStyle}
       />
       <View style={styles.editorActions}>
         <Pressable
@@ -322,10 +403,7 @@ export function InlineReviewEditor({
           testID={testID ? `${testID}-cancel` : undefined}
           hitSlop={SMALL_ACTION_HIT_SLOP}
           onPress={onCancel}
-          style={({ hovered, pressed }) => [
-            styles.ghostButton,
-            (hovered || pressed) && styles.ghostButtonHovered,
-          ]}
+          style={ghostButtonStyle}
         >
           <Text style={styles.ghostButtonText}>Cancel</Text>
         </Pressable>
@@ -335,12 +413,8 @@ export function InlineReviewEditor({
           testID={testID ? `${testID}-save` : undefined}
           hitSlop={SMALL_ACTION_HIT_SLOP}
           disabled={!canSave}
-          onPress={() => onSave(trimmedBody)}
-          style={({ hovered, pressed }) => [
-            styles.saveButton,
-            !canSave && styles.saveButtonDisabled,
-            canSave && (hovered || pressed) && styles.saveButtonHovered,
-          ]}
+          onPress={handleSave}
+          style={saveButtonStyle}
         >
           <Text style={styles.saveButtonText}>Save</Text>
         </Pressable>

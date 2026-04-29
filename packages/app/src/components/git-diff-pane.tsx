@@ -225,6 +225,10 @@ interface DiffFileSectionProps {
   testID?: string;
 }
 
+const EMPTY_COMMENTS: readonly ReviewDraftComment[] = [];
+
+function noopStartComment(): void {}
+
 function lineTypeBackground(type: DiffLine["type"] | undefined | null) {
   if (!type) return styles.emptySplitCell;
   if (type === "add") return styles.addLineContainer;
@@ -260,10 +264,15 @@ function DiffGutterCell({
     ],
     [type],
   );
-  const comments = reviewTarget
-    ? (reviewActions?.commentsByTarget.get(reviewTarget.key) ?? [])
-    : [];
+  const comments = useMemo(
+    () =>
+      reviewTarget
+        ? (reviewActions?.commentsByTarget.get(reviewTarget.key) ?? EMPTY_COMMENTS)
+        : EMPTY_COMMENTS,
+    [reviewTarget, reviewActions?.commentsByTarget],
+  );
   const isEditorOpen = isInlineReviewEditorForTarget(reviewActions?.editor ?? null, reviewTarget);
+  const onStartComment = reviewActions?.onStartComment ?? noopStartComment;
 
   return (
     <InlineReviewGutterCell
@@ -271,7 +280,7 @@ function DiffGutterCell({
       comments={comments}
       isEditorOpen={isEditorOpen}
       showPersistentAction={reviewActions?.showPersistentAction ?? false}
-      onStartComment={reviewActions?.onStartComment ?? (() => undefined)}
+      onStartComment={onStartComment}
       style={containerStyle}
     >
       <Text numberOfLines={1} style={textStyle}>
@@ -462,11 +471,12 @@ function InlineReviewThreadContent({
 }) {
   const threadState = getInlineReviewThreadState({ reviewTarget, reviewActions });
   const height = reservedHeight ?? threadState?.height ?? 0;
+  const placeholderStyle = useMemo<ViewStyle>(() => ({ minHeight: height }), [height]);
   if (height === 0) {
     return null;
   }
   if (!reviewTarget || !reviewActions || !threadState) {
-    return <View style={{ minHeight: height }} />;
+    return <View style={placeholderStyle} />;
   }
 
   return (
@@ -496,15 +506,15 @@ function InlineReviewGutterSpacer({
 }) {
   const threadState = getInlineReviewThreadState({ reviewTarget, reviewActions });
   const height = reservedHeight ?? threadState?.height ?? 0;
+  const spacerStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [styles.inlineReviewGutterSpacer, { width: gutterWidth, minHeight: height }, style],
+    [gutterWidth, height, style],
+  );
   if (height === 0) {
     return null;
   }
 
-  return (
-    <View
-      style={[styles.inlineReviewGutterSpacer, { width: gutterWidth, minHeight: height }, style]}
-    />
-  );
+  return <View style={spacerStyle} />;
 }
 
 function InlineReviewRow({
@@ -520,13 +530,18 @@ function InlineReviewRow({
 }) {
   const threadState = getInlineReviewThreadState({ reviewTarget, reviewActions });
   const height = reservedHeight ?? threadState?.height ?? 0;
+  const gutterSpacerStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [styles.inlineReviewGutterSpacer, { width: gutterWidth }],
+    [gutterWidth],
+  );
+  const placeholderStyle = useMemo<ViewStyle>(() => ({ minHeight: height }), [height]);
   if (height === 0) {
     return null;
   }
 
   return (
     <View style={styles.inlineReviewRow}>
-      <View style={[styles.inlineReviewGutterSpacer, { width: gutterWidth }]} />
+      <View style={gutterSpacerStyle} />
       {reviewTarget && reviewActions && threadState ? (
         <InlineReviewThread
           reviewTarget={reviewTarget}
@@ -535,7 +550,7 @@ function InlineReviewRow({
           testID={`review-thread-${reviewTarget.key}`}
         />
       ) : (
-        <View style={{ minHeight: height }} />
+        <View style={placeholderStyle} />
       )}
     </View>
   );

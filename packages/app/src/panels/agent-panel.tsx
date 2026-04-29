@@ -44,7 +44,6 @@ import {
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
-import { usePanelStore } from "@/stores/panel-store";
 import { type Agent, useSessionStore } from "@/stores/session-store";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";

@@ -122,6 +122,22 @@ function target(overrides: Partial<ReviewableDiffTarget> = {}): ReviewableDiffTa
   };
 }
 
+const EMPTY_COMMENTS: ReviewDraftComment[] = [];
+
+function buildReviewActions(overrides: Partial<InlineReviewActions> = {}): InlineReviewActions {
+  return {
+    commentsByTarget: new Map(),
+    editor: null,
+    showPersistentAction: false,
+    onStartComment: vi.fn(),
+    onEditComment: vi.fn(),
+    onCancelEditor: vi.fn(),
+    onSaveEditor: vi.fn(),
+    onDeleteComment: vi.fn(),
+    ...overrides,
+  };
+}
+
 function comment(overrides: Partial<ReviewDraftComment> = {}): ReviewDraftComment {
   return {
     id: "comment-1",
@@ -211,7 +227,7 @@ describe("git diff inline review helpers", () => {
     const { getByLabelText } = render(
       <InlineReviewGutterCell
         reviewTarget={reviewTarget}
-        comments={[]}
+        comments={EMPTY_COMMENTS}
         isEditorOpen={false}
         showPersistentAction={false}
         onStartComment={onStartComment}
@@ -230,7 +246,7 @@ describe("git diff inline review helpers", () => {
     const { container, queryByText } = render(
       <InlineReviewGutterCell
         reviewTarget={reviewTarget}
-        comments={[]}
+        comments={EMPTY_COMMENTS}
         isEditorOpen={false}
         showPersistentAction
         onStartComment={vi.fn()}
@@ -280,16 +296,9 @@ describe("InlineReviewThread", () => {
   it("exposes edit and delete actions for existing comments", () => {
     const reviewTarget = target();
     const draftComment = comment();
-    const actions: InlineReviewActions = {
+    const actions = buildReviewActions({
       commentsByTarget: groupInlineReviewCommentsByTarget([draftComment]),
-      editor: null,
-      showPersistentAction: false,
-      onStartComment: vi.fn(),
-      onEditComment: vi.fn(),
-      onCancelEditor: vi.fn(),
-      onSaveEditor: vi.fn(),
-      onDeleteComment: vi.fn(),
-    };
+    });
 
     const { getByTestId, getByText } = render(
       <InlineReviewThread

@@ -117,6 +117,47 @@ function getGeneratedReviewAttachmentKey(
   });
 }
 
+interface MergedComposerAttachments {
+  selectedAttachments: ComposerAttachment[];
+  generatedAttachmentKey: string | null;
+  suppressGeneratedAttachment: () => void;
+  resetSuppressionForKey: (key: string | null) => void;
+}
+
+function useMergedComposerAttachments(
+  normalAttachments: UserComposerAttachment[],
+  generatedAttachment: GeneratedReviewComposerAttachment | null,
+): MergedComposerAttachments {
+  const [suppressedKey, setSuppressedKey] = useState<string | null>(null);
+  const generatedAttachmentKey = useMemo(
+    () => getGeneratedReviewAttachmentKey(generatedAttachment),
+    [generatedAttachment],
+  );
+  const isSuppressed = generatedAttachmentKey === suppressedKey;
+  const selectedAttachments = useMemo<ComposerAttachment[]>(
+    () =>
+      generatedAttachment && generatedAttachmentKey && !isSuppressed
+        ? [...normalAttachments, generatedAttachment]
+        : normalAttachments,
+    [generatedAttachment, generatedAttachmentKey, isSuppressed, normalAttachments],
+  );
+  useEffect(() => {
+    setSuppressedKey((current) => (current && current !== generatedAttachmentKey ? null : current));
+  }, [generatedAttachmentKey]);
+  const suppressGeneratedAttachment = useCallback(() => {
+    setSuppressedKey(generatedAttachmentKey);
+  }, [generatedAttachmentKey]);
+  const resetSuppressionForKey = useCallback((key: string | null) => {
+    setSuppressedKey(key);
+  }, []);
+  return {
+    selectedAttachments,
+    generatedAttachmentKey,
+    suppressGeneratedAttachment,
+    resetSuppressionForKey,
+  };
+}
+
 function noop() {}
 
 function resolveComposerButtonIconSize(): number {
@@ -270,10 +311,10 @@ function findGithubItemByOption(
 }
 
 function isAttachmentSelectedForGithubItem(
-  attachments: readonly ComposerAttachment[],
+  current: readonly ComposerAttachment[],
   item: GitHubSearchItem,
 ): boolean {
-  return attachments.some(
+  return current.some(
     (attachment) =>
       attachment.kind !== "image" &&
       attachment.kind !== "review" &&
@@ -500,15 +541,57 @@ async function dispatchAgentMessageSend(args: DispatchAgentMessageSendArgs): Pro
 function openComposerAttachment(
   attachment: ComposerAttachment,
   setLightboxMetadata: (metadata: AttachmentMetadata) => void,
+  onOpenGeneratedAttachment?: () => void,
 ): void {
   if (attachment.kind === "image") {
     setLightboxMetadata(attachment.metadata);
     return;
   }
   if (attachment.kind === "review") {
+    onOpenGeneratedAttachment?.();
     return;
   }
   void openExternalUrl(attachment.item.url);
+}
+
+function removeComposerAttachment(
+  attachments: readonly ComposerAttachment[],
+  index: number,
+  setSelectedAttachments: (updater: AttachmentListUpdater) => void,
+  suppressGeneratedAttachment: () => void,
+): void {
+  const selected = attachments[index];
+  if (selected?.kind === "review") {
+    suppressGeneratedAttachment();
+    return;
+  }
+  setSelectedAttachments((prev) => removeAttachmentAtIndex(prev, index));
+}
+
+function finalizeSubmitResult(args: {
+  result: Awaited<ReturnType<typeof submitAgentInput>>;
+  outgoingAttachments: ComposerAttachment[];
+  clearIncludedReviewDrafts: (attachments: readonly ComposerAttachment[]) => void;
+  resetSuppressionForKey: (key: string | null) => void;
+}): void {
+  const { result, outgoingAttachments, clearIncludedReviewDrafts, resetSuppressionForKey } = args;
+  if (result === "submitted") {
+    clearIncludedReviewDrafts(outgoingAttachments);
+  }
+  if (result === "queued" || result === "submitted") {
+    resetSuppressionForKey(null);
+  }
+}
+
+function clearReviewDraftsFromAttachments(
+  attachments: readonly ComposerAttachment[],
+  clearReviewDraft: (args: { key: string }) => void,
+): void {
+  for (const attachment of attachments) {
+    if (attachment.kind === "review") {
+      clearReviewDraft({ key: attachment.reviewDraftKey });
+    }
+  }
 }
 
 interface CancelRunningAgentArgs {
@@ -1108,29 +1191,8 @@ export function Composer({
   const messagePlaceholder = resolveMessagePlaceholder(isDesktopWebBreakpoint);
   const userInput = value;
   const setUserInput = onChangeText;
-  const [suppressedGeneratedAttachmentKey, setSuppressedGeneratedAttachmentKey] = useState<
-    string | null
-  >(null);
-  const normalAttachments = attachments;
-  const generatedAttachmentKey = useMemo(
-    () => getGeneratedReviewAttachmentKey(generatedAttachment),
-    [generatedAttachment],
-  );
-  const selectedAttachments = useMemo(() => {
-    if (
-      !generatedAttachment ||
-      !generatedAttachmentKey ||
-      suppressedGeneratedAttachmentKey === generatedAttachmentKey
-    ) {
-      return normalAttachments;
-    }
-    return [...normalAttachments, generatedAttachment];
-  }, [
-    normalAttachments,
-    generatedAttachment,
-    generatedAttachmentKey,
-    suppressedGeneratedAttachmentKey,
-  ]);
+  const { selectedAttachments, suppressGeneratedAttachment, resetSuppressionForKey } =
+    useMergedComposerAttachments(attachments, generatedAttachment);
   const setSelectedAttachments = onChangeAttachments;
   const [cursorIndex, setCursorIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1171,12 +1233,6 @@ export function Composer({
   useEffect(() => {
     setCursorIndex((current) => Math.min(current, userInput.length));
   }, [userInput.length]);
-
-  useEffect(() => {
-    setSuppressedGeneratedAttachmentKey((current) =>
-      current && current !== generatedAttachmentKey ? null : current,
-    );
-  }, [generatedAttachmentKey]);
 
   const { pickImages } = useImageAttachmentPicker();
   const agentIdRef = useRef(agentId);
@@ -1275,12 +1331,8 @@ export function Composer({
   );
 
   const clearIncludedReviewDrafts = useCallback(
-    (attachments: readonly ComposerAttachment[]) => {
-      for (const attachment of attachments) {
-        if (attachment.kind === "review") {
-          clearReviewDraft({ key: attachment.reviewDraftKey });
-        }
-      }
+    (toClear: readonly ComposerAttachment[]) => {
+      clearReviewDraftsFromAttachments(toClear, clearReviewDraft);
     },
     [clearReviewDraft],
   );
@@ -1304,12 +1356,13 @@ export function Composer({
 
       setUserInput("");
       setSelectedAttachments([]);
-      setSuppressedGeneratedAttachmentKey(null);
+      resetSuppressionForKey(null);
       clearIncludedReviewDrafts(queuedAttachments);
     },
     [
       agentId,
       clearIncludedReviewDrafts,
+      resetSuppressionForKey,
       serverId,
       setQueuedMessages,
       setSelectedAttachments,
@@ -1351,12 +1404,12 @@ export function Composer({
           console.error("[AgentInput] Failed to send message:", error);
         },
       });
-      if (result === "submitted") {
-        clearIncludedReviewDrafts(outgoingAttachments);
-      }
-      if (result === "queued" || result === "submitted") {
-        setSuppressedGeneratedAttachmentKey(null);
-      }
+      finalizeSubmitResult({
+        result,
+        outgoingAttachments,
+        clearIncludedReviewDrafts,
+        resetSuppressionForKey,
+      });
     },
     [
       allowEmptySubmit,
@@ -1365,6 +1418,7 @@ export function Composer({
       isAgentRunning,
       clearIncludedReviewDrafts,
       queueMessage,
+      resetSuppressionForKey,
       setSelectedAttachments,
       setUserInput,
       submitBehavior,
@@ -1390,23 +1444,19 @@ export function Composer({
 
   const handleRemoveAttachment = useCallback(
     (index: number) => {
-      const selected = selectedAttachments[index];
-      if (selected?.kind === "review") {
-        setSuppressedGeneratedAttachmentKey(generatedAttachmentKey);
-        return;
-      }
-      setSelectedAttachments((prev) => removeAttachmentAtIndex(prev, index));
+      removeComposerAttachment(
+        selectedAttachments,
+        index,
+        setSelectedAttachments,
+        suppressGeneratedAttachment,
+      );
     },
-    [generatedAttachmentKey, selectedAttachments, setSelectedAttachments],
+    [selectedAttachments, setSelectedAttachments, suppressGeneratedAttachment],
   );
 
   const handleOpenAttachment = useCallback(
     (attachment: ComposerAttachment) => {
-      if (attachment.kind === "review") {
-        onOpenGeneratedAttachment?.();
-        return;
-      }
-      openComposerAttachment(attachment, setLightboxMetadata);
+      openComposerAttachment(attachment, setLightboxMetadata, onOpenGeneratedAttachment);
     },
     [onOpenGeneratedAttachment],
   );
@@ -1578,7 +1628,6 @@ export function Composer({
     ],
   );
 
-  const isVoiceSwitchingValue = voice?.isVoiceSwitching ?? false;
   const rightContent = useMemo(
     () => (
       <ComposerRightControlsSlot
@@ -1590,7 +1639,7 @@ export function Composer({
         buttonIconSize={buttonIconSize}
         handleToggleRealtimeVoice={handleToggleRealtimeVoice}
         isConnected={isConnected}
-        isVoiceSwitching={isVoiceSwitchingValue}
+        isVoiceSwitching={isVoiceSwitching}
         realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
         voiceToggleKeys={voiceToggleKeys}
         cancelButton={cancelButton}
@@ -1606,7 +1655,7 @@ export function Composer({
       isConnected,
       isProcessing,
       isVoiceModeForAgent,
-      isVoiceSwitchingValue,
+      isVoiceSwitching,
       realtimeVoiceButtonStyle,
       voiceToggleKeys,
     ],
