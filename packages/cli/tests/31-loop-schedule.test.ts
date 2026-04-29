@@ -62,70 +62,63 @@ try {
     // Local dev usually has at least one binary; GitHub-hosted runners
     // typically don't.
     const probe = await ctx.hubcode(["provider", "ls", "--quiet"]);
-    const installed = await ctx.hubcode([
-      "provider",
-      "models",
-      "claude",
-      "--json",
-    ]);
+    const installed = await ctx.hubcode(["provider", "models", "claude", "--json"]);
     if (
       probe.exitCode !== 0 ||
       installed.exitCode !== 0 ||
-      /binary not found|not in path|is not installed/i.test(
-        installed.stdout + installed.stderr,
-      )
+      /binary not found|not in path|is not installed/i.test(installed.stdout + installed.stderr)
     ) {
       console.log("⚠ skipped (no provider CLI on PATH for the loop runtime)\n");
     } else {
-    const run = await ctx.hubcode(
-      [
-        "loop",
-        "run",
-        "Return any response",
-        "--name",
-        "smoke-loop",
-        "--verify-check",
-        "true",
-        "--json",
-      ],
-      { timeout: 30000 },
-    );
-    assert.strictEqual(run.exitCode, 0, run.stderr);
-    const runJson = JSON.parse(run.stdout);
-    assert.strictEqual(runJson.name, "smoke-loop");
+      const run = await ctx.hubcode(
+        [
+          "loop",
+          "run",
+          "Return any response",
+          "--name",
+          "smoke-loop",
+          "--verify-check",
+          "true",
+          "--json",
+        ],
+        { timeout: 30000 },
+      );
+      assert.strictEqual(run.exitCode, 0, run.stderr);
+      const runJson = JSON.parse(run.stdout);
+      assert.strictEqual(runJson.name, "smoke-loop");
 
-    const listed = await ctx.hubcode(["loop", "ls", "--json"]);
-    assert.strictEqual(listed.exitCode, 0, listed.stderr);
-    const listedJson = JSON.parse(listed.stdout);
-    assert(Array.isArray(listedJson), listed.stdout);
-    assert(
-      listedJson.some((item: { id: string }) => item.id === runJson.id),
-      listed.stdout,
-    );
+      const listed = await ctx.hubcode(["loop", "ls", "--json"]);
+      assert.strictEqual(listed.exitCode, 0, listed.stderr);
+      const listedJson = JSON.parse(listed.stdout);
+      assert(Array.isArray(listedJson), listed.stdout);
+      assert(
+        listedJson.some((item: { id: string }) => item.id === runJson.id),
+        listed.stdout,
+      );
 
-    let status = "running";
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      const inspect = await ctx.hubcode(["loop", "inspect", runJson.id, "--json"]);
-      assert.strictEqual(inspect.exitCode, 0, inspect.stderr);
-      const inspectJson = JSON.parse(inspect.stdout);
-      status = inspectJson.status;
-      if (status !== "running") {
-        assert.strictEqual(status, "succeeded", inspect.stdout);
-        break;
+      let status = "running";
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const inspect = await ctx.hubcode(["loop", "inspect", runJson.id, "--json"]);
+        assert.strictEqual(inspect.exitCode, 0, inspect.stderr);
+        const inspectJson = JSON.parse(inspect.stdout);
+        status = inspectJson.status;
+        if (status !== "running") {
+          assert.strictEqual(status, "succeeded", inspect.stdout);
+          break;
+        }
+        await sleep(250);
       }
-      await sleep(250);
-    }
-    assert.strictEqual(status, "succeeded");
+      assert.strictEqual(status, "succeeded");
 
-    const logs = await ctx.hubcode(["loop", "logs", runJson.id], { timeout: 15000 });
-    assert.strictEqual(logs.exitCode, 0, logs.stderr);
-    assert(logs.stdout.includes("verify-check"), logs.stdout);
+      const logs = await ctx.hubcode(["loop", "logs", runJson.id], { timeout: 15000 });
+      assert.strictEqual(logs.exitCode, 0, logs.stderr);
+      assert(logs.stdout.includes("verify-check"), logs.stdout);
 
-    const stopped = await ctx.hubcode(["loop", "stop", runJson.id, "--json"]);
-    assert.strictEqual(stopped.exitCode, 0, stopped.stderr);
-    const stoppedJson = JSON.parse(stopped.stdout);
-    assert(["succeeded", "stopped"].includes(stoppedJson.status), stopped.stdout);
-    console.log("loop commands work\n");
+      const stopped = await ctx.hubcode(["loop", "stop", runJson.id, "--json"]);
+      assert.strictEqual(stopped.exitCode, 0, stopped.stderr);
+      const stoppedJson = JSON.parse(stopped.stdout);
+      assert(["succeeded", "stopped"].includes(stoppedJson.status), stopped.stdout);
+      console.log("loop commands work\n");
     }
   }
 } finally {
