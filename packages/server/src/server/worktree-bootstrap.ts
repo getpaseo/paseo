@@ -1010,7 +1010,11 @@ export async function spawnWorktreeScripts(options: {
   onLifecycleChanged?: () => void;
 }): Promise<WorktreeScriptResult[]> {
   const { repoRoot, projectSlug } = options;
-  const scriptConfigs = getScriptConfigs(repoRoot);
+  const configResult = readPaseoConfig(repoRoot);
+  if (!configResult.ok) {
+    throw paseoConfigParseError(configResult);
+  }
+  const scriptConfigs = getScriptConfigs(configResult.config);
   if (scriptConfigs.size === 0) {
     return [];
   }
