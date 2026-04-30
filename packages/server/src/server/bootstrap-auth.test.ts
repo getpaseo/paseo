@@ -20,13 +20,22 @@ function connectWebSocket(params: {
   });
 }
 
-async function expectWebSocketRejects(params: {
+async function expectWebSocketCloses(params: {
   port: number;
   protocol?: string;
-  statusCode: number;
+  code: number;
+  reason: string;
 }): Promise<void> {
-  await expect(connectWebSocket(params)).rejects.toMatchObject({
-    message: `Unexpected server response: ${params.statusCode}`,
+  const { ws } = await connectWebSocket(params);
+  await expect(
+    new Promise<{ code: number; reason: string }>((resolve) => {
+      ws.once("close", (code, reason) => {
+        resolve({ code, reason: reason.toString() });
+      });
+    }),
+  ).resolves.toEqual({
+    code: params.code,
+    reason: params.reason,
   });
 }
 
@@ -94,19 +103,21 @@ describe("daemon bearer auth", () => {
     }
   });
 
-  test("requires paseo.bearer subprotocol on WebSocket upgrades when password is configured", async () => {
+  test("closes WebSocket connections with readable auth failures when password is configured", async () => {
     const daemonHandle = await createTestPaseoDaemon({
       auth: { password: CORRECT_PASSWORD_HASH },
     });
     try {
-      await expectWebSocketRejects({
+      await expectWebSocketCloses({
         port: daemonHandle.port,
-        statusCode: 401,
+        code: 4401,
+        reason: "Password required",
       });
-      await expectWebSocketRejects({
+      await expectWebSocketCloses({
         port: daemonHandle.port,
         protocol: "paseo.bearer.wrong-password",
-        statusCode: 401,
+        code: 4401,
+        reason: "Incorrect password",
       });
 
       const { ws, protocol } = await connectWebSocket({

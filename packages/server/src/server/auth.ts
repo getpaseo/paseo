@@ -7,6 +7,12 @@ export interface DaemonAuthConfig {
   password?: string;
 }
 
+export interface BearerAuthRejectContext {
+  path: string;
+  method: string;
+  hasToken: boolean;
+}
+
 interface BearerValidationInput {
   password: string | undefined;
   token: string | null;
@@ -80,7 +86,10 @@ export function extractWsBearerToken(protocol: string | null): string | null {
   return segments.slice(2).join(".");
 }
 
-export function createRequireBearerMiddleware(auth: DaemonAuthConfig | undefined): RequestHandler {
+export function createRequireBearerMiddleware(
+  auth: DaemonAuthConfig | undefined,
+  onReject?: (context: BearerAuthRejectContext) => void,
+): RequestHandler {
   const password = auth?.password;
   return (req, res, next) => {
     if (!password || shouldBypassBearerAuth(req.method, req.path)) {
@@ -92,6 +101,11 @@ export function createRequireBearerMiddleware(auth: DaemonAuthConfig | undefined
       try {
         const token = extractHttpBearerToken(req.header("authorization"));
         if (!(await isBearerTokenValidAsync({ password, token }))) {
+          onReject?.({
+            path: req.path,
+            method: req.method,
+            hasToken: token !== null,
+          });
           res.status(401).json({ error: "Unauthorized" });
           return;
         }

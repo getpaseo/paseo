@@ -326,7 +326,11 @@ export async function createPaseoDaemon(
     next();
   });
 
-  app.use(createRequireBearerMiddleware(config.auth));
+  app.use(
+    createRequireBearerMiddleware(config.auth, (context) => {
+      logger.warn(context, "Rejected HTTP request with invalid daemon password");
+    }),
+  );
 
   // Script proxy — intercepts requests for registered *.localhost hostnames
   // and forwards them to the corresponding local script port. Placed after
@@ -774,15 +778,23 @@ export async function createPaseoDaemon(
               {
                 host: boundListenTarget.host,
                 port: boundListenTarget.port,
+                authRequired: !!config.auth?.password,
                 elapsed: elapsed(),
               },
               `Server listening on http://${boundListenTarget.host}:${boundListenTarget.port}`,
             );
           } else {
             logger.info(
-              { path: boundListenTarget.path, elapsed: elapsed() },
+              {
+                path: boundListenTarget.path,
+                authRequired: !!config.auth?.password,
+                elapsed: elapsed(),
+              },
               `Server listening on ${boundListenTarget.path}`,
             );
+          }
+          if (config.auth?.password) {
+            logger.info("Daemon password authentication enabled");
           }
 
           wsServer = new VoiceAssistantWebSocketServer(

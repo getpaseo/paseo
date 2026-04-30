@@ -1,4 +1,4 @@
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { basename, join } from "path";
 import { hostname as getHostname } from "node:os";
@@ -55,9 +55,11 @@ import { createGitHubService, type GitHubService } from "../services/github-serv
 import {
   extractWsBearerProtocol,
   extractWsBearerToken,
-  isBearerTokenValidAsync,
+  isBearerTokenValid,
   type DaemonAuthConfig,
 } from "./auth.js";
+
+const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
 export interface ExternalSocketMetadata {
   transport: "relay";
@@ -584,11 +586,11 @@ export class VoiceAssistantWebSocketServer {
       path: "/ws",
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
-        void this.verifyWsClient(req, allowedOrigins, hostnames, password, callback);
+        this.verifyWsUpgrade(req, allowedOrigins, hostnames, callback);
       },
     });
     wss.on("connection", (ws, request) => {
-      void this.attachSocket(ws, request);
+      void this.attachAuthenticatedSocket(ws, request, password);
     });
     return wss;
   }
@@ -601,13 +603,12 @@ export class VoiceAssistantWebSocketServer {
     (runtimeMetricsInterval as unknown as { unref?: () => void }).unref?.();
   }
 
-  private async verifyWsClient(
+  private verifyWsUpgrade(
     req: IncomingMessage,
     allowedOrigins: Set<string>,
     hostnames: HostnamesConfig | undefined,
-    password: string | undefined,
     callback: (res: boolean, code?: number, message?: string) => void,
-  ): Promise<void> {
+  ): void {
     const requestMetadata = extractSocketRequestMetadata(req);
     const origin = requestMetadata.origin;
     const requestHost = requestMetadata.host ?? null;
@@ -619,14 +620,6 @@ export class VoiceAssistantWebSocketServer {
       );
       callback(false, 403, "Host not allowed");
       return;
-    }
-    if (password) {
-      const protocol = extractWsBearerProtocol(req.headers["sec-websocket-protocol"]);
-      const token = extractWsBearerToken(protocol);
-      if (!(await isBearerTokenValidAsync({ password, token }))) {
-        callback(false, 401, "Unauthorized");
-        return;
-      }
     }
     const sameOrigin =
       !!origin &&
@@ -640,6 +633,30 @@ export class VoiceAssistantWebSocketServer {
       this.logger.warn({ ...requestMetadata, origin }, "Rejected connection from origin");
       callback(false, 403, "Origin not allowed");
     }
+  }
+
+  private async attachAuthenticatedSocket(
+    ws: WebSocket,
+    request: IncomingMessage,
+    password: string | undefined,
+  ): Promise<void> {
+    if (password) {
+      const requestMetadata = extractSocketRequestMetadata(request);
+      const protocol = extractWsBearerProtocol(request.headers["sec-websocket-protocol"]);
+      const token = extractWsBearerToken(protocol);
+      const isAuthorized = isBearerTokenValid({ password, token });
+      if (!isAuthorized) {
+        const reason = token === null ? "Password required" : "Incorrect password";
+        this.logger.warn(
+          { ...requestMetadata, hasToken: token !== null },
+          "Rejected WebSocket connection with invalid daemon password",
+        );
+        ws.close(WS_CLOSE_DAEMON_AUTH_FAILED, reason);
+        return;
+      }
+    }
+
+    await this.attachSocket(ws, request);
   }
 
   public broadcast(message: WSOutboundMessage): void {

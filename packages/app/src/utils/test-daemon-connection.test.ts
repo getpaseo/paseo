@@ -90,6 +90,7 @@ describe("test-daemon-connection connectToDaemon", () => {
   beforeEach(() => {
     daemonClientMock.reset();
     clientIdMock.getOrCreateClientId.mockClear();
+    vi.stubGlobal("__DEV__", false);
   });
 
   it("reuses the app clientId for direct connections", async () => {

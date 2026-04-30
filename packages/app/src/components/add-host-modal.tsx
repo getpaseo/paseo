@@ -224,8 +224,8 @@ function buildConnectionFailureCopy(
   const rawLower = raw?.toLowerCase() ?? "";
   let detail: string | null = null;
 
-  if (raw === "Incorrect password") {
-    detail = "Incorrect password";
+  if (raw === "Incorrect password" || raw === "Password required") {
+    detail = raw;
   } else if (rawLower.includes("timed out")) {
     detail = "Connection timed out. Check the host/port and your network.";
   } else if (
