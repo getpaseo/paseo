@@ -117,6 +117,7 @@ export interface WorkspaceDescriptor {
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   name: string;
   status: WorkspaceDescriptorPayload["status"];
+  archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
   gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
@@ -137,6 +138,7 @@ export function normalizeWorkspaceDescriptor(
     workspaceKind: payload.workspaceKind,
     name: payload.name,
     status: payload.status,
+    archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
     gitRuntime: payload.gitRuntime,

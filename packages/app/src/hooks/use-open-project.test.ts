@@ -78,6 +78,7 @@ describe("openProjectDirectly", () => {
             projectKind: "git" as const,
             workspaceKind: "checkout" as const,
             name: "project",
+            archivingAt: null,
             status: "done" as const,
             activityAt: null,
             diffStat: null,

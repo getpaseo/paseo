@@ -2136,6 +2136,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     // COMPAT(workspaces): keep legacy directory workspace kind parseable.
     workspaceKind: z.enum(["directory", "local_checkout", "checkout", "worktree"]),
     name: z.string(),
+    archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     activityAt: z.string().nullable(),
     diffStat: z

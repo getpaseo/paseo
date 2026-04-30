@@ -57,6 +57,7 @@ function workspaceDescriptor(id: string): WorkspaceDescriptor {
     workspaceKind: "worktree",
     name: id,
     status: "done",
+    archivingAt: null,
     diffStat: null,
     scripts: [],
   };

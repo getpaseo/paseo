@@ -191,7 +191,6 @@ function removeWorktreeFromSessionStore(input: { serverId: string; worktreePath:
 
 function restoreWorktreeArchiveState(input: {
   serverId: string;
-  worktreePath: string;
   snapshot: WorktreeArchiveSnapshot;
 }): void {
   if (input.snapshot.workspace) {
@@ -221,6 +220,16 @@ const inFlight = new Map<string, Promise<unknown>>();
 
 function inFlightKey(key: CheckoutKey, actionId: CheckoutGitAsyncActionId): string {
   return `${key}::${actionId}`;
+}
+
+export function isLocalWorktreeArchivePending(input: { serverId: string; cwd: string }): boolean {
+  return (
+    useCheckoutGitActionsStore.getState().getStatus({
+      serverId: input.serverId,
+      cwd: input.cwd,
+      actionId: "archive-worktree",
+    }) === "pending"
+  );
 }
 
 interface CheckoutGitActionsStoreState {
@@ -436,7 +445,7 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
             throw new Error(payload.error.message);
           }
         } catch (error) {
-          restoreWorktreeArchiveState({ serverId, worktreePath, snapshot });
+          restoreWorktreeArchiveState({ serverId, snapshot });
           throw error;
         }
         invalidateWorktreeList();

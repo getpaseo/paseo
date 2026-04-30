@@ -79,7 +79,9 @@ export interface AgentMcpServerOptions {
   github?: GitHubService;
   workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
   archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
-  emitWorkspaceUpdatesForCwds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForCwds"];
+  emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
+  markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
+  clearWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["clearWorkspaceArchiving"];
   emitSessionMessage?: ArchivePaseoWorktreeDependencies["emit"];
   createPaseoWorktree?: CreatePaseoWorktreeFn;
   paseoHome?: string;
@@ -1850,8 +1852,14 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       if (!options.archiveWorkspaceRecord) {
         throw new Error("Workspace registry archiver is required to archive worktrees");
       }
-      if (!options.emitWorkspaceUpdatesForCwds) {
+      if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
         throw new Error("Workspace update emitter is required to archive worktrees");
+      }
+      if (!options.markWorkspaceArchiving) {
+        throw new Error("Workspace archiving marker is required to archive worktrees");
+      }
+      if (!options.clearWorkspaceArchiving) {
+        throw new Error("Workspace archiving clearer is required to archive worktrees");
       }
       if (!options.emitSessionMessage) {
         throw new Error("Session message emitter is required to archive worktrees");
@@ -1870,7 +1878,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           agentStorage,
           archiveWorkspaceRecord: options.archiveWorkspaceRecord,
           emit: options.emitSessionMessage,
-          emitWorkspaceUpdatesForCwds: options.emitWorkspaceUpdatesForCwds,
+          emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
+          markWorkspaceArchiving: options.markWorkspaceArchiving,
+          clearWorkspaceArchiving: options.clearWorkspaceArchiving,
           isPathWithinRoot: isSameOrDescendantPath,
           killTerminalsUnderPath: (rootPath) =>
             killTerminalsUnderPath(

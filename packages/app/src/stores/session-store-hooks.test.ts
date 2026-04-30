@@ -34,6 +34,7 @@ function createWorkspace(
     workspaceKind: input.workspaceKind ?? "local_checkout",
     name: input.name ?? "main",
     status: input.status ?? "done",
+    archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
   };

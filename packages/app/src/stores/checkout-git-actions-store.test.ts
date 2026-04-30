@@ -7,6 +7,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   __resetCheckoutGitActionsStoreForTests,
   invalidateCheckoutGitQueriesForClient,
+  isLocalWorktreeArchivePending,
   useCheckoutGitActionsStore,
 } from "@/stores/checkout-git-actions-store";
 
@@ -39,6 +40,7 @@ function workspace(input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescripto
     workspaceKind: input.workspaceKind ?? "worktree",
     name: input.name ?? input.id,
     status: input.status ?? "done",
+    archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
   } satisfies WorkspaceDescriptor;
@@ -207,6 +209,7 @@ describe("checkout-git-actions-store", () => {
     expect(appQueryClient.getQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"])).toEqual([
       { worktreePath: "/tmp/other" },
     ]);
+    expect(isLocalWorktreeArchivePending({ serverId, cwd })).toBe(true);
 
     deferred.resolve({});
     await archive;
@@ -232,5 +235,26 @@ describe("checkout-git-actions-store", () => {
     expect(appQueryClient.getQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"])).toEqual(
       listSnapshot,
     );
+  });
+
+  it("reports local archive pending only while the archive action is in flight", async () => {
+    const deferred = createDeferred<Record<string, never>>();
+    const client = {
+      archivePaseoWorktree: vi.fn(() => deferred.promise),
+    };
+    const featureWorkspace = workspace({ id: cwd, name: "feature" });
+    useSessionStore.getState().initializeSession(serverId, client as unknown as DaemonClient);
+    useSessionStore.getState().setWorkspaces(serverId, new Map([[cwd, featureWorkspace]]));
+
+    const archive = useCheckoutGitActionsStore
+      .getState()
+      .archiveWorktree({ serverId, cwd, worktreePath: cwd });
+
+    expect(isLocalWorktreeArchivePending({ serverId, cwd })).toBe(true);
+
+    deferred.resolve({});
+    await archive;
+
+    expect(isLocalWorktreeArchivePending({ serverId, cwd })).toBe(false);
   });
 });

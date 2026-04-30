@@ -21,6 +21,7 @@ function createWorkspace(
     workspaceKind: input.workspaceKind ?? "checkout",
     name: input.name ?? "main",
     status: input.status ?? "running",
+    archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
   };

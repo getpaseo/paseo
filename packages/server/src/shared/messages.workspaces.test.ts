@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { describe, expect, test } from "vitest";
-import { SessionInboundMessageSchema, SessionOutboundMessageSchema } from "./messages.js";
+import {
+  SessionInboundMessageSchema,
+  SessionOutboundMessageSchema,
+  WorkspaceDescriptorPayloadSchema,
+} from "./messages.js";
 
 describe("workspace message schemas", () => {
   test("parses fetch_workspaces_request", () => {
@@ -279,6 +283,31 @@ describe("workspace message schemas", () => {
       throw new Error("Expected workspace_update upsert payload");
     }
     expect(parsed.payload.workspace.workspaceDirectory).toBe("/repo");
+  });
+
+  test("defaults omitted workspace archiving state and preserves present timestamps", () => {
+    const baseWorkspace = {
+      id: "ws-archiving",
+      projectId: "proj-archiving",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    } as const;
+    const archivingAt = "2026-04-30T20:45:00.000Z";
+
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).archivingAt).toBeNull();
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({
+        ...baseWorkspace,
+        archivingAt,
+      }).archivingAt,
+    ).toBe(archivingAt);
   });
 
   test("parses legacy workspace descriptor enum values", () => {

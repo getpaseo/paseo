@@ -83,6 +83,7 @@ function workspace(input: {
     workspaceKind: input.name === "main" ? "local_checkout" : "worktree",
     name: input.name,
     status: input.status ?? "done",
+    archivingAt: null,
     diffStat: null,
     scripts: input.scripts ?? [],
   };

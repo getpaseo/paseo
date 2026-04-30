@@ -900,6 +900,7 @@ export class Session {
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
   private readonly workspaceGitFetchSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitSubscriptions = new Map<string, () => void>();
+  private readonly archivingByWorkspaceId = new Map<string, string>();
   private registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
   private unregisterVoiceSpeakHandler?: (agentId: string) => void;
   private registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
@@ -1022,8 +1023,19 @@ export class Session {
     await this.archiveWorkspaceRecord(workspaceId);
   }
 
-  async emitWorkspaceUpdatesForExternalCwds(cwds: Iterable<string>): Promise<void> {
-    await this.emitWorkspaceUpdatesForCwds(cwds);
+  markWorkspaceArchivingForExternalMutation(
+    workspaceIds: Iterable<string>,
+    archivingAt: string,
+  ): void {
+    this.markWorkspaceArchiving(workspaceIds, archivingAt);
+  }
+
+  clearWorkspaceArchivingForExternalMutation(workspaceIds: Iterable<string>): void {
+    this.clearWorkspaceArchiving(workspaceIds);
+  }
+
+  async emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void> {
+    await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
   }
 
   async warmWorkspaceGitDataForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
@@ -5361,14 +5373,13 @@ export class Session {
         workspaceGitService: this.workspaceGitService,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
-        archiveWorkspaceRecord: async (workspaceDirectory) => {
-          const workspace = await this.findWorkspaceByDirectory(workspaceDirectory);
-          if (workspace) {
-            await this.archiveWorkspaceRecord(workspace.workspaceId);
-          }
-        },
+        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
         emit: (message) => this.emit(message),
-        emitWorkspaceUpdatesForCwds: (cwds) => this.emitWorkspaceUpdatesForCwds(cwds),
+        emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+          this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+        markWorkspaceArchiving: (workspaceIds, archivingAt) =>
+          this.markWorkspaceArchiving(workspaceIds, archivingAt),
+        clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
         isPathWithinRoot: (rootPath, candidatePath) =>
           this.isPathWithinRoot(rootPath, candidatePath),
         killTerminalsUnderPath: (rootPath) => this.killTerminalsUnderPath(rootPath),
@@ -6064,6 +6075,7 @@ export class Session {
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
       workspaceKind: workspace.kind,
       name: workspace.displayName,
+      archivingAt: null,
       status: "done",
       activityAt: null,
       diffStat,
@@ -6151,6 +6163,7 @@ export class Session {
       projectKind: "git",
       workspaceKind: result.workspace.kind,
       name: result.worktree.branchName || result.workspace.displayName,
+      archivingAt: null,
       status: "done",
       activityAt: null,
       diffStat: { additions: 0, deletions: 0 },
@@ -6177,6 +6190,18 @@ export class Session {
       return this.describeWorkspaceRecordWithGitData(input.workspace, input.projectRecord);
     }
     return this.describeWorkspaceRecord(input.workspace, input.projectRecord);
+  }
+
+  markWorkspaceArchiving(workspaceIds: Iterable<string>, archivingAt: string): void {
+    for (const workspaceId of workspaceIds) {
+      this.archivingByWorkspaceId.set(workspaceId, archivingAt);
+    }
+  }
+
+  clearWorkspaceArchiving(workspaceIds: Iterable<string>): void {
+    for (const workspaceId of workspaceIds) {
+      this.archivingByWorkspaceId.delete(workspaceId);
+    }
   }
 
   private async buildWorkspaceDescriptorMap(options: {
@@ -6222,7 +6247,11 @@ export class Session {
       ),
     );
     for (let i = 0; i < includedWorkspaces.length; i += 1) {
-      descriptorsByWorkspaceId.set(includedWorkspaces[i]!.workspaceId, workspaceDescriptors[i]!);
+      const workspaceId = includedWorkspaces[i]!.workspaceId;
+      descriptorsByWorkspaceId.set(workspaceId, {
+        ...workspaceDescriptors[i]!,
+        archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
+      });
     }
 
     for (const agent of agents) {
@@ -6910,15 +6939,6 @@ export class Session {
     const workspaces = await this.workspaceRegistry.list();
     const workspaceId = this.resolveRegisteredWorkspaceIdForCwd(cwd, workspaces);
     await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId], options);
-  }
-
-  private async emitWorkspaceUpdatesForCwds(cwds: Iterable<string>): Promise<void> {
-    const workspaces = await this.workspaceRegistry.list();
-    const uniqueWorkspaceIds = new Set<string>();
-    for (const cwd of cwds) {
-      uniqueWorkspaceIds.add(this.resolveRegisteredWorkspaceIdForCwd(cwd, workspaces));
-    }
-    await this.emitWorkspaceUpdatesForWorkspaceIds(uniqueWorkspaceIds);
   }
 
   private async handleFetchAgents(

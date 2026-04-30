@@ -41,6 +41,7 @@ import {
   normalizeWorkspaceDescriptor,
 } from "@/stores/session-store";
 import { useDraftStore } from "@/stores/draft-store";
+import { isLocalWorktreeArchivePending } from "@/stores/checkout-git-actions-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { sendOsNotification } from "@/utils/os-notifications";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
@@ -58,6 +59,7 @@ import type { AttachmentMetadata } from "@/attachments/types";
 import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
 import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
+import { shouldSuppressWorkspaceUpsertForLocalArchive } from "@/contexts/session-workspace-upserts";
 import { isNative } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -1232,6 +1234,15 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         return;
       }
       const workspace = normalizeWorkspaceDescriptor(message.payload.workspace);
+      if (
+        shouldSuppressWorkspaceUpsertForLocalArchive({
+          serverId,
+          workspace,
+          isArchivePending: isLocalWorktreeArchivePending,
+        })
+      ) {
+        return;
+      }
       mergeWorkspaces(serverId, [workspace]);
     });
 

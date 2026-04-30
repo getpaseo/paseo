@@ -519,11 +519,26 @@ export async function createPaseoDaemon(
         projectRegistry,
       });
     };
-    const emitWorkspaceUpdatesForMcpArchive = async (cwds: Iterable<string>) => {
-      const cwdList = Array.from(cwds);
+    const markWorkspaceArchivingForMcpArchive = (
+      workspaceIds: Iterable<string>,
+      archivingAt: string,
+    ) => {
+      const workspaceIdList = Array.from(workspaceIds);
+      for (const session of wsServer?.listActiveSessions() ?? []) {
+        session.markWorkspaceArchivingForExternalMutation(workspaceIdList, archivingAt);
+      }
+    };
+    const clearWorkspaceArchivingForMcpArchive = (workspaceIds: Iterable<string>) => {
+      const workspaceIdList = Array.from(workspaceIds);
+      for (const session of wsServer?.listActiveSessions() ?? []) {
+        session.clearWorkspaceArchivingForExternalMutation(workspaceIdList);
+      }
+    };
+    const emitWorkspaceUpdatesForMcpArchive = async (workspaceIds: Iterable<string>) => {
+      const workspaceIdList = Array.from(workspaceIds);
       await Promise.all(
         (wsServer?.listActiveSessions() ?? []).map((session) =>
-          session.emitWorkspaceUpdatesForExternalCwds(cwdList),
+          session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
         ),
       );
     };
@@ -542,7 +557,9 @@ export async function createPaseoDaemon(
         github,
         workspaceGitService,
         archiveWorkspaceRecord: archiveWorkspaceRecordForMcp,
-        emitWorkspaceUpdatesForCwds: emitWorkspaceUpdatesForMcpArchive,
+        emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesForMcpArchive,
+        markWorkspaceArchiving: markWorkspaceArchivingForMcpArchive,
+        clearWorkspaceArchiving: clearWorkspaceArchivingForMcpArchive,
         emitSessionMessage: emitMcpArchiveSessionMessage,
         createPaseoWorktree: async (input, serviceOptions) => {
           const coreDeps = createWorktreeCoreDeps(github);

@@ -18,6 +18,7 @@ function workspace(input: {
     workspaceKind: "checkout",
     name: "main",
     status: "running",
+    archivingAt: null,
     diffStat: null,
     scripts: input.scripts ?? [],
   };

@@ -19,7 +19,9 @@ export interface ArchivePaseoWorktreeDependencies {
   agentStorage: Pick<AgentStorage, "list" | "remove">;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   emit: EmitSessionMessage;
-  emitWorkspaceUpdatesForCwds: (cwds: Iterable<string>) => Promise<void>;
+  emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
+  markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
+  clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   killTerminalsUnderPath: (rootPath: string) => Promise<void>;
   sessionLogger?: Logger;
@@ -86,87 +88,95 @@ export async function archivePaseoWorktree(
     ...matchingStoredRecords.map((record) => record.id),
   ]);
 
-  const teardownResults = await Promise.allSettled([
-    ...liveAgents.map((agent) => dependencies.agentManager.closeAgent(agent.id)),
-    dependencies.killTerminalsUnderPath(targetPath),
-  ]);
+  const affectedWorkspaceIdList = Array.from(affectedWorkspaceIds);
+  dependencies.markWorkspaceArchiving(affectedWorkspaceIdList, new Date().toISOString());
 
-  for (const result of teardownResults) {
-    if (result.status === "rejected") {
-      dependencies.sessionLogger?.warn(
-        { err: result.reason, targetPath },
-        "Worktree teardown step failed during archive; continuing",
-      );
-    }
-  }
+  try {
+    await dependencies.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIdList);
 
-  const agentIdsToRemove = Array.from(agentIdsToRemoveFromStorage);
-  const storageRemovalResults = await Promise.allSettled(
-    agentIdsToRemove.map((agentId) => dependencies.agentStorage.remove(agentId)),
-  );
-  storageRemovalResults.forEach((result, index) => {
-    if (result.status === "fulfilled") {
-      return;
-    }
-    dependencies.sessionLogger?.warn(
-      {
-        err: result.reason,
-        agentId: agentIdsToRemove[index],
-        targetPath,
-      },
-      "Failed to remove archived worktree agent from storage; continuing",
-    );
-  });
+    const teardownResults = await Promise.allSettled([
+      ...liveAgents.map((agent) => dependencies.agentManager.closeAgent(agent.id)),
+      dependencies.killTerminalsUnderPath(targetPath),
+    ]);
 
-  await deletePaseoWorktree({
-    cwd: options.repoRoot,
-    worktreePath: targetPath,
-    worktreesRoot: options.worktreesRoot,
-    paseoHome: dependencies.paseoHome,
-  });
-
-  if (options.repoRoot) {
-    try {
-      await dependencies.workspaceGitService.getSnapshot(options.repoRoot, {
-        force: true,
-        reason: "archive-worktree",
-      });
-    } catch (error) {
-      dependencies.sessionLogger?.warn(
-        { err: error, cwd: options.repoRoot },
-        "Failed to force-refresh workspace git snapshot after archiving worktree",
-      );
-    }
-  }
-
-  for (const cwd of affectedWorkspaceCwds) {
-    dependencies.github.invalidate({ cwd });
-  }
-
-  await Promise.all(
-    Array.from(affectedWorkspaceIds).map(async (workspaceId) => {
-      try {
-        await dependencies.archiveWorkspaceRecord(workspaceId);
-      } catch (error) {
+    for (const result of teardownResults) {
+      if (result.status === "rejected") {
         dependencies.sessionLogger?.warn(
-          { err: error, workspaceId },
-          "Failed to archive workspace record; worktree FS already removed",
+          { err: result.reason, targetPath },
+          "Worktree teardown step failed during archive; continuing",
         );
       }
-    }),
-  );
+    }
 
-  for (const agentId of removedAgents) {
-    dependencies.emit({
-      type: "agent_deleted",
-      payload: {
-        agentId,
-        requestId: options.requestId,
-      },
+    const agentIdsToRemove = Array.from(agentIdsToRemoveFromStorage);
+    const storageRemovalResults = await Promise.allSettled(
+      agentIdsToRemove.map((agentId) => dependencies.agentStorage.remove(agentId)),
+    );
+    storageRemovalResults.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        return;
+      }
+      dependencies.sessionLogger?.warn(
+        {
+          err: result.reason,
+          agentId: agentIdsToRemove[index],
+          targetPath,
+        },
+        "Failed to remove archived worktree agent from storage; continuing",
+      );
     });
-  }
 
-  await dependencies.emitWorkspaceUpdatesForCwds(affectedWorkspaceCwds);
+    await deletePaseoWorktree({
+      cwd: options.repoRoot,
+      worktreePath: targetPath,
+      worktreesRoot: options.worktreesRoot,
+      paseoHome: dependencies.paseoHome,
+    });
+
+    if (options.repoRoot) {
+      try {
+        await dependencies.workspaceGitService.getSnapshot(options.repoRoot, {
+          force: true,
+          reason: "archive-worktree",
+        });
+      } catch (error) {
+        dependencies.sessionLogger?.warn(
+          { err: error, cwd: options.repoRoot },
+          "Failed to force-refresh workspace git snapshot after archiving worktree",
+        );
+      }
+    }
+
+    for (const cwd of affectedWorkspaceCwds) {
+      dependencies.github.invalidate({ cwd });
+    }
+
+    await Promise.all(
+      affectedWorkspaceIdList.map(async (workspaceId) => {
+        try {
+          await dependencies.archiveWorkspaceRecord(workspaceId);
+        } catch (error) {
+          dependencies.sessionLogger?.warn(
+            { err: error, workspaceId },
+            "Failed to archive workspace record; worktree FS already removed",
+          );
+        }
+      }),
+    );
+
+    for (const agentId of removedAgents) {
+      dependencies.emit({
+        type: "agent_deleted",
+        payload: {
+          agentId,
+          requestId: options.requestId,
+        },
+      });
+    }
+  } finally {
+    dependencies.clearWorkspaceArchiving(affectedWorkspaceIdList);
+    await dependencies.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIdList);
+  }
 
   return Array.from(removedAgents);
 }

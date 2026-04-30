@@ -364,11 +364,11 @@ export async function handlePaseoWorktreeListRequest(
 export async function handlePaseoWorktreeArchiveRequest(
   dependencies: Omit<
     ArchivePaseoWorktreeDependencies,
-    "emitWorkspaceUpdatesForCwds" | "workspaceGitService"
+    "emitWorkspaceUpdatesForWorkspaceIds" | "workspaceGitService"
   > & {
     emit: EmitSessionMessage;
     workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "listWorktrees">;
-    emitWorkspaceUpdatesForCwds: (cwds: Iterable<string>) => Promise<void>;
+    emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   },
   msg: Extract<SessionInboundMessage, { type: "paseo_worktree_archive_request" }>,
 ): Promise<void> {

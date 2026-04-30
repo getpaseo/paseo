@@ -43,6 +43,7 @@ function workspace(input: {
     workspaceKind: "local_checkout",
     name: input.id,
     status: "done",
+    archivingAt: null,
     diffStat: null,
     scripts: [],
     gitRuntime: {

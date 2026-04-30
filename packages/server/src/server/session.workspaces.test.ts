@@ -58,7 +58,10 @@ interface SessionTestAccess {
   buildWorkspaceDescriptorMap(...args: unknown[]): Promise<Map<string, unknown>>;
   describeWorkspaceRecord(...args: unknown[]): Promise<unknown>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<unknown>;
+  markWorkspaceArchiving(workspaceIds: Iterable<string>, archivingAt: string): void;
+  clearWorkspaceArchiving(workspaceIds: Iterable<string>): void;
   emitWorkspaceUpdateForCwd(...args: unknown[]): Promise<unknown>;
+  emitWorkspaceUpdatesForWorkspaceIds(...args: unknown[]): Promise<unknown>;
   emit(message: unknown): void;
   onMessage(message: unknown): void;
   getAvailableEditorTargets(...args: unknown[]): Promise<unknown>;
@@ -3343,6 +3346,7 @@ test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline desc
     projectKind: project.kind,
     workspaceKind: workspace.kind,
     name: "main",
+    archivingAt: null,
     status: "done",
     activityAt: null,
     diffStat: null,
@@ -3366,6 +3370,105 @@ test("listWorkspaceDescriptorsSnapshot keeps git workspaces on the baseline desc
   expect(session.describeWorkspaceRecord).toHaveBeenCalledWith(workspace, project);
   expect(session.describeWorkspaceRecordWithGitData).not.toHaveBeenCalled();
   expect(descriptors).toEqual([baselineDescriptor]);
+});
+
+test("buildWorkspaceDescriptorMap stamps workspace archiving state", async () => {
+  const session = createSessionForWorkspaceTests();
+  const archivingAt = "2026-04-30T20:45:00.000Z";
+  const project = createPersistedProjectRecord({
+    projectId: "proj-archiving-map",
+    rootPath: "/tmp/repo",
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-archiving-map",
+    projectId: project.projectId,
+    cwd: "/tmp/repo/worktree",
+    kind: "worktree",
+    displayName: "feature",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  session.listAgentPayloads = async () => [];
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => [workspace];
+
+  const readArchivingAt = async () =>
+    (
+      await session.buildWorkspaceDescriptorMap({
+        includeGitData: false,
+      })
+    ).get(workspace.workspaceId)?.archivingAt;
+
+  await expect(readArchivingAt()).resolves.toBeNull();
+
+  session.markWorkspaceArchiving([workspace.workspaceId], archivingAt);
+  await expect(readArchivingAt()).resolves.toBe(archivingAt);
+
+  session.clearWorkspaceArchiving([workspace.workspaceId]);
+  await expect(readArchivingAt()).resolves.toBeNull();
+});
+
+test("emitWorkspaceUpdatesForWorkspaceIds includes archiving state and dedupes unchanged emits", async () => {
+  const emitted: Array<{ type: string; payload: unknown }> = [];
+  const session = createSessionForWorkspaceTests();
+  const archivingAt = "2026-04-30T20:45:00.000Z";
+  const project = createPersistedProjectRecord({
+    projectId: "proj-archiving-emit",
+    rootPath: "/tmp/repo",
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-archiving-emit",
+    projectId: project.projectId,
+    cwd: "/tmp/repo/worktree",
+    kind: "worktree",
+    displayName: "feature",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-archiving",
+    filter: undefined,
+    isBootstrapping: false,
+    pendingUpdatesByWorkspaceId: new Map(),
+    lastEmittedByWorkspaceId: new Map(),
+  };
+  session.reconcileActiveWorkspaceRecords = async () => new Set();
+  session.listAgentPayloads = async () => [];
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.list = async () => [workspace];
+
+  session.markWorkspaceArchiving([workspace.workspaceId], archivingAt);
+
+  await session.emitWorkspaceUpdatesForWorkspaceIds([workspace.workspaceId], {
+    skipReconcile: true,
+  });
+  await session.emitWorkspaceUpdatesForWorkspaceIds([workspace.workspaceId], {
+    skipReconcile: true,
+  });
+
+  expect(emitted).toEqual([
+    {
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: expect.objectContaining({
+          id: workspace.workspaceId,
+          archivingAt,
+        }),
+      },
+    },
+  ]);
 });
 
 test("fetch_workspaces_response reads runtime fields from passive workspace git service snapshots", async () => {

@@ -28,6 +28,7 @@ export interface SidebarWorkspaceEntry {
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
   statusBucket: SidebarStateBucket;
+  archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
@@ -65,6 +66,7 @@ function createStructuralWorkspaceEntry(input: {
     workspaceKind: "checkout",
     name: input.workspaceId,
     statusBucket: "done",
+    archivingAt: null,
     diffStat: null,
     scripts: [],
     hasRunningScripts: false,
@@ -86,6 +88,7 @@ export function createSidebarWorkspaceEntry(input: {
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
     statusBucket: input.workspace.status,
+    archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),

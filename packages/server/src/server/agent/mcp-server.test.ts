@@ -743,7 +743,9 @@ describe("create_agent MCP tool", () => {
         getSnapshot: vi.fn(async () => null),
       };
       const archiveWorkspaceRecord = vi.fn(async () => undefined);
-      const emitWorkspaceUpdatesForCwds = vi.fn(async () => undefined);
+      const emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => undefined);
+      const markWorkspaceArchiving = vi.fn();
+      const clearWorkspaceArchiving = vi.fn();
       const emitSessionMessage = vi.fn();
       const server = await createAgentMcpServer({
         agentManager,
@@ -755,7 +757,9 @@ describe("create_agent MCP tool", () => {
           "getSnapshot" | "listWorktrees"
         >,
         archiveWorkspaceRecord,
-        emitWorkspaceUpdatesForCwds,
+        emitWorkspaceUpdatesForWorkspaceIds,
+        markWorkspaceArchiving,
+        clearWorkspaceArchiving,
         emitSessionMessage,
         github: createGitHubServiceStub(),
         logger,
@@ -779,7 +783,14 @@ describe("create_agent MCP tool", () => {
         reason: "archive-worktree",
       });
       expect(archiveWorkspaceRecord).toHaveBeenCalledWith(created.structuredContent.worktreePath);
-      expect(Array.from(emitWorkspaceUpdatesForCwds.mock.calls[0]?.[0] ?? [])).toEqual([
+      expect(markWorkspaceArchiving).toHaveBeenCalledWith(
+        [created.structuredContent.worktreePath],
+        expect.any(String),
+      );
+      expect(clearWorkspaceArchiving).toHaveBeenCalledWith([
+        created.structuredContent.worktreePath,
+      ]);
+      expect(Array.from(emitWorkspaceUpdatesForWorkspaceIds.mock.calls[0]?.[0] ?? [])).toEqual([
         created.structuredContent.worktreePath,
       ]);
     } finally {
