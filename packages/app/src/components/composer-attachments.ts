@@ -1,5 +1,5 @@
 import type { AttachmentMetadata, ComposerAttachment } from "@/attachments/types";
-import { composerWorkspaceAttachment } from "@/review";
+import { composerWorkspaceAttachment } from "@/attachments/composer-workspace-attachments";
 import type { AgentAttachment } from "@server/shared/messages";
 import { buildGitHubAttachmentFromSearchItem } from "@/utils/review-attachments";
 

@@ -1,10 +1,12 @@
 export {
+  buildReviewAttachmentSnapshot,
   buildReviewDraftKey,
   buildReviewDraftScopeKey,
   getReviewDraftComments,
   resetReviewDraftStore,
   useActiveReviewDraftMode,
   useClearReviewDraft,
+  useReviewAttachmentSnapshot,
   useSetActiveReviewDraftMode,
   addReviewDraftComment,
   type BuildReviewDraftKeyInput,
@@ -29,9 +31,3 @@ export {
   type InlineReviewActions,
   type InlineReviewEditorState,
 } from "./surface";
-
-export {
-  composerWorkspaceAttachment,
-  useReviewWorkspaceAttachment,
-  type WorkspaceComposerAttachment,
-} from "./composer";

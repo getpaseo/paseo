@@ -64,6 +64,7 @@ import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { Fonts } from "@/constants/theme";
 import * as Clipboard from "expo-clipboard";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
+import type { AgentAttachment } from "@server/shared/messages";
 import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import { buildToolCallDisplayModel } from "@/utils/tool-call-display";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
@@ -107,6 +108,7 @@ type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: un
 interface UserMessageProps {
   message: string;
   images?: UserMessageImageAttachment[];
+  attachments?: AgentAttachment[];
   timestamp: number;
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
@@ -356,6 +358,11 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     flexWrap: "wrap",
   },
+  attachmentPreviewContainer: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    flexWrap: "wrap",
+  },
   imagePreviewSpacing: {
     marginBottom: theme.spacing[2],
   },
@@ -373,6 +380,19 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     width: 48,
     height: 48,
     backgroundColor: theme.colors.surface1,
+  },
+  structuredAttachmentPill: {
+    maxWidth: 220,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
+    backgroundColor: theme.colors.surface1,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  structuredAttachmentText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   copyButton: {
     alignSelf: "flex-end",
@@ -396,9 +416,23 @@ function UserMessageAttachmentThumbnail({ image }: { image: UserMessageImageAtta
   return <Image source={imageSource} style={userMessageStylesheet.imageThumbnail} />;
 }
 
+function getUserMessageAttachmentLabel(attachment: AgentAttachment): string {
+  switch (attachment.type) {
+    case "review": {
+      const count = attachment.comments.length;
+      return count === 1 ? "Review · 1 comment" : `Review · ${count} comments`;
+    }
+    case "github_pr":
+      return `PR #${attachment.number}`;
+    case "github_issue":
+      return `Issue #${attachment.number}`;
+  }
+}
+
 export const UserMessage = memo(function UserMessage({
   message,
   images = [],
+  attachments = [],
   timestamp: _timestamp,
   isFirstInGroup = true,
   isLastInGroup = true,
@@ -410,6 +444,7 @@ export const UserMessage = memo(function UserMessage({
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
+  const hasAttachments = attachments.length > 0;
   const showCopyButton = hasText && (isCompact || messageHovered || copyButtonHovered);
 
   const handleHoverIn = useCallback(() => setMessageHovered(true), []);
@@ -430,6 +465,13 @@ export const UserMessage = memo(function UserMessage({
   const imagePreviewContainerStyle = useMemo(
     () => [
       userMessageStylesheet.imagePreviewContainer,
+      hasText || hasAttachments ? userMessageStylesheet.imagePreviewSpacing : undefined,
+    ],
+    [hasAttachments, hasText],
+  );
+  const attachmentPreviewContainerStyle = useMemo(
+    () => [
+      userMessageStylesheet.attachmentPreviewContainer,
       hasText ? userMessageStylesheet.imagePreviewSpacing : undefined,
     ],
     [hasText],
@@ -457,6 +499,20 @@ export const UserMessage = memo(function UserMessage({
               {images.map((image) => (
                 <View key={image.id} style={userMessageStylesheet.imagePill}>
                   <UserMessageAttachmentThumbnail image={image} />
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {hasAttachments ? (
+            <View style={attachmentPreviewContainerStyle}>
+              {attachments.map((attachment, index) => (
+                <View
+                  key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
+                  style={userMessageStylesheet.structuredAttachmentPill}
+                >
+                  <Text style={userMessageStylesheet.structuredAttachmentText} numberOfLines={1}>
+                    {getUserMessageAttachmentLabel(attachment)}
+                  </Text>
                 </View>
               ))}
             </View>

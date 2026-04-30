@@ -99,9 +99,14 @@ import {
 } from "@/utils/diff-rendering";
 import { isWeb, isNative } from "@/constants/platform";
 import {
+  buildWorkspaceAttachmentScopeKey,
+  useWorkspaceAttachmentsStore,
+} from "@/attachments/workspace-attachments-store";
+import {
   buildReviewDraftScopeKey,
   buildReviewDraftKey,
   useActiveReviewDraftMode,
+  useReviewAttachmentSnapshot,
   useSetActiveReviewDraftMode,
   type ReviewDraftComment,
   type ReviewDraftMode,
@@ -1869,6 +1874,39 @@ export function GitDiffPane({
     reviewDraftKey,
     showPersistentAction: isMobile,
   });
+  const reviewAttachment = useReviewAttachmentSnapshot({
+    key: reviewDraftKey,
+    diffFiles: files,
+    cwd,
+    mode: diffMode,
+    baseRef,
+  });
+  const workspaceAttachmentScopeKey = useMemo(
+    () => buildWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd }),
+    [cwd, serverId, workspaceId],
+  );
+  const setWorkspaceAttachments = useWorkspaceAttachmentsStore(
+    (state) => state.setWorkspaceAttachments,
+  );
+  const clearWorkspaceAttachments = useWorkspaceAttachmentsStore(
+    (state) => state.clearWorkspaceAttachments,
+  );
+
+  useEffect(() => {
+    setWorkspaceAttachments({
+      scopeKey: workspaceAttachmentScopeKey,
+      attachments: reviewAttachment ? [reviewAttachment] : [],
+    });
+
+    return () => {
+      clearWorkspaceAttachments({ scopeKey: workspaceAttachmentScopeKey });
+    };
+  }, [
+    clearWorkspaceAttachments,
+    reviewAttachment,
+    setWorkspaceAttachments,
+    workspaceAttachmentScopeKey,
+  ]);
   const {
     status: prStatus,
     githubFeaturesEnabled,

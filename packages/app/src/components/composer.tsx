@@ -74,8 +74,9 @@ import type {
   AttachmentMetadata,
   ComposerAttachment,
   UserComposerAttachment,
+  WorkspaceComposerAttachment,
 } from "@/attachments/types";
-import { composerWorkspaceAttachment, type WorkspaceComposerAttachment } from "@/review";
+import { composerWorkspaceAttachment } from "@/attachments/composer-workspace-attachments";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
@@ -462,6 +463,7 @@ async function dispatchAgentMessageSend(args: DispatchAgentMessageSendArgs): Pro
     text,
     timestamp: new Date(),
     ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
+    ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
   };
   appendUserMessageToStream({ ...args, userMessage });
   const imagesData = await encodeImages(wirePayload.images);
@@ -789,8 +791,8 @@ interface ComposerProps {
   value: string;
   onChangeText: (text: string) => void;
   attachments: UserComposerAttachment[];
-  workspaceAttachment?: WorkspaceComposerAttachment | null;
-  onOpenWorkspaceAttachment?: () => void;
+  workspaceAttachments?: readonly WorkspaceComposerAttachment[];
+  onOpenWorkspaceAttachment?: (attachment: WorkspaceComposerAttachment) => void;
   onChangeAttachments: (updater: AttachmentListUpdater) => void;
   cwd: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
@@ -988,7 +990,7 @@ export function Composer({
   value,
   onChangeText,
   attachments,
-  workspaceAttachment = null,
+  workspaceAttachments = [],
   onOpenWorkspaceAttachment,
   onChangeAttachments,
   cwd,
@@ -1048,7 +1050,7 @@ export function Composer({
     resetSuppression,
   } = composerWorkspaceAttachment.useBinding({
     normalAttachments: attachments,
-    workspaceAttachment,
+    workspaceAttachments,
     onOpenWorkspaceAttachment,
   });
   const setSelectedAttachments = onChangeAttachments;

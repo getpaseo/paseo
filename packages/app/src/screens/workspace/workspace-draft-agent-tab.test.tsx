@@ -138,7 +138,7 @@ vi.mock("@/components/composer-attachments", () => ({
   }),
 }));
 
-vi.mock("@/review", () => ({
+vi.mock("@/attachments/composer-workspace-attachments", () => ({
   composerWorkspaceAttachment: {
     userAttachmentsOnly: (attachments: ComposerAttachment[]) =>
       attachments.filter(
@@ -146,10 +146,6 @@ vi.mock("@/review", () => ({
           attachment.kind !== "review",
       ),
   },
-  useReviewWorkspaceAttachment: () => ({
-    attachment: null,
-    openAttachment: vi.fn(),
-  }),
 }));
 
 vi.mock("@/components/composer", () => ({

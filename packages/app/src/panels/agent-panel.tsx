@@ -14,6 +14,12 @@ import { FileDropZone } from "@/components/file-drop-zone";
 import type { ImageAttachment } from "@/components/message-input";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ToastViewport, useToastHost } from "@/components/toast-host";
+import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import {
+  useWorkspaceAttachments,
+  useWorkspaceAttachmentScopeKey,
+} from "@/attachments/workspace-attachments-store";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
@@ -25,7 +31,6 @@ import {
   useAgentScreenStateMachine,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
-import { useReviewWorkspaceAttachment } from "@/review";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
@@ -44,6 +49,7 @@ import {
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
+import { usePanelStore } from "@/stores/panel-store";
 import { type Agent, useSessionStore } from "@/stores/session-store";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
@@ -1072,6 +1078,9 @@ function AgentStreamSection({
         ...(pendingCreate.images && pendingCreate.images.length > 0
           ? { images: pendingCreate.images }
           : {}),
+        ...(pendingCreate.attachments && pendingCreate.attachments.length > 0
+          ? { attachments: pendingCreate.attachments }
+          : {}),
       },
     ];
   }, [pendingCreate, shouldUseOptimisticStream]);
@@ -1102,7 +1111,10 @@ function AgentStreamSection({
     }
 
     const pendingImages = pendingCreate.images;
-    if (agentId && pendingImages && pendingImages.length > 0) {
+    const pendingAttachments = pendingCreate.attachments;
+    const hasPendingImages = Boolean(pendingImages && pendingImages.length > 0);
+    const hasPendingAttachments = Boolean(pendingAttachments && pendingAttachments.length > 0);
+    if (agentId && (hasPendingImages || hasPendingAttachments)) {
       setAgentStreamTail(serverId, (previous) => {
         const current = previous.get(agentId);
         if (!current) {
@@ -1113,6 +1125,7 @@ function AgentStreamSection({
           streamItems: current,
           clientMessageId: pendingCreate.clientMessageId,
           images: pendingImages,
+          attachments: pendingAttachments,
         });
         if (merged === current) {
           return previous;
@@ -1232,6 +1245,7 @@ function ActiveAgentComposer({
   onMessageSent: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const isCompact = useIsCompactFormFactor();
   const { workspaceId } = usePaneContext();
   const agentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
@@ -1240,11 +1254,32 @@ function ActiveAgentComposer({
     }),
     initialCwd,
   });
-  const workspaceAttachment = useReviewWorkspaceAttachment({
+  const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
     cwd: agentInputDraft.cwd,
     workspaceId,
   });
+  const workspaceAttachments = useWorkspaceAttachments(workspaceAttachmentScopeKey);
+  const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
+  const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
+  const handleOpenWorkspaceAttachment = useCallback(
+    (attachment: WorkspaceComposerAttachment) => {
+      const checkout = {
+        serverId,
+        cwd: attachment.attachment.cwd,
+        isGit: true,
+      };
+      openFileExplorerForCheckout({
+        checkout,
+        isCompact,
+      });
+      setExplorerTabForCheckout({
+        ...checkout,
+        tab: "changes",
+      });
+    },
+    [isCompact, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
+  );
 
   const inputAreaStyle = useMemo(
     () => [styles.inputAreaWrapper, { paddingBottom: insets.bottom }],
@@ -1260,8 +1295,8 @@ function ActiveAgentComposer({
         value={agentInputDraft.text}
         onChangeText={agentInputDraft.setText}
         attachments={agentInputDraft.attachments}
-        workspaceAttachment={workspaceAttachment.attachment}
-        onOpenWorkspaceAttachment={workspaceAttachment.openAttachment}
+        workspaceAttachments={workspaceAttachments}
+        onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
         onChangeAttachments={agentInputDraft.setAttachments}
         cwd={agentInputDraft.cwd}
         clearDraft={agentInputDraft.clear}

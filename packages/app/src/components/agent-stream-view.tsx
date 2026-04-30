@@ -382,6 +382,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <UserMessage
             message={item.text}
             images={item.images}
+            attachments={item.attachments}
             timestamp={item.timestamp.getTime()}
             isFirstInGroup={isFirstInGroup}
             isLastInGroup={isLastInGroup}

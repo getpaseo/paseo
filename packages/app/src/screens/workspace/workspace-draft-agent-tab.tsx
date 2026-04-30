@@ -6,13 +6,14 @@ import invariant from "tiny-invariant";
 import { Composer } from "@/components/composer";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { AgentStreamView } from "@/components/agent-stream-view";
+import { composerWorkspaceAttachment } from "@/attachments/composer-workspace-attachments";
 import type { ImageAttachment } from "@/components/message-input";
 import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
-import { composerWorkspaceAttachment, useReviewWorkspaceAttachment } from "@/review";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
+import { usePanelStore } from "@/stores/panel-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
@@ -21,8 +22,13 @@ import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/works
 import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
 import type { DaemonClient } from "@server/client/daemon-client";
-import type { ComposerAttachment } from "@/attachments/types";
+import type { ComposerAttachment, WorkspaceComposerAttachment } from "@/attachments/types";
+import {
+  useWorkspaceAttachments,
+  useWorkspaceAttachmentScopeKey,
+} from "@/attachments/workspace-attachments-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
@@ -325,11 +331,33 @@ export function WorkspaceDraftAgentTab({
   );
   const autoSubmitConfig = resolveAutoSubmitConfig(pendingAutoSubmit);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
-  const workspaceAttachment = useReviewWorkspaceAttachment({
+  const isCompact = useIsCompactFormFactor();
+  const workspaceAttachmentScopeKey = useWorkspaceAttachmentScopeKey({
     serverId,
     cwd: draftInput.cwd,
     workspaceId,
   });
+  const workspaceAttachments = useWorkspaceAttachments(workspaceAttachmentScopeKey);
+  const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
+  const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
+  const handleOpenWorkspaceAttachment = useCallback(
+    (attachment: WorkspaceComposerAttachment) => {
+      const checkout = {
+        serverId,
+        cwd: attachment.attachment.cwd,
+        isGit: true,
+      };
+      openFileExplorerForCheckout({
+        checkout,
+        isCompact,
+      });
+      setExplorerTabForCheckout({
+        ...checkout,
+        tab: "changes",
+      });
+    },
+    [isCompact, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
+  );
 
   const {
     formErrorMessage,
@@ -568,8 +596,8 @@ export function WorkspaceDraftAgentTab({
             value={draftInput.text}
             onChangeText={draftInput.setText}
             attachments={draftInput.attachments}
-            workspaceAttachment={workspaceAttachment.attachment}
-            onOpenWorkspaceAttachment={workspaceAttachment.openAttachment}
+            workspaceAttachments={workspaceAttachments}
+            onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}
             onChangeAttachments={draftInput.setAttachments}
             cwd={draftInput.cwd}
             clearDraft={draftInput.clear}

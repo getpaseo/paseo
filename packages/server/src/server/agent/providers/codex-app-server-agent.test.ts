@@ -357,6 +357,52 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("separates Codex text prompts from rendered attachment text", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        { type: "text", text: "Please review this" },
+        {
+          type: "github_issue",
+          mimeType: "application/github-issue",
+          number: 456,
+          title: "Attachment spacing",
+          url: "https://github.com/getpaseo/paseo/issues/456",
+        },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      { type: "text", text: "Please review this" },
+      {
+        type: "text",
+        text: expect.stringMatching(/^\n\nGitHub Issue #456: Attachment spacing/),
+      },
+    ]);
+  });
+
+  test("does not prefix Codex attachment-only prompts with a blank line", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        {
+          type: "github_issue",
+          mimeType: "application/github-issue",
+          number: 456,
+          title: "Attachment spacing",
+          url: "https://github.com/getpaseo/paseo/issues/456",
+        },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      {
+        type: "text",
+        text: expect.stringMatching(/^GitHub Issue #456: Attachment spacing/),
+      },
+    ]);
+  });
+
   test("maps patch notifications with array-style changes and alias diff keys", () => {
     const item = __codexAppServerInternals.mapCodexPatchNotificationToToolCall({
       callId: "patch-array-alias",

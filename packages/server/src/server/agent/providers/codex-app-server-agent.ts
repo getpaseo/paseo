@@ -2410,27 +2410,36 @@ export async function codexAppServerTurnInputFromPrompt(
     return [{ type: "text", text: prompt }];
   }
 
-  const output = await Promise.all(
-    prompt.map(async (block) => {
-      if (block.type === "text") {
-        return block;
+  const output: unknown[] = [];
+  let previousTextBlock = false;
+  for (const block of prompt) {
+    if (block.type === "text") {
+      output.push(block);
+      previousTextBlock = block.text.length > 0;
+      continue;
+    }
+    if (block.type === "image") {
+      try {
+        const filePath = await writeImageAttachment(block.mimeType, block.data);
+        output.push({ type: "localImage", path: filePath });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn({ message }, "Failed to write Codex image attachment");
+        output.push({
+          type: "text",
+          text: `User attached image (failed to write temp file): ${message}`,
+        });
       }
-      if (block.type === "image") {
-        try {
-          const filePath = await writeImageAttachment(block.mimeType, block.data);
-          return { type: "localImage", path: filePath };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          logger.warn({ message }, "Failed to write Codex image attachment");
-          return {
-            type: "text",
-            text: `User attached image (failed to write temp file): ${message}`,
-          };
-        }
-      }
-      return { type: "text", text: renderPromptAttachmentAsText(block) };
-    }),
-  );
+      previousTextBlock = false;
+      continue;
+    }
+    const attachmentText = renderPromptAttachmentAsText(block);
+    output.push({
+      type: "text",
+      text: previousTextBlock ? `\n\n${attachmentText}` : attachmentText,
+    });
+    previousTextBlock = true;
+  }
   return output;
 }
 

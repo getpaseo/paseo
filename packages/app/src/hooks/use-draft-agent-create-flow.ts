@@ -16,6 +16,7 @@ interface CreateAttempt {
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
+  attachments?: AgentAttachment[];
 }
 
 type DraftAgentMachineState =
@@ -118,7 +119,11 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       return EMPTY_STREAM_ITEMS;
     }
 
-    if (!machine.attempt.text && (!machine.attempt.images || machine.attempt.images.length === 0)) {
+    if (
+      !machine.attempt.text &&
+      (!machine.attempt.images || machine.attempt.images.length === 0) &&
+      (!machine.attempt.attachments || machine.attempt.attachments.length === 0)
+    ) {
       return EMPTY_STREAM_ITEMS;
     }
 
@@ -130,6 +135,9 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         timestamp: machine.attempt.timestamp,
         ...(machine.attempt.images && machine.attempt.images.length > 0
           ? { images: machine.attempt.images }
+          : {}),
+        ...(machine.attempt.attachments && machine.attempt.attachments.length > 0
+          ? { attachments: machine.attempt.attachments }
           : {}),
       },
     ];
@@ -182,6 +190,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         text: trimmedPrompt,
         timestamp: new Date(),
         ...(images && images.length > 0 ? { images } : {}),
+        ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
       };
 
       setPendingCreateAttempt({
@@ -192,6 +201,9 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         text: attempt.text,
         timestamp: attempt.timestamp.getTime(),
         ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
+        ...(attempt.attachments && attempt.attachments.length > 0
+          ? { attachments: attempt.attachments }
+          : {}),
       });
 
       onBeforeSubmit?.({

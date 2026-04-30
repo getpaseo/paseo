@@ -10,69 +10,12 @@ import type {
 import { AttachmentPill } from "@/components/attachment-pill";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { AgentAttachment } from "@server/shared/messages";
-import { useIsCompactFormFactor } from "@/constants/layout";
-import { usePanelStore } from "@/stores/panel-store";
-import { useClearReviewDraft } from "./store";
-import { useReviewWorkspaceAttachmentSnapshot } from "./snapshot";
-
-export type { WorkspaceComposerAttachment };
-
-interface UseReviewWorkspaceAttachmentInput {
-  serverId: string;
-  workspaceId?: string | null;
-  cwd: string;
-}
-
-export function useReviewWorkspaceAttachment({
-  serverId,
-  workspaceId,
-  cwd,
-}: UseReviewWorkspaceAttachmentInput) {
-  const isCompact = useIsCompactFormFactor();
-  const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
-  const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
-  const workspaceSnapshot = useReviewWorkspaceAttachmentSnapshot({
-    serverId,
-    cwd,
-    workspaceId,
-  });
-
-  const openAttachment = useCallback(() => {
-    if (!serverId || !cwd) {
-      return;
-    }
-    const checkout = {
-      serverId,
-      cwd,
-      isGit: workspaceSnapshot.isGit,
-    };
-    openFileExplorerForCheckout({
-      checkout,
-      isCompact,
-    });
-    setExplorerTabForCheckout({
-      ...checkout,
-      tab: "changes",
-    });
-  }, [
-    cwd,
-    isCompact,
-    openFileExplorerForCheckout,
-    serverId,
-    setExplorerTabForCheckout,
-    workspaceSnapshot.isGit,
-  ]);
-
-  return {
-    attachment: workspaceSnapshot.attachment,
-    openAttachment,
-  };
-}
+import { useClearReviewDraft } from "@/review/store";
 
 interface WorkspaceAttachmentBindingInput {
   normalAttachments: UserComposerAttachment[];
-  workspaceAttachment: WorkspaceComposerAttachment | null;
-  onOpenWorkspaceAttachment?: () => void;
+  workspaceAttachments: readonly WorkspaceComposerAttachment[];
+  onOpenWorkspaceAttachment?: (attachment: WorkspaceComposerAttachment) => void;
 }
 
 interface RemoveWorkspaceAttachmentInput {
@@ -99,10 +42,7 @@ interface ComposerWorkspaceAttachmentBinding {
   resetSuppression: () => void;
 }
 
-function getAttachmentKey(attachment: WorkspaceComposerAttachment | null): string | null {
-  if (!attachment) {
-    return null;
-  }
+function getAttachmentKey(attachment: WorkspaceComposerAttachment): string {
   return JSON.stringify({
     type: "review",
     cwd: attachment.attachment.cwd,
@@ -144,42 +84,51 @@ function renderPill(args: RenderWorkspaceAttachmentPillArgs): ReactElement {
   );
 }
 
-function useBinding({
+function useWorkspaceAttachmentBinding({
   normalAttachments,
-  workspaceAttachment,
+  workspaceAttachments,
   onOpenWorkspaceAttachment,
 }: WorkspaceAttachmentBindingInput): ComposerWorkspaceAttachmentBinding {
   const clearReviewDraft = useClearReviewDraft();
-  const [suppressedKey, setSuppressedKey] = useState<string | null>(null);
-  const workspaceAttachmentKey = useMemo(
-    () => getAttachmentKey(workspaceAttachment),
-    [workspaceAttachment],
+  const [suppressedKeys, setSuppressedKeys] = useState<readonly string[]>([]);
+  const workspaceAttachmentKeys = useMemo(
+    () => workspaceAttachments.map(getAttachmentKey),
+    [workspaceAttachments],
   );
-  const isSuppressed = workspaceAttachmentKey === suppressedKey;
+  const activeWorkspaceAttachments = useMemo(
+    () =>
+      workspaceAttachments.filter(
+        (attachment, index) => !suppressedKeys.includes(workspaceAttachmentKeys[index] ?? ""),
+      ),
+    [suppressedKeys, workspaceAttachmentKeys, workspaceAttachments],
+  );
 
   const selectedAttachments = useMemo<ComposerAttachment[]>(
     () =>
-      workspaceAttachment && workspaceAttachmentKey && !isSuppressed
-        ? [...normalAttachments, workspaceAttachment]
+      activeWorkspaceAttachments.length > 0
+        ? [...normalAttachments, ...activeWorkspaceAttachments]
         : normalAttachments,
-    [isSuppressed, normalAttachments, workspaceAttachment, workspaceAttachmentKey],
+    [activeWorkspaceAttachments, normalAttachments],
   );
 
   useEffect(() => {
-    setSuppressedKey((current) => (current && current !== workspaceAttachmentKey ? null : current));
-  }, [workspaceAttachmentKey]);
+    setSuppressedKeys((current) =>
+      current.filter((suppressedKey) => workspaceAttachmentKeys.includes(suppressedKey)),
+    );
+  }, [workspaceAttachmentKeys]);
 
   const buildOutgoingAttachments = useCallback(
     (attachments: UserComposerAttachment[]): ComposerAttachment[] =>
-      workspaceAttachment && workspaceAttachmentKey && !isSuppressed
-        ? [...attachments, workspaceAttachment]
+      activeWorkspaceAttachments.length > 0
+        ? [...attachments, ...activeWorkspaceAttachments]
         : attachments,
-    [isSuppressed, workspaceAttachment, workspaceAttachmentKey],
+    [activeWorkspaceAttachments],
   );
 
-  const suppressWorkspaceAttachment = useCallback(() => {
-    setSuppressedKey(workspaceAttachmentKey);
-  }, [workspaceAttachmentKey]);
+  const suppressWorkspaceAttachment = useCallback((attachment: WorkspaceComposerAttachment) => {
+    const key = getAttachmentKey(attachment);
+    setSuppressedKeys((current) => (current.includes(key) ? current : [...current, key]));
+  }, []);
 
   const clearSentAttachments = useCallback(
     (attachments: readonly ComposerAttachment[]) => {
@@ -196,7 +145,7 @@ function useBinding({
     ({ selectedAttachments: current, index }: RemoveWorkspaceAttachmentInput) => {
       const selected = current[index];
       if (isWorkspaceAttachment(selected)) {
-        suppressWorkspaceAttachment();
+        suppressWorkspaceAttachment(selected);
         return true;
       }
       return false;
@@ -209,14 +158,14 @@ function useBinding({
       if (!isWorkspaceAttachment(attachment)) {
         return false;
       }
-      onOpenWorkspaceAttachment?.();
+      onOpenWorkspaceAttachment?.(attachment);
       return true;
     },
     [onOpenWorkspaceAttachment],
   );
 
   const resetSuppression = useCallback(() => {
-    setSuppressedKey(null);
+    setSuppressedKeys([]);
   }, []);
 
   const completeSubmit = useCallback(
@@ -300,7 +249,7 @@ export const composerWorkspaceAttachment = {
   renderPill,
   toSubmitAttachment,
   userAttachmentsOnly,
-  useBinding,
+  useBinding: useWorkspaceAttachmentBinding,
 };
 
 const styles = StyleSheet.create((theme: Theme) => ({

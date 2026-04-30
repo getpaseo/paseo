@@ -233,6 +233,9 @@ export const useReviewDraftStore = create<ReviewDraftStore>()(
       updateComment: ({ key, id, updates, updatedAt }) => {
         set((state) => {
           const comments = state.drafts[key] ?? [];
+          if (!comments.some((comment) => comment.id === id)) {
+            return state;
+          }
           const nextUpdatedAt = updatedAt ?? new Date().toISOString();
           return {
             drafts: {
@@ -245,12 +248,18 @@ export const useReviewDraftStore = create<ReviewDraftStore>()(
         });
       },
       deleteComment: ({ key, id }) => {
-        set((state) => ({
-          drafts: {
-            ...state.drafts,
-            [key]: (state.drafts[key] ?? []).filter((comment) => comment.id !== id),
-          },
-        }));
+        set((state) => {
+          const comments = state.drafts[key] ?? [];
+          if (!comments.some((comment) => comment.id === id)) {
+            return state;
+          }
+          return {
+            drafts: {
+              ...state.drafts,
+              [key]: comments.filter((comment) => comment.id !== id),
+            },
+          };
+        });
       },
       clearReview: ({ key }) => {
         set((state) => {

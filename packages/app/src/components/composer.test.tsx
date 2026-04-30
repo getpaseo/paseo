@@ -730,6 +730,10 @@ function ComposerHarness({
 }) {
   const [text, setText] = useState(initialText);
   const [attachments, setAttachments] = useState(initialAttachments);
+  const workspaceAttachments = React.useMemo(
+    () => (workspaceAttachment ? [workspaceAttachment] : []),
+    [workspaceAttachment],
+  );
   latestAttachments = attachments;
 
   const handleChangeAttachments = React.useCallback(
@@ -756,7 +760,7 @@ function ComposerHarness({
         value={text}
         onChangeText={setText}
         attachments={attachments}
-        workspaceAttachment={workspaceAttachment}
+        workspaceAttachments={workspaceAttachments}
         onChangeAttachments={handleChangeAttachments}
         isSubmitLoading={isSubmitLoading}
         submitBehavior={submitBehavior}
