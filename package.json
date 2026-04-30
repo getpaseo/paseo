@@ -1,6 +1,6 @@
 {
   "name": "hubcode",
-  "version": "2.7.6",
+  "version": "2.7.7",
   "private": true,
   "workspaces": [
     "packages/expo-two-way-audio",
