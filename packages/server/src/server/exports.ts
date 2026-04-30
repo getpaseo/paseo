@@ -4,7 +4,12 @@ export { loadConfig, type CliConfigOverrides } from "./config.js";
 export { resolvePaseoHome } from "./paseo-home.js";
 export { getOrCreateServerId } from "./server-id.js";
 export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
-export { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
+export {
+  loadPersistedConfig,
+  savePersistedConfig,
+  type PersistedConfig,
+} from "./persisted-config.js";
+export { hashDaemonPassword, isBearerTokenValid } from "./auth.js";
 export { generateLocalPairingOffer, type LocalPairingOffer } from "./pairing-offer.js";
 export {
   ConnectionOfferSchema,

@@ -3,6 +3,7 @@ import { startCommand } from "./start.js";
 import { runStatusCommand } from "./status.js";
 import { runStopCommand } from "./stop.js";
 import { runRestartCommand } from "./restart.js";
+import { runSetPasswordCommand } from "./set-password.js";
 import { pairCommand } from "./pair.js";
 import { withOutput } from "../../output/index.js";
 import { addJsonOption } from "../../utils/command-options.js";
@@ -59,6 +60,14 @@ export function createDaemonCommand(): Command {
         );
       }),
     );
+
+  addJsonOption(
+    daemon
+      .command("set-password")
+      .description("Prompt for and save a hashed daemon password to config.json"),
+  )
+    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+    .action(withOutput(runSetPasswordCommand));
 
   return daemon;
 }

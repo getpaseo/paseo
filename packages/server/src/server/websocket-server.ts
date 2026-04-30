@@ -55,7 +55,7 @@ import { createGitHubService, type GitHubService } from "../services/github-serv
 import {
   extractWsBearerProtocol,
   extractWsBearerToken,
-  isBearerTokenValid,
+  isBearerTokenValidAsync,
   type DaemonAuthConfig,
 } from "./auth.js";
 
@@ -584,7 +584,7 @@ export class VoiceAssistantWebSocketServer {
       path: "/ws",
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
-        this.verifyWsClient(req, allowedOrigins, hostnames, password, callback);
+        void this.verifyWsClient(req, allowedOrigins, hostnames, password, callback);
       },
     });
     wss.on("connection", (ws, request) => {
@@ -601,13 +601,13 @@ export class VoiceAssistantWebSocketServer {
     (runtimeMetricsInterval as unknown as { unref?: () => void }).unref?.();
   }
 
-  private verifyWsClient(
+  private async verifyWsClient(
     req: IncomingMessage,
     allowedOrigins: Set<string>,
     hostnames: HostnamesConfig | undefined,
     password: string | undefined,
     callback: (res: boolean, code?: number, message?: string) => void,
-  ): void {
+  ): Promise<void> {
     const requestMetadata = extractSocketRequestMetadata(req);
     const origin = requestMetadata.origin;
     const requestHost = requestMetadata.host ?? null;
@@ -623,7 +623,7 @@ export class VoiceAssistantWebSocketServer {
     if (password) {
       const protocol = extractWsBearerProtocol(req.headers["sec-websocket-protocol"]);
       const token = extractWsBearerToken(protocol);
-      if (!isBearerTokenValid({ password, token })) {
+      if (!(await isBearerTokenValidAsync({ password, token }))) {
         callback(false, 401, "Unauthorized");
         return;
       }
@@ -1869,7 +1869,7 @@ function selectWebSocketProtocol(
 
   for (const protocol of protocols) {
     const token = extractWsBearerToken(protocol);
-    if (isBearerTokenValid({ password, token })) {
+    if (token !== null) {
       return protocol;
     }
   }

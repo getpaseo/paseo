@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 const originalEnv = { ...process.env };
+const CORRECT_PASSWORD_HASH = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
 
 function connectWebSocket(params: {
   port: number;
@@ -52,7 +53,7 @@ describe("daemon bearer auth", () => {
 
   test("requires Authorization bearer on protected HTTP routes when password is configured", async () => {
     const daemonHandle = await createTestPaseoDaemon({
-      auth: { password: "correct-password" },
+      auth: { password: CORRECT_PASSWORD_HASH },
     });
     try {
       const missing = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/files/download`);
@@ -74,7 +75,7 @@ describe("daemon bearer auth", () => {
 
   test("bypasses bearer auth for preflight and liveness endpoints", async () => {
     const daemonHandle = await createTestPaseoDaemon({
-      auth: { password: "correct-password" },
+      auth: { password: CORRECT_PASSWORD_HASH },
     });
     try {
       const preflight = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/files/download`, {
@@ -95,7 +96,7 @@ describe("daemon bearer auth", () => {
 
   test("requires paseo.bearer subprotocol on WebSocket upgrades when password is configured", async () => {
     const daemonHandle = await createTestPaseoDaemon({
-      auth: { password: "correct-password" },
+      auth: { password: CORRECT_PASSWORD_HASH },
     });
     try {
       await expectWebSocketRejects({

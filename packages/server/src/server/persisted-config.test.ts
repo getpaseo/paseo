@@ -3,14 +3,15 @@ import { describe, expect, test } from "vitest";
 import { PersistedConfigSchema } from "./persisted-config.js";
 
 describe("PersistedConfigSchema daemon auth config", () => {
-  test("accepts optional plaintext daemon password", () => {
+  test("accepts optional daemon password hash", () => {
+    const hash = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
     const parsed = PersistedConfigSchema.parse({
       daemon: {
-        auth: { password: "shared-secret" },
+        auth: { password: hash },
       },
     });
 
-    expect(parsed.daemon?.auth?.password).toBe("shared-secret");
+    expect(parsed.daemon?.auth?.password).toBe(hash);
   });
 });
 

@@ -77,7 +77,7 @@ function tmpCwd(): string {
 
 test("DaemonClient connects to a password-protected daemon", async () => {
   const daemon = await createTestPaseoDaemon({
-    auth: { password: "shared-secret" },
+    auth: { password: "$2b$12$GMhF7pN4QnMlHOQXOqjd1OitKWPSmAO3FwB0PHzKtcZR/sAMryz76" },
   });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,

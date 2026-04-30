@@ -1,5 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
+import { compare, compareSync, hashSync } from "bcryptjs";
 import type { RequestHandler } from "express";
+
+export const DAEMON_PASSWORD_BCRYPT_COST = 12;
 
 export interface DaemonAuthConfig {
   password?: string;
@@ -11,6 +13,10 @@ interface BearerValidationInput {
 }
 
 export function isBearerTokenValid(input: BearerValidationInput): boolean {
+  return isBearerTokenValidSync(input);
+}
+
+export async function isBearerTokenValidAsync(input: BearerValidationInput): Promise<boolean> {
   if (!input.password) {
     return true;
   }
@@ -18,13 +24,22 @@ export function isBearerTokenValid(input: BearerValidationInput): boolean {
     return false;
   }
 
-  const expected = Buffer.from(input.password, "utf8");
-  const actual = Buffer.from(input.token, "utf8");
-  if (actual.length !== expected.length) {
-    timingSafeEqual(expected, Buffer.alloc(expected.length));
+  return compare(input.token, input.password);
+}
+
+export function isBearerTokenValidSync(input: BearerValidationInput): boolean {
+  if (!input.password) {
+    return true;
+  }
+  if (input.token === null) {
     return false;
   }
-  return timingSafeEqual(actual, expected);
+
+  return compareSync(input.token, input.password);
+}
+
+export function hashDaemonPassword(password: string): string {
+  return hashSync(password, DAEMON_PASSWORD_BCRYPT_COST);
 }
 
 export function extractHttpBearerToken(value: string | undefined): string | null {
@@ -73,13 +88,19 @@ export function createRequireBearerMiddleware(auth: DaemonAuthConfig | undefined
       return;
     }
 
-    const token = extractHttpBearerToken(req.header("authorization"));
-    if (!isBearerTokenValid({ password, token })) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
+    void (async () => {
+      try {
+        const token = extractHttpBearerToken(req.header("authorization"));
+        if (!(await isBearerTokenValidAsync({ password, token }))) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
 
-    next();
+        next();
+      } catch (error) {
+        next(error);
+      }
+    })();
   };
 }
 
