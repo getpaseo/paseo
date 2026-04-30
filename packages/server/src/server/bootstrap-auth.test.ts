@@ -1,7 +1,9 @@
 import { WebSocket } from "ws";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+
+const originalEnv = { ...process.env };
 
 function connectWebSocket(params: {
   port: number;
@@ -28,6 +30,12 @@ async function expectWebSocketRejects(params: {
 }
 
 describe("daemon bearer auth", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    process.env = { ...originalEnv, PASEO_SUPERVISED: "0" };
+  });
+
   test("leaves HTTP and WebSocket open when no password is configured", async () => {
     const daemonHandle = await createTestPaseoDaemon();
     try {

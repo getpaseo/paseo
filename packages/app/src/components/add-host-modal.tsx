@@ -294,6 +294,17 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     () => <Link2 size={16} color={theme.colors.palette.white} />,
     [theme.colors.palette.white],
   );
+  const hostFieldStyle = useMemo(() => [styles.field, styles.hostField], []);
+  const portFieldStyle = useMemo(() => [styles.field, styles.portField], []);
+  const checkboxStyle = useMemo(
+    () => [styles.checkbox, useTls ? styles.checkboxChecked : null],
+    [useTls],
+  );
+  const passwordInputStyle = useMemo(() => [styles.input, styles.passwordInput], []);
+  const useTlsAccessibilityState = useMemo(
+    () => ({ checked: useTls, disabled: isSaving }),
+    [isSaving, useTls],
+  );
 
   const handleClose = useCallback(() => {
     if (isSaving) return;
@@ -430,7 +441,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       <Text style={styles.helper}>Enter the address of a Paseo server.</Text>
 
       <View style={styles.portRow}>
-        <View style={[styles.field, styles.hostField]}>
+        <View style={hostFieldStyle}>
           <Text style={styles.label}>Host</Text>
           <AdaptiveTextInput
             testID="direct-host-input"
@@ -448,7 +459,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
             returnKeyType="next"
           />
         </View>
-        <View style={[styles.field, styles.portField]}>
+        <View style={portFieldStyle}>
           <Text style={styles.label}>Port</Text>
           <AdaptiveTextInput
             testID="direct-port-input"
@@ -475,10 +486,10 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
         disabled={isSaving}
         accessibilityRole="checkbox"
         accessibilityLabel="Use SSL"
-        accessibilityState={{ checked: useTls, disabled: isSaving }}
+        accessibilityState={useTlsAccessibilityState}
         testID="direct-ssl-toggle"
       >
-        <View style={[styles.checkbox, useTls ? styles.checkboxChecked : null]}>
+        <View style={checkboxStyle}>
           {useTls ? (
             <View testID="direct-ssl-toggle-checked">
               <Check size={14} color={theme.colors.palette.white} />
@@ -499,7 +510,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
             onChangeText={setPassword}
             placeholder="Optional"
             placeholderTextColor={theme.colors.foregroundMuted}
-            style={[styles.input, styles.passwordInput]}
+            style={passwordInputStyle}
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry={!isPasswordVisible}
