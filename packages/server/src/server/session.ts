@@ -1080,6 +1080,10 @@ export class Session {
     await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
   }
 
+  async emitWorkspaceUpdatesForExternalCwds(cwds: Iterable<string>): Promise<void> {
+    await Promise.all(Array.from(cwds, (cwd) => this.emitWorkspaceUpdateForCwd(cwd)));
+  }
+
   async warmWorkspaceGitDataForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
