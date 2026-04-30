@@ -4,10 +4,19 @@ export interface HostPortParts {
   isIpv6: boolean;
 }
 
+export interface ConnectionUriParts extends HostPortParts {
+  useTls: boolean;
+}
+
+export interface ParsedConnectionUri extends ConnectionUriParts {
+  password?: string;
+}
+
 export type RelayRole = "server" | "client";
 export type RelayProtocolVersion = "1" | "2";
 
 export const CURRENT_RELAY_PROTOCOL_VERSION: RelayProtocolVersion = "2";
+export const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 
 export function normalizeRelayProtocolVersion(
   value: unknown,
@@ -73,6 +82,66 @@ export function normalizeHostPort(input: string): string {
   return isIpv6 ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
+export function parseConnectionUri(input: string): ParsedConnectionUri {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new Error("Connection URI is required");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("Invalid connection URI");
+  }
+
+  if (parsed.protocol !== "tcp:") {
+    throw new Error("Connection URI protocol must be tcp:");
+  }
+  if (!parsed.hostname) {
+    throw new Error("Connection URI host is required");
+  }
+  if (!parsed.port) {
+    throw new Error("Connection URI port is required");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Connection URI userinfo is not supported");
+  }
+
+  const isIpv6 = parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]");
+  const host = isIpv6 ? parsed.hostname.slice(1, -1) : parsed.hostname;
+  const password = parsed.searchParams.get("password") || undefined;
+
+  return {
+    host,
+    port: parsePort(parsed.port, "Invalid connection URI"),
+    isIpv6,
+    useTls: parsed.searchParams.get("ssl") === "true",
+    ...(password ? { password } : {}),
+  };
+}
+
+export function serializeConnectionUri(parts: ConnectionUriParts): string {
+  return createConnectionUri(parts).toString();
+}
+
+export function serializeConnectionUriForStorage(parts: ParsedConnectionUri): string {
+  const url = createConnectionUri(parts);
+  if (parts.password) {
+    url.searchParams.set("password", parts.password);
+  }
+  return url.toString();
+}
+
+function createConnectionUri(parts: ConnectionUriParts): URL {
+  const hostPart = parts.isIpv6 ? `[${parts.host}]` : parts.host;
+  const url = new URL(`tcp://${hostPart}:${parts.port}`);
+  if (parts.useTls) {
+    url.searchParams.set("ssl", "true");
+  }
+  return url;
+}
+
 export function normalizeLoopbackToLocalhost(endpoint: string): string {
   const { host, port, isIpv6 } = parseHostPort(endpoint);
   if (host === "127.0.0.1" || (!isIpv6 && host === "0.0.0.0")) {
@@ -93,19 +162,20 @@ export function deriveLabelFromEndpoint(endpoint: string): string {
   }
 }
 
-function shouldUseSecureWebSocket(port: number): boolean {
-  return port === 443;
+export interface WebSocketUrlOptions {
+  useTls: boolean;
 }
 
-export function buildDaemonWebSocketUrl(endpoint: string): string {
+export function buildDaemonWebSocketUrl(endpoint: string, opts: WebSocketUrlOptions): string {
   const { host, port, isIpv6 } = parseHostPort(endpoint);
-  const protocol = shouldUseSecureWebSocket(port) ? "wss" : "ws";
+  const protocol = opts.useTls ? "wss" : "ws";
   const hostPart = isIpv6 ? `[${host}]` : host;
   return new URL(`${protocol}://${hostPart}:${port}/ws`).toString();
 }
 
 export function buildRelayWebSocketUrl(params: {
   endpoint: string;
+  useTls: boolean;
   serverId: string;
   role: RelayRole;
   /**
@@ -116,7 +186,7 @@ export function buildRelayWebSocketUrl(params: {
   version?: RelayProtocolVersion | 1 | 2;
 }): string {
   const { host, port, isIpv6 } = parseHostPort(params.endpoint);
-  const protocol = shouldUseSecureWebSocket(port) ? "wss" : "ws";
+  const protocol = params.useTls ? "wss" : "ws";
   const hostPart = isIpv6 ? `[${host}]` : host;
   const url = new URL(`${protocol}://${hostPart}:${port}/ws`);
   url.searchParams.set("serverId", params.serverId);
@@ -126,6 +196,14 @@ export function buildRelayWebSocketUrl(params: {
     url.searchParams.set("connectionId", params.connectionId);
   }
   return url.toString();
+}
+
+export function shouldUseTlsForDefaultHostedRelay(endpoint: string): boolean {
+  try {
+    return normalizeHostPort(endpoint) === DEFAULT_RELAY_ENDPOINT;
+  } catch {
+    return false;
+  }
 }
 
 export function extractHostPortFromWebSocketUrl(wsUrl: string): string {

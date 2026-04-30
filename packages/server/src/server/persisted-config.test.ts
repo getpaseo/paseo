@@ -2,6 +2,18 @@ import { describe, expect, test } from "vitest";
 
 import { PersistedConfigSchema } from "./persisted-config.js";
 
+describe("PersistedConfigSchema daemon auth config", () => {
+  test("accepts optional plaintext daemon password", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        auth: { password: "shared-secret" },
+      },
+    });
+
+    expect(parsed.daemon?.auth?.password).toBe("shared-secret");
+  });
+});
+
 describe("PersistedConfigSchema agent provider runtime settings", () => {
   test("legacy append entries are skipped during migration", () => {
     const parsed = PersistedConfigSchema.parse({

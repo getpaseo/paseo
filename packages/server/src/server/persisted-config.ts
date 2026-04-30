@@ -62,6 +62,12 @@ const ProvidersSchema = z
   })
   .strict();
 
+const DaemonAuthSchema = z
+  .object({
+    password: z.string().min(1).optional(),
+  })
+  .strict();
+
 const SpeechProviderIdSchema = z
   .string()
   .trim()
@@ -251,6 +257,7 @@ export const PersistedConfigSchema = z
           })
           .strict()
           .optional(),
+        auth: DaemonAuthSchema.optional(),
       })
       .strict()
       .transform(({ allowedHosts, ...daemon }) => {

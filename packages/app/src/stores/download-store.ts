@@ -242,14 +242,16 @@ interface DownloadTarget {
 }
 
 function resolveDaemonDownloadTarget(daemon?: HostProfile): DownloadTarget {
-  const endpoint = daemon?.connections.find((conn) => conn.type === "directTcp")?.endpoint ?? null;
-  if (!endpoint) {
+  const connection = daemon?.connections.find((conn) => conn.type === "directTcp") ?? null;
+  if (!connection) {
     return { baseUrl: null, authHeader: null, authCredentials: null };
   }
 
   let parsed: URL;
   try {
-    parsed = new URL(buildDaemonWebSocketUrl(endpoint));
+    parsed = new URL(
+      buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
+    );
   } catch {
     return { baseUrl: null, authHeader: null, authCredentials: null };
   }

@@ -10,11 +10,12 @@ export interface DaemonTransport {
 export type DaemonTransportFactory = (options: {
   url: string;
   headers?: Record<string, string>;
+  protocols?: string[];
 }) => DaemonTransport;
 
 export type WebSocketFactory = (
   url: string,
-  options?: { headers?: Record<string, string> },
+  options?: { headers?: Record<string, string>; protocols?: string[] },
 ) => WebSocketLike;
 
 export interface WebSocketLike {

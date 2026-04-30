@@ -1,10 +1,10 @@
 import { normalizeHostPort, normalizeLoopbackToLocalhost } from "@server/shared/daemon-endpoints";
+import {
+  DirectTcpHostConnectionSchema,
+  type DirectTcpHostConnection,
+} from "@server/shared/host-connection-schema";
 
-export interface DirectTcpHostConnection {
-  id: string;
-  type: "directTcp";
-  endpoint: string;
-}
+export { DirectTcpHostConnectionSchema, type DirectTcpHostConnection };
 
 export interface DirectSocketHostConnection {
   id: string;
@@ -58,7 +58,11 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
   }
 
   if (left.type === "directTcp" && right.type === "directTcp") {
-    return left.endpoint === right.endpoint;
+    return (
+      left.endpoint === right.endpoint &&
+      (left.useTls ?? false) === (right.useTls ?? false) &&
+      left.password === right.password
+    );
   }
   if (left.type === "directSocket" && right.type === "directSocket") {
     return left.path === right.path;
@@ -238,7 +242,13 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
       const endpoint = normalizeLoopbackToLocalhost(
         normalizeHostPort(String(record.endpoint ?? "")),
       );
-      return { id: `direct:${endpoint}`, type: "directTcp", endpoint };
+      return DirectTcpHostConnectionSchema.parse({
+        id: `direct:${endpoint}`,
+        type: "directTcp",
+        endpoint,
+        useTls: record.useTls,
+        ...(typeof record.password === "string" ? { password: record.password } : {}),
+      });
     } catch {
       return null;
     }

@@ -12,6 +12,7 @@ import {
   type DaemonTestContext,
   DaemonClient,
 } from "./test-utils/index.js";
+import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-configs.js";
 import { parsePcm16MonoWav, wordSimilarity } from "./test-utils/dictation-e2e.js";
 import type {
@@ -73,6 +74,25 @@ const speechTest = hasAnySpeech ? test : test.skip;
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-client-"));
 }
+
+test("DaemonClient connects to a password-protected daemon", async () => {
+  const daemon = await createTestPaseoDaemon({
+    auth: { password: "shared-secret" },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    password: "shared-secret",
+  });
+
+  try {
+    await client.connect();
+    const agents = await client.fetchAgents();
+    expect(agents.entries).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
 
 function waitForSignal<T>(
   timeoutMs: number,

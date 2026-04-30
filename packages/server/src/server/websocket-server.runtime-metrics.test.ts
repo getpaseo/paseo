@@ -108,6 +108,7 @@ function createServer(logger: ReturnType<typeof createLogger>) {
     undefined,
     undefined,
     undefined,
+    undefined,
     false,
     "1.2.3-test",
     undefined,

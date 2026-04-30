@@ -6,18 +6,22 @@ import type {
 
 export function defaultWebSocketFactory(
   url: string,
-  _options?: { headers?: Record<string, string> },
+  options?: { headers?: Record<string, string>; protocols?: string[] },
 ): WebSocketLike {
-  const globalWs = (globalThis as { WebSocket?: new (url: string) => WebSocketLike }).WebSocket;
+  const globalWs = (
+    globalThis as {
+      WebSocket?: new (url: string, protocols?: string | string[]) => WebSocketLike;
+    }
+  ).WebSocket;
   if (!globalWs) {
     throw new Error("WebSocket is not available in this runtime");
   }
-  return new globalWs(url);
+  return new globalWs(url, options?.protocols);
 }
 
 export function createWebSocketTransportFactory(factory: WebSocketFactory): DaemonTransportFactory {
-  return ({ url, headers }) => {
-    const ws = factory(url, { headers });
+  return ({ url, headers, protocols }) => {
+    const ws = factory(url, { headers, protocols });
     if ("binaryType" in ws) {
       try {
         ws.binaryType = "arraybuffer";

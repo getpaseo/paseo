@@ -29,6 +29,7 @@ interface TestPaseoDaemonOptions {
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
+  auth?: PaseoDaemonConfig["auth"];
 }
 
 export interface TestPaseoDaemon {
@@ -155,6 +156,7 @@ async function prepareTestDaemonConfig(
     relayEnabled: options.relayEnabled ?? false,
     relayEndpoint: options.relayEndpoint ?? "relay.paseo.sh:443",
     appBaseUrl: "https://app.paseo.sh",
+    auth: options.auth,
     openai: options.openai,
     speech: options.speech,
     voiceLlmProvider: options.voiceLlmProvider ?? null,

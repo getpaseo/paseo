@@ -8,7 +8,10 @@ import {
   type Transport as RelayTransport,
   type KeyPair,
 } from "@getpaseo/relay/e2ee";
-import { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
+import {
+  buildRelayWebSocketUrl,
+  shouldUseTlsForDefaultHostedRelay,
+} from "../shared/daemon-endpoints.js";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 
 interface RelayTransportOptions {
@@ -151,6 +154,7 @@ export function startRelayTransport({
     const connectionId = ++controlConnectionSeq;
     const url = buildRelayWebSocketUrl({
       endpoint: relayEndpoint,
+      useTls: shouldUseTlsForDefaultHostedRelay(relayEndpoint),
       serverId,
       role: "server",
     });
@@ -326,6 +330,7 @@ export function startRelayTransport({
 
     const url = buildRelayWebSocketUrl({
       endpoint: relayEndpoint,
+      useTls: shouldUseTlsForDefaultHostedRelay(relayEndpoint),
       serverId,
       role: "server",
       connectionId,

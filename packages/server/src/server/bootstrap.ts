@@ -135,6 +135,7 @@ import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
+import { createRequireBearerMiddleware, type DaemonAuthConfig } from "./auth.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -190,6 +191,7 @@ export interface PaseoDaemonConfig {
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
   appBaseUrl?: string;
+  auth?: DaemonAuthConfig;
   openai?: PaseoOpenAIConfig;
   speech?: PaseoSpeechConfig;
   voiceLlmProvider?: AgentProvider | null;
@@ -294,12 +296,6 @@ export async function createPaseoDaemon(
     });
   }
 
-  // Script proxy — intercepts requests for registered *.localhost hostnames
-  // and forwards them to the corresponding local script port. Placed after
-  // the host allowlist (*.localhost is already allowed) but before CORS and
-  // the rest of the routes so proxied requests skip unnecessary middleware.
-  app.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
-
   // CORS - allow same-origin + configured origins
   const allowedOrigins = new Set([
     ...config.corsAllowedOrigins,
@@ -329,6 +325,13 @@ export async function createPaseoDaemon(
     }
     next();
   });
+
+  app.use(createRequireBearerMiddleware(config.auth));
+
+  // Script proxy — intercepts requests for registered *.localhost hostnames
+  // and forwards them to the corresponding local script port. Placed after
+  // host/CORS/auth checks but before the rest of the routes.
+  app.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
 
   // Serve static files from public directory
   app.use("/public", express.static(staticDir));
@@ -793,6 +796,7 @@ export async function createPaseoDaemon(
             daemonConfigStore,
             mcpBaseUrl,
             { allowedOrigins, hostnames: configuredHostnames },
+            config.auth,
             speechService,
             terminalManager,
             {

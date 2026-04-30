@@ -21,6 +21,18 @@ export {
 } from "../client/daemon-client.js";
 export type { WebSocketFactory, WebSocketLike } from "../client/daemon-client-transport-types.js";
 export {
+  buildDaemonWebSocketUrl,
+  deriveLabelFromEndpoint,
+  normalizeHostPort,
+  parseConnectionUri,
+  shouldUseTlsForDefaultHostedRelay,
+} from "../shared/daemon-endpoints.js";
+export {
+  DirectTcpHostConnectionSchema,
+  type DirectTcpHostConnection,
+  type NormalizedDirectTcpHostConnection,
+} from "../shared/host-connection-schema.js";
+export {
   ensureLocalSpeechModels,
   listLocalSpeechModels,
   type LocalSpeechModelId,

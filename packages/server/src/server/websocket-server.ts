@@ -52,6 +52,12 @@ import {
   findLatestPermissionRequest,
 } from "../shared/agent-attention-notification.js";
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
+import {
+  extractWsBearerProtocol,
+  extractWsBearerToken,
+  isBearerTokenValid,
+  type DaemonAuthConfig,
+} from "./auth.js";
 
 export interface ExternalSocketMetadata {
   transport: "relay";
@@ -415,6 +421,7 @@ export class VoiceAssistantWebSocketServer {
     daemonConfigStore: DaemonConfigStore,
     mcpBaseUrl: string | null,
     wsConfig: WebSocketServerConfig,
+    auth?: DaemonAuthConfig,
     speech?: SpeechService | null,
     terminalManager?: TerminalManager | null,
     dictation?: {
@@ -527,7 +534,7 @@ export class VoiceAssistantWebSocketServer {
       });
     });
 
-    this.wss = this.createWebSocketServer(server, wsConfig);
+    this.wss = this.createWebSocketServer(server, wsConfig, auth);
     this.startRuntimeMetricsInterval();
 
     this.logger.info("WebSocket server initialized on /ws");
@@ -568,13 +575,16 @@ export class VoiceAssistantWebSocketServer {
   private createWebSocketServer(
     server: HTTPServer,
     wsConfig: WebSocketServerConfig,
+    auth: DaemonAuthConfig | undefined,
   ): WebSocketServer {
     const { allowedOrigins, hostnames } = wsConfig;
+    const password = auth?.password;
     const wss = new WebSocketServer({
       server,
       path: "/ws",
+      handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
-        this.verifyWsClient(req, allowedOrigins, hostnames, callback);
+        this.verifyWsClient(req, allowedOrigins, hostnames, password, callback);
       },
     });
     wss.on("connection", (ws, request) => {
@@ -595,6 +605,7 @@ export class VoiceAssistantWebSocketServer {
     req: IncomingMessage,
     allowedOrigins: Set<string>,
     hostnames: HostnamesConfig | undefined,
+    password: string | undefined,
     callback: (res: boolean, code?: number, message?: string) => void,
   ): void {
     const requestMetadata = extractSocketRequestMetadata(req);
@@ -608,6 +619,14 @@ export class VoiceAssistantWebSocketServer {
       );
       callback(false, 403, "Host not allowed");
       return;
+    }
+    if (password) {
+      const protocol = extractWsBearerProtocol(req.headers["sec-websocket-protocol"]);
+      const token = extractWsBearerToken(protocol);
+      if (!isBearerTokenValid({ password, token })) {
+        callback(false, 401, "Unauthorized");
+        return;
+      }
     }
     const sameOrigin =
       !!origin &&
@@ -1838,6 +1857,24 @@ function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
     ...(userAgent ? { userAgent } : {}),
     ...(remoteAddress ? { remoteAddress } : {}),
   };
+}
+
+function selectWebSocketProtocol(
+  protocols: Set<string>,
+  password: string | undefined,
+): string | false {
+  if (!password) {
+    return protocols.values().next().value ?? false;
+  }
+
+  for (const protocol of protocols) {
+    const token = extractWsBearerToken(protocol);
+    if (isBearerTokenValid({ password, token })) {
+      return protocol;
+    }
+  }
+
+  return false;
 }
 
 function stringifyCloseReason(reason: unknown): string | null {

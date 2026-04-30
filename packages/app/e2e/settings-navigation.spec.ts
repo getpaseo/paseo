@@ -59,6 +59,32 @@ test.describe("Settings sidebar navigation", () => {
     await expect(page.getByRole("button", { name: "Paste pairing link" })).toBeVisible();
   });
 
+  test("direct connection advanced URI round-trips SSL and password into the form", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+
+    await page.getByTestId("settings-add-host").click();
+    await page.getByRole("button", { name: "Direct connection" }).click();
+
+    await page.getByTestId("direct-host-advanced-toggle").click();
+    await page
+      .getByTestId("direct-host-uri-input")
+      .fill("tcp://example.paseo.test:7443?ssl=true&password=shared-secret");
+    await page.getByTestId("direct-host-advanced-toggle").click();
+
+    await expect(page.getByTestId("direct-host-input")).toHaveValue("example.paseo.test");
+    await expect(page.getByTestId("direct-port-input")).toHaveValue("7443");
+    await expect(page.getByTestId("direct-ssl-toggle-checked")).toBeVisible();
+    await expect(page.getByTestId("direct-password-input")).toHaveValue("shared-secret");
+
+    await page.getByTestId("direct-host-advanced-toggle").click();
+    await expect(page.getByTestId("direct-host-uri-input")).toHaveValue(
+      "tcp://example.paseo.test:7443?ssl=true&password=shared-secret",
+    );
+  });
+
   test("sidebar shows a Back to workspace row that leaves /settings", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);

@@ -107,6 +107,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     undefined,
     undefined,
     undefined,
+    undefined,
     false,
     "1.2.3-test",
     undefined,

@@ -54,6 +54,20 @@ const DEFAULT_FILE_LEVEL: LogLevel = "debug";
 const DEFAULT_FILE_ROTATE_SIZE = "10m";
 const DEFAULT_FILE_ROTATE_MAX_FILES = 2;
 const DEFAULT_DAEMON_LOG_FILENAME = "daemon.log";
+const REDACT_PATHS = [
+  "authorization",
+  "Authorization",
+  "headers.authorization",
+  "headers.Authorization",
+  "req.headers.authorization",
+  "req.headers.Authorization",
+  '["sec-websocket-protocol"]',
+  "Sec-WebSocket-Protocol",
+  'headers["sec-websocket-protocol"]',
+  "headers.Sec-WebSocket-Protocol",
+  'req.headers["sec-websocket-protocol"]',
+  "req.headers.Sec-WebSocket-Protocol",
+];
 
 function parseLogLevel(value: string | undefined): LogLevel | undefined {
   if (!value || !LOG_LEVELS.has(value as LogLevel)) {
@@ -285,7 +299,7 @@ export function createRootLogger(
   });
 
   return pino(
-    { level: config.level },
+    { level: config.level, redact: { paths: REDACT_PATHS, remove: true } },
     pino.multistream([
       { level: config.console.level, stream: consoleStream },
       { level: config.file.level, stream: fileStream },

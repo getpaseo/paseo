@@ -187,6 +187,7 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     daemonConfigStore as unknown as DaemonConfigStore,
     null,
     { allowedOrigins: new Set() },
+    undefined,
     speechReadiness
       ? {
           getReadiness: () => speechReadiness,

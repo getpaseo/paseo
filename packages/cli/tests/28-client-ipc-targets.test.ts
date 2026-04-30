@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   getDaemonHost,
   normalizeDaemonHost,
+  resolveDaemonPassword,
   resolveDaemonTarget,
   resolveDefaultDaemonHosts,
 } from "../src/utils/client.js";
@@ -37,20 +38,39 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
-  console.log("Test 3: local unix socket paths normalize into IPC daemon targets");
+  console.log("Test 3: tcp URI host targets honor ssl=true");
+  const target = resolveDaemonTarget("tcp://example.com:6767?ssl=true&password=query-secret");
+  assert.deepStrictEqual(target, {
+    type: "tcp",
+    url: "wss://example.com:6767/ws",
+  });
+  console.log("✓ tcp URI host targets honor ssl=true\n");
+}
+
+{
+  console.log("Test 4: tcp URI hosts normalize into canonical direct TCP targets");
+  assert.strictEqual(
+    normalizeDaemonHost("tcp://Example.com:6767?ssl=true&password=query-secret"),
+    "tcp://Example.com:6767?ssl=true&password=query-secret",
+  );
+  console.log("✓ tcp URI hosts normalize into canonical direct TCP targets\n");
+}
+
+{
+  console.log("Test 5: local unix socket paths normalize into IPC daemon targets");
   assert.strictEqual(normalizeDaemonHost("/tmp/paseo.sock"), "unix:///tmp/paseo.sock");
   console.log("✓ local unix socket paths normalize into IPC daemon targets\n");
 }
 
 {
-  console.log("Test 3b: Windows absolute paths are NOT treated as unix sockets");
+  console.log("Test 5b: Windows absolute paths are NOT treated as unix sockets");
   assert.strictEqual(normalizeDaemonHost("C:\\Users\\foo\\.paseo\\paseo.sock"), null);
   assert.strictEqual(normalizeDaemonHost("D:\\project\\socket"), null);
   console.log("✓ Windows absolute paths are not treated as unix sockets\n");
 }
 
 {
-  console.log("Test 4: default host resolution tries local IPC first, then localhost fallback");
+  console.log("Test 6: default host resolution tries local IPC first, then localhost fallback");
   const paseoHome = mkdtempSync(path.join(os.tmpdir(), "paseo-client-targets-"));
   try {
     mkdirSync(paseoHome, { recursive: true });
@@ -78,7 +98,7 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
-  console.log("Test 5: configured TCP host is preserved before the localhost fallback");
+  console.log("Test 7: configured TCP host is preserved before the localhost fallback");
   const paseoHome = mkdtempSync(path.join(os.tmpdir(), "paseo-client-targets-tcp-"));
   try {
     assert.deepStrictEqual(
@@ -95,13 +115,13 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
-  console.log("Test 6: CLI app version resolves for daemon hello compatibility");
+  console.log("Test 8: CLI app version resolves for daemon hello compatibility");
   assert.match(resolveCliVersion(), /^\d+\.\d+\.\d+/);
   console.log("✓ CLI app version resolves for daemon hello compatibility\n");
 }
 
 {
-  console.log("Test 7: local IPC still takes priority over configured TCP hosts");
+  console.log("Test 9: local IPC still takes priority over configured TCP hosts");
   const paseoHome = mkdtempSync(path.join(os.tmpdir(), "paseo-client-targets-order-"));
   try {
     mkdirSync(paseoHome, { recursive: true });
@@ -120,6 +140,17 @@ console.log("=== CLI IPC Target Helpers ===\n");
     rmSync(paseoHome, { recursive: true, force: true });
   }
   console.log("✓ local IPC still takes priority over configured TCP hosts\n");
+}
+
+{
+  console.log("Test 10: daemon password resolution uses only the TCP URI query");
+  assert.strictEqual(
+    resolveDaemonPassword("tcp://example.com:6767?ssl=true&password=query-secret"),
+    "query-secret",
+  );
+  assert.strictEqual(resolveDaemonPassword("tcp://missing.example:6767"), undefined);
+  assert.strictEqual(resolveDaemonPassword("example.com:6767"), undefined);
+  console.log("✓ daemon password resolution uses only the TCP URI query\n");
 }
 
 console.log("=== All CLI IPC target tests passed ===");

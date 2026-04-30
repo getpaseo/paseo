@@ -184,6 +184,32 @@ test("dedupes in-flight checkout status requests per agentId", async () => {
   });
 });
 
+test("passes password as HTTP bearer header and WebSocket subprotocol", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    password: "shared-secret",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  expect(transportFactory).toHaveBeenCalledWith({
+    url: "ws://test",
+    headers: { Authorization: "Bearer shared-secret" },
+    protocols: ["paseo.bearer.shared-secret"],
+  });
+});
+
 test("does not reconnect after close when ensureConnected is called", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

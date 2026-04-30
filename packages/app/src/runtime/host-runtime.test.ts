@@ -23,7 +23,7 @@ class FakeDaemonClient {
   public closeCalls = 0;
   public ensureConnectedCalls = 0;
   public fetchAgentsCalls: FetchAgentsOptions[] = [];
-  public fetchAgentsResponses: Array<Awaited<ReturnType<DaemonClient["fetchAgents"]>>> = [];
+  public fetchAgentsResponses: Awaited<ReturnType<DaemonClient["fetchAgents"]>>[] = [];
 
   async connect(): Promise<void> {
     this.connectCalls += 1;
@@ -283,9 +283,10 @@ function updateControllerSnapshot(
 }
 
 function makeProbeMap(
-  entries: Array<
-    [string, HostRuntimeSnapshot["probeByConnectionId"] extends Map<string, infer T> ? T : never]
-  >,
+  entries: [
+    string,
+    HostRuntimeSnapshot["probeByConnectionId"] extends Map<string, infer T> ? T : never,
+  ][],
 ): HostRuntimeSnapshot["probeByConnectionId"] {
   return new Map(entries);
 }
@@ -1555,6 +1556,41 @@ describe("HostRuntimeStore", () => {
 
     const renamed = store.getHosts().find((h) => h.serverId === "srv_rename");
     expect(renamed?.label).toBe("new name");
+
+    store.syncHosts([]);
+  });
+
+  it("upsertDirectConnection stores SSL and password settings", async () => {
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await store.upsertDirectConnection({
+      serverId: "srv_tls_password",
+      endpoint: "example.paseo.test:7443",
+      useTls: true,
+      password: "shared-secret",
+      label: "tls host",
+    });
+
+    const host = store.getHosts().find((entry) => entry.serverId === "srv_tls_password");
+    expect(host?.connections).toEqual([
+      {
+        id: "direct:example.paseo.test:7443",
+        type: "directTcp",
+        endpoint: "example.paseo.test:7443",
+        useTls: true,
+        password: "shared-secret",
+      },
+    ]);
 
     store.syncHosts([]);
   });
