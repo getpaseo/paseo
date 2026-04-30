@@ -13,7 +13,7 @@
     },
     "app": {
       "type": "service",
-      "command": "cd packages/app && BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON=\"${PASEO_SERVICE_DAEMON_URL#http://}\" npx expo start --port $PASEO_PORT"
+      "command": "cd packages/app && BROWSER=none EXPO_PUBLIC_LOCAL_DAEMON=\"localhost:${PASEO_SERVICE_DAEMON_PORT}\" npx expo start --port $PASEO_PORT"
     },
     "typecheck": {
       "command": "npm run typecheck"
