@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { fireEvent, render, cleanup } from "@testing-library/react";
+import "@/test/window-local-storage";
+import { act, fireEvent, render, renderHook, cleanup } from "@testing-library/react";
 import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ReviewDraftComment } from "@/stores/review-draft-store";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useReviewDraftStore, type ReviewDraftComment } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
 import {
   getInlineReviewThreadState,
@@ -13,31 +14,35 @@ import {
   InlineReviewGutterCell,
   InlineReviewThread,
   SMALL_ACTION_HIT_SLOP,
+  useInlineReviewController,
   type InlineReviewActions,
-} from "./git-diff-inline-review";
+} from "./index";
 
-const { theme, pressablePropsByLabel } = vi.hoisted(() => ({
-  theme: {
-    spacing: { 1: 4, 2: 8, 3: 12 },
-    borderWidth: { 1: 1 },
-    borderRadius: { base: 4 },
-    fontSize: { xs: 11, sm: 13 },
-    fontWeight: { medium: "500" },
-    lineHeight: { diff: 18 },
-    colors: {
-      accent: "#0a84ff",
-      accentForeground: "#fff",
-      border: "#555",
-      destructive: "#ff453a",
-      foreground: "#fff",
-      foregroundMuted: "#aaa",
-      surface1: "#111",
-      surface2: "#222",
-      surface3: "#333",
+const { theme, pressablePropsByLabel } = vi.hoisted(() => {
+  Object.assign(globalThis, { __DEV__: false });
+  return {
+    theme: {
+      spacing: { 1: 4, 2: 8, 3: 12 },
+      borderWidth: { 1: 1 },
+      borderRadius: { base: 4 },
+      fontSize: { xs: 11, sm: 13 },
+      fontWeight: { medium: "500" },
+      lineHeight: { diff: 18 },
+      colors: {
+        accent: "#0a84ff",
+        accentForeground: "#fff",
+        border: "#555",
+        destructive: "#ff453a",
+        foreground: "#fff",
+        foregroundMuted: "#aaa",
+        surface1: "#111",
+        surface2: "#222",
+        surface3: "#333",
+      },
     },
-  },
-  pressablePropsByLabel: new Map<string, Record<string, unknown>>(),
-}));
+    pressablePropsByLabel: new Map<string, Record<string, unknown>>(),
+  };
+});
 
 vi.mock("react-native", async (importOriginal) => {
   const ReactModule = await import("react");
@@ -81,6 +86,7 @@ vi.mock("react-native-unistyles", () => ({
   StyleSheet: {
     create: (factory: unknown) => (typeof factory === "function" ? factory(theme) : factory),
   },
+  withUnistyles: <T,>(component: T) => component,
   useUnistyles: () => ({ theme }),
 }));
 
@@ -94,6 +100,7 @@ vi.mock("lucide-react-native", () => {
     React.createElement("span", { ...props, "data-icon": name });
   return {
     Check: createIcon("Check"),
+    CircleDot: createIcon("CircleDot"),
     MessageCircle: createIcon("MessageCircle"),
     Pencil: createIcon("Pencil"),
     Trash2: createIcon("Trash2"),
@@ -150,6 +157,70 @@ function comment(overrides: Partial<ReviewDraftComment> = {}): ReviewDraftCommen
     ...overrides,
   };
 }
+
+describe("useInlineReviewController", () => {
+  beforeEach(() => {
+    useReviewDraftStore.setState({ drafts: {}, activeModesByScope: {} });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("owns draft comment add, edit, delete, cancel, and key-change editor reset", () => {
+    const reviewTarget = target();
+    const firstKey = "review:key-1";
+    const secondKey = "review:key-2";
+    const { result, rerender } = renderHook(
+      ({ reviewDraftKey }) =>
+        useInlineReviewController({ reviewDraftKey, showPersistentAction: true }),
+      { initialProps: { reviewDraftKey: firstKey } },
+    );
+
+    expect(result.current.showPersistentAction).toBe(true);
+
+    act(() => result.current.onStartComment(reviewTarget));
+    expect(result.current.editor).toEqual({ target: reviewTarget, commentId: null, body: "" });
+
+    act(() => result.current.onSaveEditor(" first comment "));
+    const savedComment = useReviewDraftStore.getState().drafts[firstKey]?.[0];
+    expect(savedComment).toMatchObject({
+      filePath: "src/example.ts",
+      side: "new",
+      lineNumber: 2,
+      body: "first comment",
+    });
+    expect(result.current.editor).toBeNull();
+    expect(result.current.commentsByTarget.get(reviewTarget.key)?.[0]).toMatchObject({
+      body: "first comment",
+    });
+
+    act(() => result.current.onEditComment(reviewTarget, savedComment!));
+    expect(result.current.editor).toEqual({
+      target: reviewTarget,
+      commentId: savedComment?.id,
+      body: "first comment",
+    });
+
+    act(() => result.current.onSaveEditor(" updated comment "));
+    const updatedComment = useReviewDraftStore.getState().drafts[firstKey]?.[0];
+    expect(updatedComment).toMatchObject({ id: savedComment?.id, body: "updated comment" });
+
+    act(() => result.current.onEditComment(reviewTarget, updatedComment!));
+    act(() => result.current.onDeleteComment(updatedComment!.id));
+    expect(useReviewDraftStore.getState().drafts[firstKey]).toEqual([]);
+    expect(result.current.editor).toBeNull();
+
+    act(() => result.current.onStartComment(reviewTarget));
+    act(() => result.current.onCancelEditor());
+    expect(result.current.editor).toBeNull();
+
+    act(() => result.current.onStartComment(reviewTarget));
+    rerender({ reviewDraftKey: secondKey });
+    expect(result.current.editor).toBeNull();
+  });
+});
 
 describe("git diff inline review helpers", () => {
   afterEach(() => {

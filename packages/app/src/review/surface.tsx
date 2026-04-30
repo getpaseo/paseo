@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
-import type { ReviewDraftComment } from "@/stores/review-draft-store";
+import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
 
 type PressableState = PressableStateCallbackType & { hovered?: boolean };
@@ -61,6 +61,100 @@ export function groupInlineReviewCommentsByTarget(
     grouped.set(key, [...(grouped.get(key) ?? []), comment]);
   }
   return grouped;
+}
+
+export function useInlineReviewController(input: {
+  reviewDraftKey: string;
+  showPersistentAction: boolean;
+}): InlineReviewActions {
+  const reviewComments = useReviewDraftComments(input.reviewDraftKey);
+  const commentsByTarget = useMemo(
+    () => groupInlineReviewCommentsByTarget(reviewComments),
+    [reviewComments],
+  );
+  const [editor, setEditor] = useState<InlineReviewEditorState | null>(null);
+  const addComment = useReviewDraftStore((state) => state.addComment);
+  const updateComment = useReviewDraftStore((state) => state.updateComment);
+  const deleteComment = useReviewDraftStore((state) => state.deleteComment);
+
+  useEffect(() => {
+    setEditor(null);
+  }, [input.reviewDraftKey]);
+
+  const handleStartComment = useCallback((target: ReviewableDiffTarget) => {
+    setEditor({ target, commentId: null, body: "" });
+  }, []);
+
+  const handleEditComment = useCallback(
+    (target: ReviewableDiffTarget, comment: ReviewDraftComment) => {
+      setEditor({ target, commentId: comment.id, body: comment.body });
+    },
+    [],
+  );
+
+  const handleCancelEditor = useCallback(() => {
+    setEditor(null);
+  }, []);
+
+  const handleSaveEditor = useCallback(
+    (body: string) => {
+      const trimmedBody = body.trim();
+      if (!editor || trimmedBody.length === 0) {
+        return;
+      }
+
+      if (editor.commentId) {
+        updateComment({
+          key: input.reviewDraftKey,
+          id: editor.commentId,
+          updates: { body: trimmedBody },
+        });
+      } else {
+        addComment({
+          key: input.reviewDraftKey,
+          comment: {
+            filePath: editor.target.filePath,
+            side: editor.target.side,
+            lineNumber: editor.target.lineNumber,
+            body: trimmedBody,
+          },
+        });
+      }
+      setEditor(null);
+    },
+    [addComment, editor, input.reviewDraftKey, updateComment],
+  );
+
+  const handleDeleteComment = useCallback(
+    (id: string) => {
+      deleteComment({ key: input.reviewDraftKey, id });
+      setEditor((current) => (current?.commentId === id ? null : current));
+    },
+    [deleteComment, input.reviewDraftKey],
+  );
+
+  return useMemo<InlineReviewActions>(
+    () => ({
+      commentsByTarget,
+      editor,
+      showPersistentAction: input.showPersistentAction,
+      onStartComment: handleStartComment,
+      onEditComment: handleEditComment,
+      onCancelEditor: handleCancelEditor,
+      onSaveEditor: handleSaveEditor,
+      onDeleteComment: handleDeleteComment,
+    }),
+    [
+      commentsByTarget,
+      editor,
+      handleCancelEditor,
+      handleDeleteComment,
+      handleEditComment,
+      handleSaveEditor,
+      handleStartComment,
+      input.showPersistentAction,
+    ],
+  );
 }
 
 export function isInlineReviewEditorForTarget(

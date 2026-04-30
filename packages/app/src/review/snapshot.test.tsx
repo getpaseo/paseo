@@ -6,15 +6,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CheckoutStatusResponse } from "@server/shared/messages";
 import type { ParsedDiffFile } from "@/hooks/use-checkout-diff-query";
+import { buildReviewDraftKey, buildReviewDraftScopeKey, useReviewDraftStore } from "./store";
 import {
-  buildReviewDraftKey,
-  buildReviewDraftScopeKey,
-  useReviewDraftStore,
-} from "@/stores/review-draft-store";
-import {
-  useGeneratedReviewAttachment,
-  type UseGeneratedReviewAttachmentResult,
-} from "./use-generated-review-attachment";
+  useReviewWorkspaceAttachmentSnapshot,
+  type UseReviewWorkspaceAttachmentSnapshotResult,
+} from "./snapshot";
 
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 
@@ -121,11 +117,11 @@ async function waitForExpectation(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
-describe("useGeneratedReviewAttachment", () => {
+describe("useReviewWorkspaceAttachmentSnapshot", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
   let queryClient: QueryClient | null = null;
-  let latest: UseGeneratedReviewAttachmentResult | null = null;
+  let latest: UseReviewWorkspaceAttachmentSnapshotResult | null = null;
 
   beforeEach(() => {
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", {
@@ -191,7 +187,7 @@ describe("useGeneratedReviewAttachment", () => {
     });
 
     function Probe() {
-      latest = useGeneratedReviewAttachment({
+      latest = useReviewWorkspaceAttachmentSnapshot({
         serverId,
         workspaceId: "workspace-1",
         cwd,
@@ -265,7 +261,7 @@ describe("useGeneratedReviewAttachment", () => {
     });
 
     function Probe() {
-      latest = useGeneratedReviewAttachment({
+      latest = useReviewWorkspaceAttachmentSnapshot({
         serverId,
         workspaceId: "workspace-1",
         cwd,
@@ -349,7 +345,7 @@ describe("useGeneratedReviewAttachment", () => {
     });
 
     function Probe() {
-      latest = useGeneratedReviewAttachment({
+      latest = useReviewWorkspaceAttachmentSnapshot({
         serverId,
         workspaceId: "workspace-1",
         cwd,

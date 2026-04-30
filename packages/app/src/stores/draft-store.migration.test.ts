@@ -3,10 +3,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { ComposerAttachment } from "@/attachments/types";
 import { __draftStoreTestUtils, useDraftStore } from "./draft-store";
 
-function generatedReviewAttachment(): Extract<ComposerAttachment, { kind: "review" }> {
+function workspaceReviewAttachment(): Extract<ComposerAttachment, { kind: "review" }> {
   return {
     kind: "review",
-    generated: true,
     reviewDraftKey: "review:key",
     commentCount: 1,
     attachment: {
@@ -126,13 +125,13 @@ describe("draft-store migration", () => {
     expect(twice).toEqual(once);
   });
 
-  it("rejects generated review attachments from migrated draft attachments", async () => {
+  it("rejects workspace review attachments from migrated draft attachments", async () => {
     const migrated = await __draftStoreTestUtils.migratePersistedState({
       drafts: {
         "agent:server:agent": {
           input: {
             text: "hello",
-            attachments: [generatedReviewAttachment()],
+            attachments: [workspaceReviewAttachment()],
             cwd: "/repo",
           },
           lifecycle: "active",

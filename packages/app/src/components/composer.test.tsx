@@ -12,7 +12,7 @@ import type {
 import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
 import { Composer } from "./composer";
 import { splitComposerAttachmentsForSubmit } from "./composer-attachments";
-import { useReviewDraftStore } from "@/stores/review-draft-store";
+import { addReviewDraftComment, getReviewDraftComments, resetReviewDraftStore } from "@/review";
 
 const keyboardActionHandlerMock = vi.hoisted(() => vi.fn());
 
@@ -41,6 +41,7 @@ const {
     borderRadius: { full: 999, md: 6, lg: 8, "2xl": 16 },
     fontSize: { xs: 11, sm: 13, base: 15, lg: 18 },
     fontWeight: { normal: "400", medium: "500" },
+    lineHeight: { diff: 18 },
     shadow: { md: {} },
     colors: {
       surface0: "#000",
@@ -610,7 +611,6 @@ function reviewAttachment(body: string): ReviewAttachment {
 function reviewComposerAttachment(body: string): ReviewComposerAttachment {
   return {
     kind: "review",
-    generated: true,
     reviewDraftKey: `review:${body}`,
     commentCount: 1,
     attachment: reviewAttachment(body),
@@ -618,7 +618,7 @@ function reviewComposerAttachment(body: string): ReviewComposerAttachment {
 }
 
 function seedReviewDraft(key: string) {
-  useReviewDraftStore.getState().addComment({
+  addReviewDraftComment({
     key,
     comment: {
       id: `${key}:comment`,
@@ -690,7 +690,7 @@ beforeEach(() => {
   mockSessionState.sessions.server.agents = new Map([
     ["agent", { status: "idle", lastUsage: null }],
   ]);
-  useReviewDraftStore.setState({ drafts: {}, activeModesByScope: {} });
+  resetReviewDraftStore();
 });
 
 afterEach(() => {
@@ -718,13 +718,13 @@ function imageAttachment(id: string): AttachmentMetadata {
 function ComposerHarness({
   initialText = "",
   initialAttachments = [],
-  generatedReviewAttachment = null,
+  workspaceAttachment = null,
   isSubmitLoading = false,
   submitBehavior,
 }: {
   initialText?: string;
   initialAttachments?: UserComposerAttachment[];
-  generatedReviewAttachment?: ReviewComposerAttachment | null;
+  workspaceAttachment?: ReviewComposerAttachment | null;
   isSubmitLoading?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
 }) {
@@ -756,7 +756,7 @@ function ComposerHarness({
         value={text}
         onChangeText={setText}
         attachments={attachments}
-        generatedAttachment={generatedReviewAttachment}
+        workspaceAttachment={workspaceAttachment}
         onChangeAttachments={handleChangeAttachments}
         isSubmitLoading={isSubmitLoading}
         submitBehavior={submitBehavior}
@@ -771,7 +771,7 @@ function renderComposer(
   input: {
     initialText?: string;
     initialAttachments?: UserComposerAttachment[];
-    generatedReviewAttachment?: ReviewComposerAttachment | null;
+    workspaceAttachment?: ReviewComposerAttachment | null;
     isSubmitLoading?: boolean;
     submitBehavior?: "clear" | "preserve-and-lock";
   } = {},
@@ -995,7 +995,7 @@ describe("Composer attachments", () => {
     );
   });
 
-  it("serializes generated review attachments through the structured attachment path", async () => {
+  it("serializes workspace review attachments through the structured attachment path", async () => {
     const review = reviewComposerAttachment("Please simplify this.");
     expect(splitComposerAttachmentsForSubmit([review])).toEqual({
       images: [],
@@ -1003,11 +1003,11 @@ describe("Composer attachments", () => {
     });
   });
 
-  it("renders and submits a generated review attachment pill", async () => {
+  it("renders and submits a workspace review attachment pill", async () => {
     const review = reviewComposerAttachment("Please simplify this.");
     renderComposer({
       initialText: "review this",
-      generatedReviewAttachment: review,
+      workspaceAttachment: review,
     });
 
     expect(queryByTestId("composer-review-attachment-pill")?.textContent).toContain("Review");
@@ -1025,21 +1025,21 @@ describe("Composer attachments", () => {
     );
   });
 
-  it("clears the included generated review draft after a successful submit", async () => {
+  it("clears the included workspace review draft after a successful submit", async () => {
     const review = reviewComposerAttachment("Clear submitted review draft.");
     seedReviewDraft(review.reviewDraftKey);
     renderComposer({
       initialText: "review this",
-      generatedReviewAttachment: review,
+      workspaceAttachment: review,
     });
 
     click(document.querySelector('[aria-label="Send message"]')!);
     await flushAsyncWork();
 
-    expect(useReviewDraftStore.getState().drafts[review.reviewDraftKey]).toBeUndefined();
+    expect(getReviewDraftComments(review.reviewDraftKey)).toBeUndefined();
   });
 
-  it("restores only normal attachments when a submit with a generated review fails", async () => {
+  it("restores only normal attachments when a submit with a workspace review fails", async () => {
     const image = imageAttachment("img-failure");
     const review = reviewComposerAttachment("This should be sent but not persisted.");
     seedReviewDraft(review.reviewDraftKey);
@@ -1047,7 +1047,7 @@ describe("Composer attachments", () => {
     renderComposer({
       initialText: "review this",
       initialAttachments: [{ kind: "image", metadata: image }],
-      generatedReviewAttachment: review,
+      workspaceAttachment: review,
     });
 
     click(document.querySelector('[aria-label="Send message"]')!);
@@ -1061,14 +1061,14 @@ describe("Composer attachments", () => {
       }),
     );
     expect(latestAttachments).toEqual([{ kind: "image", metadata: image }]);
-    expect(useReviewDraftStore.getState().drafts[review.reviewDraftKey]).toHaveLength(1);
+    expect(getReviewDraftComments(review.reviewDraftKey)).toHaveLength(1);
   });
 
-  it("clears generated review suppression after a send lifecycle", async () => {
+  it("clears workspace review suppression after a send lifecycle", async () => {
     const review = reviewComposerAttachment("Keep this available for the next message.");
     renderComposer({
       initialText: "send without review",
-      generatedReviewAttachment: review,
+      workspaceAttachment: review,
     });
 
     click(document.querySelector('[aria-label="Remove review attachment"]')!);
@@ -1087,12 +1087,12 @@ describe("Composer attachments", () => {
     expect(queryByTestId("composer-review-attachment-pill")).not.toBeNull();
   });
 
-  it("keeps generated review suppressed after a failed send", async () => {
+  it("keeps workspace review suppressed after a failed send", async () => {
     const review = reviewComposerAttachment("Do not send this on retry.");
     mockClient.sendAgentMessage.mockRejectedValueOnce(new Error("network down"));
     renderComposer({
       initialText: "retry without review",
-      generatedReviewAttachment: review,
+      workspaceAttachment: review,
     });
 
     click(document.querySelector('[aria-label="Remove review attachment"]')!);
@@ -1124,21 +1124,21 @@ describe("Composer attachments", () => {
     );
   });
 
-  it("captures generated review attachments at queue time", async () => {
+  it("captures workspace review attachments at queue time", async () => {
     appSendBehavior.current = "queue";
     mockSessionState.sessions.server.agents.set("agent", { status: "running", lastUsage: null });
     const initialReview = reviewComposerAttachment("Initial queued review.");
     const editedReview = reviewComposerAttachment("Edited after queue.");
     renderComposer({
       initialText: "queue this",
-      generatedReviewAttachment: initialReview,
+      workspaceAttachment: initialReview,
     });
 
     click(document.querySelector('[aria-label="Queue message"]')!);
     await flushAsyncWork();
     renderComposer({
       initialText: "",
-      generatedReviewAttachment: editedReview,
+      workspaceAttachment: editedReview,
     });
 
     const queued = mockSessionState.sessions.server.queuedMessages.get("agent") as Array<{
@@ -1147,29 +1147,29 @@ describe("Composer attachments", () => {
     expect(queued[0]?.attachments).toEqual([initialReview]);
   });
 
-  it("clears the included generated review draft after queueing", async () => {
+  it("clears the included workspace review draft after queueing", async () => {
     appSendBehavior.current = "queue";
     mockSessionState.sessions.server.agents.set("agent", { status: "running", lastUsage: null });
     const review = reviewComposerAttachment("Clear queued review draft.");
     seedReviewDraft(review.reviewDraftKey);
     renderComposer({
       initialText: "queue this",
-      generatedReviewAttachment: review,
+      workspaceAttachment: review,
     });
 
     click(document.querySelector('[aria-label="Queue message"]')!);
     await flushAsyncWork();
 
-    expect(useReviewDraftStore.getState().drafts[review.reviewDraftKey]).toBeUndefined();
+    expect(getReviewDraftComments(review.reviewDraftKey)).toBeUndefined();
   });
 
-  it("clears generated review suppression after queueing a message", async () => {
+  it("clears workspace review suppression after queueing a message", async () => {
     appSendBehavior.current = "queue";
     mockSessionState.sessions.server.agents.set("agent", { status: "running", lastUsage: null });
     const review = reviewComposerAttachment("Queue without this review first.");
     renderComposer({
       initialText: "queue without review",
-      generatedReviewAttachment: review,
+      workspaceAttachment: review,
     });
 
     click(document.querySelector('[aria-label="Remove review attachment"]')!);
@@ -1185,7 +1185,7 @@ describe("Composer attachments", () => {
     expect(queryByTestId("composer-review-attachment-pill")).not.toBeNull();
   });
 
-  it("does not restore queued generated review attachments into live draft attachments when editing", async () => {
+  it("does not restore queued workspace review attachments into live draft attachments when editing", async () => {
     appSendBehavior.current = "queue";
     mockSessionState.sessions.server.agents.set("agent", { status: "running", lastUsage: null });
     const image = imageAttachment("img-queued-edit");
@@ -1193,7 +1193,7 @@ describe("Composer attachments", () => {
     renderComposer({
       initialText: "queue this",
       initialAttachments: [{ kind: "image", metadata: image }],
-      generatedReviewAttachment: review,
+      workspaceAttachment: review,
     });
 
     click(document.querySelector('[aria-label="Queue message"]')!);

@@ -9,8 +9,7 @@ import { AgentStreamView } from "@/components/agent-stream-view";
 import type { ImageAttachment } from "@/components/message-input";
 import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
-import { useGeneratedReviewComposerAttachment } from "@/hooks/use-generated-review-composer-attachment";
-import { stripGeneratedReviewAttachments } from "@/attachments/composer-attachment-utils";
+import { composerWorkspaceAttachment, useReviewWorkspaceAttachment } from "@/review";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
@@ -326,7 +325,7 @@ export function WorkspaceDraftAgentTab({
   );
   const autoSubmitConfig = resolveAutoSubmitConfig(pendingAutoSubmit);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
-  const generatedReview = useGeneratedReviewComposerAttachment({
+  const workspaceAttachment = useReviewWorkspaceAttachment({
     serverId,
     cwd: draftInput.cwd,
     workspaceId,
@@ -415,7 +414,7 @@ export function WorkspaceDraftAgentTab({
       cwd: submission.cwd,
     }).catch(() => {
       setDraftText(submission.text);
-      setDraftAttachments(stripGeneratedReviewAttachments(submission.attachments));
+      setDraftAttachments(composerWorkspaceAttachment.userAttachmentsOnly(submission.attachments));
       autoSubmitKeyRef.current = null;
     });
   }, [
@@ -569,8 +568,8 @@ export function WorkspaceDraftAgentTab({
             value={draftInput.text}
             onChangeText={draftInput.setText}
             attachments={draftInput.attachments}
-            generatedAttachment={generatedReview.attachment}
-            onOpenGeneratedAttachment={generatedReview.openAttachment}
+            workspaceAttachment={workspaceAttachment.attachment}
+            onOpenWorkspaceAttachment={workspaceAttachment.openAttachment}
             onChangeAttachments={draftInput.setAttachments}
             cwd={draftInput.cwd}
             clearDraft={draftInput.clear}

@@ -9,7 +9,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/components/composer";
 import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
-import { stripGeneratedReviewAttachments } from "@/attachments/composer-attachment-utils";
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -374,7 +373,9 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     }),
     draft: {
       text,
-      attachments: stripGeneratedReviewAttachments(attachments),
+      attachments: attachments.filter(
+        (attachment): attachment is UserComposerAttachment => attachment.kind !== "review",
+      ),
       cwd: workspaceDirectory,
     },
   });

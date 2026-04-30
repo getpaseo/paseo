@@ -67,7 +67,7 @@ interface ReviewDraftStoreActions {
   clearReview: (input: { key: string }) => void;
 }
 
-type ReviewDraftCommentInput = Omit<ReviewDraftComment, "id" | "createdAt" | "updatedAt"> &
+export type ReviewDraftCommentInput = Omit<ReviewDraftComment, "id" | "createdAt" | "updatedAt"> &
   Partial<Pick<ReviewDraftComment, "id" | "createdAt" | "updatedAt">>;
 
 type ReviewDraftStore = ReviewDraftStoreState & ReviewDraftStoreActions;
@@ -372,7 +372,6 @@ export function buildReviewAttachmentSnapshot(
 
   return {
     kind: "review",
-    generated: true,
     reviewDraftKey: input.reviewDraftKey,
     commentCount: comments.length,
     attachment,
@@ -381,6 +380,29 @@ export function buildReviewAttachmentSnapshot(
 
 export function useReviewDraftComments(key: string): ReviewDraftComment[] {
   return useReviewDraftStore((state) => state.drafts[key] ?? EMPTY_REVIEW_DRAFT_COMMENTS);
+}
+
+export function useSetActiveReviewDraftMode(): ReviewDraftStoreActions["setActiveMode"] {
+  return useReviewDraftStore((state) => state.setActiveMode);
+}
+
+export function useClearReviewDraft(): ReviewDraftStoreActions["clearReview"] {
+  return useReviewDraftStore((state) => state.clearReview);
+}
+
+export function addReviewDraftComment(input: {
+  key: string;
+  comment: ReviewDraftCommentInput;
+}): ReviewDraftComment {
+  return useReviewDraftStore.getState().addComment(input);
+}
+
+export function getReviewDraftComments(key: string): ReviewDraftComment[] | undefined {
+  return useReviewDraftStore.getState().drafts[key];
+}
+
+export function resetReviewDraftStore(): void {
+  useReviewDraftStore.setState({ drafts: {}, activeModesByScope: {} });
 }
 
 export function useReviewDraftCommentsForAttachment(input: {

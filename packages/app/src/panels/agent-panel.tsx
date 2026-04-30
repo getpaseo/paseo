@@ -25,7 +25,7 @@ import {
   useAgentScreenStateMachine,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
-import { useGeneratedReviewComposerAttachment } from "@/hooks/use-generated-review-composer-attachment";
+import { useReviewWorkspaceAttachment } from "@/review";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
@@ -1240,7 +1240,7 @@ function ActiveAgentComposer({
     }),
     initialCwd,
   });
-  const generatedReview = useGeneratedReviewComposerAttachment({
+  const workspaceAttachment = useReviewWorkspaceAttachment({
     serverId,
     cwd: agentInputDraft.cwd,
     workspaceId,
@@ -1260,8 +1260,8 @@ function ActiveAgentComposer({
         value={agentInputDraft.text}
         onChangeText={agentInputDraft.setText}
         attachments={agentInputDraft.attachments}
-        generatedAttachment={generatedReview.attachment}
-        onOpenGeneratedAttachment={generatedReview.openAttachment}
+        workspaceAttachment={workspaceAttachment.attachment}
+        onOpenWorkspaceAttachment={workspaceAttachment.openAttachment}
         onChangeAttachments={agentInputDraft.setAttachments}
         cwd={agentInputDraft.cwd}
         clearDraft={agentInputDraft.clear}

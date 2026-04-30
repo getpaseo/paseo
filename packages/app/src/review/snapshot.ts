@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { GeneratedReviewComposerAttachment } from "@/attachments/types";
+import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useCheckoutDiffQuery } from "@/hooks/use-checkout-diff-query";
 import { useCheckoutStatusQuery } from "@/hooks/use-checkout-status-query";
@@ -11,24 +11,24 @@ import {
   useReviewCommentCount,
   useReviewDraftCommentsForAttachment,
   type ReviewDraftMode,
-} from "@/stores/review-draft-store";
+} from "./store";
 
-export interface UseGeneratedReviewAttachmentInput {
+export interface UseReviewWorkspaceAttachmentSnapshotInput {
   serverId: string;
   workspaceId?: string | null;
   cwd: string;
 }
 
-export interface UseGeneratedReviewAttachmentResult {
-  attachment: GeneratedReviewComposerAttachment | null;
+export interface UseReviewWorkspaceAttachmentSnapshotResult {
+  attachment: WorkspaceComposerAttachment | null;
   isGit: boolean;
 }
 
-export function useGeneratedReviewAttachment({
+export function useReviewWorkspaceAttachmentSnapshot({
   serverId,
   workspaceId,
   cwd,
-}: UseGeneratedReviewAttachmentInput): UseGeneratedReviewAttachmentResult {
+}: UseReviewWorkspaceAttachmentSnapshotInput): UseReviewWorkspaceAttachmentSnapshotResult {
   const { preferences: changesPreferences } = useChangesPreferences();
   const { status } = useCheckoutStatusQuery({ serverId, cwd });
   const gitStatus = status && status.isGit ? status : null;

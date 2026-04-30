@@ -26,12 +26,11 @@ export type ComposerAttachment =
       attachment: Extract<AgentAttachment, { type: "review" }>;
       reviewDraftKey: string;
       commentCount: number;
-      generated: true;
     };
 
 export type UserComposerAttachment = Exclude<ComposerAttachment, { kind: "review" }>;
 
-export type GeneratedReviewComposerAttachment = Extract<ComposerAttachment, { kind: "review" }>;
+export type WorkspaceComposerAttachment = Extract<ComposerAttachment, { kind: "review" }>;
 
 export type AttachmentDataSource =
   | { kind: "base64"; base64: string }

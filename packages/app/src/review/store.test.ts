@@ -7,7 +7,7 @@ import {
   buildReviewDraftKey,
   buildReviewDraftScopeKey,
   useReviewDraftStore,
-} from "./review-draft-store";
+} from "./store";
 
 const STORE_STORAGE_KEY = "@paseo:review-draft-store";
 
@@ -139,7 +139,7 @@ describe("review draft store", () => {
     ]);
   });
 
-  it("persists compact draft comments separately from generated wire context", () => {
+  it("persists compact draft comments separately from workspace attachment wire context", () => {
     const key = buildReviewDraftKey({
       serverId: "local",
       workspaceId: "workspace-1",
@@ -191,7 +191,7 @@ describe("review draft store", () => {
 });
 
 describe("buildReviewAttachmentSnapshot", () => {
-  it("builds a bounded generated review attachment and skips missing targets", () => {
+  it("builds a bounded workspace review attachment and skips missing targets", () => {
     const snapshot = buildReviewAttachmentSnapshot({
       reviewDraftKey: "review:key",
       cwd: "/repo",
@@ -222,7 +222,6 @@ describe("buildReviewAttachmentSnapshot", () => {
 
     expect(snapshot).toEqual({
       kind: "review",
-      generated: true,
       reviewDraftKey: "review:key",
       commentCount: 1,
       attachment: {

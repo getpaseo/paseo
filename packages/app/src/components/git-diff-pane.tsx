@@ -101,22 +101,18 @@ import { isWeb, isNative } from "@/constants/platform";
 import {
   buildReviewDraftScopeKey,
   buildReviewDraftKey,
-  useReviewDraftComments,
-  useReviewDraftStore,
   useActiveReviewDraftMode,
+  useSetActiveReviewDraftMode,
   type ReviewDraftComment,
   type ReviewDraftMode,
-} from "@/stores/review-draft-store";
-import {
-  groupInlineReviewCommentsByTarget,
   getInlineReviewThreadState,
   getSplitInlineReviewThreadState,
   InlineReviewGutterCell,
   InlineReviewThread,
   isInlineReviewEditorForTarget,
+  useInlineReviewController,
   type InlineReviewActions,
-  type InlineReviewEditorState,
-} from "@/components/git-diff-inline-review";
+} from "@/review";
 
 export type { GitActionId, GitAction, GitActions } from "@/components/git-actions-policy";
 
@@ -1857,16 +1853,7 @@ export function GitDiffPane({
       }),
     [baseRef, changesPreferences.hideWhitespace, cwd, diffMode, serverId, workspaceId],
   );
-  const reviewComments = useReviewDraftComments(reviewDraftKey);
-  const commentsByTarget = useMemo(
-    () => groupInlineReviewCommentsByTarget(reviewComments),
-    [reviewComments],
-  );
-  const [reviewEditor, setReviewEditor] = useState<InlineReviewEditorState | null>(null);
-  const addReviewComment = useReviewDraftStore((state) => state.addComment);
-  const updateReviewComment = useReviewDraftStore((state) => state.updateComment);
-  const deleteReviewComment = useReviewDraftStore((state) => state.deleteComment);
-  const setActiveReviewMode = useReviewDraftStore((state) => state.setActiveMode);
+  const setActiveReviewMode = useSetActiveReviewDraftMode();
 
   const handleSelectUncommitted = useCallback(() => {
     setDiffModeOverride("uncommitted");
@@ -1878,84 +1865,10 @@ export function GitDiffPane({
     setActiveReviewMode({ scopeKey: reviewDraftScopeKey, mode: "base" });
   }, [reviewDraftScopeKey, setActiveReviewMode]);
 
-  useEffect(() => {
-    setReviewEditor(null);
-  }, [reviewDraftKey]);
-
-  const handleStartReviewComment = useCallback((target: ReviewableDiffTarget) => {
-    setReviewEditor({ target, commentId: null, body: "" });
-  }, []);
-
-  const handleEditReviewComment = useCallback(
-    (target: ReviewableDiffTarget, comment: ReviewDraftComment) => {
-      setReviewEditor({ target, commentId: comment.id, body: comment.body });
-    },
-    [],
-  );
-
-  const handleCancelReviewEditor = useCallback(() => {
-    setReviewEditor(null);
-  }, []);
-
-  const handleSaveReviewEditor = useCallback(
-    (body: string) => {
-      const trimmedBody = body.trim();
-      if (!reviewEditor || trimmedBody.length === 0) {
-        return;
-      }
-
-      if (reviewEditor.commentId) {
-        updateReviewComment({
-          key: reviewDraftKey,
-          id: reviewEditor.commentId,
-          updates: { body: trimmedBody },
-        });
-      } else {
-        addReviewComment({
-          key: reviewDraftKey,
-          comment: {
-            filePath: reviewEditor.target.filePath,
-            side: reviewEditor.target.side,
-            lineNumber: reviewEditor.target.lineNumber,
-            body: trimmedBody,
-          },
-        });
-      }
-      setReviewEditor(null);
-    },
-    [addReviewComment, reviewDraftKey, reviewEditor, updateReviewComment],
-  );
-
-  const handleDeleteReviewComment = useCallback(
-    (id: string) => {
-      deleteReviewComment({ key: reviewDraftKey, id });
-      setReviewEditor((current) => (current?.commentId === id ? null : current));
-    },
-    [deleteReviewComment, reviewDraftKey],
-  );
-
-  const reviewActions = useMemo<InlineReviewActions>(
-    () => ({
-      commentsByTarget,
-      editor: reviewEditor,
-      showPersistentAction: isMobile,
-      onStartComment: handleStartReviewComment,
-      onEditComment: handleEditReviewComment,
-      onCancelEditor: handleCancelReviewEditor,
-      onSaveEditor: handleSaveReviewEditor,
-      onDeleteComment: handleDeleteReviewComment,
-    }),
-    [
-      commentsByTarget,
-      handleCancelReviewEditor,
-      handleDeleteReviewComment,
-      handleEditReviewComment,
-      handleSaveReviewEditor,
-      handleStartReviewComment,
-      isMobile,
-      reviewEditor,
-    ],
-  );
+  const reviewActions = useInlineReviewController({
+    reviewDraftKey,
+    showPersistentAction: isMobile,
+  });
   const {
     status: prStatus,
     githubFeaturesEnabled,
@@ -2406,10 +2319,9 @@ export function GitDiffPane({
       effectiveLayout,
       heightVersion,
       wrapLines,
-      reviewComments,
-      reviewEditor,
+      reviewActions,
     }),
-    [expandedPathsArray, effectiveLayout, heightVersion, wrapLines, reviewComments, reviewEditor],
+    [expandedPathsArray, effectiveLayout, heightVersion, wrapLines, reviewActions],
   );
 
   const hasChanges = files.length > 0;

@@ -73,11 +73,9 @@ import type { GitHubSearchItem } from "@server/shared/messages";
 import type {
   AttachmentMetadata,
   ComposerAttachment,
-  GeneratedReviewComposerAttachment,
   UserComposerAttachment,
 } from "@/attachments/types";
-import { stripGeneratedReviewAttachments } from "@/attachments/composer-attachment-utils";
-import { useReviewDraftStore } from "@/stores/review-draft-store";
+import { composerWorkspaceAttachment, type WorkspaceComposerAttachment } from "@/review";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
@@ -95,68 +93,6 @@ interface QueuedMessage {
 type AttachmentListUpdater =
   | UserComposerAttachment[]
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
-
-function getGeneratedReviewAttachmentKey(
-  attachment: GeneratedReviewComposerAttachment | null,
-): string | null {
-  if (!attachment) {
-    return null;
-  }
-  return JSON.stringify({
-    type: "review",
-    cwd: attachment.attachment.cwd,
-    mode: attachment.attachment.mode,
-    baseRef: attachment.attachment.baseRef ?? null,
-    reviewDraftKey: attachment.reviewDraftKey,
-    comments: attachment.attachment.comments.map((comment) => ({
-      filePath: comment.filePath,
-      side: comment.side,
-      lineNumber: comment.lineNumber,
-      body: comment.body,
-    })),
-  });
-}
-
-interface MergedComposerAttachments {
-  selectedAttachments: ComposerAttachment[];
-  generatedAttachmentKey: string | null;
-  suppressGeneratedAttachment: () => void;
-  resetSuppressionForKey: (key: string | null) => void;
-}
-
-function useMergedComposerAttachments(
-  normalAttachments: UserComposerAttachment[],
-  generatedAttachment: GeneratedReviewComposerAttachment | null,
-): MergedComposerAttachments {
-  const [suppressedKey, setSuppressedKey] = useState<string | null>(null);
-  const generatedAttachmentKey = useMemo(
-    () => getGeneratedReviewAttachmentKey(generatedAttachment),
-    [generatedAttachment],
-  );
-  const isSuppressed = generatedAttachmentKey === suppressedKey;
-  const selectedAttachments = useMemo<ComposerAttachment[]>(
-    () =>
-      generatedAttachment && generatedAttachmentKey && !isSuppressed
-        ? [...normalAttachments, generatedAttachment]
-        : normalAttachments,
-    [generatedAttachment, generatedAttachmentKey, isSuppressed, normalAttachments],
-  );
-  useEffect(() => {
-    setSuppressedKey((current) => (current && current !== generatedAttachmentKey ? null : current));
-  }, [generatedAttachmentKey]);
-  const suppressGeneratedAttachment = useCallback(() => {
-    setSuppressedKey(generatedAttachmentKey);
-  }, [generatedAttachmentKey]);
-  const resetSuppressionForKey = useCallback((key: string | null) => {
-    setSuppressedKey(key);
-  }, []);
-  return {
-    selectedAttachments,
-    generatedAttachmentKey,
-    suppressGeneratedAttachment,
-    resetSuppressionForKey,
-  };
-}
 
 function noop() {}
 
@@ -314,13 +250,14 @@ function isAttachmentSelectedForGithubItem(
   current: readonly ComposerAttachment[],
   item: GitHubSearchItem,
 ): boolean {
-  return current.some(
-    (attachment) =>
-      attachment.kind !== "image" &&
-      attachment.kind !== "review" &&
-      attachment.item.kind === item.kind &&
-      attachment.item.number === item.number,
-  );
+  return composerWorkspaceAttachment
+    .userAttachmentsOnly(current)
+    .some(
+      (attachment) =>
+        attachment.kind !== "image" &&
+        attachment.item.kind === item.kind &&
+        attachment.item.number === item.number,
+    );
 }
 
 function buildGithubAttachment(item: GitHubSearchItem): UserComposerAttachment {
@@ -431,17 +368,14 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
       />
     );
   }
-  if (attachment.kind === "review") {
-    return (
-      <ReviewAttachmentPill
-        key={`review:${attachment.attachment.cwd}:${attachment.attachment.mode}`}
-        attachment={attachment}
-        index={index}
-        disabled={disabled}
-        onOpen={onOpen}
-        onRemove={onRemove}
-      />
-    );
+  if (composerWorkspaceAttachment.is(attachment)) {
+    return composerWorkspaceAttachment.renderPill({
+      attachment,
+      index,
+      disabled,
+      onOpen,
+      onRemove,
+    });
   }
   return (
     <GithubAttachmentPill
@@ -541,57 +475,17 @@ async function dispatchAgentMessageSend(args: DispatchAgentMessageSendArgs): Pro
 function openComposerAttachment(
   attachment: ComposerAttachment,
   setLightboxMetadata: (metadata: AttachmentMetadata) => void,
-  onOpenGeneratedAttachment?: () => void,
+  openWorkspaceAttachment: (input: { attachment: ComposerAttachment }) => boolean,
 ): void {
   if (attachment.kind === "image") {
     setLightboxMetadata(attachment.metadata);
     return;
   }
-  if (attachment.kind === "review") {
-    onOpenGeneratedAttachment?.();
+  if (composerWorkspaceAttachment.is(attachment)) {
+    openWorkspaceAttachment({ attachment });
     return;
   }
   void openExternalUrl(attachment.item.url);
-}
-
-function removeComposerAttachment(
-  attachments: readonly ComposerAttachment[],
-  index: number,
-  setSelectedAttachments: (updater: AttachmentListUpdater) => void,
-  suppressGeneratedAttachment: () => void,
-): void {
-  const selected = attachments[index];
-  if (selected?.kind === "review") {
-    suppressGeneratedAttachment();
-    return;
-  }
-  setSelectedAttachments((prev) => removeAttachmentAtIndex(prev, index));
-}
-
-function finalizeSubmitResult(args: {
-  result: Awaited<ReturnType<typeof submitAgentInput>>;
-  outgoingAttachments: ComposerAttachment[];
-  clearIncludedReviewDrafts: (attachments: readonly ComposerAttachment[]) => void;
-  resetSuppressionForKey: (key: string | null) => void;
-}): void {
-  const { result, outgoingAttachments, clearIncludedReviewDrafts, resetSuppressionForKey } = args;
-  if (result === "submitted") {
-    clearIncludedReviewDrafts(outgoingAttachments);
-  }
-  if (result === "queued" || result === "submitted") {
-    resetSuppressionForKey(null);
-  }
-}
-
-function clearReviewDraftsFromAttachments(
-  attachments: readonly ComposerAttachment[],
-  clearReviewDraft: (args: { key: string }) => void,
-): void {
-  for (const attachment of attachments) {
-    if (attachment.kind === "review") {
-      clearReviewDraft({ key: attachment.reviewDraftKey });
-    }
-  }
 }
 
 interface CancelRunningAgentArgs {
@@ -794,52 +688,6 @@ interface GithubAttachmentPillProps {
   onRemove: (index: number) => void;
 }
 
-interface ReviewAttachmentPillProps {
-  attachment: Extract<ComposerAttachment, { kind: "review" }>;
-  index: number;
-  disabled: boolean;
-  onOpen: (attachment: ComposerAttachment) => void;
-  onRemove: (index: number) => void;
-}
-
-function ReviewAttachmentPill({
-  attachment,
-  index,
-  disabled,
-  onOpen,
-  onRemove,
-}: ReviewAttachmentPillProps) {
-  const label =
-    attachment.commentCount === 1
-      ? "Review · 1 comment"
-      : `Review · ${attachment.commentCount} comments`;
-  const handleOpen = useCallback(() => {
-    onOpen(attachment);
-  }, [onOpen, attachment]);
-  const handleRemove = useCallback(() => {
-    onRemove(index);
-  }, [onRemove, index]);
-  return (
-    <AttachmentPill
-      testID="composer-review-attachment-pill"
-      onOpen={handleOpen}
-      onRemove={handleRemove}
-      openAccessibilityLabel="Open review attachment"
-      removeAccessibilityLabel="Remove review attachment"
-      disabled={disabled}
-    >
-      <View style={styles.githubPillBody}>
-        <View style={styles.githubPillIcon}>
-          <ThemedCircleDot size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
-        </View>
-        <Text style={styles.githubPillText} numberOfLines={1}>
-          {label}
-        </Text>
-      </View>
-    </AttachmentPill>
-  );
-}
-
 function GithubAttachmentPill({
   attachment,
   index,
@@ -941,8 +789,8 @@ interface ComposerProps {
   value: string;
   onChangeText: (text: string) => void;
   attachments: UserComposerAttachment[];
-  generatedAttachment?: GeneratedReviewComposerAttachment | null;
-  onOpenGeneratedAttachment?: () => void;
+  workspaceAttachment?: WorkspaceComposerAttachment | null;
+  onOpenWorkspaceAttachment?: () => void;
   onChangeAttachments: (updater: AttachmentListUpdater) => void;
   cwd: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
@@ -1140,8 +988,8 @@ export function Composer({
   value,
   onChangeText,
   attachments,
-  generatedAttachment = null,
-  onOpenGeneratedAttachment,
+  workspaceAttachment = null,
+  onOpenWorkspaceAttachment,
   onChangeAttachments,
   cwd,
   clearDraft,
@@ -1184,15 +1032,25 @@ export function Composer({
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
   const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
-  const clearReviewDraft = useReviewDraftStore((state) => state.clearReview);
 
   const isMobile = useIsCompactFormFactor();
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isMobile);
   const messagePlaceholder = resolveMessagePlaceholder(isDesktopWebBreakpoint);
   const userInput = value;
   const setUserInput = onChangeText;
-  const { selectedAttachments, suppressGeneratedAttachment, resetSuppressionForKey } =
-    useMergedComposerAttachments(attachments, generatedAttachment);
+  const {
+    selectedAttachments,
+    buildOutgoingAttachments,
+    removeAttachment,
+    openAttachment,
+    clearSentAttachments,
+    completeSubmit,
+    resetSuppression,
+  } = composerWorkspaceAttachment.useBinding({
+    normalAttachments: attachments,
+    workspaceAttachment,
+    onOpenWorkspaceAttachment,
+  });
   const setSelectedAttachments = onChangeAttachments;
   const [cursorIndex, setCursorIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1330,13 +1188,6 @@ export function Composer({
     [agentId, serverId, setQueuedMessages],
   );
 
-  const clearIncludedReviewDrafts = useCallback(
-    (toClear: readonly ComposerAttachment[]) => {
-      clearReviewDraftsFromAttachments(toClear, clearReviewDraft);
-    },
-    [clearReviewDraft],
-  );
-
   const queueMessage = useCallback(
     (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
       const trimmedMessage = queuedMessage.trim();
@@ -1356,13 +1207,13 @@ export function Composer({
 
       setUserInput("");
       setSelectedAttachments([]);
-      resetSuppressionForKey(null);
-      clearIncludedReviewDrafts(queuedAttachments);
+      resetSuppression();
+      clearSentAttachments(queuedAttachments);
     },
     [
       agentId,
-      clearIncludedReviewDrafts,
-      resetSuppressionForKey,
+      clearSentAttachments,
+      resetSuppression,
       serverId,
       setQueuedMessages,
       setSelectedAttachments,
@@ -1396,7 +1247,7 @@ export function Composer({
         clearDraft,
         setUserInput,
         setAttachments: (nextAttachments) => {
-          setSelectedAttachments(stripGeneratedReviewAttachments(nextAttachments));
+          setSelectedAttachments(composerWorkspaceAttachment.userAttachmentsOnly(nextAttachments));
         },
         setSendError,
         setIsProcessing,
@@ -1404,21 +1255,18 @@ export function Composer({
           console.error("[AgentInput] Failed to send message:", error);
         },
       });
-      finalizeSubmitResult({
+      completeSubmit({
         result,
         outgoingAttachments,
-        clearIncludedReviewDrafts,
-        resetSuppressionForKey,
       });
     },
     [
       allowEmptySubmit,
       clearDraft,
+      completeSubmit,
       hasExternalContent,
       isAgentRunning,
-      clearIncludedReviewDrafts,
       queueMessage,
-      resetSuppressionForKey,
       setSelectedAttachments,
       setUserInput,
       submitBehavior,
@@ -1431,9 +1279,13 @@ export function Composer({
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
       }
-      void sendMessageWithContent(payload.text, payload.attachments, payload.forceSend);
+      void sendMessageWithContent(
+        payload.text,
+        buildOutgoingAttachments(attachments),
+        payload.forceSend,
+      );
     },
-    [blurOnSubmit, sendMessageWithContent],
+    [attachments, blurOnSubmit, buildOutgoingAttachments, sendMessageWithContent],
   );
 
   const handlePickImage = useCallback(async () => {
@@ -1444,21 +1296,23 @@ export function Composer({
 
   const handleRemoveAttachment = useCallback(
     (index: number) => {
-      removeComposerAttachment(
+      const didRemoveWorkspaceAttachment = removeAttachment({
         selectedAttachments,
         index,
-        setSelectedAttachments,
-        suppressGeneratedAttachment,
-      );
+      });
+      if (didRemoveWorkspaceAttachment) {
+        return;
+      }
+      setSelectedAttachments((prev) => removeAttachmentAtIndex(prev, index));
     },
-    [selectedAttachments, setSelectedAttachments, suppressGeneratedAttachment],
+    [removeAttachment, selectedAttachments, setSelectedAttachments],
   );
 
   const handleOpenAttachment = useCallback(
     (attachment: ComposerAttachment) => {
-      openComposerAttachment(attachment, setLightboxMetadata, onOpenGeneratedAttachment);
+      openComposerAttachment(attachment, setLightboxMetadata, openAttachment);
     },
-    [onOpenGeneratedAttachment],
+    [openAttachment],
   );
 
   useEffect(() => {
@@ -1547,7 +1401,7 @@ export function Composer({
 
       updateQueue((current) => current.filter((q) => q.id !== id));
       setUserInput(item.text);
-      setSelectedAttachments(stripGeneratedReviewAttachments(item.attachments));
+      setSelectedAttachments(composerWorkspaceAttachment.userAttachmentsOnly(item.attachments));
     },
     [queuedMessages, setSelectedAttachments, setUserInput, updateQueue],
   );
@@ -1573,9 +1427,9 @@ export function Composer({
 
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
-      queueMessage(payload.text, payload.attachments);
+      queueMessage(payload.text, buildOutgoingAttachments(attachments));
     },
-    [queueMessage],
+    [attachments, buildOutgoingAttachments, queueMessage],
   );
 
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;

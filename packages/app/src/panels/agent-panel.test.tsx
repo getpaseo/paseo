@@ -170,6 +170,13 @@ vi.mock("@/hooks/use-archive-agent", () => ({
   }),
 }));
 
+vi.mock("@/review", () => ({
+  useReviewWorkspaceAttachment: () => ({
+    attachment: null,
+    openAttachment: vi.fn(),
+  }),
+}));
+
 vi.mock("@/components/composer", () => ({
   Composer: ({ cwd, isPaneFocused }: { cwd: string; isPaneFocused: boolean }) => {
     React.useEffect(
