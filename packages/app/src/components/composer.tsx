@@ -17,7 +17,7 @@ import {
   type ReactNode,
 } from "react";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor, useIsTightHeader } from "@/constants/layout";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
@@ -131,8 +131,18 @@ function resolveIsDesktopWebBreakpoint(isMobile: boolean): boolean {
   return isWeb && !isMobile;
 }
 
-function resolveMessagePlaceholder(isDesktopWebBreakpoint: boolean): string {
-  return isDesktopWebBreakpoint ? DESKTOP_MESSAGE_PLACEHOLDER : MOBILE_MESSAGE_PLACEHOLDER;
+function resolveMessagePlaceholder(input: {
+  isDesktopWebBreakpoint: boolean;
+  isTight: boolean;
+}): string {
+  if (!input.isDesktopWebBreakpoint) return MOBILE_MESSAGE_PLACEHOLDER;
+  // The full desktop placeholder ("Message the agent, tag @files, or use
+  // /commands and /skills") doesn't fit on a single line in narrow desktop
+  // windows. Switching to the shorter mobile copy at the same breakpoint
+  // the header buttons collapse keeps the composer placeholder readable
+  // (and stops it from being clipped after we pinned the empty-input
+  // height to a single line).
+  return input.isTight ? MOBILE_MESSAGE_PLACEHOLDER : DESKTOP_MESSAGE_PLACEHOLDER;
 }
 
 async function pickAndPersistImages(
@@ -1025,7 +1035,11 @@ export function Composer({
 
   const isMobile = useIsCompactFormFactor();
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isMobile);
-  const messagePlaceholder = resolveMessagePlaceholder(isDesktopWebBreakpoint);
+  const isTightComposer = useIsTightHeader();
+  const messagePlaceholder = resolveMessagePlaceholder({
+    isDesktopWebBreakpoint,
+    isTight: isTightComposer,
+  });
   const userInput = value;
   const setUserInput = onChangeText;
   const selectedAttachments = attachments;

@@ -33,6 +33,7 @@ const OpenAiSpeechResolutionSchema = z.object({
   apiKey: OptionalTrimmedStringSchema,
   sttConfidenceThreshold: OptionalFiniteNumberSchema,
   sttModel: OptionalTrimmedStringSchema,
+  sttBaseURL: OptionalTrimmedStringSchema,
   ttsVoice: z.string().trim().toLowerCase().pipe(OpenAiTtsVoiceSchema).default("alloy"),
   ttsModel: z
     .string()
@@ -64,6 +65,17 @@ export function resolveOpenAiSpeechConfig(params: {
       (params.providers.dictationStt.enabled !== false &&
       params.providers.dictationStt.provider === "openai"
         ? params.persisted.features?.dictation?.stt?.model
+        : undefined),
+    sttBaseURL:
+      params.env.OPENAI_STT_BASE_URL ??
+      params.env.OPENAI_BASE_URL ??
+      (params.providers.voiceStt.enabled !== false &&
+      params.providers.voiceStt.provider === "openai"
+        ? params.persisted.features?.voiceMode?.stt?.baseURL
+        : undefined) ??
+      (params.providers.dictationStt.enabled !== false &&
+      params.providers.dictationStt.provider === "openai"
+        ? params.persisted.features?.dictation?.stt?.baseURL
         : undefined),
     ttsVoice:
       params.env.TTS_VOICE ??
@@ -100,6 +112,7 @@ export function resolveOpenAiSpeechConfig(params: {
         ? { confidenceThreshold: parsed.sttConfidenceThreshold }
         : {}),
       ...(parsed.sttModel ? { model: parsed.sttModel } : {}),
+      ...(parsed.sttBaseURL ? { baseURL: parsed.sttBaseURL } : {}),
     },
     tts: {
       apiKey: parsed.apiKey,

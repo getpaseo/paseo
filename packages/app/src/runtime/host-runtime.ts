@@ -17,7 +17,11 @@ import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-en
 import { resolveAppVersion } from "@/utils/app-version";
 import { resolveShareAuthForServerId } from "@/stores/shared-session-store";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@server/shared/connection-offer";
-import { shouldUseDesktopDaemon, startDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import {
+  DaemonStartError,
+  shouldUseDesktopDaemon,
+  startDesktopDaemon,
+} from "@/desktop/daemon/desktop-daemon";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
 import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "@/utils/daemon-endpoints";
 import { getOrCreateClientId } from "@/utils/client-id";
@@ -38,7 +42,7 @@ export type HostRuntimeConnectionStatus = "idle" | "connecting" | "online" | "of
 
 export type HostRuntimeBootstrapResult =
   | { ok: true; listenAddress: string; serverId: string; hostname: string | null }
-  | { ok: false; error: string };
+  | { ok: false; error: string; startError?: DaemonStartError };
 
 export type ActiveConnection =
   | { type: "directTcp"; endpoint: string; display: string }
@@ -1285,6 +1289,13 @@ export class HostRuntimeStore {
         hostname: daemon.hostname,
       };
     } catch (error) {
+      if (error instanceof DaemonStartError) {
+        return {
+          ok: false,
+          error: error.message,
+          startError: error,
+        };
+      }
       return {
         ok: false,
         error: toErrorMessage(error),

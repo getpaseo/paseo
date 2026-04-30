@@ -31,6 +31,7 @@ export interface SidebarWorkspaceEntry {
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+  gitRemoteUrl?: string | null;
 }
 
 export interface SidebarProjectEntry {
@@ -96,6 +97,7 @@ export function createSidebarWorkspaceEntry(input: {
     diffStat: input.workspace.diffStat,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
+    gitRemoteUrl: input.workspace.gitRemoteUrl ?? null,
   };
 }
 

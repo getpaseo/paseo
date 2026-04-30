@@ -3,6 +3,40 @@ import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 
+export type DaemonStartErrorCode =
+  | "STALE_HUBCODE_DAEMON"
+  | "PORT_TAKEN_BY_OTHER"
+  | "STARTUP_FAILED";
+
+export interface DaemonStartErrorDetails {
+  port?: number | null;
+  conflictingPid?: number | null;
+  conflictingProcessName?: string | null;
+  conflictingDaemonVersion?: string | null;
+  recentLogs?: string;
+}
+
+export class DaemonStartError extends Error {
+  readonly code: DaemonStartErrorCode;
+  readonly details: DaemonStartErrorDetails;
+
+  constructor(code: DaemonStartErrorCode, message: string, details: DaemonStartErrorDetails) {
+    super(message);
+    this.name = "DaemonStartError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function parseDaemonStartErrorPayload(value: unknown): DaemonStartError | null {
+  if (!isRecord(value)) return null;
+  if (value.__hubcodeDaemonStartError !== true) return null;
+  const code = typeof value.code === "string" ? value.code : "STARTUP_FAILED";
+  const message = typeof value.message === "string" ? value.message : "Daemon failed to start.";
+  const details = isRecord(value.details) ? (value.details as DaemonStartErrorDetails) : {};
+  return new DaemonStartError(code as DaemonStartErrorCode, message, details);
+}
+
 export type DesktopDaemonStatus = {
   serverId: string;
   status: DesktopDaemonState;
@@ -118,7 +152,23 @@ export async function getDesktopDaemonStatus(): Promise<DesktopDaemonStatus> {
 }
 
 export async function startDesktopDaemon(): Promise<DesktopDaemonStatus> {
-  return parseDesktopDaemonStatus(await invokeDesktopCommand("start_desktop_daemon"));
+  const raw = await invokeDesktopCommand("start_desktop_daemon");
+  const structured = parseDaemonStartErrorPayload(raw);
+  if (structured) throw structured;
+  return parseDesktopDaemonStatus(raw);
+}
+
+export async function killProcessOnDaemonPort(
+  pid: number,
+): Promise<{ ok: boolean; error?: string }> {
+  const raw = await invokeDesktopCommand("kill_process_on_daemon_port", { pid });
+  if (!isRecord(raw) || typeof raw.ok !== "boolean") {
+    throw new Error("Unexpected kill_process_on_daemon_port response.");
+  }
+  return {
+    ok: raw.ok,
+    ...(typeof raw.error === "string" ? { error: raw.error } : {}),
+  };
 }
 
 export async function stopDesktopDaemon(): Promise<DesktopDaemonStatus> {

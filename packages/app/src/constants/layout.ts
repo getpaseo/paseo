@@ -44,6 +44,16 @@ export function useIsCompactFormFactor(): boolean {
   return rt.breakpoint === "xs" || rt.breakpoint === "sm";
 }
 
+/**
+ * `true` when the desktop header is too narrow to comfortably fit primary CTA
+ * labels alongside the branch switcher (≈ < 992px). Header buttons collapse to
+ * icon-only at this breakpoint while staying visually distinct from mobile.
+ */
+export function useIsTightHeader(): boolean {
+  const { rt } = useUnistyles();
+  return rt.breakpoint === "xs" || rt.breakpoint === "sm" || rt.breakpoint === "md";
+}
+
 // SplitContainer relies on dnd-kit and DOM-backed accessibility helpers.
 // Keep that capability distinct from desktop-width layout so touch tablets
 // can use the desktop shell without entering web-only code paths.

@@ -62,7 +62,7 @@ export function BranchSwitcher({
   }
 
   return (
-    <View ref={anchorRef} collapsable={false}>
+    <View ref={anchorRef} collapsable={false} style={styles.branchSwitcherAnchor}>
       <Pressable
         testID="workspace-header-branch-switcher"
         onPress={() => setIsOpen(true)}
@@ -120,6 +120,14 @@ const styles = StyleSheet.create((theme) => ({
     // flexShrink + minWidth:0 lets the title ellipsize instead of forcing the
     // parent row to grow (which pushed the chevron off-screen on narrow rows).
     // Paseo 0.1.60 fix.
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  // Without shrink on the anchor wrapper the inner Pressable's flexShrink: 1
+  // never propagates up — the wrapper takes the trigger's intrinsic width and
+  // the right-side header buttons end up overlapping the branch label on
+  // medium-width windows.
+  branchSwitcherAnchor: {
     flexShrink: 1,
     minWidth: 0,
   },

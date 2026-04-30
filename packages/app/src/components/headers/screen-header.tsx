@@ -89,6 +89,10 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    // Lock the right group's width to its intrinsic content. Without this the
+    // left group's flexShrink chain has nothing to push against and the two
+    // sides can paint on top of each other on narrow desktop windows.
+    flexShrink: 0,
   },
   borderless: {
     borderBottomColor: "transparent",

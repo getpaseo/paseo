@@ -51,6 +51,19 @@ import {
   runCliJsonCommand,
   runCliTextCommand,
 } from "./runtime-paths.js";
+import { probePort, type PortProbeResult } from "./port-probe.js";
+import { DaemonStartError, isDaemonStartError } from "./daemon-start-error.js";
+
+const DEFAULT_DAEMON_PORT = 6767;
+
+function getDesktopDaemonListenPort(): number {
+  const raw = process.env.PORT?.trim();
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_DAEMON_PORT;
+}
 
 const DAEMON_LOG_FILENAME = "daemon.log";
 const PID_POLL_INTERVAL_MS = 100;
@@ -250,6 +263,93 @@ function normalizeVersion(version: string | null): string | null {
   return trimmed.replace(/^v/i, "");
 }
 
+function maybeReuseProbedDaemon(probe: PortProbeResult, port: number): DesktopDaemonStatus | null {
+  if (probe.kind !== "hubcode") return null;
+
+  const appVersion = normalizeVersion(resolveDesktopAppVersion());
+  const daemonVersion = normalizeVersion(probe.version);
+  // Only reuse when versions match. A stale daemon from a different release
+  // would speak a different protocol; better to surface it and let the user
+  // end it explicitly.
+  if (!appVersion || !daemonVersion || appVersion !== daemonVersion) return null;
+
+  logDesktopDaemonLifecycle("reusing live Hubcode daemon discovered via probe", {
+    port,
+    pid: probe.pid,
+    daemonVersion,
+  });
+  return {
+    serverId: probe.serverId ?? "",
+    status: "running",
+    listen: probe.listen ?? `127.0.0.1:${port}`,
+    hostname: probe.hostname,
+    pid: probe.pid,
+    home: getHubcodeHome(),
+    version: daemonVersion,
+    // The probe found a daemon we did NOT spawn from this Electron process —
+    // so anything that gates on "did this desktop start it?" stays no-op.
+    desktopManaged: false,
+    error: null,
+  };
+}
+
+function throwIfPortConflict(probe: PortProbeResult, port: number): void {
+  if (probe.kind === "free") return;
+
+  if (probe.kind === "hubcode") {
+    throw new DaemonStartError(
+      "STALE_HUBCODE_DAEMON",
+      `Another Hubcode daemon is already listening on port ${port}.`,
+      {
+        port,
+        conflictingPid: probe.pid,
+        conflictingProcessName: "hubcode (daemon)",
+        conflictingDaemonVersion: probe.version,
+      },
+    );
+  }
+
+  // Foreign occupant — could be Paseo, another dev tool, or something
+  // unrelated. Surface PID and process name so the UI can describe it.
+  throw new DaemonStartError(
+    "PORT_TAKEN_BY_OTHER",
+    `Port ${port} is held by another process${probe.processName ? ` (${probe.processName})` : ""}.`,
+    {
+      port,
+      conflictingPid: probe.pid,
+      conflictingProcessName: probe.processName,
+    },
+  );
+}
+
+async function killForeignProcessOnDaemonPort(args: {
+  pid: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  const pid = args?.pid;
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return { ok: false, error: "Invalid PID" };
+  }
+  // Refuse to kill ourselves or our own daemon child. The renderer should not
+  // be able to send our PID, but defense in depth.
+  if (pid === process.pid) {
+    return { ok: false, error: "Refusing to kill the desktop process itself" };
+  }
+  try {
+    signalProcessSafely(pid, "SIGTERM");
+    const stopped = await waitForPidExit(pid, STOP_TIMEOUT_MS);
+    if (!stopped) {
+      signalProcessGroupSafely(pid, "SIGKILL");
+      const killed = await waitForPidExit(pid, KILL_TIMEOUT_MS);
+      if (!killed) {
+        return { ok: false, error: `Process ${pid} did not exit after SIGKILL` };
+      }
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 async function startDaemon(): Promise<DesktopDaemonStatus> {
   const current = await resolveStatus();
   if (current.status === "running") {
@@ -265,6 +365,18 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
       return current;
     }
   }
+
+  // Pidlock says nobody's home, but the listen port can still be occupied:
+  //  - a previous daemon survived after the pidlock vanished (rare crash path),
+  //  - the user has Paseo or another Hubcode build running,
+  //  - some unrelated process grabbed 6767.
+  // Surface a structured error in the second/third cases so the splash screen
+  // can offer a one-click fix instead of failing with a raw EADDRINUSE.
+  const port = getDesktopDaemonListenPort();
+  const probe = await probePort(port);
+  const reuseStatus = maybeReuseProbedDaemon(probe, port);
+  if (reuseStatus) return reuseStatus;
+  throwIfPortConflict(probe, port);
 
   const daemonRunner = resolveDaemonRunnerEntrypoint();
   const invocation = createNodeEntrypointInvocation({
@@ -347,7 +459,13 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
 
   if (exitedEarly) {
     const logs = tailFile(logFilePath(), 15);
-    throw new Error(`Daemon failed to start.${logs ? `\n\nRecent logs:\n${logs}` : ""}`);
+    // Re-probe in case the early exit was a race we lost (the spawned daemon
+    // hit EADDRINUSE between our pre-spawn probe and its listen() call).
+    if (logs.includes("EADDRINUSE")) {
+      const racedProbe = await probePort(port);
+      throwIfPortConflict(racedProbe, port);
+    }
+    throw new DaemonStartError("STARTUP_FAILED", "Daemon failed to start.", { recentLogs: logs });
   }
 
   // Poll for PID file with server ID
@@ -520,6 +638,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     start_desktop_daemon: () => startDaemonAndAnnounce(),
     stop_desktop_daemon: () => stopDaemon(),
     restart_desktop_daemon: () => restartDaemonAndAnnounce(),
+    kill_process_on_daemon_port: (args) => killForeignProcessOnDaemonPort(args as { pid: number }),
     desktop_daemon_logs: () => getDaemonLogs(),
     desktop_daemon_pairing: () => getDaemonPairing(),
     cli_daemon_status: () => getCliDaemonStatus(),
@@ -603,6 +722,11 @@ export function registerDaemonManager(): void {
       try {
         return await handler(args);
       } catch (err) {
+        if (isDaemonStartError(err)) {
+          // Structured daemon-start failure — the splash screen renders a
+          // tailored UI from the payload (e.g. "End the existing process").
+          return err.toIpcPayload();
+        }
         // Auth/authz errors are part of normal flow — the user can be signed
         // out, the session expired, or the active org is one they're not a
         // member of. Don't let Electron's IPC layer print a noisy "Error

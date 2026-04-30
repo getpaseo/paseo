@@ -109,6 +109,7 @@ import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-stor
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { buildGitHubBranchTreeUrl } from "@/utils/github-repo-url";
 import {
   requireWorkspaceExecutionDirectory,
   resolveWorkspaceExecutionDirectory,
@@ -242,6 +243,7 @@ interface WorkspaceRowInnerProps {
   onArchive?: () => void;
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
+  onOpenOnGitHub?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
 }
 
@@ -650,6 +652,7 @@ function WorkspaceRowRightGroup({
   onArchive,
   onCopyBranchName,
   onCopyPath,
+  onOpenOnGitHub,
 }: {
   workspace: SidebarWorkspaceEntry;
   isHovered: boolean;
@@ -666,6 +669,7 @@ function WorkspaceRowRightGroup({
   onArchive?: () => void;
   onCopyBranchName?: () => void;
   onCopyPath?: () => void;
+  onOpenOnGitHub?: () => void;
 }) {
   const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
   return (
@@ -685,6 +689,7 @@ function WorkspaceRowRightGroup({
           workspaceKey={workspace.workspaceKey}
           onCopyPath={onCopyPath}
           onCopyBranchName={onCopyBranchName}
+          onOpenOnGitHub={onOpenOnGitHub}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}
@@ -711,6 +716,7 @@ function WorkspaceKebabMenu({
   workspaceKey,
   onCopyPath,
   onCopyBranchName,
+  onOpenOnGitHub,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -720,6 +726,7 @@ function WorkspaceKebabMenu({
   workspaceKey: string;
   onCopyPath?: () => void;
   onCopyBranchName?: () => void;
+  onOpenOnGitHub?: () => void;
   onArchive: () => void;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
@@ -758,6 +765,15 @@ function WorkspaceKebabMenu({
             onSelect={onCopyBranchName}
           >
             Copy branch name
+          </DropdownMenuItem>
+        ) : null}
+        {onOpenOnGitHub ? (
+          <DropdownMenuItem
+            testID={`sidebar-workspace-menu-open-on-github-${workspaceKey}`}
+            leading={copyLeadingIcon}
+            onSelect={onOpenOnGitHub}
+          >
+            Open branch on GitHub
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem
@@ -1368,6 +1384,7 @@ function WorkspaceRowInner({
   onArchive,
   onCopyBranchName,
   onCopyPath,
+  onOpenOnGitHub,
   archiveShortcutKeys,
 }: WorkspaceRowInnerProps) {
   const _isCompact = useIsCompactFormFactor();
@@ -1479,6 +1496,7 @@ function WorkspaceRowInner({
               onArchive={onArchive}
               onCopyBranchName={onCopyBranchName}
               onCopyPath={onCopyPath}
+              onOpenOnGitHub={onOpenOnGitHub}
             />
           </View>
           {prHint ? (
@@ -1663,6 +1681,22 @@ function WorkspaceRowWithMenu({
     toast.copied("Branch name copied");
   }, [toast, workspace.name]);
 
+  const githubBranchUrl = useMemo(
+    () =>
+      buildGitHubBranchTreeUrl({
+        remoteUrl: workspace.gitRemoteUrl,
+        branch: workspace.name,
+      }),
+    [workspace.gitRemoteUrl, workspace.name],
+  );
+
+  const handleOpenOnGitHub = useCallback(() => {
+    if (!githubBranchUrl) {
+      return;
+    }
+    void openExternalUrl(githubBranchUrl);
+  }, [githubBranchUrl]);
+
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
 
   useKeyboardActionHandler({
@@ -1699,6 +1733,7 @@ function WorkspaceRowWithMenu({
       onArchive={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
       onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
       onCopyPath={handleCopyPath}
+      onOpenOnGitHub={githubBranchUrl ? handleOpenOnGitHub : undefined}
       archiveShortcutKeys={selected ? archiveShortcutKeys : null}
     />
   );

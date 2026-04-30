@@ -874,6 +874,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     if (!isWeb) return false;
     const textarea = getWebTextArea();
     if (!textarea || typeof textarea.scrollHeight !== "number") return false;
+
+    // An empty textarea reports the placeholder's wrapped height as
+    // scrollHeight in Chromium — so a long placeholder that wraps to two
+    // lines on a narrow window inflates the composer before the user types
+    // anything, then collapses on the first keystroke and inflates again on
+    // delete. Pin the height to MIN_INPUT_HEIGHT while there's no real
+    // content so the composer stays stable.
+    if (valueRef.current.length === 0) {
+      const previousHeight = inputHeightRef.current;
+      if (Math.abs(previousHeight - MIN_INPUT_HEIGHT) >= 1) {
+        inputHeightRef.current = MIN_INPUT_HEIGHT;
+        setInputHeight(MIN_INPUT_HEIGHT);
+        onHeightChange?.(MIN_INPUT_HEIGHT);
+        logWebStickyBottom("composer_height_changed", {
+          source: `${source}_empty_placeholder_pin`,
+          previousHeight,
+          nextHeight: MIN_INPUT_HEIGHT,
+        });
+        return true;
+      }
+      return false;
+    }
+
     const scrollHeight = textarea.scrollHeight ?? 0;
 
     if (baselineInputHeightRef.current === null && scrollHeight > 0) {
@@ -925,6 +948,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
   ) {
     const contentHeight = event.nativeEvent.contentSize.height;
+    // Same placeholder-puffs-the-composer issue as measureWebInputHeight:
+    // when the field is empty, the reported content size reflects the
+    // placeholder, which can wrap to multiple lines on a narrow window.
+    // Pin to MIN_INPUT_HEIGHT until there's actual content.
+    if (valueRef.current.length === 0) {
+      setBoundedInputHeight(MIN_INPUT_HEIGHT);
+      return;
+    }
     if (isWeb) {
       logWebStickyBottom("composer_content_size_change", {
         reportedHeight: contentHeight,

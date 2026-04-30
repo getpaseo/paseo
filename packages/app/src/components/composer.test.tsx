@@ -198,6 +198,7 @@ vi.mock("@/constants/layout", () => ({
   FOOTER_HEIGHT: 72,
   MAX_CONTENT_WIDTH: 900,
   useIsCompactFormFactor: () => false,
+  useIsTightHeader: () => false,
 }));
 
 vi.mock("lucide-react-native", () => {

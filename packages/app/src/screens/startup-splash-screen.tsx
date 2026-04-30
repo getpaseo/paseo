@@ -2,12 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { BookOpen, Check, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
+import { BookOpen, Check, Copy, Power, RotateCw, TriangleAlert } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { HubcodeLogo } from "@/components/icons/hubcode-logo";
 import { Button } from "@/components/ui/button";
 import { Fonts } from "@/constants/theme";
-import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
+import {
+  DaemonStartError,
+  getDesktopDaemonLogs,
+  killProcessOnDaemonPort,
+  type DesktopDaemonLogs,
+} from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { isWeb } from "@/constants/platform";
 
@@ -15,6 +20,7 @@ type StartupSplashScreenProps = {
   bootstrapState?: {
     phase: "starting-daemon" | "connecting" | "online" | "error";
     error: string | null;
+    startError?: DaemonStartError | null;
     retry: () => void;
   };
 };
@@ -129,6 +135,35 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     lineHeight: 22,
+  },
+  conflictCard: {
+    borderRadius: theme.borderRadius.xl,
+    backgroundColor: theme.colors.surface1,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    padding: theme.spacing[6],
+    gap: theme.spacing[3],
+  },
+  conflictTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  conflictBody: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+    lineHeight: 22,
+  },
+  conflictMeta: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontFamily: Fonts.mono,
+  },
+  conflictNote: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 18,
+    fontStyle: "italic",
   },
   errorMessage: {
     color: theme.colors.destructive,
@@ -324,6 +359,11 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
             open a GitHub issue with the logs attached so we can dig in.
           </Text>
 
+          <PortConflictCard
+            startError={bootstrapState.startError ?? null}
+            onResolved={bootstrapState.retry}
+          />
+
           <Text style={styles.errorMessage}>{bootstrapState.error}</Text>
 
           {daemonLogs?.logPath ? <Text style={styles.logsMeta}>{daemonLogs.logPath}</Text> : null}
@@ -372,6 +412,93 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
           </View>
         </View>
       </ScrollView>
+    </View>
+  );
+}
+
+function PortConflictCard({
+  startError,
+  onResolved,
+}: {
+  startError: DaemonStartError | null;
+  onResolved: () => void;
+}) {
+  const { theme } = useUnistyles();
+  const [isEnding, setIsEnding] = useState(false);
+  const [endError, setEndError] = useState<string | null>(null);
+
+  if (!startError) return null;
+  if (startError.code !== "PORT_TAKEN_BY_OTHER" && startError.code !== "STALE_HUBCODE_DAEMON") {
+    return null;
+  }
+
+  const port = startError.details.port ?? 6767;
+  const pid = startError.details.conflictingPid ?? null;
+  const processName = startError.details.conflictingProcessName ?? null;
+  const isStale = startError.code === "STALE_HUBCODE_DAEMON";
+
+  const title = isStale
+    ? "Another Hubcode agent is already running"
+    : `Something else is using port ${port}`;
+
+  const body = isStale
+    ? "We found a Hubcode agent from a previous session still running on your machine. It needs to be closed before this version can take over — your work is safe and won't be lost."
+    : `Port ${port} is the doorway your local agent listens on, and another program is currently holding it open. End that program (or the one we detected below) and we'll start your agent on a clean slate.`;
+
+  const buttonLabel = isStale
+    ? "End the existing Hubcode agent and try again"
+    : "End the conflicting process and try again";
+
+  const handleEnd = async () => {
+    if (pid === null) {
+      setEndError(
+        "We couldn't pinpoint the process holding the port. Please end it manually and click Retry.",
+      );
+      return;
+    }
+    setIsEnding(true);
+    setEndError(null);
+    try {
+      const result = await killProcessOnDaemonPort(pid);
+      if (!result.ok) {
+        setEndError(result.error ?? "Couldn't end the process. Please try ending it manually.");
+        setIsEnding(false);
+        return;
+      }
+      onResolved();
+    } catch (err) {
+      setEndError(err instanceof Error ? err.message : String(err));
+      setIsEnding(false);
+    }
+  };
+
+  return (
+    <View style={styles.conflictCard}>
+      <Text style={styles.conflictTitle}>{title}</Text>
+      <Text style={styles.conflictBody}>{body}</Text>
+      {pid !== null ? (
+        <Text style={styles.conflictMeta}>
+          {processName ? `${processName} · ` : ""}
+          PID {pid} · port {port}
+        </Text>
+      ) : (
+        <Text style={styles.conflictMeta}>port {port}</Text>
+      )}
+      <Button
+        variant="default"
+        leftIcon={<Power size={16} color={theme.colors.palette.white} />}
+        onPress={() => void handleEnd()}
+        disabled={isEnding || pid === null}
+      >
+        {isEnding ? "Ending…" : buttonLabel}
+      </Button>
+      {endError ? <Text style={styles.errorMessage}>{endError}</Text> : null}
+      {!isStale ? (
+        <Text style={styles.conflictNote}>
+          We won't end anything without your say-so. Hubcode only sends a polite stop signal first
+          and falls back to a hard kill only if the process refuses to exit.
+        </Text>
+      ) : null}
     </View>
   );
 }

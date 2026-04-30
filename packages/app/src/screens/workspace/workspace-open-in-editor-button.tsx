@@ -16,6 +16,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
 import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
+import { useIsTightHeader } from "@/constants/layout";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
@@ -28,6 +29,7 @@ export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEd
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
+  const isTightHeader = useIsTightHeader();
 
   const shouldLoadEditors =
     isWeb && Boolean(client && isConnected) && cwd.trim().length > 0 && isAbsolutePath(cwd);
@@ -106,6 +108,7 @@ export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEd
           testID="workspace-open-in-editor-primary"
           style={({ hovered, pressed }) => [
             styles.splitButtonPrimary,
+            isTightHeader && styles.splitButtonPrimaryCompact,
             (hovered || pressed) && styles.splitButtonPrimaryHovered,
             openMutation.isPending && styles.splitButtonPrimaryDisabled,
           ]}
@@ -127,7 +130,7 @@ export function WorkspaceOpenInEditorButton({ serverId, cwd }: WorkspaceOpenInEd
                 size={16}
                 color={theme.colors.foregroundMuted}
               />
-              <Text style={styles.splitButtonText}>Open</Text>
+              {!isTightHeader ? <Text style={styles.splitButtonText}>Open</Text> : null}
             </View>
           )}
         </Pressable>
@@ -200,6 +203,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
     justifyContent: "center",
     position: "relative",
+  },
+  splitButtonPrimaryCompact: {
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[2],
   },
   splitButtonPrimaryHovered: {
     backgroundColor: theme.colors.surface2,

@@ -14,6 +14,7 @@ const { redirectMock, state } = vi.hoisted(() => {
     bootstrapState: {
       phase: "starting-daemon",
       error: null,
+      startError: null,
       retry: vi.fn(),
     } as HostRuntimeBootstrapState,
     anyOnlineHostServerId: null as string | null,
@@ -63,6 +64,7 @@ describe.skip("Index route startup navigation", () => {
     state.bootstrapState = {
       phase: "starting-daemon",
       error: null,
+      startError: null,
       retry: vi.fn(),
     };
     state.anyOnlineHostServerId = null;

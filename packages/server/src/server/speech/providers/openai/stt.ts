@@ -19,6 +19,7 @@ export interface STTConfig {
   apiKey: string;
   model?: "whisper-1" | "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | (string & {});
   confidenceThreshold?: number; // Default: -3.0
+  baseURL?: string;
 }
 
 function isObject(value: unknown): value is { [key: string]: unknown } {
@@ -56,6 +57,7 @@ export class OpenAISTT implements SpeechToTextProvider {
     this.logger = parentLogger.child({ module: "agent", provider: "openai", component: "stt" });
     this.openaiClient = new OpenAI({
       apiKey: sttConfig.apiKey,
+      ...(sttConfig.baseURL ? { baseURL: sttConfig.baseURL } : {}),
     });
     this.logger.info({ model: sttConfig.model || "whisper-1" }, "STT (OpenAI Whisper) initialized");
   }

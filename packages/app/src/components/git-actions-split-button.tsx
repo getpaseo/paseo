@@ -13,6 +13,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useToast } from "@/contexts/toast-context";
 import type { GitAction, GitActions } from "@/components/git-actions-policy";
+import { useIsTightHeader } from "@/constants/layout";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
@@ -22,6 +23,7 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
   const { theme } = useUnistyles();
   const toast = useToast();
   const archiveShortcutKeys = useShortcutKeys("archive-worktree");
+  const isTightHeader = useIsTightHeader();
 
   const getActionDisplayLabel = useCallback((action: GitAction): string => {
     if (action.status === "pending") return action.pendingLabel;
@@ -51,6 +53,7 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
             testID="changes-primary-cta"
             style={({ hovered, pressed }) => [
               styles.splitButtonPrimary,
+              isTightHeader && styles.splitButtonPrimaryCompact,
               (hovered || pressed) && styles.splitButtonPrimaryHovered,
               gitActions.primary!.disabled && styles.splitButtonPrimaryDisabled,
             ]}
@@ -68,9 +71,11 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
             ) : (
               <View style={styles.splitButtonContent}>
                 {gitActions.primary.icon}
-                <Text style={styles.splitButtonText}>
-                  {getActionDisplayLabel(gitActions.primary)}
-                </Text>
+                {!isTightHeader ? (
+                  <Text style={styles.splitButtonText}>
+                    {getActionDisplayLabel(gitActions.primary)}
+                  </Text>
+                ) : null}
               </View>
             )}
           </Pressable>
@@ -179,6 +184,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[1],
     justifyContent: "center",
     position: "relative",
+  },
+  splitButtonPrimaryCompact: {
+    paddingHorizontal: theme.spacing[2],
   },
   splitButtonPrimaryHovered: {
     backgroundColor: theme.colors.surface2,

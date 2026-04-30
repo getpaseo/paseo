@@ -166,6 +166,7 @@ polyfillCrypto();
 export type HostRuntimeBootstrapState = {
   phase: "starting-daemon" | "connecting" | "online" | "error";
   error: string | null;
+  startError: import("@/desktop/daemon/desktop-daemon").DaemonStartError | null;
   retry: () => void;
 };
 
@@ -188,6 +189,7 @@ function getRouteParamValue(value: string | string[] | undefined): string | unde
 const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   phase: "starting-daemon",
   error: null,
+  startError: null,
   retry: () => {},
 });
 
@@ -329,10 +331,12 @@ function BillingStreamMount() {
 function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<HostRuntimeBootstrapState["phase"]>("starting-daemon");
   const [error, setError] = useState<string | null>(null);
+  const [startError, setStartError] = useState<HostRuntimeBootstrapState["startError"]>(null);
   const [retryToken, setRetryToken] = useState(0);
   const retry = useCallback(() => {
     setPhase("starting-daemon");
     setError(null);
+    setStartError(null);
     setRetryToken((current) => current + 1);
   }, []);
 
@@ -356,12 +360,21 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
         cancelAnyOnline = anyOnline.cancel;
 
         const bootstrapPromise = (async (): Promise<
-          { type: "online" } | { type: "error"; error: string }
+          | { type: "online" }
+          | {
+              type: "error";
+              error: string;
+              startError: HostRuntimeBootstrapState["startError"];
+            }
         > => {
           try {
             const bootstrapResult = await store.bootstrapDesktop();
             if (!bootstrapResult.ok) {
-              return { type: "error", error: bootstrapResult.error };
+              return {
+                type: "error",
+                error: bootstrapResult.error,
+                startError: bootstrapResult.startError ?? null,
+              };
             }
             if (!cancelled && !raceSettled) {
               setPhase("connecting");
@@ -376,6 +389,7 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
             return {
               type: "error",
               error: err instanceof Error ? err.message : String(err),
+              startError: null,
             };
           }
         })();
@@ -392,9 +406,11 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
           if (result.type === "online") {
             setPhase("online");
             setError(null);
+            setStartError(null);
           } else {
             setPhase("error");
             setError(result.error);
+            setStartError(result.startError);
           }
         }
       } else {
@@ -414,10 +430,12 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
       if (shouldManageDesktop) {
         setPhase("error");
         setError(bootstrapError instanceof Error ? bootstrapError.message : String(bootstrapError));
+        setStartError(null);
         return;
       }
       setPhase("online");
       setError(null);
+      setStartError(null);
     });
 
     return () => {
@@ -430,9 +448,10 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     () => ({
       phase,
       error,
+      startError,
       retry,
     }),
-    [error, phase, retry],
+    [error, phase, startError, retry],
   );
 
   return (
