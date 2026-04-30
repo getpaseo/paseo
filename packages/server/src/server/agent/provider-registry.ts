@@ -22,6 +22,7 @@ import type {
   ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
 import { ClaudeAgentClient } from "./providers/claude-agent.js";
+import { CodeBuddyACPAgentClient } from "./providers/codebuddy-acp-agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
@@ -87,6 +88,11 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
   opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings),
   pi: (logger, runtimeSettings) =>
     new PiDirectAgentClient({
+      logger,
+      runtimeSettings,
+    }),
+  codebuddy: (logger, runtimeSettings) =>
+    new CodeBuddyACPAgentClient({
       logger,
       runtimeSettings,
     }),

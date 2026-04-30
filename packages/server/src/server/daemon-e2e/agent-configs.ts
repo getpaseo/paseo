@@ -60,6 +60,13 @@ export const agentConfigs = {
     provider: "pi",
     thinkingOptionId: "medium",
   },
+  codebuddy: {
+    provider: "codebuddy",
+    modes: {
+      full: "bypassPermissions",
+      ask: "default",
+    },
+  },
 } as const satisfies Record<string, AgentTestConfig>;
 
 export type AgentProvider = keyof typeof agentConfigs;
@@ -134,6 +141,8 @@ export function isProviderAvailable(provider: AgentProvider): Promise<boolean> {
             Boolean(process.env.OPENROUTER_API_KEY) ||
             existsSync(join(homedir(), ".pi", "agent", "auth.json")))
         );
+      case "codebuddy":
+        return Boolean(process.env.CODEBUDDY_API_KEY) || Boolean(process.env.CODEBUDDY_AUTH_TOKEN);
     }
   })();
 
@@ -144,4 +153,11 @@ export function isProviderAvailable(provider: AgentProvider): Promise<boolean> {
 /**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = ["claude", "codex", "copilot", "opencode", "pi"];
+export const allProviders: AgentProvider[] = [
+  "claude",
+  "codex",
+  "copilot",
+  "opencode",
+  "pi",
+  "codebuddy",
+];

@@ -58,6 +58,8 @@ const CLAUDE_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const CODEBUDDY_MODES: AgentProviderModeDefinition[] = CLAUDE_MODES;
+
 const CODEX_MODES: AgentProviderModeDefinition[] = [
   {
     id: "auto",
@@ -182,6 +184,18 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     description: "Minimal terminal-based coding agent with multi-provider LLM support",
     defaultModeId: null,
     modes: [],
+  },
+  {
+    id: "codebuddy",
+    label: "CodeBuddy",
+    description:
+      "Tencent CodeBuddy Code — Claude-compatible coding agent (set CODEBUDDY_API_KEY and CODEBUDDY_BASE_URL)",
+    defaultModeId: "default",
+    modes: CODEBUDDY_MODES,
+    voice: {
+      enabled: true,
+      defaultModeId: "default",
+    },
   },
 ];
 

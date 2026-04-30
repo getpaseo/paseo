@@ -13,6 +13,7 @@ const mockState = vi.hoisted(() => {
       claude: [] as ConstructorEntry[],
       codex: [] as ConstructorEntry[],
       copilot: [] as ConstructorEntry[],
+      codebuddy: [] as ConstructorEntry[],
       opencode: [] as ConstructorEntry[],
       pi: [] as ConstructorEntry[],
       genericAcp: [] as Array<{
@@ -177,6 +178,55 @@ vi.mock("./providers/copilot-acp-agent.js", () => ({
         return await isCommandAvailable(command.argv?.[0] ?? "");
       }
       return true;
+    }
+  },
+}));
+
+vi.mock("./providers/codebuddy-acp-agent.js", () => ({
+  CodeBuddyACPAgentClient: class CodeBuddyACPAgentClient {
+    readonly capabilities = {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    };
+    readonly provider = "codebuddy";
+    readonly runtimeSettings?: unknown;
+
+    constructor(options: { runtimeSettings?: unknown }) {
+      this.runtimeSettings = options.runtimeSettings;
+      mockState.constructorArgs.codebuddy.push({
+        runtimeSettings: options.runtimeSettings,
+      });
+    }
+
+    async createSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async resumeSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async listModels(): Promise<AgentModelDefinition[]> {
+      return mockState.runtimeModels.get(this.provider) ?? [];
+    }
+
+    async listModes(): Promise<[]> {
+      return [];
+    }
+
+    async isAvailable(): Promise<boolean> {
+      const command = (this.runtimeSettings as { command?: { mode?: string; argv?: string[] } })
+        ?.command;
+      if (command?.mode === "replace") {
+        const { isCommandAvailable } = await import("../../utils/executable.js");
+        return await isCommandAvailable(command.argv?.[0] ?? "");
+      }
+      const { isCommandAvailable } = await import("../../utils/executable.js");
+      return await isCommandAvailable("codebuddy");
     }
   },
 }));
