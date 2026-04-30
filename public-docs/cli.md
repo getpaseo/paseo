@@ -120,6 +120,25 @@ paseo daemon stop              # Stop the daemon
 
 Use `PASEO_HOME` to run multiple isolated daemon instances.
 
+## Connecting to a remote daemon
+
+`--host` accepts either a local target (`host:port`, a unix socket, or a Windows pipe) or a pairing offer URL — the same `https://app.paseo.sh/#offer=...` link the mobile app uses for QR pairing. With an offer URL the CLI connects through the Paseo relay with end-to-end encryption, so you can drive a daemon on another machine without exposing it to the network.
+
+Get an offer URL from the daemon you want to control:
+
+```bash
+paseo daemon pair --json   # prints { url, qr, ... }
+```
+
+Use it from anywhere:
+
+```bash
+paseo ls --host 'https://app.paseo.sh/#offer=eyJ2IjoyLC...'
+paseo run --host "$OFFER_URL" "fix the failing tests"
+```
+
+You can also set it once via `PASEO_HOST` instead of passing `--host` on every command.
+
 ## Multi-agent workflows
 
 The CLI is designed to be used by agents themselves. You can instruct an agent to spawn sub-agents for parallel work:
@@ -160,7 +179,7 @@ paseo ls -q                    # IDs only (quiet)
 
 ## Global options
 
-- `--host <host:port>` — connect to a different daemon
+- `--host <target>` — connect to a different daemon (`host:port`, unix socket, or `https://app.paseo.sh/#offer=...` for relay). See [Connecting to a remote daemon](#connecting-to-a-remote-daemon).
 - `--json` — JSON output
 - `-q, --quiet` — minimal output
 - `--no-color` — disable colors

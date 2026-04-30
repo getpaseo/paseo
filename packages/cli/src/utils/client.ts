@@ -1,5 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
-import { loadConfig, resolvePaseoHome, DaemonClient } from "@getpaseo/server";
+import {
+  loadConfig,
+  resolvePaseoHome,
+  DaemonClient,
+  buildRelayWebSocketUrl,
+  parseConnectionOfferFromUrl,
+  type ConnectionOffer,
+  type WebSocketLike,
+} from "@getpaseo/server";
 import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
@@ -176,18 +184,14 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
  * Create a WebSocket factory that works in Node.js
  */
 function createNodeWebSocketFactory() {
-  return (url: string, options?: { headers?: Record<string, string>; socketPath?: string }) => {
+  return (
+    url: string,
+    options?: { headers?: Record<string, string>; socketPath?: string },
+  ): WebSocketLike => {
     return new WebSocket(url, {
       headers: options?.headers,
       ...(options?.socketPath ? { socketPath: options.socketPath } : {}),
-    }) as unknown as {
-      readyState: number;
-      send: (data: string | Uint8Array | ArrayBuffer) => void;
-      close: (code?: number, reason?: string) => void;
-      binaryType?: string;
-      on: (event: string, listener: (...args: unknown[]) => void) => void;
-      off: (event: string, listener: (...args: unknown[]) => void) => void;
-    };
+    }) as unknown as WebSocketLike;
   };
 }
 
@@ -214,7 +218,7 @@ async function tryConnectHost(
         ...(target.type === "ipc" ? { socketPath: target.socketPath } : {}),
       }),
     reconnect: { enabled: false },
-  } as unknown as ConstructorParameters<typeof DaemonClient>[0]);
+  });
 
   try {
     await client.connect();
@@ -225,11 +229,63 @@ async function tryConnectHost(
   }
 }
 
+async function connectViaRelayOffer(
+  offer: ConnectionOffer,
+  clientId: string,
+  timeout: number,
+  nodeWebSocketFactory: ReturnType<typeof createNodeWebSocketFactory>,
+): Promise<DaemonClient> {
+  const url = buildRelayWebSocketUrl({
+    endpoint: offer.relay.endpoint,
+    serverId: offer.serverId,
+    role: "client",
+  });
+
+  const client = new DaemonClient({
+    url,
+    clientId,
+    clientType: "cli",
+    appVersion: resolveCliVersion(),
+    connectTimeoutMs: timeout,
+    webSocketFactory: (target: string, config?: { headers?: Record<string, string> }) =>
+      nodeWebSocketFactory(target, { headers: config?.headers }),
+    e2ee: { enabled: true, daemonPublicKeyB64: offer.daemonPublicKeyB64 },
+    reconnect: { enabled: false },
+  });
+
+  try {
+    await client.connect();
+    return client;
+  } catch (error) {
+    await client.close().catch(() => {});
+    const message = error instanceof Error ? error.message : String(error);
+    const lastError = client.lastError ? ` (${client.lastError})` : "";
+    throw new Error(`Failed to connect via relay offer: ${message}${lastError}`, { cause: error });
+  }
+}
+
+function parseHostOfferOrNull(host: string | undefined): ConnectionOffer | null {
+  if (!host) return null;
+  try {
+    return parseConnectionOfferFromUrl(host);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid pairing offer URL: ${message}`, { cause: error });
+  }
+}
+
 export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonClient> {
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
   const clientId = await getOrCreateCliClientId();
-  const hosts = resolveDaemonHostCandidates(options);
   const nodeWebSocketFactory = createNodeWebSocketFactory();
+
+  const explicitHost = options?.host ?? process.env.PASEO_HOST;
+  const offer = parseHostOfferOrNull(explicitHost);
+  if (offer) {
+    return connectViaRelayOffer(offer, clientId, timeout, nodeWebSocketFactory);
+  }
+
+  const hosts = resolveDaemonHostCandidates(options);
 
   async function tryNext(index: number, lastError: unknown): Promise<DaemonClient> {
     if (index >= hosts.length) {

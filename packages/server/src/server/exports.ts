@@ -7,11 +7,19 @@ export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
 export { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
 export { generateLocalPairingOffer, type LocalPairingOffer } from "./pairing-offer.js";
 export {
+  ConnectionOfferSchema,
+  decodeOfferFragmentPayload,
+  parseConnectionOfferFromUrl,
+  type ConnectionOffer,
+} from "../shared/connection-offer.js";
+export { buildRelayWebSocketUrl } from "../shared/daemon-endpoints.js";
+export {
   DaemonClient,
   type DaemonClientConfig,
   type ConnectionState,
   type DaemonEvent,
 } from "../client/daemon-client.js";
+export type { WebSocketFactory, WebSocketLike } from "../client/daemon-client-transport-types.js";
 export {
   ensureLocalSpeechModels,
   listLocalSpeechModels,

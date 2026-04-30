@@ -217,6 +217,7 @@ export async function startTestDaemon(options?: {
   paseoHome?: string;
   workDir?: string;
   timeout?: number;
+  env?: NodeJS.ProcessEnv;
 }): Promise<TestDaemonContext> {
   const port = options?.port ?? (await getAvailablePort());
   const { paseoHome, workDir } =
@@ -240,6 +241,7 @@ export async function startTestDaemon(options?: {
       PASEO_LISTEN: `${TEST_DAEMON_HOST}:${port}`,
       // Force no TTY to prevent QR code output
       CI: "true",
+      ...options?.env,
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
@@ -396,7 +398,10 @@ export async function runPaseoCli(
  *
  * This is the main entry point for E2E tests.
  */
-export async function createE2ETestContext(options?: { timeout?: number }): Promise<
+export async function createE2ETestContext(options?: {
+  timeout?: number;
+  env?: NodeJS.ProcessEnv;
+}): Promise<
   TestDaemonContext & {
     /** Run a paseo CLI command against this daemon */
     paseo: (
@@ -409,7 +414,7 @@ export async function createE2ETestContext(options?: { timeout?: number }): Prom
     }>;
   }
 > {
-  const ctx = await startTestDaemon({ timeout: options?.timeout });
+  const ctx = await startTestDaemon({ timeout: options?.timeout, env: options?.env });
 
   const paseo = (
     args: string[],
