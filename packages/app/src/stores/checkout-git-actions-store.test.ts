@@ -93,6 +93,72 @@ describe("checkout-git-actions-store", () => {
     expect(store.getStatus({ serverId, cwd, actionId: "commit" })).toBe("idle");
   });
 
+  it("runs pull then push sequentially for pull-and-push", async () => {
+    const order: string[] = [];
+    const client = {
+      checkoutPull: vi.fn(async () => {
+        order.push("pull");
+        return {};
+      }),
+      checkoutPush: vi.fn(async () => {
+        order.push("push");
+        return {};
+      }),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd });
+
+    expect(order).toEqual(["pull", "push"]);
+    expect(client.checkoutPull).toHaveBeenCalledWith(cwd);
+    expect(client.checkoutPush).toHaveBeenCalledWith(cwd);
+  });
+
+  it("does not push when pull fails for pull-and-push", async () => {
+    const client = {
+      checkoutPull: vi.fn(async () => ({ error: { message: "pull conflict" } })),
+      checkoutPush: vi.fn(async () => ({})),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await expect(
+      useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd }),
+    ).rejects.toThrow("pull conflict");
+    expect(client.checkoutPush).not.toHaveBeenCalled();
+  });
+
+  it("surfaces push errors from pull-and-push after a successful pull", async () => {
+    const client = {
+      checkoutPull: vi.fn(async () => ({})),
+      checkoutPush: vi.fn(async () => ({ error: { message: "push rejected" } })),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await expect(
+      useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd }),
+    ).rejects.toThrow("push rejected");
+    expect(client.checkoutPull).toHaveBeenCalledTimes(1);
+    expect(client.checkoutPush).toHaveBeenCalledTimes(1);
+  });
+
   it("invalidates checkout PR status and every PR pane timeline for a checkout", async () => {
     const queryClient = new QueryClient();
 

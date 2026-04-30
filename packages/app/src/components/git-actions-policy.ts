@@ -6,6 +6,7 @@ export type GitActionId =
   | "commit"
   | "pull"
   | "push"
+  | "pull-and-push"
   | "pr"
   | "merge-branch"
   | "merge-from-base"
@@ -56,7 +57,7 @@ export interface BuildGitActionsInput {
   runtime: Record<GitActionId, GitActionRuntimeState>;
 }
 
-const REMOTE_ACTION_IDS: GitActionId[] = ["pull", "push"];
+const REMOTE_ACTION_IDS: GitActionId[] = ["pull", "push", "pull-and-push"];
 const FEATURE_ACTION_IDS: GitActionId[] = ["merge-from-base", "merge-branch", "pr"];
 
 export function buildGitActions(input: BuildGitActionsInput): GitActions {
@@ -99,6 +100,20 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     unavailableMessage: input.runtime.push.disabled ? undefined : getPushUnavailableMessage(input),
     icon: input.runtime.push.icon,
     handler: input.runtime.push.handler,
+  });
+
+  allActions.set("pull-and-push", {
+    id: "pull-and-push",
+    label: "Pull and push",
+    pendingLabel: "Pulling and pushing...",
+    successLabel: "Pulled and pushed",
+    disabled: input.runtime["pull-and-push"].disabled,
+    status: input.runtime["pull-and-push"].status,
+    unavailableMessage: input.runtime["pull-and-push"].disabled
+      ? undefined
+      : getPullAndPushUnavailableMessage(input),
+    icon: input.runtime["pull-and-push"].icon,
+    handler: input.runtime["pull-and-push"].handler,
   });
 
   allActions.set("pr", buildPrAction(input));
@@ -261,6 +276,19 @@ function getPushUnavailableMessage(input: BuildGitActionsInput): string | undefi
   }
   if (input.aheadOfOrigin === 0) {
     return "Push isn't available because there is nothing new to send";
+  }
+  return undefined;
+}
+
+function getPullAndPushUnavailableMessage(input: BuildGitActionsInput): string | undefined {
+  if (!input.hasRemote) {
+    return "Pull and push isn't available here because this branch is not connected to a remote yet";
+  }
+  if (input.hasUncommittedChanges) {
+    return "Pull and push isn't available while you have local changes so commit or stash them first";
+  }
+  if (input.behindOfOrigin === 0 && input.aheadOfOrigin === 0) {
+    return "Pull and push isn't available because this branch is already in sync";
   }
   return undefined;
 }

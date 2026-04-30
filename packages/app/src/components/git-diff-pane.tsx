@@ -31,6 +31,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   AlignJustify,
   Archive,
+  ArrowDownUp,
   ChevronDown,
   Columns2,
   Download,
@@ -1071,6 +1072,7 @@ interface GitActionRunners {
   runCommit: (args: { serverId: string; cwd: string }) => Promise<void>;
   runPull: (args: { serverId: string; cwd: string }) => Promise<void>;
   runPush: (args: { serverId: string; cwd: string }) => Promise<void>;
+  runPullAndPush: (args: { serverId: string; cwd: string }) => Promise<void>;
   runCreatePr: (args: { serverId: string; cwd: string }) => Promise<void>;
   runMergeBranch: (args: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
   runMergeFromBase: (args: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
@@ -1099,6 +1101,7 @@ interface GitActionHandlers {
   handleCommit: () => void;
   handlePull: () => void;
   handlePush: () => void;
+  handlePullAndPush: () => void;
   handleCreatePr: () => void;
   handleMergeBranch: () => void;
   handleMergeFromBase: () => void;
@@ -1151,6 +1154,18 @@ function useGitActionHandlers({
       })
       .catch((err) => {
         toastActionError(err, "Failed to push");
+      });
+  }, [cwd, runners, serverId, toastActionError, toastActionSuccess]);
+
+  const handlePullAndPush = useCallback(() => {
+    void runners
+      .runPullAndPush({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("Pulled and pushed");
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to pull and push");
       });
   }, [cwd, runners, serverId, toastActionError, toastActionSuccess]);
 
@@ -1233,6 +1248,7 @@ function useGitActionHandlers({
     handleCommit,
     handlePull,
     handlePush,
+    handlePullAndPush,
     handleCreatePr,
     handleMergeBranch,
     handleMergeFromBase,
@@ -1350,6 +1366,7 @@ function computeDisabledStates(
     commitDisabled: actionsDisabled || statuses.commitStatus === pending,
     pullDisabled: actionsDisabled || statuses.pullStatus === pending,
     pushDisabled: actionsDisabled || statuses.pushStatus === pending,
+    pullAndPushDisabled: actionsDisabled || statuses.pullAndPushStatus === pending,
     prDisabled: actionsDisabled || statuses.prCreateStatus === pending,
     mergeDisabled: actionsDisabled || statuses.mergeStatus === pending,
     mergeFromBaseDisabled: actionsDisabled || statuses.mergeFromBaseStatus === pending,
@@ -1393,6 +1410,7 @@ interface GitActionsStatusInputs {
   commitStatus: CheckoutGitActionStatus;
   pullStatus: CheckoutGitActionStatus;
   pushStatus: CheckoutGitActionStatus;
+  pullAndPushStatus: CheckoutGitActionStatus;
   prCreateStatus: CheckoutGitActionStatus;
   mergeStatus: CheckoutGitActionStatus;
   mergeFromBaseStatus: CheckoutGitActionStatus;
@@ -1403,6 +1421,7 @@ interface GitActionsDisabledInputs {
   commitDisabled: boolean;
   pullDisabled: boolean;
   pushDisabled: boolean;
+  pullAndPushDisabled: boolean;
   prDisabled: boolean;
   mergeDisabled: boolean;
   mergeFromBaseDisabled: boolean;
@@ -1461,6 +1480,12 @@ function buildGitActionsForPane({
         status: statuses.pushStatus,
         icon: <Upload size={16} color={iconColor} />,
         handler: handlers.handlePush,
+      },
+      "pull-and-push": {
+        disabled: disabled.pullAndPushDisabled,
+        status: statuses.pullAndPushStatus,
+        icon: <ArrowDownUp size={16} color={iconColor} />,
+        handler: handlers.handlePullAndPush,
       },
       pr: {
         disabled: disabled.prDisabled,
@@ -1879,6 +1904,9 @@ export function GitDiffPane({
   const pushStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "push" }),
   );
+  const pullAndPushStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "pull-and-push" }),
+  );
   const prCreateStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "create-pr" }),
   );
@@ -1895,6 +1923,7 @@ export function GitDiffPane({
   const runCommit = useCheckoutGitActionsStore((state) => state.commit);
   const runPull = useCheckoutGitActionsStore((state) => state.pull);
   const runPush = useCheckoutGitActionsStore((state) => state.push);
+  const runPullAndPush = useCheckoutGitActionsStore((state) => state.pullAndPush);
   const runCreatePr = useCheckoutGitActionsStore((state) => state.createPr);
   const runMergeBranch = useCheckoutGitActionsStore((state) => state.mergeBranch);
   const runMergeFromBase = useCheckoutGitActionsStore((state) => state.mergeFromBase);
@@ -1938,6 +1967,7 @@ export function GitDiffPane({
       runCommit,
       runPull,
       runPush,
+      runPullAndPush,
       runCreatePr,
       runMergeBranch,
       runMergeFromBase,
@@ -1950,6 +1980,7 @@ export function GitDiffPane({
       runMergeBranch,
       runMergeFromBase,
       runPull,
+      runPullAndPush,
       runPush,
     ],
   );
@@ -1958,6 +1989,7 @@ export function GitDiffPane({
     handleCommit,
     handlePull,
     handlePush,
+    handlePullAndPush,
     handleCreatePr,
     handleMergeBranch,
     handleMergeFromBase,
@@ -2081,6 +2113,7 @@ export function GitDiffPane({
       commitStatus,
       pullStatus,
       pushStatus,
+      pullAndPushStatus,
       prCreateStatus,
       mergeStatus,
       mergeFromBaseStatus,
@@ -2092,6 +2125,7 @@ export function GitDiffPane({
       mergeFromBaseStatus,
       mergeStatus,
       prCreateStatus,
+      pullAndPushStatus,
       pullStatus,
       pushStatus,
     ],
@@ -2155,6 +2189,7 @@ export function GitDiffPane({
       handleCommit,
       handlePull,
       handlePush,
+      handlePullAndPush,
       handleCreatePr,
       handleMergeBranch,
       handleMergeFromBase,
@@ -2169,6 +2204,7 @@ export function GitDiffPane({
       handleMergeFromBase,
       handlePr,
       handlePull,
+      handlePullAndPush,
       handlePush,
     ],
   );

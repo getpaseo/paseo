@@ -17,6 +17,7 @@ export type CheckoutGitAsyncActionId =
   | "commit"
   | "pull"
   | "push"
+  | "pull-and-push"
   | "create-pr"
   | "merge-branch"
   | "merge-from-base"
@@ -234,6 +235,7 @@ interface CheckoutGitActionsStoreState {
   commit: (params: { serverId: string; cwd: string }) => Promise<void>;
   pull: (params: { serverId: string; cwd: string }) => Promise<void>;
   push: (params: { serverId: string; cwd: string }) => Promise<void>;
+  pullAndPush: (params: { serverId: string; cwd: string }) => Promise<void>;
   createPr: (params: { serverId: string; cwd: string }) => Promise<void>;
   mergeBranch: (params: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
   mergeFromBase: (params: { serverId: string; cwd: string; baseRef: string }) => Promise<void>;
@@ -342,6 +344,25 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
         const payload = await client.checkoutPush(cwd);
         if (payload.error) {
           throw new Error(payload.error.message);
+        }
+      },
+    });
+  },
+
+  pullAndPush: async ({ serverId, cwd }) => {
+    await runCheckoutAction({
+      serverId,
+      cwd,
+      actionId: "pull-and-push",
+      run: async () => {
+        const client = resolveClient(serverId);
+        const pullPayload = await client.checkoutPull(cwd);
+        if (pullPayload.error) {
+          throw new Error(pullPayload.error.message);
+        }
+        const pushPayload = await client.checkoutPush(cwd);
+        if (pushPayload.error) {
+          throw new Error(pushPayload.error.message);
         }
       },
     });

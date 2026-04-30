@@ -54,6 +54,7 @@ function useGitActionStatuses(
   commitStatus: CheckoutGitActionStatus;
   pullStatus: CheckoutGitActionStatus;
   pushStatus: CheckoutGitActionStatus;
+  pullAndPushStatus: CheckoutGitActionStatus;
   prCreateStatus: CheckoutGitActionStatus;
   mergeStatus: CheckoutGitActionStatus;
   mergeFromBaseStatus: CheckoutGitActionStatus;
@@ -67,6 +68,9 @@ function useGitActionStatuses(
   );
   const pushStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "push" }),
+  );
+  const pullAndPushStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({ serverId, cwd, actionId: "pull-and-push" }),
   );
   const prCreateStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "create-pr" }),
@@ -84,6 +88,7 @@ function useGitActionStatuses(
     commitStatus,
     pullStatus,
     pushStatus,
+    pullAndPushStatus,
     prCreateStatus,
     mergeStatus,
     mergeFromBaseStatus,
@@ -180,6 +185,7 @@ function useGitActionRunners() {
   const runCommit = useCheckoutGitActionsStore((state) => state.commit);
   const runPull = useCheckoutGitActionsStore((state) => state.pull);
   const runPush = useCheckoutGitActionsStore((state) => state.push);
+  const runPullAndPush = useCheckoutGitActionsStore((state) => state.pullAndPush);
   const runCreatePr = useCheckoutGitActionsStore((state) => state.createPr);
   const runMergeBranch = useCheckoutGitActionsStore((state) => state.mergeBranch);
   const runMergeFromBase = useCheckoutGitActionsStore((state) => state.mergeFromBase);
@@ -188,6 +194,7 @@ function useGitActionRunners() {
     runCommit,
     runPull,
     runPush,
+    runPullAndPush,
     runCreatePr,
     runMergeBranch,
     runMergeFromBase,
@@ -202,6 +209,7 @@ interface UseGitActionsInput {
     commit: ReactElement;
     pull: ReactElement;
     push: ReactElement;
+    pullAndPush: ReactElement;
     viewPr: ReactElement;
     createPr: ReactElement;
     merge: ReactElement;
@@ -284,6 +292,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     commitStatus,
     pullStatus,
     pushStatus,
+    pullAndPushStatus,
     prCreateStatus,
     mergeStatus,
     mergeFromBaseStatus,
@@ -294,6 +303,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     runCommit,
     runPull,
     runPush,
+    runPullAndPush,
     runCreatePr,
     runMergeBranch,
     runMergeFromBase,
@@ -348,6 +358,17 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
         toastActionError(err, "Failed to push");
       });
   }, [cwd, runPush, serverId, toastActionError, toastActionSuccess]);
+
+  const handlePullAndPush = useCallback(() => {
+    void runPullAndPush({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess("Pulled and pushed");
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, "Failed to pull and push");
+      });
+  }, [cwd, runPullAndPush, serverId, toastActionError, toastActionSuccess]);
 
   const handleCreatePr = useCallback(() => {
     void persistShipDefault("pr");
@@ -449,6 +470,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const mergeDisabled = isActionDisabled(actionsDisabled, mergeStatus);
   const mergeFromBaseDisabled = isActionDisabled(actionsDisabled, mergeFromBaseStatus);
   const pushDisabled = isActionDisabled(actionsDisabled, pushStatus);
+  const pullAndPushDisabled = isActionDisabled(actionsDisabled, pullAndPushStatus);
   const archiveDisabled = isActionDisabled(actionsDisabled, archiveStatus);
 
   const branchLabel = resolveBranchLabel({
@@ -502,6 +524,12 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
           icon: icons.push,
           handler: handlePush,
         },
+        "pull-and-push": {
+          disabled: pullAndPushDisabled,
+          status: pullAndPushStatus,
+          icon: icons.pullAndPush,
+          handler: handlePullAndPush,
+        },
         pr: {
           disabled: prDisabled,
           status: hasPullRequest ? "idle" : prCreateStatus,
@@ -547,6 +575,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     commitDisabled,
     pullDisabled,
     pushDisabled,
+    pullAndPushDisabled,
     prDisabled,
     mergeDisabled,
     mergeFromBaseDisabled,
@@ -554,6 +583,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     commitStatus,
     pullStatus,
     pushStatus,
+    pullAndPushStatus,
     prCreateStatus,
     mergeStatus,
     mergeFromBaseStatus,
@@ -561,6 +591,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     handleCommit,
     handlePull,
     handlePush,
+    handlePullAndPush,
     handlePrAction,
     handleMergeBranch,
     handleMergeFromBase,

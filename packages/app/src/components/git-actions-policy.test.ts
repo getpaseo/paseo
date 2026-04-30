@@ -36,6 +36,11 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
         status: "idle",
         handler: () => undefined,
       },
+      "pull-and-push": {
+        disabled: false,
+        status: "idle",
+        handler: () => undefined,
+      },
       pr: {
         disabled: false,
         status: "idle",
@@ -65,7 +70,7 @@ describe("git-actions-policy", () => {
   it("shows only remote sync actions on the base branch", () => {
     const actions = buildGitActions(createInput({ hasRemote: true }));
 
-    expect(actions.secondary.map((action) => action.id)).toEqual(["pull", "push"]);
+    expect(actions.secondary.map((action) => action.id)).toEqual(["pull", "push", "pull-and-push"]);
   });
 
   it("prioritizes pull when the branch is behind origin", () => {
@@ -149,6 +154,7 @@ describe("git-actions-policy", () => {
     expect(actions.secondary.map((action) => action.id)).toEqual([
       "pull",
       "push",
+      "pull-and-push",
       "merge-from-base",
       "merge-branch",
       "pr",
@@ -156,6 +162,48 @@ describe("git-actions-policy", () => {
     expect(
       actions.secondary.some((action) => action.id === "pr" && action.label === "View PR"),
     ).toBe(true);
+  });
+
+  it("enables pull-and-push when the branch has both incoming and outgoing commits", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        aheadOfOrigin: 2,
+        behindOfOrigin: 3,
+      }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action).toMatchObject({
+      label: "Pull and push",
+      disabled: false,
+      unavailableMessage: undefined,
+    });
+  });
+
+  it("explains why pull-and-push is unavailable when the branch is in sync", () => {
+    const actions = buildGitActions(createInput({ hasRemote: true }));
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action).toMatchObject({
+      disabled: false,
+      unavailableMessage: "Pull and push isn't available because this branch is already in sync",
+    });
+  });
+
+  it("explains why pull-and-push is unavailable when there are uncommitted changes", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        hasUncommittedChanges: true,
+        aheadOfOrigin: 1,
+      }),
+    );
+    const action = actions.secondary.find((entry) => entry.id === "pull-and-push");
+
+    expect(action?.unavailableMessage).toBe(
+      "Pull and push isn't available while you have local changes so commit or stash them first",
+    );
   });
 
   it("only shows archive worktree for paseo worktrees", () => {
