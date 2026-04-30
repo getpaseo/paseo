@@ -10,6 +10,19 @@ const PaseoWorktreeMetadataV1Schema = z.object({
 const PaseoWorktreeMetadataV2Schema = z.object({
   version: z.literal(2),
   baseRefName: z.string().min(1),
+  firstAgentBranchAutoName: z
+    .discriminatedUnion("status", [
+      z.object({
+        status: z.literal("pending"),
+        placeholderBranchName: z.string().min(1),
+      }),
+      z.object({
+        status: z.literal("attempted"),
+        placeholderBranchName: z.string().min(1),
+        attemptedAt: z.string().min(1),
+      }),
+    ])
+    .optional(),
   runtime: z
     .object({
       worktreePort: z.number().int().positive(),
@@ -101,11 +114,62 @@ export function writePaseoWorktreeRuntimeMetadata(
   const next: PaseoWorktreeMetadata = {
     version: 2,
     baseRefName: current.baseRefName,
+    ...(current.version === 2 && current.firstAgentBranchAutoName
+      ? { firstAgentBranchAutoName: current.firstAgentBranchAutoName }
+      : {}),
     runtime: {
       worktreePort: options.worktreePort,
     },
   };
   writeFileSync(metadataPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+}
+
+export function writePaseoWorktreeFirstAgentBranchAutoNameMetadata(
+  worktreeRoot: string,
+  options: { placeholderBranchName: string },
+): void {
+  const placeholderBranchName = options.placeholderBranchName.trim();
+  if (!placeholderBranchName) {
+    throw new Error("Placeholder branch name is required");
+  }
+
+  const current = readPaseoWorktreeMetadata(worktreeRoot);
+  if (!current) {
+    throw new Error("Cannot persist first-agent branch auto-name metadata: missing base metadata");
+  }
+
+  writePaseoWorktreeMetadataFile(worktreeRoot, {
+    version: 2,
+    baseRefName: current.baseRefName,
+    firstAgentBranchAutoName: {
+      status: "pending",
+      placeholderBranchName,
+    },
+    ...(current.version === 2 && current.runtime ? { runtime: current.runtime } : {}),
+  });
+}
+
+export function markPaseoWorktreeFirstAgentBranchAutoNameAttempted(
+  worktreeRoot: string,
+  options: { attemptedAt?: string } = {},
+): PaseoWorktreeMetadata | null {
+  const current = readPaseoWorktreeMetadata(worktreeRoot);
+  if (!current || current.version !== 2 || current.firstAgentBranchAutoName?.status !== "pending") {
+    return current;
+  }
+
+  const next: PaseoWorktreeMetadata = {
+    version: 2,
+    baseRefName: current.baseRefName,
+    firstAgentBranchAutoName: {
+      status: "attempted",
+      placeholderBranchName: current.firstAgentBranchAutoName.placeholderBranchName,
+      attemptedAt: options.attemptedAt ?? new Date().toISOString(),
+    },
+    ...(current.runtime ? { runtime: current.runtime } : {}),
+  };
+  writePaseoWorktreeMetadataFile(worktreeRoot, next);
+  return next;
 }
 
 export function readPaseoWorktreeMetadata(worktreeRoot: string): PaseoWorktreeMetadata | null {
@@ -135,4 +199,13 @@ export function readPaseoWorktreeRuntimePort(worktreeRoot: string): number | nul
     return metadata.runtime.worktreePort;
   }
   return null;
+}
+
+function writePaseoWorktreeMetadataFile(
+  worktreeRoot: string,
+  metadata: PaseoWorktreeMetadata,
+): void {
+  const metadataPath = getPaseoWorktreeMetadataPath(worktreeRoot);
+  mkdirSync(join(getGitDirForWorktreeRoot(worktreeRoot), "paseo"), { recursive: true });
+  writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
 }

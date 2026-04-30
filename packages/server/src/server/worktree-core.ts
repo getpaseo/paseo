@@ -17,6 +17,7 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 
 export interface CreateWorktreeCoreInput extends ResolveWorktreeCreationIntentInput {
   cwd: string;
+  nameContext?: string;
   paseoHome?: string;
   runSetup?: boolean;
 }

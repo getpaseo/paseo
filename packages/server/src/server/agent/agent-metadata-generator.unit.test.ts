@@ -7,33 +7,8 @@ import {
   type AgentMetadataGeneratorDeps,
 } from "./agent-metadata-generator.js";
 import type { AgentManager } from "./agent-manager.js";
-import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 
 const logger = createTestLogger();
-
-const ELIGIBLE_WORKTREE_SNAPSHOT: WorkspaceGitRuntimeSnapshot = {
-  cwd: "/tmp/repo/metadata-worktree",
-  git: {
-    isGit: true,
-    repoRoot: "/tmp/repo/metadata-worktree",
-    mainRepoRoot: "/tmp/repo",
-    currentBranch: "metadata-worktree",
-    remoteUrl: null,
-    isPaseoOwnedWorktree: true,
-    isDirty: false,
-    baseRef: "main",
-    aheadBehind: null,
-    aheadOfOrigin: null,
-    behindOfOrigin: null,
-    hasRemote: false,
-    diffStat: null,
-  },
-  github: {
-    featuresEnabled: false,
-    pullRequest: null,
-    error: null,
-  },
-};
 
 function createDeps(
   generateStructuredAgentResponseWithFallback: NonNullable<
@@ -89,134 +64,30 @@ describe("agent metadata generator auto-title", () => {
     expect(setTitle).not.toHaveBeenCalled();
   });
 
-  it("notifies agent state after successfully renaming a generated branch", async () => {
+  it("generates titles independently from workspace branch naming", async () => {
     const setTitle = vi.fn().mockResolvedValue(undefined);
-    const notifyAgentState = vi.fn();
-    const flush = vi.fn().mockResolvedValue(undefined);
-    const manager = {
-      setTitle,
-      notifyAgentState,
-      flush,
-    } as unknown as AgentManager;
-    const renameCurrentBranch = vi.fn().mockResolvedValue({
-      previousBranch: "metadata-worktree",
-      currentBranch: "feature/metadata-worktree",
-    }) as NonNullable<AgentMetadataGeneratorDeps["renameCurrentBranch"]>;
-    const generateStructured = vi.fn().mockResolvedValue({
-      branch: "feature/metadata-worktree",
-    }) as NonNullable<AgentMetadataGeneratorDeps["generateStructuredAgentResponseWithFallback"]>;
-    const workspaceGitService = {
-      getSnapshot: vi.fn().mockResolvedValue(ELIGIBLE_WORKTREE_SNAPSHOT),
-    };
+    const manager = { setTitle } as unknown as AgentManager;
+    const generateStructured = vi
+      .fn()
+      .mockResolvedValue({ title: "Generated title" }) as NonNullable<
+      AgentMetadataGeneratorDeps["generateStructuredAgentResponseWithFallback"]
+    >;
 
     await generateAndApplyAgentMetadata({
       agentManager: manager,
-      agentId: "agent-branch",
+      agentId: "agent-suppressed-branch",
       cwd: "/tmp/repo/metadata-worktree",
-      initialPrompt: "Rename this worktree branch.",
-      explicitTitle: "Keep explicit title",
-      paseoHome: "/tmp/paseo-home",
+      initialPrompt: "Implement this feature",
+      explicitTitle: null,
       logger,
       deps: {
         generateStructuredAgentResponseWithFallback: generateStructured,
-        renameCurrentBranch,
-        workspaceGitService,
       },
     });
 
-    expect(renameCurrentBranch).toHaveBeenCalledWith(
-      "/tmp/repo/metadata-worktree",
-      "feature/metadata-worktree",
+    expect(generateStructured).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: "/tmp/repo/metadata-worktree" }),
     );
-    expect(notifyAgentState).toHaveBeenCalledWith("agent-branch");
-    expect(setTitle).not.toHaveBeenCalled();
-  });
-
-  it("forces a workspace git snapshot refresh after renaming a generated branch", async () => {
-    const manager = {
-      setTitle: vi.fn().mockResolvedValue(undefined),
-      notifyAgentState: vi.fn(),
-      flush: vi.fn().mockResolvedValue(undefined),
-    } as unknown as AgentManager;
-    const renameCurrentBranch = vi.fn().mockResolvedValue({
-      previousBranch: "metadata-worktree",
-      currentBranch: "feature/metadata-worktree",
-    }) as NonNullable<AgentMetadataGeneratorDeps["renameCurrentBranch"]>;
-    const generateStructured = vi.fn().mockResolvedValue({
-      branch: "feature/metadata-worktree",
-    }) as NonNullable<AgentMetadataGeneratorDeps["generateStructuredAgentResponseWithFallback"]>;
-    const workspaceGitService = {
-      getSnapshot: vi.fn().mockResolvedValue(ELIGIBLE_WORKTREE_SNAPSHOT),
-    };
-
-    await generateAndApplyAgentMetadata({
-      agentManager: manager,
-      agentId: "agent-branch-refresh",
-      cwd: "/tmp/repo/metadata-worktree",
-      initialPrompt: "Rename this worktree branch.",
-      explicitTitle: "Keep explicit title",
-      logger,
-      deps: {
-        generateStructuredAgentResponseWithFallback: generateStructured,
-        renameCurrentBranch,
-        workspaceGitService: workspaceGitService as unknown as Pick<
-          import("../workspace-git-service.js").WorkspaceGitService,
-          "getSnapshot"
-        >,
-      },
-    });
-
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo/metadata-worktree", {
-      force: true,
-      reason: "rename-branch",
-    });
-  });
-
-  it("uses the workspace git service snapshot for branch rename eligibility checks", async () => {
-    const setTitle = vi.fn().mockResolvedValue(undefined);
-    const notifyAgentState = vi.fn();
-    const manager = {
-      setTitle,
-      notifyAgentState,
-      flush: vi.fn().mockResolvedValue(undefined),
-    } as unknown as AgentManager;
-    const workspaceGitService = {
-      getSnapshot: vi.fn().mockResolvedValue(ELIGIBLE_WORKTREE_SNAPSHOT),
-    };
-    const renameCurrentBranch = vi.fn().mockResolvedValue({
-      previousBranch: "metadata-worktree",
-      currentBranch: "feature/metadata-worktree",
-    }) as NonNullable<AgentMetadataGeneratorDeps["renameCurrentBranch"]>;
-    const generateStructured = vi.fn().mockResolvedValue({
-      branch: "feature/metadata-worktree",
-    }) as NonNullable<AgentMetadataGeneratorDeps["generateStructuredAgentResponseWithFallback"]>;
-
-    await generateAndApplyAgentMetadata({
-      agentManager: manager,
-      agentId: "agent-service-branch",
-      cwd: "/tmp/repo/metadata-worktree",
-      initialPrompt: "Rename this worktree branch.",
-      explicitTitle: "Keep explicit title",
-      logger,
-      deps: {
-        generateStructuredAgentResponseWithFallback: generateStructured,
-        renameCurrentBranch,
-        workspaceGitService: workspaceGitService as unknown as Pick<
-          import("../workspace-git-service.js").WorkspaceGitService,
-          "getSnapshot"
-        >,
-      },
-    });
-
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(3);
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo/metadata-worktree");
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo/metadata-worktree", {
-      force: true,
-      reason: "rename-branch",
-    });
-    expect(renameCurrentBranch).toHaveBeenCalledWith(
-      "/tmp/repo/metadata-worktree",
-      "feature/metadata-worktree",
-    );
+    expect(setTitle).toHaveBeenCalledWith("agent-suppressed-branch", "Generated title");
   });
 });

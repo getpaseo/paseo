@@ -88,7 +88,8 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { createGitHubService } from "../services/github-service.js";
-import { createPaseoWorktree } from "./paseo-worktree-service.js";
+import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
+import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
 import { createWorktreeCoreDeps } from "./worktree-core.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
@@ -545,24 +546,54 @@ export async function createPaseoDaemon(
         emitWorkspaceUpdatesForCwds: emitWorkspaceUpdatesForMcpArchive,
         emitSessionMessage: emitMcpArchiveSessionMessage,
         createPaseoWorktree: async (input, serviceOptions) => {
-          const coreDeps = createWorktreeCoreDeps(github);
-          const result = await createPaseoWorktree(input, {
-            ...coreDeps,
-            ...(serviceOptions?.resolveDefaultBranch
-              ? {
-                  resolveDefaultBranch: serviceOptions.resolveDefaultBranch,
-                }
-              : {}),
-            projectRegistry,
-            workspaceRegistry,
-            workspaceGitService,
-          });
-          await Promise.all(
-            wsServer
-              ?.listActiveSessions()
-              .map((session) => session.warmWorkspaceGitDataForWorkspace(result.workspace)) ?? [],
+          return createPaseoWorktreeWorkflow(
+            {
+              paseoHome: config.paseoHome,
+              createPaseoWorktree: async (workflowInput, workflowOptions) => {
+                const coreDeps = createWorktreeCoreDeps(github);
+                return createRegisteredPaseoWorktree(workflowInput, {
+                  ...coreDeps,
+                  ...(workflowOptions?.resolveDefaultBranch
+                    ? {
+                        resolveDefaultBranch: workflowOptions.resolveDefaultBranch,
+                      }
+                    : {}),
+                  projectRegistry,
+                  workspaceRegistry,
+                  workspaceGitService,
+                });
+              },
+              warmWorkspaceGitData: async (workspace) => {
+                await Promise.all(
+                  wsServer
+                    ?.listActiveSessions()
+                    .map((session) => session.warmWorkspaceGitDataForWorkspace(workspace)) ?? [],
+                );
+              },
+              emitWorkspaceUpdateForCwd: async (cwd, emitOptions) => {
+                await Promise.all(
+                  wsServer
+                    ?.listActiveSessions()
+                    .map((session) => session.emitWorkspaceUpdatesForExternalCwds([cwd])) ?? [],
+                );
+                void emitOptions;
+              },
+              cacheWorkspaceSetupSnapshot: () => {},
+              emit: emitMcpArchiveSessionMessage,
+              sessionLogger: logger,
+              terminalManager,
+              archiveWorkspaceRecord: archiveWorkspaceRecordForMcp,
+              scriptRouteStore,
+              scriptRuntimeStore,
+              getDaemonTcpPort: () =>
+                boundListenTarget?.type === "tcp" ? boundListenTarget.port : null,
+              getDaemonTcpHost: () =>
+                boundListenTarget?.type === "tcp" ? boundListenTarget.host : null,
+              onScriptsChanged: null,
+            },
+            input,
+            serviceOptions,
           );
-          return result;
         },
         paseoHome: config.paseoHome,
         callerAgentId,

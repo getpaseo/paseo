@@ -1347,6 +1347,7 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   type: z.literal("create_paseo_worktree_request"),
   cwd: z.string(),
   worktreeSlug: z.string().optional(),
+  nameContext: z.string().optional(),
   attachments: AgentAttachmentsSchema,
   refName: z.string().min(1).optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),

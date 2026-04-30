@@ -165,13 +165,11 @@ import {
 } from "./file-explorer/service.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { PushTokenStore } from "./push/token-store.js";
-import { type WorktreeConfig } from "../utils/worktree.js";
 import {
   readPaseoConfigForEdit,
   writePaseoConfigForEdit,
   type ProjectConfigRpcError,
 } from "../utils/paseo-config-file.js";
-import { runAsyncWorktreeBootstrap } from "./worktree-bootstrap.js";
 import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import type { ScriptRouteStore } from "./script-proxy.js";
@@ -206,6 +204,7 @@ import {
   type PullRequestTimelineItem,
 } from "../services/github-service.js";
 import {
+  attemptFirstAgentBranchAutoName,
   createPaseoWorktree,
   type CreatePaseoWorktreeInput,
   type CreatePaseoWorktreeResult,
@@ -214,7 +213,10 @@ import { createWorktreeCoreDeps } from "./worktree-core.js";
 import {
   assertSafeGitRef as assertWorktreeSafeGitRef,
   buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
-  runWorktreeSetupInBackground as runWorktreeSetupInBackgroundSession,
+  buildAgentWorktreeNameContext,
+  createPaseoWorktreeWorkflow as createWorktreeWorkflow,
+  type CreatePaseoWorktreeSetupContinuationInput,
+  type CreatePaseoWorktreeWorkflowResult,
   handleCreatePaseoWorktreeRequest as handleCreateWorktreeRequest,
   handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
@@ -274,6 +276,7 @@ type GitMutationRefreshReason =
   | "create-pr"
   | "switch-branch"
   | "create-branch"
+  | "rename-branch"
   | "stash-push"
   | "stash-pop"
   | "create-worktree";
@@ -3052,19 +3055,28 @@ export class Session {
         ...(provisionalTitle ? { title: provisionalTitle } : {}),
       };
 
-      const { sessionConfig, worktreeBootstrap } = await this.buildAgentSessionConfig(
+      const agentNameContext = buildAgentWorktreeNameContext({
+        initialPrompt: trimmedPrompt,
+        attachments,
+      });
+      const { sessionConfig, setupContinuation } = await this.buildAgentSessionConfig(
         resolvedConfig,
         git,
         worktreeName,
         attachments,
+        agentNameContext,
       );
-      const resolvedWorkspace = msg.workspaceId
+      let resolvedWorkspace = msg.workspaceId
         ? await this.workspaceRegistry.get(msg.workspaceId)
         : ((await this.findWorkspaceByDirectory(sessionConfig.cwd)) ??
           (await this.findOrCreateWorkspaceForDirectory(sessionConfig.cwd)));
       if (!resolvedWorkspace) {
         throw new Error(`Workspace not found: ${msg.workspaceId}`);
       }
+      resolvedWorkspace = await this.maybeAutoNameWorkspaceBranchForFirstAgent({
+        workspace: resolvedWorkspace,
+        nameContext: agentNameContext,
+      });
       const snapshot = await this.agentManager.createAgent(
         {
           ...sessionConfig,
@@ -3102,27 +3114,9 @@ export class Session {
         });
       }
 
-      if (worktreeBootstrap) {
-        void runAsyncWorktreeBootstrap({
-          agentId: snapshot.id,
-          worktree: worktreeBootstrap.worktree,
-          shouldBootstrap: worktreeBootstrap.shouldBootstrap,
-          terminalManager: this.terminalManager,
-          appendTimelineItem: (item) =>
-            appendTimelineItemIfAgentKnown({
-              agentManager: this.agentManager,
-              agentId: snapshot.id,
-              item,
-            }),
-          emitLiveTimelineItem: (item) =>
-            emitLiveTimelineItemIfAgentKnown({
-              agentManager: this.agentManager,
-              agentId: snapshot.id,
-              item,
-            }),
-          logger: this.sessionLogger,
-        });
-      }
+      setupContinuation?.startAfterAgentCreate({
+        agentId: snapshot.id,
+      });
 
       this.sessionLogger.info(
         { agentId: snapshot.id, provider: snapshot.provider },
@@ -3178,9 +3172,6 @@ export class Session {
       explicitTitle: params.explicitTitle,
       paseoHome: this.paseoHome,
       logger: this.sessionLogger,
-      deps: {
-        workspaceGitService: this.workspaceGitService,
-      },
     });
 
     const started = await this.handleSendAgentMessage(
@@ -3341,9 +3332,10 @@ export class Session {
     gitOptions?: GitSetupOptions,
     legacyWorktreeName?: string,
     attachments?: AgentAttachment[],
+    nameContext?: string,
   ): Promise<{
     sessionConfig: AgentSessionConfig;
-    worktreeBootstrap?: { worktree: WorktreeConfig; shouldBootstrap: boolean };
+    setupContinuation?: CreatePaseoWorktreeWorkflowResult["setupContinuation"];
   }> {
     return buildWorktreeAgentSessionConfig(
       {
@@ -3351,7 +3343,26 @@ export class Session {
         sessionLogger: this.sessionLogger,
         workspaceGitService: this.workspaceGitService,
         createPaseoWorktree: (input, serviceOptions) =>
-          this.createPaseoWorktree(input, serviceOptions),
+          this.createPaseoWorktreeWorkflow(input, {
+            ...serviceOptions,
+            setupContinuation: {
+              kind: "agent",
+              terminalManager: this.terminalManager,
+              appendTimelineItem: ({ agentId, item }) =>
+                appendTimelineItemIfAgentKnown({
+                  agentManager: this.agentManager,
+                  agentId,
+                  item,
+                }),
+              emitLiveTimelineItem: ({ agentId, item }) =>
+                emitLiveTimelineItemIfAgentKnown({
+                  agentManager: this.agentManager,
+                  agentId,
+                  item,
+                }),
+              logger: this.sessionLogger,
+            },
+          }),
         checkoutExistingBranch: (cwd, branch) => this.checkoutExistingBranch(cwd, branch),
         createBranchFromBase: (params) => this.createBranchFromBase(params),
         github: this.github,
@@ -3360,7 +3371,33 @@ export class Session {
       gitOptions,
       legacyWorktreeName,
       attachments,
+      nameContext,
     );
+  }
+
+  private async maybeAutoNameWorkspaceBranchForFirstAgent(input: {
+    workspace: PersistedWorkspaceRecord;
+    nameContext?: string;
+  }): Promise<PersistedWorkspaceRecord> {
+    const coreDeps = createWorktreeCoreDeps(this.github);
+    const result = await attemptFirstAgentBranchAutoName({
+      cwd: input.workspace.cwd,
+      nameContext: input.nameContext,
+      generateBranchName: coreDeps.generateBranchName,
+    });
+    if (!result.renamed || !result.branchName) {
+      return input.workspace;
+    }
+
+    const updatedWorkspace: PersistedWorkspaceRecord = {
+      ...input.workspace,
+      displayName: result.branchName,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.workspaceRegistry.upsert(updatedWorkspace);
+    await this.notifyGitMutation(input.workspace.cwd, "rename-branch");
+    await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
+    return updatedWorkspace;
   }
 
   private emitProviderDisabledResponse(
@@ -7320,27 +7357,26 @@ export class Session {
         paseoHome: this.paseoHome,
         describeWorkspaceRecord: (result) => this.describeCreatedWorktreeWorkspace(result),
         emit: (message) => this.emit(message),
-        createPaseoWorktree: (input) => this.createPaseoWorktree(input),
-        warmWorkspaceGitData: (workspace) => this.warmWorkspaceGitDataForWorkspace(workspace),
         sessionLogger: this.sessionLogger,
-        runWorktreeSetupInBackground: (options) => this.runWorktreeSetupInBackground(options),
+        createPaseoWorktreeWorkflow: (input) => this.createPaseoWorktreeWorkflow(input),
       },
       request,
     );
   }
 
-  private async runWorktreeSetupInBackground(options: {
-    requestCwd: string;
-    repoRoot: string;
-    workspaceId: string;
-    worktree: { branchName: string; worktreePath: string };
-    shouldBootstrap: boolean;
-    slug: string;
-    worktreePath: string;
-  }): Promise<void> {
-    return runWorktreeSetupInBackgroundSession(
+  private async createPaseoWorktreeWorkflow(
+    input: CreatePaseoWorktreeInput,
+    options?: {
+      resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
+      setupContinuation?: CreatePaseoWorktreeSetupContinuationInput;
+    },
+  ): Promise<CreatePaseoWorktreeWorkflowResult> {
+    return createWorktreeWorkflow(
       {
         paseoHome: this.paseoHome,
+        createPaseoWorktree: (workflowInput, serviceOptions) =>
+          this.createPaseoWorktree(workflowInput, serviceOptions),
+        warmWorkspaceGitData: (workspace) => this.warmWorkspaceGitDataForWorkspace(workspace),
         emitWorkspaceUpdateForCwd: (cwd, emitOptions) =>
           this.emitWorkspaceUpdateForCwd(cwd, emitOptions),
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) => {
@@ -7358,6 +7394,7 @@ export class Session {
           this.emitWorkspaceScriptStatusUpdate(workspaceId, workspaceDirectory);
         },
       },
+      input,
       options,
     );
   }
