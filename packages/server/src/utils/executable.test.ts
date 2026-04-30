@@ -207,9 +207,18 @@ describe("quoteWindowsCommand", () => {
     expect(quoteWindowsCommand("feature|bugfix")).toBe("feature^|bugfix");
   });
 
-  test("doubles percent signs", () => {
+  test("does not double percent signs", () => {
     setPlatform("win32");
-    expect(quoteWindowsCommand("100%")).toBe("100%%");
+    // cmd.exe only collapses %% → % inside batch files; on the command line
+    // it stays literal, which corrupts git --format atoms etc.
+    expect(quoteWindowsCommand("100%")).toBe("100%");
+  });
+
+  test("preserves git --format atoms verbatim", () => {
+    setPlatform("win32");
+    expect(quoteWindowsCommand("--format=%(refname)%09%(committerdate:unix)")).toBe(
+      "--format=%^(refname^)%09%^(committerdate:unix^)",
+    );
   });
 
   test("escapes carets", () => {
@@ -227,7 +236,7 @@ describe("quoteWindowsCommand", () => {
   test("quotes commands with spaces after escaping metacharacters", () => {
     setPlatform("win32");
     expect(quoteWindowsCommand("C:\\Program Files\\My Tool&Stuff\\run 100%.cmd")).toBe(
-      '"C:\\Program Files\\My Tool^&Stuff\\run 100%%.cmd"',
+      '"C:\\Program Files\\My Tool^&Stuff\\run 100%.cmd"',
     );
   });
 

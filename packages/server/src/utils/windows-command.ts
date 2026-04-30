@@ -10,7 +10,11 @@ function escapeWindowsCmdValue(value: string): string {
 
   const isQuoted = value.startsWith('"') && value.endsWith('"');
   const unquoted = isQuoted ? value.slice(1, -1) : value;
-  const escaped = unquoted.replace(/%/g, "%%").replace(/([&|^<>()!])/g, "^$1");
+  // Do NOT double `%` here. cmd.exe only collapses `%%` → `%` inside batch
+  // files; on the command line / `cmd /c "..."` `%%` stays literal, which
+  // breaks args like git's `--format=%(refname)` (git treats `%%` as the
+  // escape for a literal `%`, so the format atoms become literals).
+  const escaped = unquoted.replace(/([&|^<>()!])/g, "^$1");
 
   if (isQuoted || /[\s"]/u.test(unquoted)) {
     const quoted = escaped
