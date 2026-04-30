@@ -60,7 +60,7 @@ function DocsLayout() {
             ))}
           </nav>
         </aside>
-        <main className="flex-1 p-6 md:p-12 max-w-3xl prose">
+        <main className="flex-1 p-6 md:p-12 max-w-3xl docs-prose">
           <Outlet />
         </main>
       </div>
