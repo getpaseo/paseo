@@ -21,12 +21,19 @@ function writeEchoArgScript(): string {
   return scriptPath;
 }
 
+// Use the bare command name "node" (no extension, no path separator) so
+// `shouldUseWindowsShell` resolves to true on Windows. That routes the spawn
+// through cmd.exe and exercises `quoteWindowsArgument`, which is where the
+// %-doubling bug lives. Using `process.execPath` here would skip the shell
+// path entirely and silently pass the test.
+const COMMAND = "node";
+
 describe("spawn argument escaping for % characters", () => {
   test("delivers a git for-each-ref --format atom to the child verbatim", async () => {
     const scriptPath = writeEchoArgScript();
     const formatArg = "--format=%(refname)%09%(committerdate:unix)";
 
-    const { stdout } = await execCommand(process.execPath, [scriptPath, formatArg]);
+    const { stdout } = await execCommand(COMMAND, [scriptPath, formatArg]);
 
     expect(stdout).toBe(formatArg);
   });
@@ -35,7 +42,7 @@ describe("spawn argument escaping for % characters", () => {
     const scriptPath = writeEchoArgScript();
     const arg = "%(refname)";
 
-    const { stdout } = await execCommand(process.execPath, [scriptPath, arg]);
+    const { stdout } = await execCommand(COMMAND, [scriptPath, arg]);
 
     expect(stdout).toBe(arg);
   });
