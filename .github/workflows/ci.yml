@@ -122,6 +122,7 @@ jobs:
           npx vitest run
           src/utils/executable.test.ts
           src/utils/spawn.launch-regression.test.ts
+          src/utils/spawn.percent-escape.test.ts
           src/utils/spawn.test.ts
           src/utils/run-git-command.test.ts
           src/utils/checkout-git-rev-parse.test.ts
