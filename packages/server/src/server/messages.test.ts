@@ -100,4 +100,27 @@ describe("serializeAgentStreamEvent", () => {
     const serialized = serializeAgentStreamEvent(event as AgentStreamEvent);
     expect(serialized).toBeNull();
   });
+
+  test("drops internal session config drift events from websocket payloads", () => {
+    const events: AgentStreamEvent[] = [
+      {
+        type: "mode_changed",
+        provider: "codex",
+        currentModeId: "build",
+        availableModes: [{ id: "build", label: "Build" }],
+      },
+      {
+        type: "model_changed",
+        provider: "codex",
+        runtimeInfo: { provider: "codex", sessionId: "session-1", model: "gpt-5.4" },
+      },
+      {
+        type: "thinking_option_changed",
+        provider: "codex",
+        thinkingOptionId: "high",
+      },
+    ];
+
+    expect(events.map((event) => serializeAgentStreamEvent(event))).toEqual([null, null, null]);
+  });
 });

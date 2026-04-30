@@ -20,6 +20,7 @@ import {
   resolveACPModelSelection,
 } from "./acp-agent.js";
 import { transformPiModels } from "./pi-direct-agent.js";
+import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 interface ACPSessionInternals {
@@ -27,8 +28,7 @@ interface ACPSessionInternals {
   connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
-  emitSessionStateUpdated(): void;
-  translateSessionUpdate(update: SessionUpdate): unknown;
+  translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
 }
 
 interface ACPModelSelectionInternals {
@@ -475,10 +475,21 @@ describe("ACPAgentSession Zed parity", () => {
       modelId: "sonnet",
     });
 
-    (validSession as unknown as ACPSessionInternals).translateSessionUpdate({
+    const modeEvents = (validSession as unknown as ACPSessionInternals).translateSessionUpdate({
       sessionUpdate: "current_mode_update",
       currentModeId: "default",
     });
+    expect(modeEvents).toEqual([
+      {
+        type: "mode_changed",
+        provider: "claude-acp",
+        currentModeId: "default",
+        availableModes: [
+          { id: "default", label: "Always Ask" },
+          { id: "plan", label: "Plan" },
+        ],
+      },
+    ]);
     expect(await validSession.getCurrentMode()).toBe("default");
 
     const logger = createTestLogger();
@@ -530,10 +541,6 @@ describe("ACPAgentSession Zed parity", () => {
   test("routes config_option_update and refreshes derived mode, model, and thinking state", async () => {
     const session = createSession();
     const internals = session as unknown as ACPSessionInternals;
-    const sessionStateUpdates: void[] = [];
-    const unsubscribe = session.subscribeToSessionState(() => {
-      sessionStateUpdates.push(undefined);
-    });
 
     const events = internals.translateSessionUpdate({
       sessionUpdate: "config_option_update",
@@ -543,11 +550,32 @@ describe("ACPAgentSession Zed parity", () => {
         selectConfigOption("thought_level", ["low", "high"], "high"),
       ],
     });
-    internals.emitSessionStateUpdated();
-    unsubscribe();
 
-    expect(events).toEqual([]);
-    expect(sessionStateUpdates).toHaveLength(1);
+    expect(events).toMatchObject([
+      {
+        type: "mode_changed",
+        provider: "claude-acp",
+        currentModeId: "plan",
+        availableModes: [
+          { id: "default", label: "default" },
+          { id: "plan", label: "plan" },
+        ],
+      },
+      {
+        type: "model_changed",
+        provider: "claude-acp",
+        runtimeInfo: expect.objectContaining({
+          model: "opus",
+          thinkingOptionId: "high",
+          modeId: "plan",
+        }),
+      },
+      {
+        type: "thinking_option_changed",
+        provider: "claude-acp",
+        thinkingOptionId: "high",
+      },
+    ]);
     expect(internals.configOptions).toEqual([
       selectConfigOption("mode", ["default", "plan"], "plan"),
       selectConfigOption("model", ["sonnet", "opus"], "opus"),
@@ -573,11 +601,12 @@ describe("ACPAgentSession Zed parity", () => {
       sessionUpdate: "current_mode_update",
       currentModeId: "plan",
     });
-    internals.translateSessionUpdate({
+    const events = internals.translateSessionUpdate({
       sessionUpdate: "config_option_update",
       configOptions: [selectConfigOption("model", ["sonnet"], "sonnet")],
     });
 
+    expect(events.map((event) => event.type)).toEqual(["model_changed"]);
     expect(await session.getCurrentMode()).toBe("plan");
     await expect(session.getRuntimeInfo()).resolves.toMatchObject({
       model: "sonnet",
@@ -589,21 +618,25 @@ describe("ACPAgentSession Zed parity", () => {
     const session = createSession();
     const internals = session as unknown as ACPSessionInternals;
 
-    internals.translateSessionUpdate({
+    const configEvents = internals.translateSessionUpdate({
       sessionUpdate: "config_option_update",
       configOptions: [selectConfigOption("mode", ["default", "plan"], "plan")],
     });
-    internals.translateSessionUpdate({
+    const modeEvents = internals.translateSessionUpdate({
       sessionUpdate: "current_mode_update",
       currentModeId: "default",
     });
 
+    expect(configEvents).toMatchObject([{ type: "mode_changed", currentModeId: "plan" }]);
+    expect(modeEvents).toMatchObject([{ type: "mode_changed", currentModeId: "default" }]);
     expect(await session.getCurrentMode()).toBe("default");
   });
 
   test("uses canonical mode returned by setSessionConfigOption response", async () => {
     const session = createSession();
     const internals = session as unknown as ACPModelSelectionInternals;
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
     internals.sessionId = "session-1";
     internals.configOptions = [selectConfigOption("mode", ["ask", "default"], "ask")];
     internals.connection = {
@@ -613,13 +646,27 @@ describe("ACPAgentSession Zed parity", () => {
     };
 
     await session.setMode("ask");
+    unsubscribe();
 
     expect(await session.getCurrentMode()).toBe("default");
+    expect(events).toMatchObject([
+      {
+        type: "mode_changed",
+        provider: "claude-acp",
+        currentModeId: "default",
+        availableModes: [
+          { id: "ask", label: "ask" },
+          { id: "default", label: "default" },
+        ],
+      },
+    ]);
   });
 
   test("uses canonical model returned by setSessionConfigOption response", async () => {
     const session = createSession();
     const internals = session as unknown as ACPModelSelectionInternals;
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
     internals.sessionId = "session-1";
     internals.configOptions = [selectConfigOption("model", ["claude-sonnet", "sonnet"], "sonnet")];
     internals.connection = {
@@ -629,13 +676,21 @@ describe("ACPAgentSession Zed parity", () => {
     };
 
     await session.setModel("claude-sonnet");
+    unsubscribe();
 
     await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "sonnet" });
+    expect(events).toContainEqual({
+      type: "model_changed",
+      provider: "claude-acp",
+      runtimeInfo: expect.objectContaining({ model: "sonnet" }),
+    });
   });
 
   test("uses canonical thinking option returned by setSessionConfigOption response", async () => {
     const session = createSession();
     const internals = session as unknown as ACPModelSelectionInternals;
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
     internals.sessionId = "session-1";
     internals.configOptions = [
       selectConfigOption("thought_level", ["think-hard", "high"], "think-hard"),
@@ -647,8 +702,14 @@ describe("ACPAgentSession Zed parity", () => {
     };
 
     await session.setThinkingOption("think-hard");
+    unsubscribe();
 
     await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: "high" });
+    expect(events).toContainEqual({
+      type: "thinking_option_changed",
+      provider: "claude-acp",
+      thinkingOptionId: "high",
+    });
   });
 
   test("passes Copilot Autopilot ACP permission requests through to the user", async () => {

@@ -316,6 +316,18 @@ export type AgentStreamEvent =
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {
+      type: "mode_changed";
+      provider: AgentProvider;
+      currentModeId: string | null;
+      availableModes: AgentMode[];
+    }
+  | { type: "model_changed"; provider: AgentProvider; runtimeInfo: AgentRuntimeInfo }
+  | {
+      type: "thinking_option_changed";
+      provider: AgentProvider;
+      thinkingOptionId: string | null;
+    }
+  | {
       type: "turn_failed";
       provider: AgentProvider;
       error: string;
@@ -475,7 +487,6 @@ export interface AgentSession {
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
-  subscribeToSessionState?(callback: () => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;

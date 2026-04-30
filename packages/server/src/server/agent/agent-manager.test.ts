@@ -1343,6 +1343,82 @@ test("persists live mode, model, and thinking changes without an external snapsh
   expect(persisted?.runtimeInfo?.model).toBe("gpt-5.4");
 });
 
+test("session config drift events update state through the stream channel", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-session-config-events-"));
+  let capturedSession: TestAgentSession | null = null;
+  class ConfigEventClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new ConfigEventClient(),
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000133",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "plan",
+    model: "gpt-5.2-codex",
+    thinkingOptionId: "low",
+  });
+  const streams: AgentStreamEvent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream") {
+        streams.push(event.event);
+      }
+    },
+    { agentId: snapshot.id, replayState: false },
+  );
+
+  capturedSession?.pushEvent({
+    type: "mode_changed",
+    provider: "codex",
+    currentModeId: "build",
+    availableModes: [
+      { id: "plan", label: "Plan" },
+      { id: "build", label: "Build" },
+    ],
+  });
+  capturedSession?.pushEvent({
+    type: "model_changed",
+    provider: "codex",
+    runtimeInfo: {
+      provider: "codex",
+      sessionId: capturedSession.id,
+      model: "gpt-5.4",
+      modeId: "build",
+      thinkingOptionId: "low",
+    },
+  });
+  capturedSession?.pushEvent({
+    type: "thinking_option_changed",
+    provider: "codex",
+    thinkingOptionId: "high",
+  });
+  await manager.flush();
+
+  const agent = manager.getAgent(snapshot.id);
+  expect(agent?.currentModeId).toBe("build");
+  expect(agent?.availableModes).toEqual([
+    { id: "plan", label: "Plan" },
+    { id: "build", label: "Build" },
+  ]);
+  expect(agent?.runtimeInfo).toMatchObject({
+    model: "gpt-5.4",
+    modeId: "build",
+    thinkingOptionId: "high",
+  });
+  expect(streams.map((event) => event.type)).toEqual([]);
+});
+
 test("setLabels merges and persists labels", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-labels-"));
   const storagePath = join(workdir, "agents");

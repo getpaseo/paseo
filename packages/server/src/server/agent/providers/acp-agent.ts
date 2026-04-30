@@ -741,7 +741,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   ) => Promise<void>;
   private readonly launchEnv?: Record<string, string>;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
-  private readonly sessionStateSubscribers = new Set<() => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private readonly messageAssemblies = new Map<string, MessageAssemblyState>();
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
@@ -998,13 +997,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     };
   }
 
-  subscribeToSessionState(callback: () => void): () => void {
-    this.sessionStateSubscribers.add(callback);
-    return () => {
-      this.sessionStateSubscribers.delete(callback);
-    };
-  }
-
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     if (!this.historyPending || this.persistedHistory.length === 0) {
       return;
@@ -1018,17 +1010,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
-    return {
-      provider: this.provider,
-      sessionId: this.sessionId,
-      model: this.currentModel,
-      thinkingOptionId: this.thinkingOptionId,
-      modeId: this.currentMode,
-      extra: {
-        title: this.currentTitle,
-        updatedAt: this.lastActivityAt,
-      },
-    };
+    return this.runtimeInfo();
   }
 
   async getAvailableModes(): Promise<AgentMode[]> {
@@ -1133,6 +1115,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
       await this.connection.setSessionMode({ sessionId: this.sessionId, modeId });
       this.currentMode = modeId;
+      this.pushEvent({
+        type: "mode_changed",
+        provider: this.provider,
+        currentModeId: this.currentMode,
+        availableModes: [...this.availableModes],
+      });
       return;
     }
 
@@ -1163,6 +1151,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       category: "mode",
       requestedValue: modeId,
       label: "mode",
+    });
+    this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
+    this.pushEvent({
+      type: "mode_changed",
+      provider: this.provider,
+      currentModeId: this.currentMode,
+      availableModes: [...this.availableModes],
     });
   }
 
@@ -1215,6 +1210,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           modelId,
         });
         this.currentModel = modelId;
+        this.pushEvent({
+          type: "model_changed",
+          provider: this.provider,
+          runtimeInfo: this.runtimeInfo(),
+        });
         return;
       } catch {
         // Fall through to config option path.
@@ -1249,6 +1249,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modelId,
       label: "model",
     });
+    this.pushEvent({
+      type: "model_changed",
+      provider: this.provider,
+      runtimeInfo: this.runtimeInfo(),
+    });
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -1263,6 +1268,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.thinkingOptionWriter) {
       await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
       this.thinkingOptionId = thinkingOptionId;
+      this.pushEvent({
+        type: "thinking_option_changed",
+        provider: this.provider,
+        thinkingOptionId: this.thinkingOptionId,
+      });
       return;
     }
 
@@ -1284,6 +1294,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       category: "thought_level",
       requestedValue: thinkingOptionId,
       label: "thought-level",
+    });
+    this.pushEvent({
+      type: "thinking_option_changed",
+      provider: this.provider,
+      thinkingOptionId: this.thinkingOptionId,
     });
   }
 
@@ -1422,7 +1437,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     this.subscribers.clear();
-    this.sessionStateSubscribers.clear();
     this.connection = null;
     this.child = null;
     this.activeForegroundTurnId = null;
@@ -1471,13 +1485,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         }
       }
       return;
-    }
-
-    if (
-      params.update.sessionUpdate === "current_mode_update" ||
-      params.update.sessionUpdate === "config_option_update"
-    ) {
-      this.emitSessionStateUpdated();
     }
 
     for (const event of events) {
@@ -1726,10 +1733,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return [this.wrapTimeline(mapPlanToTimeline(update))];
       case "current_mode_update":
         this.handleCurrentModeUpdate(update);
-        return [];
+        return [
+          {
+            type: "mode_changed",
+            provider: this.provider,
+            currentModeId: this.currentMode,
+            availableModes: [...this.availableModes],
+          },
+        ];
       case "config_option_update":
-        this.handleConfigOptionUpdate(update);
-        return [];
+        return this.handleConfigOptionUpdate(update);
       case "session_info_update":
         this.handleSessionInfoUpdate(update);
         return [];
@@ -1795,14 +1808,42 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentMode = update.currentModeId;
   }
 
-  private handleConfigOptionUpdate(update: ConfigOptionUpdate): void {
+  private handleConfigOptionUpdate(update: ConfigOptionUpdate): AgentStreamEvent[] {
     this.configOptions = update.configOptions;
     const modeInfo = deriveModesFromACP(this.defaultModes, null, this.configOptions);
+    const nextMode = modeInfo.currentModeId;
+    const nextModel = deriveCurrentConfigValue(this.configOptions, "model");
+    const nextThinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
+
     this.availableModes = modeInfo.modes;
-    this.currentMode = modeInfo.currentModeId ?? this.currentMode;
-    this.currentModel = deriveCurrentConfigValue(this.configOptions, "model") ?? this.currentModel;
-    this.thinkingOptionId =
-      deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
+    this.currentMode = nextMode ?? this.currentMode;
+    this.currentModel = nextModel ?? this.currentModel;
+    this.thinkingOptionId = nextThinkingOptionId ?? this.thinkingOptionId;
+
+    const events: AgentStreamEvent[] = [];
+    if (nextMode !== null) {
+      events.push({
+        type: "mode_changed",
+        provider: this.provider,
+        currentModeId: this.currentMode,
+        availableModes: [...this.availableModes],
+      });
+    }
+    if (nextModel !== null) {
+      events.push({
+        type: "model_changed",
+        provider: this.provider,
+        runtimeInfo: this.runtimeInfo(),
+      });
+    }
+    if (nextThinkingOptionId !== null) {
+      events.push({
+        type: "thinking_option_changed",
+        provider: this.provider,
+        thinkingOptionId: this.thinkingOptionId,
+      });
+    }
+    return events;
   }
 
   private handleSessionInfoUpdate(update: SessionInfoUpdate): void {
@@ -1861,10 +1902,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private emitSessionStateUpdated(): void {
-    for (const subscriber of this.sessionStateSubscribers) {
-      subscriber();
-    }
+  private runtimeInfo(): AgentRuntimeInfo {
+    return {
+      provider: this.provider,
+      sessionId: this.sessionId,
+      model: this.currentModel,
+      thinkingOptionId: this.thinkingOptionId,
+      modeId: this.currentMode,
+      extra: {
+        title: this.currentTitle,
+        updatedAt: this.lastActivityAt,
+      },
+    };
   }
 
   private finishTurn(

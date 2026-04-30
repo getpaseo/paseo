@@ -74,7 +74,6 @@ interface SmokeTrace {
     toolSnapshot: SmokeCriterionReport | null;
     permission: SmokeCriterionReport | null;
   };
-  sessionStateUpdates: number;
   finalState: unknown;
   notes: string[];
 }
@@ -134,7 +133,6 @@ function createTrace(config: WrapperSmokeConfig): SmokeTrace {
       toolSnapshot: null,
       permission: null,
     },
-    sessionStateUpdates: 0,
     finalState: null,
     notes: [],
   };
@@ -361,9 +359,6 @@ async function bootSession(
   const logger = createSmokeLogger();
   const session = createSession(config, logger);
   session.subscribe((event) => trace.events.push(event));
-  session.subscribeToSessionState(() => {
-    trace.sessionStateUpdates += 1;
-  });
   await session.initializeNewSession();
   await captureFinalState(session, trace);
   return session;
