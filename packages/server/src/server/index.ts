@@ -207,19 +207,23 @@ async function main() {
 
   process.on("uncaughtException", (err) => {
     logger.fatal({ err }, "Uncaught exception — daemon crashing");
-    process.exit(1);
+    exitAfterPinoFlush();
   });
 
   process.on("unhandledRejection", (reason) => {
     logger.fatal({ err: reason }, "Unhandled promise rejection — daemon crashing");
-    process.exit(1);
+    exitAfterPinoFlush();
   });
+}
+
+// Give pino async streams a moment to flush the fatal log entry to daemon.log
+// before the process exits. Without this, the last few entries that explain
+// why the daemon crashed can be lost.
+function exitAfterPinoFlush(): void {
+  setTimeout(() => process.exit(1), 200);
 }
 
 main().catch((err) => {
   process.stderr.write(`${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
-  // Give pino streams a moment to flush the fatal log entry to daemon.log
-  // before the process exits. Without this, async file streams may lose the
-  // last few entries that explain why the daemon crashed.
-  setTimeout(() => process.exit(1), 200);
+  exitAfterPinoFlush();
 });
