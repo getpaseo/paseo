@@ -192,7 +192,7 @@ npm run db:query -- "SELECT * FROM agent_timeline_rows..."
 | File                                                       | What it covers                                   |
 | ---------------------------------------------------------- | ------------------------------------------------ |
 | [../CLAUDE.md](../CLAUDE.md)                               | Repository overview, critical rules, quick start |
-| [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)         | System design, WebSocket protocol, data flow     |
-| [../docs/CODING_STANDARDS.md](../docs/CODING_STANDARDS.md) | Type hygiene, error handling, React patterns     |
-| [../docs/TESTING.md](../docs/TESTING.md)                   | TDD workflow, determinism, real deps over mocks  |
+| [../docs/architecture.md](../docs/architecture.md)         | System design, WebSocket protocol, data flow     |
+| [../docs/coding-standards.md](../docs/coding-standards.md) | Type hygiene, error handling, React patterns     |
+| [../docs/testing.md](../docs/testing.md)                   | TDD workflow, determinism, real deps over mocks  |
 | [../SECURITY.md](../SECURITY.md)                           | Relay threat model, E2E encryption               |

@@ -27,10 +27,10 @@ If you want to propose a direction change, start a conversation.
 Please read these first:
 
 - [README.md](README.md)
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
-- [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md)
-- [docs/TESTING.md](docs/TESTING.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/development.md](docs/development.md)
+- [docs/coding-standards.md](docs/coding-standards.md)
+- [docs/testing.md](docs/testing.md)
 - [CLAUDE.md](CLAUDE.md)
 
 ## What is most helpful
@@ -105,7 +105,7 @@ npm run dev:website
 npm run cli -- ls -a -g
 ```
 
-Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for build-sync gotchas, local state, ports, and daemon details.
+Read [docs/development.md](docs/development.md) for build-sync gotchas, local state, ports, and daemon details.
 
 ## Multi-platform testing
 
@@ -132,7 +132,7 @@ If you touch protocol or shared client/server behavior, read the compatibility n
 
 Paseo has explicit standards. Follow them.
 
-The full guide lives in [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md).
+The full guide lives in [docs/coding-standards.md](docs/coding-standards.md).
 
 ## PR checklist
 
