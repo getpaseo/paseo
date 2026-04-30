@@ -221,6 +221,7 @@ interface ManagedAgentBase {
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
   unsubscribeSession: (() => void) | null;
+  unsubscribeSessionState: (() => void) | null;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    */
@@ -828,6 +829,10 @@ export class AgentManager {
     if (existing.unsubscribeSession) {
       existing.unsubscribeSession();
       existing.unsubscribeSession = null;
+    }
+    if (existing.unsubscribeSessionState) {
+      existing.unsubscribeSessionState();
+      existing.unsubscribeSessionState = null;
     }
     for (const waiter of existing.foregroundTurnWaiters) {
       this.settleForegroundTurnWaiter(waiter);
@@ -2142,6 +2147,7 @@ export class AgentManager {
       foregroundTurnWaiters: new Set<ForegroundTurnWaiter>(),
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
+      unsubscribeSessionState: null,
       persistence: attachPersistenceCwd(session.describePersistence(), config.cwd),
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
@@ -2178,6 +2184,10 @@ export class AgentManager {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
     }
+    if (agent.unsubscribeSessionState) {
+      agent.unsubscribeSessionState();
+      agent.unsubscribeSessionState = null;
+    }
     for (const waiter of agent.foregroundTurnWaiters) {
       waiter.callback({
         type: "turn_canceled",
@@ -2209,6 +2219,10 @@ export class AgentManager {
       this.enqueueSessionEvent(agentId, event);
     });
     agent.unsubscribeSession = unsubscribe;
+    agent.unsubscribeSessionState =
+      agent.session.subscribeToSessionState?.(() => {
+        this.enqueueSessionStateUpdate(agentId);
+      }) ?? null;
   }
 
   private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
@@ -2231,6 +2245,31 @@ export class AgentManager {
           { err, agentId, eventType: event.type },
           "Failed to process session event",
         );
+      });
+
+    this.sessionEventTails.set(agentId, next);
+    this.trackBackgroundTask(next);
+    void next.finally(() => {
+      if (this.sessionEventTails.get(agentId) === next) {
+        this.sessionEventTails.delete(agentId);
+      }
+    });
+  }
+
+  private enqueueSessionStateUpdate(agentId: string): void {
+    const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const current = this.agents.get(agentId);
+        if (!current?.session) {
+          return;
+        }
+        await this.onStreamSessionStateUpdated(current);
+        return;
+      })
+      .catch((err) => {
+        this.logger.error({ err, agentId }, "Failed to process session state update");
       });
 
     this.sessionEventTails.set(agentId, next);
@@ -2365,7 +2404,10 @@ export class AgentManager {
     return this.registry;
   }
 
-  private async refreshSessionState(agent: ActiveManagedAgent): Promise<void> {
+  private async refreshSessionState(
+    agent: ActiveManagedAgent,
+    options?: { emitRuntimeState?: boolean },
+  ): Promise<void> {
     try {
       const modes = await agent.session.getAvailableModes();
       agent.availableModes = modes;
@@ -2387,10 +2429,13 @@ export class AgentManager {
     }
 
     this.syncFeaturesFromSession(agent);
-    await this.refreshRuntimeInfo(agent);
+    await this.refreshRuntimeInfo(agent, { emitState: options?.emitRuntimeState });
   }
 
-  private async refreshRuntimeInfo(agent: ActiveManagedAgent): Promise<void> {
+  private async refreshRuntimeInfo(
+    agent: ActiveManagedAgent,
+    options?: { emitState?: boolean },
+  ): Promise<void> {
     try {
       const newInfo = await agent.session.getRuntimeInfo();
       const changed =
@@ -2406,7 +2451,7 @@ export class AgentManager {
         );
       }
       // Emit state if runtimeInfo changed so clients get the updated model
-      if (changed) {
+      if (changed && options?.emitState !== false) {
         this.emitState(agent);
       }
     } catch {
@@ -2559,6 +2604,11 @@ export class AgentManager {
       }
     }
     void this.refreshRuntimeInfo(agent);
+  }
+
+  private async onStreamSessionStateUpdated(agent: ActiveManagedAgent): Promise<void> {
+    await this.refreshSessionState(agent, { emitRuntimeState: false });
+    this.emitState(agent);
   }
 
   private async onStreamTimelineEvent(params: {
