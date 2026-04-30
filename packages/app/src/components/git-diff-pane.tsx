@@ -1730,7 +1730,7 @@ export function GitDiffPane({
   workspaceId,
   cwd,
   hideHeaderRow,
-  enabled = true,
+  enabled,
 }: GitDiffPaneProps) {
   const { theme } = useUnistyles();
   const toast = useToast();
@@ -1843,7 +1843,7 @@ export function GitDiffPane({
     mode: diffMode,
     baseRef,
     ignoreWhitespace: changesPreferences.hideWhitespace,
-    enabled: shouldEnableCheckoutDiff({ paneEnabled: enabled, isGit }),
+    enabled: shouldEnableCheckoutDiff({ paneEnabled: enabled !== false, isGit }),
   });
   const reviewDraftKey = useMemo(
     () =>
