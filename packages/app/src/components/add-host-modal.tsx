@@ -403,29 +403,28 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   }, []);
 
   const handleToggleAdvanced = useCallback(() => {
-    if (isAdvancedOpen) {
+    if (!isAdvancedOpen) {
       try {
-        const next = draftFromConnectionUri(advancedUri);
-        setHost(next.host);
-        setPort(next.port);
-        setUseTls(next.useTls);
-        setPassword(next.password);
-        setErrorMessage("");
-        setIsAdvancedOpen(false);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Invalid connection URI";
-        setErrorMessage(message);
+        setAdvancedUri(buildConnectionUriFromDraft({ host, port, useTls, password }));
+      } catch {
+        setAdvancedUri("");
       }
+      setErrorMessage("");
+      setIsAdvancedOpen(true);
       return;
     }
 
     try {
-      setAdvancedUri(buildConnectionUriFromDraft({ host, port, useTls, password }));
+      const next = draftFromConnectionUri(advancedUri);
+      setHost(next.host);
+      setPort(next.port);
+      setUseTls(next.useTls);
+      setPassword(next.password);
+      setErrorMessage("");
     } catch {
-      setAdvancedUri("");
+      setErrorMessage("");
     }
-    setErrorMessage("");
-    setIsAdvancedOpen(true);
+    setIsAdvancedOpen(false);
   }, [advancedUri, host, isAdvancedOpen, password, port, useTls]);
 
   const AdvancedIcon = isAdvancedOpen ? ChevronDown : ChevronRight;
