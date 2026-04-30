@@ -18,6 +18,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 
@@ -52,6 +53,30 @@ function createFeature(args: { id: string; label: string; value: boolean }): Age
     id: args.id,
     label: args.label,
     value: args.value,
+  };
+}
+
+function createPersistedDescriptor(args: {
+  cwd: string;
+  sessionId: string;
+  nativeHandle?: string;
+}): PersistedAgentDescriptor {
+  return {
+    provider: "codex",
+    sessionId: args.sessionId,
+    cwd: args.cwd,
+    title: null,
+    lastActivityAt: new Date("2026-01-01T00:00:00Z"),
+    persistence: {
+      provider: "codex",
+      sessionId: args.sessionId,
+      nativeHandle: args.nativeHandle,
+      metadata: {
+        provider: "codex",
+        cwd: args.cwd,
+      },
+    },
+    timeline: [],
   };
 }
 
@@ -1086,6 +1111,48 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
       PASEO_AGENT_ID: resumed.id,
     },
   });
+});
+
+test("findPersistedAgent returns matching descriptors by session id or native handle", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-find-persisted-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  const descriptors: PersistedAgentDescriptor[] = [
+    createPersistedDescriptor({
+      cwd: workdir,
+      sessionId: "session-direct",
+      nativeHandle: "native-direct",
+    }),
+    createPersistedDescriptor({
+      cwd: workdir,
+      sessionId: "session-other",
+      nativeHandle: "native-match",
+    }),
+  ];
+
+  class PersistedAgentsClient extends TestAgentClient {
+    lastLimit: number | undefined;
+
+    override async listPersistedAgents(options?: { limit?: number }) {
+      this.lastLimit = options?.limit;
+      return descriptors;
+    }
+  }
+
+  const client = new PersistedAgentsClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+
+  await expect(manager.findPersistedAgent("codex", "session-direct")).resolves.toBe(descriptors[0]);
+  await expect(manager.findPersistedAgent("codex", "native-match")).resolves.toBe(descriptors[1]);
+  await expect(manager.findPersistedAgent("codex", "missing")).resolves.toBeNull();
+  expect(client.lastLimit).toBe(200);
 });
 
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {

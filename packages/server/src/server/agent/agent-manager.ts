@@ -606,6 +606,25 @@ export class AgentManager {
       .slice(0, limit);
   }
 
+  async findPersistedAgent(
+    provider: AgentProvider,
+    sessionId: string,
+  ): Promise<PersistedAgentDescriptor | null> {
+    const client = this.requireClient(provider);
+    if (!client.listPersistedAgents) {
+      return null;
+    }
+
+    const descriptors = await client.listPersistedAgents({ limit: 200 });
+    return (
+      descriptors.find((descriptor) => {
+        return (
+          descriptor.sessionId === sessionId || descriptor.persistence.nativeHandle === sessionId
+        );
+      }) ?? null
+    );
+  }
+
   async listProviderAvailability(): Promise<ProviderAvailability[]> {
     const checks = Array.from(this.clients.keys()).map(async (provider) => {
       const client = this.clients.get(provider);

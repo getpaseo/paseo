@@ -22,6 +22,7 @@ import { addInspectOptions, runInspectCommand } from "./commands/agent/inspect.j
 import { addWaitOptions, runWaitCommand } from "./commands/agent/wait.js";
 import { addArchiveOptions, runArchiveCommand } from "./commands/agent/archive.js";
 import { addAttachOptions, runAttachCommand } from "./commands/agent/attach.js";
+import { addImportOptions, runImportCommand } from "./commands/agent/import.js";
 import { withOutput } from "./output/index.js";
 import { onboardCommand } from "./commands/onboard.js";
 import {
@@ -58,6 +59,10 @@ export function createCli(): Command {
 
   addJsonAndDaemonHostOptions(addRunOptions(program.command("run"))).action(
     withOutput(runRunCommand),
+  );
+
+  addJsonAndDaemonHostOptions(addImportOptions(program.command("import"))).action(
+    withOutput(runImportCommand),
   );
 
   addDaemonHostOption(addAttachOptions(program.command("attach"))).action(runAttachCommand);

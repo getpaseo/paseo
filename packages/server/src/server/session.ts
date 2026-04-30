@@ -758,6 +758,45 @@ class VoiceFeatureUnavailableError extends Error {
   }
 }
 
+interface BuildImportPersistenceHandleInput {
+  provider: AgentProvider;
+  sessionId: string;
+  cwd?: string;
+}
+
+function buildImportPersistenceHandle(
+  input: BuildImportPersistenceHandleInput,
+): AgentPersistenceHandle {
+  const cwd = input.cwd ?? process.cwd();
+  return {
+    provider: input.provider,
+    sessionId: input.sessionId,
+    nativeHandle: input.sessionId,
+    metadata: {
+      provider: input.provider,
+      cwd,
+    },
+  };
+}
+
+function applyImportCwdOverride(
+  handle: AgentPersistenceHandle,
+  cwd: string | undefined,
+): AgentPersistenceHandle {
+  if (!cwd) {
+    return handle;
+  }
+
+  return {
+    ...handle,
+    metadata: {
+      ...handle.metadata,
+      provider: handle.provider,
+      cwd,
+    },
+  };
+}
+
 function convertPCMToWavBuffer(
   pcmBuffer: Buffer,
   sampleRate: number,
@@ -1846,6 +1885,8 @@ export class Session {
         return this.handleCreateAgentRequest(msg);
       case "resume_agent_request":
         return this.handleResumeAgentRequest(msg);
+      case "import_agent_request":
+        return this.handleImportAgentRequest(msg);
       case "refresh_agent_request":
         return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
@@ -3246,6 +3287,72 @@ export class Session {
           timestamp: new Date(),
           type: "error",
           content: `Failed to resume agent: ${(error as Error).message}`,
+        },
+      });
+    }
+  }
+
+  private async handleImportAgentRequest(
+    msg: Extract<SessionInboundMessage, { type: "import_agent_request" }>,
+  ): Promise<void> {
+    const { provider, sessionId, cwd, labels, requestId } = msg;
+    this.sessionLogger.info({ sessionId, provider }, `Importing agent ${sessionId} (${provider})`);
+
+    try {
+      const descriptor = await this.agentManager.findPersistedAgent(provider, sessionId);
+      if (!descriptor && provider === "opencode" && !cwd) {
+        throw new Error(
+          "OpenCode sessions require --cwd when the session cannot be found in persisted agents",
+        );
+      }
+
+      const handle = descriptor
+        ? applyImportCwdOverride(descriptor.persistence, cwd)
+        : buildImportPersistenceHandle({ provider, sessionId, cwd });
+      const overrides = cwd ? ({ cwd } satisfies Partial<AgentSessionConfig>) : undefined;
+
+      await this.unarchiveAgentByHandle(handle);
+      const snapshot = await this.agentManager.resumeAgentFromPersistence(
+        handle,
+        overrides,
+        undefined,
+        {
+          labels,
+        },
+      );
+      await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
+      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
+      await this.forwardAgentUpdate(snapshot);
+      const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
+      const agentPayload = await this.buildAgentPayload(snapshot);
+      this.emit({
+        type: "status",
+        payload: {
+          status: "agent_resumed",
+          agentId: snapshot.id,
+          requestId,
+          timelineSize,
+          agent: agentPayload,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.sessionLogger.error({ err: error }, "Failed to import agent");
+      this.emit({
+        type: "status",
+        payload: {
+          status: "agent_create_failed",
+          requestId,
+          error: message,
+        },
+      });
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to import agent: ${message}`,
         },
       });
     }

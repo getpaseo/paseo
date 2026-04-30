@@ -1010,6 +1010,15 @@ export const ResumeAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ImportAgentRequestMessageSchema = z.object({
+  type: z.literal("import_agent_request"),
+  provider: AgentProviderSchema,
+  sessionId: z.string(),
+  cwd: z.string().optional(),
+  labels: z.record(z.string()).optional(),
+  requestId: z.string(),
+});
+
 export const RefreshAgentRequestMessageSchema = z.object({
   type: z.literal("refresh_agent_request"),
   agentId: z.string(),
@@ -1652,6 +1661,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
+  ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
   CancelAgentRequestMessageSchema,
   ShutdownServerRequestMessageSchema,

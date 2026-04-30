@@ -122,6 +122,13 @@ const perfNow: () => number =
     ? () => performance.now()
     : () => Date.now();
 
+export interface ImportAgentInput {
+  provider: AgentProvider;
+  sessionId: string;
+  cwd?: string;
+  labels?: Record<string, string>;
+}
+
 export type {
   DaemonTransport,
   DaemonTransportFactory,
@@ -1759,6 +1766,47 @@ export class DaemonClient {
         return null;
       },
     });
+
+    return status.agent;
+  }
+
+  async importAgent(input: ImportAgentInput): Promise<AgentSnapshotPayload> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "import_agent_request",
+      requestId,
+      provider: input.provider,
+      sessionId: input.sessionId,
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
+    });
+
+    const status = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "status") {
+          return null;
+        }
+        const resumed = AgentResumedStatusPayloadSchema.safeParse(msg.payload);
+        if (resumed.success && resumed.data.requestId === requestId) {
+          return resumed.data;
+        }
+
+        const failed = AgentCreateFailedStatusPayloadSchema.safeParse(msg.payload);
+        if (failed.success && failed.data.requestId === requestId) {
+          return failed.data;
+        }
+
+        return null;
+      },
+    });
+
+    if (status.status === "agent_create_failed") {
+      throw new Error(status.error);
+    }
 
     return status.agent;
   }
