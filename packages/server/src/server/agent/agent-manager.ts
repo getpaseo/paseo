@@ -1324,12 +1324,13 @@ export class AgentManager {
         turnId = result.turnId;
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
-        this.handleStreamEvent(agent, {
+        await this.handleStreamEvent(agent, {
           type: "turn_failed",
           provider: agent.provider,
           error: errorMsg,
         });
         this.finalizeForegroundTurn(agent);
+        this.settlePendingForegroundRun(agentId, pendingRun.token);
         throw error;
       }
 

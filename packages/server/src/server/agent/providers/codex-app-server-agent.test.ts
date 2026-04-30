@@ -314,6 +314,59 @@ describe("Codex app-server provider", () => {
     );
   });
 
+  test("resolves Codex skill slash commands into app-server skill input", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "skills/list") {
+        return {
+          data: [
+            {
+              cwd: "/tmp/codex-question-test",
+              skills: [
+                {
+                  name: "paseo-implement",
+                  description: "Execute an existing Paseo plan.",
+                  path: "/tmp/skills/paseo-implement/SKILL.md",
+                },
+              ],
+              errors: [],
+            },
+          ],
+        };
+      }
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = { request } as unknown as CodexClientLike;
+
+    await session.startTurn("/paseo-implement in a worktree, remember to use Claude for the UI");
+
+    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStartCall?.[1]).toEqual(
+      expect.objectContaining({
+        input: [
+          {
+            type: "skill",
+            name: "paseo-implement",
+            path: "/tmp/skills/paseo-implement/SKILL.md",
+          },
+          {
+            type: "text",
+            text: "in a worktree, remember to use Claude for the UI",
+            text_elements: [],
+          },
+        ],
+      }),
+    );
+  });
+
   test("maps image prompt blocks to Codex localImage input", async () => {
     const input = await codexAppServerTurnInputFromPrompt(
       [
@@ -352,8 +405,24 @@ describe("Codex app-server provider", () => {
     expect(input).toEqual([
       {
         type: "text",
+        text_elements: [],
         text: expect.stringContaining("GitHub PR #123: Fix race in worktree setup"),
       },
+    ]);
+  });
+
+  test("passes Codex skill prompt blocks through to Codex app-server input", async () => {
+    const input = await codexAppServerTurnInputFromPrompt(
+      [
+        { type: "skill", name: "fix-build", path: "/tmp/skills/fix-build/SKILL.md" },
+        { type: "text", text: "keep this build moving" },
+      ],
+      logger,
+    );
+
+    expect(input).toEqual([
+      { type: "skill", name: "fix-build", path: "/tmp/skills/fix-build/SKILL.md" },
+      { type: "text", text: "keep this build moving", text_elements: [] },
     ]);
   });
 
@@ -373,10 +442,11 @@ describe("Codex app-server provider", () => {
     );
 
     expect(input).toEqual([
-      { type: "text", text: "Please review this" },
+      { type: "text", text: "Please review this", text_elements: [] },
       {
         type: "text",
         text: expect.stringMatching(/^\n\nGitHub Issue #456: Attachment spacing/),
+        text_elements: [],
       },
     ]);
   });
@@ -399,6 +469,7 @@ describe("Codex app-server provider", () => {
       {
         type: "text",
         text: expect.stringMatching(/^GitHub Issue #456: Attachment spacing/),
+        text_elements: [],
       },
     ]);
   });

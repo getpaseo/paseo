@@ -3606,6 +3606,71 @@ test("clearAgentAttention on errored agent stays cleared until a new error trans
   expect(persistedAfterSecondFailure?.attentionReason).toBe("error");
 });
 
+test("streamAgent clears pending run when startTurn fails before a turn id exists", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-turn-failure-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class FailsOnceBeforeTurnSession extends TestAgentSession {
+    private attempt = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.attempt += 1;
+      if (this.attempt === 1) {
+        throw new Error("Invalid request: missing field `text`");
+      }
+      return super.startTurn();
+    }
+  }
+
+  class FailsOnceClient implements AgentClient {
+    readonly provider = "codex" as const;
+    readonly capabilities = TEST_CAPABILITIES;
+    readonly session = new FailsOnceBeforeTurnSession({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+
+    async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+
+    async resumeSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new FailsOnceClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000131",
+  });
+
+  const agent = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    title: "Start turn failure cleanup",
+  });
+
+  await expect(manager.runAgent(agent.id, "fail before turn id")).rejects.toThrow(
+    "Invalid request: missing field `text`",
+  );
+
+  await expect(manager.runAgent(agent.id, "second turn")).resolves.toEqual(
+    expect.objectContaining({
+      sessionId: expect.any(String),
+      canceled: false,
+    }),
+  );
+});
+
 test("archiveAgent persists archivedAt and updatedAt before emitting closed state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-"));
   const storagePath = join(workdir, "agents");

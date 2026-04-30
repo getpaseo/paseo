@@ -2402,20 +2402,53 @@ async function readCodexConfiguredDefaults(
   return mergeCodexConfiguredDefaults(savedConfigDefaults, configReadDefaults);
 }
 
+interface CodexSkillPromptBlock {
+  type: "skill";
+  name: string;
+  path: string;
+}
+
+type CodexPromptContentBlock = AgentPromptContentBlock | CodexSkillPromptBlock;
+type CodexPromptInput = string | CodexPromptContentBlock[];
+interface CodexTextElement {
+  byteRange: {
+    start: number;
+    end: number;
+  };
+  placeholder: string | null;
+}
+
+type CodexAppServerUserInput =
+  | {
+      type: "text";
+      text: string;
+      text_elements: CodexTextElement[];
+    }
+  | {
+      type: "localImage";
+      path: string;
+    }
+  | CodexSkillPromptBlock;
+
 export async function codexAppServerTurnInputFromPrompt(
-  prompt: AgentPromptInput,
+  prompt: CodexPromptInput,
   logger: Logger,
-): Promise<unknown[]> {
+): Promise<CodexAppServerUserInput[]> {
   if (typeof prompt === "string") {
-    return [{ type: "text", text: prompt }];
+    return [toCodexTextInput(prompt)];
   }
 
-  const output: unknown[] = [];
+  const output: CodexAppServerUserInput[] = [];
   let previousTextBlock = false;
   for (const block of prompt) {
     if (block.type === "text") {
-      output.push(block);
+      output.push(toCodexTextInput(block.text));
       previousTextBlock = block.text.length > 0;
+      continue;
+    }
+    if (block.type === "skill") {
+      output.push(block);
+      previousTextBlock = false;
       continue;
     }
     if (block.type === "image") {
@@ -2426,21 +2459,25 @@ export async function codexAppServerTurnInputFromPrompt(
         const message = error instanceof Error ? error.message : String(error);
         logger.warn({ message }, "Failed to write Codex image attachment");
         output.push({
-          type: "text",
-          text: `User attached image (failed to write temp file): ${message}`,
+          ...toCodexTextInput(`User attached image (failed to write temp file): ${message}`),
         });
       }
       previousTextBlock = false;
       continue;
     }
     const attachmentText = renderPromptAttachmentAsText(block);
-    output.push({
-      type: "text",
-      text: previousTextBlock ? `\n\n${attachmentText}` : attachmentText,
-    });
+    output.push(toCodexTextInput(previousTextBlock ? `\n\n${attachmentText}` : attachmentText));
     previousTextBlock = true;
   }
   return output;
+}
+
+function toCodexTextInput(text: string): Extract<CodexAppServerUserInput, { type: "text" }> {
+  return {
+    type: "text",
+    text,
+    text_elements: [],
+  };
 }
 
 function buildCodexAppServerEnv(
@@ -2891,7 +2928,7 @@ class CodexAppServerAgentSession implements AgentSession {
   private async buildCommandPromptInput(
     commandName: string,
     args?: string,
-  ): Promise<AgentPromptInput> {
+  ): Promise<CodexPromptInput> {
     if (commandName.startsWith("prompts:")) {
       const promptName = commandName.slice("prompts:".length);
       const codexHome = resolveCodexHomeDir();
@@ -2908,9 +2945,9 @@ class CodexAppServerAgentSession implements AgentSession {
     }
     const skill = this.cachedSkills.find((entry) => entry.name === commandName);
     if (skill) {
-      const input = [
+      const input: CodexPromptContentBlock[] = [
         { type: "skill", name: skill.name, path: skill.path },
-      ] as unknown as AgentPromptContentBlock[];
+      ];
       if (args && args.trim().length > 0) {
         input.push({ type: "text", text: args.trim() });
       } else {
@@ -3496,12 +3533,11 @@ class CodexAppServerAgentSession implements AgentSession {
     return Object.keys(innerConfig).length > 0 ? innerConfig : null;
   }
 
-  private async buildUserInput(prompt: AgentPromptInput): Promise<unknown[]> {
+  private async buildUserInput(prompt: CodexPromptInput): Promise<CodexAppServerUserInput[]> {
     if (typeof prompt === "string") {
-      return [{ type: "text", text: prompt }];
+      return [toCodexTextInput(prompt)];
     }
-    const blocks = prompt as AgentPromptContentBlock[];
-    return await codexAppServerTurnInputFromPrompt(blocks, this.logger);
+    return await codexAppServerTurnInputFromPrompt(prompt, this.logger);
   }
 
   private emitEvent(event: AgentStreamEvent): void {
