@@ -90,6 +90,12 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       runtimeSettings,
     }),
+  dirac: (logger, runtimeSettings) =>
+    new GenericACPAgentClient({
+      logger,
+      command: ["dirac", "--acp"],
+      env: runtimeSettings?.env,
+    }),
   mock: (logger) => new MockLoadTestAgentClient(logger),
 };
 

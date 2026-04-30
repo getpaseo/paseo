@@ -159,7 +159,7 @@ describe("ProviderOverrideSchema", () => {
 });
 
 describe("migrateProviderSettings", () => {
-  const builtinProviderIds = ["claude", "codex", "copilot", "opencode", "pi"];
+  const builtinProviderIds = ["claude", "codex", "copilot", "dirac", "opencode", "pi"];
 
   test("passes through entries already in the new format", () => {
     const migrated = migrateProviderSettings(

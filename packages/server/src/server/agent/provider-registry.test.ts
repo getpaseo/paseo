@@ -423,6 +423,10 @@ test("new provider extending acp uses GenericACPAgentClient", () => {
   expect(registry["my-agent"].createClient(logger).provider).toBe("my-agent");
   expect(mockState.constructorArgs.genericAcp).toEqual([
     {
+      command: ["dirac", "--acp"],
+      env: undefined,
+    },
+    {
       command: ["my-agent", "--acp"],
       env: {
         ACP_TOKEN: "secret",
