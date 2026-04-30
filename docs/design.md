@@ -17,7 +17,7 @@ Before designing anything new, understand what exists:
 
 - Where does similar functionality live?
 - What patterns does the codebase already use?
-- What layers exist? (See [ARCHITECTURE.md](./ARCHITECTURE.md))
+- What layers exist? (See [architecture.md](./architecture.md))
 - What types and data shapes are already defined?
 
 New features rarely mean only new code. Usually they require modifying existing interfaces, extending existing types, or refactoring to accommodate the new functionality. Identify what needs to change, not just what needs to be added.
@@ -38,7 +38,7 @@ If you can't define verification, you don't understand the feature well enough y
 
 - What types are needed?
 - Use discriminated unions — make impossible states impossible
-- One canonical type per concept (see [CODING_STANDARDS.md](./CODING_STANDARDS.md))
+- One canonical type per concept (see [coding-standards.md](./coding-standards.md))
 
 ### Layers
 

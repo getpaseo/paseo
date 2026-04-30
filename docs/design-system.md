@@ -1,4 +1,4 @@
-# DESIGN-SYSTEM.md
+# Design system
 
 Tokens — every color, font size, weight, spacing step, radius, icon size — live in `packages/app/src/styles/theme.ts`.
 

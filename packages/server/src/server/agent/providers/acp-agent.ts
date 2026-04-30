@@ -106,8 +106,6 @@ const ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
   terminal: true,
 };
 
-const COPILOT_AUTOPILOT_MODE = "https://agentclientprotocol.com/protocol/session-modes#autopilot";
-
 // Suppress interactive auth side-effects (e.g. Gemini CLI opening a Google
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
@@ -283,6 +281,29 @@ interface ConfigOptionSelector {
   metadata?: AgentMetadata;
 }
 
+type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
+interface SelectConfigChoice {
+  value: string;
+  name: string;
+  description?: string | null;
+  group?: string;
+}
+type AvailableACPModel = NonNullable<SessionModelState["availableModels"]>[number];
+
+interface ACPModeSelection {
+  availableMode: AgentMode | null;
+  configOption: SelectConfigOption | null;
+  configChoice: SelectConfigChoice | null;
+  hasAvailableModes: boolean;
+}
+
+interface ACPModelSelection {
+  availableModel: AvailableACPModel | null;
+  configOption: SelectConfigOption | null;
+  configChoice: SelectConfigChoice | null;
+  hasAvailableModels: boolean;
+}
+
 export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undefined {
   if (!usage) {
     return undefined;
@@ -292,6 +313,42 @@ export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undef
     inputTokens: usage.inputTokens ?? undefined,
     outputTokens: usage.outputTokens ?? undefined,
     cachedInputTokens: usage.cachedReadTokens ?? undefined,
+  };
+}
+
+export function resolveACPModeSelection({
+  modeId,
+  availableModes,
+  configOptions,
+}: {
+  modeId: string;
+  availableModes: AgentMode[];
+  configOptions: SessionConfigOption[] | null | undefined;
+}): ACPModeSelection {
+  const configOption = findSelectConfigOption({ configOptions, category: "mode" });
+  return {
+    availableMode: availableModes.find((mode) => mode.id === modeId) ?? null,
+    configOption,
+    configChoice: findSelectConfigChoice({ option: configOption, value: modeId }),
+    hasAvailableModes: availableModes.length > 0,
+  };
+}
+
+export function resolveACPModelSelection({
+  modelId,
+  availableModels,
+  configOptions,
+}: {
+  modelId: string;
+  availableModels: AvailableACPModel[] | null | undefined;
+  configOptions: SessionConfigOption[] | null | undefined;
+}): ACPModelSelection {
+  const configOption = findSelectConfigOption({ configOptions, category: "model" });
+  return {
+    availableModel: availableModels?.find((model) => model.modelId === modelId) ?? null,
+    configOption,
+    configChoice: findSelectConfigChoice({ option: configOption, value: modelId }),
+    hasAvailableModels: Boolean(availableModels?.length),
   };
 }
 
@@ -311,10 +368,8 @@ export function deriveModesFromACP(
     };
   }
 
-  const modeOption = configOptions?.find(
-    (option) => option.type === "select" && option.category === "mode",
-  );
-  if (modeOption?.type === "select") {
+  const modeOption = findSelectConfigOption({ configOptions, category: "mode" });
+  if (modeOption) {
     const flatOptions = flattenSelectOptions(modeOption.options);
     return {
       modes: flatOptions.map((option) => ({
@@ -701,6 +756,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private currentMode: string | null = null;
   private availableModes: AgentMode[];
   private currentModel: string | null = null;
+  private availableModels: AvailableACPModel[] | null = null;
   private thinkingOptionId: string | null = null;
   private currentTitle: string | null = null;
   private lastActivityAt: string | null = null;
@@ -954,17 +1010,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
-    return {
-      provider: this.provider,
-      sessionId: this.sessionId,
-      model: this.currentModel,
-      thinkingOptionId: this.thinkingOptionId,
-      modeId: this.currentMode,
-      extra: {
-        title: this.currentTitle,
-        updatedAt: this.lastActivityAt,
-      },
-    };
+    return this.runtimeInfo();
   }
 
   async getAvailableModes(): Promise<AgentMode[]> {
@@ -1036,27 +1082,83 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error("ACP session not initialized");
     }
 
-    const modeExists = this.availableModes.some((mode) => mode.id === modeId);
-    if (!modeExists && this.availableModes.length > 0) {
-      throw new Error(`Unknown ${this.provider} mode '${modeId}'`);
+    const selection = resolveACPModeSelection({
+      modeId,
+      availableModes: this.availableModes,
+      configOptions: this.configOptions,
+    });
+    await this.setModeWithSelection({ modeId, selection });
+  }
+
+  // Mode/model selection updates stay after ACP RPC success; this intentionally diverges from Zed's optimistic rollback path (acp.rs:3080-3104).
+  private async setModeWithSelection({
+    modeId,
+    selection,
+  }: {
+    modeId: string;
+    selection: ACPModeSelection;
+  }): Promise<void> {
+    if (!this.connection || !this.sessionId) {
+      throw new Error("ACP session not initialized");
     }
 
-    if (this.availableModes.length > 0) {
+    if (selection.hasAvailableModes) {
+      if (!selection.availableMode) {
+        this.warnInvalidSelection(
+          modeId,
+          `is not valid ${this.provider} mode. Available options: ${this.availableModes
+            .map((mode) => mode.id)
+            .join(", ")}`,
+        );
+        return;
+      }
+
       await this.connection.setSessionMode({ sessionId: this.sessionId, modeId });
       this.currentMode = modeId;
+      this.pushEvent({
+        type: "mode_changed",
+        provider: this.provider,
+        currentModeId: this.currentMode,
+        availableModes: [...this.availableModes],
+      });
       return;
     }
 
-    const modeOption = this.getSelectConfigOption("mode");
+    const modeOption = selection.configOption;
     if (!modeOption) {
       throw new Error(`${this.provider} does not expose ACP mode switching`);
     }
-    await this.connection.setSessionConfigOption({
+    if (!selection.configChoice) {
+      this.warnInvalidSelection(
+        modeId,
+        `is not valid ${this.provider} mode config option. Available options: ${flattenSelectOptions(
+          modeOption.options,
+        )
+          .map((option) => option.value)
+          .join(", ")}`,
+      );
+      return;
+    }
+
+    const response = await this.connection.setSessionConfigOption({
       sessionId: this.sessionId,
       configId: modeOption.id,
       value: modeId,
     });
-    this.currentMode = modeId;
+    this.currentMode = this.applyConfigOptionResponse({
+      response,
+      configId: modeOption.id,
+      category: "mode",
+      requestedValue: modeId,
+      label: "mode",
+    });
+    this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
+    this.pushEvent({
+      type: "mode_changed",
+      provider: this.provider,
+      currentModeId: this.currentMode,
+      availableModes: [...this.availableModes],
+    });
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -1068,29 +1170,90 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    if ("unstable_setSessionModel" in this.connection) {
+    const selection = resolveACPModelSelection({
+      modelId,
+      availableModels: this.availableModels,
+      configOptions: this.configOptions,
+    });
+    await this.setModelWithSelection({ modelId, selection });
+  }
+
+  private async setModelWithSelection({
+    modelId,
+    selection,
+  }: {
+    modelId: string;
+    selection: ACPModelSelection;
+  }): Promise<void> {
+    if (!this.connection || !this.sessionId) {
+      throw new Error("ACP session not initialized");
+    }
+
+    if (selection.hasAvailableModels) {
+      if (!selection.availableModel) {
+        this.warnInvalidSelection(
+          modelId,
+          `is not a valid ${this.provider} model. Available options: ${this.availableModels
+            ?.map((model) => model.modelId)
+            .join(", ")}`,
+        );
+        return;
+      }
+
+      if (typeof this.connection.unstable_setSessionModel !== "function") {
+        throw new Error(`${this.provider} does not expose ACP model selection`);
+      }
+
       try {
         await this.connection.unstable_setSessionModel({
           sessionId: this.sessionId,
           modelId,
         });
         this.currentModel = modelId;
+        this.pushEvent({
+          type: "model_changed",
+          provider: this.provider,
+          runtimeInfo: this.runtimeInfo(),
+        });
         return;
       } catch {
         // Fall through to config option path.
       }
     }
 
-    const modelOption = this.getSelectConfigOption("model");
+    const modelOption = selection.configOption;
     if (!modelOption) {
       throw new Error(`${this.provider} does not expose ACP model selection`);
     }
-    await this.connection.setSessionConfigOption({
+    if (!selection.configChoice) {
+      this.warnInvalidSelection(
+        modelId,
+        `is not a valid ${this.provider} model config option. Available options: ${flattenSelectOptions(
+          modelOption.options,
+        )
+          .map((option) => option.value)
+          .join(", ")}`,
+      );
+      return;
+    }
+
+    const response = await this.connection.setSessionConfigOption({
       sessionId: this.sessionId,
       configId: modelOption.id,
       value: modelId,
     });
-    this.currentModel = modelId;
+    this.currentModel = this.applyConfigOptionResponse({
+      response,
+      configId: modelOption.id,
+      category: "model",
+      requestedValue: modelId,
+      label: "model",
+    });
+    this.pushEvent({
+      type: "model_changed",
+      provider: this.provider,
+      runtimeInfo: this.runtimeInfo(),
+    });
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -1105,19 +1268,67 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.thinkingOptionWriter) {
       await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
       this.thinkingOptionId = thinkingOptionId;
+      this.pushEvent({
+        type: "thinking_option_changed",
+        provider: this.provider,
+        thinkingOptionId: this.thinkingOptionId,
+      });
       return;
     }
 
-    const option = this.getSelectConfigOption("thought_level");
+    const option = findSelectConfigOption({
+      configOptions: this.configOptions,
+      category: "thought_level",
+    });
     if (!option) {
       throw new Error(`${this.provider} does not expose ACP thought-level selection`);
     }
-    await this.connection.setSessionConfigOption({
+    const response = await this.connection.setSessionConfigOption({
       sessionId: this.sessionId,
       configId: option.id,
       value: thinkingOptionId,
     });
-    this.thinkingOptionId = thinkingOptionId;
+    this.thinkingOptionId = this.applyConfigOptionResponse({
+      response,
+      configId: option.id,
+      category: "thought_level",
+      requestedValue: thinkingOptionId,
+      label: "thought-level",
+    });
+    this.pushEvent({
+      type: "thinking_option_changed",
+      provider: this.provider,
+      thinkingOptionId: this.thinkingOptionId,
+    });
+  }
+
+  private applyConfigOptionResponse({
+    response,
+    configId,
+    category,
+    requestedValue,
+    label,
+  }: {
+    response: { configOptions: SessionConfigOption[] };
+    configId: string;
+    category: string;
+    requestedValue: string;
+    label: string;
+  }): string {
+    this.configOptions = response.configOptions;
+    const responseOption = findSelectConfigOption({
+      configOptions: response.configOptions,
+      category,
+      id: configId,
+    });
+    if (responseOption?.currentValue != null) {
+      return responseOption.currentValue;
+    }
+    this.logger.warn(
+      { configId, value: requestedValue },
+      `ACP setSessionConfigOption response did not include the requested ${label} option currentValue; using requested value`,
+    );
+    return requestedValue;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -1232,18 +1443,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    if (shouldAutoApprovePermissionRequest(this.provider, this.currentMode)) {
-      const selectedOption = selectPermissionOption(params.options, { behavior: "allow" });
-      return selectedOption
-        ? {
-            outcome: {
-              outcome: "selected",
-              optionId: selectedOption.optionId,
-            },
-          }
-        : { outcome: { outcome: "cancelled" } };
-    }
-
+    // Match Zed acp.rs:3189-3220 — pure pass-through. Accepted UX regression: Copilot Autopilot will now prompt the user for every tool request.
     const requestId = randomUUID();
     let toolSnapshot =
       this.toolCalls.get(params.toolCall.toolCallId) ??
@@ -1461,6 +1661,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.availableModes = modeInfo.modes;
     this.currentMode = modeInfo.currentModeId ?? this.currentMode;
 
+    this.availableModels = transformed.models?.availableModels ?? null;
     this.currentModel =
       transformed.models?.currentModelId ?? deriveCurrentConfigValue(this.configOptions, "model");
     this.thinkingOptionId =
@@ -1468,15 +1669,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private async applyConfiguredOverrides(): Promise<void> {
-    if (this.config.modeId && this.config.modeId !== this.currentMode) {
-      await this.setMode(this.config.modeId);
+    const configuredModeId = this.config.modeId;
+    if (configuredModeId && configuredModeId !== this.currentMode) {
+      const selection = resolveACPModeSelection({
+        modeId: configuredModeId,
+        availableModes: this.availableModes,
+        configOptions: this.configOptions,
+      });
+      await this.setModeWithSelection({ modeId: configuredModeId, selection });
     }
-    if (this.config.model && this.config.model !== this.currentModel) {
-      await this.setModel(this.config.model);
+    const configuredModelId = this.config.model;
+    if (configuredModelId && configuredModelId !== this.currentModel) {
+      const selection = resolveACPModelSelection({
+        modelId: configuredModelId,
+        availableModels: this.availableModels,
+        configOptions: this.configOptions,
+      });
+      await this.setModelWithSelection({ modelId: configuredModelId, selection });
     }
     if (this.config.thinkingOptionId && this.config.thinkingOptionId !== this.thinkingOptionId) {
       await this.setThinkingOption(this.config.thinkingOptionId);
     }
+  }
+
+  private warnInvalidSelection(value: string, message: string): void {
+    (this.logger.warn as unknown as (value: string, message: string) => void)(value, message);
   }
 
   private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {
@@ -1516,10 +1733,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return [this.wrapTimeline(mapPlanToTimeline(update))];
       case "current_mode_update":
         this.handleCurrentModeUpdate(update);
-        return [];
+        return [
+          {
+            type: "mode_changed",
+            provider: this.provider,
+            currentModeId: this.currentMode,
+            availableModes: [...this.availableModes],
+          },
+        ];
       case "config_option_update":
-        this.handleConfigOptionUpdate(update);
-        return [];
+        return this.handleConfigOptionUpdate(update);
       case "session_info_update":
         this.handleSessionInfoUpdate(update);
         return [];
@@ -1585,14 +1808,42 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentMode = update.currentModeId;
   }
 
-  private handleConfigOptionUpdate(update: ConfigOptionUpdate): void {
+  private handleConfigOptionUpdate(update: ConfigOptionUpdate): AgentStreamEvent[] {
     this.configOptions = update.configOptions;
     const modeInfo = deriveModesFromACP(this.defaultModes, null, this.configOptions);
+    const nextMode = modeInfo.currentModeId;
+    const nextModel = deriveCurrentConfigValue(this.configOptions, "model");
+    const nextThinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
+
     this.availableModes = modeInfo.modes;
-    this.currentMode = modeInfo.currentModeId ?? this.currentMode;
-    this.currentModel = deriveCurrentConfigValue(this.configOptions, "model") ?? this.currentModel;
-    this.thinkingOptionId =
-      deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
+    this.currentMode = nextMode ?? this.currentMode;
+    this.currentModel = nextModel ?? this.currentModel;
+    this.thinkingOptionId = nextThinkingOptionId ?? this.thinkingOptionId;
+
+    const events: AgentStreamEvent[] = [];
+    if (nextMode !== null) {
+      events.push({
+        type: "mode_changed",
+        provider: this.provider,
+        currentModeId: this.currentMode,
+        availableModes: [...this.availableModes],
+      });
+    }
+    if (nextModel !== null) {
+      events.push({
+        type: "model_changed",
+        provider: this.provider,
+        runtimeInfo: this.runtimeInfo(),
+      });
+    }
+    if (nextThinkingOptionId !== null) {
+      events.push({
+        type: "thinking_option_changed",
+        provider: this.provider,
+        thinkingOptionId: this.thinkingOptionId,
+      });
+    }
+    return events;
   }
 
   private handleSessionInfoUpdate(update: SessionInfoUpdate): void {
@@ -1651,6 +1902,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  private runtimeInfo(): AgentRuntimeInfo {
+    return {
+      provider: this.provider,
+      sessionId: this.sessionId,
+      model: this.currentModel,
+      thinkingOptionId: this.thinkingOptionId,
+      modeId: this.currentMode,
+      extra: {
+        title: this.currentTitle,
+        updatedAt: this.lastActivityAt,
+      },
+    };
+  }
+
   private finishTurn(
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
@@ -1698,16 +1963,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return parts.length > 0 ? parts.join(" | ") : undefined;
   }
 
-  private getSelectConfigOption(
-    category: string,
-  ): Extract<SessionConfigOption, { type: "select" }> | null {
-    const option = this.configOptions.find(
-      (entry): entry is Extract<SessionConfigOption, { type: "select" }> =>
-        entry.type === "select" && entry.category === category,
-    );
-    return option ?? null;
-  }
-
   private getTerminalEntry(terminalId: string): TerminalEntry {
     const entry = this.terminalEntries.get(terminalId);
     if (!entry) {
@@ -1717,15 +1972,37 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 }
 
-function flattenSelectOptions(
-  options: Extract<SessionConfigOption, { type: "select" }>["options"],
-): Array<{ value: string; name: string; description?: string | null; group?: string }> {
-  const flattened: Array<{
-    value: string;
-    name: string;
-    description?: string | null;
-    group?: string;
-  }> = [];
+function findSelectConfigOption({
+  configOptions,
+  category,
+  id,
+}: {
+  configOptions: SessionConfigOption[] | null | undefined;
+  category: string;
+  id?: string;
+}): SelectConfigOption | null {
+  const option = configOptions?.find(
+    (entry): entry is SelectConfigOption =>
+      entry.type === "select" && entry.category === category && (!id || entry.id === id),
+  );
+  return option ?? null;
+}
+
+function findSelectConfigChoice({
+  option,
+  value,
+}: {
+  option: SelectConfigOption | null;
+  value: string;
+}): SelectConfigChoice | null {
+  if (!option) {
+    return null;
+  }
+  return flattenSelectOptions(option.options).find((choice) => choice.value === value) ?? null;
+}
+
+function flattenSelectOptions(options: SelectConfigOption["options"]): SelectConfigChoice[] {
+  const flattened: SelectConfigChoice[] = [];
   for (const option of options) {
     if ("value" in option) {
       flattened.push(option);
@@ -1742,10 +2019,7 @@ function deriveSelectorOptions(
   configOptions: SessionConfigOption[] | null | undefined,
   category: string,
 ): ConfigOptionSelector[] {
-  const option = configOptions?.find(
-    (entry): entry is Extract<SessionConfigOption, { type: "select" }> =>
-      entry.type === "select" && entry.category === category,
-  );
+  const option = findSelectConfigOption({ configOptions, category });
   if (!option) {
     return [];
   }
@@ -2167,10 +2441,6 @@ function mapPermissionRequest(
       options: params.options,
     },
   };
-}
-
-function shouldAutoApprovePermissionRequest(provider: string, currentMode: string | null): boolean {
-  return provider === "copilot" && currentMode === COPILOT_AUTOPILOT_MODE;
 }
 
 function selectPermissionOption(

@@ -261,4 +261,4 @@ xcrun simctl ui booted appearance dark     # set dark
 xcrun simctl ui booted appearance light    # set light
 ```
 
-Expo dev server logs are in the tmux pane running `npm run dev`. Daemon logs are at `$PASEO_HOME/daemon.log` (see [DEVELOPMENT.md](DEVELOPMENT.md)).
+Expo dev server logs are in the tmux pane running `npm run dev`. Daemon logs are at `$PASEO_HOME/daemon.log` (see [development.md](development.md)).

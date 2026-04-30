@@ -1,28 +1,21 @@
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { getDocs } from "~/docs";
 import "~/styles.css";
 
 export const Route = createFileRoute("/docs")({
   component: DocsLayout,
 });
 
-const navigation = [
-  { name: "Getting started", href: "/docs" },
-  { name: "Updates", href: "/docs/updates" },
-  { name: "Voice", href: "/docs/voice" },
-  { name: "Git worktrees", href: "/docs/worktrees" },
-  { name: "CLI", href: "/docs/cli" },
-  { name: "Skills", href: "/docs/skills" },
-  { name: "Providers", href: "/docs/providers" },
-  { name: "Configuration", href: "/docs/configuration" },
-  { name: "Security", href: "/docs/security" },
-  { name: "Best practices", href: "/docs/best-practices" },
-];
-
 const ACTIVE_OPTIONS_EXACT = { exact: true };
 const MOBILE_ACTIVE_PROPS = { className: "text-foreground" };
 const DESKTOP_ACTIVE_PROPS = { className: "bg-muted text-foreground" };
 
 function DocsLayout() {
+  const navigation = getDocs().map((doc) => ({
+    name: doc.frontmatter.nav,
+    href: doc.href,
+  }));
+
   return (
     <div className="min-h-screen bg-background">
       {/* Mobile header */}
@@ -31,7 +24,7 @@ function DocsLayout() {
           <img src="/logo.svg" alt="Paseo" className="w-6 h-6" />
           <span className="text-lg font-medium">Paseo</span>
         </Link>
-        <nav className="flex gap-4 mt-4">
+        <nav className="flex gap-4 mt-4 flex-wrap">
           {navigation.map((item) => (
             <Link
               key={item.href}
@@ -67,7 +60,7 @@ function DocsLayout() {
             ))}
           </nav>
         </aside>
-        <main className="flex-1 p-6 md:p-12 max-w-3xl prose">
+        <main className="flex-1 p-6 md:p-12 max-w-3xl docs-prose">
           <Outlet />
         </main>
       </div>

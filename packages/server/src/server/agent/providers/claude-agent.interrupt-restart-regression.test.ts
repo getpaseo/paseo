@@ -338,6 +338,52 @@ test("reuses the existing query after interrupt before starting the next prompt"
   await session.close();
 });
 
+test("emits an assistant system notice when Claude changes session id mid-turn", async () => {
+  const logger = createTestLogger();
+  let queryRef: ScriptedQuery | null = null;
+
+  sdkMocks.query.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    queryRef = createScriptedQuery({
+      prompt,
+      sessionId: "claude-original-session",
+      async handlePrompt({ promptRecord, query }) {
+        if (promptRecord.text !== "trigger session switch") {
+          return;
+        }
+        query.emit({
+          type: "assistant",
+          message: { content: "Claude kept working." },
+          session_id: "claude-provider-switched-session",
+        });
+        query.emit(buildSuccessResult("claude-provider-switched-session"));
+      },
+    });
+    return queryRef;
+  });
+
+  const client = new ClaudeAgentClient({ logger });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  const events = await collectUntilTerminal(streamSession(session, "trigger session switch"));
+  const assistantMessages = events.flatMap((event) => {
+    if (event.type !== "timeline" || event.item.type !== "assistant_message") {
+      return [];
+    }
+    return [event.item.text];
+  });
+
+  expect(session.id).toBe("claude-provider-switched-session");
+  expect(assistantMessages).toContain("Claude kept working.");
+  expect(assistantMessages).toContain(
+    "Claude switched to a new session: claude-original-session -> claude-provider-switched-session",
+  );
+
+  await session.close();
+});
+
 test("recovers when the query pump sees a single interrupt abort before the next prompt", async () => {
   const logger = createTestLogger();
   const output = createAsyncQueue<Record<string, unknown>>();

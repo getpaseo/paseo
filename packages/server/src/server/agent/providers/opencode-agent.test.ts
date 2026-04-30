@@ -555,3 +555,47 @@ describe("OpenCode adapter context-window normalization", () => {
     ]);
   });
 });
+
+describe("OpenCode adapter startTurn error handling", () => {
+  test("emits turn_failed when client.session.promptAsync throws synchronously", async () => {
+    // Async iterable that never yields and never resolves. The IIFE in
+    // startTurn synchronously hits the promptAsync throw and finishes the
+    // turn before this iterator is ever pulled, so the never-resolving
+    // promise inside next() is fine and gets garbage-collected.
+    const neverYieldingStream: AsyncIterable<OpenCodeEvent> = {
+      [Symbol.asyncIterator]: () => ({
+        next: () => new Promise(() => {}),
+      }),
+    };
+
+    const fakeClient = {
+      event: {
+        subscribe: vi.fn().mockResolvedValue({ stream: neverYieldingStream }),
+      },
+      session: {
+        promptAsync: vi.fn(() => {
+          throw new Error("boom: synchronous throw");
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("hello");
+
+    const failed = events.find((event) => event.type === "turn_failed");
+    expect(failed).toBeDefined();
+    expect(failed?.type).toBe("turn_failed");
+    if (failed?.type === "turn_failed") {
+      expect(failed.error).toContain("boom: synchronous throw");
+    }
+  });
+});

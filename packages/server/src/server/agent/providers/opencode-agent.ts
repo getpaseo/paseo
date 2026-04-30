@@ -728,6 +728,9 @@ export const __openCodeInternals = {
   reconcileOpenCodeSessionClose,
   resolveOpenCodeModelLookupKeyFromAssistantMessage,
   resolveOpenCodeSelectedModelContextWindow,
+  get OpenCodeAgentSession() {
+    return OpenCodeAgentSession;
+  },
 };
 
 export class OpenCodeServerManager {
@@ -1864,6 +1867,22 @@ function appendOpenCodeSessionStatus(
   // "retry" and "busy" are transient — no terminal event.
 }
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 class OpenCodeAgentSession implements AgentSession {
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
@@ -2058,7 +2077,20 @@ class OpenCodeAgentSession implements AgentSession {
 
     const turnId = this.createTurnId();
     this.activeForegroundTurnId = turnId;
-    void this.consumeEventStream(turnId, turnAbortController);
+
+    // OpenCode's /event SSE endpoint does NOT replay past events. If we send
+    // the prompt before our reader is connected, terminal events fired early
+    // by the server (e.g. session.error / session.idle for invalid model or
+    // mode) are missed and the turn hangs forever. Wait for the subscription
+    // to be established before sending anything.
+    const subscriptionReady = createDeferred<void>();
+    void this.consumeEventStream(turnId, turnAbortController, subscriptionReady);
+    try {
+      await subscriptionReady.promise;
+    } catch {
+      // consumeEventStream already finished the turn with the subscription error.
+      return { turnId };
+    }
 
     const slashCommand = await this.resolveSlashCommandInvocation(prompt);
     if (slashCommand) {
@@ -2160,25 +2192,28 @@ class OpenCodeAgentSession implements AgentSession {
           );
         });
     } else {
-      void this.client.session
-        .promptAsync({
-          sessionID: this.sessionId,
-          directory: this.config.cwd,
-          parts,
-          ...(options?.outputSchema
-            ? {
-                format: {
-                  type: "json_schema" as const,
-                  schema: options.outputSchema as Record<string, unknown>,
-                },
-              }
-            : {}),
-          ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
-          ...(model ? { model } : {}),
-          ...(effectiveMode ? { agent: effectiveMode } : {}),
-          ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-        })
-        .then((promptResponse) => {
+      // Wrap in an async IIFE so a synchronous throw from promptAsync (e.g.
+      // SDK input validation) is caught alongside async rejections. A plain
+      // `.then().catch()` chain would let a sync throw escape unhandled.
+      void (async () => {
+        try {
+          const promptResponse = await this.client.session.promptAsync({
+            sessionID: this.sessionId,
+            directory: this.config.cwd,
+            parts,
+            ...(options?.outputSchema
+              ? {
+                  format: {
+                    type: "json_schema" as const,
+                    schema: options.outputSchema as Record<string, unknown>,
+                  },
+                }
+              : {}),
+            ...(this.config.systemPrompt ? { system: this.config.systemPrompt } : {}),
+            ...(model ? { model } : {}),
+            ...(effectiveMode ? { agent: effectiveMode } : {}),
+            ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+          });
           if (promptResponse.error) {
             this.finishForegroundTurn(
               {
@@ -2189,9 +2224,7 @@ class OpenCodeAgentSession implements AgentSession {
               turnId,
             );
           }
-          return;
-        })
-        .catch((error) => {
+        } catch (error) {
           this.finishForegroundTurn(
             {
               type: "turn_failed",
@@ -2200,7 +2233,8 @@ class OpenCodeAgentSession implements AgentSession {
             },
             turnId,
           );
-        });
+        }
+      })();
     }
 
     return { turnId };
@@ -2216,12 +2250,14 @@ class OpenCodeAgentSession implements AgentSession {
   private async consumeEventStream(
     turnId: string,
     turnAbortController: AbortController,
+    subscriptionReady: Deferred<void>,
   ): Promise<void> {
     try {
       const result = await this.client.event.subscribe(
         { directory: this.config.cwd },
         { signal: turnAbortController.signal, sseMaxRetryAttempts: 0 },
       );
+      subscriptionReady.resolve();
 
       for await (const event of result.stream) {
         if (turnAbortController.signal.aborted || this.activeForegroundTurnId !== turnId) {
@@ -2256,6 +2292,7 @@ class OpenCodeAgentSession implements AgentSession {
         );
       }
     } catch (error) {
+      subscriptionReady.reject(error);
       if (!turnAbortController.signal.aborted && this.activeForegroundTurnId === turnId) {
         this.finishForegroundTurn(
           {

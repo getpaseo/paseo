@@ -412,7 +412,10 @@ test("captures session IDs from fixture-driven init message variants", async () 
     fixtures.map(async (fixture) => {
       const session = await createSession();
       const internal = session as unknown as {
-        handleSystemMessage: (message: Record<string, unknown>) => string | null;
+        handleSystemMessage: (message: Record<string, unknown>) => {
+          threadStartedSessionId: string | null;
+          notice: AgentTimelineItem | null;
+        };
       };
       try {
         const started = internal.handleSystemMessage({
@@ -422,7 +425,10 @@ test("captures session IDs from fixture-driven init message variants", async () 
           model: "opus",
           ...fixture.payload,
         });
-        expect(started).toBe(fixture.expected);
+        expect(started).toEqual({
+          threadStartedSessionId: fixture.expected,
+          notice: null,
+        });
         expect(session.describePersistence()?.sessionId).toBe(fixture.expected);
       } finally {
         await session.close();

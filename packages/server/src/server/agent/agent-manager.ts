@@ -2519,6 +2519,37 @@ export class AgentManager {
         agent.lastUsage = event.usage;
         this.emitState(agent);
         return undefined;
+      case "mode_changed":
+        agent.currentModeId = event.currentModeId;
+        agent.availableModes = event.availableModes;
+        if (agent.runtimeInfo) {
+          agent.runtimeInfo = { ...agent.runtimeInfo, modeId: event.currentModeId };
+        }
+        flags.shouldDispatchEvent = false;
+        this.emitState(agent);
+        return undefined;
+      case "model_changed":
+        agent.runtimeInfo = event.runtimeInfo;
+        if (!agent.persistence && event.runtimeInfo.sessionId) {
+          agent.persistence = attachPersistenceCwd(
+            { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
+            agent.cwd,
+          );
+        }
+        agent.currentModeId = event.runtimeInfo.modeId ?? agent.currentModeId;
+        flags.shouldDispatchEvent = false;
+        this.emitState(agent);
+        return undefined;
+      case "thinking_option_changed":
+        if (agent.runtimeInfo) {
+          agent.runtimeInfo = {
+            ...agent.runtimeInfo,
+            thinkingOptionId: event.thinkingOptionId,
+          };
+        }
+        flags.shouldDispatchEvent = false;
+        this.emitState(agent);
+        return undefined;
       case "timeline":
         return this.onStreamTimelineEvent({ agent, event, options, isForegroundEvent, flags });
       case "turn_completed":

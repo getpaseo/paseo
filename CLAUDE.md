@@ -19,14 +19,14 @@ This is an npm workspace monorepo:
 
 | Doc                                                  | What's in it                                                                      |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)         | System design, package layering, WebSocket protocol, agent lifecycle, data flow   |
-| [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) | Type hygiene, error handling, state design, React patterns, file organization     |
-| [docs/TESTING.md](docs/TESTING.md)                   | TDD workflow, determinism, real dependencies over mocks, test organization        |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)           | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP        |
-| [docs/RELEASE.md](docs/RELEASE.md)                   | Release playbook, draft releases, completion checklist                            |
-| [docs/CUSTOM-PROVIDERS.md](docs/CUSTOM-PROVIDERS.md) | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries |
-| [docs/ANDROID.md](docs/ANDROID.md)                   | App variants, local/cloud builds, EAS workflows                                   |
-| [docs/DESIGN.md](docs/DESIGN.md)                     | How to design features before implementation                                      |
+| [docs/architecture.md](docs/architecture.md)         | System design, package layering, WebSocket protocol, agent lifecycle, data flow   |
+| [docs/coding-standards.md](docs/coding-standards.md) | Type hygiene, error handling, state design, React patterns, file organization     |
+| [docs/testing.md](docs/testing.md)                   | TDD workflow, determinism, real dependencies over mocks, test organization        |
+| [docs/development.md](docs/development.md)           | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP        |
+| [docs/release.md](docs/release.md)                   | Release playbook, draft releases, completion checklist                            |
+| [docs/custom-providers.md](docs/custom-providers.md) | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries |
+| [docs/android.md](docs/android.md)                   | App variants, local/cloud builds, EAS workflows                                   |
+| [docs/design.md](docs/design.md)                     | How to design features before implementation                                      |
 | [SECURITY.md](SECURITY.md)                           | Relay threat model, E2E encryption, DNS rebinding, agent auth                     |
 
 ## Quick start
@@ -41,7 +41,7 @@ npm run format                       # Auto-format with Biome
 npm run format:check                 # Check formatting without writing
 ```
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup, build sync requirements, and debugging.
+See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
 
 ## Critical rules
 

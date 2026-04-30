@@ -850,6 +850,14 @@ export async function createPaseoDaemon(
     if (wsServer) {
       await wsServer.close();
     }
+    // Force-drop remaining sockets so httpServer.close() resolves promptly.
+    // We've already closed wsServer (which sent ws-layer close frames) and
+    // stopped every other service, so anything still attached is a TCP
+    // socket whose higher-level shutdown hasn't fully released it (e.g.
+    // upgraded WS sockets in the closing handshake, or HTTP keep-alive
+    // sockets in CLOSE_WAIT). closeIdleConnections() does not catch
+    // upgraded sockets, so we use closeAllConnections() here.
+    httpServer.closeAllConnections();
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
     });

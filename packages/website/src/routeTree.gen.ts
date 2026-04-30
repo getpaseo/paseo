@@ -20,15 +20,7 @@ import { Route as BlogRouteImport } from "./routes/blog";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as DocsIndexRouteImport } from "./routes/docs/index";
 import { Route as BlogIndexRouteImport } from "./routes/blog/index";
-import { Route as DocsWorktreesRouteImport } from "./routes/docs/worktrees";
-import { Route as DocsVoiceRouteImport } from "./routes/docs/voice";
-import { Route as DocsUpdatesRouteImport } from "./routes/docs/updates";
-import { Route as DocsSkillsRouteImport } from "./routes/docs/skills";
-import { Route as DocsSecurityRouteImport } from "./routes/docs/security";
-import { Route as DocsProvidersRouteImport } from "./routes/docs/providers";
-import { Route as DocsConfigurationRouteImport } from "./routes/docs/configuration";
-import { Route as DocsCliRouteImport } from "./routes/docs/cli";
-import { Route as DocsBestPracticesRouteImport } from "./routes/docs/best-practices";
+import { Route as DocsSplatRouteImport } from "./routes/docs/$";
 import { Route as BlogSplatRouteImport } from "./routes/blog/$";
 
 const PrivacyRoute = PrivacyRouteImport.update({
@@ -86,49 +78,9 @@ const BlogIndexRoute = BlogIndexRouteImport.update({
   path: "/",
   getParentRoute: () => BlogRoute,
 } as any);
-const DocsWorktreesRoute = DocsWorktreesRouteImport.update({
-  id: "/worktrees",
-  path: "/worktrees",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsVoiceRoute = DocsVoiceRouteImport.update({
-  id: "/voice",
-  path: "/voice",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsUpdatesRoute = DocsUpdatesRouteImport.update({
-  id: "/updates",
-  path: "/updates",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsSkillsRoute = DocsSkillsRouteImport.update({
-  id: "/skills",
-  path: "/skills",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsSecurityRoute = DocsSecurityRouteImport.update({
-  id: "/security",
-  path: "/security",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsProvidersRoute = DocsProvidersRouteImport.update({
-  id: "/providers",
-  path: "/providers",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsConfigurationRoute = DocsConfigurationRouteImport.update({
-  id: "/configuration",
-  path: "/configuration",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsCliRoute = DocsCliRouteImport.update({
-  id: "/cli",
-  path: "/cli",
-  getParentRoute: () => DocsRoute,
-} as any);
-const DocsBestPracticesRoute = DocsBestPracticesRouteImport.update({
-  id: "/best-practices",
-  path: "/best-practices",
+const DocsSplatRoute = DocsSplatRouteImport.update({
+  id: "/$",
+  path: "/$",
   getParentRoute: () => DocsRoute,
 } as any);
 const BlogSplatRoute = BlogSplatRouteImport.update({
@@ -148,15 +100,7 @@ export interface FileRoutesByFullPath {
   "/opencode": typeof OpencodeRoute;
   "/privacy": typeof PrivacyRoute;
   "/blog/$": typeof BlogSplatRoute;
-  "/docs/best-practices": typeof DocsBestPracticesRoute;
-  "/docs/cli": typeof DocsCliRoute;
-  "/docs/configuration": typeof DocsConfigurationRoute;
-  "/docs/providers": typeof DocsProvidersRoute;
-  "/docs/security": typeof DocsSecurityRoute;
-  "/docs/skills": typeof DocsSkillsRoute;
-  "/docs/updates": typeof DocsUpdatesRoute;
-  "/docs/voice": typeof DocsVoiceRoute;
-  "/docs/worktrees": typeof DocsWorktreesRoute;
+  "/docs/$": typeof DocsSplatRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
 }
@@ -169,15 +113,7 @@ export interface FileRoutesByTo {
   "/opencode": typeof OpencodeRoute;
   "/privacy": typeof PrivacyRoute;
   "/blog/$": typeof BlogSplatRoute;
-  "/docs/best-practices": typeof DocsBestPracticesRoute;
-  "/docs/cli": typeof DocsCliRoute;
-  "/docs/configuration": typeof DocsConfigurationRoute;
-  "/docs/providers": typeof DocsProvidersRoute;
-  "/docs/security": typeof DocsSecurityRoute;
-  "/docs/skills": typeof DocsSkillsRoute;
-  "/docs/updates": typeof DocsUpdatesRoute;
-  "/docs/voice": typeof DocsVoiceRoute;
-  "/docs/worktrees": typeof DocsWorktreesRoute;
+  "/docs/$": typeof DocsSplatRoute;
   "/blog": typeof BlogIndexRoute;
   "/docs": typeof DocsIndexRoute;
 }
@@ -193,15 +129,7 @@ export interface FileRoutesById {
   "/opencode": typeof OpencodeRoute;
   "/privacy": typeof PrivacyRoute;
   "/blog/$": typeof BlogSplatRoute;
-  "/docs/best-practices": typeof DocsBestPracticesRoute;
-  "/docs/cli": typeof DocsCliRoute;
-  "/docs/configuration": typeof DocsConfigurationRoute;
-  "/docs/providers": typeof DocsProvidersRoute;
-  "/docs/security": typeof DocsSecurityRoute;
-  "/docs/skills": typeof DocsSkillsRoute;
-  "/docs/updates": typeof DocsUpdatesRoute;
-  "/docs/voice": typeof DocsVoiceRoute;
-  "/docs/worktrees": typeof DocsWorktreesRoute;
+  "/docs/$": typeof DocsSplatRoute;
   "/blog/": typeof BlogIndexRoute;
   "/docs/": typeof DocsIndexRoute;
 }
@@ -218,15 +146,7 @@ export interface FileRouteTypes {
     | "/opencode"
     | "/privacy"
     | "/blog/$"
-    | "/docs/best-practices"
-    | "/docs/cli"
-    | "/docs/configuration"
-    | "/docs/providers"
-    | "/docs/security"
-    | "/docs/skills"
-    | "/docs/updates"
-    | "/docs/voice"
-    | "/docs/worktrees"
+    | "/docs/$"
     | "/blog/"
     | "/docs/";
   fileRoutesByTo: FileRoutesByTo;
@@ -239,15 +159,7 @@ export interface FileRouteTypes {
     | "/opencode"
     | "/privacy"
     | "/blog/$"
-    | "/docs/best-practices"
-    | "/docs/cli"
-    | "/docs/configuration"
-    | "/docs/providers"
-    | "/docs/security"
-    | "/docs/skills"
-    | "/docs/updates"
-    | "/docs/voice"
-    | "/docs/worktrees"
+    | "/docs/$"
     | "/blog"
     | "/docs";
   id:
@@ -262,15 +174,7 @@ export interface FileRouteTypes {
     | "/opencode"
     | "/privacy"
     | "/blog/$"
-    | "/docs/best-practices"
-    | "/docs/cli"
-    | "/docs/configuration"
-    | "/docs/providers"
-    | "/docs/security"
-    | "/docs/skills"
-    | "/docs/updates"
-    | "/docs/voice"
-    | "/docs/worktrees"
+    | "/docs/$"
     | "/blog/"
     | "/docs/";
   fileRoutesById: FileRoutesById;
@@ -366,67 +270,11 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof BlogIndexRouteImport;
       parentRoute: typeof BlogRoute;
     };
-    "/docs/worktrees": {
-      id: "/docs/worktrees";
-      path: "/worktrees";
-      fullPath: "/docs/worktrees";
-      preLoaderRoute: typeof DocsWorktreesRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/voice": {
-      id: "/docs/voice";
-      path: "/voice";
-      fullPath: "/docs/voice";
-      preLoaderRoute: typeof DocsVoiceRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/updates": {
-      id: "/docs/updates";
-      path: "/updates";
-      fullPath: "/docs/updates";
-      preLoaderRoute: typeof DocsUpdatesRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/skills": {
-      id: "/docs/skills";
-      path: "/skills";
-      fullPath: "/docs/skills";
-      preLoaderRoute: typeof DocsSkillsRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/security": {
-      id: "/docs/security";
-      path: "/security";
-      fullPath: "/docs/security";
-      preLoaderRoute: typeof DocsSecurityRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/providers": {
-      id: "/docs/providers";
-      path: "/providers";
-      fullPath: "/docs/providers";
-      preLoaderRoute: typeof DocsProvidersRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/configuration": {
-      id: "/docs/configuration";
-      path: "/configuration";
-      fullPath: "/docs/configuration";
-      preLoaderRoute: typeof DocsConfigurationRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/cli": {
-      id: "/docs/cli";
-      path: "/cli";
-      fullPath: "/docs/cli";
-      preLoaderRoute: typeof DocsCliRouteImport;
-      parentRoute: typeof DocsRoute;
-    };
-    "/docs/best-practices": {
-      id: "/docs/best-practices";
-      path: "/best-practices";
-      fullPath: "/docs/best-practices";
-      preLoaderRoute: typeof DocsBestPracticesRouteImport;
+    "/docs/$": {
+      id: "/docs/$";
+      path: "/$";
+      fullPath: "/docs/$";
+      preLoaderRoute: typeof DocsSplatRouteImport;
       parentRoute: typeof DocsRoute;
     };
     "/blog/$": {
@@ -452,28 +300,12 @@ const BlogRouteChildren: BlogRouteChildren = {
 const BlogRouteWithChildren = BlogRoute._addFileChildren(BlogRouteChildren);
 
 interface DocsRouteChildren {
-  DocsBestPracticesRoute: typeof DocsBestPracticesRoute;
-  DocsCliRoute: typeof DocsCliRoute;
-  DocsConfigurationRoute: typeof DocsConfigurationRoute;
-  DocsProvidersRoute: typeof DocsProvidersRoute;
-  DocsSecurityRoute: typeof DocsSecurityRoute;
-  DocsSkillsRoute: typeof DocsSkillsRoute;
-  DocsUpdatesRoute: typeof DocsUpdatesRoute;
-  DocsVoiceRoute: typeof DocsVoiceRoute;
-  DocsWorktreesRoute: typeof DocsWorktreesRoute;
+  DocsSplatRoute: typeof DocsSplatRoute;
   DocsIndexRoute: typeof DocsIndexRoute;
 }
 
 const DocsRouteChildren: DocsRouteChildren = {
-  DocsBestPracticesRoute: DocsBestPracticesRoute,
-  DocsCliRoute: DocsCliRoute,
-  DocsConfigurationRoute: DocsConfigurationRoute,
-  DocsProvidersRoute: DocsProvidersRoute,
-  DocsSecurityRoute: DocsSecurityRoute,
-  DocsSkillsRoute: DocsSkillsRoute,
-  DocsUpdatesRoute: DocsUpdatesRoute,
-  DocsVoiceRoute: DocsVoiceRoute,
-  DocsWorktreesRoute: DocsWorktreesRoute,
+  DocsSplatRoute: DocsSplatRoute,
   DocsIndexRoute: DocsIndexRoute,
 };
 
