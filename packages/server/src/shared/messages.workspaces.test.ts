@@ -154,9 +154,9 @@ describe("workspace message schemas", () => {
           scripts: [
             {
               scriptName: "web",
-              hostname: "web.paseo.localhost",
+              hostname: "web.hubcode.localhost",
               port: 3000,
-              proxyUrl: "http://web.paseo.localhost:6767",
+              proxyUrl: "http://web.hubcode.localhost:6767",
               lifecycle: "running",
               health: "healthy",
             },

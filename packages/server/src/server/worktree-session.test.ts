@@ -23,7 +23,6 @@ import {
   resolveGitCreateBaseBranch,
   runWorktreeSetupInBackground,
   handleCreateHubcodeWorktreeRequest,
-  handleWorkspaceSetupStatusRequest,
 } from "./worktree-session.js";
 import {
   createWorktree as createWorktreePrimitive,
@@ -1588,14 +1587,14 @@ describe.skip("archiveHubcodeWorktree", () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const created = await createLegacyWorktreeForTest({
       branchName: "archive-marked-during-close",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "archive-marked-during-close",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
     const affectedIds = [created.worktreePath];
     const liveAgent = createManagedAgentForArchive({
@@ -1647,9 +1646,9 @@ describe.skip("archiveHubcodeWorktree", () => {
       events.push("close:end");
     });
 
-    await handlePaseoWorktreeArchiveRequest(
+    await handleHubcodeWorktreeArchiveRequest(
       {
-        paseoHome,
+        hubcodeHome,
         github: createGitHubServiceStub(),
         workspaceGitService: {
           getSnapshot: vi.fn(async () => null),
@@ -1738,14 +1737,14 @@ describe.skip("archiveHubcodeWorktree", () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
 
-    const paseoHome = path.join(tempDir, ".paseo");
+    const hubcodeHome = path.join(tempDir, ".hubcode");
     const created = await createLegacyWorktreeForTest({
       branchName: "archive-delete-fails",
       cwd: repoDir,
       baseBranch: "main",
       worktreeSlug: "archive-delete-fails",
       runSetup: false,
-      paseoHome,
+      hubcodeHome,
     });
     const archivingByWorkspaceId = new Map<string, string>();
     const emittedUpdates: Array<{

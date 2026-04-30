@@ -131,6 +131,7 @@ import type {
   AgentStreamEvent,
   AgentProvider,
   AgentPersistenceHandle,
+  AgentTimelineItem,
   ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
@@ -284,6 +285,19 @@ export function resolveCreateAgentTitles(options: {
     explicitTitle,
     provisionalTitle,
   };
+}
+
+function getFirstUserMessageText(timeline: readonly AgentTimelineItem[]): string | null {
+  for (const item of timeline) {
+    if (item.type !== "user_message") {
+      continue;
+    }
+    const text = item.text.trim();
+    if (text) {
+      return text;
+    }
+  }
+  return null;
 }
 
 export function resolveWaitForFinishError(options: {
@@ -3828,6 +3842,98 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleImportAgentRequest(
+    msg: Extract<SessionInboundMessage, { type: "import_agent_request" }>,
+  ): Promise<void> {
+    const { provider, sessionId, cwd, labels, requestId } = msg;
+    this.sessionLogger.info({ sessionId, provider }, `Importing agent ${sessionId} (${provider})`);
+
+    try {
+      const descriptor = await this.agentManager.findPersistedAgent(provider, sessionId);
+      if (!descriptor && provider === "opencode" && !cwd) {
+        throw new Error(
+          "OpenCode sessions require --cwd when the session cannot be found in persisted agents",
+        );
+      }
+
+      const handle = descriptor
+        ? applyImportCwdOverride(descriptor.persistence, cwd)
+        : buildImportPersistenceHandle({ provider, sessionId, cwd });
+      const overrides = cwd ? ({ cwd } satisfies Partial<AgentSessionConfig>) : undefined;
+
+      await this.unarchiveAgentByHandle(handle);
+      const snapshot = await this.agentManager.resumeAgentFromPersistence(
+        handle,
+        overrides,
+        undefined,
+        {
+          labels,
+        },
+      );
+      await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
+      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
+      await this.applyImportedAgentTitle(snapshot);
+      await this.forwardAgentUpdate(snapshot);
+      const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
+      const agentPayload = await this.buildAgentPayload(snapshot);
+      this.emit({
+        type: "status",
+        payload: {
+          status: "agent_resumed",
+          agentId: snapshot.id,
+          requestId,
+          timelineSize,
+          agent: agentPayload,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.sessionLogger.error({ err: error }, "Failed to import agent");
+      this.emit({
+        type: "status",
+        payload: {
+          status: "agent_create_failed",
+          requestId,
+          error: message,
+        },
+      });
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to import agent: ${message}`,
+        },
+      });
+    }
+  }
+
+  private async applyImportedAgentTitle(snapshot: ManagedAgent): Promise<void> {
+    const initialPrompt = getFirstUserMessageText(this.agentManager.getTimeline(snapshot.id));
+    if (!initialPrompt) {
+      return;
+    }
+
+    const { explicitTitle, provisionalTitle } = resolveCreateAgentTitles({
+      configTitle: snapshot.config.title,
+      initialPrompt,
+    });
+    if (!explicitTitle && provisionalTitle) {
+      await this.agentManager.setTitle(snapshot.id, provisionalTitle);
+    }
+
+    scheduleAgentMetadataGeneration({
+      agentManager: this.agentManager,
+      agentId: snapshot.id,
+      cwd: snapshot.cwd,
+      initialPrompt,
+      explicitTitle,
+      hubcodeHome: this.hubcodeHome,
+      logger: this.sessionLogger,
+    });
   }
 
   private async handleRefreshAgentRequest(
