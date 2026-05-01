@@ -573,13 +573,39 @@ export class IndexingService {
       await this.persist(workspaceId, initial);
       this.logger.info({ workspaceId }, "auto-enabled indexing for new workspace");
 
-      if (this.reindexTrigger) {
-        void this.reindexTrigger(workspaceId).catch((err) =>
-          this.logger.info({ err, workspaceId }, "auto-reindex on workspace add failed"),
-        );
-      }
+      // Lazy reindex: do NOT fire the indexer here. Worktrees of the same
+      // repo each cost ~25s of CPU on `npm run dev`-sized projects (284 files
+      // → 1.8k nodes → 17.5k edges), and most are throwaway one-task spaces
+      // that never need codegraph search. We instead fire the reindex on
+      // first agent creation in the workspace (see triggerReindexIfPending),
+      // and via the existing `reindex` RPC the UI calls when the user opens
+      // a codegraph-aware panel.
     } catch (err) {
       this.logger.debug({ err, workspaceId }, "autoEnableForNewWorkspace failed (ignored)");
+    }
+  }
+
+  /**
+   * Fire-and-forget reindex if the workspace has indexing enabled but no
+   * `lastIndexedAt` yet. Idempotent: subsequent calls are no-ops once the
+   * workspace has been indexed at least once. Called from agent-creation
+   * paths so the index is ready by the time the user gives the agent a
+   * codegraph-flavored prompt.
+   */
+  async triggerReindexIfPending(workspaceId: string): Promise<void> {
+    try {
+      const record = await this.adapter.get(workspaceId);
+      if (!record?.indexing?.enabled) return;
+      if (record.indexing.status?.phase === "ready") return;
+      if (record.indexing.status?.phase === "indexing") return;
+      if (record.indexing.status?.phase === "installing") return;
+      if (!this.reindexTrigger) return;
+      this.logger.info({ workspaceId }, "triggering lazy reindex (first agent in workspace)");
+      void this.reindexTrigger(workspaceId).catch((err) =>
+        this.logger.info({ err, workspaceId }, "lazy reindex failed"),
+      );
+    } catch (err) {
+      this.logger.debug({ err, workspaceId }, "triggerReindexIfPending failed (ignored)");
     }
   }
 

@@ -3740,6 +3740,14 @@ export class Session {
         { agentId: snapshot.id, provider: snapshot.provider },
         `Created agent ${snapshot.id} (${snapshot.provider})`,
       );
+
+      // Lazy indexing: fire reindex when the first agent lands in this
+      // workspace. autoEnableForNewWorkspace turned the config on but
+      // skipped the heavy initial scan; do it now that we know the user
+      // is actually about to use this worktree for AI work.
+      if (this.indexingService && config.cwd) {
+        void this.indexingService.triggerReindexIfPending(config.cwd);
+      }
     } catch (error: any) {
       this.sessionLogger.error({ err: error }, "Failed to create agent");
       if (requestId) {
