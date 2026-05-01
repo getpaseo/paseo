@@ -173,6 +173,74 @@ it("creates a terminal through the worker and streams output", async () => {
   expect(snapshots).toBe(snapshotsBeforeOutput);
 });
 
+it("refreshes cached terminal state after worker output", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-state-"));
+  temporaryDirs.push(cwd);
+  manager = createWorkerTerminalManager();
+  const session = trackTerminal(
+    await manager.createTerminal({
+      cwd,
+      ...nodeTerminalCommand(`
+      process.stdout.write("worker-state-ready\\n");
+      setInterval(() => {}, 1000);
+    `),
+    }),
+  );
+
+  await waitForCondition(() => getVisibleText(session).includes("worker-state-ready"), 10000);
+
+  expect(getVisibleText(session)).toContain("worker-state-ready");
+});
+
+it("refreshes cached terminal title after worker title changes", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-title-"));
+  temporaryDirs.push(cwd);
+  manager = createWorkerTerminalManager();
+  const session = trackTerminal(
+    await manager.createTerminal({
+      cwd,
+      command: "/bin/sh",
+      args: ["-lc", "printf '\\033]0;Build Output\\007'; sleep 2"],
+    }),
+  );
+
+  await waitForCondition(() => session.getTitle() === "Build Output", 10000);
+
+  expect(session.getState().title).toBe("Build Output");
+});
+
+it("refreshes cached terminal size after worker resize", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-resize-"));
+  temporaryDirs.push(cwd);
+  manager = createWorkerTerminalManager();
+  const session = trackTerminal(await manager.createTerminal({ cwd }));
+
+  session.send({ type: "resize", rows: 10, cols: 40 });
+
+  await waitForCondition(() => {
+    const size = session.getSize();
+    return size.rows === 10 && size.cols === 40;
+  }, 10000);
+
+  expect(session.getState().rows).toBe(10);
+  expect(session.getState().cols).toBe(40);
+});
+
+it("captures terminal output from the worker authority", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-capture-"));
+  temporaryDirs.push(cwd);
+  manager = createWorkerTerminalManager();
+  const session = trackTerminal(await manager.createTerminal({ cwd }));
+
+  session.send({ type: "input", data: "echo hello world\r" });
+
+  await waitForCondition(() => getVisibleText(session).includes("hello world"), 10000);
+
+  const capture = await manager.captureTerminal(session.id);
+  expect(capture.lines.join("\n")).toContain("hello world");
+  expect(capture.totalLines).toBeGreaterThan(0);
+});
+
 it("does not surface fire-and-forget send timeouts as unhandled rejections", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({

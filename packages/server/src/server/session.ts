@@ -42,7 +42,7 @@ import {
   type WorkspaceStateBucket,
 } from "./messages.js";
 import type { TerminalManager, TerminalsChangedEvent } from "../terminal/terminal-manager.js";
-import { captureTerminalLines, type TerminalSession } from "../terminal/terminal.js";
+import type { TerminalSession } from "../terminal/terminal.js";
 import { TerminalOutputCoalescer } from "../terminal/terminal-output-coalescer.js";
 import {
   TerminalStreamOpcode,
@@ -9647,7 +9647,7 @@ export class Session {
     this.ensureTerminalExitSubscription(session);
 
     try {
-      const capture = captureTerminalLines(session, {
+      const capture = await this.terminalManager.captureTerminal(msg.terminalId, {
         start: msg.start,
         end: msg.end,
         stripAnsi: msg.stripAnsi,

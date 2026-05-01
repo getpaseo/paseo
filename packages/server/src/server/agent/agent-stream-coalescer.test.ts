@@ -103,7 +103,7 @@ describe("AgentStreamCoalescer", () => {
     expect(coalescer.handle("agent-1", assistant("lo"))).toBe(true);
 
     expect(flushes).toEqual([]);
-    await vi.advanceTimersByTimeAsync(199);
+    await vi.advanceTimersByTimeAsync(59);
     expect(flushes).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(1);
@@ -119,7 +119,7 @@ describe("AgentStreamCoalescer", () => {
   test("uses constructor windowMs instead of a hard-coded value", async () => {
     const { coalescer, flushes } = createHarness(10);
 
-    expect(AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS).toBe(200);
+    expect(AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS).toBe(60);
     expect(coalescer.handle("agent-1", assistant("fast"))).toBe(true);
 
     await vi.advanceTimersByTimeAsync(9);
@@ -203,7 +203,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", reasoning("r1"));
     coalescer.handle("agent-1", assistant("a2"));
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -231,7 +231,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", assistant("a2"));
     coalescer.handle("agent-1", reasoning("r2"));
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes.map((flush) => flush.item)).toEqual([
       { type: "assistant_message", text: "a1" },
       { type: "reasoning", text: "r1" },
@@ -246,7 +246,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", assistant("c", { provider: "codex" }));
     coalescer.handle("agent-1", assistant("o", { provider: "opencode" }));
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -267,7 +267,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", assistant("one", { turnId: "turn-1" }));
     coalescer.handle("agent-1", assistant("two", { turnId: "turn-2" }));
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -290,7 +290,7 @@ describe("AgentStreamCoalescer", () => {
     expect(coalescer.handle("agent-1", assistant(""))).toBe(true);
     expect(coalescer.handle("agent-2", reasoning(""))).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([]);
   });
 
@@ -302,7 +302,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", assistant("\t"));
     coalescer.handle("agent-1", assistant(" mixed \n\t whitespace "));
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -332,7 +332,7 @@ describe("AgentStreamCoalescer", () => {
       coalescer.handle("agent-1", assistant(chunk));
     }
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -350,7 +350,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", assistant("b"));
     coalescer.handle("agent-2", assistant("y"));
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -431,7 +431,7 @@ describe("AgentStreamCoalescer", () => {
       },
     ]);
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -452,7 +452,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", assistant("manual"));
     coalescer.flushFor("agent-1");
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -468,7 +468,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", assistant("durable"));
     coalescer.flushAndDiscard("agent-1");
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -532,7 +532,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", timeline(firstItem));
     coalescer.handle("agent-1", assistant("llo"));
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
       {
         agentId: "agent-1",
@@ -552,7 +552,7 @@ describe("AgentStreamCoalescer", () => {
     expect(coalescer.handle("agent-1", toolCall({ output: "first" }))).toBe(true);
     expect(coalescer.handle("agent-1", toolCall({ output: "second" }))).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
 
     expect(flushes).toEqual([
       {
@@ -583,7 +583,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", toolCall({ callId: "tool-1", output: "one-b" }));
     coalescer.handle("agent-1", toolCall({ callId: "tool-2", output: "two-b" }));
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
 
     expect(flushes.map((flush) => flush.item)).toEqual([
       {
@@ -651,7 +651,7 @@ describe("AgentStreamCoalescer", () => {
     coalescer.handle("agent-1", toolCall({ output: "latest" }));
     coalescer.handle("agent-1", assistant("b"));
 
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(60);
 
     expect(flushes.map((flush) => flush.item)).toEqual([
       { type: "assistant_message", text: "a" },

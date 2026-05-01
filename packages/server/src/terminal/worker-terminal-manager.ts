@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { TerminalState } from "../shared/messages.js";
 import type {
   ClientMessage,
+  CaptureTerminalLinesResult,
   ServerMessage,
   TerminalCommandFinishedInfo,
   TerminalExitInfo,
@@ -281,6 +282,103 @@ export function createWorkerTerminalManager(
     return record;
   }
 
+  function handleTerminalMessageEvent(
+    message: Extract<TerminalWorkerToParentMessage, { type: "terminalMessage" }>,
+  ): void {
+    const record = recordsById.get(message.terminalId);
+    if (!record) {
+      return;
+    }
+    if (message.message.type === "snapshot") {
+      record.state = message.message.state;
+    }
+    for (const listener of Array.from(record.messageListeners)) {
+      listener(message.message);
+    }
+  }
+
+  function handleTerminalStateUpdatedEvent(
+    message: Extract<TerminalWorkerToParentMessage, { type: "terminalStateUpdated" }>,
+  ): void {
+    const record = recordsById.get(message.terminalId);
+    if (!record) {
+      return;
+    }
+    record.state = message.state;
+  }
+
+  function handleTerminalExitEvent(
+    message: Extract<TerminalWorkerToParentMessage, { type: "terminalExit" }>,
+  ): void {
+    const record = recordsById.get(message.terminalId);
+    if (!record) {
+      return;
+    }
+    record.exitInfo = message.info;
+    for (const listener of Array.from(record.exitListeners)) {
+      listener(message.info);
+    }
+    record.exitListeners.clear();
+    removeRecord(message.terminalId);
+    emitTerminalsChanged({
+      cwd: record.info.cwd,
+      terminals: listTerminalItemsForCwd(record.info.cwd),
+    });
+  }
+
+  function handleTerminalTitleChangeEvent(
+    message: Extract<TerminalWorkerToParentMessage, { type: "terminalTitleChange" }>,
+  ): void {
+    const record = recordsById.get(message.terminalId);
+    if (!record) {
+      return;
+    }
+    const nextState = { ...record.state };
+    if (message.title) {
+      nextState.title = message.title;
+    } else {
+      delete nextState.title;
+    }
+    record.info = {
+      ...record.info,
+      ...(message.title ? { title: message.title } : { title: undefined }),
+    };
+    record.state = nextState;
+    for (const listener of Array.from(record.titleChangeListeners)) {
+      listener(message.title);
+    }
+    emitTerminalsChanged({
+      cwd: record.info.cwd,
+      terminals: listTerminalItemsForCwd(record.info.cwd),
+    });
+  }
+
+  function handleTerminalCommandFinishedEvent(
+    message: Extract<TerminalWorkerToParentMessage, { type: "terminalCommandFinished" }>,
+  ): void {
+    const record = recordsById.get(message.terminalId);
+    if (!record) {
+      return;
+    }
+    for (const listener of Array.from(record.commandFinishedListeners)) {
+      listener(message.info);
+    }
+  }
+
+  function handleTerminalsChangedEvent(
+    message: Extract<TerminalWorkerToParentMessage, { type: "terminalsChanged" }>,
+  ): void {
+    emitTerminalsChanged({
+      cwd: message.cwd,
+      terminals: message.terminals.map((terminal) => ({
+        id: terminal.id,
+        name: terminal.name,
+        cwd: terminal.cwd,
+        ...(terminal.title ? { title: terminal.title } : {}),
+      })),
+    });
+  }
+
   function handleWorkerEvent(message: TerminalWorkerToParentMessage): void {
     switch (message.type) {
       case "terminalCreated": {
@@ -298,77 +396,32 @@ export function createWorkerTerminalManager(
       }
 
       case "terminalMessage": {
-        const record = recordsById.get(message.terminalId);
-        if (!record) {
-          return;
-        }
-        if (message.message.type === "snapshot") {
-          record.state = message.message.state;
-        }
-        for (const listener of Array.from(record.messageListeners)) {
-          listener(message.message);
-        }
+        handleTerminalMessageEvent(message);
+        return;
+      }
+
+      case "terminalStateUpdated": {
+        handleTerminalStateUpdatedEvent(message);
         return;
       }
 
       case "terminalExit": {
-        const record = recordsById.get(message.terminalId);
-        if (!record) {
-          return;
-        }
-        record.exitInfo = message.info;
-        for (const listener of Array.from(record.exitListeners)) {
-          listener(message.info);
-        }
-        record.exitListeners.clear();
-        removeRecord(message.terminalId);
-        emitTerminalsChanged({
-          cwd: record.info.cwd,
-          terminals: listTerminalItemsForCwd(record.info.cwd),
-        });
+        handleTerminalExitEvent(message);
         return;
       }
 
       case "terminalTitleChange": {
-        const record = recordsById.get(message.terminalId);
-        if (!record) {
-          return;
-        }
-        record.info = {
-          ...record.info,
-          ...(message.title ? { title: message.title } : { title: undefined }),
-        };
-        for (const listener of Array.from(record.titleChangeListeners)) {
-          listener(message.title);
-        }
-        emitTerminalsChanged({
-          cwd: record.info.cwd,
-          terminals: listTerminalItemsForCwd(record.info.cwd),
-        });
+        handleTerminalTitleChangeEvent(message);
         return;
       }
 
       case "terminalCommandFinished": {
-        const record = recordsById.get(message.terminalId);
-        if (!record) {
-          return;
-        }
-        for (const listener of Array.from(record.commandFinishedListeners)) {
-          listener(message.info);
-        }
+        handleTerminalCommandFinishedEvent(message);
         return;
       }
 
       case "terminalsChanged": {
-        emitTerminalsChanged({
-          cwd: message.cwd,
-          terminals: message.terminals.map((terminal) => ({
-            id: terminal.id,
-            name: terminal.name,
-            cwd: terminal.cwd,
-            ...(terminal.title ? { title: terminal.title } : {}),
-          })),
-        });
+        handleTerminalsChangedEvent(message);
         return;
       }
     }
@@ -487,6 +540,19 @@ export function createWorkerTerminalManager(
         terminalId: id,
         ...(options ? { options } : {}),
       });
+    },
+
+    async captureTerminal(
+      id: string,
+      options?: { start?: number; end?: number; stripAnsi?: boolean },
+    ): Promise<CaptureTerminalLinesResult> {
+      return (await sendRequest({
+        type: "captureTerminal",
+        terminalId: id,
+        ...(options?.start === undefined ? {} : { start: options.start }),
+        ...(options?.end === undefined ? {} : { end: options.end }),
+        ...(options?.stripAnsi === undefined ? {} : { stripAnsi: options.stripAnsi }),
+      })) as CaptureTerminalLinesResult;
     },
 
     listDirectories(): string[] {

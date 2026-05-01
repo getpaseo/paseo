@@ -1,4 +1,9 @@
-import { createTerminal, type TerminalSession } from "./terminal.js";
+import {
+  captureTerminalLines,
+  createTerminal,
+  type CaptureTerminalLinesResult,
+  type TerminalSession,
+} from "./terminal.js";
 import { resolve, sep, win32, posix } from "node:path";
 
 export interface TerminalListItem {
@@ -33,6 +38,10 @@ export interface TerminalManager {
     id: string,
     options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
   ): Promise<void>;
+  captureTerminal(
+    id: string,
+    options?: { start?: number; end?: number; stripAnsi?: boolean },
+  ): Promise<CaptureTerminalLinesResult>;
   listDirectories(): string[];
   killAll(): void;
   subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void;
@@ -218,6 +227,20 @@ export function createTerminalManager(): TerminalManager {
       } finally {
         removeSessionById(id, { kill: false });
       }
+    },
+
+    async captureTerminal(
+      id: string,
+      options?: { start?: number; end?: number; stripAnsi?: boolean },
+    ): Promise<CaptureTerminalLinesResult> {
+      const session = terminalsById.get(id);
+      if (!session) {
+        return {
+          lines: [],
+          totalLines: 0,
+        };
+      }
+      return captureTerminalLines(session, options);
     },
 
     listDirectories(): string[] {

@@ -9,6 +9,24 @@ import type { StreamItem } from "@/types/stream";
 import type { StreamSegmentRenderers, StreamViewportHandle } from "./stream-strategy";
 import { createWebStreamStrategy } from "./stream-strategy-web";
 
+vi.hoisted(() => {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: () => ({
+      addEventListener: () => {},
+      addListener: () => {},
+      dispatchEvent: () => false,
+      matches: false,
+      media: "",
+      onchange: null,
+      removeEventListener: () => {},
+      removeListener: () => {},
+    }),
+  });
+});
+
+vi.mock("./use-web-scrollbar", () => ({ useWebElementScrollbar: () => null }));
+
 function userMessage(index: number): StreamItem {
   return {
     kind: "user_message",

@@ -903,6 +903,166 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("streams Codex assistant message deltas and does not replay completed text", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-1",
+      delta: "Hel",
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-1",
+      delta: "lo",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "assistant-item-1",
+        type: "agentMessage",
+        text: "Hello",
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "Hel" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "lo" },
+      },
+    ]);
+  });
+
+  test("emits only the missing assistant suffix when completed text extends streamed deltas", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-2",
+      delta: "Hel",
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-item-2",
+      delta: "lo",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "assistant-item-2",
+        type: "agentMessage",
+        text: "Hello!",
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "Hel" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "lo" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "assistant_message", text: "!" },
+      },
+    ]);
+  });
+
+  test("streams Codex reasoning deltas and does not replay completed reasoning", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-1",
+      delta: "Think",
+    });
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-1",
+      delta: "ing",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "reasoning-item-1",
+        type: "reasoning",
+        summary: ["Thinking"],
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "Think" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "ing" },
+      },
+    ]);
+  });
+
+  test("emits only the missing reasoning suffix when completed reasoning extends streamed deltas", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-2",
+      delta: "Think",
+    });
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-2",
+      delta: "ing",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "reasoning-item-2",
+        type: "reasoning",
+        summary: ["Thinking!"],
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "Think" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "ing" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "!" },
+      },
+    ]);
+  });
+
   test("approving a synthetic Codex plan permission disables plan mode, preserves fast mode, and returns follow-up prompt", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },

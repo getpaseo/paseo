@@ -28,6 +28,7 @@ import {
 import Animated, { Keyframe, runOnJS } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check, CheckCircle } from "lucide-react-native";
+import { isWeb } from "@/constants/platform";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
 
@@ -42,6 +43,11 @@ type Alignment = "start" | "center" | "end";
 interface Rect {
   x: number;
   y: number;
+  width: number;
+  height: number;
+}
+
+interface Size {
   width: number;
   height: number;
 }
@@ -159,6 +165,55 @@ function computePosition({
   );
 
   return { x, y, actualPlacement };
+}
+
+interface SharedDropdownContentProps {
+  collapsable: false;
+  testID?: string;
+  style: StyleProp<ViewStyle>;
+}
+
+function renderDropdownSurface(input: {
+  isWebSurface: boolean;
+  sharedProps: SharedDropdownContentProps;
+  scrollable: boolean;
+  scrollViewportStyle: StyleProp<ViewStyle>;
+  content: ReactElement;
+  onExited: () => void;
+}): ReactElement {
+  const { isWebSurface, sharedProps, scrollable, scrollViewportStyle, content, onExited } = input;
+
+  const body = scrollable ? (
+    <ScrollView
+      bounces={false}
+      showsVerticalScrollIndicator
+      style={scrollViewportStyle}
+      contentContainerStyle={DROPDOWN_SCROLL_CONTENT_STYLE}
+    >
+      {content}
+    </ScrollView>
+  ) : (
+    content
+  );
+
+  if (isWebSurface) {
+    return <View {...sharedProps}>{body}</View>;
+  }
+
+  return (
+    <Animated.View
+      {...sharedProps}
+      entering={contentEntering}
+      exiting={contentExiting.withCallback((finished) => {
+        "worklet";
+        if (finished) {
+          runOnJS(onExited)();
+        }
+      })}
+    >
+      {body}
+    </Animated.View>
+  );
 }
 
 export function DropdownMenu({
@@ -314,8 +369,10 @@ export function DropdownMenuContent({
   width,
   minWidth = 180,
   maxWidth,
+  maxHeight,
   fullWidth = false,
   horizontalPadding = 16,
+  scrollable = false,
   testID,
 }: PropsWithChildren<{
   side?: Placement;
@@ -324,8 +381,10 @@ export function DropdownMenuContent({
   width?: number;
   minWidth?: number;
   maxWidth?: number;
+  maxHeight?: number;
   fullWidth?: boolean;
   horizontalPadding?: number;
+  scrollable?: boolean;
   testID?: string;
 }>): ReactElement | null {
   const { open, setOpen, triggerRef, flushPendingSelect } =
@@ -334,9 +393,23 @@ export function DropdownMenuContent({
   const webScrollbarStyle = useWebScrollbarStyle();
   const [closing, setClosing] = useState(false);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
-  const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
+  const [contentSize, setContentSize] = useState<Size | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const [actualPlacement, setActualPlacement] = useState<Placement>(side);
+  const visibleContentSize = useMemo(() => {
+    if (!contentSize) return null;
+    if (!scrollable) return contentSize;
+
+    const { height: screenHeight } = Dimensions.get("window");
+    const viewportMaxHeight = Math.max(screenHeight - 16, 0);
+    const resolvedMaxHeight =
+      typeof maxHeight === "number" ? Math.min(maxHeight, viewportMaxHeight) : viewportMaxHeight;
+
+    return {
+      width: contentSize.width,
+      height: Math.min(contentSize.height, resolvedMaxHeight),
+    };
+  }, [contentSize, scrollable, maxHeight]);
 
   // Keep Modal mounted during exit animation
   useEffect(() => {
@@ -395,7 +468,7 @@ export function DropdownMenuContent({
 
   // Calculate position when we have both measurements
   useEffect(() => {
-    if (!triggerRect || !contentSize) return;
+    if (!triggerRect || !visibleContentSize) return;
 
     const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
     // measureInWindow returns screen coordinates including status bar
@@ -409,7 +482,7 @@ export function DropdownMenuContent({
 
     const result = computePosition({
       triggerRect,
-      contentSize,
+      contentSize: visibleContentSize,
       displayArea,
       placement: side,
       alignment: align,
@@ -420,12 +493,17 @@ export function DropdownMenuContent({
     const x = fullWidth ? horizontalPadding : result.x;
     setPosition({ x, y: result.y });
     setActualPlacement(result.actualPlacement);
-  }, [triggerRect, contentSize, side, align, offset, fullWidth, horizontalPadding]);
+  }, [triggerRect, visibleContentSize, side, align, offset, fullWidth, horizontalPadding]);
 
-  const handleContentLayout = useCallback(
+  const handleMeasuredContentLayout = useCallback(
     (event: { nativeEvent: { layout: { width: number; height: number } } }) => {
       const { width: w, height: h } = event.nativeEvent.layout;
-      setContentSize({ width: w, height: h });
+      setContentSize((current) => {
+        if (current && current.width === w && current.height === h) {
+          return current;
+        }
+        return { width: w, height: h };
+      });
     },
     [],
   );
@@ -460,8 +538,26 @@ export function DropdownMenuContent({
     actualPlacement,
     align,
   ]);
+  const sharedContentProps = useMemo(
+    () => ({
+      collapsable: false as const,
+      testID,
+      style: contentStyle,
+    }),
+    [testID, contentStyle],
+  );
+  const scrollViewportStyle = useMemo(
+    () => [webScrollbarStyle, visibleContentSize ? { height: visibleContentSize.height } : null],
+    [visibleContentSize, webScrollbarStyle],
+  );
 
   if (!modalVisible) return null;
+
+  const content = (
+    <View collapsable={false} onLayout={handleMeasuredContentLayout}>
+      {children}
+    </View>
+  );
 
   return (
     <Modal
@@ -480,30 +576,16 @@ export function DropdownMenuContent({
           onPress={handleClose}
           testID={testID ? `${testID}-backdrop` : undefined}
         />
-        {!closing ? (
-          <Animated.View
-            entering={contentEntering}
-            exiting={contentExiting.withCallback((finished) => {
-              "worklet";
-              if (finished) {
-                runOnJS(setModalVisible)(false);
-              }
-            })}
-            collapsable={false}
-            testID={testID}
-            onLayout={handleContentLayout}
-            style={contentStyle}
-          >
-            <ScrollView
-              bounces={false}
-              showsVerticalScrollIndicator
-              style={webScrollbarStyle}
-              contentContainerStyle={DROPDOWN_SCROLL_CONTENT_STYLE}
-            >
-              {children}
-            </ScrollView>
-          </Animated.View>
-        ) : null}
+        {!closing
+          ? renderDropdownSurface({
+              isWebSurface: isWeb,
+              sharedProps: sharedContentProps,
+              scrollable,
+              scrollViewportStyle,
+              content,
+              onExited: () => setModalVisible(false),
+            })
+          : null}
       </View>
     </Modal>
   );
