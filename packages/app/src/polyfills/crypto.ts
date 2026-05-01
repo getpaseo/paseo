@@ -47,11 +47,6 @@ export function polyfillCrypto(): void {
     g.crypto = {} as Crypto;
   }
 
-  if (typeof g.crypto.randomUUID !== "function") {
-    g.crypto.randomUUID = () =>
-      ExpoCrypto.randomUUID() as `${string}-${string}-${string}-${string}-${string}`;
-  }
-
   if (typeof g.crypto.getRandomValues !== "function") {
     g.crypto.getRandomValues = <T extends ArrayBufferView | null>(array: T): T => {
       if (array === null) return array;
@@ -59,5 +54,18 @@ export function polyfillCrypto(): void {
         array as unknown as Parameters<typeof ExpoCrypto.getRandomValues>[0],
       ) as unknown as T;
     };
+  }
+
+  if (typeof g.crypto.randomUUID !== "function") {
+    g.crypto.randomUUID = (() => {
+      const bytes = new Uint8Array(16);
+      g.crypto!.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex: string[] = [];
+      for (let i = 0; i < 16; i++) hex.push(bytes[i].toString(16).padStart(2, "0"));
+      const h = hex.join("");
+      return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}` as `${string}-${string}-${string}-${string}-${string}`;
+    }) as Crypto["randomUUID"];
   }
 }

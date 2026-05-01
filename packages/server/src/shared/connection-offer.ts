@@ -1,4 +1,3 @@
-import { Buffer } from "node:buffer";
 import { z } from "zod";
 
 /**
@@ -24,7 +23,10 @@ export type ConnectionOffer = ConnectionOfferV2;
 function decodeBase64UrlToUtf8(input: string): string {
   const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
   const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
-  return Buffer.from(padded, "base64").toString("utf8");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
 }
 
 export function decodeOfferFragmentPayload(encoded: string): unknown {
