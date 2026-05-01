@@ -18,6 +18,7 @@ describe.skip("workspace source of truth consumption", () => {
       workspaceKind: "local_checkout",
       name: "feat/workspace-sot",
       status: "running",
+      archivingAt: null,
       diffStat: null,
       scripts: [],
     };

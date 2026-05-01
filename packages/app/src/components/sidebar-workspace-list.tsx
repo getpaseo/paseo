@@ -1550,7 +1550,7 @@ function WorkspaceRowWithMenu({
       : "idle",
   );
   const isWorktree = workspace.workspaceKind === "worktree";
-  const isArchiving = isWorktree ? archiveStatus === "pending" : isArchivingWorkspace;
+  const isArchiving = isWorktree ? workspace.archivingAt !== null : isArchivingWorkspace;
   const redirectAfterArchive = useCallback(() => {
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,

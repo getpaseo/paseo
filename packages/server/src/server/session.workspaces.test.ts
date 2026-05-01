@@ -11,6 +11,83 @@ import {
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
 
+interface SessionTestAccess {
+  projectRegistry: {
+    list(...args: unknown[]): Promise<unknown[]>;
+    archive(projectId: string, archivedAt: string): Promise<void>;
+    get(id: string): Promise<unknown>;
+    upsert(record: unknown): Promise<unknown>;
+  };
+  agentStorage: {
+    list(...args: unknown[]): Promise<unknown[]>;
+    get(agentId: string): Promise<unknown>;
+  };
+  workspaceRegistry: {
+    list(...args: unknown[]): Promise<unknown[]>;
+    archive(workspaceId: string, archivedAt: string): Promise<void>;
+    get(workspaceId: string): Promise<unknown>;
+    upsert(record: unknown): Promise<unknown>;
+  };
+  agentUpdatesSubscription: unknown;
+  workspaceUpdatesSubscription: unknown;
+  interruptAgentIfRunning(agentId: string): unknown;
+  reconcileActiveWorkspaceRecords(...args: unknown[]): Promise<Set<string>>;
+  reconcileWorkspaceRecord(workspaceId: string): Promise<Record<string, unknown>>;
+  reconcileAndEmitWorkspaceUpdates(...args: unknown[]): Promise<unknown>;
+  forwardAgentUpdate(...args: unknown[]): Promise<unknown>;
+  handleArchiveAgentRequest(agentId: string, requestId: string): Promise<unknown>;
+  handleMessage(message: unknown): Promise<unknown>;
+  handleCreatePaseoWorktreeRequest(params: unknown): Promise<unknown>;
+  listAgentPayloads(...args: unknown[]): Promise<unknown[]>;
+  listFetchWorkspacesEntries(params: unknown): Promise<ListFetchResult>;
+  listFetchAgentsEntries(params: unknown): Promise<ListFetchResult>;
+  resolveAgentIdentifier(identifier: string): Promise<unknown>;
+  getAgentPayloadById(agentId: string): Promise<unknown>;
+  buildProjectPlacementForCwd(cwd: string): Promise<unknown>;
+  buildProjectPlacement(cwd: string): Promise<unknown>;
+  resolveRegisteredWorkspaceIdForCwd(
+    cwd: string,
+    workspaces: ReturnType<typeof createPersistedWorkspaceRecord>[],
+  ): string;
+  buildWorkspaceDescriptorMap(...args: unknown[]): Promise<Map<string, unknown>>;
+  describeWorkspaceRecord(...args: unknown[]): Promise<unknown>;
+  describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<unknown>;
+  markWorkspaceArchiving(workspaceIds: Iterable<string>, archivingAt: string): void;
+  clearWorkspaceArchiving(workspaceIds: Iterable<string>): void;
+  emitWorkspaceUpdateForCwd(...args: unknown[]): Promise<unknown>;
+  emitWorkspaceUpdatesForWorkspaceIds(...args: unknown[]): Promise<unknown>;
+  emit(message: unknown): void;
+  onMessage(message: unknown): void;
+  getAvailableEditorTargets(...args: unknown[]): Promise<unknown>;
+  filterEditorsForClient(...args: unknown[]): unknown;
+  openEditorTarget(input: { editorId: string; path: string }): Promise<unknown>;
+  resolveAvailableEditorTargets(...args: unknown[]): Promise<unknown>;
+  paseoHome: string;
+  terminalManager: {
+    killTerminal(id: string): unknown;
+  } | null;
+  workspaceGitService: {
+    getCheckout: (cwd: string) => Promise<unknown>;
+    getSnapshot: (cwd: string, options?: unknown) => Promise<WorkspaceGitRuntimeSnapshot>;
+    peekSnapshot: (cwd: string) => WorkspaceGitRuntimeSnapshot | null;
+    registerWorkspace: (params: { cwd: string }, listener: unknown) => { unsubscribe: () => void };
+  };
+}
+
+interface ListFetchResult {
+  entries: Array<Record<string, unknown>>;
+  pageInfo: Record<string, unknown>;
+  nextCursor?: string | null;
+  total?: number;
+  [key: string]: unknown;
+}
+
+type TestSession = SessionTestAccess;
+
+function asTestSession(session: Session | TestSession): TestSession {
+  return session as unknown as TestSession;
+}
+
 function makeAgent(input: {
   id: string;
   cwd: string;
@@ -1882,6 +1959,7 @@ describe("workspace aggregation", () => {
       projectKind: project.kind,
       workspaceKind: workspace.kind,
       name: "main",
+      archivingAt: null,
       status: "done",
       activityAt: null,
       diffStat: null,

@@ -33,6 +33,7 @@ function workspace(
     workspaceDirectory: input.projectRootPath ?? input.id,
     name: input.name,
     status: input.status,
+    archivingAt: null,
     diffStat: null,
     scripts: [],
   };

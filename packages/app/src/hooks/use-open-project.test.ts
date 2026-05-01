@@ -79,6 +79,7 @@ describe("openProjectDirectly", () => {
             projectKind: "git",
             workspaceKind: "checkout",
             name: "project",
+            archivingAt: null,
             status: "done",
             activityAt: null,
             diffStat: null,

@@ -3202,6 +3202,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     projectKind: z.enum(["git", "non_git"]),
     workspaceKind: z.enum(["local_checkout", "worktree", "directory"]),
     name: z.string(),
+    archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     activityAt: z.string().nullable(),
     diffStat: z

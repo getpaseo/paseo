@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSessionStore } from "@/stores/session-store";
 import {
   __resetCheckoutGitActionsStoreForTests,
+  isLocalWorktreeArchivePending,
   useCheckoutGitActionsStore,
 } from "@/stores/checkout-git-actions-store";
 
@@ -60,5 +61,31 @@ describe("checkout-git-actions-store", () => {
 
     vi.advanceTimersByTime(1000);
     expect(store.getStatus({ serverId, cwd, actionId: "commit" })).toBe("idle");
+  });
+
+  it("reports local archive pending only while the archive action is in flight", async () => {
+    vi.useRealTimers();
+    const deferred = createDeferred<Record<string, never>>();
+    const client = {
+      archiveHubcodeWorktree: vi.fn(() => deferred.promise),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...(state.sessions as any),
+        [serverId]: { client, workspaces: new Map() } as any,
+      },
+    }));
+
+    const archive = useCheckoutGitActionsStore
+      .getState()
+      .archiveWorktree({ serverId, cwd, worktreePath: cwd });
+
+    expect(isLocalWorktreeArchivePending({ serverId, cwd })).toBe(true);
+
+    deferred.resolve({});
+    await archive;
+
+    expect(isLocalWorktreeArchivePending({ serverId, cwd })).toBe(false);
   });
 });

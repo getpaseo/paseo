@@ -16,6 +16,7 @@ function workspace(serverId: string, cwd: string): SidebarWorkspaceEntry {
     workspaceKind: "local_checkout",
     name: cwd,
     statusBucket: "done",
+    archivingAt: null,
     diffStat: null,
     scripts: [],
     hasRunningScripts: false,

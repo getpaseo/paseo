@@ -707,6 +707,7 @@ export class Session {
     string,
     import("../shared/messages.js").WorkspaceSetupSnapshot
   >();
+  private readonly archivingByWorkspaceId = new Map<string, string>();
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
     handler: VoiceSpeakHandler,
@@ -1134,6 +1135,21 @@ export class Session {
     }
 
     return false;
+  }
+
+  markWorkspaceArchivingForExternalMutation(
+    workspaceIds: Iterable<string>,
+    archivingAt: string,
+  ): void {
+    this.markWorkspaceArchiving(workspaceIds, archivingAt);
+  }
+
+  clearWorkspaceArchivingForExternalMutation(workspaceIds: Iterable<string>): void {
+    this.clearWorkspaceArchiving(workspaceIds);
+  }
+
+  async emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds: Iterable<string>): Promise<void> {
+    await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
   }
 
   private emitShareScopeRejection(
@@ -6225,6 +6241,7 @@ export class Session {
       projectKind: resolvedProjectRecord?.kind ?? "non_git",
       workspaceKind: workspace.kind,
       name: workspace.displayName,
+      archivingAt: null,
       status: "done",
       activityAt: null,
       diffStat: null,
@@ -6344,14 +6361,15 @@ export class Session {
       // (empty git repo, missing worktree dir, corrupt index) doesn't
       // block the rest of the workspace list from loading.
       try {
-        descriptorsByWorkspaceId.set(
-          workspace.workspaceId,
-          await this.buildWorkspaceDescriptor({
-            workspace,
-            projectRecord,
-            includeGitData: options.includeGitData,
-          }),
-        );
+        const descriptor = await this.buildWorkspaceDescriptor({
+          workspace,
+          projectRecord,
+          includeGitData: options.includeGitData,
+        });
+        descriptorsByWorkspaceId.set(workspace.workspaceId, {
+          ...descriptor,
+          archivingAt: this.archivingByWorkspaceId.get(workspace.workspaceId) ?? null,
+        });
       } catch (err) {
         this.sessionLogger.warn(
           { err, workspaceId: workspace.workspaceId, cwd: workspace.cwd },
@@ -7865,6 +7883,18 @@ export class Session {
     }
 
     await this.processAudio(audio, format);
+  }
+
+  markWorkspaceArchiving(workspaceIds: Iterable<string>, archivingAt: string): void {
+    for (const workspaceId of workspaceIds) {
+      this.archivingByWorkspaceId.set(workspaceId, archivingAt);
+    }
+  }
+
+  clearWorkspaceArchiving(workspaceIds: Iterable<string>): void {
+    for (const workspaceId of workspaceIds) {
+      this.archivingByWorkspaceId.delete(workspaceId);
+    }
   }
 
   private async flushPendingAudioSegments(reason: string): Promise<void> {

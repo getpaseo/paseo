@@ -39,6 +39,7 @@ import {
 } from "@/stores/session-store";
 import { useDraftStore } from "@/stores/draft-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
+import { isLocalWorktreeArchivePending } from "@/stores/checkout-git-actions-store";
 import { sendOsNotification } from "@/utils/os-notifications";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import {
@@ -53,6 +54,7 @@ import { resolveProjectPlacement } from "@/utils/project-placement";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
+import { shouldSuppressWorkspaceUpsertForLocalArchive } from "@/contexts/session-workspace-upserts";
 import { isNative } from "@/constants/platform";
 
 // Re-export types from session-store and draft-store for backward compatibility
@@ -1171,7 +1173,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         removeWorkspace(serverId, message.payload.id);
         return;
       }
-      mergeWorkspaces(serverId, [normalizeWorkspaceDescriptor(message.payload.workspace)]);
+      const workspace = normalizeWorkspaceDescriptor(message.payload.workspace);
+      if (
+        shouldSuppressWorkspaceUpsertForLocalArchive({
+          serverId,
+          workspace,
+          isArchivePending: isLocalWorktreeArchivePending,
+        })
+      ) {
+        return;
+      }
+      mergeWorkspaces(serverId, [workspace]);
     });
 
     const unsubStatus = client.on("status", (message) => {
