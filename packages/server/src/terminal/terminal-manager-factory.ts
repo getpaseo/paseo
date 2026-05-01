@@ -3,7 +3,11 @@ import { createWorkerTerminalManager } from "./worker-terminal-manager.js";
 
 export type TerminalBackend = "in-process" | "worker";
 
-export function resolveTerminalBackend(env: NodeJS.ProcessEnv = process.env): TerminalBackend {
+// Only the field we read — accepts process.env directly, plain test stubs,
+// and Record<string, string | undefined> shapes without requiring NODE_ENV.
+type TerminalBackendEnv = { HUBCODE_TERMINAL_BACKEND?: string | undefined };
+
+export function resolveTerminalBackend(env: TerminalBackendEnv = process.env): TerminalBackend {
   // Default to in-process while the worker rollout bakes. Set
   // HUBCODE_TERMINAL_BACKEND=worker to opt in.
   return env.HUBCODE_TERMINAL_BACKEND === "worker" ? "worker" : "in-process";
