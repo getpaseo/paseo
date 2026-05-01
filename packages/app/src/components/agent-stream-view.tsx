@@ -292,6 +292,25 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isMobileBreakpoint: isMobile,
       });
     }, [isMobile, streamHead, streamItems]);
+    const inlineWorkingIndicatorItemId = useMemo(() => {
+      if (agent.status !== "running") {
+        return null;
+      }
+      const footerItem = baseRenderModel.segments.liveHead.find((item, index, items) => {
+        if (item.kind !== "assistant_message") {
+          return false;
+        }
+        return (
+          getStreamNeighborItem({
+            strategy: streamRenderStrategy,
+            items,
+            index,
+            relation: "below",
+          }) === undefined
+        );
+      });
+      return footerItem?.id ?? null;
+    }, [agent.status, baseRenderModel.segments.liveHead, streamRenderStrategy]);
     useImperativeHandle(
       ref,
       () => ({
@@ -590,21 +609,31 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           item.kind === "assistant_message" &&
           (nextItem?.kind === "user_message" ||
             (nextItem === undefined && agent.status !== "running"));
+        const isRunningAssistantTurnFooter =
+          item.kind === "assistant_message" && item.id === inlineWorkingIndicatorItemId;
+        let footer: ReactNode = null;
+        if (isRunningAssistantTurnFooter) {
+          footer = <InlineWorkingIndicatorSlot />;
+        } else if (isEndOfAssistantTurn) {
+          footer = (
+            <TurnCopyButtonSlot strategy={streamRenderStrategy} items={items} startIndex={index} />
+          );
+        }
 
         return (
           <StreamItemWrapper gapBelow={gapBelow}>
             {content}
-            {isEndOfAssistantTurn ? (
-              <TurnCopyButtonSlot
-                strategy={streamRenderStrategy}
-                items={items}
-                startIndex={index}
-              />
-            ) : null}
+            {footer}
           </StreamItemWrapper>
         );
       },
-      [getGapBetween, renderStreamItemContent, agent.status, streamRenderStrategy],
+      [
+        getGapBetween,
+        renderStreamItemContent,
+        agent.status,
+        streamRenderStrategy,
+        inlineWorkingIndicatorItemId,
+      ],
     );
 
     const pendingPermissionItems = useMemo(
@@ -612,7 +641,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [pendingPermissions, agentId],
     );
 
-    const showWorkingIndicator = agent.status === "running";
+    const showAuxiliaryWorkingIndicator =
+      agent.status === "running" && inlineWorkingIndicatorItemId === null;
     const pendingPermissionsNode = useMemo(
       () =>
         pendingPermissionItems.length > 0 ? (
@@ -626,12 +656,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
     const workingIndicatorNode = useMemo(
       () =>
-        showWorkingIndicator ? (
-          <View style={stylesheet.bottomBarWrapper}>
+        showAuxiliaryWorkingIndicator ? (
+          <View style={stylesheet.bottomBarWrapper} testID="stream-working-indicator-auxiliary">
             <WorkingIndicator />
           </View>
         ) : null,
-      [showWorkingIndicator],
+      [showAuxiliaryWorkingIndicator],
     );
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       return {
@@ -800,7 +830,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 export const AgentStreamView = memo(AgentStreamViewComponent);
 AgentStreamView.displayName = "AgentStreamView";
 
-function WorkingIndicator() {
+function WorkingIndicator({ variant = "auxiliary" }: { variant?: "auxiliary" | "inline" }) {
   const progress = useSharedValue(0);
 
   useEffect(() => {
@@ -852,13 +882,26 @@ function WorkingIndicator() {
     [dotThreeStyle],
   );
 
+  const containerStyle =
+    variant === "inline"
+      ? stylesheet.inlineWorkingIndicatorFrame
+      : stylesheet.workingIndicatorBubble;
+
   return (
-    <View style={stylesheet.workingIndicatorBubble}>
+    <View style={containerStyle}>
       <View style={stylesheet.workingDotsRow}>
         <Animated.View style={dotOneCombinedStyle} />
         <Animated.View style={dotTwoCombinedStyle} />
         <Animated.View style={dotThreeCombinedStyle} />
       </View>
+    </View>
+  );
+}
+
+function InlineWorkingIndicatorSlot() {
+  return (
+    <View style={stylesheet.inlineTurnFooter} testID="turn-working-indicator">
+      <WorkingIndicator variant="inline" />
     </View>
   );
 }
@@ -1226,6 +1269,17 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[2],
     gap: theme.spacing[2],
+  },
+  inlineTurnFooter: {
+    alignSelf: "flex-start",
+    marginTop: theme.spacing[2],
+    padding: theme.spacing[2],
+    paddingTop: 0,
+  },
+  inlineWorkingIndicatorFrame: {
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
   },
   workingIndicatorBubble: {
     flexDirection: "row",

@@ -11,6 +11,7 @@ import { AgentStreamView } from "./agent-stream-view";
 const assistantMessageCalls = vi.hoisted(
   () => [] as Array<{ message: string; spacing: string | undefined }>,
 );
+const turnCopyButtonCalls = vi.hoisted(() => [] as Array<{ getContent: () => string }>);
 
 const mockSessionState = vi.hoisted(() => ({
   sessions: {
@@ -121,7 +122,13 @@ vi.mock("./message", async () => {
     SpeakMessage: () => null,
     TodoListCard: () => null,
     ToolCall: () => null,
-    TurnCopyButton: () => null,
+    TurnCopyButton: (props: { getContent: () => string }) => {
+      turnCopyButtonCalls.push(props);
+      return ReactModule.createElement("button", {
+        "data-testid": "turn-copy-button",
+        type: "button",
+      });
+    },
     UserMessage: () => null,
   };
 });
@@ -174,6 +181,24 @@ function assistantBlock(params: {
   };
 }
 
+function runningToolCall(id: string): Extract<StreamItem, { kind: "tool_call" }> {
+  return {
+    kind: "tool_call",
+    id,
+    timestamp: new Date("2026-05-01T00:00:00.000Z"),
+    payload: {
+      source: "orchestrator",
+      data: {
+        toolCallId: id,
+        toolName: "bash",
+        arguments: "npm test",
+        result: null,
+        status: "executing",
+      },
+    },
+  };
+}
+
 describe("AgentStreamView", () => {
   let root: Root | null = null;
   let container: HTMLDivElement | null = null;
@@ -187,6 +212,7 @@ describe("AgentStreamView", () => {
     originalScrollTo = HTMLElement.prototype.scrollTo;
     HTMLElement.prototype.scrollTo = vi.fn();
     assistantMessageCalls.length = 0;
+    turnCopyButtonCalls.length = 0;
     mockSessionState.sessions.server.agentStreamHead = new Map();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -253,6 +279,137 @@ describe("AgentStreamView", () => {
     );
     expect(headCalls.map((call) => call.spacing)).toEqual(
       Array.from({ length: headCalls.length }, () => "compactTop"),
+    );
+  });
+
+  it("renders running dots in the assistant turn footer when live text is streaming", () => {
+    const headBlock = assistantBlock({
+      id: "group-1:head",
+      text: "Streaming paragraph",
+      blockIndex: 0,
+    });
+    mockSessionState.sessions.server.agentStreamHead.set("agent-1", [headBlock]);
+    const agent = {
+      id: "agent-1",
+      serverId: "server",
+      status: "running",
+      cwd: "/tmp/project",
+    } as never;
+
+    act(() => {
+      root?.render(
+        React.createElement(AgentStreamView, {
+          agentId: "agent-1",
+          serverId: "server",
+          agent,
+          streamItems: [],
+          pendingPermissions: new Map(),
+        }),
+      );
+    });
+
+    expect(container?.querySelector('[data-testid="turn-working-indicator"]')).not.toBeNull();
+    expect(
+      container?.querySelector('[data-testid="stream-working-indicator-auxiliary"]'),
+    ).toBeNull();
+    expect(container?.querySelector('[data-testid="turn-copy-button"]')).toBeNull();
+  });
+
+  it("only renders running dots on the live assistant row", () => {
+    const tailBlock = assistantBlock({
+      id: "group-1:block:0",
+      text: "History paragraph",
+      blockIndex: 0,
+    });
+    const headBlock = assistantBlock({
+      id: "group-2:head",
+      text: "Streaming paragraph",
+      blockIndex: 0,
+    });
+    mockSessionState.sessions.server.agentStreamHead.set("agent-1", [headBlock]);
+    const agent = {
+      id: "agent-1",
+      serverId: "server",
+      status: "running",
+      cwd: "/tmp/project",
+    } as never;
+
+    act(() => {
+      root?.render(
+        React.createElement(AgentStreamView, {
+          agentId: "agent-1",
+          serverId: "server",
+          agent,
+          streamItems: [tailBlock],
+          pendingPermissions: new Map(),
+        }),
+      );
+    });
+
+    expect(container?.querySelectorAll('[data-testid="turn-working-indicator"]')).toHaveLength(1);
+    expect(
+      container?.querySelector('[data-testid="stream-working-indicator-auxiliary"]'),
+    ).toBeNull();
+  });
+
+  it("keeps the auxiliary running dots when there is no live assistant row", () => {
+    mockSessionState.sessions.server.agentStreamHead.set("agent-1", [runningToolCall("tool-1")]);
+    const agent = {
+      id: "agent-1",
+      serverId: "server",
+      status: "running",
+      cwd: "/tmp/project",
+    } as never;
+
+    act(() => {
+      root?.render(
+        React.createElement(AgentStreamView, {
+          agentId: "agent-1",
+          serverId: "server",
+          agent,
+          streamItems: [],
+          pendingPermissions: new Map(),
+        }),
+      );
+    });
+
+    expect(container?.querySelector('[data-testid="turn-working-indicator"]')).toBeNull();
+    expect(
+      container?.querySelector('[data-testid="stream-working-indicator-auxiliary"]'),
+    ).not.toBeNull();
+  });
+
+  it("replaces the running footer with the copy button when the assistant turn idles", () => {
+    const headBlock = assistantBlock({
+      id: "group-1:head",
+      text: "Complete paragraph",
+      blockIndex: 0,
+    });
+    mockSessionState.sessions.server.agentStreamHead.set("agent-1", [headBlock]);
+    const agent = {
+      id: "agent-1",
+      serverId: "server",
+      status: "idle",
+      cwd: "/tmp/project",
+    } as never;
+
+    act(() => {
+      root?.render(
+        React.createElement(AgentStreamView, {
+          agentId: "agent-1",
+          serverId: "server",
+          agent,
+          streamItems: [],
+          pendingPermissions: new Map(),
+        }),
+      );
+    });
+
+    expect(container?.querySelector('[data-testid="turn-working-indicator"]')).toBeNull();
+    expect(container?.querySelector('[data-testid="turn-copy-button"]')).not.toBeNull();
+    expect(turnCopyButtonCalls.length).toBeGreaterThan(0);
+    expect(turnCopyButtonCalls.map((call) => call.getContent())).toEqual(
+      Array.from({ length: turnCopyButtonCalls.length }, () => "Complete paragraph"),
     );
   });
 });
