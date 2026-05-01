@@ -1657,7 +1657,13 @@ function selectWebSocketProtocol(
   password: string | undefined,
 ): string | false {
   if (!password) {
-    return protocols.values().next().value ?? false;
+    // No auth configured. Echo back the first negotiated subprotocol if the
+    // client offered one; otherwise accept the connection without a
+    // subprotocol header. Returning `false` when `protocols` is empty would
+    // reject the upgrade in ws v8+, breaking every default unauthenticated
+    // client.
+    const first = protocols.values().next().value;
+    return first ?? "";
   }
 
   for (const protocol of protocols) {
