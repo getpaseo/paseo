@@ -1,18 +1,34 @@
 # Changelog
 
-## 0.1.65-beta.2 - 2026-04-30
+## 0.1.65-beta.3 - 2026-05-01
 
 ### Added
 
 - **Windows:** Native ARM64 builds are now available for Snapdragon X / Copilot+ PCs.
+- Connect directly via TCP URI with SSL and optional password auth. ([#635](https://github.com/getpaseo/paseo/pull/635))
+- Connect to a daemon via relay using a pairing offer URL from the CLI. ([#639](https://github.com/getpaseo/paseo/pull/639))
+- Resume existing agent sessions with `paseo import --provider <name> <id>`. ([#632](https://github.com/getpaseo/paseo/pull/632))
+- Inline review comments in the git diff pane. ([#530](https://github.com/getpaseo/paseo/pull/530))
 - Pull and push your branch in one step from the git actions menu in the changes pane.
 - Images in assistant messages show a loading spinner while they load and an "Image unavailable" fallback if they fail, instead of a blank space.
+
+### Improved
+
+- Codex streaming feels more responsive — message boundaries are preserved and output arrives sooner.
+- Terminal sessions run in a dedicated worker process for better stability.
 
 ### Fixed
 
 - **Apple Silicon Mac:** The desktop update pipeline now publishes manifests atomically, closing a race that could install the Intel build on Apple Silicon Macs and cause 100%+ renderer CPU usage. Affected users will self-heal — electron-updater's Rosetta detection migrates back to arm64 on the next update poll. ([#555](https://github.com/getpaseo/paseo/issues/555))
 - **Linux:** `.deb` and `.rpm` packages now show as `Paseo` in the dock and process list instead of `Paseo.bin`. `--no-sandbox` is now scoped to AppImage only, matching VS Code's sandbox handling. ([#602](https://github.com/getpaseo/paseo/issues/602))
+- **Windows:** Git diff commands no longer break on paths with special characters. ([#629](https://github.com/getpaseo/paseo/pull/629))
+- Cursor CLI and other ACP custom providers launch reliably. ([#628](https://github.com/getpaseo/paseo/pull/628))
 - Daemon stays up when WebSocket clients disconnect mid-stream, and crashes now write a fatal log entry instead of disappearing silently. ([#613](https://github.com/getpaseo/paseo/pull/613) by [@yuruiz](https://github.com/yuruiz))
+- Codex plan approval panels no longer duplicate.
+- Imported agents display the correct title immediately.
+- OpenCode surfaces invalid mode/model errors instead of hanging.
+- Archived worktrees stay hidden without flashing back into the list. ([#640](https://github.com/getpaseo/paseo/pull/640))
+- Web dropdown menus no longer resize unexpectedly.
 - The visible changes pane keeps in sync with the working tree diff.
 - Tool detail rows on the timeline are selectable again.
 - `paseo.json` parse errors in setup, teardown, and terminal actions now surface a clear error instead of failing silently.
