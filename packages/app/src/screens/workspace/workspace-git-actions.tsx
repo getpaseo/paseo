@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useUnistyles } from "react-native-unistyles";
 import {
   Archive,
+  ArrowDownUp,
   Download,
   GitCommitHorizontal,
   GitMerge,
@@ -25,6 +26,7 @@ export function WorkspaceGitActions({ serverId, cwd }: WorkspaceGitActionsProps)
       commit: <GitCommitHorizontal size={16} color={theme.colors.foregroundMuted} />,
       pull: <Download size={16} color={theme.colors.foregroundMuted} />,
       push: <Upload size={16} color={theme.colors.foregroundMuted} />,
+      pullAndPush: <ArrowDownUp size={16} color={theme.colors.foregroundMuted} />,
       viewPr: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
       createPr: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
       merge: <GitMerge size={16} color={theme.colors.foregroundMuted} />,

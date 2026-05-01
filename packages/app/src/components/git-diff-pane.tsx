@@ -17,6 +17,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   AlignJustify,
   Archive,
+  ArrowDownUp,
   ChevronDown,
   Columns2,
   Download,
@@ -1289,6 +1290,20 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
           status: pushStatus,
           icon: <Upload size={16} color={theme.colors.foregroundMuted} />,
           handler: handlePush,
+        },
+        "pull-and-push": {
+          disabled: pullDisabled || pushDisabled,
+          status:
+            pullStatus === "pending" || pushStatus === "pending"
+              ? "pending"
+              : pullStatus === "success" && pushStatus === "success"
+                ? "success"
+                : "idle",
+          icon: <ArrowDownUp size={16} color={theme.colors.foregroundMuted} />,
+          handler: () => {
+            handlePull();
+            handlePush();
+          },
         },
         pr: {
           disabled: prDisabled,

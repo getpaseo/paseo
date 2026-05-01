@@ -36,6 +36,11 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
         status: "idle",
         handler: () => undefined,
       },
+      "pull-and-push": {
+        disabled: false,
+        status: "idle",
+        handler: () => undefined,
+      },
       pr: {
         disabled: false,
         status: "idle",
@@ -65,7 +70,7 @@ describe("git-actions-policy", () => {
   it("shows only remote sync actions on the base branch", () => {
     const actions = buildGitActions(createInput({ hasRemote: true }));
 
-    expect(actions.secondary.map((action) => action.id)).toEqual(["pull", "push"]);
+    expect(actions.secondary.map((action) => action.id)).toEqual(["pull", "push", "pull-and-push"]);
   });
 
   it("prioritizes pull when the branch is behind origin", () => {
@@ -149,6 +154,7 @@ describe("git-actions-policy", () => {
     expect(actions.secondary.map((action) => action.id)).toEqual([
       "pull",
       "push",
+      "pull-and-push",
       "merge-from-base",
       "merge-branch",
       "pr",
