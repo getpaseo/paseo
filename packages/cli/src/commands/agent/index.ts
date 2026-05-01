@@ -12,6 +12,14 @@ import { addWaitOptions, runWaitCommand } from "./wait.js";
 import { addAttachOptions, runAttachCommand } from "./attach.js";
 import { addReloadOptions, runReloadCommand } from "./reload.js";
 import { addImportOptions, runImportCommand } from "./import.js";
+import {
+  addHandoffOptions,
+  addResumeSessionOptions,
+  addSessionsOptions,
+  runHandoffCommand,
+  runResumeSessionCommand,
+  runSessionsCommand,
+} from "./sessions.js";
 import { runUpdateCommand } from "./update.js";
 import { withOutput } from "../../output/index.js";
 import {
@@ -52,6 +60,18 @@ export function createAgentCommand(): Command {
 
   addJsonAndDaemonHostOptions(addInspectOptions(agent.command("inspect"))).action(
     withOutput(runInspectCommand),
+  );
+
+  addJsonAndDaemonHostOptions(addSessionsOptions(agent.command("sessions"))).action(
+    withOutput(runSessionsCommand),
+  );
+
+  addJsonAndDaemonHostOptions(addResumeSessionOptions(agent.command("resume-session"))).action(
+    withOutput(runResumeSessionCommand),
+  );
+
+  addJsonAndDaemonHostOptions(addHandoffOptions(agent.command("handoff"))).action(
+    withOutput(runHandoffCommand),
   );
 
   addJsonAndDaemonHostOptions(addWaitOptions(agent.command("wait"))).action(

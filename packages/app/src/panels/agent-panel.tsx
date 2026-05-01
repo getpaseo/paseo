@@ -279,7 +279,7 @@ function useAgentPanelDescriptor(
 }
 
 function AgentPanel() {
-  const { serverId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, target, openFileInWorkspace, closeCurrentTab } = usePaneContext();
   const { isInteractive } = usePaneFocus();
   invariant(target.kind === "agent", "AgentPanel requires agent target");
 
@@ -295,6 +295,7 @@ function AgentPanel() {
       agentId={target.agentId}
       isPaneFocused={isInteractive}
       onOpenWorkspaceFile={handleOpenWorkspaceFile}
+      onCloseCurrentTab={closeCurrentTab}
     />
   );
 }
@@ -356,11 +357,13 @@ function AgentPanelContent({
   agentId,
   isPaneFocused,
   onOpenWorkspaceFile,
+  onCloseCurrentTab,
 }: {
   serverId: string;
   agentId: string;
   isPaneFocused: boolean;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
+  onCloseCurrentTab: () => void;
 }) {
   const resolvedAgentId = agentId.trim() || undefined;
   const resolvedServerId = serverId.trim() || undefined;
@@ -403,6 +406,7 @@ function AgentPanelContent({
       isConnected={runtimeIsConnected}
       connectionStatus={connectionStatus}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onCloseCurrentTab={onCloseCurrentTab}
     />
   );
 }
@@ -415,6 +419,7 @@ function AgentPanelBody({
   isConnected,
   connectionStatus,
   onOpenWorkspaceFile,
+  onCloseCurrentTab,
 }: {
   serverId: string;
   agentId?: string;
@@ -423,6 +428,7 @@ function AgentPanelBody({
   isConnected: boolean;
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
+  onCloseCurrentTab: () => void;
 }) {
   const { isArchivingAgent: _isArchivingAgent } = useArchiveAgent();
   const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
@@ -568,6 +574,7 @@ function AgentPanelBody({
       isConnected={isConnected}
       connectionStatus={connectionStatus}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onCloseCurrentTab={onCloseCurrentTab}
     />
   );
 }
@@ -580,6 +587,7 @@ function ChatAgentContent({
   isConnected,
   connectionStatus,
   onOpenWorkspaceFile,
+  onCloseCurrentTab,
 }: {
   serverId: string;
   agentId?: string;
@@ -588,6 +596,7 @@ function ChatAgentContent({
   isConnected: boolean;
   connectionStatus: HostRuntimeConnectionStatus;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
+  onCloseCurrentTab: () => void;
 }) {
   const panelToast = useToastHost();
   const { isArchivingAgent } = useArchiveAgent();
@@ -979,6 +988,7 @@ function ChatAgentContent({
             onAddImages={handleAddImagesCallback}
             onComposerHeightChange={handleComposerHeightChange}
             onMessageSent={handleMessageSent}
+            onLocalCommand={onCloseCurrentTab}
           />
 
           {viewState.tag === "ready" &&
@@ -1000,8 +1010,8 @@ function ChatAgentContent({
       {isArchivingCurrentAgent ? (
         <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
           <ThemedActivityIndicator size="large" uniProps={foregroundColorMapping} />
-          <Text style={styles.archivingTitle}>Archiving agent...</Text>
-          <Text style={styles.archivingSubtitle}>Please wait while we archive this agent.</Text>
+          <Text style={styles.archivingTitle}>Closing agent...</Text>
+          <Text style={styles.archivingSubtitle}>Please wait while we close this agent.</Text>
         </View>
       ) : null}
     </View>
@@ -1181,6 +1191,7 @@ function AgentComposerSection({
   onAddImages,
   onComposerHeightChange,
   onMessageSent,
+  onLocalCommand,
 }: {
   agentId?: string;
   serverId: string;
@@ -1194,6 +1205,7 @@ function AgentComposerSection({
   onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onLocalCommand: () => void;
 }) {
   if (!agentId) {
     return null;
@@ -1217,6 +1229,7 @@ function AgentComposerSection({
       onAddImages={onAddImages}
       onComposerHeightChange={onComposerHeightChange}
       onMessageSent={onMessageSent}
+      onLocalCommand={onLocalCommand}
     />
   );
 }
@@ -1232,6 +1245,7 @@ function ActiveAgentComposer({
   onAddImages,
   onComposerHeightChange,
   onMessageSent,
+  onLocalCommand,
 }: {
   agentId: string;
   serverId: string;
@@ -1243,6 +1257,7 @@ function ActiveAgentComposer({
   onAddImages: (addImages: (images: ImageAttachment[]) => void) => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onLocalCommand: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
@@ -1307,6 +1322,7 @@ function ActiveAgentComposer({
         onAddImages={onAddImages}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
+        onLocalCommand={onLocalCommand}
       />
     </View>
   );

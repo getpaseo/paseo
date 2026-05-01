@@ -806,6 +806,8 @@ interface ComposerProps {
   commandDraftConfig?: DraftCommandConfig;
   /** Called when a message is about to be sent (any path: keyboard, dictation, queued). */
   onMessageSent?: () => void;
+  /** Handles Paseo-local slash commands before they are sent to the agent provider. */
+  onLocalCommand?: (command: "exit" | "quit") => void;
   onComposerHeightChange?: (height: number) => void;
   onAttentionInputFocus?: () => void;
   onAttentionPromptSend?: () => void;
@@ -819,6 +821,17 @@ const EMPTY_ARRAY: readonly QueuedMessage[] = [];
 const DESKTOP_MESSAGE_PLACEHOLDER = "Message the agent, tag @files, or use /commands and /skills";
 const MOBILE_MESSAGE_PLACEHOLDER = "Message, @files, /commands";
 const StableMessageInput = memo(MessageInput);
+
+function resolveLocalComposerCommand(text: string): "exit" | "quit" | null {
+  const command = text.trim();
+  if (command === "/exit") {
+    return "exit";
+  }
+  if (command === "/q") {
+    return "quit";
+  }
+  return null;
+}
 
 function resolveContextWindowValues(
   rawMax: number | null,
@@ -1000,6 +1013,7 @@ export function Composer({
   onFocusInput,
   commandDraftConfig,
   onMessageSent,
+  onLocalCommand,
   onComposerHeightChange,
   onAttentionInputFocus,
   onAttentionPromptSend,
@@ -1278,6 +1292,14 @@ export function Composer({
 
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
+      const localCommand = resolveLocalComposerCommand(payload.text);
+      if (localCommand && onLocalCommand) {
+        setUserInput("");
+        setSelectedAttachments([]);
+        clearDraft("abandoned");
+        onLocalCommand(localCommand);
+        return;
+      }
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
       }
@@ -1287,7 +1309,16 @@ export function Composer({
         payload.forceSend,
       );
     },
-    [attachments, blurOnSubmit, buildOutgoingAttachments, sendMessageWithContent],
+    [
+      attachments,
+      blurOnSubmit,
+      buildOutgoingAttachments,
+      clearDraft,
+      onLocalCommand,
+      sendMessageWithContent,
+      setSelectedAttachments,
+      setUserInput,
+    ],
   );
 
   const handlePickImage = useCallback(async () => {

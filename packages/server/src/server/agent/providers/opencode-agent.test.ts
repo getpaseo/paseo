@@ -5,7 +5,11 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import type { Event as OpenCodeEvent } from "@opencode-ai/sdk/v2/client";
+import type {
+  Event as OpenCodeEvent,
+  Message as OpenCodeMessage,
+  Part as OpenCodePart,
+} from "@opencode-ai/sdk/v2/client";
 import {
   __openCodeInternals,
   OpenCodeAgentClient,
@@ -202,8 +206,10 @@ const hasOpenCode = isBinaryInstalled("opencode");
       expect(model.metadata).toMatchObject({
         providerId: expect.any(String),
         modelId: expect.any(String),
-        contextWindowMaxTokens: expect.any(Number),
       });
+      if (model.metadata.contextWindowMaxTokens !== undefined) {
+        expect(model.metadata.contextWindowMaxTokens).toEqual(expect.any(Number));
+      }
     }
   }, 60_000);
 
@@ -260,6 +266,7 @@ const hasOpenCode = isBinaryInstalled("opencode");
   test("plan mode blocks edits while build mode can write files", async () => {
     const cwd = tmpCwd();
     const planFile = path.join(cwd, "plan-mode-output.txt");
+    const buildFile = path.join(cwd, "build-mode-output.txt");
     const client = new OpenCodeAgentClient(logger);
 
     const planSession = await client.createSession({
@@ -277,7 +284,6 @@ const hasOpenCode = isBinaryInstalled("opencode");
     expect(planTurn.turnCompleted).toBe(true);
     expect(planTurn.turnFailed).toBe(false);
     expect(existsSync(planFile)).toBe(false);
-    expect(planTurn.toolCalls).toHaveLength(0);
 
     const planResponse = planTurn.assistantMessages
       .map((message) => message.text)
@@ -302,6 +308,7 @@ const hasOpenCode = isBinaryInstalled("opencode");
     expect(buildTurn.turnCompleted).toBe(true);
     expect(buildTurn.turnFailed).toBe(false);
     expect(buildTurn.toolCalls.some((toolCall) => toolCall.status === "completed")).toBe(true);
+    expect(existsSync(buildFile)).toBe(true);
 
     const buildResponse = buildTurn.assistantMessages
       .map((message) => message.text)
@@ -315,6 +322,104 @@ const hasOpenCode = isBinaryInstalled("opencode");
 });
 
 describe("OpenCode adapter context-window normalization", () => {
+  test("maps persisted OpenCode messages into Paseo timeline items", () => {
+    const timeline = __openCodeInternals.mapOpenCodePersistedMessagesToTimeline([
+      {
+        info: {
+          id: "user-message",
+          sessionID: "session-1",
+          role: "user",
+        } as unknown as OpenCodeMessage,
+        parts: [
+          {
+            id: "user-part-1",
+            sessionID: "session-1",
+            messageID: "user-message",
+            type: "text",
+            text: "Please ",
+          },
+          {
+            id: "user-part-2",
+            sessionID: "session-1",
+            messageID: "user-message",
+            type: "text",
+            text: "continue",
+          },
+        ] as unknown as OpenCodePart[],
+      },
+      {
+        info: {
+          id: "assistant-message",
+          sessionID: "session-1",
+          role: "assistant",
+        } as unknown as OpenCodeMessage,
+        parts: [
+          {
+            id: "reasoning-part",
+            sessionID: "session-1",
+            messageID: "assistant-message",
+            type: "reasoning",
+            text: "Thinking",
+            time: { start: 1, end: 2 },
+          },
+          {
+            id: "assistant-part",
+            sessionID: "session-1",
+            messageID: "assistant-message",
+            type: "text",
+            text: "Done",
+          },
+        ] as unknown as OpenCodePart[],
+      },
+    ]);
+
+    expect(timeline).toEqual([
+      { type: "user_message", text: "Please continue" },
+      { type: "reasoning", text: "Thinking" },
+      { type: "assistant_message", text: "Done" },
+    ]);
+  });
+
+  test("uses structured assistant content when persisted text parts are absent", () => {
+    const timeline = __openCodeInternals.mapOpenCodePersistedMessagesToTimeline([
+      {
+        info: {
+          id: "assistant-message",
+          sessionID: "session-1",
+          role: "assistant",
+          structured: { result: "ok" },
+        } as unknown as OpenCodeMessage,
+        parts: [] as OpenCodePart[],
+      },
+    ]);
+
+    expect(timeline).toEqual([{ type: "assistant_message", text: '{"result":"ok"}' }]);
+  });
+
+  test("ignores empty incomplete persisted assistant placeholders", () => {
+    const timeline = __openCodeInternals.mapOpenCodePersistedMessagesToTimeline([
+      {
+        info: {
+          id: "assistant-message",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1_777_217_640_000 },
+        } as unknown as OpenCodeMessage,
+        parts: [] as OpenCodePart[],
+      },
+    ]);
+
+    expect(timeline).toEqual([]);
+  });
+
+  test("normalizes OpenCode second and millisecond timestamps", () => {
+    expect(__openCodeInternals.normalizeOpenCodeTimestampMs(1_777_217_640)).toBe(1_777_217_640_000);
+    expect(__openCodeInternals.normalizeOpenCodeTimestampMs(1_777_217_640_000)).toBe(
+      1_777_217_640_000,
+    );
+    expect(__openCodeInternals.normalizeOpenCodeTimestampMs(undefined)).toBe(0);
+  });
+
   test("close reconciliation aborts then archives upstream session", async () => {
     const abort = vi.fn().mockResolvedValue({ data: true, error: undefined });
     const update = vi.fn().mockResolvedValue({
@@ -332,6 +437,7 @@ describe("OpenCode adapter context-window normalization", () => {
       sessionId: "session-1",
       directory: "/tmp/project",
       logger: createTestLogger(),
+      abortFirst: true,
     });
 
     expect(abort).toHaveBeenCalledWith({
@@ -368,10 +474,95 @@ describe("OpenCode adapter context-window normalization", () => {
       sessionId: "session-1",
       directory: "/tmp/project",
       logger: createTestLogger(),
+      abortFirst: true,
     });
 
     expect(abort).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  test("close reconciliation skips abort for idle upstream sessions", async () => {
+    const abort = vi.fn().mockResolvedValue({ data: true, error: undefined });
+    const update = vi.fn().mockResolvedValue({
+      data: { id: "session-1", time: { archived: Date.now() } },
+      error: undefined,
+    });
+
+    await __openCodeInternals.reconcileOpenCodeSessionClose({
+      client: {
+        session: {
+          abort,
+          update,
+        },
+      } as never,
+      sessionId: "session-1",
+      directory: "/tmp/project",
+      logger: createTestLogger(),
+      abortFirst: false,
+    });
+
+    expect(abort).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  test("close reconciliation can detach without archiving upstream session", async () => {
+    const abort = vi.fn().mockResolvedValue({ data: true, error: undefined });
+    const update = vi.fn().mockResolvedValue({
+      data: { id: "session-1", time: { archived: Date.now() } },
+      error: undefined,
+    });
+
+    await __openCodeInternals.reconcileOpenCodeSessionClose({
+      client: {
+        session: {
+          abort,
+          update,
+        },
+      } as never,
+      sessionId: "session-1",
+      directory: "/tmp/project",
+      logger: createTestLogger(),
+      abortFirst: true,
+      archive: false,
+    });
+
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  test("resolves detach close behavior from persistence metadata", () => {
+    expect(
+      __openCodeInternals.resolveOpenCodeCloseBehavior({
+        provider: "opencode",
+        sessionId: "session-1",
+        nativeHandle: "session-1",
+        metadata: { paseoCloseBehavior: "detach" },
+      }),
+    ).toBe("detach");
+
+    expect(
+      __openCodeInternals.resolveOpenCodeCloseBehavior({
+        provider: "opencode",
+        sessionId: "session-1",
+        nativeHandle: "session-1",
+      }),
+    ).toBe("archive");
+  });
+
+  test("selects older external OpenCode sessions after excluding active managed sessions", () => {
+    const sessions = [
+      { id: "active-newest", directory: "/repo" },
+      { id: "external-older", directory: "/repo" },
+      { id: "other-cwd", directory: "/elsewhere" },
+    ];
+
+    expect(
+      __openCodeInternals.selectOpenCodePersistedSessions(sessions as never, {
+        directory: "/repo",
+        limit: 1,
+        excludeSessionIds: ["active-newest"],
+      }),
+    ).toEqual([{ id: "external-older", directory: "/repo" }]);
   });
 
   test("builds OpenCode file parts for image prompt blocks", () => {

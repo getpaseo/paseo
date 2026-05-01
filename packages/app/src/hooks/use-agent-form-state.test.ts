@@ -32,6 +32,14 @@ const TEST_CLAUDE_DEFINITION: AgentProviderDefinition = {
   ],
 };
 
+const TEST_OPENCODE_DEFINITION: AgentProviderDefinition = {
+  id: "opencode",
+  label: "OpenCode",
+  description: "OpenCode test provider",
+  defaultModeId: "build",
+  modes: [{ id: "build", label: "Build", icon: "ShieldAlert", colorTier: "moderate" }],
+};
+
 function makeProviderMap(
   ...definitions: AgentProviderDefinition[]
 ): Map<AgentProvider, AgentProviderDefinition> {
@@ -40,6 +48,7 @@ function makeProviderMap(
 
 const codexProviderMap = makeProviderMap(TEST_CODEX_DEFINITION);
 const claudeProviderMap = makeProviderMap(TEST_CLAUDE_DEFINITION);
+const opencodeProviderMap = makeProviderMap(TEST_OPENCODE_DEFINITION);
 
 describe("useAgentFormState", () => {
   describe("buildProviderDefinitions", () => {
@@ -254,6 +263,60 @@ describe("useAgentFormState", () => {
     });
   });
 
+  describe("explicit selection helpers", () => {
+    it("treats provider defaults as implicit until the user or preferences choose them", () => {
+      expect(
+        __private__.isExplicitModeSelection({
+          modeId: "build",
+          initialValues: undefined,
+          providerPrefs: undefined,
+          userModified: false,
+          providerDef: {
+            id: "opencode",
+            label: "OpenCode",
+            description: "OpenCode test provider",
+            defaultModeId: "build",
+            modes: [{ id: "build", label: "Build", icon: "ShieldAlert", colorTier: "moderate" }],
+          },
+        }),
+      ).toBe(false);
+
+      expect(
+        __private__.isExplicitModelSelection({
+          initialValues: undefined,
+          providerPrefs: undefined,
+          userModified: false,
+        }),
+      ).toBe(false);
+    });
+
+    it("treats saved provider preferences as explicit selections", () => {
+      expect(
+        __private__.isExplicitModeSelection({
+          modeId: "build",
+          initialValues: undefined,
+          providerPrefs: { mode: "build", model: "anthropic/claude-sonnet-4-6" },
+          userModified: false,
+          providerDef: {
+            id: "opencode",
+            label: "OpenCode",
+            description: "OpenCode test provider",
+            defaultModeId: "build",
+            modes: [{ id: "build", label: "Build", icon: "ShieldAlert", colorTier: "moderate" }],
+          },
+        }),
+      ).toBe(true);
+
+      expect(
+        __private__.isExplicitModelSelection({
+          initialValues: undefined,
+          providerPrefs: { model: "anthropic/claude-sonnet-4-6" },
+          userModified: false,
+        }),
+      ).toBe(true);
+    });
+  });
+
   describe("__private__.resolveFormState", () => {
     const codexModels: AgentModelDefinition[] = [
       {
@@ -327,6 +390,49 @@ describe("useAgentFormState", () => {
 
       expect(resolved.model).toBe("");
       expect(resolved.thinkingOptionId).toBe("");
+    });
+
+    it("shows OpenCode's configured default model without making it an explicit override", () => {
+      const opencodeModels: AgentModelDefinition[] = [
+        {
+          provider: "opencode",
+          id: "anthropic/claude-sonnet-4-6",
+          label: "Claude Sonnet 4.6",
+          isDefault: true,
+        },
+      ];
+      const resolved = __private__.resolveFormState(
+        undefined,
+        { provider: "opencode" },
+        opencodeModels,
+        {
+          serverId: false,
+          provider: false,
+          modeId: false,
+          model: false,
+          thinkingOptionId: false,
+          workingDir: false,
+        },
+        {
+          serverId: null,
+          provider: "opencode",
+          modeId: "",
+          model: "",
+          thinkingOptionId: "",
+          workingDir: "",
+        },
+        new Set<string>(),
+        opencodeProviderMap,
+      );
+
+      expect(resolved.model).toBe("anthropic/claude-sonnet-4-6");
+      expect(
+        __private__.isExplicitModelSelection({
+          initialValues: undefined,
+          providerPrefs: undefined,
+          userModified: false,
+        }),
+      ).toBe(false);
     });
 
     it("auto-selects the model's default thinking option when model is preferred but thinking is not", () => {

@@ -13,12 +13,13 @@ import type {
   AgentLaunchContext,
   AgentProvider,
   AgentPersistenceHandle,
+  ListPersistedAgentsOptions,
+  PersistedAgentDescriptor,
   AgentRunResult,
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
-  PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 
@@ -372,6 +373,79 @@ test("normalizeConfig strips legacy 'default' model id", async () => {
 
   expect(snapshot.config.model).toBe("gpt-5.4");
   expect(snapshot.config.modeId).toBe("auto");
+});
+
+test("listPersistedAgents asks providers to exclude active sessions before applying limit", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client: AgentClient = new TestAgentClient();
+  const listPersistedAgents = vi.fn(
+    async (options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]> => {
+      if (options?.excludeSessionIds?.length) {
+        return [
+          {
+            provider: "codex",
+            sessionId: "older-external-session",
+            cwd: workdir,
+            title: "Older external session",
+            lastActivityAt: new Date("2026-01-01T00:00:00.000Z"),
+            persistence: {
+              provider: "codex",
+              sessionId: "older-external-session",
+              nativeHandle: "older-external-session",
+            },
+            timeline: [],
+          },
+        ];
+      }
+
+      return [
+        {
+          provider: "codex",
+          sessionId: "active-session-would-underfill",
+          cwd: workdir,
+          title: "Active session",
+          lastActivityAt: new Date("2026-01-02T00:00:00.000Z"),
+          persistence: {
+            provider: "codex",
+            sessionId: "active-session-would-underfill",
+            nativeHandle: "active-session-would-underfill",
+          },
+          timeline: [],
+        },
+      ];
+    },
+  );
+  client.listPersistedAgents = listPersistedAgents;
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000103",
+  });
+
+  const active = await manager.createAgent({ provider: "codex", cwd: workdir });
+  const activeSessionId = active.persistence?.sessionId;
+  if (!activeSessionId) {
+    throw new Error("Expected active test agent to describe a persisted session");
+  }
+  const descriptors = await manager.listPersistedAgents({
+    provider: "codex",
+    cwd: workdir,
+    limit: 1,
+  });
+
+  expect(listPersistedAgents).toHaveBeenCalledWith({
+    cwd: workdir,
+    limit: 1,
+    excludeSessionIds: [activeSessionId],
+  });
+  expect(descriptors.map((descriptor) => descriptor.sessionId)).toEqual(["older-external-session"]);
+
+  rmSync(workdir, { recursive: true, force: true });
 });
 
 test("setAgentMode persists the selected mode across session reload", async () => {

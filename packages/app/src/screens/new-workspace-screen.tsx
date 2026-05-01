@@ -387,10 +387,15 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     attachments,
     cwd: workspaceDirectory,
     provider,
-    ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
+    ...(composerState.modeOptions.length > 0 &&
+    composerState.selectedMode !== "" &&
+    (provider !== "opencode" || composerState.selectedModeIsExplicit)
       ? { modeId: composerState.selectedMode }
       : {}),
-    ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
+    ...(composerState.effectiveModelId &&
+    (provider !== "opencode" || composerState.selectedModelIsExplicit)
+      ? { model: composerState.effectiveModelId }
+      : {}),
     ...(composerState.effectiveThinkingOptionId
       ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
       : {}),

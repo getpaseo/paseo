@@ -743,12 +743,14 @@ function ComposerHarness({
   workspaceAttachment = null,
   isSubmitLoading = false,
   submitBehavior,
+  onLocalCommand,
 }: {
   initialText?: string;
   initialAttachments?: UserComposerAttachment[];
   workspaceAttachment?: ReviewComposerAttachment | null;
   isSubmitLoading?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
+  onLocalCommand?: (command: "exit" | "quit") => void;
 }) {
   const [text, setText] = useState(initialText);
   const [attachments, setAttachments] = useState(initialAttachments);
@@ -788,6 +790,7 @@ function ComposerHarness({
         submitBehavior={submitBehavior}
         cwd="/repo"
         clearDraft={vi.fn()}
+        onLocalCommand={onLocalCommand}
       />
     </QueryClientProvider>
   );
@@ -800,6 +803,7 @@ function renderComposer(
     workspaceAttachment?: ReviewComposerAttachment | null;
     isSubmitLoading?: boolean;
     submitBehavior?: "clear" | "preserve-and-lock";
+    onLocalCommand?: (command: "exit" | "quit") => void;
   } = {},
 ) {
   act(() => {
@@ -1289,6 +1293,58 @@ describe("Composer attachments", () => {
         attachments: [],
       }),
     );
+  });
+
+  it("handles /q locally instead of sending it to the agent", async () => {
+    const onLocalCommand = vi.fn();
+    renderComposer({ initialText: "/q", onLocalCommand });
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(onLocalCommand).toHaveBeenCalledWith("quit");
+    expect(mockClient.sendAgentMessage).not.toHaveBeenCalled();
+    expect(document.querySelector('[aria-label="Message agent..."]')).toHaveProperty("value", "");
+  });
+
+  it("handles /q locally even when attachments are selected", async () => {
+    const onLocalCommand = vi.fn();
+    renderComposer({
+      initialText: "/q",
+      initialAttachments: [{ kind: "github_issue", item: issueItem }],
+      onLocalCommand,
+    });
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(onLocalCommand).toHaveBeenCalledWith("quit");
+    expect(mockClient.sendAgentMessage).not.toHaveBeenCalled();
+    expect(latestAttachments).toEqual([]);
+  });
+
+  it("sends /q as normal text when no local command handler is wired", async () => {
+    renderComposer({ initialText: "/q" });
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(mockClient.sendAgentMessage).toHaveBeenCalledWith(
+      "agent",
+      "/q",
+      expect.objectContaining({ images: [], attachments: [] }),
+    );
+  });
+
+  it("handles /exit locally instead of sending it to the agent", async () => {
+    const onLocalCommand = vi.fn();
+    renderComposer({ initialText: "/exit", onLocalCommand });
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(onLocalCommand).toHaveBeenCalledWith("exit");
+    expect(mockClient.sendAgentMessage).not.toHaveBeenCalled();
   });
 
   it("removes the image attachment when its pill X button is pressed", () => {

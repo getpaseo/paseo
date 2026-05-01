@@ -36,6 +36,7 @@ export function buildModelRows(
         modelId: model.id,
         modelLabel: model.label,
         description: model.description,
+        isDefault: model.isDefault,
       });
     }
   }
@@ -51,4 +52,33 @@ export function matchesSearch(row: SelectorModelRow, normalizedQuery: string): b
   return [row.modelLabel, row.modelId, row.providerLabel].some((value) =>
     value.toLowerCase().includes(normalizedQuery),
   );
+}
+
+export function buildSuggestedRows({
+  rows,
+  selectedProvider,
+  selectedModel,
+  favoriteKeys,
+}: {
+  rows: SelectorModelRow[];
+  selectedProvider: string;
+  selectedModel: string;
+  favoriteKeys: Set<string>;
+}): SelectorModelRow[] {
+  const suggestedRows: SelectorModelRow[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const row of rows) {
+    const isSelected = row.provider === selectedProvider && row.modelId === selectedModel;
+    if ((!isSelected && !row.isDefault) || favoriteKeys.has(row.favoriteKey)) {
+      continue;
+    }
+
+    if (!seenKeys.has(row.favoriteKey)) {
+      suggestedRows.push(row);
+      seenKeys.add(row.favoriteKey);
+    }
+  }
+
+  return suggestedRows;
 }

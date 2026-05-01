@@ -47,6 +47,7 @@ interface SessionTestAccess {
   listAgentPayloads(...args: unknown[]): Promise<unknown[]>;
   listFetchWorkspacesEntries(params: unknown): Promise<ListFetchResult>;
   listFetchAgentsEntries(params: unknown): Promise<ListFetchResult>;
+  listPersistedAgentDescriptors(params: unknown): Promise<unknown[]>;
   resolveAgentIdentifier(identifier: string): Promise<unknown>;
   getAgentPayloadById(agentId: string): Promise<unknown>;
   buildProjectPlacementForCwd(cwd: string): Promise<unknown>;
@@ -255,6 +256,7 @@ function createSessionForWorkspaceTests(
     appVersion?: string | null;
     onMessage?: (message: SessionOutboundMessage) => void;
     workspaceGitService?: ReturnType<typeof createNoopWorkspaceGitService>;
+    agentManager?: Partial<SessionOptions["agentManager"]>;
   } = {},
 ): TestSession {
   const logger = {
@@ -279,10 +281,12 @@ function createSessionForWorkspaceTests(
         subscribe: () => () => {},
         listAgents: () => [],
         getAgent: () => null,
+        listPersistedAgents: async () => [],
         archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
         archiveSnapshot: async () => ({}),
         clearAgentAttention: async () => {},
         notifyAgentState: () => {},
+        ...options.agentManager,
       } as unknown as SessionOptions["agentManager"],
       agentStorage: {
         list: async () => [],
@@ -392,6 +396,70 @@ test("unsupported persisted agents are excluded from active lists but preserved 
       persistence: null,
     }),
   );
+});
+
+test("fetch_persisted_agents_request lists provider sessions for cwd", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const listPersistedAgents = vi.fn(async () => [
+    {
+      provider: "opencode",
+      sessionId: "ses_123",
+      cwd: "/tmp/project",
+      title: "External OpenCode Session",
+      lastActivityAt: new Date("2026-04-26T18:11:00.000Z"),
+      persistence: {
+        provider: "opencode",
+        sessionId: "ses_123",
+        metadata: {
+          cwd: "/tmp/project",
+        },
+      },
+      timeline: [{ type: "user_message", text: "hello" }],
+    },
+  ]);
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => messages.push(message),
+    agentManager: { listPersistedAgents },
+  });
+
+  await session.handleMessage({
+    type: "fetch_persisted_agents_request",
+    requestId: "req-persisted",
+    provider: "opencode",
+    cwd: "/tmp/project",
+    page: { limit: 5 },
+  });
+
+  expect(listPersistedAgents).toHaveBeenCalledWith({
+    provider: "opencode",
+    cwd: "/tmp/project",
+    limit: 5,
+  });
+  expect(messages).toEqual([
+    {
+      type: "fetch_persisted_agents_response",
+      payload: {
+        requestId: "req-persisted",
+        entries: [
+          {
+            provider: "opencode",
+            sessionId: "ses_123",
+            cwd: "/tmp/project",
+            title: "External OpenCode Session",
+            lastActivityAt: "2026-04-26T18:11:00.000Z",
+            persistence: {
+              provider: "opencode",
+              sessionId: "ses_123",
+              metadata: {
+                cwd: "/tmp/project",
+              },
+            },
+            timeline: [{ type: "user_message", text: "hello" }],
+          },
+        ],
+      },
+    },
+  ]);
 });
 
 test("workspace reconciliation reports archived workspaces to subscribed clients", async () => {

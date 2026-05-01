@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Keyboard, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Keyboard, Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import invariant from "tiny-invariant";
 import { Composer } from "@/components/composer";
 import { FileDropZone } from "@/components/file-drop-zone";
@@ -10,28 +11,32 @@ import { composerWorkspaceAttachment } from "@/attachments/composer-workspace-at
 import type { ImageAttachment } from "@/components/message-input";
 import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
+import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
-import type { Agent } from "@/stores/session-store";
+import { type Agent, useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { encodeImages } from "@/utils/encode-images";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
-import type { AgentSnapshotPayload } from "@server/shared/messages";
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { AgentSnapshotPayload, AgentStreamEventPayload } from "@server/shared/messages";
+import type { DaemonClient, FetchPersistedAgentsEntry } from "@server/client/daemon-client";
 import type { ComposerAttachment, WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useWorkspaceAttachments,
   useWorkspaceAttachmentScopeKey,
 } from "@/attachments/workspace-attachments-store";
-import type { UserMessageImageAttachment } from "@/types/stream";
+import { hydrateStreamState, type UserMessageImageAttachment } from "@/types/stream";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
+const EMPTY_EXTERNAL_SESSIONS: FetchPersistedAgentsEntry[] = [];
+const EXTERNAL_SESSIONS_QUERY_LIMIT = 5;
+const RECENT_EXTERNAL_SESSION_MS = 10 * 60 * 1000;
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: false,
@@ -116,16 +121,37 @@ function validateDraftSubmission(input: {
 function resolveDraftModeIdOverride(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   modeOptionsCount: number;
+  provider: string;
   selectedMode: string;
+  selectedModeIsExplicit: boolean;
 }): { modeId: string } | Record<string, never> {
-  const { autoSubmitConfig, modeOptionsCount, selectedMode } = input;
+  const { autoSubmitConfig, modeOptionsCount, provider, selectedMode, selectedModeIsExplicit } =
+    input;
   if (autoSubmitConfig?.modeId) {
     return { modeId: autoSubmitConfig.modeId };
+  }
+  if (provider === "opencode" && !selectedModeIsExplicit) {
+    return {};
   }
   if (modeOptionsCount > 0 && selectedMode !== "") {
     return { modeId: selectedMode };
   }
   return {};
+}
+
+function resolveDraftModelOverride(input: {
+  autoSubmitConfig: AutoSubmitConfig | null;
+  provider: string;
+  effectiveModelId: string | null;
+  selectedModelIsExplicit: boolean;
+}): string | undefined {
+  if (input.autoSubmitConfig?.model) {
+    return input.autoSubmitConfig.model;
+  }
+  if (input.provider === "opencode" && !input.selectedModelIsExplicit) {
+    return undefined;
+  }
+  return input.effectiveModelId || undefined;
 }
 
 function resolveDraftModeId(input: {
@@ -143,6 +169,208 @@ function resolveDraftModeId(input: {
   return null;
 }
 
+function formatExternalSessionUpdatedAt(value: string): string {
+  const updatedAt = Date.parse(value);
+  if (Number.isNaN(updatedAt)) {
+    return "recently";
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000));
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function isRecentlyActiveExternalSession(session: FetchPersistedAgentsEntry): boolean {
+  const updatedAt = Date.parse(session.lastActivityAt);
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt < RECENT_EXTERNAL_SESSION_MS;
+}
+
+function buildExternalSessionPreviewStreamItems(session: FetchPersistedAgentsEntry) {
+  const timestamp = new Date(session.lastActivityAt);
+  const fallbackTimestamp = Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
+  return hydrateStreamState(
+    session.timeline.map((item) => ({
+      event: {
+        type: "timeline",
+        provider: session.provider,
+        item,
+      } satisfies AgentStreamEventPayload,
+      timestamp: fallbackTimestamp,
+    })),
+    { source: "canonical" },
+  );
+}
+
+function seedResumedExternalSessionPreview(input: {
+  serverId: string;
+  agent: AgentSnapshotPayload;
+  session: FetchPersistedAgentsEntry;
+}): void {
+  const previewItems = buildExternalSessionPreviewStreamItems(input.session);
+  if (previewItems.length === 0) {
+    return;
+  }
+  useSessionStore.getState().setAgentStreamTail(input.serverId, (previous) => {
+    if (previous.has(input.agent.id)) {
+      return previous;
+    }
+    const next = new Map(previous);
+    next.set(input.agent.id, previewItems);
+    return next;
+  });
+}
+
+function ExternalSessionRow({
+  session,
+  isDisabled,
+  isResuming,
+  onResume,
+}: {
+  session: FetchPersistedAgentsEntry;
+  isDisabled: boolean;
+  isResuming: boolean;
+  onResume: (session: FetchPersistedAgentsEntry) => void;
+}) {
+  const handlePress = useCallback(() => {
+    onResume(session);
+  }, [onResume, session]);
+  const handoffHint = isRecentlyActiveExternalSession(session) ? " - quit terminal first" : "";
+
+  return (
+    <Pressable style={styles.externalSessionRow} disabled={isDisabled} onPress={handlePress}>
+      <View style={styles.externalSessionTextGroup}>
+        <Text style={styles.externalSessionTitle} numberOfLines={1}>
+          {session.title ?? "Untitled OpenCode session"}
+        </Text>
+        <Text style={styles.externalSessionMeta} numberOfLines={1}>
+          {session.sessionId.slice(0, 12)} - {session.timeline.length} messages -{" "}
+          {formatExternalSessionUpdatedAt(session.lastActivityAt)}
+          {handoffHint}
+        </Text>
+      </View>
+      <Text style={styles.externalSessionAction}>{isResuming ? "Resuming..." : "Resume"}</Text>
+    </Pressable>
+  );
+}
+
+function ExternalSessionsPanel({
+  isLoading,
+  sessions,
+  isResumePending,
+  resumingSessionId,
+  onResume,
+}: {
+  isLoading: boolean;
+  sessions: FetchPersistedAgentsEntry[];
+  isResumePending: boolean;
+  resumingSessionId: string | null;
+  onResume: (session: FetchPersistedAgentsEntry) => void;
+}) {
+  if (isLoading) {
+    return (
+      <View style={styles.externalSessionsLoading}>
+        <ActivityIndicator size="small" />
+        <Text style={styles.externalSessionsLoadingText}>Checking for OpenCode sessions</Text>
+      </View>
+    );
+  }
+
+  if (sessions.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.externalSessionsCard}>
+      <View style={styles.externalSessionsHeader}>
+        <Text style={styles.externalSessionsTitle}>OpenCode sessions in this project</Text>
+        <Text style={styles.externalSessionsSubtitle}>
+          Resume a session to manage it from Paseo.
+        </Text>
+      </View>
+      <View style={styles.externalSessionsList}>
+        {sessions.map((session) => (
+          <ExternalSessionRow
+            key={session.sessionId}
+            session={session}
+            isDisabled={isResumePending}
+            isResuming={isResumePending && resumingSessionId === session.sessionId}
+            onResume={onResume}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function useWorkspaceExternalSessions(input: {
+  serverId: string;
+  client: DaemonClient | null;
+  isConnected: boolean;
+  workspaceDirectory: string | null;
+  onCreated: (agent: AgentSnapshotPayload) => void;
+}) {
+  const { serverId, client, isConnected, workspaceDirectory, onCreated } = input;
+  const toast = useToast();
+  const externalSessionsQuery = useQuery({
+    queryKey: [
+      "workspace-external-agent-sessions",
+      serverId,
+      workspaceDirectory,
+      "opencode",
+      EXTERNAL_SESSIONS_QUERY_LIMIT,
+    ],
+    enabled: Boolean(client && isConnected && workspaceDirectory),
+    staleTime: 30_000,
+    queryFn: async () => {
+      invariant(client, "Host client is required");
+      invariant(workspaceDirectory, "Workspace directory is required");
+      const payload = await client.fetchPersistedAgents({
+        provider: "opencode",
+        cwd: workspaceDirectory,
+        page: { limit: EXTERNAL_SESSIONS_QUERY_LIMIT },
+      });
+      return payload.entries;
+    },
+  });
+  const resumeExternalSession = useMutation({
+    mutationFn: async (session: FetchPersistedAgentsEntry) => {
+      if (!client) {
+        throw new Error("Host is not connected");
+      }
+      if (!session.persistence) {
+        throw new Error("Session is missing a resume handle");
+      }
+      return client.resumeAgent(session.persistence, {
+        cwd: session.cwd,
+        title: session.title,
+      });
+    },
+    onSuccess: (agent, session) => {
+      toast.show("Session resumed", { variant: "success" });
+      onCreated(agent);
+      seedResumedExternalSessionPreview({ serverId, agent, session });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to resume session");
+    },
+  });
+  const handleResumeExternalSession = useCallback(
+    (session: FetchPersistedAgentsEntry) => {
+      resumeExternalSession.mutate(session);
+    },
+    [resumeExternalSession],
+  );
+
+  return {
+    sessions: externalSessionsQuery.data ?? EMPTY_EXTERNAL_SESSIONS,
+    isLoading: externalSessionsQuery.isLoading,
+    isResumePending: resumeExternalSession.isPending,
+    resumingSessionId: resumeExternalSession.variables?.sessionId ?? null,
+    resumeSession: handleResumeExternalSession,
+  };
+}
+
 async function submitDraftCreateRequest(input: {
   attempt: { clientMessageId: string };
   text: string;
@@ -155,9 +383,11 @@ async function submitDraftCreateRequest(input: {
   composerState: {
     selectedProvider: string | null;
     selectedMode: string;
+    selectedModeIsExplicit: boolean;
     modeOptions: unknown[];
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
+    selectedModelIsExplicit: boolean;
     featureValues: Record<string, unknown> | undefined;
   };
 }): Promise<{ agentId: string | null; result: AgentSnapshotPayload }> {
@@ -186,13 +416,20 @@ async function submitDraftCreateRequest(input: {
   const modeIdOverride = resolveDraftModeIdOverride({
     autoSubmitConfig,
     modeOptionsCount: composerState.modeOptions.length,
+    provider,
     selectedMode: composerState.selectedMode,
+    selectedModeIsExplicit: composerState.selectedModeIsExplicit,
   });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
     cwd: workspaceDirectory,
     ...modeIdOverride,
-    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
+    model: resolveDraftModelOverride({
+      autoSubmitConfig,
+      provider,
+      effectiveModelId: composerState.effectiveModelId,
+      selectedModelIsExplicit: composerState.selectedModelIsExplicit,
+    }),
     thinkingOptionId:
       autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
     featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
@@ -358,6 +595,13 @@ export function WorkspaceDraftAgentTab({
     },
     [isCompact, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
   );
+  const externalSessions = useWorkspaceExternalSessions({
+    serverId,
+    client,
+    isConnected,
+    workspaceDirectory,
+    onCreated,
+  });
 
   const {
     formErrorMessage,
@@ -580,6 +824,13 @@ export function WorkspaceDraftAgentTab({
                     <Text style={styles.errorText}>{formErrorMessage}</Text>
                   </View>
                 ) : null}
+                <ExternalSessionsPanel
+                  isLoading={externalSessions.isLoading}
+                  sessions={externalSessions.sessions}
+                  isResumePending={externalSessions.isResumePending}
+                  resumingSessionId={externalSessions.resumingSessionId}
+                  onResume={externalSessions.resumeSession}
+                />
               </View>
             </ScrollView>
           )}
@@ -612,6 +863,10 @@ export function WorkspaceDraftAgentTab({
     </FileDropZone>
   );
 }
+
+export const __private__ = {
+  buildExternalSessionPreviewStreamItems,
+};
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -651,5 +906,68 @@ const styles = StyleSheet.create((theme) => ({
   },
   errorText: {
     color: theme.colors.destructive,
+  },
+  externalSessionsLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  externalSessionsLoadingText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  externalSessionsCard: {
+    gap: theme.spacing[3],
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+  },
+  externalSessionsHeader: {
+    gap: theme.spacing[1],
+  },
+  externalSessionsTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
+  },
+  externalSessionsSubtitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  externalSessionsList: {
+    gap: theme.spacing[2],
+  },
+  externalSessionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+  },
+  externalSessionTextGroup: {
+    flex: 1,
+    minWidth: 0,
+    gap: theme.spacing[1],
+  },
+  externalSessionTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "500",
+  },
+  externalSessionMeta: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  externalSessionAction: {
+    color: theme.colors.accent,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
   },
 }));

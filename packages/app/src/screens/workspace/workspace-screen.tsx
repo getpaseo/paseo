@@ -51,7 +51,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import {
   buildWorkspaceTabPersistenceKey,
   collectAllTabs,
@@ -178,6 +178,12 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function isDetachOnCloseAgent(agent: Agent | null | undefined): boolean {
+  return (
+    agent?.provider === "opencode" && agent.persistence?.metadata?.paseoCloseBehavior === "detach"
+  );
 }
 
 function decodeSegment(value: string): string {
@@ -2006,13 +2012,15 @@ function WorkspaceScreenContent({
         const agent =
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
         const isRunning = agent?.status === "running" || agent?.status === "initializing";
+        const isDetachOnClose = isDetachOnCloseAgent(agent);
 
         if (isRunning) {
           const confirmed = await confirmDialog({
-            title: "Archive running agent?",
-            message:
-              "This agent is still running. Archiving it will stop the agent and close the tab.",
-            confirmLabel: "Archive",
+            title: isDetachOnClose ? "Close running session?" : "Archive running agent?",
+            message: isDetachOnClose
+              ? "This session is still running in Paseo. Closing it will stop the active Paseo run and leave the OpenCode session resumable."
+              : "This agent is still running. Archiving it will stop the agent and close the tab.",
+            confirmLabel: isDetachOnClose ? "Close" : "Archive",
             cancelLabel: "Cancel",
             destructive: true,
           });

@@ -19,6 +19,7 @@ export interface FavoriteModelRow {
   modelId: string;
   modelLabel: string;
   description?: string;
+  isDefault?: boolean;
 }
 
 const providerPreferencesSchema = z.object({

@@ -120,6 +120,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
+  PersistedAgentDescriptor,
   ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
@@ -457,6 +458,10 @@ type FetchAgentHistoryRequestMessage = Extract<
   SessionInboundMessage,
   { type: "fetch_agent_history_request" }
 >;
+type FetchPersistedAgentsRequestMessage = Extract<
+  SessionInboundMessage,
+  { type: "fetch_persisted_agents_request" }
+>;
 type AgentDirectoryRequestMessage = FetchAgentsRequestMessage | FetchAgentHistoryRequestMessage;
 type FetchAgentsRequestFilter = NonNullable<FetchAgentsRequestMessage["filter"]>;
 type FetchAgentsRequestSort = NonNullable<FetchAgentsRequestMessage["sort"]>[number];
@@ -466,6 +471,11 @@ type FetchAgentsResponsePayload = Extract<
 >["payload"];
 type FetchAgentsResponseEntry = FetchAgentsResponsePayload["entries"][number];
 type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
+type FetchPersistedAgentsResponsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_persisted_agents_response" }
+>["payload"];
+type PersistedAgentDescriptorPayload = FetchPersistedAgentsResponsePayload["entries"][number];
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 type AgentUpdatesFilter = FetchAgentsRequestFilter;
 interface AgentUpdatesSubscriptionState {
@@ -1816,6 +1826,8 @@ export class Session {
         return this.handleFetchAgents(msg);
       case "fetch_agent_history_request":
         return this.handleFetchAgentHistory(msg);
+      case "fetch_persisted_agents_request":
+        return this.handleFetchPersistedAgents(msg);
       case "fetch_agent_request":
         return this.handleFetchAgent(msg.agentId, msg.requestId);
       case "delete_agent_request":
@@ -3141,8 +3153,6 @@ export class Session {
       await this.unarchiveAgentByHandle(handle);
       const snapshot = await this.agentManager.resumeAgentFromPersistence(handle, overrides);
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
-      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
-      await this.forwardAgentUpdate(snapshot);
       const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
       if (requestId) {
         const agentPayload = await this.buildAgentPayload(snapshot);
@@ -3157,6 +3167,17 @@ export class Session {
           },
         });
       }
+      void (async () => {
+        try {
+          await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
+          await this.forwardAgentUpdate(snapshot);
+        } catch (error) {
+          this.sessionLogger.warn(
+            { err: error, agentId: snapshot.id },
+            "Failed to hydrate resumed agent",
+          );
+        }
+      })();
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to resume agent");
       this.emit({
@@ -5666,6 +5687,41 @@ export class Session {
     return agents;
   }
 
+  private serializePersistedAgentDescriptor(
+    descriptor: PersistedAgentDescriptor,
+  ): PersistedAgentDescriptorPayload {
+    return {
+      provider: descriptor.provider,
+      sessionId: descriptor.sessionId,
+      cwd: descriptor.cwd,
+      title: descriptor.title,
+      lastActivityAt: descriptor.lastActivityAt.toISOString(),
+      persistence: descriptor.persistence,
+      timeline: descriptor.timeline,
+    };
+  }
+
+  private async listPersistedAgentDescriptors(
+    request: FetchPersistedAgentsRequestMessage,
+  ): Promise<PersistedAgentDescriptorPayload[]> {
+    const cwd = request.cwd ? this.normalizePersistedAgentCwd(request.cwd) : undefined;
+    const descriptors = await this.agentManager.listPersistedAgents({
+      provider: request.provider,
+      cwd,
+      limit: request.page?.limit,
+    });
+    return descriptors.map((descriptor) => this.serializePersistedAgentDescriptor(descriptor));
+  }
+
+  private normalizePersistedAgentCwd(cwd: string): string {
+    const resolved = resolve(cwd);
+    try {
+      return realpathSync.native(resolved);
+    } catch {
+      return resolved;
+    }
+  }
+
   private async resolveAgentIdentifier(
     identifier: string,
   ): Promise<{ ok: true; agentId: string } | { ok: false; error: string }> {
@@ -6820,6 +6876,35 @@ export class Session {
       const code = error instanceof SessionRequestError ? error.code : "fetch_agent_history_failed";
       const message = error instanceof Error ? error.message : "Failed to fetch agent history";
       this.sessionLogger.error({ err: error }, "Failed to handle fetch_agent_history_request");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: request.requestId,
+          requestType: request.type,
+          error: message,
+          code,
+        },
+      });
+    }
+  }
+
+  private async handleFetchPersistedAgents(
+    request: FetchPersistedAgentsRequestMessage,
+  ): Promise<void> {
+    try {
+      const entries = await this.listPersistedAgentDescriptors(request);
+      this.emit({
+        type: "fetch_persisted_agents_response",
+        payload: {
+          requestId: request.requestId,
+          entries,
+        },
+      });
+    } catch (error) {
+      const code =
+        error instanceof SessionRequestError ? error.code : "fetch_persisted_agents_failed";
+      const message = error instanceof Error ? error.message : "Failed to fetch persisted agents";
+      this.sessionLogger.error({ err: error }, "Failed to handle fetch_persisted_agents_request");
       this.emit({
         type: "rpc_error",
         payload: {

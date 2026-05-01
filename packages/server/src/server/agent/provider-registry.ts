@@ -229,22 +229,26 @@ function mergeModels(
   additionalModels: ProviderProfileModel[],
   runtimeModels: AgentModelDefinition[],
 ): AgentModelDefinition[] {
+  const profileModelsReplaceRuntime = provider !== "opencode";
   const baseModels =
-    profileModels.length === 0
+    profileModels.length === 0 || !profileModelsReplaceRuntime
       ? runtimeModels.map((model) => mapModel(provider, model))
       : profileModels.map((model) => ({
           ...model,
           provider,
         }));
+  const modelsToMerge = profileModelsReplaceRuntime
+    ? additionalModels
+    : [...profileModels, ...additionalModels];
 
-  if (additionalModels.length === 0) {
+  if (modelsToMerge.length === 0) {
     return baseModels;
   }
 
   const mergedModels = [...baseModels];
   let hasAdditionalDefault = false;
 
-  for (const model of additionalModels) {
+  for (const model of modelsToMerge) {
     const additionalModel = {
       ...model,
       provider,
@@ -268,7 +272,7 @@ function mergeModels(
   }
 
   const additionalDefaultIds = new Set(
-    additionalModels.filter((model) => model.isDefault === true).map((model) => model.id),
+    modelsToMerge.filter((model) => model.isDefault === true).map((model) => model.id),
   );
 
   return mergedModels.map((model) =>
