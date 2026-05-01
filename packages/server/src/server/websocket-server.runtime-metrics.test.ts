@@ -103,6 +103,7 @@ function createServer(logger: ReturnType<typeof createLogger>) {
     daemonConfigStore as unknown as DaemonConfigStore,
     null,
     { allowedOrigins: new Set() },
+    undefined, // auth
     undefined, // speech
     undefined, // terminalManager
     undefined, // dictation

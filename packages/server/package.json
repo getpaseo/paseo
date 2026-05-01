@@ -97,6 +97,7 @@
     "@xterm/headless": "^6.0.0",
     "ai": "5.0.78",
     "ajv": "^8.17.1",
+    "bcryptjs": "^3.0.3",
     "dotenv": "^17.2.3",
     "express": "^4.18.2",
     "express-basic-auth": "^1.2.1",

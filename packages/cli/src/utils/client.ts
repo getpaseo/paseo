@@ -1,10 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
-  loadConfig,
-  resolveHubcodeHome,
-  DaemonClient,
+  buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
+  loadConfig,
+  normalizeHostPort,
+  parseConnectionUri,
   parseConnectionOfferFromUrl,
+  DaemonClient,
+  resolveHubcodeHome,
+  shouldUseTlsForDefaultHostedRelay,
   type ConnectionOffer,
   type WebSocketLike,
 } from "@hubcode/server";
@@ -43,6 +47,27 @@ export function normalizeDaemonHost(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) {
     return null;
+  }
+
+  if (trimmed.startsWith("tcp://")) {
+    try {
+      const parsed = parseConnectionUri(trimmed);
+      const endpoint = normalizeHostPort(
+        parsed.isIpv6 ? `[${parsed.host}]:${parsed.port}` : `${parsed.host}:${parsed.port}`,
+      );
+      const query = new URLSearchParams();
+      if (parsed.useTls) {
+        query.set("ssl", "true");
+      }
+      if (parsed.password) {
+        query.set("password", parsed.password);
+      }
+      const queryString = query.toString();
+      const suffix = queryString ? `?${queryString}` : "";
+      return `tcp://${endpoint}${suffix}`;
+    } catch {
+      return null;
+    }
   }
 
   if (
@@ -179,10 +204,26 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
     };
   }
 
+  if (trimmed.startsWith("tcp://")) {
+    const parsed = parseConnectionUri(trimmed);
+    const endpoint = normalizeHostPort(
+      parsed.isIpv6 ? `[${parsed.host}]:${parsed.port}` : `${parsed.host}:${parsed.port}`,
+    );
+    return {
+      type: "tcp",
+      url: buildDaemonWebSocketUrl(endpoint, { useTls: parsed.useTls }),
+    };
+  }
+
   return {
     type: "tcp",
     url: `ws://${trimmed}/ws`,
   };
+}
+
+export function resolveDaemonPassword(host: string): string | undefined {
+  const trimmed = host.trim();
+  return trimmed.startsWith("tcp://") ? parseConnectionUri(trimmed).password : undefined;
 }
 
 /**
@@ -191,9 +232,9 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
 function createNodeWebSocketFactory() {
   return (
     url: string,
-    options?: { headers?: Record<string, string>; socketPath?: string },
+    options?: { headers?: Record<string, string>; protocols?: string[]; socketPath?: string },
   ): WebSocketLike => {
-    return new WebSocket(url, {
+    return new WebSocket(url, options?.protocols, {
       headers: options?.headers,
       ...(options?.socketPath ? { socketPath: options.socketPath } : {}),
     }) as unknown as WebSocketLike;
@@ -208,6 +249,7 @@ async function connectViaRelayOffer(
 ): Promise<DaemonClient> {
   const url = buildRelayWebSocketUrl({
     endpoint: offer.relay.endpoint,
+    useTls: shouldUseTlsForDefaultHostedRelay(offer.relay.endpoint),
     serverId: offer.serverId,
     role: "client",
   });
@@ -217,8 +259,10 @@ async function connectViaRelayOffer(
     clientId,
     clientType: "cli",
     connectTimeoutMs: timeout,
-    webSocketFactory: (target: string, config?: { headers?: Record<string, string> }) =>
-      nodeWebSocketFactory(target, { headers: config?.headers }),
+    webSocketFactory: (
+      target: string,
+      config?: { headers?: Record<string, string>; protocols?: string[] },
+    ) => nodeWebSocketFactory(target, { headers: config?.headers, protocols: config?.protocols }),
     e2ee: { enabled: true, daemonPublicKeyB64: offer.daemonPublicKeyB64 },
     reconnect: { enabled: false },
   });
@@ -266,14 +310,20 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
 
   for (const host of hosts) {
     const target = resolveDaemonTarget(host);
+    const password = resolveDaemonPassword(host);
     const client = new DaemonClient({
       url: target.url,
       clientId,
       clientType: "cli",
       connectTimeoutMs: timeout,
-      webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
+      password,
+      webSocketFactory: (
+        url: string,
+        config?: { headers?: Record<string, string>; protocols?: string[] },
+      ) =>
         nodeWebSocketFactory(url, {
           headers: config?.headers,
+          protocols: config?.protocols,
           ...(target.type === "ipc" ? { socketPath: target.socketPath } : {}),
         }),
       reconnect: { enabled: false },

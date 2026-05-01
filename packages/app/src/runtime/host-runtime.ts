@@ -13,7 +13,13 @@ import {
   type HostConnection,
   type HostProfile,
 } from "@/types/host-connection";
-import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
+import {
+  buildDaemonWebSocketUrl,
+  buildRelayWebSocketUrl,
+  decodeOfferFragmentPayload,
+  normalizeHostPort,
+  shouldUseTlsForDefaultHostedRelay,
+} from "@/utils/daemon-endpoints";
 import { resolveAppVersion } from "@/utils/app-version";
 import { resolveShareAuthForServerId } from "@/stores/shared-session-store";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@server/shared/connection-offer";
@@ -23,7 +29,6 @@ import {
   startDesktopDaemon,
 } from "@/desktop/daemon/desktop-daemon";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
-import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "@/utils/daemon-endpoints";
 import { getOrCreateClientId } from "@/utils/client-id";
 import {
   selectBestConnection,
@@ -473,13 +478,17 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       if (connection.type === "directTcp") {
         return new DaemonClient({
           ...base,
-          url: buildDaemonWebSocketUrl(connection.endpoint),
+          url: buildDaemonWebSocketUrl(connection.endpoint, {
+            useTls: connection.useTls ?? false,
+          }),
+          ...(connection.password ? { password: connection.password } : {}),
         });
       }
       return new DaemonClient({
         ...base,
         url: buildRelayWebSocketUrl({
           endpoint: connection.relayEndpoint,
+          useTls: shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),
           serverId: host.serverId,
         }),
         e2ee: {
@@ -1343,10 +1352,13 @@ export class HostRuntimeStore {
   async upsertDirectConnection(input: {
     serverId: string;
     endpoint: string;
+    useTls?: boolean;
+    password?: string;
     label?: string;
     existingClient?: DaemonClient;
   }): Promise<HostProfile> {
     const endpoint = normalizeHostPort(input.endpoint);
+    const password = input.password?.trim();
     return this.upsertHostConnection({
       serverId: input.serverId,
       label: input.label,
@@ -1354,6 +1366,8 @@ export class HostRuntimeStore {
         id: `direct:${endpoint}`,
         type: "directTcp",
         endpoint,
+        useTls: input.useTls ?? false,
+        ...(password ? { password } : {}),
       },
       existingClient: input.existingClient,
     });
@@ -2071,6 +2085,8 @@ export interface HostMutations {
   upsertDirectConnection: (input: {
     serverId: string;
     endpoint: string;
+    useTls?: boolean;
+    password?: string;
     label?: string;
   }) => Promise<HostProfile>;
   upsertRelayConnection: (input: {

@@ -11,6 +11,7 @@ import type {
 } from "./agent/provider-launch-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "./agent/provider-manifest.js";
+import { hashDaemonPassword } from "./auth.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import {
   mergeAllowedHosts,
@@ -107,6 +108,19 @@ function extractAgentProviderSettings(
     : undefined;
 }
 
+function resolveAuthConfig(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): HubcodeDaemonConfig["auth"] {
+  const envPassword = env.HUBCODE_PASSWORD?.trim();
+  if (envPassword) {
+    return { password: hashDaemonPassword(envPassword) };
+  }
+  return persisted.daemon?.auth?.password
+    ? { password: persisted.daemon.auth.password }
+    : undefined;
+}
+
 export function loadConfig(
   hubcodeHome: string,
   options?: {
@@ -196,6 +210,7 @@ export function loadConfig(
     relayEndpoint,
     relayPublicEndpoint,
     appBaseUrl,
+    auth: resolveAuthConfig(env, persisted),
     openai,
     speech,
     voiceLlmProvider,

@@ -1,5 +1,5 @@
-import { WebSocketServer } from "ws";
-import type { Server as HTTPServer } from "http";
+import { WebSocket, WebSocketServer } from "ws";
+import type { IncomingMessage, Server as HTTPServer } from "http";
 import { join } from "path";
 import { hostname as getHostname } from "node:os";
 import type { AgentManager } from "./agent/agent-manager.js";
@@ -30,6 +30,14 @@ import {
 import { asUint8Array, decodeTerminalStreamFrame } from "../shared/terminal-stream-protocol.js";
 import type { AllowedHostsConfig } from "./allowed-hosts.js";
 import { isHostAllowed } from "./allowed-hosts.js";
+import {
+  extractWsBearerProtocol,
+  extractWsBearerToken,
+  isBearerTokenValid,
+  type DaemonAuthConfig,
+} from "./auth.js";
+
+const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 import {
   Session,
   type SessionLifecycleIntent,
@@ -362,6 +370,7 @@ export class VoiceAssistantWebSocketServer {
     daemonConfigStore: DaemonConfigStore,
     mcpBaseUrl: string | null,
     wsConfig: WebSocketServerConfig,
+    auth?: DaemonAuthConfig,
     speech?: SpeechService | null,
     terminalManager?: TerminalManager | null,
     dictation?: {
@@ -461,9 +470,11 @@ export class VoiceAssistantWebSocketServer {
     });
 
     const { allowedOrigins, allowedHosts } = wsConfig;
+    const authPassword = auth?.password;
     this.wss = new WebSocketServer({
       server,
       path: "/ws",
+      handleProtocols: (protocols) => selectWebSocketProtocol(protocols, authPassword),
       verifyClient: ({ req }, callback) => {
         const requestMetadata = extractSocketRequestMetadata(req);
         const origin = requestMetadata.origin;
@@ -493,7 +504,7 @@ export class VoiceAssistantWebSocketServer {
     });
 
     this.wss.on("connection", (ws, request) => {
-      void this.attachSocket(ws, request);
+      void this.attachAuthenticatedSocket(ws, request, authPassword);
     });
 
     const runtimeMetricsInterval = setInterval(() => {
@@ -643,6 +654,30 @@ export class VoiceAssistantWebSocketServer {
     for (const ws of connection.sockets) {
       this.sendBinaryToClient(ws, frame);
     }
+  }
+
+  private async attachAuthenticatedSocket(
+    ws: WebSocket,
+    request: IncomingMessage,
+    password: string | undefined,
+  ): Promise<void> {
+    if (password) {
+      const requestMetadata = extractSocketRequestMetadata(request);
+      const protocol = extractWsBearerProtocol(request.headers["sec-websocket-protocol"]);
+      const token = extractWsBearerToken(protocol);
+      const isAuthorized = isBearerTokenValid({ password, token });
+      if (!isAuthorized) {
+        const reason = token === null ? "Password required" : "Incorrect password";
+        this.logger.warn(
+          { ...requestMetadata, hasToken: token !== null },
+          "Rejected WebSocket connection with invalid daemon password",
+        );
+        ws.close(WS_CLOSE_DAEMON_AUTH_FAILED, reason);
+        return;
+      }
+    }
+
+    await this.attachSocket(ws as unknown as WebSocketLike, request);
   }
 
   private async attachSocket(
@@ -1616,6 +1651,24 @@ type SocketRequestMetadata = {
   userAgent?: string;
   remoteAddress?: string;
 };
+
+function selectWebSocketProtocol(
+  protocols: Set<string>,
+  password: string | undefined,
+): string | false {
+  if (!password) {
+    return protocols.values().next().value ?? false;
+  }
+
+  for (const protocol of protocols) {
+    const token = extractWsBearerToken(protocol);
+    if (token !== null) {
+      return protocol;
+    }
+  }
+
+  return false;
+}
 
 function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
   if (!request || typeof request !== "object") {

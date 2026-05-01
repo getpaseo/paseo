@@ -123,6 +123,8 @@ describe("hubcode daemon bootstrap", () => {
           statusText: "test cleanup",
         }),
       );
+      vi.unstubAllGlobals();
+      globalThis.fetch = originalFetch;
       await daemonHandle.close();
     }
   });

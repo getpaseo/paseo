@@ -63,6 +63,16 @@ const ProvidersSchema = z
   })
   .strict();
 
+const BcryptHashSchema = z.string().regex(/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/, {
+  message: "Expected a bcrypt hash",
+});
+
+const DaemonAuthSchema = z
+  .object({
+    password: BcryptHashSchema.optional(),
+  })
+  .strict();
+
 const SpeechProviderIdSchema = z
   .string()
   .trim()
@@ -253,6 +263,7 @@ export const PersistedConfigSchema = z
           })
           .strict()
           .optional(),
+        auth: DaemonAuthSchema.optional(),
       })
       .strict()
       .optional(),

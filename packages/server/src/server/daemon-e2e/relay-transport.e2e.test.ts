@@ -99,6 +99,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     const serverId = `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const url = buildRelayWebSocketUrl({
       endpoint: `127.0.0.1:${port}`,
+      useTls: false,
       serverId,
       role: "server",
     });
@@ -206,6 +207,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       const ws = new WebSocket(
         buildRelayWebSocketUrl({
           endpoint: `127.0.0.1:${relayPort}`,
+          useTls: false,
           serverId,
           role: "client",
         }),
@@ -329,6 +331,7 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
       const ws = new WebSocket(
         buildRelayWebSocketUrl({
           endpoint: `127.0.0.1:${relayPort}`,
+          useTls: false,
           serverId,
           role: "client",
         }),

@@ -1303,6 +1303,41 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("upsertDirectConnection stores SSL and password settings", async () => {
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => ({
+          client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: host.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await store.upsertDirectConnection({
+      serverId: "srv_tls_password",
+      endpoint: "example.hubcode.test:7443",
+      useTls: true,
+      password: "shared-secret",
+      label: "tls host",
+    });
+
+    const host = store.getHosts().find((entry) => entry.serverId === "srv_tls_password");
+    expect(host?.connections).toEqual([
+      {
+        id: "direct:example.hubcode.test:7443",
+        type: "directTcp",
+        endpoint: "example.hubcode.test:7443",
+        useTls: true,
+        password: "shared-secret",
+      },
+    ]);
+
+    store.syncHosts([]);
+  });
+
   it("uses the advertised hostname when adding a relay host from a pairing offer", async () => {
     const store = new HostRuntimeStore({
       deps: {

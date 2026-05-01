@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   getDaemonHost,
   normalizeDaemonHost,
+  resolveDaemonPassword,
   resolveDaemonTarget,
   resolveDefaultDaemonHosts,
 } from "../src/utils/client.js";
@@ -36,13 +37,32 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
-  console.log("Test 3: local unix socket paths normalize into IPC daemon targets");
+  console.log("Test 3: tcp URI host targets honor ssl=true");
+  const target = resolveDaemonTarget("tcp://example.com:6767?ssl=true&password=query-secret");
+  assert.deepStrictEqual(target, {
+    type: "tcp",
+    url: "wss://example.com:6767/ws",
+  });
+  console.log("✓ tcp URI host targets honor ssl=true\n");
+}
+
+{
+  console.log("Test 3a: tcp URI hosts normalize into canonical direct TCP targets");
+  assert.strictEqual(
+    normalizeDaemonHost("tcp://Example.com:6767?ssl=true&password=query-secret"),
+    "tcp://Example.com:6767?ssl=true&password=query-secret",
+  );
+  console.log("✓ tcp URI hosts normalize into canonical direct TCP targets\n");
+}
+
+{
+  console.log("Test 3b: local unix socket paths normalize into IPC daemon targets");
   assert.strictEqual(normalizeDaemonHost("/tmp/hubcode.sock"), "unix:///tmp/hubcode.sock");
   console.log("✓ local unix socket paths normalize into IPC daemon targets\n");
 }
 
 {
-  console.log("Test 3b: Windows absolute paths are NOT treated as unix sockets");
+  console.log("Test 3c: Windows absolute paths are NOT treated as unix sockets");
   assert.strictEqual(normalizeDaemonHost("C:\\Users\\foo\\.hubcode\\hubcode.sock"), null);
   assert.strictEqual(normalizeDaemonHost("D:\\project\\socket"), null);
   console.log("✓ Windows absolute paths are not treated as unix sockets\n");
@@ -113,6 +133,17 @@ console.log("=== CLI IPC Target Helpers ===\n");
     rmSync(hubcodeHome, { recursive: true, force: true });
   }
   console.log("✓ local IPC still takes priority over configured TCP hosts\n");
+}
+
+{
+  console.log("Test 7: daemon password resolution uses only the TCP URI query");
+  assert.strictEqual(
+    resolveDaemonPassword("tcp://example.com:6767?ssl=true&password=query-secret"),
+    "query-secret",
+  );
+  assert.strictEqual(resolveDaemonPassword("tcp://missing.example:6767"), undefined);
+  assert.strictEqual(resolveDaemonPassword("example.com:6767"), undefined);
+  console.log("✓ daemon password resolution uses only the TCP URI query\n");
 }
 
 console.log("=== All CLI IPC target tests passed ===");

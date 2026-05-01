@@ -29,6 +29,7 @@ type TestHubcodeDaemonOptions = {
   voiceLlmProviderExplicit?: boolean;
   voiceLlmModel?: string | null;
   dictationFinalTimeoutMs?: number;
+  auth?: HubcodeDaemonConfig["auth"];
 };
 
 export type TestHubcodeDaemon = {
@@ -95,6 +96,7 @@ export async function createTestHubcodeDaemon(
       relayEnabled: options.relayEnabled ?? false,
       relayEndpoint: options.relayEndpoint ?? "relay.hubcode.ai:443",
       appBaseUrl: "https://app.hubcode.ai",
+      auth: options.auth,
       openai: options.openai,
       speech: options.speech,
       voiceLlmProvider: options.voiceLlmProvider ?? null,

@@ -152,6 +152,7 @@ import type {
 } from "./agent/provider-launch-config.js";
 import type { CliProviderOverrides } from "../shared/cli-provider-registry.js";
 import { isHostAllowed, type AllowedHostsConfig } from "./allowed-hosts.js";
+import { createRequireBearerMiddleware, type DaemonAuthConfig } from "./auth.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -205,6 +206,7 @@ export type HubcodeDaemonConfig = {
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
   appBaseUrl?: string;
+  auth?: DaemonAuthConfig;
   openai?: HubcodeOpenAIConfig;
   speech?: HubcodeSpeechConfig;
   voiceLlmProvider?: AgentProvider | null;
@@ -304,6 +306,12 @@ export async function createHubcodeDaemon(
       }
       next();
     });
+
+    app.use(
+      createRequireBearerMiddleware(config.auth, (context) => {
+        logger.warn(context, "Rejected HTTP request with invalid daemon password");
+      }),
+    );
 
     // Serve static files from public directory
     app.use("/public", express.static(staticDir));
@@ -1361,15 +1369,23 @@ export async function createHubcodeDaemon(
                 {
                   host: boundListenTarget.host,
                   port: boundListenTarget.port,
+                  authRequired: !!config.auth?.password,
                   elapsed: elapsed(),
                 },
                 `Server listening on http://${boundListenTarget.host}:${boundListenTarget.port}`,
               );
             } else {
               logger.info(
-                { path: boundListenTarget.path, elapsed: elapsed() },
+                {
+                  path: boundListenTarget.path,
+                  authRequired: !!config.auth?.password,
+                  elapsed: elapsed(),
+                },
                 `Server listening on ${boundListenTarget.path}`,
               );
+            }
+            if (config.auth?.password) {
+              logger.info("Daemon password authentication enabled");
             }
 
             wsServer = new VoiceAssistantWebSocketServer(
@@ -1383,6 +1399,7 @@ export async function createHubcodeDaemon(
               daemonConfigStore,
               mcpBaseUrl,
               { allowedOrigins, allowedHosts: config.allowedHosts },
+              config.auth,
               speechService,
               terminalManager,
               {
