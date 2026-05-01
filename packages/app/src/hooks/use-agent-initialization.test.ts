@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import { __private__ } from "./use-agent-initialization";
 
 describe("useAgentInitialization timeline request policy", () => {
@@ -10,11 +11,10 @@ describe("useAgentInitialization timeline request policy", () => {
           seq: 42,
         },
         hasAuthoritativeHistory: false,
-        initialTimelineLimit: 200,
       }),
     ).toEqual({
       direction: "tail",
-      limit: 200,
+      limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "canonical",
     });
   });
@@ -24,11 +24,10 @@ describe("useAgentInitialization timeline request policy", () => {
       __private__.deriveInitialTimelineRequest({
         cursor: null,
         hasAuthoritativeHistory: true,
-        initialTimelineLimit: 200,
       }),
     ).toEqual({
       direction: "tail",
-      limit: 200,
+      limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "canonical",
     });
   });
@@ -41,26 +40,11 @@ describe("useAgentInitialization timeline request policy", () => {
           seq: 42,
         },
         hasAuthoritativeHistory: true,
-        initialTimelineLimit: 200,
       }),
     ).toEqual({
       direction: "after",
       cursor: { epoch: "epoch-1", seq: 42 },
-      limit: 0,
-      projection: "canonical",
-    });
-  });
-
-  it("supports unbounded tail bootstrap policy", () => {
-    expect(
-      __private__.deriveInitialTimelineRequest({
-        cursor: null,
-        hasAuthoritativeHistory: false,
-        initialTimelineLimit: 0,
-      }),
-    ).toEqual({
-      direction: "tail",
-      limit: 0,
+      limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "canonical",
     });
   });

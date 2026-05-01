@@ -8,8 +8,11 @@ import {
   getInitKey,
   rejectInitDeferred,
 } from "@/utils/agent-initialization";
-import { deriveInitialTimelineRequest } from "@/contexts/session-timeline-bootstrap-policy";
+import {
+  deriveInitialTimelineRequest,
+} from "@/contexts/session-timeline-bootstrap-policy";
 import { isWeb } from "@/constants/platform";
+import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 
 const INIT_TIMEOUT_MS = 5 * 60_000;
 const NATIVE_INITIAL_TIMELINE_LIMIT = 200;
@@ -56,13 +59,11 @@ export function useAgentInitialization({
 
       const session = useSessionStore.getState().sessions[serverId];
       const cursor = session?.agentTimelineCursor.get(agentId);
-      const initialTimelineLimit = resolveInitialTimelineLimit();
       const hasAuthoritativeHistory =
         session?.agentAuthoritativeHistoryApplied.get(agentId) === true;
       const timelineRequest = deriveInitialTimelineRequest({
         cursor: cursor ? { epoch: cursor.epoch, seq: cursor.endSeq } : null,
         hasAuthoritativeHistory,
-        initialTimelineLimit,
       });
       const initRequestDirection = timelineRequest.direction === "after" ? "after" : "tail";
 
@@ -103,10 +104,9 @@ export function useAgentInitialization({
 
       try {
         await client.refreshAgent(agentId);
-        const initialTimelineLimit = resolveInitialTimelineLimit();
         await client.fetchAgentTimeline(agentId, {
           direction: "tail",
-          limit: initialTimelineLimit,
+          limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "canonical",
         });
       } catch (error) {

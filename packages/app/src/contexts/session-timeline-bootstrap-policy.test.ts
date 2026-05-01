@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import { deriveInitialTimelineRequest } from "./session-timeline-bootstrap-policy";
 
 describe("deriveInitialTimelineRequest", () => {
@@ -7,11 +8,10 @@ describe("deriveInitialTimelineRequest", () => {
       deriveInitialTimelineRequest({
         cursor: { epoch: "epoch-1", seq: 42 },
         hasAuthoritativeHistory: false,
-        initialTimelineLimit: 100,
       }),
     ).toEqual({
       direction: "tail",
-      limit: 100,
+      limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "canonical",
     });
   });
@@ -21,11 +21,10 @@ describe("deriveInitialTimelineRequest", () => {
       deriveInitialTimelineRequest({
         cursor: null,
         hasAuthoritativeHistory: true,
-        initialTimelineLimit: 100,
       }),
     ).toEqual({
       direction: "tail",
-      limit: 100,
+      limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "canonical",
     });
   });
@@ -35,12 +34,11 @@ describe("deriveInitialTimelineRequest", () => {
       deriveInitialTimelineRequest({
         cursor: { epoch: "epoch-1", seq: 42 },
         hasAuthoritativeHistory: true,
-        initialTimelineLimit: 100,
       }),
     ).toEqual({
       direction: "after",
       cursor: { epoch: "epoch-1", seq: 42 },
-      limit: 0,
+      limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "canonical",
     });
   });

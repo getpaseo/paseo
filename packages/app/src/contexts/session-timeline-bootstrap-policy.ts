@@ -1,3 +1,5 @@
+import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
+
 type InitialTimelineCursor = {
   epoch: string;
   seq: number;
@@ -6,11 +8,9 @@ type InitialTimelineCursor = {
 export function deriveInitialTimelineRequest({
   cursor,
   hasAuthoritativeHistory,
-  initialTimelineLimit,
 }: {
   cursor: InitialTimelineCursor;
   hasAuthoritativeHistory: boolean;
-  initialTimelineLimit: number;
 }): {
   direction: "tail" | "after";
   cursor?: { epoch: string; seq: number };
@@ -20,7 +20,7 @@ export function deriveInitialTimelineRequest({
   if (!hasAuthoritativeHistory || !cursor) {
     return {
       direction: "tail",
-      limit: initialTimelineLimit,
+      limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "canonical",
     };
   }
@@ -28,7 +28,7 @@ export function deriveInitialTimelineRequest({
   return {
     direction: "after",
     cursor: { epoch: cursor.epoch, seq: cursor.seq },
-    limit: 0,
+    limit: TIMELINE_FETCH_PAGE_SIZE,
     projection: "canonical",
   };
 }

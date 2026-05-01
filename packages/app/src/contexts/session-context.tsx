@@ -13,6 +13,7 @@ import {
   type ProcessTimelineResponseOutput,
   type TimelineReducerSideEffect,
 } from "@/contexts/session-stream-reducers";
+import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import type {
   AgentAttachment,
   AgentStreamEventPayload,
@@ -754,7 +755,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
             .fetchAgentTimeline(agentId, {
               direction: "after",
               cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
-              limit: 0,
+              limit: TIMELINE_FETCH_PAGE_SIZE,
               projection: "canonical",
             })
             .catch((error) => {
@@ -1024,7 +1025,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         .fetchAgentTimeline(agentId, {
           direction: "after",
           cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
-          limit: 0,
+          limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "canonical",
         })
         .catch((error) => {

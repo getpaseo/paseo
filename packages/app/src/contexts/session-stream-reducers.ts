@@ -65,6 +65,8 @@ export interface ProcessTimelineResponseInput {
     endCursor: { seq: number } | null;
     entries: TimelineResponseEntry[];
     error: string | null;
+    hasNewer: boolean;
+    hasOlder: boolean;
   };
   currentTail: StreamItem[];
   currentHead: StreamItem[];

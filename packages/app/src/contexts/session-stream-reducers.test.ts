@@ -94,6 +94,8 @@ const baseTimelineInput: ProcessTimelineResponseInput = {
     endCursor: null,
     entries: [],
     error: null,
+    hasNewer: false,
+    hasOlder: false,
   },
   currentTail: [],
   currentHead: [],
