@@ -1,6 +1,6 @@
 {
   "name": "@hubcode/desktop",
-  "version": "2.8.0",
+  "version": "2.8.1",
   "private": true,
   "description": "Hubcode desktop app (Electron wrapper)",
   "main": "dist/main.js",
@@ -12,8 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@hubcode/cli": "2.8.0",
-    "@hubcode/server": "2.8.0",
+    "@hubcode/cli": "2.8.1",
+    "@hubcode/server": "2.8.1",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",
     "tar": "^7.4.3",
