@@ -690,7 +690,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
         }
         const tabId = useWorkspaceLayoutStore
           .getState()
-          .openTab(workspaceKey, { kind: "terminal", terminalId: createdTerminal.id });
+          .openTabFocused(workspaceKey, { kind: "terminal", terminalId: createdTerminal.id });
         if (tabId) {
           useWorkspaceLayoutStore.getState().focusTab(workspaceKey, tabId);
         }
@@ -872,7 +872,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
     () => (workspaceLayout ? collectAllTabs(workspaceLayout.root) : EMPTY_UI_TABS),
     [workspaceLayout],
   );
-  const openWorkspaceTab = useWorkspaceLayoutStore((state) => state.openTab);
+  const openWorkspaceTab = useWorkspaceLayoutStore((state) => state.openTabFocused);
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
   const unpinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.unpinAgent);
@@ -1114,7 +1114,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
           if (persistenceKey) {
             const tabId = useWorkspaceLayoutStore
               .getState()
-              .openTab(persistenceKey, { kind: "terminal", terminalId: result.terminalId });
+              .openTabFocused(persistenceKey, { kind: "terminal", terminalId: result.terminalId });
             if (tabId) {
               useWorkspaceLayoutStore.getState().focusTab(persistenceKey, tabId);
             }
@@ -1141,7 +1141,7 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
         if (persistenceKey) {
           const tabId = useWorkspaceLayoutStore
             .getState()
-            .openTab(persistenceKey, { kind: "terminal", terminalId: result.terminalId });
+            .openTabFocused(persistenceKey, { kind: "terminal", terminalId: result.terminalId });
           if (tabId) {
             useWorkspaceLayoutStore.getState().focusTab(persistenceKey, tabId);
           }

@@ -12,7 +12,7 @@ import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
  * ```
  */
 export function useOpenBrowserTab() {
-  const openTab = useWorkspaceLayoutStore((s) => s.openTab);
+  const openTab = useWorkspaceLayoutStore((s) => s.openTabFocused);
   const splitPaneEmpty = useWorkspaceLayoutStore((s) => s.splitPaneEmpty);
   const focusTab = useWorkspaceLayoutStore((s) => s.focusTab);
 

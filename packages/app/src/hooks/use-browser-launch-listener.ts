@@ -88,7 +88,7 @@ export function useBrowserLaunchListener(
           // pane). Then close the stale tabs — the pane stays alive
           // because the freshly-opened tab keeps it populated.
           state.focusPane(workspaceKey, stalePane.id);
-          const tabId = state.openTab(workspaceKey, target);
+          const tabId = state.openTabFocused(workspaceKey, target);
           if (tabId) state.focusTab(workspaceKey, tabId);
           for (const tab of stale) {
             state.closeTab(workspaceKey, tab.tabId);
@@ -111,12 +111,12 @@ export function useBrowserLaunchListener(
           position: "right",
         });
         if (newPaneId) {
-          const tabId = state.openTab(workspaceKey, target);
+          const tabId = state.openTabFocused(workspaceKey, target);
           if (tabId) state.focusTab(workspaceKey, tabId);
           return;
         }
       }
-      const tabId = state.openTab(workspaceKey, target);
+      const tabId = state.openTabFocused(workspaceKey, target);
       if (tabId) state.focusTab(workspaceKey, tabId);
     };
 
