@@ -35,7 +35,7 @@
     "web": "npm run web --workspace=@hubcode/app",
     "dev:desktop": "npm run dev --workspace=@hubcode/desktop",
     "build:fast": "npm run build:fast:server && npm run build:fast:desktop",
-    "build:fast:server": "cd packages/server && npx esbuild src/server/exports.ts src/server/index.ts --outdir=dist/server/server --platform=node --format=esm --bundle --external:ws --external:better-sqlite3 --external:pino --external:pino-pretty --external:electron-log --external:sherpa-onnx-node --external:onnxruntime-node --packages=external",
+    "build:fast:server": "cd packages/server && npx esbuild src/server/exports.ts src/server/index.ts --outdir=dist/server/server --platform=node --format=esm --bundle --external:ws --external:better-sqlite3 --external:pino --external:pino-pretty --external:electron-log --external:sherpa-onnx-node --external:onnxruntime-node --packages=external && node -e \"require('node:fs').cpSync('src/terminal/shell-integration','dist/server/server/shell-integration',{recursive:true})\"",
     "build:fast:desktop": "cd packages/desktop && npx esbuild src/main.ts src/preload.ts --outdir=dist --platform=node --format=cjs --bundle --external:electron --external:electron-updater --external:electron-log --external:ws --external:@hubcode/server --external:@hubcode/cli",
     "build:desktop": "npm run version:sync-internal && npm run build:web --workspace=@hubcode/app && npm run build --workspace=@hubcode/desktop",
     "cli": "npx tsx packages/cli/src/index.js",

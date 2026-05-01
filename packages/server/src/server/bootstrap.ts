@@ -279,6 +279,7 @@ export async function createHubcodeDaemon(
     }
 
     // CORS - allow same-origin + configured origins
+    const isDev = process.env.NODE_ENV === "development";
     const allowedOrigins = new Set([
       ...config.corsAllowedOrigins,
       // Packaged desktop renderers use the custom hubcode:// protocol scheme.
@@ -289,6 +290,23 @@ export async function createHubcodeDaemon(
             `http://${listenTarget.host}:${listenTarget.port}`,
             `http://localhost:${listenTarget.port}`,
             `http://127.0.0.1:${listenTarget.port}`,
+          ]
+        : []),
+      // Dev-only: allow Expo / Vite / web dev servers on common ports so the
+      // renderer (loaded from `http://localhost:8081` etc.) can talk to the
+      // daemon on a different port. Skipped in production.
+      ...(isDev
+        ? [
+            "http://localhost:8081",
+            "http://127.0.0.1:8081",
+            "http://localhost:8082",
+            "http://127.0.0.1:8082",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:19000",
+            "http://127.0.0.1:19000",
+            "http://localhost:19006",
+            "http://127.0.0.1:19006",
           ]
         : []),
     ]);
