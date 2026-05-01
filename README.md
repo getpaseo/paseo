@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packages/website/public/logo.svg" width="64" height="64" alt="Hubcode logo">
+  <img src="packages/website/public/logo-icon.png" width="64" height="64" alt="Hubcode logo">
 </p>
 
 <h1 align="center">Hubcode</h1>
