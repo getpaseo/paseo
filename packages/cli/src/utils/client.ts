@@ -1,5 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
-import { loadConfig, resolveHubcodeHome, DaemonClient } from "@hubcode/server";
+import {
+  loadConfig,
+  resolveHubcodeHome,
+  DaemonClient,
+  buildRelayWebSocketUrl,
+  parseConnectionOfferFromUrl,
+  type ConnectionOffer,
+  type WebSocketLike,
+} from "@hubcode/server";
 import path from "node:path";
 import WebSocket from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
@@ -181,19 +189,58 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
  * Create a WebSocket factory that works in Node.js
  */
 function createNodeWebSocketFactory() {
-  return (url: string, options?: { headers?: Record<string, string>; socketPath?: string }) => {
+  return (
+    url: string,
+    options?: { headers?: Record<string, string>; socketPath?: string },
+  ): WebSocketLike => {
     return new WebSocket(url, {
       headers: options?.headers,
       ...(options?.socketPath ? { socketPath: options.socketPath } : {}),
-    }) as unknown as {
-      readyState: number;
-      send: (data: string | Uint8Array | ArrayBuffer) => void;
-      close: (code?: number, reason?: string) => void;
-      binaryType?: string;
-      on: (event: string, listener: (...args: unknown[]) => void) => void;
-      off: (event: string, listener: (...args: unknown[]) => void) => void;
-    };
+    }) as unknown as WebSocketLike;
   };
+}
+
+async function connectViaRelayOffer(
+  offer: ConnectionOffer,
+  clientId: string,
+  timeout: number,
+  nodeWebSocketFactory: ReturnType<typeof createNodeWebSocketFactory>,
+): Promise<DaemonClient> {
+  const url = buildRelayWebSocketUrl({
+    endpoint: offer.relay.endpoint,
+    serverId: offer.serverId,
+    role: "client",
+  });
+
+  const client = new DaemonClient({
+    url,
+    clientId,
+    clientType: "cli",
+    connectTimeoutMs: timeout,
+    webSocketFactory: (target: string, config?: { headers?: Record<string, string> }) =>
+      nodeWebSocketFactory(target, { headers: config?.headers }),
+    e2ee: { enabled: true, daemonPublicKeyB64: offer.daemonPublicKeyB64 },
+    reconnect: { enabled: false },
+  });
+
+  try {
+    await client.connect();
+    return client;
+  } catch (error) {
+    await client.close().catch(() => {});
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to connect via relay offer: ${message}`, { cause: error });
+  }
+}
+
+function parseHostOfferOrNull(host: string | undefined): ConnectionOffer | null {
+  if (!host) return null;
+  try {
+    return parseConnectionOfferFromUrl(host);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid pairing offer URL: ${message}`, { cause: error });
+  }
 }
 
 /**
@@ -203,8 +250,18 @@ function createNodeWebSocketFactory() {
 export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonClient> {
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
   const clientId = await getOrCreateCliClientId();
-  const hosts = resolveDaemonHostCandidates(options);
   const nodeWebSocketFactory = createNodeWebSocketFactory();
+
+  // If --host (or HUBCODE_HOST) is a pairing-offer URL like
+  // `https://app.hubcode.ai/#offer=<base64url>`, take the relay path and
+  // skip local TCP/IPC discovery entirely.
+  const explicitHost = options?.host ?? process.env.HUBCODE_HOST;
+  const offer = parseHostOfferOrNull(explicitHost);
+  if (offer) {
+    return connectViaRelayOffer(offer, clientId, timeout, nodeWebSocketFactory);
+  }
+
+  const hosts = resolveDaemonHostCandidates(options);
   let lastError: unknown = null;
 
   for (const host of hosts) {
@@ -220,7 +277,7 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
           ...(target.type === "ipc" ? { socketPath: target.socketPath } : {}),
         }),
       reconnect: { enabled: false },
-    } as unknown as ConstructorParameters<typeof DaemonClient>[0]);
+    });
 
     const connectPromise = client.connect();
 

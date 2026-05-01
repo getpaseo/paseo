@@ -195,8 +195,15 @@ function readHubcodeConfig(repoRoot: string): HubcodeConfig | null {
   }
   try {
     return JSON.parse(readFileSync(hubcodeConfigPath, "utf8"));
-  } catch {
-    throw new Error(`Failed to parse hubcode.json`);
+  } catch (error) {
+    // Surface both the absolute path and the underlying parse detail so
+    // callers (setup/teardown/terminal scripts) report something actionable
+    // instead of a bare "Failed to parse hubcode.json".
+    const detail = error instanceof Error ? error.message : String(error);
+    const wrapped = new Error(`Failed to parse hubcode.json at ${hubcodeConfigPath}: ${detail}`, {
+      cause: error,
+    });
+    throw wrapped;
   }
 }
 
@@ -1298,8 +1305,25 @@ export async function resolveExistingWorktreeForSlug({
   };
 }
 
-export function getScriptConfigs(repoRoot: string): Map<string, ScriptConfig> {
-  const config = readHubcodeConfig(repoRoot);
+export function getScriptConfigs(
+  repoRoot: string,
+  options?: { logger?: { warn: (obj: object, msg: string) => void } },
+): Map<string, ScriptConfig> {
+  // Isolate parse failures from the projection pipeline. A single malformed
+  // hubcode.json should not break fetch_workspaces / script-status emission
+  // for every other workspace — the user already sees a workspace-level
+  // failure event; the projection just needs to treat this workspace as
+  // having no scripts.
+  let config: HubcodeConfig | null = null;
+  try {
+    config = readHubcodeConfig(repoRoot);
+  } catch (err) {
+    options?.logger?.warn(
+      { repoRoot, err },
+      "Failed to parse hubcode.json; treating workspace as having no scripts",
+    );
+    return new Map();
+  }
   const scripts = config?.scripts;
   if (!scripts || typeof scripts !== "object") {
     return new Map();

@@ -116,10 +116,22 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
   } | null>(null);
   const lastActiveRef = useRef<typeof active>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Workspaces whose first indexing run we've already announced. Subsequent
+  // reindexes (typically triggered by agent file edits) complete silently —
+  // the toast was useful during initial setup, but flashing every time the
+  // AI saves a file just adds noise.
+  const announcedWorkspacesRef = useRef<Set<string>>(new Set());
+  // Workspaces that hit the "installing" phase during this session — those
+  // are first-time setups and we always want to surface their completion.
+  const sawInstallingRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const prev = lastActiveRef.current;
     lastActiveRef.current = active;
+
+    if (active?.phase === "installing") {
+      sawInstallingRef.current.add(active.workspaceId);
+    }
 
     if (dismissTimeoutRef.current) {
       clearTimeout(dismissTimeoutRef.current);
@@ -135,6 +147,17 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
     // Was active, now nothing → show a brief "done" state.
     if (prev) {
       const kind = prev.phase === "error" ? "error" : "ready";
+      // Silently swallow successful reindexes after the first announcement
+      // for this workspace. Errors always surface.
+      const isFirstRun =
+        sawInstallingRef.current.has(prev.workspaceId) ||
+        !announcedWorkspacesRef.current.has(prev.workspaceId);
+      if (kind === "ready" && !isFirstRun) {
+        return;
+      }
+      if (kind === "ready") {
+        announcedWorkspacesRef.current.add(prev.workspaceId);
+      }
       setTerminal({
         kind,
         label: prev.label,
@@ -155,7 +178,15 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
     };
   }, [active]);
 
-  if (!active && !terminal) return null;
+  // Suppress the spinner for silent reindexes too (auto-triggered after the
+  // first run) — only errors and first-time setups should pop the toast.
+  const suppressActive =
+    active?.phase === "indexing" &&
+    announcedWorkspacesRef.current.has(active.workspaceId) &&
+    !sawInstallingRef.current.has(active.workspaceId);
+
+  const visibleActive = suppressActive ? null : active;
+  if (!visibleActive && !terminal) return null;
 
   return (
     <View
@@ -170,8 +201,8 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
       style={[styles.container, { bottom: insets.bottom + TOAST_OFFSET }]}
     >
       <View style={[styles.toastWrapper, styles.toast]}>
-        {active ? (
-          active.phase === "error" ? (
+        {visibleActive ? (
+          visibleActive.phase === "error" ? (
             <XCircle size={18} color={theme.colors.destructive} />
           ) : (
             <ActivityIndicator size="small" color={theme.colors.foreground} />
@@ -184,26 +215,30 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
 
         <View style={styles.textContainer}>
           <Text style={styles.title} numberOfLines={1}>
-            {active ? labelForPhase(active.phase, active.label) : `Indexed ${terminal?.label}`}
+            {visibleActive
+              ? labelForPhase(visibleActive.phase, visibleActive.label)
+              : `Indexed ${terminal?.label}`}
           </Text>
           <Text style={styles.subtitle} numberOfLines={1}>
-            {active
-              ? formatActiveDetail(active)
+            {visibleActive
+              ? formatActiveDetail(visibleActive)
               : (terminal?.detail ?? (terminal?.kind === "ready" ? "Ready" : "Failed"))}
           </Text>
-          {active && active.progress != null && active.phase === "indexing" ? (
+          {visibleActive && visibleActive.progress != null && visibleActive.phase === "indexing" ? (
             <View style={styles.progressBar}>
-              <View style={[styles.progressFill, { width: `${Math.round(active.progress)}%` }]} />
+              <View
+                style={[styles.progressFill, { width: `${Math.round(visibleActive.progress)}%` }]}
+              />
             </View>
           ) : null}
         </View>
 
-        {active && active.phase === "error" ? (
+        {visibleActive && visibleActive.phase === "error" ? (
           <Pressable
             onPress={() =>
               setDismissedError({
-                workspaceId: active.workspaceId,
-                message: active.error,
+                workspaceId: visibleActive.workspaceId,
+                message: visibleActive.error,
               })
             }
             hitSlop={8}
@@ -212,7 +247,7 @@ function IndexingToastInner({ serverId }: { serverId: string }) {
           >
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>
-        ) : !active && terminal ? (
+        ) : !visibleActive && terminal ? (
           <Pressable
             onPress={() => setTerminal(null)}
             hitSlop={8}

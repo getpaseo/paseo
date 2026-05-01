@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import type {
   ScriptStatusUpdateMessage,
   SessionOutboundMessage,
@@ -25,6 +26,7 @@ interface BuildWorkspaceScriptPayloadsOptions {
     currentBranch: string | null;
   };
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
+  logger?: Logger;
 }
 
 function resolveDaemonPort(daemonPort: number | null | (() => number | null)): number | null {
@@ -136,7 +138,7 @@ export function buildWorkspaceScriptPayloads(
   const workspaceDirectory = options.workspaceDirectory;
   const projectSlug = options.gitMetadata?.projectSlug ?? deriveProjectSlug(workspaceDirectory);
   const branchName = options.gitMetadata?.currentBranch ?? null;
-  const scriptConfigs = getScriptConfigs(workspaceDirectory);
+  const scriptConfigs = getScriptConfigs(workspaceDirectory, { logger: options.logger });
   const runtimeEntries = new Map(
     options.runtimeStore
       .listForWorkspace(workspaceId)

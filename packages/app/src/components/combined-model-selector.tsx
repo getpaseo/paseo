@@ -20,7 +20,6 @@ import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import { getProviderIcon } from "@/components/provider-icons";
 import type { FavoriteModelRow } from "@/hooks/use-form-preferences";
 import { useHubcodeModels } from "@/hooks/use-hubcode-models";
-import { Alert } from "react-native";
 import { authServerBaseUrl } from "@/desktop/auth/web-auth-api";
 import { openExternalUrl } from "@/utils/open-external-url";
 import {
@@ -564,7 +563,7 @@ export function CombinedModelSelector({
     const description = hubcodeRequiresSignIn
       ? "Sign in to unlock curated combos"
       : hubcodeBundle?.requiresUpgrade
-        ? "Upgrade to unlock curated combos"
+        ? "Free models — upgrade for full access"
         : "Your plan's curated combos";
     const hubcodeDef: AgentProviderDefinition = {
       id: "hubcode" as AgentProvider,
@@ -588,22 +587,17 @@ export function CombinedModelSelector({
     }
     if (!hubcodeBundle) return allProviderModels;
     const existing = next.get("hubcode") ?? [];
-    const models: AgentModelDefinition[] = hubcodeBundle.requiresUpgrade
-      ? [
-          {
-            id: "__upgrade__",
-            label: "Upgrade to Pro to use Hubcode",
-            description: "Click to upgrade",
-          } as AgentModelDefinition,
-        ]
-      : hubcodeBundle.combos.map(
-          (c) =>
-            ({
-              id: c.comboName,
-              label: c.comboName,
-              description: undefined,
-            }) as AgentModelDefinition,
-        );
+    // Free-tier users still see and can pick combos — they run on a low
+    // rate limit. The agent panel surfaces an upgrade banner when an
+    // upgrade-gated combo is in use.
+    const models: AgentModelDefinition[] = hubcodeBundle.combos.map(
+      (c) =>
+        ({
+          id: c.comboName,
+          label: c.comboName,
+          description: undefined,
+        }) as AgentModelDefinition,
+    );
     // Merge: prefer fresh client-side data, then append any daemon-provided
     // models we didn't already see (keyed by id) so we never duplicate.
     const seen = new Set(models.map((m) => m.id));
@@ -627,14 +621,8 @@ export function CombinedModelSelector({
         return true;
       }
       if (!hubcodeBundle) return false;
-      if (hubcodeBundle.requiresUpgrade || modelId === "__upgrade__") {
-        Alert.alert(
-          "Upgrade required",
-          "Hubcode combos are available on Pro and Enterprise plans. Upgrade your plan to unlock curated multi-model routing.",
-          [{ text: "OK" }],
-        );
-        return true; // handled — don't forward to onSelect
-      }
+      // Free users can pick combos; they get rate-limited and the agent
+      // panel surfaces an upgrade banner. No alert here.
       return false;
     },
     [hubcodeBundle, hubcodeRequiresSignIn],
@@ -814,19 +802,9 @@ export function CombinedModelSelector({
             canSelectProvider={canSelectProvider}
             onToggleFavorite={onToggleFavorite}
             onDrillDown={(providerId, providerLabel) => {
-              if (providerId === "hubcode" && hubcodeBundle?.requiresUpgrade) {
-                handleHubcodeSelection("__upgrade__");
-                setIsOpen(false);
-                return;
-              }
               setView({ kind: "provider", providerId, providerLabel });
             }}
-            providerCountOverride={(providerId) => {
-              if (providerId === "hubcode" && hubcodeBundle?.requiresUpgrade) {
-                return "Upgrade";
-              }
-              return null;
-            }}
+            providerCountOverride={() => null}
           />
         ) : (
           <View style={styles.sheetLoadingState}>

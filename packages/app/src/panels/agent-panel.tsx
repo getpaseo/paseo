@@ -13,6 +13,7 @@ import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop-zone";
 import { SessionIntegrationBanner } from "@/components/session-integration-banner";
 import { FreeSessionCountdownBanner } from "@/components/billing/free-session-countdown-banner";
+import { HubcodeRateLimitBanner } from "@/components/billing/hubcode-rate-limit-banner";
 import type { ImageAttachment } from "@/components/message-input";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ToastViewport, useToastHost } from "@/components/toast-host";
@@ -304,6 +305,7 @@ function AgentPanelBody({
         archivedAt: agent?.archivedAt ?? null,
         requiresAttention: agent?.requiresAttention ?? false,
         attentionReason: agent?.attentionReason ?? null,
+        provider: agent?.provider ?? null,
       };
     }),
   );
@@ -783,8 +785,13 @@ function AgentPanelBody({
       <FileDropZone onFilesDropped={handleFilesDropped} disabled={isArchivingCurrentAgent}>
         <View style={styles.container}>
           <SessionIntegrationBanner serverId={serverId} cwd={agentState.cwd ?? workspaceId} />
+          {isInSharedSession && (
+            <View style={styles.freeBannerWrap}>
+              <FreeSessionCountdownBanner sessionStartedAt={sessionStartedAt} />
+            </View>
+          )}
           <View style={styles.freeBannerWrap}>
-            <FreeSessionCountdownBanner sessionStartedAt={sessionStartedAt} />
+            <HubcodeRateLimitBanner activeProvider={agentState.provider} />
           </View>
           <View style={styles.contentContainer}>
             <ReanimatedAnimated.View style={[styles.content, animatedKeyboardStyle]}>

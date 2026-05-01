@@ -10,10 +10,39 @@
  */
 
 import { useEffect, useRef } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSessionStore } from "@/stores/session-store";
 import { useActiveOrgId } from "@/stores/active-org-store";
 import { useAuthSession } from "@/desktop/hooks/use-auth-session";
 import { upsertProjectRegistry } from "@/api/project-registry";
+
+// Per-device record of which org each project_key was first synced to. Keeps
+// the auto-sync from cloning a project across every org the user switches
+// into — once a project has a "home" org, switching orgs is a no-op for sync.
+// Explicit "+" actions in the projects sidebar can still register a project
+// in another org via a direct upsert path that bypasses this hook.
+const HOME_ORG_STORAGE_KEY = "@hubcode:project-home-orgs";
+
+type HomeOrgMap = Record<string, string>;
+
+async function loadHomeOrgMap(): Promise<HomeOrgMap> {
+  try {
+    const raw = await AsyncStorage.getItem(HOME_ORG_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? (parsed as HomeOrgMap) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveHomeOrgMap(map: HomeOrgMap): Promise<void> {
+  try {
+    await AsyncStorage.setItem(HOME_ORG_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // best-effort
+  }
+}
 
 interface ProjectSyncCandidate {
   projectKey: string;
@@ -93,7 +122,20 @@ export function useProjectRegistrySync(): void {
     debounceRef.current = setTimeout(() => {
       lastSyncKeyRef.current = fingerprint;
       void (async () => {
+        const homeOrgs = await loadHomeOrgMap();
+        let homeOrgsDirty = false;
         for (const project of projects) {
+          const home = homeOrgs[project.projectKey];
+          if (home && home !== activeOrgId) {
+            // Project already has a home org — don't propagate to the
+            // currently active one. The user must explicitly re-add it via
+            // the sidebar "+" if they want it in this org too.
+            continue;
+          }
+          if (!home) {
+            homeOrgs[project.projectKey] = activeOrgId;
+            homeOrgsDirty = true;
+          }
           try {
             await upsertProjectRegistry(
               {
@@ -120,6 +162,9 @@ export function useProjectRegistrySync(): void {
             }
             console.warn("[project-registry] upsert failed for", project.projectKey, message);
           }
+        }
+        if (homeOrgsDirty) {
+          await saveHomeOrgMap(homeOrgs);
         }
       })();
     }, UPSERT_DEBOUNCE_MS);

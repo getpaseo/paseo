@@ -31,6 +31,7 @@ import {
   useSharedSessionStore,
 } from "@/stores/shared-session-store";
 import { isNative, isWeb } from "@/constants/platform";
+import { openExternalUrl } from "@/utils/open-external-url";
 
 interface SidebarSharedWorkspacesProps {
   serverId: string | null;
@@ -80,8 +81,8 @@ export function SidebarSharedWorkspaces({
 
   const handleOpenShared = useCallback(
     (share: { serverId: string; workspaceId: string; shareUrl: string }) => {
-      if (isWeb && share.shareUrl && typeof window !== "undefined") {
-        window.open(share.shareUrl, "_blank", "noopener,noreferrer");
+      if (isWeb && share.shareUrl) {
+        void openExternalUrl(share.shareUrl);
         return;
       }
       router.push(buildHostWorkspaceRoute(share.serverId, share.workspaceId));
@@ -121,8 +122,8 @@ export function SidebarSharedWorkspaces({
 
   const handleOpenShareUrl = useCallback(async (shareUrl: string) => {
     if (!shareUrl) return;
-    if (isWeb && typeof window !== "undefined") {
-      window.open(shareUrl, "_blank", "noopener,noreferrer");
+    if (isWeb) {
+      await openExternalUrl(shareUrl);
       return;
     }
     try {

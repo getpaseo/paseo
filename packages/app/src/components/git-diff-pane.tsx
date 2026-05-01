@@ -79,8 +79,6 @@ import {
   hasVisibleDiffTokens,
 } from "@/utils/diff-rendering";
 import { isWeb, isNative, getIsElectron } from "@/constants/platform";
-import { MonacoDiffEditor } from "@/components/monaco-diff-editor";
-import { reconstructNewFile, reconstructOldFile } from "@/utils/diff-highlighter";
 
 export type { GitActionId, GitAction, GitActions } from "@/components/git-actions-policy";
 
@@ -527,16 +525,6 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 });
 
-function mapToText(lineMap: Map<number, string>): string {
-  if (lineMap.size === 0) return "";
-  const maxLine = Math.max(...lineMap.keys());
-  const lines: string[] = [];
-  for (let i = 1; i <= maxLine; i++) {
-    lines.push(lineMap.get(i) ?? "");
-  }
-  return lines.join("\n");
-}
-
 function DiffFileBody({
   file,
   layout,
@@ -550,9 +538,6 @@ function DiffFileBody({
   onBodyHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }) {
-  const { theme } = useUnistyles();
-  const isDark = theme.colorScheme === "dark";
-  const isMobile = useIsCompactFormFactor();
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const [bodyWidth, setBodyWidth] = useState(0);
 
@@ -572,28 +557,6 @@ function DiffFileBody({
               <Text style={styles.statusMessageText}>
                 {file.status === "binary" ? "Binary file" : "Diff too large to display"}
               </Text>
-            </View>
-          );
-        }
-
-        // Use Monaco DiffEditor on web (desktop browser + Electron)
-        if (isWeb && !isMobile) {
-          // Cast hunks to match the diff-highlighter's DiffHunk type (structurally identical)
-          const hunks = file.hunks as Parameters<typeof reconstructOldFile>[0];
-          const oldText = mapToText(reconstructOldFile(hunks));
-          const newText = mapToText(reconstructNewFile(hunks));
-          const totalLines = Math.max(oldText.split("\n").length, newText.split("\n").length);
-          // 19px line height + 16px top/bottom padding, min 120px, no max cap
-          const editorHeight = totalLines * 19 + 16;
-          return (
-            <View style={{ height: Math.max(editorHeight, 120) }}>
-              <MonacoDiffEditor
-                originalValue={oldText}
-                modifiedValue={newText}
-                filePath={file.path}
-                isDark={isDark}
-                renderSideBySide={layout === "split"}
-              />
             </View>
           );
         }
