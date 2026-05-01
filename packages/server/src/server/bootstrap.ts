@@ -138,7 +138,8 @@ async function resolveIndexingStateForCwd(
   return indexingService.getState(match.workspaceId);
 }
 import { DaemonConfigStore } from "./daemon-config-store.js";
-import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
+import type { TerminalManager } from "../terminal/terminal-manager.js";
+import { createConfiguredTerminalManager } from "../terminal/terminal-manager-factory.js";
 import { BrowserManager } from "./browser/browser-manager.js";
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
@@ -475,7 +476,7 @@ export async function createHubcodeDaemon(
       guiMcpRegistry,
     });
 
-    const terminalManager = createTerminalManager();
+    const terminalManager = createConfiguredTerminalManager();
     const browserManager = new BrowserManager({ logger });
     // `clientBrowserManager` drives the desktop app's <webview> via
     // Playwright connected to Electron's CDP endpoint (exposed by the

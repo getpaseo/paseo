@@ -23,7 +23,7 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/server/**/*", "src/services/**/*", "src/types/**/*"],
+  "include": ["src/server/**/*", "src/services/**/*", "src/types/**/*", "src/terminal/**/*"],
   "exclude": [
     "node_modules",
     "dist",

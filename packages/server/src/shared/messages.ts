@@ -4100,6 +4100,7 @@ export const TerminalStateSchema = z
     grid: z.array(z.array(TerminalCellSchema)),
     scrollback: z.array(z.array(TerminalCellSchema)),
     cursor: TerminalCursorSchema,
+    title: z.string().optional(),
   })
   .strict();
 

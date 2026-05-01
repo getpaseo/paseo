@@ -57,7 +57,7 @@ import {
 import type { TerminalManager, TerminalsChangedEvent } from "../terminal/terminal-manager.js";
 import { BrowserManager } from "./browser/browser-manager.js";
 import { PlaywrightBrowserManager } from "./browser/playwright-browser-manager.js";
-import { captureTerminalLines, type TerminalSession } from "../terminal/terminal.js";
+import type { TerminalSession } from "../terminal/terminal.js";
 import {
   TerminalStreamOpcode,
   encodeTerminalSnapshotPayload,
@@ -9646,7 +9646,7 @@ export class Session {
     this.ensureTerminalExitSubscription(session);
 
     try {
-      const capture = captureTerminalLines(session, {
+      const capture = await this.terminalManager.captureTerminal(msg.terminalId, {
         start: msg.start,
         end: msg.end,
         stripAnsi: msg.stripAnsi,
