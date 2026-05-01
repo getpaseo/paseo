@@ -1,5 +1,5 @@
 import type { AgentModelDefinition } from "../../agent-sdk-types.js";
-import type { ModelEnvMapping } from "./model-env-override.js";
+import type { ModelEnvMapping } from "../shared/model-env-override.js";
 
 const CLAUDE_THINKING_OPTIONS = [
   { id: "low", label: "Low" },
@@ -61,8 +61,8 @@ const CLAUDE_MODELS: AgentModelDefinition[] = [
   },
 ];
 
-export const CLAUDE_MODEL_ENV_MAPPINGS: ModelEnvMapping[] = [
-  { env: "ANTHROPIC_MODEL", forceDefault: true, thinkingOptions: CLAUDE_THINKING_OPTIONS },
+export const CLAUDE_MODEL_ENV_MAPPINGS: readonly ModelEnvMapping[] = [
+  { env: "ANTHROPIC_MODEL", globalDefault: true, thinkingOptions: CLAUDE_THINKING_OPTIONS },
   {
     env: "ANTHROPIC_DEFAULT_OPUS_MODEL",
     family: "opus",
