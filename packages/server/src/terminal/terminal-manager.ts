@@ -1,10 +1,16 @@
-import { createTerminal, type TerminalSession } from "./terminal.js";
+import {
+  captureTerminalLines,
+  createTerminal,
+  type CaptureTerminalLinesResult,
+  type TerminalSession,
+} from "./terminal.js";
 import { resolve, sep, win32, posix } from "node:path";
 
 export interface TerminalListItem {
   id: string;
   name: string;
   cwd: string;
+  title?: string;
 }
 
 export interface TerminalsChangedEvent {
@@ -17,12 +23,12 @@ export type TerminalsChangedListener = (input: TerminalsChangedEvent) => void;
 export interface TerminalManager {
   getTerminals(cwd: string): Promise<TerminalSession[]>;
   createTerminal(options: {
+    id?: string;
     cwd: string;
     name?: string;
+    title?: string;
     env?: Record<string, string>;
-    /** When set, spawn this command directly instead of a shell (for CLI agents). */
     command?: string;
-    /** Arguments for the direct command. */
     args?: string[];
   }): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
@@ -32,6 +38,10 @@ export interface TerminalManager {
     id: string,
     options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number },
   ): Promise<void>;
+  captureTerminal(
+    id: string,
+    options?: { start?: number; end?: number; stripAnsi?: boolean },
+  ): Promise<CaptureTerminalLinesResult>;
   listDirectories(): string[];
   killAll(): void;
   subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void;
@@ -41,6 +51,7 @@ export function createTerminalManager(): TerminalManager {
   const terminalsByCwd = new Map<string, TerminalSession[]>();
   const terminalsById = new Map<string, TerminalSession>();
   const terminalExitUnsubscribeById = new Map<string, () => void>();
+  const terminalTitleUnsubscribeById = new Map<string, () => void>();
   const terminalsChangedListeners = new Set<TerminalsChangedListener>();
   const defaultEnvByRootCwd = new Map<string, Record<string, string>>();
 
@@ -60,6 +71,11 @@ export function createTerminalManager(): TerminalManager {
     if (unsubscribeExit) {
       unsubscribeExit();
       terminalExitUnsubscribeById.delete(id);
+    }
+    const unsubscribeTitle = terminalTitleUnsubscribeById.get(id);
+    if (unsubscribeTitle) {
+      unsubscribeTitle();
+      terminalTitleUnsubscribeById.delete(id);
     }
 
     terminalsById.delete(id);
@@ -104,7 +120,11 @@ export function createTerminalManager(): TerminalManager {
     const unsubscribeExit = session.onExit(() => {
       removeSessionById(session.id, { kill: false });
     });
+    const unsubscribeTitle = session.onTitleChange(() => {
+      emitTerminalsChanged({ cwd: session.cwd });
+    });
     terminalExitUnsubscribeById.set(session.id, unsubscribeExit);
+    terminalTitleUnsubscribeById.set(session.id, unsubscribeTitle);
     return session;
   }
 
@@ -113,6 +133,7 @@ export function createTerminalManager(): TerminalManager {
       id: input.session.id,
       name: input.session.name,
       cwd: input.session.cwd,
+      title: input.session.getTitle(),
     };
   }
 
@@ -146,8 +167,10 @@ export function createTerminalManager(): TerminalManager {
     },
 
     async createTerminal(options: {
+      id?: string;
       cwd: string;
       name?: string;
+      title?: string;
       env?: Record<string, string>;
       command?: string;
       args?: string[];
@@ -158,15 +181,16 @@ export function createTerminalManager(): TerminalManager {
       const defaultName = `Terminal ${terminals.length + 1}`;
       const inheritedEnv = resolveDefaultEnvForCwd(options.cwd);
       const mergedEnv =
-        inheritedEnv || options.env
-          ? { ...(inheritedEnv ?? {}), ...(options.env ?? {}) }
-          : undefined;
+        inheritedEnv || options.env ? { ...inheritedEnv, ...options.env } : undefined;
       const session = registerSession(
         await createTerminal({
+          ...(options.id ? { id: options.id } : {}),
           cwd: options.cwd,
           name: options.name ?? defaultName,
+          ...(options.title ? { title: options.title } : {}),
+          ...(options.command ? { command: options.command } : {}),
+          ...(options.args ? { args: options.args } : {}),
           ...(mergedEnv ? { env: mergedEnv } : {}),
-          ...(options.command ? { command: options.command, args: options.args } : {}),
         }),
       );
 
@@ -198,44 +222,25 @@ export function createTerminalManager(): TerminalManager {
       if (!session) {
         return;
       }
-      const gracefulTimeoutMs = options?.gracefulTimeoutMs ?? 2000;
-      const forceTimeoutMs = options?.forceTimeoutMs ?? 1500;
-
-      const exited = new Promise<void>((resolveExit) => {
-        const unsubscribe = session.onExit(() => {
-          unsubscribe();
-          resolveExit();
-        });
-      });
-
-      // Graceful kill (signal sent by session.kill()).
       try {
-        session.kill();
-      } catch {
-        // ignore — fall through to wait + force-cleanup.
+        await session.killAndWait(options);
+      } finally {
+        removeSessionById(id, { kill: false });
       }
+    },
 
-      const gracefulRace = await Promise.race([
-        exited.then(() => "exited" as const),
-        new Promise<"timeout">((resolveTimeout) =>
-          setTimeout(() => resolveTimeout("timeout"), gracefulTimeoutMs),
-        ),
-      ]);
-
-      if (gracefulRace !== "exited") {
-        // Force escalation: re-kill (process.kill in the underlying pty)
-        try {
-          session.kill();
-        } catch {
-          // ignore
-        }
-        await Promise.race([
-          exited,
-          new Promise<void>((resolveForce) => setTimeout(resolveForce, forceTimeoutMs)),
-        ]);
+    async captureTerminal(
+      id: string,
+      options?: { start?: number; end?: number; stripAnsi?: boolean },
+    ): Promise<CaptureTerminalLinesResult> {
+      const session = terminalsById.get(id);
+      if (!session) {
+        return {
+          lines: [],
+          totalLines: 0,
+        };
       }
-
-      removeSessionById(id, { kill: false });
+      return captureTerminalLines(session, options);
     },
 
     listDirectories(): string[] {
