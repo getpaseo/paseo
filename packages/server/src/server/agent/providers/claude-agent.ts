@@ -33,7 +33,12 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
 } from "./claude/task-notification-tool-call.js";
-import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./claude/claude-models.js";
+import {
+  CLAUDE_MODEL_ENV_MAPPINGS,
+  getClaudeModels,
+  normalizeClaudeRuntimeModelId,
+} from "./claude/claude-models.js";
+import { applyModelEnvOverrides } from "./claude/model-env-override.js";
 import { parsePartialJsonObject } from "./claude/partial-json.js";
 import { ClaudeSidechainTracker } from "./claude/sidechain-tracker.js";
 import {
@@ -1131,6 +1136,25 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
 
 const claudeDebug = process.env.PASEO_CLAUDE_DEBUG === "1";
 
+let cachedClaudeUserSettingsEnv: Record<string, string> | null = null;
+
+function loadClaudeUserSettingsEnv(): Record<string, string> {
+  if (cachedClaudeUserSettingsEnv) return cachedClaudeUserSettingsEnv;
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+  try {
+    const raw = fs.readFileSync(path.join(configDir, "settings.json"), "utf-8");
+    const settings = JSON.parse(raw);
+    if (settings.env && typeof settings.env === "object" && !Array.isArray(settings.env)) {
+      cachedClaudeUserSettingsEnv = settings.env as Record<string, string>;
+      return cachedClaudeUserSettingsEnv;
+    }
+  } catch {
+    // settings.json doesn't exist or isn't valid JSON
+  }
+  cachedClaudeUserSettingsEnv = {};
+  return cachedClaudeUserSettingsEnv;
+}
+
 export class ClaudeAgentClient implements AgentClient {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -1189,7 +1213,9 @@ export class ClaudeAgentClient implements AgentClient {
 
   async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
     // Claude exposes a static catalog here; cwd/force are intentionally irrelevant.
-    return getClaudeModels();
+    const settingsEnv = loadClaudeUserSettingsEnv();
+    const mergedEnv = { ...process.env, ...settingsEnv, ...this.runtimeSettings?.env };
+    return applyModelEnvOverrides(getClaudeModels(), mergedEnv, CLAUDE_MODEL_ENV_MAPPINGS);
   }
 
   async listPersistedAgents(
