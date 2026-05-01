@@ -560,46 +560,51 @@ export class IndexingService {
    * is fired and forgotten — errors are logged at info level, never thrown,
    * because failing to index should never block workspace creation.
    */
-  async autoEnableForNewWorkspace(workspaceId: string): Promise<void> {
-    try {
-      const record = await this.adapter.get(workspaceId);
-      if (!record) return;
-      // Only act on truly fresh workspaces — `indexing === undefined` is
-      // our marker for "never touched", whereas `{ enabled: false }` means
-      // the user deliberately turned it off.
-      if (record.indexing !== undefined) return;
-
-      const initial: IndexingState = { ...defaultIndexingState(), enabled: true };
-      await this.persist(workspaceId, initial);
-      this.logger.info({ workspaceId }, "auto-enabled indexing for new workspace");
-
-      // Lazy reindex: do NOT fire the indexer here. Worktrees of the same
-      // repo each cost ~25s of CPU on `npm run dev`-sized projects (284 files
-      // → 1.8k nodes → 17.5k edges), and most are throwaway one-task spaces
-      // that never need codegraph search. We instead fire the reindex on
-      // first agent creation in the workspace (see triggerReindexIfPending),
-      // and via the existing `reindex` RPC the UI calls when the user opens
-      // a codegraph-aware panel.
-    } catch (err) {
-      this.logger.debug({ err, workspaceId }, "autoEnableForNewWorkspace failed (ignored)");
-    }
+  async autoEnableForNewWorkspace(_workspaceId: string): Promise<void> {
+    // Lazy indexing: do NOT persist `enabled: true` at workspace creation.
+    //
+    // Why: `git worktree add` writes hundreds of files into the new cwd. If
+    // we mark the workspace enabled here, fs-watcher reconcile installs a
+    // watcher immediately, and the watcher's debounced batch sees those
+    // writes as a "change" → triggers a 25s full reindex per worktree. Most
+    // worktrees are throwaway one-task spaces that never need codegraph
+    // search, so this was pure waste.
+    //
+    // Instead, indexing stays in the default-undefined state until the
+    // first agent is created in the workspace. At that point
+    // `triggerReindexIfPending` flips `enabled: true` and fires the
+    // reindex. The `setEnabled` RPC (Settings toggle) and explicit
+    // `reindex` RPC (UI codegraph panel) also work without any auto-enable
+    // here, since both call `getState` which materializes the default.
   }
 
   /**
-   * Fire-and-forget reindex if the workspace has indexing enabled but no
-   * `lastIndexedAt` yet. Idempotent: subsequent calls are no-ops once the
-   * workspace has been indexed at least once. Called from agent-creation
-   * paths so the index is ready by the time the user gives the agent a
-   * codegraph-flavored prompt.
+   * Enable indexing and fire the initial reindex if the workspace has
+   * never been indexed yet. Idempotent: subsequent calls are no-ops once
+   * the workspace has been indexed at least once or is mid-flight. Called
+   * from agent-creation paths so the index is ready by the time the user
+   * gives the agent a codegraph-flavored prompt.
    */
   async triggerReindexIfPending(workspaceId: string): Promise<void> {
     try {
       const record = await this.adapter.get(workspaceId);
-      if (!record?.indexing?.enabled) return;
-      if (record.indexing.status?.phase === "ready") return;
-      if (record.indexing.status?.phase === "indexing") return;
-      if (record.indexing.status?.phase === "installing") return;
+      if (!record) return;
+      // User explicitly disabled — respect that.
+      if (record.indexing && record.indexing.enabled === false) return;
+      // Already indexed or in flight — nothing to do.
+      const phase = record.indexing?.status?.phase;
+      if (phase === "ready" || phase === "indexing" || phase === "installing") return;
       if (!this.reindexTrigger) return;
+
+      // Persist enabled=true on first agent in workspace. This is also what
+      // installs the fs-watcher (via reconcileWatchers' onStatus listener
+      // firing on the phase transition).
+      if (!record.indexing) {
+        const initial: IndexingState = { ...defaultIndexingState(), enabled: true };
+        await this.persist(workspaceId, initial);
+        this.logger.info({ workspaceId }, "lazy-enabled indexing on first agent");
+      }
+
       this.logger.info({ workspaceId }, "triggering lazy reindex (first agent in workspace)");
       void this.reindexTrigger(workspaceId).catch((err) =>
         this.logger.info({ err, workspaceId }, "lazy reindex failed"),
