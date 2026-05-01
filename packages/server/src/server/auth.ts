@@ -122,6 +122,5 @@ export function shouldBypassBearerAuth(method: string, path: string): boolean {
   if (method === "OPTIONS") {
     return true;
   }
-  // Public liveness/version endpoints used by local supervisors and health probes.
-  return path === "/api/health" || path === "/api/status";
+  return path === "/api/health";
 }

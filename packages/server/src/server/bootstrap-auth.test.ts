@@ -97,7 +97,7 @@ describe("daemon bearer auth", () => {
       expect(health.status).toBe(200);
 
       const status = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/status`);
-      expect(status.status).toBe(200);
+      expect(status.status).toBe(401);
     } finally {
       await daemonHandle.close();
     }
