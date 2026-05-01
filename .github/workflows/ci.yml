@@ -126,6 +126,7 @@ jobs:
           src/utils/spawn.test.ts
           src/utils/run-git-command.test.ts
           src/utils/checkout-git-rev-parse.test.ts
+          src/terminal/worker-terminal-manager.test.ts
           src/server/agent/provider-registry.test.ts
           src/server/agent/provider-launch-config.test.ts
           src/server/agent/provider-snapshot-manager.test.ts
