@@ -58,12 +58,14 @@ export interface WorkspacePaneContentProps {
   content: WorkspacePaneContentModel;
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
+  onFocusPane?: () => void;
 }
 
 export function WorkspacePaneContent({
   content,
   isWorkspaceFocused,
   isPaneFocused,
+  onFocusPane,
 }: WorkspacePaneContentProps) {
   const { Component, key, paneContextValue } = content;
   const paneFocusValue = useMemo(
@@ -71,8 +73,9 @@ export function WorkspacePaneContent({
       createPaneFocusContextValue({
         isWorkspaceFocused,
         isPaneFocused,
+        onFocusPane,
       }),
-    [isPaneFocused, isWorkspaceFocused],
+    [isPaneFocused, isWorkspaceFocused, onFocusPane],
   );
 
   return (

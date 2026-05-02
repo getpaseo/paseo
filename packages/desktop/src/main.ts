@@ -33,6 +33,10 @@ import {
 } from "./features/notifications.js";
 import { registerOpenerHandlers } from "./features/opener.js";
 import { setupApplicationMenu } from "./features/menu.js";
+import {
+  getPaseoBrowserIdForWebContents,
+  registerPaseoBrowserWebContents,
+} from "./features/browser-webviews.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
 import {
@@ -84,6 +88,8 @@ function getBrowserIdFromWebviewPartition(partition: string | undefined): string
   const browserId = partition.slice(prefix.length).trim();
   return browserId.length > 0 ? browserId : null;
 }
+
+const pendingBrowserWebviewIds: string[] = [];
 
 function isBrowserRefreshInput(input: Electron.Input): boolean {
   if (input.type !== "keyDown" || input.alt || input.shift) {
@@ -275,6 +281,7 @@ async function createMainWindow(): Promise<void> {
       event.preventDefault();
       return;
     }
+    pendingBrowserWebviewIds.push(browserId);
     webPreferences.nodeIntegration = false;
     webPreferences.nodeIntegrationInSubFrames = false;
     webPreferences.nodeIntegrationInWorker = false;
@@ -289,6 +296,10 @@ async function createMainWindow(): Promise<void> {
     delete (params as { preloadURL?: string }).preloadURL;
   });
   mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
+    const browserId = pendingBrowserWebviewIds.shift() ?? null;
+    if (browserId) {
+      registerPaseoBrowserWebContents(contents, browserId);
+    }
     contents.on("before-input-event", (event, input) => {
       if (isBrowserRefreshInput(input)) {
         event.preventDefault();
@@ -301,8 +312,10 @@ async function createMainWindow(): Promise<void> {
       }
       if (isBrowserLocationInput(input)) {
         event.preventDefault();
+        const focusedBrowserId = getPaseoBrowserIdForWebContents(contents);
         mainWindow.webContents.send(BROWSER_SHORTCUT_EVENT, {
           action: "focus-url",
+          ...(focusedBrowserId ? { browserId: focusedBrowserId } : {}),
         });
       }
     });

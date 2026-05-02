@@ -110,11 +110,13 @@ describe("WorkspacePaneContent", () => {
       isWorkspaceFocused: true,
       isPaneFocused: false,
       isInteractive: false,
+      focusPane: expect.any(Function),
     });
     expect(snapshots[1]?.focus).toEqual({
       isWorkspaceFocused: true,
       isPaneFocused: true,
       isInteractive: true,
+      focusPane: expect.any(Function),
     });
   });
 });

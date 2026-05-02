@@ -184,7 +184,30 @@ function buildBrowserAttachmentScopeKey(input: {
 }
 
 function executeWebviewJavaScript(webview: ElectronWebview, code: string): Promise<unknown> {
-  return webview.executeJavaScript?.(code) ?? Promise.resolve(null);
+  if (!webview.isConnected) {
+    return Promise.resolve(null);
+  }
+  try {
+    return webview.executeJavaScript?.(code) ?? Promise.resolve(null);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
+function ignoreWebviewJavaScriptError() {}
+
+function destroyWebviewSelector(webview: ElectronWebview): void {
+  void executeWebviewJavaScript(
+    webview,
+    "if(window.__paseoSelector) window.__paseoSelector.destroy();",
+  ).catch(ignoreWebviewJavaScriptError);
+}
+
+function clearWebviewSelector(webview: ElectronWebview): void {
+  void executeWebviewJavaScript(
+    webview,
+    "if(window.__paseoSelector) window.__paseoSelector.destroy(); window.__paseoSelectorResult = null;",
+  ).catch(ignoreWebviewJavaScriptError);
 }
 
 function getTextInputNativeElement(current: WebTextInput | null): HTMLInputElement | null {
@@ -250,12 +273,14 @@ export function BrowserPane({
   workspaceId,
   cwd,
   isInteractive,
+  onFocusPane,
 }: {
   browserId: string;
   serverId: string;
   workspaceId: string;
   cwd: string | null;
   isInteractive?: boolean;
+  onFocusPane?: () => void;
 }) {
   const { theme } = useUnistyles();
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
@@ -439,6 +464,9 @@ export function BrowserPane({
       domReadyRef.current = true;
       syncNavigationState();
     };
+    const handleWebviewFocus = () => {
+      onFocusPane?.();
+    };
 
     webview.addEventListener("did-start-loading", handleStartLoading);
     webview.addEventListener("did-stop-loading", handleStopLoading);
@@ -449,6 +477,8 @@ export function BrowserPane({
     webview.addEventListener("page-favicon-updated", handleFaviconUpdated);
     webview.addEventListener("did-fail-load", handleLoadFailed);
     webview.addEventListener("dom-ready", handleDomReady);
+    webview.addEventListener("focus", handleWebviewFocus);
+    webview.addEventListener("mousedown", handleWebviewFocus);
 
     host.appendChild(webview);
     if (initialUnsafeNavigationMessage) {
@@ -468,6 +498,8 @@ export function BrowserPane({
       webview.removeEventListener("page-favicon-updated", handleFaviconUpdated);
       webview.removeEventListener("did-fail-load", handleLoadFailed);
       webview.removeEventListener("dom-ready", handleDomReady);
+      webview.removeEventListener("focus", handleWebviewFocus);
+      webview.removeEventListener("mousedown", handleWebviewFocus);
       if (host.contains(webview)) {
         host.removeChild(webview);
       }
@@ -477,7 +509,7 @@ export function BrowserPane({
       domReadyRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browserId]);
+  }, [browserId, onFocusPane]);
 
   const navigate = useCallback((nextUrl: string) => {
     const normalizedUrl = normalizeWorkspaceBrowserUrl(nextUrl);
@@ -568,11 +600,17 @@ export function BrowserPane({
       return;
     }
     const unsubscribe = getDesktopHost()?.events?.on?.("browser-shortcut", (payload) => {
-      if (
-        !isDesktopBrowserShortcutEvent(payload) ||
-        (payload.browserId && payload.browserId !== browserIdRef.current) ||
-        !isInteractive
-      ) {
+      if (!isDesktopBrowserShortcutEvent(payload)) {
+        return;
+      }
+      if (payload.browserId) {
+        if (payload.browserId !== browserIdRef.current) {
+          return;
+        }
+        focusUrlBar();
+        return;
+      }
+      if (!isInteractive) {
         return;
       }
       focusUrlBar();
@@ -773,22 +811,26 @@ export function BrowserPane({
     `;
 
     try {
-      void executeWebviewJavaScript(webview, js).then(() => {
-        const poll = startSelectorResultPolling({
-          webview,
-          onSelection: addElementAttachment,
-          onDone: () => setSelectorActive(false),
-        });
-        window.setTimeout(() => {
-          window.clearInterval(poll);
-          setSelectorActive(false);
-          void executeWebviewJavaScript(
+      void executeWebviewJavaScript(webview, js)
+        .then(() => {
+          const poll = startSelectorResultPolling({
             webview,
-            "if(window.__paseoSelector) window.__paseoSelector.destroy();",
-          );
-        }, 30000);
-        return undefined;
-      });
+            onSelection: addElementAttachment,
+            onDone: () => setSelectorActive(false),
+          });
+          window.setTimeout(() => {
+            window.clearInterval(poll);
+            setSelectorActive(false);
+            if (webviewRef.current !== webview || !domReadyRef.current) {
+              return;
+            }
+            destroyWebviewSelector(webview);
+          }, 30000);
+          return undefined;
+        })
+        .catch(() => {
+          setSelectorActive(false);
+        });
     } catch {
       setSelectorActive(false);
     }
@@ -799,10 +841,7 @@ export function BrowserPane({
     setSelectorActive(false);
     if (webview && domReadyRef.current) {
       try {
-        void executeWebviewJavaScript(
-          webview,
-          "if(window.__paseoSelector) window.__paseoSelector.destroy(); window.__paseoSelectorResult = null;",
-        );
+        clearWebviewSelector(webview);
       } catch {}
     }
   }, []);

@@ -17,19 +17,23 @@ export interface PaneFocusContextValue {
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
   isInteractive: boolean;
+  focusPane(): void;
 }
 
 const PaneContext = createContext<PaneContextValue | null>(null);
 const PaneFocusContext = createContext<PaneFocusContextValue | null>(null);
+const noopFocusPane = () => {};
 
 export function createPaneFocusContextValue(input: {
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
+  onFocusPane?: () => void;
 }): PaneFocusContextValue {
   return {
     isWorkspaceFocused: input.isWorkspaceFocused,
     isPaneFocused: input.isPaneFocused,
     isInteractive: input.isWorkspaceFocused && input.isPaneFocused,
+    focusPane: input.onFocusPane ?? noopFocusPane,
   };
 }
 

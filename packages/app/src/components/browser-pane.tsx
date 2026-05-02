@@ -8,6 +8,7 @@ interface BrowserPaneProps {
   workspaceId: string;
   cwd: string | null;
   isInteractive?: boolean;
+  onFocusPane?: () => void;
 }
 
 export function BrowserPane({ browserId }: BrowserPaneProps) {

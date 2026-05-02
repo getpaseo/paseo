@@ -160,6 +160,7 @@ interface MountedTabSlotProps {
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
   paneId: string;
+  onFocusPane: (paneId: string) => void;
   buildPaneContentModel: (input: {
     paneId: string;
     tab: WorkspaceTabDescriptor;
@@ -172,6 +173,7 @@ const MountedTabSlot = memo(function MountedTabSlot({
   isWorkspaceFocused,
   isPaneFocused,
   paneId,
+  onFocusPane,
   buildPaneContentModel,
 }: MountedTabSlotProps) {
   const content = useMemo(
@@ -187,6 +189,9 @@ const MountedTabSlot = memo(function MountedTabSlot({
     () => ({ display: (isVisible ? "flex" : "none") as "flex" | "none", flex: 1 }),
     [isVisible],
   );
+  const handleFocusPane = useCallback(() => {
+    onFocusPane(paneId);
+  }, [onFocusPane, paneId]);
 
   return (
     <View style={wrapperStyle}>
@@ -194,6 +199,7 @@ const MountedTabSlot = memo(function MountedTabSlot({
         content={content}
         isWorkspaceFocused={isWorkspaceFocused}
         isPaneFocused={isPaneFocused}
+        onFocusPane={handleFocusPane}
       />
     </View>
   );
@@ -1020,6 +1026,7 @@ function SplitPaneView({
                   isWorkspaceFocused={isWorkspaceFocused}
                   isPaneFocused={isFocused && tabId === activeTabDescriptor?.tabId}
                   paneId={pane.id}
+                  onFocusPane={stableOnFocusPane}
                   buildPaneContentModel={buildPaneContentModel}
                 />
               );
