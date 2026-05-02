@@ -90,14 +90,14 @@ export interface DesktopBrowserFoundInPageResult {
 }
 
 export interface DesktopBrowserBridge {
-  setActivePane?: (browserId: string | null) => Promise<void>;
-  findInPage?: (
+  setActivePane: (browserId: string | null) => Promise<void>;
+  findInPage: (
     browserId: string,
     text: string,
     options?: DesktopBrowserFindOptions,
   ) => Promise<number | null> | number | null;
-  stopFindInPage?: (browserId: string, action: DesktopBrowserFindAction) => Promise<void> | void;
-  onFoundInPage?: (
+  stopFindInPage: (browserId: string, action: DesktopBrowserFindAction) => Promise<void> | void;
+  onFoundInPage: (
     browserId: string,
     listener: (result: DesktopBrowserFoundInPageResult) => void,
   ) => Promise<() => void> | (() => void);

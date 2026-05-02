@@ -40,11 +40,16 @@ interface NativeScrollToIndexFailedInfo {
   averageItemLength: number;
 }
 
+interface NativeScrollIndexFallbackInput {
+  index: number;
+  averageItemLength: number;
+}
+
 function keyExtractor(item: { id: string }): string {
   return item.id;
 }
 
-export function getNativeScrollToIndexFallbackOffset(input: NativeScrollToIndexFailedInfo) {
+export function getNativeScrollToIndexFallbackOffset(input: NativeScrollIndexFallbackInput) {
   if (!Number.isFinite(input.averageItemLength) || input.averageItemLength <= 0) {
     return 0;
   }

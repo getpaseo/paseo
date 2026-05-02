@@ -145,13 +145,14 @@ interface FakeSearchController {
 
 const controllers = new Map<string, FakeSearchController>();
 
-function createController(): FakeSearchController {
+function createController(input?: { total?: number }): FakeSearchController {
+  const total = input?.total ?? 3;
   return {
     query: vi.fn((query: string) =>
-      query === "missing" ? { status: "no-match" } : { status: "matched", current: 1, total: 3 },
+      query === "missing" ? { status: "no-match" } : { status: "matched", current: 1, total },
     ),
-    next: vi.fn(() => ({ status: "matched", current: 2, total: 3 })),
-    prev: vi.fn(() => ({ status: "matched", current: 3, total: 3 })),
+    next: vi.fn(() => ({ status: "matched", current: 2, total })),
+    prev: vi.fn(() => ({ status: "matched", current: 3, total })),
     close: vi.fn(),
   };
 }
@@ -159,11 +160,14 @@ function createController(): FakeSearchController {
 function FakeFindPanel() {
   const paneContext = usePaneContext();
   const controller = controllers.get(paneContext.paneInstanceId ?? "");
+  if (!controller) {
+    throw new Error(`Missing fake find controller for pane ${paneContext.paneInstanceId}`);
+  }
   const paneFind = usePaneFind({
-    onQuery: controller?.query ?? createController().query,
-    onNext: controller?.next ?? createController().next,
-    onPrev: controller?.prev ?? createController().prev,
-    onClose: controller?.close ?? createController().close,
+    onQuery: controller.query,
+    onNext: controller.next,
+    onPrev: controller.prev,
+    onClose: controller.close,
   });
 
   return (
@@ -350,12 +354,12 @@ describe("FindBar", () => {
     act(() => {
       button("pane-find-next").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(controller.next).toHaveBeenCalledTimes(2);
+    expect(container?.textContent).toContain("2 / 3");
 
     act(() => {
       button("pane-find-prev").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(controller.prev).toHaveBeenCalledTimes(2);
+    expect(container?.textContent).toContain("3 / 3");
 
     pressKey("Escape");
     expect(controller.close).toHaveBeenCalledTimes(1);
@@ -367,7 +371,7 @@ describe("FindBar", () => {
     act(() => {
       button("pane-find-close").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(controller.close).toHaveBeenCalledTimes(2);
+    expect(container?.querySelector('[data-testid="pane-find-input"]')).toBeNull();
   });
 
   it("cleans up the active find adapter on pane deactivation and unmount", () => {
@@ -436,8 +440,8 @@ describe("FindBar", () => {
   });
 
   it("routes open find through the focused workspace pane without replacing pane focus", () => {
-    const left = createController();
-    const right = createController();
+    const left = createController({ total: 7 });
+    const right = createController({ total: 5 });
     const leftContent = buildWorkspacePaneContentModel({
       tab,
       paneId: "left",
@@ -488,8 +492,8 @@ describe("FindBar", () => {
     });
 
     changeInput("abc");
-    expect(left.query).not.toHaveBeenCalled();
-    expect(right.query).toHaveBeenCalledWith("abc");
+    expect(container?.textContent).toContain("1 / 5");
+    expect(container?.textContent).not.toContain("1 / 7");
     expect(focusLeft).not.toHaveBeenCalled();
     expect(focusRight).not.toHaveBeenCalled();
   });

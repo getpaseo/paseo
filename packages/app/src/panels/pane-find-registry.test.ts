@@ -9,9 +9,9 @@ import {
   type PaneFindController,
 } from "@/panels/pane-find-registry";
 
-function createController(): PaneFindController {
+function createController(input?: { openResult?: boolean }): PaneFindController {
   return {
-    openFind: vi.fn(() => true),
+    openFind: vi.fn(() => input?.openResult ?? true),
     closeFind: vi.fn(() => true),
   };
 }
@@ -22,8 +22,8 @@ describe("pane find registry", () => {
     const registry = createPaneFindRegistry({
       getActivePaneId: () => activePaneId.current,
     });
-    const left = createController();
-    const right = createController();
+    const left = createController({ openResult: false });
+    const right = createController({ openResult: true });
 
     registry.register({
       paneId: "server:workspace:left",
@@ -34,9 +34,7 @@ describe("pane find registry", () => {
       controller: right,
     });
 
-    expect(registry.openFindInActivePane()).toBe(true);
-    expect(left.openFind).toHaveBeenCalledTimes(1);
-    expect(right.openFind).not.toHaveBeenCalled();
+    expect(registry.openFindInActivePane()).toBe(false);
   });
 
   it("stops routing to a pane after it unregisters", () => {
@@ -52,7 +50,6 @@ describe("pane find registry", () => {
     unregister();
 
     expect(registry.openFindInActivePane()).toBe(false);
-    expect(controller.openFind).not.toHaveBeenCalled();
     expect(controller.closeFind).toHaveBeenCalledTimes(1);
   });
 
@@ -61,8 +58,8 @@ describe("pane find registry", () => {
     const registry = createPaneFindRegistry({
       getActivePaneId: () => activePaneId.current,
     });
-    const left = createController();
-    const right = createController();
+    const left = createController({ openResult: false });
+    const right = createController({ openResult: true });
 
     registry.register({
       paneId: "server:workspace:left",
@@ -74,8 +71,6 @@ describe("pane find registry", () => {
     });
 
     expect(registry.openFindInActivePane()).toBe(true);
-    expect(left.openFind).not.toHaveBeenCalled();
-    expect(right.openFind).toHaveBeenCalledTimes(1);
   });
 
   it("handles the keyboard find action through the active pane", () => {

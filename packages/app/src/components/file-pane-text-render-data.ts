@@ -1,17 +1,17 @@
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 
-export interface FilePaneTextLineRenderData {
+interface FilePaneTextLineRenderData {
   lineNumber: number;
   text: string;
   tokens: HighlightToken[];
 }
 
-export interface FilePaneTextRenderData {
+interface FilePaneTextRenderData {
   lines: FilePaneTextLineRenderData[];
   searchableText: string;
 }
 
-export interface FilePaneFindLineSpan {
+interface FilePaneFindLineSpan {
   lineNumber: number;
   startColumn: number;
   endColumn: number;

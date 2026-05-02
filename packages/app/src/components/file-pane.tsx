@@ -95,6 +95,13 @@ interface FilePaneTextPreviewProps {
   webScrollbarStyle: object;
 }
 
+interface FilePaneSearchableTextPreviewProps extends Omit<
+  FilePaneTextPreviewProps,
+  "findHighlightsByLine" | "textRenderData"
+> {
+  textRenderData: ReturnType<typeof createFilePaneTextRenderData>;
+}
+
 interface FilePaneImagePreviewProps {
   imagePreviewUri: string | null;
   imageSource: { uri: string } | null;
@@ -566,6 +573,20 @@ function FilePaneTextPreview({
   );
 }
 
+function FilePaneSearchableTextPreview(props: FilePaneSearchableTextPreviewProps) {
+  const { findHighlightsByLine, paneFind } = useFilePaneFindAdapter({
+    textRenderData: props.textRenderData,
+    textScrollRefs: props.textScrollRefs,
+  });
+
+  return (
+    <>
+      <FilePaneFindBarSlot paneFind={paneFind} />
+      <FilePaneTextPreview {...props} findHighlightsByLine={findHighlightsByLine} />
+    </>
+  );
+}
+
 function FilePaneImagePreview({
   imagePreviewUri,
   imageSource,
@@ -644,11 +665,6 @@ function FilePreviewBody({
   const scrollbar = useWebScrollViewScrollbar(previewScrollRef, {
     enabled: showDesktopWebScrollbar,
   });
-  const { findHighlightsByLine, paneFind } = useFilePaneFindAdapter({
-    textRenderData,
-    textScrollRefs,
-  });
-
   const gutterWidth = useMemo(() => {
     if (!textRenderData) return 0;
     return lineNumberGutterWidth(textRenderData.lines.length, theme.fontSize.sm);
@@ -673,13 +689,34 @@ function FilePreviewBody({
         <Text style={styles.emptyText}>No preview available</Text>
       </FilePaneCenterState>
     );
+  } else if (preview.kind === "text" && textRenderData) {
+    content = (
+      <FilePaneSearchableTextPreview
+        baseColor={baseColor}
+        colorMap={colorMap}
+        currentMatchBackgroundColor={currentMatchBackgroundColor}
+        gutterWidth={gutterWidth}
+        isMarkdownFile={isMarkdownFile}
+        isMobile={isMobile}
+        markdownParser={markdownParser}
+        markdownStyles={markdownStyles}
+        matchBackgroundColor={matchBackgroundColor}
+        preview={preview}
+        previewScrollRef={previewScrollRef}
+        scrollbar={scrollbar}
+        showDesktopWebScrollbar={showDesktopWebScrollbar}
+        textRenderData={textRenderData}
+        textScrollRefs={textScrollRefs}
+        webScrollbarStyle={webScrollbarStyle}
+      />
+    );
   } else if (preview.kind === "text") {
     content = (
       <FilePaneTextPreview
         baseColor={baseColor}
         colorMap={colorMap}
         currentMatchBackgroundColor={currentMatchBackgroundColor}
-        findHighlightsByLine={findHighlightsByLine}
+        findHighlightsByLine={new Map()}
         gutterWidth={gutterWidth}
         isMarkdownFile={isMarkdownFile}
         isMobile={isMobile}
@@ -714,12 +751,7 @@ function FilePreviewBody({
     );
   }
 
-  return (
-    <View style={styles.previewScrollContainer}>
-      <FilePaneFindBarSlot paneFind={paneFind} />
-      {content}
-    </View>
-  );
+  return <View style={styles.previewScrollContainer}>{content}</View>;
 }
 
 export function FilePane({

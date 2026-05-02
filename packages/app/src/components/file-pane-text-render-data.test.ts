@@ -5,7 +5,8 @@ import {
   createFilePaneTextRenderData,
   findFilePaneTextMatches,
 } from "@/components/file-pane-text-render-data";
-import type { FilePaneTextLineRenderData } from "@/components/file-pane-text-render-data";
+
+type FilePaneTextLineRenderData = ReturnType<typeof createFilePaneTextRenderData>["lines"][number];
 
 function tokenText(line: FilePaneTextLineRenderData): string {
   return line.tokens.map(({ text }) => text).join("");

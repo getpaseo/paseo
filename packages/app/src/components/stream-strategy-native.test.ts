@@ -6,7 +6,6 @@ describe("getNativeScrollToIndexFallbackOffset", () => {
     expect(
       getNativeScrollToIndexFallbackOffset({
         index: 25,
-        highestMeasuredFrameIndex: 4,
         averageItemLength: 72,
       }),
     ).toBe(1800);
@@ -16,14 +15,12 @@ describe("getNativeScrollToIndexFallbackOffset", () => {
     expect(
       getNativeScrollToIndexFallbackOffset({
         index: 25,
-        highestMeasuredFrameIndex: 4,
         averageItemLength: 0,
       }),
     ).toBe(0);
     expect(
       getNativeScrollToIndexFallbackOffset({
         index: 25,
-        highestMeasuredFrameIndex: 4,
         averageItemLength: Number.NaN,
       }),
     ).toBe(0);

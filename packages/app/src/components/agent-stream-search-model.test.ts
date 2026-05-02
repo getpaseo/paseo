@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
-import type { ToolCallDetail } from "@server/server/agent/agent-sdk-types";
 import {
   buildAgentStreamSearchModel,
   findAgentStreamSearchMatches,
-  getAgentStreamItemSearchableText,
 } from "./agent-stream-search-model";
 
 function timestamp(seed: number): Date {
@@ -63,82 +61,53 @@ function todoList(id: string, seed = 1): StreamItem {
   };
 }
 
-function agentToolCall(id: string, detail: ToolCallDetail, seed = 1): StreamItem {
-  return {
-    kind: "tool_call",
-    id,
-    timestamp: timestamp(seed),
-    payload: {
-      source: "agent",
-      data: {
-        provider: "codex",
-        callId: `call-${id}`,
-        name: "exec_command",
-        status: "completed",
-        error: null,
-        detail,
-      },
-    },
-  };
+function getSearchableText(item: StreamItem): string {
+  const model = buildAgentStreamSearchModel({
+    streamItems: [item],
+    streamHead: [],
+    platform: "web",
+    isMobileBreakpoint: true,
+  });
+  return model.entries[0]?.text ?? "";
 }
 
-describe("getAgentStreamItemSearchableText", () => {
-  it("extracts user, assistant, thought, activity, and todo text", () => {
-    expect(getAgentStreamItemSearchableText(userMessage("u1", "user text"))).toBe("user text");
-    expect(getAgentStreamItemSearchableText(assistantMessage("a1", "assistant text"))).toBe(
-      "assistant text",
-    );
-    expect(getAgentStreamItemSearchableText(thought("t1", "thought text"))).toBe("thought text");
-    expect(getAgentStreamItemSearchableText(activityLog("l1", "activity text"))).toBe(
-      "activity text",
-    );
-    expect(getAgentStreamItemSearchableText(todoList("todo"))).toBe(
-      "Write the red test\nMake search green",
-    );
+describe("buildAgentStreamSearchModel", () => {
+  it("indexes user and assistant message text", () => {
+    expect(getSearchableText(userMessage("u1", "user text"))).toBe("user text");
+    expect(getSearchableText(assistantMessage("a1", "assistant text"))).toBe("assistant text");
   });
 
-  it("searches minimal visible tool-call text and skips raw hidden payloads", () => {
-    const shell = agentToolCall("shell", {
-      type: "shell",
-      command: "npm run typecheck",
-      output: "internal output should stay out",
-    });
-
-    expect(getAgentStreamItemSearchableText(shell)).toBe("Shell\nnpm run typecheck");
+  it("excludes non-message rows that do not render find highlights", () => {
+    expect(getSearchableText(thought("t1", "thought text"))).toBe("");
+    expect(getSearchableText(activityLog("l1", "activity text"))).toBe("");
+    expect(getSearchableText(todoList("todo"))).toBe("");
   });
 
-  it("includes special tool-call content branches that render as messages or cards", () => {
-    const speak: StreamItem = {
+  it("excludes tool call rows from the search index", () => {
+    const toolCall: StreamItem = {
       kind: "tool_call",
-      id: "speak",
+      id: "shell",
       timestamp: timestamp(1),
       payload: {
         source: "agent",
         data: {
           provider: "codex",
-          callId: "call-speak",
-          name: "speak",
+          callId: "call-shell",
+          name: "exec_command",
           status: "completed",
           error: null,
           detail: {
-            type: "unknown",
-            input: "spoken message",
-            output: null,
+            type: "shell",
+            command: "npm run typecheck",
+            output: "internal output should stay out",
           },
         },
       },
     };
-    const plan = agentToolCall("plan", {
-      type: "plan",
-      text: "phase checklist",
-    });
 
-    expect(getAgentStreamItemSearchableText(speak)).toBe("spoken message");
-    expect(getAgentStreamItemSearchableText(plan)).toBe("Plan\nphase checklist");
+    expect(getSearchableText(toolCall)).toBe("");
   });
-});
 
-describe("buildAgentStreamSearchModel", () => {
   it("orders virtualized history, mounted history, live head, and optimistic items deterministically", () => {
     const committed: StreamItem[] = [];
     for (let index = 0; index < 64; index += 1) {
@@ -185,7 +154,7 @@ describe("findAgentStreamSearchMatches", () => {
   it("returns stable match ids from item identity and local occurrence data", () => {
     const model = buildAgentStreamSearchModel({
       streamItems: [assistantMessage("a1", "Alpha alpha beta")],
-      streamHead: [thought("h1", "alpha live")],
+      streamHead: [assistantMessage("h1", "alpha live")],
       platform: "web",
       isMobileBreakpoint: true,
     });
@@ -201,5 +170,21 @@ describe("findAgentStreamSearchMatches", () => {
       "h1:text:0:0:5",
     ]);
     expect(matches.map((match) => match.entry.item.id)).toEqual(["a1", "a1", "h1"]);
+  });
+
+  it("skips fenced code blocks while preserving message offsets for highlights", () => {
+    const model = buildAgentStreamSearchModel({
+      streamItems: [assistantMessage("a1", "before alpha\n```\nalpha\n```\nafter alpha")],
+      streamHead: [],
+      platform: "web",
+      isMobileBreakpoint: true,
+    });
+
+    const matches = findAgentStreamSearchMatches({
+      model,
+      query: "alpha",
+    });
+
+    expect(matches.map((match) => match.id)).toEqual(["a1:text:0:7:12", "a1:text:0:33:38"]);
   });
 });

@@ -1,16 +1,19 @@
-import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
-
 export interface PaneFindController {
   openFind(): boolean;
   closeFind(): boolean;
 }
 
-export interface RegisterPaneFindInput {
+interface PaneFindKeyboardAction {
+  id: "workspace.find.open";
+  scope: "workspace";
+}
+
+interface RegisterPaneFindInput {
   paneId: string;
   controller: PaneFindController;
 }
 
-export interface PaneFindRegistry {
+interface PaneFindRegistry {
   register(input: RegisterPaneFindInput): () => void;
   openFindInActivePane(): boolean;
   closeFindInPane(paneId: string): boolean;
@@ -73,9 +76,7 @@ export function clearActivePaneFindPaneId(paneId: string) {
   }
 }
 
-export function handlePaneFindKeyboardAction(action: KeyboardActionDefinition): boolean {
-  if (action.id !== "workspace.find.open") {
-    return false;
-  }
+export function handlePaneFindKeyboardAction(action: PaneFindKeyboardAction): boolean {
+  void action;
   return paneFindRegistry.openFindInActivePane();
 }

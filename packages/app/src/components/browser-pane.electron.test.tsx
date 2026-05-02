@@ -207,8 +207,6 @@ vi.mock("@/stores/browser-store", () => ({
 }));
 
 type FakeWebview = HTMLDivElement & {
-  findInPage: ReturnType<typeof vi.fn<(text: string, options?: unknown) => number>>;
-  stopFindInPage: ReturnType<typeof vi.fn<(action: string) => void>>;
   getURL: ReturnType<typeof vi.fn<() => string>>;
   canGoBack: ReturnType<typeof vi.fn<() => boolean>>;
   canGoForward: ReturnType<typeof vi.fn<() => boolean>>;
@@ -248,8 +246,6 @@ function installWebviewElementFactory(): void {
       return originalCreateElement(tagName, options);
     }
     const element = originalCreateElement("div") as FakeWebview;
-    element.findInPage = vi.fn(() => nextRequestId++);
-    element.stopFindInPage = vi.fn();
     element.getURL = vi.fn(() => "https://example.com");
     element.canGoBack = vi.fn(() => false);
     element.canGoForward = vi.fn(() => false);
@@ -423,23 +419,6 @@ describe("BrowserPane Electron find", () => {
     expect(container?.querySelector('[data-testid="pane-find-input"]')).toBeNull();
   });
 
-  it("ignores requestId-less found-in-page events while a newer requestId search is active", () => {
-    renderBrowserPane();
-    markWebviewDomReady();
-    openFind();
-
-    changeInput("needle");
-    dispatchFoundInPage({ requestId: 1, activeMatchOrdinal: 1, matches: 2 });
-    expect(container?.textContent).toContain("1 / 2");
-
-    pressKey("Enter");
-    dispatchFoundInPage({ activeMatchOrdinal: 2, matches: 9 });
-    expect(container?.textContent).toContain("Searching...");
-
-    dispatchFoundInPage({ requestId: 2, activeMatchOrdinal: 2, matches: 2 });
-    expect(container?.textContent).toContain("2 / 2");
-  });
-
   it("cleans browser find selection on empty query, navigation, blur, and unmount", () => {
     renderBrowserPane();
     markWebviewDomReady();
@@ -480,7 +459,7 @@ describe("BrowserPane Electron find", () => {
     expect(desktopBridge.foundInPageListeners.size).toBe(0);
   });
 
-  it("does not call webview find methods before dom-ready", () => {
+  it("does not call the browser find bridge before dom-ready", () => {
     renderBrowserPane();
     openFind();
 

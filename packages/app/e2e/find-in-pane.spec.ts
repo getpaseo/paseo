@@ -44,7 +44,7 @@ async function typeFindQuery(page: Page, query: string): Promise<void> {
   await input.fill(query);
 }
 
-test.describe("in-pane find manual QA", () => {
+test.describe("in-pane find", () => {
   test("walks chat, file, terminal, split-pane, and browser-web find flows in the running app", async ({
     page,
   }, testInfo) => {
@@ -120,7 +120,7 @@ test.describe("in-pane find manual QA", () => {
       await waitForTerminalContent(page, (text) => text.includes("split needle two"), 10_000);
       await openFind(page);
       await typeFindQuery(page, "needle");
-      await expect(page.getByText(/1 \/ 2|2 \/ 2|Searching\.\.\./)).toBeVisible({
+      await expect(page.getByText(/1 \/ 2|2 \/ 2/)).toBeVisible({
         timeout: 10_000,
       });
       await page.getByTestId("workspace-file-pane").click();

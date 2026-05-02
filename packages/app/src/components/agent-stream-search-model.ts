@@ -1,19 +1,19 @@
-import type { StreamItem, ToolCallItem } from "@/types/stream";
-import { buildToolCallDisplayModel } from "@/utils/tool-call-display";
+import type { StreamItem } from "@/types/stream";
 import {
   findMountedWindowStart,
   getWebMountedRecentStreamItems,
   getWebPartialVirtualizationThreshold,
 } from "./agent-stream-web-virtualization";
 
-export type AgentStreamSearchSource = "historyVirtualized" | "historyMounted" | "liveHead";
+type AgentStreamSearchSource = "historyVirtualized" | "historyMounted" | "liveHead";
 
-export interface AgentStreamSearchTextSegment {
+interface AgentStreamSearchTextSegment {
   key: string;
   text: string;
+  startOffset: number;
 }
 
-export interface AgentStreamSearchEntry {
+interface AgentStreamSearchEntry {
   item: StreamItem;
   source: AgentStreamSearchSource;
   index: number;
@@ -30,7 +30,7 @@ export interface AgentStreamSearchMatch {
   end: number;
 }
 
-export interface AgentStreamSearchModel {
+interface AgentStreamSearchModel {
   entries: AgentStreamSearchEntry[];
   segments: {
     historyVirtualized: AgentStreamSearchEntry[];
@@ -39,7 +39,7 @@ export interface AgentStreamSearchModel {
   };
 }
 
-export interface BuildAgentStreamSearchModelInput {
+interface BuildAgentStreamSearchModelInput {
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
   streamItems: StreamItem[];
@@ -48,97 +48,77 @@ export interface BuildAgentStreamSearchModelInput {
   cwd?: string;
 }
 
-export interface FindAgentStreamSearchMatchesInput {
+interface FindAgentStreamSearchMatchesInput {
   model: AgentStreamSearchModel;
   query: string;
 }
 
-function compactText(parts: Array<string | undefined>): string {
-  return parts
-    .map((part) => part?.trim())
-    .filter((part): part is string => Boolean(part))
-    .join("\n");
+function getFenceDelimiter(line: string): string | null {
+  const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
+  return match?.[2] ?? null;
 }
 
-function getToolCallSearchableSegments(
-  item: ToolCallItem,
-  cwd: string | undefined,
-): AgentStreamSearchTextSegment[] {
-  if (item.payload.source === "agent") {
-    const { data } = item.payload;
-    if (
-      data.name === "speak" &&
-      data.detail.type === "unknown" &&
-      typeof data.detail.input === "string" &&
-      data.detail.input.trim()
-    ) {
-      return [{ key: "text", text: data.detail.input }];
+function getMessageSearchableSegments(text: string): AgentStreamSearchTextSegment[] {
+  const segments: AgentStreamSearchTextSegment[] = [];
+  let activeFenceCharacter: "`" | "~" | null = null;
+  let activeFenceLength = 0;
+  let currentText = "";
+  let currentStartOffset = 0;
+  let offset = 0;
+
+  const flush = () => {
+    if (currentText.length > 0) {
+      segments.push({ key: "text", text: currentText, startOffset: currentStartOffset });
+      currentText = "";
+    }
+  };
+
+  for (const line of text.split("\n")) {
+    const lineWithBreak = offset + line.length < text.length ? `${line}\n` : line;
+    const fenceDelimiter = getFenceDelimiter(line);
+    const isClosingFence =
+      activeFenceCharacter &&
+      fenceDelimiter?.[0] === activeFenceCharacter &&
+      fenceDelimiter.length >= activeFenceLength;
+    const isOpeningFence = !activeFenceCharacter && fenceDelimiter;
+    const isIndentedCode = !activeFenceCharacter && (/^( {4,}|\t)/.test(line) || line === "    ");
+
+    if (isOpeningFence || activeFenceCharacter || isIndentedCode) {
+      flush();
+    } else {
+      if (currentText.length === 0) {
+        currentStartOffset = offset;
+      }
+      currentText += lineWithBreak;
     }
 
-    const display = buildToolCallDisplayModel({
-      name: data.name,
-      status: data.status,
-      error: data.error,
-      detail: data.detail,
-      metadata: data.metadata,
-      cwd,
-    });
-    const visibleText = compactText([
-      display.displayName,
-      display.summary,
-      data.detail.type === "plan" ? data.detail.text : undefined,
-      display.errorText,
-    ]);
-    return visibleText ? [{ key: "tool", text: visibleText }] : [];
+    if (isOpeningFence) {
+      activeFenceCharacter = fenceDelimiter[0] as "`" | "~";
+      activeFenceLength = fenceDelimiter.length;
+    } else if (isClosingFence) {
+      activeFenceCharacter = null;
+      activeFenceLength = 0;
+    }
+
+    offset += lineWithBreak.length;
   }
 
-  const { data } = item.payload;
-  const display = buildToolCallDisplayModel({
-    name: data.toolName,
-    status: data.status === "executing" ? "running" : data.status,
-    error: data.error,
-    detail: {
-      type: "unknown",
-      input: data.arguments,
-      output: data.result ?? null,
-    },
-    cwd,
-  });
-  const visibleText = compactText([display.displayName, display.summary, display.errorText]);
-  return visibleText ? [{ key: "tool", text: visibleText }] : [];
+  flush();
+  return segments;
 }
 
-export function getAgentStreamItemSearchableSegments(
-  item: StreamItem,
-  options: { cwd?: string } = {},
-): AgentStreamSearchTextSegment[] {
+function getAgentStreamItemSearchableSegments(item: StreamItem): AgentStreamSearchTextSegment[] {
   switch (item.kind) {
     case "user_message":
     case "assistant_message":
+      return item.text ? getMessageSearchableSegments(item.text) : [];
     case "thought":
-      return item.text ? [{ key: "text", text: item.text }] : [];
     case "activity_log":
-      return item.message ? [{ key: "text", text: item.message }] : [];
     case "todo_list":
-      return item.items.map((todo, index) => ({
-        key: `todo:${index}`,
-        text: todo.text,
-      }));
     case "tool_call":
-      return getToolCallSearchableSegments(item, options.cwd);
     case "compaction":
       return [];
   }
-}
-
-export function getAgentStreamItemSearchableText(
-  item: StreamItem,
-  options: { cwd?: string } = {},
-): string {
-  return getAgentStreamItemSearchableSegments(item, options)
-    .map((segment) => segment.text)
-    .filter((text) => text.length > 0)
-    .join("\n");
 }
 
 function mergeOptimisticItems(input: {
@@ -163,7 +143,7 @@ function buildEntries(input: {
   cwd: string | undefined;
 }): AgentStreamSearchEntry[] {
   return input.items.map((item, offset) => {
-    const segments = getAgentStreamItemSearchableSegments(item, { cwd: input.cwd });
+    const segments = getAgentStreamItemSearchableSegments(item);
     return {
       item,
       source: input.source,
@@ -277,13 +257,15 @@ export function findAgentStreamSearchMatches(
           break;
         }
         const end = start + input.query.length;
+        const absoluteStart = segment.startOffset + start;
+        const absoluteEnd = segment.startOffset + end;
         matches.push({
-          id: `${entry.item.id}:${segment.key}:${occurrenceIndex}:${start}:${end}`,
+          id: `${entry.item.id}:${segment.key}:${occurrenceIndex}:${absoluteStart}:${absoluteEnd}`,
           entry,
           segmentKey: segment.key,
           occurrenceIndex,
-          start,
-          end,
+          start: absoluteStart,
+          end: absoluteEnd,
         });
         occurrenceIndex += 1;
         fromIndex = end;

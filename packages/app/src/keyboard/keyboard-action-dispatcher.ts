@@ -11,7 +11,6 @@ export type KeyboardActionId =
   | "message-input.voice-mute-toggle"
   | "workspace.tab.new"
   | "workspace.tab.close-current"
-  | "workspace.find.open"
   | "workspace.tab.navigate-index"
   | "workspace.tab.navigate-relative"
   | "workspace.pane.split.right"
@@ -41,7 +40,6 @@ export type KeyboardActionDefinition =
   | { id: "message-input.voice-mute-toggle"; scope: KeyboardActionScope }
   | { id: "workspace.tab.new"; scope: KeyboardActionScope }
   | { id: "workspace.tab.close-current"; scope: KeyboardActionScope }
-  | { id: "workspace.find.open"; scope: KeyboardActionScope }
   | { id: "workspace.tab.navigate-index"; scope: KeyboardActionScope; index: number }
   | { id: "workspace.tab.navigate-relative"; scope: KeyboardActionScope; delta: 1 | -1 }
   | { id: "workspace.pane.split.right"; scope: KeyboardActionScope }
