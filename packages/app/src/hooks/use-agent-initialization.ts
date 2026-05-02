@@ -8,9 +8,7 @@ import {
   getInitKey,
   rejectInitDeferred,
 } from "@/utils/agent-initialization";
-import {
-  deriveInitialTimelineRequest,
-} from "@/contexts/session-timeline-bootstrap-policy";
+import { deriveInitialTimelineRequest } from "@/contexts/session-timeline-bootstrap-policy";
 import { isWeb } from "@/constants/platform";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 

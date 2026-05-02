@@ -948,6 +948,8 @@ describe("processAgentStreamEvents", () => {
         endCursor: { seq: 186 },
         entries: [makeTimelineEntry(186, seq186Text)],
         error: null,
+        hasNewer: false,
+        hasOlder: false,
       },
     });
 
