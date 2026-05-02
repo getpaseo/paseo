@@ -104,6 +104,7 @@ vi.mock("@/hooks/use-providers-snapshot", () => ({
 }));
 
 interface RenderOptions {
+  visible?: boolean;
   onClose?: () => void;
   onImportedAgent?: (agentId: string) => void;
   snapshot?: {
@@ -131,7 +132,7 @@ function renderSheet(
   return render(
     <QueryClientProvider client={queryClient}>
       <WorkspaceImportSheet
-        visible
+        visible={options?.visible ?? true}
         client={client}
         serverId="server-1"
         workspaceDirectory="/repo/paseo"
@@ -140,6 +141,16 @@ function renderSheet(
       />
     </QueryClientProvider>,
   );
+}
+
+function createRecentSessionsClient(
+  fetchRecentProviderSessions: Pick<
+    DaemonClient,
+    "fetchRecentProviderSessions"
+  >["fetchRecentProviderSessions"],
+  importAgent: Pick<DaemonClient, "importAgent">["importAgent"],
+): Pick<DaemonClient, "fetchRecentProviderSessions" | "importAgent"> {
+  return { fetchRecentProviderSessions, importAgent };
 }
 
 function createImportedAgentSnapshot(id: string): Awaited<ReturnType<DaemonClient["importAgent"]>> {
@@ -304,6 +315,54 @@ describe("WorkspaceImportSheet", () => {
     expect(screen.getByText("2h ago")).toBeTruthy();
     expect(screen.getByText("Implement the importer sheet")).toBeTruthy();
     expect(screen.getByText("Make the rows readable and provider opaque")).toBeTruthy();
+  });
+
+  it("keeps cached rows visible and revalidates when reopened", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [createProviderSessionEntry({ title: "Cached importable session" })],
+    }));
+    const importAgent = vi.fn();
+    const client = createRecentSessionsClient(fetchRecentProviderSessions, importAgent);
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    mockSnapshot.current = { entries: undefined, supportsSnapshot: false };
+
+    function TestSheet({ visible }: { visible: boolean }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <WorkspaceImportSheet
+            visible={visible}
+            client={client}
+            serverId="server-1"
+            workspaceDirectory="/repo/paseo"
+            onClose={vi.fn()}
+            onImportedAgent={vi.fn()}
+          />
+        </QueryClientProvider>
+      );
+    }
+
+    const { rerender } = render(<TestSheet visible />);
+
+    expect(await screen.findByText("Cached importable session")).toBeTruthy();
+    expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
+
+    rerender(<TestSheet visible={false} />);
+    fetchRecentProviderSessions.mockClear();
+    rerender(<TestSheet visible />);
+
+    expect(await screen.findByText("Cached importable session")).toBeTruthy();
+    await waitFor(() => {
+      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+        cwd: "/repo/paseo",
+        limit: 20,
+      });
+    });
   });
 
   it("imports a selected session by provider handle and reports the imported agent", async () => {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient, FetchRecentProviderSessionEntry } from "@server/client/daemon-client";
@@ -379,6 +379,16 @@ export function WorkspaceImportSheet({
     () => ["recent-provider-sessions", workspaceDirectory] as const,
     [workspaceDirectory],
   );
+  const wasVisibleRef = useRef(visible);
+
+  useEffect(() => {
+    const justOpened = visible && !wasVisibleRef.current;
+    wasVisibleRef.current = visible;
+    if (!justOpened || !client || !workspaceDirectory) {
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: sessionsQueryRoot });
+  }, [visible, client, workspaceDirectory, queryClient, sessionsQueryRoot]);
 
   const queriesConfig = useMemo(
     () =>
