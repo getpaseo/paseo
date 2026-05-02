@@ -174,6 +174,7 @@ describe("codex tool-call mapper", () => {
         subAgentType: "Sub-agent",
         description: "Inspect the Codex stream path.",
         log: "",
+        actions: [],
       },
     });
   });

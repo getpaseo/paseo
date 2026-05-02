@@ -706,6 +706,7 @@ describe("Codex app-server provider", () => {
             subAgentType: "Sub-agent",
             description: "Inspect the stream path.",
             log: "",
+            actions: [],
           },
         },
       },
@@ -763,6 +764,7 @@ describe("Codex app-server provider", () => {
         subAgentType: "Sub-agent",
         description: "Report findings.",
         log: "[Assistant] Found the path.",
+        actions: [],
       },
     });
   });
