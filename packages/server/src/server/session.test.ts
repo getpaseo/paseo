@@ -17,6 +17,7 @@ import type {
   AgentTimelineItem,
   ListModesOptions,
   ListModelsOptions,
+  PersistedAgentDescriptor,
 } from "./agent/agent-sdk-types.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderDefinition } from "./agent/provider-registry.js";
@@ -68,6 +69,7 @@ interface SessionHandlerInternals {
   handleCheckoutPullRequest(params: unknown): Promise<unknown>;
   handleCheckoutPushRequest(params: unknown): Promise<unknown>;
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
+  handleFetchRecentProviderSessions(params: unknown): Promise<unknown>;
   handleImportAgentRequest(params: unknown): Promise<unknown>;
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
@@ -929,6 +931,86 @@ afterEach(() => {
 });
 
 describe("session agent import", () => {
+  test("filters already imported provider sessions by native handle", async () => {
+    const messages: unknown[] = [];
+    const cwd = "/tmp/import-filter";
+    const importedDescriptor: PersistedAgentDescriptor = {
+      provider: "claude",
+      sessionId: "provider-session-imported",
+      cwd,
+      title: "Already imported",
+      lastActivityAt: new Date("2026-04-30T12:00:00.000Z"),
+      persistence: {
+        provider: "claude",
+        sessionId: "provider-session-imported",
+        nativeHandle: "provider-native-imported",
+      },
+      timeline: [{ type: "user_message", text: "already imported" }],
+    };
+    const visibleDescriptor: PersistedAgentDescriptor = {
+      provider: "claude",
+      sessionId: "provider-session-visible",
+      cwd,
+      title: "Still importable",
+      lastActivityAt: new Date("2026-04-30T11:00:00.000Z"),
+      persistence: {
+        provider: "claude",
+        sessionId: "provider-session-visible",
+        nativeHandle: "provider-native-visible",
+      },
+      timeline: [{ type: "user_message", text: "still importable" }],
+    };
+    const agentManager = {
+      listAgents: vi.fn(() => [
+        {
+          provider: "claude",
+          persistence: {
+            provider: "claude",
+            sessionId: "stored-session-id",
+            nativeHandle: "provider-native-imported",
+          },
+        } as ManagedAgent,
+      ]),
+      listPersistedAgents: vi.fn().mockResolvedValue([importedDescriptor, visibleDescriptor]),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const agentStorage = {
+      list: vi.fn().mockResolvedValue([]),
+    };
+    const session = createSessionForTest({ messages });
+    Object.assign(session, { agentManager, agentStorage });
+
+    await asSessionInternals(session).handleFetchRecentProviderSessions({
+      type: "fetch_recent_provider_sessions_request",
+      requestId: "recent-provider-sessions",
+      cwd,
+      providers: ["claude"],
+      limit: 15,
+    });
+
+    expect(agentManager.listPersistedAgents).toHaveBeenCalledWith({
+      limit: 200,
+      providerFilter: new Set(["claude"]),
+      cwd,
+    });
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "fetch_recent_provider_sessions_response",
+        payload: expect.objectContaining({
+          requestId: "recent-provider-sessions",
+          filteredAlreadyImportedCount: 1,
+          entries: [
+            expect.objectContaining({
+              providerId: "claude",
+              providerHandleId: "provider-native-visible",
+              title: "Still importable",
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
   test("sets a provisional title and schedules auto-title generation from the first hydrated user message", async () => {
     const messages: unknown[] = [];
     const cwd = "/tmp/imported-agent";
