@@ -562,7 +562,7 @@ test("omitting create_agent_request worktree base-ref fields preserves legacy wi
   await expect(createPromise).rejects.toThrow("legacy git shape sentinel");
 });
 
-test("sends structured attachments with create_paseo_worktree_request", async () => {
+test("sends structured first-agent context attachments with create_paseo_worktree_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
 
@@ -582,15 +582,17 @@ test("sends structured attachments with create_paseo_worktree_request", async ()
   const createPromise = client.createPaseoWorktree({
     cwd: "/tmp/project",
     worktreeSlug: "review-pr-123",
-    attachments: [
-      {
-        type: "github_pr",
-        mimeType: "application/github-pr",
-        number: 123,
-        title: "Fix race in worktree setup",
-        url: "https://github.com/getpaseo/paseo/pull/123",
-      },
-    ],
+    firstAgentContext: {
+      attachments: [
+        {
+          type: "github_pr",
+          mimeType: "application/github-pr",
+          number: 123,
+          title: "Fix race in worktree setup",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+        },
+      ],
+    },
   });
 
   expect(mock.sent).toHaveLength(1);
@@ -599,10 +601,12 @@ test("sends structured attachments with create_paseo_worktree_request", async ()
     message: {
       type: "create_paseo_worktree_request";
       requestId: string;
-      attachments: Array<{ type: string; mimeType: string; number: number }>;
+      firstAgentContext: {
+        attachments: Array<{ type: string; mimeType: string; number: number }>;
+      };
     };
   };
-  expect(request.message.attachments).toEqual([
+  expect(request.message.firstAgentContext.attachments).toEqual([
     {
       type: "github_pr",
       mimeType: "application/github-pr",

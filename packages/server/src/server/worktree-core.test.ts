@@ -182,7 +182,6 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
       {
         cwd: repoDir,
         worktreeSlug: "legacy-rpc",
-        attachments: [],
         paseoHome,
         runSetup: false,
       },
@@ -199,7 +198,7 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
     expect(existsSync(result.worktree.worktreePath)).toBe(true);
   });
 
-  test("checks out the legacy RPC GitHub PR attachment branch", async () => {
+  test("checks out an explicit GitHub PR branch with legacy RPC fields", async () => {
     const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
     cleanupPaths.push(tempDir);
 
@@ -207,19 +206,10 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
       {
         cwd: repoDir,
         worktreeSlug: "review-pr-123",
+        githubPrNumber: 123,
+        refName: "feature/review-pr",
         paseoHome,
         runSetup: false,
-        attachments: [
-          {
-            type: "github_pr",
-            mimeType: "application/github-pr",
-            number: 123,
-            title: "Review branch",
-            url: "https://github.com/getpaseo/paseo/pull/123",
-            baseRefName: "main",
-            headRefName: "feature/review-pr",
-          },
-        ],
       },
       createCoreDeps(),
     );
@@ -240,19 +230,10 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
     const result = await createCoreWorktree(
       {
         cwd: repoDir,
+        githubPrNumber: 123,
+        refName: "feature/review-pr",
         paseoHome,
         runSetup: false,
-        attachments: [
-          {
-            type: "github_pr",
-            mimeType: "application/github-pr",
-            number: 123,
-            title: "Review branch",
-            url: "https://github.com/getpaseo/paseo/pull/123",
-            baseRefName: "main",
-            headRefName: "feature/review-pr",
-          },
-        ],
       },
       createCoreDeps(),
     );
@@ -549,19 +530,10 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
     const deps = createCoreDeps();
     const input = {
       cwd: repoDir,
+      githubPrNumber: 123,
+      refName: "feature/review-pr",
       paseoHome,
       runSetup: false,
-      attachments: [
-        {
-          type: "github_pr" as const,
-          mimeType: "application/github-pr" as const,
-          number: 123,
-          title: "Review branch",
-          url: "https://github.com/getpaseo/paseo/pull/123",
-          baseRefName: "main",
-          headRefName: "feature/review-pr",
-        },
-      ],
     };
 
     const first = await createCoreWorktree(input, deps);
@@ -588,18 +560,9 @@ describe.skipIf(process.platform === "win32")("createWorktreeCore", () => {
       {
         cwd: repoDir,
         worktreeSlug: "stubbed-github",
+        githubPrNumber: 123,
         paseoHome,
         runSetup: false,
-        attachments: [
-          {
-            type: "github_pr",
-            mimeType: "application/github-pr",
-            number: 123,
-            title: "Review branch",
-            url: "https://github.com/getpaseo/paseo/pull/123",
-            baseRefName: "main",
-          },
-        ],
       },
       createCoreDeps({ github }),
     );
