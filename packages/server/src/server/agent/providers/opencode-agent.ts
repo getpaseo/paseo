@@ -1,5 +1,7 @@
 import type { ChildProcess } from "node:child_process";
+import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import path from "node:path";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -73,6 +75,7 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
 
 const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_FULL_ACCESS_MODE_ID = "full-access";
+const OPENCODE_STORAGE_SESSION_LIMIT = 200;
 
 const DEFAULT_MODES: AgentMode[] = [
   {
@@ -91,6 +94,51 @@ const DEFAULT_MODES: AgentMode[] = [
     description: "Automatically approves all tool permission prompts for the session",
   },
 ];
+
+const OpenCodeStoredSessionSchema = z
+  .object({
+    id: z.string().min(1),
+    directory: z.string().min(1),
+    title: z.string().nullable().optional(),
+    time: z
+      .object({
+        created: z.number().optional(),
+        updated: z.number().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+const OpenCodeStoredMessageSchema = z
+  .object({
+    id: z.string().min(1),
+    sessionID: z.string().min(1),
+    role: z.string().optional(),
+    time: z
+      .object({
+        created: z.number().optional(),
+        completed: z.number().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+const OpenCodeStoredPartSchema = z
+  .object({
+    type: z.string().optional(),
+    text: z.string().optional(),
+    time: z
+      .object({
+        start: z.number().optional(),
+        end: z.number().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+type OpenCodeStoredSession = z.infer<typeof OpenCodeStoredSessionSchema>;
+type OpenCodeStoredMessage = z.infer<typeof OpenCodeStoredMessageSchema>;
+type OpenCodeStoredPart = z.infer<typeof OpenCodeStoredPartSchema>;
 
 type OpenCodeAgentConfig = AgentSessionConfig & { provider: "opencode" };
 type OpenCodeMessageRole = "user" | "assistant";
@@ -706,8 +754,169 @@ function buildOpenCodePromptParts(
   return output;
 }
 
+function resolveOpenCodeStorageRoot(): string {
+  const xdgDataHome = process.env.XDG_DATA_HOME;
+  const dataHome =
+    typeof xdgDataHome === "string" && xdgDataHome.trim().length > 0
+      ? xdgDataHome
+      : path.join(homedir(), ".local", "share");
+  return path.join(dataHome, "opencode", "storage");
+}
+
+async function collectOpenCodePersistedAgentsFromStorage(
+  storageRoot: string,
+  options?: ListPersistedAgentsOptions,
+): Promise<PersistedAgentDescriptor[]> {
+  const sessions = await readOpenCodeStoredSessions(path.join(storageRoot, "session"));
+  const limit = options?.limit ?? OPENCODE_STORAGE_SESSION_LIMIT;
+  const candidates = sessions
+    .filter((session) => !options?.cwd || session.directory === options.cwd)
+    .sort((left, right) => getOpenCodeSessionTimestamp(right) - getOpenCodeSessionTimestamp(left))
+    .slice(0, limit);
+
+  const descriptors = await Promise.all(
+    candidates.map((session) => buildOpenCodePersistedAgentDescriptor(storageRoot, session)),
+  );
+
+  return descriptors.filter((descriptor): descriptor is PersistedAgentDescriptor =>
+    Boolean(descriptor),
+  );
+}
+
+async function readOpenCodeStoredSessions(sessionRoot: string): Promise<OpenCodeStoredSession[]> {
+  const files = await findJsonFiles(sessionRoot);
+  const sessions: OpenCodeStoredSession[] = [];
+  for (const file of files) {
+    const parsed = await readJsonFile(file, OpenCodeStoredSessionSchema);
+    if (parsed) {
+      sessions.push(parsed);
+    }
+  }
+  return sessions;
+}
+
+async function buildOpenCodePersistedAgentDescriptor(
+  storageRoot: string,
+  session: OpenCodeStoredSession,
+): Promise<PersistedAgentDescriptor | null> {
+  const timeline = await readOpenCodeSessionTimeline(storageRoot, session.id);
+  return {
+    provider: "opencode",
+    sessionId: session.id,
+    cwd: session.directory,
+    title: normalizeOpenCodeSessionTitle(session.title),
+    lastActivityAt: new Date(getOpenCodeSessionTimestamp(session)),
+    persistence: {
+      provider: "opencode",
+      sessionId: session.id,
+      nativeHandle: session.id,
+      metadata: {
+        provider: "opencode",
+        cwd: session.directory,
+        title: normalizeOpenCodeSessionTitle(session.title),
+      },
+    },
+    timeline,
+  };
+}
+
+async function readOpenCodeSessionTimeline(
+  storageRoot: string,
+  sessionId: string,
+): Promise<AgentTimelineItem[]> {
+  const messageRoot = path.join(storageRoot, "message", sessionId);
+  const messageFiles = await findJsonFiles(messageRoot);
+  const messages: OpenCodeStoredMessage[] = [];
+  for (const file of messageFiles) {
+    const parsed = await readJsonFile(file, OpenCodeStoredMessageSchema);
+    if (parsed?.sessionID === sessionId) {
+      messages.push(parsed);
+    }
+  }
+
+  const timeline: AgentTimelineItem[] = [];
+  for (const message of messages.sort(
+    (left, right) => getOpenCodeMessageTimestamp(left) - getOpenCodeMessageTimestamp(right),
+  )) {
+    const text = await readOpenCodeMessageText(storageRoot, message.id);
+    if (!text) {
+      continue;
+    }
+    if (message.role === "user") {
+      timeline.push({ type: "user_message", text, messageId: message.id });
+    } else if (message.role === "assistant") {
+      timeline.push({ type: "assistant_message", text });
+    }
+  }
+  return timeline;
+}
+
+async function readOpenCodeMessageText(storageRoot: string, messageId: string): Promise<string> {
+  const partRoot = path.join(storageRoot, "part", messageId);
+  const partFiles = await findJsonFiles(partRoot);
+  const parts: OpenCodeStoredPart[] = [];
+  for (const file of partFiles) {
+    const parsed = await readJsonFile(file, OpenCodeStoredPartSchema);
+    if (parsed?.type === "text" && typeof parsed.text === "string") {
+      parts.push(parsed);
+    }
+  }
+
+  return parts
+    .sort((left, right) => getOpenCodePartTimestamp(left) - getOpenCodePartTimestamp(right))
+    .map((part) => part.text?.trim() ?? "")
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+async function findJsonFiles(root: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = path.join(root, entry.name);
+      if (entry.isDirectory()) {
+        return findJsonFiles(entryPath);
+      }
+      return entry.isFile() && entry.name.endsWith(".json") ? [entryPath] : [];
+    }),
+  );
+  return files.flat();
+}
+
+async function readJsonFile<T>(file: string, schema: z.ZodType<T>): Promise<T | null> {
+  try {
+    return schema.parse(JSON.parse(await readFile(file, "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeOpenCodeSessionTitle(title: string | null | undefined): string | null {
+  const normalized = title?.trim();
+  return normalized ? normalized : null;
+}
+
+function getOpenCodeSessionTimestamp(session: OpenCodeStoredSession): number {
+  return session.time?.updated ?? session.time?.created ?? 0;
+}
+
+function getOpenCodeMessageTimestamp(message: OpenCodeStoredMessage): number {
+  return message.time?.created ?? message.time?.completed ?? 0;
+}
+
+function getOpenCodePartTimestamp(part: OpenCodeStoredPart): number {
+  return part.time?.start ?? part.time?.end ?? 0;
+}
+
 export const __openCodeInternals = {
   buildOpenCodePromptParts,
+  collectOpenCodePersistedAgentsFromStorage,
   buildOpenCodeModelContextWindowLookup,
   buildOpenCodeModelDefinition,
   buildOpenCodeModelLookupKey,
@@ -1199,10 +1408,9 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async listPersistedAgents(
-    _options?: ListPersistedAgentsOptions,
+    options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    // TODO: Implement by listing sessions from OpenCode
-    return [];
+    return collectOpenCodePersistedAgentsFromStorage(resolveOpenCodeStorageRoot(), options);
   }
 
   async isAvailable(): Promise<boolean> {
