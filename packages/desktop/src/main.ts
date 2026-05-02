@@ -71,9 +71,33 @@ function preventUnsafeBrowserWebviewNavigation(
   }
 }
 const OPEN_PROJECT_EVENT = "paseo:event:open-project";
+const BROWSER_SHORTCUT_EVENT = "paseo:event:browser-shortcut";
 const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
 const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
 app.setName("Paseo");
+
+function getBrowserIdFromWebviewPartition(partition: string | undefined): string | null {
+  const prefix = "persist:paseo-browser-";
+  if (!partition?.startsWith(prefix)) {
+    return null;
+  }
+  const browserId = partition.slice(prefix.length).trim();
+  return browserId.length > 0 ? browserId : null;
+}
+
+function isBrowserRefreshInput(input: Electron.Input): boolean {
+  if (input.type !== "keyDown" || input.alt || input.shift) {
+    return false;
+  }
+  return (input.meta || input.control) && input.key.toLowerCase() === "r";
+}
+
+function isBrowserLocationInput(input: Electron.Input): boolean {
+  if (input.type !== "keyDown" || input.alt || input.shift) {
+    return false;
+  }
+  return (input.meta || input.control) && input.key.toLowerCase() === "l";
+}
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
@@ -246,6 +270,11 @@ async function createMainWindow(): Promise<void> {
       event.preventDefault();
       return;
     }
+    const browserId = getBrowserIdFromWebviewPartition(params.partition);
+    if (!browserId) {
+      event.preventDefault();
+      return;
+    }
     webPreferences.nodeIntegration = false;
     webPreferences.nodeIntegrationInSubFrames = false;
     webPreferences.nodeIntegrationInWorker = false;
@@ -260,6 +289,23 @@ async function createMainWindow(): Promise<void> {
     delete (params as { preloadURL?: string }).preloadURL;
   });
   mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
+    contents.on("before-input-event", (event, input) => {
+      if (isBrowserRefreshInput(input)) {
+        event.preventDefault();
+        if (contents.isLoadingMainFrame()) {
+          contents.stop();
+        } else {
+          contents.reload();
+        }
+        return;
+      }
+      if (isBrowserLocationInput(input)) {
+        event.preventDefault();
+        mainWindow.webContents.send(BROWSER_SHORTCUT_EVENT, {
+          action: "focus-url",
+        });
+      }
+    });
     contents.setWindowOpenHandler(({ url }) => {
       if (!isAllowedBrowserWebviewUrl(url)) {
         return { action: "deny" };

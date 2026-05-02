@@ -7,6 +7,7 @@ interface BrowserPaneProps {
   serverId: string;
   workspaceId: string;
   cwd: string | null;
+  isInteractive?: boolean;
 }
 
 export function BrowserPane({ browserId }: BrowserPaneProps) {

@@ -16,7 +16,12 @@ import {
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
 import type { BrowserElementAttachment } from "@/attachments/types";
-import { isElectronRuntime } from "@/desktop/host";
+import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import {
+  getDesktopHost,
+  isElectronRuntime,
+  type DesktopBrowserShortcutEvent,
+} from "@/desktop/host";
 import { useBrowserStore, normalizeWorkspaceBrowserUrl } from "@/stores/browser-store";
 
 type ElectronWebview = HTMLElement & {
@@ -30,8 +35,13 @@ type ElectronWebview = HTMLElement & {
   getURL?: () => string;
   openDevTools?: () => void;
   executeJavaScript?: (code: string) => Promise<unknown>;
+  focus?: () => void;
   addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
   removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
+};
+
+type WebTextInput = TextInput & {
+  getNativeRef?: () => unknown;
 };
 
 type BrowserElementSelection = Omit<BrowserElementAttachment, "formatted"> & {
@@ -177,6 +187,30 @@ function executeWebviewJavaScript(webview: ElectronWebview, code: string): Promi
   return webview.executeJavaScript?.(code) ?? Promise.resolve(null);
 }
 
+function getTextInputNativeElement(current: WebTextInput | null): HTMLInputElement | null {
+  const native = current?.getNativeRef?.() ?? current;
+  return native instanceof HTMLInputElement ? native : null;
+}
+
+function isBrowserShortcutKey(event: KeyboardEvent, key: "l" | "r"): boolean {
+  if (event.altKey || event.shiftKey) {
+    return false;
+  }
+  if (!event.metaKey && !event.ctrlKey) {
+    return false;
+  }
+  const eventKey = event.key.toLowerCase();
+  return eventKey === key || event.code === `Key${key.toUpperCase()}`;
+}
+
+function isDesktopBrowserShortcutEvent(payload: unknown): payload is DesktopBrowserShortcutEvent {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  const event = payload as Partial<DesktopBrowserShortcutEvent>;
+  return event.action === "focus-url";
+}
+
 function startSelectorResultPolling(input: {
   webview: ElectronWebview;
   onSelection: (selection: BrowserElementSelection) => void;
@@ -215,20 +249,26 @@ export function BrowserPane({
   serverId,
   workspaceId,
   cwd,
+  isInteractive,
 }: {
   browserId: string;
   serverId: string;
   workspaceId: string;
   cwd: string | null;
+  isInteractive?: boolean;
 }) {
   const { theme } = useUnistyles();
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
   const webviewRef = useRef<ElectronWebview | null>(null);
   const webviewHostRef = useRef<HTMLDivElement | null>(null);
+  const urlInputRef = useRef<WebTextInput | null>(null);
   const initialUrlRef = useRef(browser?.url ?? "https://example.com");
   const browserIdRef = useRef(browserId);
   browserIdRef.current = browserId;
+  const browserRef = useRef(browser);
+  browserRef.current = browser;
+  const pendingNavigationUrlRef = useRef<string | null>(null);
   const domReadyRef = useRef(false);
   const [selectorActive, setSelectorActive] = useState(false);
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
@@ -271,7 +311,14 @@ export function BrowserPane({
   const updateBrowserRef = useRef(updateBrowser);
   updateBrowserRef.current = updateBrowser;
 
-  const syncNavigationState = useCallback(() => {
+  const focusUrlBar = useCallback(() => {
+    urlInputRef.current?.focus();
+    window.setTimeout(() => {
+      getTextInputNativeElement(urlInputRef.current)?.select();
+    }, 0);
+  }, []);
+
+  const syncNavigationState = useCallback((input?: { syncUrl?: boolean }) => {
     const webview = webviewRef.current;
     if (!webview || !domReadyRef.current) {
       return;
@@ -279,11 +326,14 @@ export function BrowserPane({
 
     try {
       const currentUrl = webview.getURL?.() ?? webview.getAttribute("src") ?? "";
-      updateBrowserRef.current(browserIdRef.current, {
-        url: normalizeWorkspaceBrowserUrl(currentUrl),
+      const patch = {
         canGoBack: webview.canGoBack?.() ?? false,
         canGoForward: webview.canGoForward?.() ?? false,
-      });
+        ...(input?.syncUrl === false
+          ? {}
+          : { url: normalizeWorkspaceBrowserUrl(pendingNavigationUrlRef.current ?? currentUrl) }),
+      };
+      updateBrowserRef.current(browserIdRef.current, patch);
     } catch {
       // webview not yet attached
     }
@@ -320,8 +370,8 @@ export function BrowserPane({
     webview.style.background = "transparent";
 
     const handleStartLoading = () => {
-      updateBrowser(browserId, { isLoading: true, faviconUrl: null, lastError: null });
-      syncNavigationState();
+      updateBrowser(browserId, { isLoading: true, lastError: null });
+      syncNavigationState({ syncUrl: false });
     };
     const handleStopLoading = () => {
       updateBrowser(browserId, { isLoading: false });
@@ -332,15 +382,35 @@ export function BrowserPane({
         typeof (event as Event & { url?: unknown }).url === "string"
           ? ((event as Event & { url?: string }).url ?? "")
           : (webview.getURL?.() ?? webview.getAttribute("src") ?? "");
+      const normalized = normalizeWorkspaceBrowserUrl(nextUrl);
+      const previousUrl = browserRef.current?.url ?? initialUrlRef.current;
+      pendingNavigationUrlRef.current = null;
       updateBrowser(browserIdRef.current, {
-        url: normalizeWorkspaceBrowserUrl(nextUrl),
+        url: normalized,
+        ...(normalized !== previousUrl ? { faviconUrl: null } : {}),
         lastError: null,
       });
       setDraftUrl((current) => {
-        const normalized = normalizeWorkspaceBrowserUrl(nextUrl);
         return current === normalized ? current : normalized;
       });
       syncNavigationState();
+    };
+    const handleWillNavigate = (event: Event) => {
+      const nextUrl =
+        typeof (event as Event & { url?: unknown }).url === "string"
+          ? ((event as Event & { url?: string }).url ?? "")
+          : "";
+      if (!nextUrl) {
+        return;
+      }
+      const normalized = normalizeWorkspaceBrowserUrl(nextUrl);
+      pendingNavigationUrlRef.current = normalized;
+      updateBrowserRef.current(browserIdRef.current, {
+        url: normalized,
+        ...(normalized !== browserRef.current?.url ? { faviconUrl: null } : {}),
+        lastError: null,
+      });
+      setDraftUrl((current) => (current === normalized ? current : normalized));
     };
     const handleTitleUpdated = (event: Event) => {
       const title =
@@ -372,6 +442,7 @@ export function BrowserPane({
 
     webview.addEventListener("did-start-loading", handleStartLoading);
     webview.addEventListener("did-stop-loading", handleStopLoading);
+    webview.addEventListener("will-navigate", handleWillNavigate);
     webview.addEventListener("did-navigate", handleNavigate);
     webview.addEventListener("did-navigate-in-page", handleNavigate);
     webview.addEventListener("page-title-updated", handleTitleUpdated);
@@ -390,6 +461,7 @@ export function BrowserPane({
     return () => {
       webview.removeEventListener("did-start-loading", handleStartLoading);
       webview.removeEventListener("did-stop-loading", handleStopLoading);
+      webview.removeEventListener("will-navigate", handleWillNavigate);
       webview.removeEventListener("did-navigate", handleNavigate);
       webview.removeEventListener("did-navigate-in-page", handleNavigate);
       webview.removeEventListener("page-title-updated", handleTitleUpdated);
@@ -411,9 +483,12 @@ export function BrowserPane({
     const normalizedUrl = normalizeWorkspaceBrowserUrl(nextUrl);
     const webview = webviewRef.current;
     const unsafeNavigationMessage = getUnsafeNavigationMessage(normalizedUrl);
+    const previousUrl = browserRef.current?.url ?? initialUrlRef.current;
+    pendingNavigationUrlRef.current = unsafeNavigationMessage ? null : normalizedUrl;
     updateBrowserRef.current(browserIdRef.current, {
       url: normalizedUrl,
       isLoading: unsafeNavigationMessage === null,
+      ...(normalizedUrl !== previousUrl ? { faviconUrl: null } : {}),
       lastError: null,
     });
     setDraftUrl((current) => (current === normalizedUrl ? current : normalizedUrl));
@@ -460,6 +535,56 @@ export function BrowserPane({
     }
     webviewRef.current?.reload?.();
   }, [browser?.isLoading, browserId, updateBrowser]);
+
+  useEffect(() => {
+    if (!isElectronRuntime() || !isInteractive) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isBrowserShortcutKey(event, "l")) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        focusUrlBar();
+        return;
+      }
+      if (isBrowserShortcutKey(event, "r")) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        handleRefresh();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [focusUrlBar, handleRefresh, isInteractive]);
+
+  useEffect(() => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+    const unsubscribe = getDesktopHost()?.events?.on?.("browser-shortcut", (payload) => {
+      if (
+        !isDesktopBrowserShortcutEvent(payload) ||
+        (payload.browserId && payload.browserId !== browserIdRef.current) ||
+        !isInteractive
+      ) {
+        return;
+      }
+      focusUrlBar();
+    });
+
+    if (typeof unsubscribe === "function") {
+      return unsubscribe;
+    }
+    return () => {
+      void unsubscribe?.then((dispose) => dispose());
+    };
+  }, [focusUrlBar, isInteractive]);
 
   const handleNavigateDraftUrl = useCallback(() => {
     navigate(draftUrl);
@@ -785,6 +910,7 @@ export function BrowserPane({
             onSubmitEditing={handleNavigateDraftUrl}
             placeholder="Enter URL"
             placeholderTextColor={theme.colors.foregroundMuted}
+            ref={urlInputRef}
             style={urlInputStyle}
             value={draftUrl}
           />
@@ -829,30 +955,29 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
   },
   chromeRow: {
-    minHeight: 40,
+    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.surface3,
-    backgroundColor: theme.colors.surface1,
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
   },
   chromeLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: theme.spacing[1],
   },
   chromeRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: theme.spacing[1],
   },
   iconButton: {
     width: 28,
     height: 28,
-    borderRadius: 8,
+    borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -868,16 +993,14 @@ const styles = StyleSheet.create((theme) => ({
   urlBarWrap: {
     flex: 1,
     minWidth: 0,
-    height: 30,
-    borderRadius: 10,
-    paddingLeft: 10,
-    paddingRight: 8,
+    height: 28,
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: theme.spacing[2],
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surface1,
     borderWidth: 1,
-    borderColor: theme.colors.surface3,
+    borderColor: theme.colors.border,
   },
   urlInput: {
     flex: 1,
@@ -887,14 +1010,14 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
   },
   errorRow: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.surface3,
+    borderBottomColor: theme.colors.border,
     backgroundColor: theme.colors.surface0,
   },
   metaError: {
-    fontSize: 11,
+    fontSize: theme.fontSize.xs,
   },
   webviewWrap: {
     flex: 1,
