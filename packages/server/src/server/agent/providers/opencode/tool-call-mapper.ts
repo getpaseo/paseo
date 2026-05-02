@@ -43,7 +43,7 @@ export function mapOpencodeToolCall(params: OpencodeToolCallParams): ToolCallTim
   const error = raw.error ?? null;
   const rawStatus = typeof raw.status === "string" ? raw.status : undefined;
   const status = normalizeToolCallStatus(rawStatus, error, output);
-  const detail = deriveOpencodeToolDetail(name, input, output);
+  const detail = deriveOpencodeToolDetail(name, input, output, error);
 
   if (status === "failed") {
     return {

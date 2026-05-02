@@ -48,6 +48,7 @@ import {
 import { findExecutable, isCommandAvailable } from "../../../utils/executable.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import { buildToolCallDisplayModel } from "../../../shared/tool-call-display.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   formatDiagnosticStatus,
@@ -1309,15 +1310,42 @@ export class OpenCodeAgentClient implements AgentClient {
 
 export interface OpenCodeEventTranslationState {
   sessionId: string;
+  cwd?: string;
   messageRoles: Map<string, OpenCodeMessageRole>;
   accumulatedUsage: AgentUsage;
   streamedPartKeys: Set<string>;
   emittedStructuredMessageIds: Set<string>;
   /** Tracks the type of each part by ID, learned from message.part.updated events. */
   partTypes: Map<string, string>;
+  subAgentsByCallId?: Map<string, OpenCodeSubAgentActivityState>;
+  subAgentCallIdByChildSessionId?: Map<string, string>;
+  pendingChildToolPartsBySessionId?: Map<string, OpenCodeToolPartEventPart[]>;
   modelContextWindowsByModelKey?: ReadonlyMap<string, number>;
   onAssistantModelContextWindowResolved?: (contextWindowMaxTokens: number) => void;
 }
+
+type OpenCodeToolPartEventPart = Extract<
+  Extract<OpenCodeEvent, { type: "message.part.updated" }>["properties"]["part"],
+  { type: "tool" }
+>;
+
+interface OpenCodeSubAgentActionEntry {
+  index: number;
+  key: string;
+  toolName: string;
+  summary?: string;
+}
+
+interface OpenCodeSubAgentActivityState {
+  toolCall: ToolCallTimelineItem;
+  actions: OpenCodeSubAgentActionEntry[];
+  actionIndexByKey: Map<string, number>;
+  nextActionIndex: number;
+  childSessionId?: string;
+}
+
+const MAX_OPENCODE_SUB_AGENT_ACTIONS = 200;
+const MAX_OPENCODE_PENDING_CHILD_TOOL_PARTS = 200;
 
 function stringifyStructuredAssistantMessage(value: unknown): string | null {
   if (value === undefined) {
@@ -1561,6 +1589,269 @@ function resetOpenCodeTurnTrackingState(state: OpenCodeEventTranslationState): v
   state.partTypes.clear();
 }
 
+function getOpenCodeSubAgentMaps(state: OpenCodeEventTranslationState): {
+  byCallId: Map<string, OpenCodeSubAgentActivityState>;
+  callIdByChildSessionId: Map<string, string>;
+  pendingChildToolPartsBySessionId: Map<string, OpenCodeToolPartEventPart[]>;
+} {
+  state.subAgentsByCallId ??= new Map();
+  state.subAgentCallIdByChildSessionId ??= new Map();
+  state.pendingChildToolPartsBySessionId ??= new Map();
+  return {
+    byCallId: state.subAgentsByCallId,
+    callIdByChildSessionId: state.subAgentCallIdByChildSessionId,
+    pendingChildToolPartsBySessionId: state.pendingChildToolPartsBySessionId,
+  };
+}
+
+function getOpenCodeSubAgentState(
+  callId: string,
+  state: OpenCodeEventTranslationState,
+  toolCall: ToolCallTimelineItem,
+): OpenCodeSubAgentActivityState {
+  const maps = getOpenCodeSubAgentMaps(state);
+  const existing = maps.byCallId.get(callId);
+  if (existing) {
+    existing.toolCall = toolCall;
+    return existing;
+  }
+
+  const created: OpenCodeSubAgentActivityState = {
+    toolCall,
+    actions: [],
+    actionIndexByKey: new Map(),
+    nextActionIndex: 1,
+  };
+  maps.byCallId.set(callId, created);
+  return created;
+}
+
+function linkOpenCodeSubAgentChildSession(
+  activity: OpenCodeSubAgentActivityState,
+  childSessionId: string,
+  state: OpenCodeEventTranslationState,
+): void {
+  activity.childSessionId = childSessionId;
+  const maps = getOpenCodeSubAgentMaps(state);
+  maps.callIdByChildSessionId.set(childSessionId, activity.toolCall.callId);
+}
+
+function buildOpenCodeSubAgentLog(
+  detail: Extract<ToolCallDetail, { type: "sub_agent" }>,
+  activity: OpenCodeSubAgentActivityState,
+): string {
+  const actionLog = activity.actions
+    .map((action) =>
+      action.summary ? `[${action.toolName}] ${action.summary}` : `[${action.toolName}]`,
+    )
+    .join("\n");
+  const parts = [actionLog, detail.log].filter((part) => part.trim().length > 0);
+  return parts.join("\n\n");
+}
+
+function buildOpenCodeSubAgentTimelineItem(
+  activity: OpenCodeSubAgentActivityState,
+): ToolCallTimelineItem {
+  const toolCall = activity.toolCall;
+  if (toolCall.detail.type !== "sub_agent") {
+    return toolCall;
+  }
+  const childSessionId = activity.childSessionId ?? toolCall.detail.childSessionId;
+  return {
+    ...toolCall,
+    detail: {
+      ...toolCall.detail,
+      ...(childSessionId ? { childSessionId } : {}),
+      log: buildOpenCodeSubAgentLog(toolCall.detail, activity),
+      actions: activity.actions.map((action) => ({
+        index: action.index,
+        toolName: action.toolName,
+        ...(action.summary ? { summary: action.summary } : {}),
+      })),
+    },
+  };
+}
+
+function registerOpenCodeSubAgentToolCall(
+  item: ToolCallTimelineItem,
+  state: OpenCodeEventTranslationState,
+): ToolCallTimelineItem {
+  if (item.detail.type !== "sub_agent") {
+    return item;
+  }
+  const activity = getOpenCodeSubAgentState(item.callId, state, item);
+  if (item.detail.childSessionId) {
+    linkOpenCodeSubAgentChildSession(activity, item.detail.childSessionId, state);
+  }
+  return buildOpenCodeSubAgentTimelineItem(activity);
+}
+
+function bufferOpenCodeSubAgentChildToolPart(
+  part: OpenCodeToolPartEventPart,
+  state: OpenCodeEventTranslationState,
+): void {
+  const maps = getOpenCodeSubAgentMaps(state);
+  if (maps.byCallId.size === 0) {
+    return;
+  }
+  const totalPending = [...maps.pendingChildToolPartsBySessionId.values()].reduce(
+    (total, parts) => total + parts.length,
+    0,
+  );
+  if (totalPending >= MAX_OPENCODE_PENDING_CHILD_TOOL_PARTS) {
+    return;
+  }
+  const pending = maps.pendingChildToolPartsBySessionId.get(part.sessionID) ?? [];
+  pending.push(part);
+  maps.pendingChildToolPartsBySessionId.set(part.sessionID, pending);
+}
+
+function flushOpenCodeSubAgentChildToolParts(
+  childSessionId: string,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const maps = getOpenCodeSubAgentMaps(state);
+  const pending = maps.pendingChildToolPartsBySessionId.get(childSessionId);
+  if (!pending || pending.length === 0) {
+    return;
+  }
+  maps.pendingChildToolPartsBySessionId.delete(childSessionId);
+  for (const part of pending) {
+    appendOpenCodeSubAgentChildToolPart(part, state, events);
+  }
+}
+
+function findOnlyOpenCodeSubAgentWaitingForChild(
+  state: OpenCodeEventTranslationState,
+): OpenCodeSubAgentActivityState | null {
+  const maps = getOpenCodeSubAgentMaps(state);
+  const candidates = [...maps.byCallId.values()].filter(
+    (activity) =>
+      activity.toolCall.status === "running" &&
+      activity.toolCall.detail.type === "sub_agent" &&
+      !activity.childSessionId,
+  );
+  return candidates.length === 1 ? (candidates[0] ?? null) : null;
+}
+
+function summarizeOpenCodeSubAgentAction(
+  item: ToolCallTimelineItem,
+  cwd: string | undefined,
+): string | undefined {
+  const display = buildToolCallDisplayModel({
+    name: item.name,
+    status: item.status,
+    error: item.error,
+    metadata: item.metadata,
+    detail: item.detail,
+    cwd,
+  });
+  return display.summary ?? display.errorText;
+}
+
+function appendOpenCodeSubAgentAction(
+  activity: OpenCodeSubAgentActivityState,
+  item: ToolCallTimelineItem,
+  cwd: string | undefined,
+): boolean {
+  const key = item.callId || `${item.name}:${activity.actions.length}`;
+  const existingIndex = activity.actionIndexByKey.get(key);
+  const summary = summarizeOpenCodeSubAgentAction(item, cwd);
+
+  if (existingIndex !== undefined) {
+    const action = activity.actions[existingIndex];
+    if (!action) {
+      return false;
+    }
+    const changed = action.toolName !== item.name || action.summary !== summary;
+    action.toolName = item.name;
+    if (summary) {
+      action.summary = summary;
+    } else {
+      delete action.summary;
+    }
+    return changed;
+  }
+
+  if (activity.actions.length >= MAX_OPENCODE_SUB_AGENT_ACTIONS) {
+    return false;
+  }
+
+  activity.actionIndexByKey.set(key, activity.actions.length);
+  activity.actions.push({
+    index: activity.nextActionIndex,
+    key,
+    toolName: item.name,
+    ...(summary ? { summary } : {}),
+  });
+  activity.nextActionIndex += 1;
+  return true;
+}
+
+function appendOpenCodeToolCallTimelineItem(
+  item: ToolCallTimelineItem,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const timelineItem = registerOpenCodeSubAgentToolCall(item, state);
+  events.push({
+    type: "timeline",
+    provider: "opencode",
+    item: timelineItem,
+  });
+  if (timelineItem.detail.type === "sub_agent" && timelineItem.detail.childSessionId) {
+    flushOpenCodeSubAgentChildToolParts(timelineItem.detail.childSessionId, state, events);
+  }
+}
+
+function appendOpenCodeSubAgentChildSessionLinked(
+  childSessionId: string,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const activity = findOnlyOpenCodeSubAgentWaitingForChild(state);
+  if (!activity) {
+    return;
+  }
+  linkOpenCodeSubAgentChildSession(activity, childSessionId, state);
+  events.push({
+    type: "timeline",
+    provider: "opencode",
+    item: buildOpenCodeSubAgentTimelineItem(activity),
+  });
+  flushOpenCodeSubAgentChildToolParts(childSessionId, state, events);
+}
+
+function appendOpenCodeSubAgentChildToolPart(
+  part: OpenCodeToolPartEventPart,
+  state: OpenCodeEventTranslationState,
+  events: AgentStreamEvent[],
+): void {
+  const maps = getOpenCodeSubAgentMaps(state);
+  const parentCallId = maps.callIdByChildSessionId.get(part.sessionID);
+  if (!parentCallId) {
+    bufferOpenCodeSubAgentChildToolPart(part, state);
+    return;
+  }
+  const activity = maps.byCallId.get(parentCallId);
+  if (!activity) {
+    return;
+  }
+  const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
+  if (!parsedToolPart.success || !parsedToolPart.data) {
+    return;
+  }
+  if (!appendOpenCodeSubAgentAction(activity, parsedToolPart.data, state.cwd)) {
+    return;
+  }
+  events.push({
+    type: "timeline",
+    provider: "opencode",
+    item: buildOpenCodeSubAgentTimelineItem(activity),
+  });
+}
+
 function appendOpenCodeSessionCreatedOrUpdated(
   event: Extract<OpenCodeEvent, { type: "session.created" | "session.updated" }>,
   state: OpenCodeEventTranslationState,
@@ -1572,6 +1863,13 @@ function appendOpenCodeSessionCreatedOrUpdated(
       sessionId: state.sessionId,
       provider: "opencode",
     });
+    return;
+  }
+
+  const info = readOpenCodeRecord(event.properties.info);
+  const parentSessionId = readNonEmptyString(info?.parentID) ?? readNonEmptyString(info?.parentId);
+  if (parentSessionId === state.sessionId) {
+    appendOpenCodeSubAgentChildSessionLinked(event.properties.info.id, state, events);
   }
 }
 
@@ -1617,6 +1915,9 @@ function appendOpenCodeMessagePartUpdated(
 ): void {
   const part = event.properties.part;
   if (part.sessionID !== state.sessionId) {
+    if (part.type === "tool") {
+      appendOpenCodeSubAgentChildToolPart(part, state, events);
+    }
     return;
   }
   const messageRole = state.messageRoles.get(part.messageID);
@@ -1633,7 +1934,7 @@ function appendOpenCodeMessagePartUpdated(
   if (part.type === "tool") {
     const parsedToolPart = OpencodeToolPartToTimelineItemSchema.safeParse(part);
     if (parsedToolPart.success && parsedToolPart.data) {
-      events.push({ type: "timeline", provider: "opencode", item: parsedToolPart.data });
+      appendOpenCodeToolCallTimelineItem(parsedToolPart.data, state, events);
     }
     return;
   }
@@ -1911,6 +2212,9 @@ class OpenCodeAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
+  private subAgentsByCallId = new Map<string, OpenCodeSubAgentActivityState>();
+  private subAgentCallIdByChildSessionId = new Map<string, string>();
+  private pendingChildToolPartsBySessionId = new Map<string, OpenCodeToolPartEventPart[]>();
   private selectedModelContextWindowMaxTokens: number | undefined;
   private releaseServer: (() => void) | null;
   constructor(
@@ -2063,6 +2367,9 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     this.runningToolCalls.clear();
+    this.subAgentsByCallId.clear();
+    this.subAgentCallIdByChildSessionId.clear();
+    this.pendingChildToolPartsBySessionId.clear();
     const turnAbortController = new AbortController();
     this.abortController = turnAbortController;
     await this.ensureMcpServersConfigured();
@@ -2349,6 +2656,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   private synthesizeInterruptedToolCalls(turnId: string): void {
     for (const item of this.runningToolCalls.values()) {
+      const error = { message: "Tool execution aborted" };
       this.notifySubscribers(
         {
           type: "timeline",
@@ -2356,7 +2664,16 @@ class OpenCodeAgentSession implements AgentSession {
           item: {
             ...item,
             status: "failed",
-            error: { message: "Tool execution aborted" },
+            error,
+            detail:
+              item.detail.type === "sub_agent"
+                ? {
+                    ...item.detail,
+                    log: [item.detail.log, error.message]
+                      .filter((entry) => entry.trim().length > 0)
+                      .join("\n"),
+                  }
+                : item.detail,
           },
         },
         turnId,
@@ -2709,11 +3026,15 @@ class OpenCodeAgentSession implements AgentSession {
   private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {
     const translated = translateOpenCodeEvent(event, {
       sessionId: this.sessionId,
+      cwd: this.config.cwd,
       messageRoles: this.messageRoles,
       accumulatedUsage: this.accumulatedUsage,
       streamedPartKeys: this.streamedPartKeys,
       emittedStructuredMessageIds: this.emittedStructuredMessageIds,
       partTypes: this.partTypes,
+      subAgentsByCallId: this.subAgentsByCallId,
+      subAgentCallIdByChildSessionId: this.subAgentCallIdByChildSessionId,
+      pendingChildToolPartsBySessionId: this.pendingChildToolPartsBySessionId,
       modelContextWindowsByModelKey: this.modelContextWindowsByModelKey,
       onAssistantModelContextWindowResolved: (contextWindowMaxTokens) => {
         this.accumulatedUsage.contextWindowMaxTokens = contextWindowMaxTokens;

@@ -412,14 +412,18 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, z.ZodTypeDef, unkno
       type: z.literal("sub_agent"),
       subAgentType: z.string().optional(),
       description: z.string().optional(),
+      childSessionId: z.string().optional(),
       log: z.string(),
-      actions: z.array(
-        z.object({
-          index: z.number().int().positive(),
-          toolName: z.string(),
-          summary: z.string().optional(),
-        }),
-      ),
+      actions: z
+        .array(
+          z.object({
+            index: z.number().int().positive(),
+            toolName: z.string(),
+            summary: z.string().optional(),
+          }),
+        )
+        .optional()
+        .default([]),
     }),
     z.object({
       type: z.literal("plain_text"),

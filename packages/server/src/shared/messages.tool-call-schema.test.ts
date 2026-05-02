@@ -147,6 +147,30 @@ describe("shared messages tool_call schema", () => {
     }
   });
 
+  it("defaults missing sub_agent actions for older payloads", () => {
+    const parsed = AgentTimelineItemPayloadSchema.parse({
+      type: "tool_call",
+      callId: "call_sub_agent_legacy",
+      name: "Task",
+      status: "running",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Explore",
+        description: "Inspect repository structure",
+        log: "[Read] README.md",
+      },
+    });
+
+    expect(parsed.type).toBe("tool_call");
+    if (parsed.type === "tool_call") {
+      expect(parsed.detail.type).toBe("sub_agent");
+      if (parsed.detail.type === "sub_agent") {
+        expect(parsed.detail.actions).toEqual([]);
+      }
+    }
+  });
+
   it("parses plain_text detail with icon and rejects unknown icon names", () => {
     const parsed = AgentTimelineItemPayloadSchema.parse({
       type: "tool_call",

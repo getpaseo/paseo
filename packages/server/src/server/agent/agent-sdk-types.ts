@@ -235,6 +235,7 @@ export type ToolCallDetail =
       type: "sub_agent";
       subAgentType?: string;
       description?: string;
+      childSessionId?: string;
       log: string;
       actions: Array<{
         index: number;
