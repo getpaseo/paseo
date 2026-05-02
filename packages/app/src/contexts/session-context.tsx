@@ -12,7 +12,7 @@ import {
   processTimelineResponse,
   type ProcessTimelineResponseOutput,
   type TimelineReducerSideEffect,
-} from "@/contexts/session-stream-reducers";
+} from "@/timeline/session-stream-reducers";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import type {
   AgentAttachment,
