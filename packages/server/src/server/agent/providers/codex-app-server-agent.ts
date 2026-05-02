@@ -703,6 +703,20 @@ const CodexModelListResponseSchema = z.object({
     .optional(),
 });
 
+function filterCodexThreadsByCwd(
+  threads: Array<Record<string, unknown>>,
+  cwd: string | undefined,
+): Array<Record<string, unknown>> {
+  if (!cwd) {
+    return threads;
+  }
+  // thread/list rows carry an optional cwd. The descriptor builder later
+  // falls back to process.cwd() if the field is missing, so we only match
+  // here when the row genuinely carries a cwd string — otherwise threads
+  // with no cwd would falsely match the daemon's own cwd.
+  return threads.filter((thread) => typeof thread.cwd === "string" && thread.cwd === cwd);
+}
+
 class CodexAppServerClient {
   private readonly rl: readline.Interface;
   private readonly pending = new Map<number, PendingRequest>();
@@ -4821,8 +4835,14 @@ export class CodexAppServerAgentClient implements AgentClient {
       client.notify("initialized", {});
 
       const limit = options?.limit ?? 20;
-      const response = toObjectRecord(await client.request("thread/list", { limit }));
-      const threads = Array.isArray(response?.data) ? response.data : [];
+      // thread/list returns the cheap `cwd` field. When the caller supplied
+      // a cwd hint we filter here so the per-thread `thread/read includeTurns`
+      // hydration below only runs for matching threads. Fetch a wider window
+      // when filtering since most threads will be from other cwds.
+      const listLimit = options?.cwd ? Math.max(limit, 50) : limit;
+      const response = toObjectRecord(await client.request("thread/list", { limit: listLimit }));
+      const allThreads = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
+      const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
       const descriptors: PersistedAgentDescriptor[] = await Promise.all(
         threads.slice(0, limit).map(async (thread) => {
           const threadId = typeof thread.id === "string" ? thread.id : "";
@@ -5075,6 +5095,7 @@ export const __codexAppServerInternals = {
   CodexAppServerClient,
   codexModelSupportsFastMode,
   CodexAppServerAgentSession,
+  filterCodexThreadsByCwd,
   formatCodexQuestionPrompts,
   mapCodexQuestionRequestToToolCall,
   mapCodexPatchNotificationToToolCall,

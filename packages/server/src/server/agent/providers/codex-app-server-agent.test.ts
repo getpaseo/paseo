@@ -1656,3 +1656,30 @@ describe("Codex app-server provider", () => {
     );
   });
 });
+
+describe("filterCodexThreadsByCwd", () => {
+  test("returns all threads when cwd is undefined", () => {
+    const threads = [{ id: "a", cwd: "/x" }, { id: "b", cwd: "/y" }, { id: "c" }];
+    expect(__codexAppServerInternals.filterCodexThreadsByCwd(threads, undefined)).toBe(threads);
+  });
+
+  test("keeps only threads whose cwd matches exactly", () => {
+    const threads = [
+      { id: "a", cwd: "/x" },
+      { id: "b", cwd: "/y" },
+      { id: "c", cwd: "/x" },
+    ];
+    const filtered = __codexAppServerInternals.filterCodexThreadsByCwd(threads, "/x");
+    expect(filtered.map((t) => t.id)).toEqual(["a", "c"]);
+  });
+
+  test("drops threads with no cwd field when filtering", () => {
+    const threads = [
+      { id: "missing-cwd" },
+      { id: "with-cwd", cwd: "/x" },
+      { id: "non-string-cwd", cwd: 123 },
+    ];
+    const filtered = __codexAppServerInternals.filterCodexThreadsByCwd(threads, "/x");
+    expect(filtered.map((t) => t.id)).toEqual(["with-cwd"]);
+  });
+});

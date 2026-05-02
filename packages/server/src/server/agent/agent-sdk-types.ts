@@ -427,6 +427,13 @@ export interface AgentSlashCommand {
 
 export interface ListPersistedAgentsOptions {
   limit?: number;
+  /**
+   * Optional cwd hint. Providers that can cheaply pre-filter persisted
+   * sessions by working directory should do so before doing expensive
+   * work like fetching turn timelines. Providers that can't filter
+   * cheaply may ignore this hint.
+   */
+  cwd?: string;
 }
 
 export interface PersistedAgentDescriptor {

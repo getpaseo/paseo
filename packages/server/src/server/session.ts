@@ -6723,6 +6723,7 @@ export class Session {
     const descriptors = await this.agentManager.listPersistedAgents({
       limit: 200,
       providerFilter,
+      cwd: request.cwd,
     });
     return descriptors
       .filter((descriptor) => {

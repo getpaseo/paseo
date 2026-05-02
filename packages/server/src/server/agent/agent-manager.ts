@@ -577,7 +577,7 @@ export class AgentManager {
       if (!client.listPersistedAgents) {
         return [];
       }
-      return client.listPersistedAgents({ limit: options.limit });
+      return client.listPersistedAgents({ limit: options.limit, cwd: options.cwd });
     }
 
     const providerEntries = Array.from(this.clients.entries()).filter(
@@ -588,7 +588,10 @@ export class AgentManager {
     const descriptorLists = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
         try {
-          return await client.listPersistedAgents!({ limit: options?.limit });
+          return await client.listPersistedAgents!({
+            limit: options?.limit,
+            cwd: options?.cwd,
+          });
         } catch (error) {
           this.logger.warn(
             { err: error, provider },
