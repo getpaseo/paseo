@@ -24,6 +24,7 @@ import {
   Ellipsis,
   EllipsisVertical,
   Globe,
+  Import as ImportIcon,
   PanelRight,
   RotateCw,
   Settings,
@@ -57,6 +58,7 @@ import { SourceControlPanelIcon } from "@/components/icons/source-control-panel-
 import { WorkspaceGitActions } from "@/screens/workspace/workspace-git-actions";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
+import { WorkspaceImportSheet } from "@/screens/workspace/workspace-import-sheet";
 import { ExplorerSidebarAnimationProvider } from "@/contexts/explorer-sidebar-animation-context";
 import { useToast } from "@/contexts/toast-context";
 import { useExplorerOpenGesture } from "@/hooks/use-explorer-open-gesture";
@@ -176,6 +178,7 @@ const ThemedX = withUnistyles(X);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedGlobe = withUnistyles(Globe);
+const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
 const ThemedPanelRight = withUnistyles(PanelRight);
 const ThemedSourceControlPanelIcon = withUnistyles(SourceControlPanelIcon);
@@ -188,6 +191,7 @@ const sourceControlPanelStrokeWidth15 = { strokeWidth: 1.5 };
 const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_TERMINAL_ICON = <ThemedSquareTerminal size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
+const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
 const GATED_WORKSPACE_HEADER_LEFT = <SidebarMenuToggle />;
@@ -779,14 +783,17 @@ interface WorkspaceHeaderMenuProps {
   showCreateBrowserTab: boolean;
   isMobile: boolean;
   createTerminalDisabled: boolean;
+  importAgentDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
   menuNewBrowserIcon: ReactElement;
+  menuImportIcon: ReactElement;
   menuCopyIcon: ReactElement;
   menuSettingsIcon: ReactElement;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
   onCreateBrowser: () => void;
+  onOpenImportSheet: () => void;
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
@@ -813,14 +820,17 @@ function WorkspaceHeaderMenu({
   showCreateBrowserTab,
   isMobile,
   createTerminalDisabled,
+  importAgentDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
   menuNewBrowserIcon,
+  menuImportIcon,
   menuCopyIcon,
   menuSettingsIcon,
   onCreateDraftTab,
   onCreateTerminal,
   onCreateBrowser,
+  onOpenImportSheet,
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
@@ -868,6 +878,14 @@ function WorkspaceHeaderMenu({
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuItem
+          testID="workspace-header-import-agent"
+          leading={menuImportIcon}
+          disabled={importAgentDisabled}
+          onSelect={onOpenImportSheet}
+        >
+          Import agent...
+        </DropdownMenuItem>
+        <DropdownMenuItem
           testID="workspace-header-copy-path"
           leading={menuCopyIcon}
           disabled={!isAbsolutePath(normalizedWorkspaceId)}
@@ -914,14 +932,17 @@ interface WorkspaceHeaderTitleBarProps {
   showCreateBrowserTab: boolean;
   isMobile: boolean;
   createTerminalDisabled: boolean;
+  importAgentDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
   menuNewBrowserIcon: ReactElement;
+  menuImportIcon: ReactElement;
   menuCopyIcon: ReactElement;
   menuSettingsIcon: ReactElement;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
   onCreateBrowser: () => void;
+  onOpenImportSheet: () => void;
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
@@ -940,14 +961,17 @@ function WorkspaceHeaderTitleBar({
   showCreateBrowserTab,
   isMobile,
   createTerminalDisabled,
+  importAgentDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
   menuNewBrowserIcon,
+  menuImportIcon,
   menuCopyIcon,
   menuSettingsIcon,
   onCreateDraftTab,
   onCreateTerminal,
   onCreateBrowser,
+  onOpenImportSheet,
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
@@ -985,14 +1009,17 @@ function WorkspaceHeaderTitleBar({
         showCreateBrowserTab={showCreateBrowserTab}
         isMobile={isMobile}
         createTerminalDisabled={createTerminalDisabled}
+        importAgentDisabled={importAgentDisabled}
         menuNewAgentIcon={menuNewAgentIcon}
         menuNewTerminalIcon={menuNewTerminalIcon}
         menuNewBrowserIcon={menuNewBrowserIcon}
+        menuImportIcon={menuImportIcon}
         menuCopyIcon={menuCopyIcon}
         menuSettingsIcon={menuSettingsIcon}
         onCreateDraftTab={onCreateDraftTab}
         onCreateTerminal={onCreateTerminal}
         onCreateBrowser={onCreateBrowser}
+        onOpenImportSheet={onOpenImportSheet}
         onCopyWorkspacePath={onCopyWorkspacePath}
         onCopyBranchName={onCopyBranchName}
         onOpenSetupTab={onOpenSetupTab}
@@ -1390,6 +1417,14 @@ function WorkspaceScreenContent({
   );
   const { workspaceDirectory, isMissingWorkspaceExecutionAuthority } =
     resolveWorkspaceAuthorityState(workspaceAuthority, workspaceDescriptor);
+  const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
+  const canOpenImportSheet = [client, isConnected, workspaceDirectory].every(Boolean);
+  const openImportSheet = useCallback(() => {
+    setIsImportSheetVisible(true);
+  }, []);
+  const closeImportSheet = useCallback(() => {
+    setIsImportSheetVisible(false);
+  }, []);
 
   // Warm the global provider snapshot so the model picker is ready when opened.
   useProvidersSnapshot(normalizedServerId, {
@@ -1933,6 +1968,18 @@ function WorkspaceScreenContent({
       focusWorkspaceTab(persistenceKey, tabId);
     },
     [focusWorkspaceTab, persistenceKey],
+  );
+  const handleImportedAgent = useCallback(
+    (agentId: string) => {
+      if (!persistenceKey) {
+        return;
+      }
+      const tabId = openWorkspaceTabFocused(persistenceKey, { kind: "agent", agentId });
+      if (tabId) {
+        navigateToTabId(tabId);
+      }
+    },
+    [navigateToTabId, openWorkspaceTabFocused, persistenceKey],
   );
 
   const emptyWorkspaceSeedRef = useRef<string | null>(null);
@@ -3208,14 +3255,17 @@ function WorkspaceScreenContent({
                         showCreateBrowserTab={showCreateBrowserTab}
                         isMobile={isMobile}
                         createTerminalDisabled={createTerminalDisabled}
+                        importAgentDisabled={!canOpenImportSheet}
                         menuNewAgentIcon={menuNewAgentIcon}
                         menuNewTerminalIcon={menuNewTerminalIcon}
                         menuNewBrowserIcon={MENU_NEW_BROWSER_ICON}
+                        menuImportIcon={MENU_IMPORT_ICON}
                         menuCopyIcon={menuCopyIcon}
                         menuSettingsIcon={menuSettingsIcon}
                         onCreateDraftTab={handleCreateDraftTab}
                         onCreateTerminal={handleCreateTerminal}
                         onCreateBrowser={handleCreateBrowserTab}
+                        onOpenImportSheet={openImportSheet}
                         onCopyWorkspacePath={handleCopyWorkspacePath}
                         onCopyBranchName={handleCopyBranchName}
                         onOpenSetupTab={handleOpenSetupTab}
@@ -3297,6 +3347,14 @@ function WorkspaceScreenContent({
               />
             ) : null}
           </View>
+          <WorkspaceImportSheet
+            visible={isImportSheetVisible}
+            client={client}
+            serverId={normalizedServerId}
+            workspaceDirectory={workspaceDirectory}
+            onClose={closeImportSheet}
+            onImportedAgent={handleImportedAgent}
+          />
         </View>
       </WorkspaceFocusProvider>
     )
