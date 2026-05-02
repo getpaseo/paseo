@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const appDir = path.resolve(__dirname, "packages/app");
 const appNodeModules = path.resolve(appDir, "node_modules");
@@ -57,6 +57,6 @@ export default defineConfig({
     ],
   },
   test: {
-    exclude: ["**/.claude/**"],
+    exclude: [...configDefaults.exclude, "**/.claude/**"],
   },
 });
