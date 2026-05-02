@@ -19,8 +19,12 @@ const mockSessionState = vi.hoisted(() => ({
       client: null,
       agentStreamHead: new Map<string, StreamItem[]>(),
       workspaces: new Map(),
+      agentTimelineCursor: new Map(),
+      agentTimelineHasOlder: new Map(),
+      agentTimelineOlderFetchInFlight: new Map(),
     },
   },
+  setAgentTimelineOlderFetchInFlight: () => {},
 }));
 
 vi.mock("react-native-unistyles", () => ({
