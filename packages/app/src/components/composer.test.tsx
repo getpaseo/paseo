@@ -1431,3 +1431,34 @@ describe("Composer attachments", () => {
     });
   });
 });
+
+describe("Composer prompt history navigation", () => {
+  it("pushes the submitted prompt onto the global history store", async () => {
+    const { useGlobalPromptHistoryStore } = await import("@/stores/prompt-history-store");
+    useGlobalPromptHistoryStore.setState({ entries: [] });
+
+    renderComposer({ initialText: "first prompt" });
+    await flushAsyncWork();
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(useGlobalPromptHistoryStore.getState().entries).toEqual(["first prompt"]);
+
+    useGlobalPromptHistoryStore.setState({ entries: [] });
+  });
+
+  it("does NOT push to history when the submit fails", async () => {
+    const { useGlobalPromptHistoryStore } = await import("@/stores/prompt-history-store");
+    useGlobalPromptHistoryStore.setState({ entries: [] });
+    mockClient.sendAgentMessage.mockRejectedValueOnce(new Error("network down"));
+
+    renderComposer({ initialText: "doomed prompt" });
+    await flushAsyncWork();
+
+    click(document.querySelector('[aria-label="Send message"]')!);
+    await flushAsyncWork();
+
+    expect(useGlobalPromptHistoryStore.getState().entries).toEqual([]);
+  });
+});
