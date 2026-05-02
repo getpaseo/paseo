@@ -5,6 +5,7 @@ import type { WorkspaceTabTarget } from "@/stores/workspace-tabs-store";
 export interface PaneContextValue {
   serverId: string;
   workspaceId: string;
+  paneInstanceId: string | null;
   tabId: string;
   target: WorkspaceTabTarget;
   openTab(target: WorkspaceTabTarget): void;

@@ -299,6 +299,7 @@ function buildTestPaneValue() {
   return {
     serverId: "server",
     workspaceId: "workspace",
+    paneInstanceId: null,
     tabId: "agent-agent",
     target: { kind: "agent" as const, agentId: "agent" },
     openTab: vi.fn(),

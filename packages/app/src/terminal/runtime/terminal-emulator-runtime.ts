@@ -2,11 +2,12 @@ import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
+import type { ISearchOptions, ISearchResultChangeEvent } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { LigaturesAddon } from "@xterm/addon-ligatures/lib/addon-ligatures.mjs";
-import { Terminal, type ITheme } from "@xterm/xterm";
+import { Terminal, type IDisposable, type ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@server/shared/messages";
 import {
   type PendingTerminalModifiers,
@@ -37,6 +38,12 @@ export interface TerminalEmulatorRuntimeCallbacks {
   }) => Promise<void> | void;
   onPendingModifiersConsumed?: () => Promise<void> | void;
   onOpenExternalUrl?: (url: string) => Promise<void> | void;
+}
+
+export type TerminalFindResultChangeEvent = ISearchResultChangeEvent;
+
+export interface TerminalFindQueryInput {
+  query: string;
 }
 
 interface TerminalEmulatorRuntimeDisposables {
@@ -81,6 +88,15 @@ const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
 const RESET_TERMINAL_ANSI = "\u001bc";
+const TERMINAL_FIND_SEARCH_OPTIONS: ISearchOptions = {
+  caseSensitive: false,
+  decorations: {
+    matchBackground: "#facc15",
+    matchOverviewRuler: "#facc15",
+    activeMatchBackground: "#38bdf8",
+    activeMatchColorOverviewRuler: "#38bdf8",
+  },
+};
 
 const DEFAULT_TERMINAL_FONT_FAMILY = [
   // Prefer common developer fonts, with Nerd Font variants for prompt/TUI glyphs.
@@ -118,6 +134,7 @@ export class TerminalEmulatorRuntime {
   };
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
+  private searchAddon: SearchAddon | null = null;
   private fitAndEmitResize: ((force: boolean) => void) | null = null;
   private lastSize: { rows: number; cols: number } | null = null;
   private cleanup: (() => void) | null = null;
@@ -172,6 +189,7 @@ export class TerminalEmulatorRuntime {
       theme: withOverviewRulerBorderHidden(input.theme),
     });
     const fitAddon = new FitAddon();
+    const searchAddon = new SearchAddon({ highlightLimit: 20_000 });
     const unicode11Addon = new Unicode11Addon();
     let webglAddon: WebglAddon | null = null;
     let imageAddon: ImageAddon | null = null;
@@ -183,7 +201,7 @@ export class TerminalEmulatorRuntime {
         void this.callbacks.onOpenExternalUrl?.(uri);
       }),
     );
-    terminal.loadAddon(new SearchAddon({ highlightLimit: 20_000 }));
+    terminal.loadAddon(searchAddon);
     terminal.loadAddon(new ClipboardAddon());
     try {
       terminal.loadAddon(new LigaturesAddon());
@@ -267,6 +285,7 @@ export class TerminalEmulatorRuntime {
 
     this.terminal = terminal;
     this.fitAddon = fitAddon;
+    this.searchAddon = searchAddon;
     window.__paseoTerminal = terminal;
 
     const fitAndEmitResize = (force: boolean): void => {
@@ -571,6 +590,25 @@ export class TerminalEmulatorRuntime {
     this.terminal?.focus();
   }
 
+  findNext(input: TerminalFindQueryInput): boolean {
+    return this.searchAddon?.findNext(input.query, TERMINAL_FIND_SEARCH_OPTIONS) ?? false;
+  }
+
+  findPrevious(input: TerminalFindQueryInput): boolean {
+    return this.searchAddon?.findPrevious(input.query, TERMINAL_FIND_SEARCH_OPTIONS) ?? false;
+  }
+
+  clearFindDecorations(): void {
+    this.searchAddon?.clearDecorations();
+  }
+
+  onFindResultsChanged(listener: (event: TerminalFindResultChangeEvent) => void): () => void {
+    const disposable: IDisposable | undefined = this.searchAddon?.onDidChangeResults(listener);
+    return () => {
+      disposable?.dispose();
+    };
+  }
+
   private refreshVisibleRows(): void {
     const terminal = this.terminal;
     if (!terminal || terminal.rows <= 0) {
@@ -603,6 +641,7 @@ export class TerminalEmulatorRuntime {
     }
     this.terminal = null;
     this.fitAddon = null;
+    this.searchAddon = null;
     this.fitAndEmitResize = null;
     this.lastSize = null;
     this.suppressInput = false;

@@ -41,6 +41,13 @@ export interface StreamEdgeSlotProps {
 export interface StreamViewportHandle {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
+  scrollToStreamItem: (target: StreamScrollTarget) => void;
+}
+
+export interface StreamScrollTarget {
+  source: "historyVirtualized" | "historyMounted" | "liveHead";
+  index: number;
+  itemId: string;
 }
 
 export interface StreamSegmentRenderers {

@@ -58,6 +58,11 @@ vi.mock("@/hooks/use-workspace-navigation", () => ({
 
 import { useKeyboardShortcuts } from "./use-keyboard-shortcuts";
 import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import {
+  clearActivePaneFindPaneId,
+  paneFindRegistry,
+  setActivePaneFindPaneId,
+} from "@/panels/pane-find-registry";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import {
   activateNavigationWorkspaceSelection,
@@ -161,6 +166,58 @@ describe("useKeyboardShortcuts", () => {
 
     expect(handleInterrupt).toHaveBeenCalledTimes(1);
     unregister();
+  });
+
+  it("routes Cmd+F to the active pane find controller only", async () => {
+    const activeController = { openFind: vi.fn(() => true), closeFind: vi.fn(() => true) };
+    const hiddenController = { openFind: vi.fn(() => true), closeFind: vi.fn(() => true) };
+    const unregisterActive = paneFindRegistry.register({
+      paneId: "srv:ws-2:main",
+      controller: activeController,
+    });
+    const unregisterHidden = paneFindRegistry.register({
+      paneId: "srv:ws-2:hidden",
+      controller: hiddenController,
+    });
+    setActivePaneFindPaneId("srv:ws-2:main");
+
+    await act(async () => {
+      root?.render(<Probe />);
+    });
+
+    const event = new KeyboardEvent("keydown", {
+      key: "f",
+      code: "KeyF",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+
+    expect(activeController.openFind).toHaveBeenCalledTimes(1);
+    expect(hiddenController.openFind).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+
+    clearActivePaneFindPaneId("srv:ws-2:main");
+    unregisterActive();
+    unregisterHidden();
+  });
+
+  it("leaves Cmd+F to the browser when no pane find controller handles it", async () => {
+    await act(async () => {
+      root?.render(<Probe />);
+    });
+
+    const event = new KeyboardEvent("keydown", {
+      key: "f",
+      code: "KeyF",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it("returns from desktop settings to the retained workspace without browser history back", async () => {

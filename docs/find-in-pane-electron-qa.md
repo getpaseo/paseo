@@ -8,8 +8,8 @@ npm run test:e2e --workspace=@getpaseo/app -- find-in-pane-electron.spec.ts --pr
 
 The spec starts a fresh desktop app from the current worktree with:
 
-- isolated `PASEO_HOME` under `/tmp/paseo-find-pane-electron-rerun/home`
-- isolated Electron user data under `/tmp/paseo-find-pane-electron-rerun/electron-user-data`
+- per-run isolated `PASEO_HOME` under `/tmp/paseo-find-pane-electron-rerun/home-*`
+- per-run isolated Electron user data under `/tmp/paseo-find-pane-electron-rerun/electron-user-data-*`
 - `PASEO_LISTEN=127.0.0.1:0`, so it must not use port `6767`
 - a local HTTP page containing three `electronneedle` matches
 
