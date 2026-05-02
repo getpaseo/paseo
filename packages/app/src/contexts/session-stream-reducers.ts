@@ -99,16 +99,49 @@ interface TimelinePathResult {
   sideEffects: TimelineReducerSideEffect[];
 }
 
+function preserveReplacePathAssistantHead(params: {
+  tail: StreamItem[];
+  currentHead: StreamItem[];
+}): {
+  tail: StreamItem[];
+  head: StreamItem[];
+} {
+  const { tail, currentHead } = params;
+  const liveAssistant = currentHead.findLast(
+    (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+      item.kind === "assistant_message",
+  );
+  if (!liveAssistant) {
+    return { tail, head: [] };
+  }
+  const tailAssistant = tail.at(-1);
+  if (!tailAssistant || tailAssistant.kind !== "assistant_message") {
+    return { tail, head: currentHead };
+  }
+  if (!liveAssistant.text.startsWith(tailAssistant.text)) {
+    return { tail, head: [] };
+  }
+  return {
+    tail: tail.slice(0, -1),
+    head: [{ ...liveAssistant, text: tailAssistant.text }],
+  };
+}
+
 function applyTimelineReplacePath(args: {
   timelineUnits: TimelineUnit[];
   payload: ProcessTimelineResponseInput["payload"];
   bootstrapPolicy: ReturnType<typeof deriveBootstrapTailTimelinePolicy>;
+  currentHead: StreamItem[];
   toHydratedEvents: (
     units: TimelineUnit[],
   ) => Array<{ event: AgentStreamEventPayload; timestamp: Date }>;
 }): TimelinePathResult {
-  const { timelineUnits, payload, bootstrapPolicy, toHydratedEvents } = args;
-  const tail = hydrateStreamState(toHydratedEvents(timelineUnits), { source: "canonical" });
+  const { timelineUnits, payload, bootstrapPolicy, currentHead, toHydratedEvents } = args;
+  const hydratedTail = hydrateStreamState(toHydratedEvents(timelineUnits), { source: "canonical" });
+  const { tail, head } = preserveReplacePathAssistantHead({
+    tail: hydratedTail,
+    currentHead,
+  });
   const cursor: TimelineCursor | null =
     payload.startCursor && payload.endCursor
       ? {
@@ -121,7 +154,7 @@ function applyTimelineReplacePath(args: {
   if (bootstrapPolicy.catchUpCursor) {
     sideEffects.push({ type: "catch_up", cursor: bootstrapPolicy.catchUpCursor });
   }
-  return { tail, head: [], cursor, cursorChanged: true, sideEffects };
+  return { tail, head, cursor, cursorChanged: true, sideEffects };
 }
 
 interface IncrementalAcceptResult {
@@ -307,6 +340,7 @@ export function processTimelineResponse(
         timelineUnits,
         payload,
         bootstrapPolicy,
+        currentHead,
         toHydratedEvents,
       })
     : applyTimelineIncrementalPath({

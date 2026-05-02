@@ -910,6 +910,67 @@ describe("processAgentStreamEvents", () => {
       lastActivityAt: new Date(3000),
     });
   });
+
+  it("keeps a live Claude assistant paragraph contiguous when init tail hydration lands mid-stream", () => {
+    const seq186Text = "Now let me write the updated tool-call-detail-parser.ts with all the sub";
+    const seq187Text = "agent additions.";
+
+    const liveSeq186 = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: makeTimelineEvent(seq186Text),
+      seq: 186,
+      epoch: "epoch-1",
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      timestamp: new Date("2026-05-02T10:00:00.186Z"),
+    });
+
+    expect(getAssistantTexts(liveSeq186.head)).toEqual([seq186Text]);
+    expect(getAssistantTexts(liveSeq186.tail)).toEqual([]);
+
+    const initTailHydration = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: liveSeq186.tail,
+      currentHead: liveSeq186.head,
+      currentCursor: liveSeq186.cursor ?? undefined,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      initRequestDirection: "tail",
+      payload: {
+        agentId: "agent-1",
+        direction: "tail",
+        reset: false,
+        epoch: "epoch-1",
+        startCursor: { seq: 186 },
+        endCursor: { seq: 186 },
+        entries: [makeTimelineEntry(186, seq186Text)],
+        error: null,
+      },
+    });
+
+    expect(getAssistantTexts(initTailHydration.tail)).toEqual([]);
+    expect(getAssistantTexts(initTailHydration.head)).toEqual([seq186Text]);
+
+    const liveSeq187 = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: makeTimelineEvent(seq187Text),
+      seq: 187,
+      epoch: "epoch-1",
+      currentTail: initTailHydration.tail,
+      currentHead: initTailHydration.head,
+      currentCursor: initTailHydration.cursor ?? undefined,
+      timestamp: new Date("2026-05-02T10:00:00.187Z"),
+    });
+
+    const finalAssistantItems = [...liveSeq187.tail, ...liveSeq187.head].filter(
+      (item): item is Extract<StreamItem, { kind: "assistant_message" }> =>
+        item.kind === "assistant_message",
+    );
+
+    expect(finalAssistantItems).toHaveLength(1);
+    expect(finalAssistantItems[0]?.text).toBe(`${seq186Text}${seq187Text}`);
+  });
 });
 
 describe("createAgentStreamReducerQueue", () => {
