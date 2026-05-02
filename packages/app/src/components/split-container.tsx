@@ -91,6 +91,8 @@ interface SplitContainerProps {
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string }) => void;
+  onCreateBrowserTab: (input: { paneId?: string }) => void;
+  showCreateBrowserTab?: boolean;
   buildPaneContentModel: (input: {
     paneId: string;
     tab: WorkspaceTabDescriptor;
@@ -339,6 +341,8 @@ export function SplitContainer({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateBrowserTab,
+  showCreateBrowserTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -557,6 +561,8 @@ export function SplitContainer({
         onCloseOtherTabs={onCloseOtherTabs}
         onCreateDraftTab={onCreateDraftTab}
         onCreateTerminalTab={onCreateTerminalTab}
+        onCreateBrowserTab={onCreateBrowserTab}
+        showCreateBrowserTab={showCreateBrowserTab}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
@@ -694,6 +700,8 @@ function SplitNodeView({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateBrowserTab,
+  showCreateBrowserTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -744,6 +752,8 @@ function SplitNodeView({
         onCloseOtherTabs={onCloseOtherTabs}
         onCreateDraftTab={onCreateDraftTab}
         onCreateTerminalTab={onCreateTerminalTab}
+        onCreateBrowserTab={onCreateBrowserTab}
+        showCreateBrowserTab={showCreateBrowserTab}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
@@ -787,6 +797,8 @@ function SplitNodeView({
               onCloseOtherTabs={onCloseOtherTabs}
               onCreateDraftTab={onCreateDraftTab}
               onCreateTerminalTab={onCreateTerminalTab}
+              onCreateBrowserTab={onCreateBrowserTab}
+              showCreateBrowserTab={showCreateBrowserTab}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
               onSplitPane={onSplitPane}
@@ -836,6 +848,8 @@ function SplitPaneView({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateBrowserTab,
+  showCreateBrowserTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane: _onSplitPane,
@@ -977,6 +991,8 @@ function SplitPaneView({
           onCloseOtherTabs={handleCloseOtherTabs}
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminalTab={onCreateTerminalTab}
+          onCreateBrowserTab={onCreateBrowserTab}
+          showCreateBrowserTab={showCreateBrowserTab}
           onReorderTabs={handleReorderTabs}
           onSplitRight={handleSplitRight}
           onSplitDown={handleSplitDown}

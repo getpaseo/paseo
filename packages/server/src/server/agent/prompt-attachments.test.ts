@@ -85,6 +85,17 @@ describe("prompt attachments", () => {
     ).toContain("GitHub Issue #55: Issue");
   });
 
+  it("renders text attachments as their client-provided prompt text", () => {
+    expect(
+      renderPromptAttachmentAsText({
+        type: "text",
+        mimeType: "text/plain",
+        title: "Browser element",
+        text: "<browser-element>button.primary</browser-element>",
+      }),
+    ).toBe("<browser-element>button.primary</browser-element>");
+  });
+
   it("returns undefined when firstAgentContext is empty", () => {
     expect(buildAgentBranchNameSeed(undefined)).toBeUndefined();
     expect(buildAgentBranchNameSeed({})).toBeUndefined();

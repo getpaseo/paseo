@@ -737,6 +737,13 @@ export const GitHubIssueAttachmentSchema = z.object({
   body: z.string().nullable().optional(),
 });
 
+export const TextAttachmentSchema = z.object({
+  type: z.literal("text"),
+  mimeType: z.literal("text/plain"),
+  title: z.string().nullable().optional(),
+  text: z.string(),
+});
+
 export const ReviewAttachmentContextLineSchema = z.object({
   oldLineNumber: z.number().int().positive().nullable(),
   newLineNumber: z.number().int().positive().nullable(),
@@ -768,6 +775,7 @@ export const ReviewAttachmentSchema = z.object({
 export const AgentAttachmentSchema = z.discriminatedUnion("type", [
   GitHubPrAttachmentSchema,
   GitHubIssueAttachmentSchema,
+  TextAttachmentSchema,
   ReviewAttachmentSchema,
 ]);
 

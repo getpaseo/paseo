@@ -225,6 +225,7 @@ vi.mock("lucide-react-native", () => {
     Pencil: createIcon("Pencil"),
     AudioLines: createIcon("AudioLines"),
     CircleDot: createIcon("CircleDot"),
+    MousePointer2: createIcon("MousePointer2"),
     GitPullRequest: createIcon("GitPullRequest"),
     X: createIcon("X"),
     Mic: createIcon("Mic"),
@@ -574,6 +575,7 @@ let workspaceBindingRenderCount = 0;
 
 type ReviewComposerAttachment = Extract<ComposerAttachment, { kind: "review" }>;
 type ReviewAttachment = Extract<AgentAttachment, { type: "review" }>;
+type BrowserElementComposerAttachment = Extract<ComposerAttachment, { kind: "browser_element" }>;
 
 function reviewAttachment(body: string): ReviewAttachment {
   return {
@@ -616,6 +618,30 @@ function reviewComposerAttachment(body: string): ReviewComposerAttachment {
     reviewDraftKey: `review:${body}`,
     commentCount: 1,
     attachment: reviewAttachment(body),
+  };
+}
+
+function browserElementComposerAttachment(): BrowserElementComposerAttachment {
+  return {
+    kind: "browser_element",
+    attachment: {
+      url: "https://example.com/page",
+      selector: "button.primary",
+      tag: "button",
+      text: "Save",
+      outerHTML: '<button class="primary">Save</button>',
+      computedStyles: { display: "flex" },
+      boundingRect: { x: 1, y: 2, width: 80, height: 32 },
+      reactSource: {
+        fileName: "src/save-button.tsx",
+        lineNumber: 12,
+        columnNumber: 3,
+        componentName: "SaveButton",
+      },
+      parentChain: ["form.settings"],
+      children: [],
+      formatted: '<browser-element url="https://example.com/page">button.primary</browser-element>',
+    },
   };
 }
 
@@ -1040,6 +1066,21 @@ describe("Composer attachments", () => {
     expect(splitComposerAttachmentsForSubmit([review])).toEqual({
       images: [],
       attachments: [review.attachment],
+    });
+  });
+
+  it("serializes browser element workspace attachments as generic text attachments", async () => {
+    const browserElement = browserElementComposerAttachment();
+    expect(splitComposerAttachmentsForSubmit([browserElement])).toEqual({
+      images: [],
+      attachments: [
+        {
+          type: "text",
+          mimeType: "text/plain",
+          title: "Browser element · button",
+          text: browserElement.attachment.formatted,
+        },
+      ],
     });
   });
 

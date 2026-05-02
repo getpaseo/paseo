@@ -11,6 +11,7 @@ export type WorkspaceTabTarget =
   | { kind: "draft"; draftId: string }
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
+  | { kind: "browser"; browserId: string }
   | { kind: "file"; path: string }
   | { kind: "setup"; workspaceId: string };
 

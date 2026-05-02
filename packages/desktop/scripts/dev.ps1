@@ -33,5 +33,5 @@ Write-Host @"
     --kill-others `
     --names "metro,electron" `
     --prefix-colors "magenta,cyan" `
-    "cd `"$AppDir`" && npx expo start --port $($env:EXPO_PORT)" `
+    "cd `"$AppDir`" && `$env:PASEO_WEB_PLATFORM = `"electron`"; npx expo start --port $($env:EXPO_PORT)" `
     "npx wait-on tcp:$($env:EXPO_PORT) && npx electron `"$DesktopDir`""
