@@ -51,6 +51,7 @@ import {
 } from "./agent-stream-coalescer.js";
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "./provider-manifest.js";
+import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -96,6 +97,11 @@ export interface SubscribeOptions {
 
 export type PersistedAgentQueryOptions = ListPersistedAgentsOptions & {
   provider?: AgentProvider;
+  /**
+   * When set, only providers in this set are scanned, in addition to the
+   * built-in importable allowlist + enabled + non-derived rules.
+   */
+  providerFilter?: Set<string>;
 };
 
 export type AgentAttentionCallback = (params: {
@@ -117,6 +123,7 @@ interface AgentManagerRescueTimeouts {
 
 interface ProviderEnabledFlag {
   enabled: boolean;
+  derivedFromProviderId?: string | null;
 }
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
@@ -381,6 +388,7 @@ function buildExplicitTimelineSeedForRegister(
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
+  private readonly providerDerivedFromId = new Map<AgentProvider, string | null>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
@@ -436,6 +444,7 @@ export class AgentManager {
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
       if (definition) {
         this.providerEnabled.set(provider, definition.enabled);
+        this.providerDerivedFromId.set(provider, definition.derivedFromProviderId ?? null);
       }
     }
     for (const [provider, client] of Object.entries(input.clients)) {
@@ -561,6 +570,9 @@ export class AgentManager {
     options?: PersistedAgentQueryOptions,
   ): Promise<PersistedAgentDescriptor[]> {
     if (options?.provider) {
+      if (!this.isProviderImportable(options.provider, options.providerFilter)) {
+        return [];
+      }
       const client = this.requireClient(options.provider);
       if (!client.listPersistedAgents) {
         return [];
@@ -569,7 +581,9 @@ export class AgentManager {
     }
 
     const providerEntries = Array.from(this.clients.entries()).filter(
-      ([, client]) => !!client.listPersistedAgents,
+      ([provider, client]) =>
+        !!client.listPersistedAgents &&
+        this.isProviderImportable(provider, options?.providerFilter),
     );
     const descriptorLists = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
@@ -590,6 +604,25 @@ export class AgentManager {
     return descriptors
       .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
       .slice(0, limit);
+  }
+
+  private isProviderImportable(
+    provider: AgentProvider,
+    providerFilter: Set<string> | undefined,
+  ): boolean {
+    if (!IMPORTABLE_PROVIDERS.includes(provider as (typeof IMPORTABLE_PROVIDERS)[number])) {
+      return false;
+    }
+    if (this.providerEnabled.get(provider) === false) {
+      return false;
+    }
+    if (this.providerDerivedFromId.get(provider) != null) {
+      return false;
+    }
+    if (providerFilter && !providerFilter.has(provider)) {
+      return false;
+    }
+    return true;
   }
 
   async findPersistedAgent(

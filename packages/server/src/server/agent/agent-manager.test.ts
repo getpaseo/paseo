@@ -1074,6 +1074,17 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
       return new TestAgentSession(config);
     }
 
+    async listModels() {
+      return [
+        {
+          provider: "codex",
+          id: "gpt-5.4",
+          label: "GPT-5.4",
+          isDefault: true,
+        },
+      ];
+    }
+
     async resumeSession(
       handle: AgentPersistenceHandle,
       overrides?: Partial<AgentSessionConfig>,
@@ -1140,6 +1151,7 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     },
   });
   expect(client.lastResumeOverrides).toMatchObject({
+    model: "gpt-5.4",
     modeId: "auto",
     systemPrompt: "new prompt",
     mcpServers: {
@@ -5221,3 +5233,135 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
   expect(manager.getAgent(snapshot.id)?.activeForegroundTurnId).toBeNull();
 }, 10_000);
+
+class RecordingPersistedAgentsClient implements AgentClient {
+  readonly capabilities = TEST_CAPABILITIES;
+  calls = 0;
+
+  constructor(public readonly provider: AgentProvider) {}
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async createSession(): Promise<AgentSession> {
+    throw new Error(`unexpected createSession for ${this.provider}`);
+  }
+
+  async resumeSession(): Promise<AgentSession> {
+    throw new Error(`unexpected resumeSession for ${this.provider}`);
+  }
+
+  async listModels() {
+    return [];
+  }
+
+  async listPersistedAgents(): Promise<PersistedAgentDescriptor[]> {
+    this.calls += 1;
+    return [
+      {
+        provider: this.provider,
+        sessionId: `${this.provider}-session`,
+        cwd: "/tmp/recent",
+        title: null,
+        lastActivityAt: new Date("2026-01-01T00:00:00Z"),
+        persistence: { provider: this.provider, sessionId: `${this.provider}-session` },
+        timeline: [],
+      },
+    ];
+  }
+}
+
+test("listPersistedAgents skips disabled providers in fan-out", async () => {
+  const claudeClient = new RecordingPersistedAgentsClient("claude");
+  const codexClient = new RecordingPersistedAgentsClient("codex");
+  const manager = new AgentManager({
+    clients: { claude: claudeClient, codex: codexClient },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      codex: { enabled: false, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const result = await manager.listPersistedAgents();
+
+  expect(claudeClient.calls).toBe(1);
+  expect(codexClient.calls).toBe(0);
+  expect(result.map((d) => d.provider)).toEqual(["claude"]);
+});
+
+test("listPersistedAgents skips derived providers in fan-out", async () => {
+  const claudeClient = new RecordingPersistedAgentsClient("claude");
+  const zaiClient = new RecordingPersistedAgentsClient("zai");
+  const manager = new AgentManager({
+    clients: { claude: claudeClient, zai: zaiClient },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      zai: { enabled: true, derivedFromProviderId: "claude" },
+    },
+    logger,
+  });
+
+  const result = await manager.listPersistedAgents();
+
+  expect(claudeClient.calls).toBe(1);
+  expect(zaiClient.calls).toBe(0);
+  expect(result.map((d) => d.provider)).toEqual(["claude"]);
+});
+
+test("listPersistedAgents skips providers outside the importable allowlist", async () => {
+  const claudeClient = new RecordingPersistedAgentsClient("claude");
+  const geminiClient = new RecordingPersistedAgentsClient("gemini");
+  const manager = new AgentManager({
+    clients: { claude: claudeClient, gemini: geminiClient },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      gemini: { enabled: true, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const result = await manager.listPersistedAgents();
+
+  expect(claudeClient.calls).toBe(1);
+  expect(geminiClient.calls).toBe(0);
+  expect(result.map((d) => d.provider)).toEqual(["claude"]);
+});
+
+test("listPersistedAgents narrows to the providerFilter when supplied", async () => {
+  const claudeClient = new RecordingPersistedAgentsClient("claude");
+  const codexClient = new RecordingPersistedAgentsClient("codex");
+  const manager = new AgentManager({
+    clients: { claude: claudeClient, codex: codexClient },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      codex: { enabled: true, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const result = await manager.listPersistedAgents({
+    providerFilter: new Set(["claude"]),
+  });
+
+  expect(claudeClient.calls).toBe(1);
+  expect(codexClient.calls).toBe(0);
+  expect(result.map((d) => d.provider)).toEqual(["claude"]);
+});
+
+test("listPersistedAgents with explicit provider returns [] when provider is disabled", async () => {
+  const codexClient = new RecordingPersistedAgentsClient("codex");
+  const manager = new AgentManager({
+    clients: { codex: codexClient },
+    providerDefinitions: {
+      codex: { enabled: false, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const result = await manager.listPersistedAgents({ provider: "codex" });
+
+  expect(codexClient.calls).toBe(0);
+  expect(result).toEqual([]);
+});
