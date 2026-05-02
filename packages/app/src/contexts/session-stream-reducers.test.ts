@@ -16,10 +16,15 @@ import {
 // Test helpers
 // ---------------------------------------------------------------------------
 
-function makeTimelineEntry(seq: number, text: string, type: string = "assistant_message") {
+function makeTimelineEntry(
+  seq: number,
+  text: string,
+  type: string = "assistant_message",
+  seqEnd = seq,
+) {
   return {
     seqStart: seq,
-    seqEnd: seq,
+    seqEnd,
     provider: "claude",
     item: { type, text },
     timestamp: new Date(1000 + seq).toISOString(),
@@ -80,6 +85,14 @@ function getAssistantTexts(items: StreamItem[]): string[] {
   return items
     .filter((item): item is Extract<StreamItem, { kind: "assistant_message" }> => {
       return item.kind === "assistant_message";
+    })
+    .map((item) => item.text);
+}
+
+function getUserTexts(items: StreamItem[]): string[] {
+  return items
+    .filter((item): item is Extract<StreamItem, { kind: "user_message" }> => {
+      return item.kind === "user_message";
     })
     .map((item) => item.text);
 }
@@ -356,6 +369,117 @@ describe("processTimelineResponse", () => {
     // No new items appended (all dropped as stale)
     expect(result.tail).toBe(baseTimelineInput.currentTail);
     expect(result.cursorChanged).toBe(false);
+  });
+
+  it("prepends older before-cursor entries and only expands the start cursor", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "current-3",
+        text: "current-3",
+        timestamp: new Date(3000),
+      },
+    ];
+    const currentHead = [makeAssistantItem("live head")];
+    const existingCursor: TimelineCursor = {
+      epoch: "epoch-1",
+      startSeq: 3,
+      endSeq: 5,
+    };
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentHead,
+      currentCursor: existingCursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          makeTimelineEntry(1, "older-1", "user_message"),
+          makeTimelineEntry(2, "older-2", "user_message"),
+        ],
+      },
+    });
+
+    expect(getUserTexts(result.tail)).toEqual(["older-1", "older-2", "current-3"]);
+    expect(result.head).toBe(currentHead);
+    expect(result.cursorChanged).toBe(true);
+    expect(result.cursor).toEqual({
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 5,
+    });
+  });
+
+  it("leaves the cursor alone when a before page makes no progress", () => {
+    const currentTail: StreamItem[] = [
+      {
+        kind: "user_message",
+        id: "current-3",
+        text: "current-3",
+        timestamp: new Date(3000),
+      },
+    ];
+    const existingCursor: TimelineCursor = {
+      epoch: "epoch-1",
+      startSeq: 3,
+      endSeq: 5,
+    };
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: existingCursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 4 },
+        entries: [
+          makeTimelineEntry(3, "overlap-3", "user_message"),
+          makeTimelineEntry(4, "overlap-4", "user_message"),
+        ],
+      },
+    });
+
+    expect(result.tail).toBe(currentTail);
+    expect(result.cursorChanged).toBe(false);
+    expect(result.cursor).toBe(existingCursor);
+  });
+
+  it("merges assistant chunks across the older-page prepend boundary", () => {
+    const currentTail = [makeAssistantItem("newer chunk", "assistant-newer")];
+    const existingCursor: TimelineCursor = {
+      epoch: "epoch-1",
+      startSeq: 3,
+      endSeq: 5,
+    };
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: existingCursor,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [makeTimelineEntry(1, "older chunk ")],
+      },
+    });
+
+    expect(getAssistantTexts(result.tail)).toEqual(["older chunk newer chunk"]);
+    expect(result.cursor).toEqual({
+      epoch: "epoch-1",
+      startSeq: 1,
+      endSeq: 5,
+    });
   });
 
   it("requests canonical catch-up when a projected entry overlaps unseen seqs", () => {

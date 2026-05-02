@@ -133,6 +133,9 @@ describe("createWebStreamStrategy", () => {
             routeBottomAnchorRequest: null,
             isAuthoritativeHistoryReady: true,
             onNearBottomChange: vi.fn(),
+            onNearHistoryStart: vi.fn(),
+            isLoadingOlderHistory: false,
+            hasOlderHistory: false,
             scrollEnabled: true,
             listStyle: null,
             baseListContentContainerStyle: null,
@@ -144,5 +147,64 @@ describe("createWebStreamStrategy", () => {
 
     expect(rowRenderCount.mock.calls.length).toBeGreaterThan(0);
     expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
+  });
+
+  it("fires near-history-start when the user scrolls near the top", async () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    const viewportRef = React.createRef<StreamViewportHandle>();
+    const onNearHistoryStart = vi.fn();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <>
+          {strategy.render({
+            agentId: "agent",
+            segments: {
+              historyVirtualized: [],
+              historyMounted: [userMessage(1), userMessage(2)],
+              liveHead: [],
+            },
+            boundary: {
+              hasVirtualizedHistory: false,
+              hasMountedHistory: true,
+              hasLiveHead: false,
+              historyToHeadGap: 0,
+            },
+            renderers: createRenderers(vi.fn()),
+            listEmptyComponent: null,
+            viewportRef,
+            routeBottomAnchorRequest: null,
+            isAuthoritativeHistoryReady: true,
+            onNearBottomChange: vi.fn(),
+            onNearHistoryStart,
+            isLoadingOlderHistory: false,
+            hasOlderHistory: true,
+            scrollEnabled: true,
+            listStyle: null,
+            baseListContentContainerStyle: null,
+            forwardListContentContainerStyle: null,
+          })}
+        </>,
+      );
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
+    expect(scrollContainer).toBeInstanceOf(HTMLElement);
+    Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1200 });
+    Object.defineProperty(scrollContainer, "scrollTop", { configurable: true, value: 64 });
+
+    act(() => {
+      scrollContainer?.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(onNearHistoryStart).toHaveBeenCalledTimes(1);
   });
 });

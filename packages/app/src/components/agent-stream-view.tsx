@@ -56,6 +56,8 @@ import type {
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { useSessionStore } from "@/stores/session-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
+import type { ToastApi } from "@/components/toast-host";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { QuestionFormCard } from "./question-form-card";
@@ -145,6 +147,7 @@ export interface AgentStreamViewProps {
   pendingPermissions: Map<string, PendingPermission>;
   routeBottomAnchorRequest?: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady?: boolean;
+  toast?: ToastApi | null;
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
 }
 
@@ -158,6 +161,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       pendingPermissions,
       routeBottomAnchorRequest = null,
       isAuthoritativeHistoryReady = true,
+      toast,
       onOpenWorkspaceFile,
     },
     ref,
@@ -197,6 +201,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       serverId: resolvedServerId,
       workspaceId: workspaceId ?? undefined,
       workspaceRoot,
+    });
+    const { isLoadingOlder, hasOlder, loadOlder } = useLoadOlderAgentHistory({
+      serverId: resolvedServerId,
+      agentId,
+      toast,
     });
     const openWorkspaceFile = useStableEvent(function openWorkspaceFile(input: {
       filePath: string;
@@ -796,6 +805,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               routeBottomAnchorRequest,
               isAuthoritativeHistoryReady,
               onNearBottomChange: setIsNearBottom,
+              onNearHistoryStart: loadOlder,
+              isLoadingOlderHistory: isLoadingOlder,
+              hasOlderHistory: hasOlder,
               scrollEnabled: streamScrollEnabled,
               listStyle: stylesheet.list,
               baseListContentContainerStyle: stylesheet.listContentContainer,

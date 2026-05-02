@@ -961,6 +961,7 @@ function ChatAgentContent({
                 canFinalizePendingCreate={canFinalizePendingCreate}
                 routeBottomAnchorRequest={routeBottomAnchorRequest}
                 hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
+                toast={panelToast.api}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
               />
             </ReanimatedAnimated.View>
@@ -1018,6 +1019,7 @@ function AgentStreamSection({
   canFinalizePendingCreate,
   routeBottomAnchorRequest,
   hasAppliedAuthoritativeHistory,
+  toast,
   onOpenWorkspaceFile,
 }: {
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
@@ -1029,6 +1031,7 @@ function AgentStreamSection({
   canFinalizePendingCreate: boolean;
   routeBottomAnchorRequest: RouteBottomAnchorRequest;
   hasAppliedAuthoritativeHistory: boolean;
+  toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (input: { filePath: string }) => void;
 }) {
   const streamItemsRaw = useSessionStore((state) =>
@@ -1163,6 +1166,7 @@ function AgentStreamSection({
       pendingPermissions={pendingPermissions}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
+      toast={toast}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
     />
   );

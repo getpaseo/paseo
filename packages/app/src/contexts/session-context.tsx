@@ -452,6 +452,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setAgentStreamState = useSessionStore((state) => state.setAgentStreamState);
   const clearAgentStreamHead = useSessionStore((state) => state.clearAgentStreamHead);
   const setAgentTimelineCursor = useSessionStore((state) => state.setAgentTimelineCursor);
+  const setAgentTimelineHasOlder = useSessionStore((state) => state.setAgentTimelineHasOlder);
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
   const bumpHistorySyncGeneration = useSessionStore((state) => state.bumpHistorySyncGeneration);
   const markAgentHistorySynchronized = useSessionStore(
@@ -1054,6 +1055,15 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const currentTail = session?.agentStreamTail.get(agentId) ?? [];
       const currentHead = session?.agentStreamHead.get(agentId) ?? [];
 
+      setAgentTimelineHasOlder(serverId, (prev) => {
+        if (prev.get(agentId) === payload.hasOlder) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(agentId, payload.hasOlder);
+        return next;
+      });
+
       if (payload.agent) {
         const normalized = normalizeAgentSnapshot(payload.agent, serverId);
         applyAuthoritativeAgentSnapshot({
@@ -1126,6 +1136,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       setAgentStreamHead,
       setAgentStreamTail,
       setAgentTimelineCursor,
+      setAgentTimelineHasOlder,
       setInitializingAgents,
     ],
   );

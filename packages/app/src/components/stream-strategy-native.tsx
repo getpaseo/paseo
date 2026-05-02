@@ -9,7 +9,9 @@ import {
 } from "react";
 import {
   FlatList,
+  ActivityIndicator,
   Keyboard,
+  View,
   type LayoutChangeEvent,
   type ListRenderItemInfo,
   type NativeScrollEvent,
@@ -29,6 +31,7 @@ const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   minIndexForVisible: 0,
   autoscrollToTopThreshold: 0,
 });
+const HISTORY_START_THRESHOLD_PX = 96;
 
 function keyExtractor(item: { id: string }): string {
   return item.id;
@@ -45,6 +48,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
     onNearBottomChange,
+    onNearHistoryStart,
+    isLoadingOlderHistory,
+    hasOlderHistory,
     scrollEnabled,
     listStyle,
     baseListContentContainerStyle,
@@ -65,6 +71,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const programmaticScrollEventBudgetRef = useRef(0);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
+  const historyStartReadyRef = useRef(false);
 
   const historyRows = useMemo(() => {
     if (segments.historyVirtualized.length === 0) {
@@ -155,6 +162,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     scrollOffsetYRef.current = 0;
     clearNativeViewportSettling();
     setIsNativeViewportSettling(false);
+    historyStartReadyRef.current = false;
+    const frame = requestAnimationFrame(() => {
+      historyStartReadyRef.current = true;
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+    };
   }, [agentId, clearNativeViewportSettling]);
 
   useEffect(() => {
@@ -226,6 +240,18 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       viewportHeight: streamViewportMetricsRef.current.viewportHeight,
     });
     onNearBottomChange(nearBottom);
+
+    const distanceFromOldestEdge =
+      streamViewportMetricsRef.current.contentHeight -
+      streamViewportMetricsRef.current.viewportHeight -
+      contentOffset.y;
+    if (
+      historyStartReadyRef.current &&
+      hasOlderHistory &&
+      distanceFromOldestEdge <= HISTORY_START_THRESHOLD_PX
+    ) {
+      onNearHistoryStart();
+    }
 
     if (programmaticScrollEventBudgetRef.current > 0 && contentOffset.y <= 8) {
       programmaticScrollEventBudgetRef.current -= 1;
@@ -307,6 +333,17 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     );
   }, [boundary, listEmptyComponent, renderLiveAuxiliary, renderLiveHeadRow, segments.liveHead]);
 
+  const historyFooterContent = useMemo(() => {
+    if (!isLoadingOlderHistory) {
+      return null;
+    }
+    return (
+      <View testID="load-older-history-spinner">
+        <ActivityIndicator size="small" />
+      </View>
+    );
+  }, [isLoadingOlderHistory]);
+
   return (
     <FlatList
       ref={flatListRef}
@@ -316,6 +353,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       testID="agent-chat-scroll"
       nativeID="agent-chat-scroll-native-virtualized"
       ListHeaderComponent={liveHeaderContent ?? undefined}
+      ListFooterComponent={historyFooterContent ?? undefined}
       contentContainerStyle={baseListContentContainerStyle}
       style={listStyle}
       onLayout={handleListLayout}

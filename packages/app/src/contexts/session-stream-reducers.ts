@@ -312,6 +312,55 @@ function acceptIncrementalTimelineUnits(args: {
   return { acceptedUnits, cursor, gapCursor };
 }
 
+function acceptOlderTimelineUnits(args: {
+  timelineUnits: TimelineUnit[];
+  payload: ProcessTimelineResponseInput["payload"];
+  currentCursor: TimelineCursor | undefined;
+}): IncrementalAcceptResult {
+  const { timelineUnits, payload, currentCursor } = args;
+  if (!currentCursor || currentCursor.epoch !== payload.epoch) {
+    return { acceptedUnits: [], cursor: currentCursor, gapCursor: null };
+  }
+
+  const acceptedUnits = timelineUnits.filter((unit) => unit.seqEnd < currentCursor.startSeq);
+  if (acceptedUnits.length === 0) {
+    return { acceptedUnits, cursor: currentCursor, gapCursor: null };
+  }
+
+  const firstAccepted = acceptedUnits[0];
+  const startSeq = payload.startCursor?.seq ?? firstAccepted?.seq ?? currentCursor.startSeq;
+  return {
+    acceptedUnits,
+    cursor: { ...currentCursor, startSeq },
+    gapCursor: null,
+  };
+}
+
+function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: StreamItem[]) {
+  if (olderTail.length === 0) {
+    return currentTail;
+  }
+  if (currentTail.length === 0) {
+    return olderTail;
+  }
+
+  const olderLast = olderTail.at(-1);
+  const currentFirst = currentTail[0];
+  if (olderLast?.kind !== "assistant_message" || currentFirst?.kind !== "assistant_message") {
+    return [...olderTail, ...currentTail];
+  }
+
+  return [
+    ...olderTail.slice(0, -1),
+    {
+      ...olderLast,
+      text: `${olderLast.text}${currentFirst.text}`,
+      timestamp: currentFirst.timestamp,
+    },
+    ...currentTail.slice(1),
+  ];
+}
+
 function applyTimelineIncrementalPath(args: {
   timelineUnits: TimelineUnit[];
   payload: ProcessTimelineResponseInput["payload"];
@@ -330,14 +379,27 @@ function applyTimelineIncrementalPath(args: {
     return { tail: nextTail, head: nextHead, cursor: nextCursor, cursorChanged, sideEffects };
   }
 
-  const { acceptedUnits, cursor, gapCursor } = acceptIncrementalTimelineUnits({
-    timelineUnits,
-    payload,
-    currentCursor,
-  });
+  const { acceptedUnits, cursor, gapCursor } =
+    payload.direction === "before"
+      ? acceptOlderTimelineUnits({
+          timelineUnits,
+          payload,
+          currentCursor,
+        })
+      : acceptIncrementalTimelineUnits({
+          timelineUnits,
+          payload,
+          currentCursor,
+        });
 
   if (acceptedUnits.length > 0) {
-    if (currentHead.length > 0) {
+    if (payload.direction === "before") {
+      const olderTail = hydrateStreamState(
+        acceptedUnits.map(({ event, timestamp }) => ({ event, timestamp })),
+        { source: "canonical" },
+      );
+      nextTail = mergePrependedCanonicalTail(olderTail, currentTail);
+    } else if (currentHead.length > 0) {
       for (const { event, timestamp } of acceptedUnits) {
         const applied = applyStreamEvent({
           tail: nextTail,
