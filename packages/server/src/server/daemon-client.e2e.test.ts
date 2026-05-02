@@ -1291,11 +1291,9 @@ test("supports git and file operations", async () => {
     return unsubscribeList;
   });
 
-  const listResult = await ctx.client.exploreFileSystem(cwd, ".", "list", listRequestId);
+  const listResult = await ctx.client.listDirectory(cwd, ".", listRequestId);
   const listMessage = await listMessagePromise;
-  expect(listResult.error).toBeNull();
-  expect(listResult.directory).toBeTruthy();
-  expect(listResult.requestId).toBe(listRequestId);
+  expect(listResult.entries.some((entry) => entry.name === "download.txt")).toBe(true);
   expect(listMessage.payload.mode).toBe("list");
   expect(listMessage.payload.requestId).toBe(listRequestId);
 
@@ -1319,11 +1317,9 @@ test("supports git and file operations", async () => {
     return unsubscribeFile;
   });
 
-  const fileResult = await ctx.client.exploreFileSystem(cwd, "download.txt", "file", fileRequestId);
+  const fileResult = await ctx.client.readFile(cwd, "download.txt", fileRequestId);
   const fileMessage = await fileMessagePromise;
-  expect(fileResult.error).toBeNull();
-  expect(fileResult.file?.content).toBe(downloadContents);
-  expect(fileResult.requestId).toBe(fileRequestId);
+  expect(new TextDecoder().decode(fileResult.bytes)).toBe(downloadContents);
   expect(fileMessage.payload.mode).toBe("file");
   expect(fileMessage.payload.requestId).toBe(fileRequestId);
 

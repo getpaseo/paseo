@@ -98,7 +98,7 @@ import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
-import { persistAttachmentFromBase64, persistAttachmentFromDataUrl } from "@/attachments/service";
+import { persistAttachmentFromBytes, persistAttachmentFromDataUrl } from "@/attachments/service";
 import type { DaemonClient } from "@server/client/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 export type { InlinePathTarget } from "@/utils/inline-path";
@@ -760,25 +760,21 @@ function AssistantMarkdownImage({
         return null;
       }
 
-      const payload = await client.exploreFileSystem(resolution.cwd, resolution.path, "file");
-      if (payload.error) {
-        throw new Error(payload.error);
-      }
-      const file = payload.file;
-      if (!file || file.kind !== "image" || !file.content) {
+      const file = await client.readFile(resolution.cwd, resolution.path);
+      if (file.kind !== "image") {
         throw new Error("Image preview unavailable.");
       }
 
-      return await persistAttachmentFromBase64({
+      return await persistAttachmentFromBytes({
         id: createPreviewAttachmentId({
-          mimeType: file.mimeType ?? "image/png",
+          mimeType: file.mime,
           path: file.path || resolution.path,
           size: file.size,
           modifiedAt: file.modifiedAt,
-          contentLength: file.content.length,
+          contentLength: file.bytes.byteLength,
         }),
-        base64: file.content,
-        mimeType: file.mimeType,
+        bytes: file.bytes,
+        mimeType: file.mime,
         fileName: getFileNameFromPath(file.path || resolution.path),
       });
     },

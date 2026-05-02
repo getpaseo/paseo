@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { CheckoutPrStatusSchema } from "../shared/messages.js";
 import type { WorkspaceDescriptorPayload } from "../shared/messages.js";
+import { decodeFileTransferFrame, FileTransferOpcode } from "../shared/binary-frames/index.js";
 import { normalizeCheckoutPrStatusPayload, Session } from "./session.js";
 import type {
   AgentClient,
@@ -45,6 +46,17 @@ interface SessionHandlerInternals {
 
 function asSessionInternals(session: Session): SessionHandlerInternals {
   return session as unknown as SessionHandlerInternals;
+}
+
+function createBinaryMessageHandler(
+  binaryMessages: Uint8Array[] | undefined,
+): ((frame: Uint8Array) => void) | undefined {
+  if (!binaryMessages) {
+    return undefined;
+  }
+  return (frame) => {
+    binaryMessages.push(frame);
+  };
 }
 
 const checkoutGitMocks = vi.hoisted(() => ({
@@ -195,7 +207,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
   };
 });
 
-function createSessionForTest(options?: {
+interface SessionForTestOptions {
   github?: {
     invalidate: ReturnType<typeof vi.fn>;
     isAuthenticated?: ReturnType<typeof vi.fn>;
@@ -223,17 +235,20 @@ function createSessionForTest(options?: {
   getDaemonTcpHost?: () => string | null;
   providerSnapshotManager?: ProviderSnapshotManager;
   messages?: unknown[];
-}): Session {
+  binaryMessages?: Uint8Array[];
+}
+
+function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const logger = pino({ level: "silent" });
-  const github = options?.github ?? {
+  const github = options.github ?? {
     invalidate: vi.fn(),
     searchIssuesAndPrs: vi.fn(),
     createPullRequest: vi.fn(),
   };
-  const checkoutDiffManager = options?.checkoutDiffManager ?? {
+  const checkoutDiffManager = options.checkoutDiffManager ?? {
     scheduleRefreshForCwd: vi.fn(),
   };
-  const workspaceGitService = options?.workspaceGitService ?? {
+  const workspaceGitService = options.workspaceGitService ?? {
     getCheckoutDiff: vi.fn(),
     getSnapshot: vi.fn(),
     suggestBranchesForCwd: vi.fn(),
@@ -244,11 +259,12 @@ function createSessionForTest(options?: {
     resolveRepoRemoteUrl: vi.fn(),
     getWorkspaceGitMetadata: vi.fn(),
   };
-  const messages = options?.messages ?? [];
+  const messages = options.messages ?? [];
 
   return new Session({
     clientId: "test-client",
     onMessage: (message) => messages.push(message),
+    onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
     logger,
     downloadTokenStore: {} as unknown as SessionOptions["downloadTokenStore"],
     pushTokenStore: {} as unknown as SessionOptions["pushTokenStore"],
@@ -260,7 +276,7 @@ function createSessionForTest(options?: {
     agentStorage: {
       list: vi.fn().mockResolvedValue([]),
     } as unknown as SessionOptions["agentStorage"],
-    projectRegistry: (options?.projectRegistry ?? {
+    projectRegistry: (options.projectRegistry ?? {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
       upsert: vi.fn(),
@@ -269,7 +285,7 @@ function createSessionForTest(options?: {
       initialize: vi.fn(),
       existsOnDisk: vi.fn(),
     }) as unknown as SessionOptions["projectRegistry"],
-    workspaceRegistry: (options?.workspaceRegistry ?? {
+    workspaceRegistry: (options.workspaceRegistry ?? {
       get: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
     }) as unknown as SessionOptions["workspaceRegistry"],
@@ -288,14 +304,111 @@ function createSessionForTest(options?: {
     } as unknown as SessionOptions["daemonConfigStore"],
     stt: null,
     tts: null,
-    terminalManager: (options?.terminalManager ?? null) as SessionOptions["terminalManager"],
-    providerSnapshotManager: options?.providerSnapshotManager,
-    scriptRouteStore: options?.scriptRouteStore as SessionOptions["scriptRouteStore"],
-    scriptRuntimeStore: options?.scriptRuntimeStore as SessionOptions["scriptRuntimeStore"],
-    getDaemonTcpPort: options?.getDaemonTcpPort,
-    getDaemonTcpHost: options?.getDaemonTcpHost,
+    terminalManager: (options.terminalManager ?? null) as SessionOptions["terminalManager"],
+    providerSnapshotManager: options.providerSnapshotManager,
+    scriptRouteStore: options.scriptRouteStore as SessionOptions["scriptRouteStore"],
+    scriptRuntimeStore: options.scriptRuntimeStore as SessionOptions["scriptRuntimeStore"],
+    getDaemonTcpPort: options.getDaemonTcpPort,
+    getDaemonTcpHost: options.getDaemonTcpHost,
   });
 }
+
+describe("file explorer binary responses", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function makeRoot(): string {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "file-explorer-session-test-")));
+    tempDirs.push(root);
+    return root;
+  }
+
+  test("old clients get legacy JSON file content from a new daemon", async () => {
+    const cwd = makeRoot();
+    writeFileSync(join(cwd, "logo.png"), "hello");
+    const messages: unknown[] = [];
+    const binaryMessages: Uint8Array[] = [];
+    const session = createSessionForTest({ messages, binaryMessages });
+
+    await session.handleMessage({
+      type: "file_explorer_request",
+      cwd,
+      path: "logo.png",
+      mode: "file",
+      requestId: "req-old-client",
+    });
+
+    expect(binaryMessages).toEqual([]);
+    expect(messages).toEqual([
+      {
+        type: "file_explorer_response",
+        payload: expect.objectContaining({
+          cwd,
+          path: "logo.png",
+          mode: "file",
+          directory: null,
+          error: null,
+          requestId: "req-old-client",
+          file: expect.objectContaining({
+            kind: "image",
+            encoding: "base64",
+            content: "aGVsbG8=",
+            mimeType: "image/png",
+            size: 5,
+          }),
+        }),
+      },
+    ]);
+  });
+
+  test("new clients get binary file frames without legacy JSON content", async () => {
+    const cwd = makeRoot();
+    writeFileSync(join(cwd, "logo.png"), "hello");
+    const messages: unknown[] = [];
+    const binaryMessages: Uint8Array[] = [];
+    const session = createSessionForTest({ messages, binaryMessages });
+
+    await session.handleMessage({
+      type: "file_explorer_request",
+      cwd,
+      path: "logo.png",
+      mode: "file",
+      requestId: "req-new-client",
+      acceptBinary: true,
+    });
+
+    expect(messages).toEqual([]);
+    expect(binaryMessages).toHaveLength(3);
+
+    const frames = binaryMessages.map((frame) => decodeFileTransferFrame(frame));
+    expect(frames[0]).toEqual({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId: "req-new-client",
+      metadata: {
+        mime: "image/png",
+        size: 5,
+        encoding: "binary",
+        modifiedAt: expect.any(String),
+      },
+      payload: new Uint8Array(),
+    });
+    expect(frames[1]).toEqual({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-new-client",
+      payload: new TextEncoder().encode("hello"),
+    });
+    expect(frames[2]).toEqual({
+      opcode: FileTransferOpcode.FileEnd,
+      requestId: "req-new-client",
+      payload: new Uint8Array(),
+    });
+  });
+});
 
 function createProjectRecord(rootPath: string, archivedAt: string | null = null) {
   return {

@@ -1,5 +1,6 @@
 import React, { useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { FileReadResult } from "@server/client/daemon-client";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import {
   ActivityIndicator,
@@ -27,8 +28,9 @@ import { isWeb } from "@/constants/platform";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
-import { persistAttachmentFromBase64 } from "@/attachments/service";
+import { persistAttachmentFromBytes } from "@/attachments/service";
 import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
+import { explorerFileFromReadResult } from "@/file-explorer/read-result";
 
 interface CodeLineProps {
   tokens: HighlightToken[];
@@ -65,30 +67,34 @@ function formatFileSize({ size }: { size: number }): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-async function createFilePanePreview(file: ExplorerFile | null): Promise<{
+async function createFilePanePreview(file: FileReadResult | null): Promise<{
   file: ExplorerFile | null;
   imageAttachment: AttachmentMetadata | null;
 }> {
-  if (!file || file.kind !== "image" || !file.content) {
-    return { file, imageAttachment: null };
+  if (!file) {
+    return { file: null, imageAttachment: null };
   }
 
-  const { content: _content, ...imageFile } = file;
-  const imageAttachment = await persistAttachmentFromBase64({
+  const explorerFile = explorerFileFromReadResult(file);
+  if (file.kind !== "image") {
+    return { file: explorerFile, imageAttachment: null };
+  }
+
+  const imageAttachment = await persistAttachmentFromBytes({
     id: createPreviewAttachmentId({
-      mimeType: file.mimeType ?? "image/png",
+      mimeType: file.mime,
       path: file.path,
       size: file.size,
       modifiedAt: file.modifiedAt,
-      contentLength: file.content.length,
+      contentLength: file.bytes.byteLength,
     }),
-    base64: file.content,
-    mimeType: file.mimeType,
+    bytes: file.bytes,
+    mimeType: file.mime,
     fileName: getFileNameFromPath(file.path),
   });
 
   return {
-    file: imageFile,
+    file: explorerFile,
     imageAttachment,
   };
 }
@@ -358,17 +364,21 @@ export function FilePane({
       if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
         return { file: null as ExplorerFile | null, error: "Host is not connected" };
       }
-      const payload = await client.exploreFileSystem(
-        normalizedWorkspaceRoot,
-        normalizedFilePath,
-        "file",
-      );
-      const preview = await createFilePanePreview(payload.file ?? null);
-      return {
-        file: preview.file,
-        imageAttachment: preview.imageAttachment,
-        error: payload.error ?? null,
-      };
+      try {
+        const file = await client.readFile(normalizedWorkspaceRoot, normalizedFilePath);
+        const preview = await createFilePanePreview(file);
+        return {
+          file: preview.file,
+          imageAttachment: preview.imageAttachment,
+          error: null,
+        };
+      } catch (error) {
+        return {
+          file: null,
+          imageAttachment: null,
+          error: error instanceof Error ? error.message : "Failed to load file",
+        };
+      }
     },
     staleTime: 5_000,
     refetchOnMount: true,

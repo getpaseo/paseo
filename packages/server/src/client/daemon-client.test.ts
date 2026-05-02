@@ -1,5 +1,6 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { DaemonClient, type DaemonTransport } from "./daemon-client";
+import { encodeFileTransferFrame, FileTransferOpcode } from "../shared/binary-frames/index.js";
 import {
   asUint8Array,
   decodeTerminalResizePayload,
@@ -12,6 +13,9 @@ import {
 expectTypeOf<"getGitDiff" extends keyof DaemonClient ? true : false>().toEqualTypeOf<false>();
 expectTypeOf<
   "getHighlightedDiff" extends keyof DaemonClient ? true : false
+>().toEqualTypeOf<false>();
+expectTypeOf<
+  "exploreFileSystem" extends keyof DaemonClient ? true : false
 >().toEqualTypeOf<false>();
 
 function createMockLogger() {
@@ -233,6 +237,209 @@ test("does not reconnect after close when ensureConnected is called", async () =
 
   client.ensureConnected();
   expect(client.getConnectionState().status).toBe("disposed");
+});
+
+test("listDirectory sends a list file explorer request and returns directory entries", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.listDirectory("/tmp/project", "src", "req-list");
+
+  expect(JSON.parse(String(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "file_explorer_request",
+      cwd: "/tmp/project",
+      path: "src",
+      mode: "list",
+      requestId: "req-list",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file_explorer_response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "src",
+        mode: "list",
+        directory: {
+          path: "src",
+          entries: [
+            {
+              name: "index.ts",
+              path: "src/index.ts",
+              kind: "file",
+              size: 12,
+              modifiedAt: "2026-05-02T00:00:00.000Z",
+            },
+          ],
+        },
+        file: null,
+        error: null,
+        requestId: "req-list",
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({
+    path: "src",
+    entries: [
+      {
+        name: "index.ts",
+        path: "src/index.ts",
+        kind: "file",
+        size: 12,
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    ],
+  });
+});
+
+test("readFile hides legacy base64 behind bytes", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.readFile("/tmp/project", "logo.png", "req-file");
+
+  expect(JSON.parse(String(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "file_explorer_request",
+      cwd: "/tmp/project",
+      path: "logo.png",
+      mode: "file",
+      acceptBinary: true,
+      requestId: "req-file",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file_explorer_response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "logo.png",
+        mode: "file",
+        directory: null,
+        file: {
+          path: "logo.png",
+          kind: "image",
+          encoding: "base64",
+          content: "aGVsbG8=",
+          mimeType: "image/png",
+          size: 5,
+          modifiedAt: "2026-05-02T00:00:00.000Z",
+        },
+        error: null,
+        requestId: "req-file",
+      },
+    }),
+  );
+
+  const result = await responsePromise;
+  expect(result).toMatchObject({
+    mime: "image/png",
+    size: 5,
+    path: "logo.png",
+    kind: "image",
+    modifiedAt: "2026-05-02T00:00:00.000Z",
+  });
+  expect(new TextDecoder().decode(result.bytes)).toBe("hello");
+});
+
+test("readFile resolves from binary file frames when the daemon supports them", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.readFile("/tmp/project", "logo.png", "req-binary");
+
+  expect(JSON.parse(String(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "file_explorer_request",
+      cwd: "/tmp/project",
+      path: "logo.png",
+      mode: "file",
+      acceptBinary: true,
+      requestId: "req-binary",
+    },
+  });
+
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId: "req-binary",
+      metadata: {
+        mime: "image/png",
+        size: 5,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-binary",
+      payload: new TextEncoder().encode("hello"),
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileEnd,
+      requestId: "req-binary",
+    }),
+  );
+
+  const result = await responsePromise;
+  expect(result).toMatchObject({
+    mime: "image/png",
+    size: 5,
+    path: "logo.png",
+    kind: "image",
+    modifiedAt: "2026-05-02T00:00:00.000Z",
+  });
+  expect(new TextDecoder().decode(result.bytes)).toBe("hello");
 });
 
 test("normalizes workspace_setup_progress into a workspace-scoped daemon event", async () => {

@@ -14,6 +14,21 @@ const fileSystemMock = vi.hoisted(() => ({
   readAsStringAsync: vi.fn(async () => "AAECAw=="),
   deleteAsync: vi.fn(async () => {}),
   readDirectoryAsync: vi.fn(async () => []),
+  fileWrite: vi.fn((_uri: string, _content: Uint8Array) => {}),
+}));
+
+vi.mock("expo-file-system", () => ({
+  File: class {
+    uri: string;
+
+    constructor(uri: string) {
+      this.uri = uri;
+    }
+
+    write(content: Uint8Array) {
+      fileSystemMock.fileWrite(this.uri, content);
+    }
+  },
 }));
 
 vi.mock("expo-file-system/legacy", () => ({
@@ -37,9 +52,10 @@ describe("local file attachment store", () => {
     fileSystemMock.readAsStringAsync.mockClear();
     fileSystemMock.deleteAsync.mockClear();
     fileSystemMock.readDirectoryAsync.mockClear();
+    fileSystemMock.fileWrite.mockClear();
   });
 
-  it("writes raw base64 sources directly to the managed file path", async () => {
+  it("writes raw byte sources directly to the managed file path", async () => {
     const store = createLocalFileAttachmentStore({
       storageType: "native-file",
       baseDirectoryName: "preview-assets",
@@ -50,14 +66,14 @@ describe("local file attachment store", () => {
       id: "preview_8_test",
       mimeType: "image/png",
       fileName: "result.png",
-      source: { kind: "base64", base64: "AAECAw==" },
+      source: { kind: "bytes", bytes: new Uint8Array([0, 1, 2, 3]) },
     });
 
-    expect(fileSystemMock.writeAsStringAsync).toHaveBeenCalledWith(
+    expect(fileSystemMock.fileWrite).toHaveBeenCalledWith(
       "file:///cache/preview-assets/preview_8_test.png",
-      "AAECAw==",
-      { encoding: "base64" },
+      new Uint8Array([0, 1, 2, 3]),
     );
+    expect(fileSystemMock.writeAsStringAsync).not.toHaveBeenCalled();
     expect(attachment).toMatchObject({
       id: "preview_8_test",
       mimeType: "image/png",

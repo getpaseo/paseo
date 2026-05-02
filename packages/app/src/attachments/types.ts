@@ -33,7 +33,7 @@ export type UserComposerAttachment = Exclude<ComposerAttachment, { kind: "review
 export type WorkspaceComposerAttachment = Extract<ComposerAttachment, { kind: "review" }>;
 
 export type AttachmentDataSource =
-  | { kind: "base64"; base64: string }
+  | { kind: "bytes"; bytes: Uint8Array }
   | { kind: "blob"; blob: Blob }
   | { kind: "data_url"; dataUrl: string }
   | { kind: "file_uri"; uri: string };

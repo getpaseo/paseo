@@ -12,6 +12,7 @@ import {
   deleteDesktopAttachmentFile,
   garbageCollectDesktopAttachmentFiles,
   writeDesktopAttachmentBase64,
+  writeDesktopAttachmentBytes,
 } from "@/desktop/attachments/desktop-file-commands";
 import {
   readDesktopFileBase64,
@@ -132,6 +133,32 @@ async function saveDesktopAttachmentFromBase64(input: {
   });
 }
 
+async function saveDesktopAttachmentFromBytes(input: {
+  id: string;
+  bytes: Uint8Array;
+  mimeType: string;
+  fileName?: string | null;
+}): Promise<AttachmentMetadata> {
+  const extension = extensionForAttachment({
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+  });
+
+  const result = await writeDesktopAttachmentBytes({
+    attachmentId: input.id,
+    bytes: input.bytes,
+    extension,
+  });
+
+  return toDesktopMetadata({
+    id: input.id,
+    mimeType: input.mimeType,
+    storagePath: result.path,
+    byteSize: result.byteSize,
+    fileName: input.fileName,
+  });
+}
+
 function assertDesktopAttachment(attachment: AttachmentMetadata): void {
   if (attachment.storageType !== "desktop-file") {
     throw new Error(`Unsupported desktop attachment storage type '${attachment.storageType}'.`);
@@ -166,11 +193,11 @@ export function createDesktopAttachmentStore(): AttachmentStore {
         });
       }
 
-      if (input.source.kind === "base64") {
+      if (input.source.kind === "bytes") {
         const mimeType = normalizeMimeType(input.mimeType);
-        return await saveDesktopAttachmentFromBase64({
+        return await saveDesktopAttachmentFromBytes({
           id,
-          base64: input.source.base64,
+          bytes: input.source.bytes,
           mimeType,
           fileName,
         });

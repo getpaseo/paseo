@@ -31,8 +31,8 @@ export async function persistAttachmentFromDataUrl(input: {
   });
 }
 
-export async function persistAttachmentFromBase64(input: {
-  base64: string;
+export async function persistAttachmentFromBytes(input: {
+  bytes: Uint8Array;
   mimeType?: string;
   fileName?: string | null;
   id?: string;
@@ -42,7 +42,7 @@ export async function persistAttachmentFromBase64(input: {
     id: input.id,
     mimeType: input.mimeType,
     fileName: input.fileName,
-    source: { kind: "base64", base64: input.base64 },
+    source: { kind: "bytes", bytes: input.bytes },
   });
 }
 

@@ -22,7 +22,7 @@ afterEach(async () => {
   await ctx.cleanup();
 }, 60000);
 
-describe("exploreFileSystem", () => {
+describe("file explorer", () => {
   test("lists directory contents", async () => {
     const cwd = tmpCwd();
 
@@ -45,16 +45,13 @@ describe("exploreFileSystem", () => {
     expect(agent.status).toBe("idle");
 
     // List directory contents
-    const result = await ctx.client.exploreFileSystem(cwd, ".", "list");
+    const directory = await ctx.client.listDirectory(cwd, ".");
 
     // Verify listing returned without error
-    expect(result.error).toBeNull();
-    expect(result.mode).toBe("list");
-    expect(result.directory).toBeTruthy();
-    expect(result.directory!.entries).toBeTruthy();
+    expect(directory.entries).toBeTruthy();
 
     // Find expected entries
-    const entries = result.directory!.entries;
+    const entries = directory.entries;
     const testTxt = entries.find((e) => e.name === "test.txt");
     const dataJson = entries.find((e) => e.name === "data.json");
     const subdir = entries.find((e) => e.name === "subdir");
@@ -92,17 +89,14 @@ describe("exploreFileSystem", () => {
     expect(agent.id).toBeTruthy();
 
     // Read file contents
-    const result = await ctx.client.exploreFileSystem(cwd, "readme.txt", "file");
+    const result = await ctx.client.readFile(cwd, "readme.txt");
 
     // Verify file read
-    expect(result.error).toBeNull();
-    expect(result.mode).toBe("file");
-    expect(result.file).toBeTruthy();
     // Server may return basename or full path
-    expect(result.file!.path).toContain("readme.txt");
-    expect(result.file!.kind).toBe("text");
-    expect(result.file!.content).toBe(testContent);
-    expect(result.file!.size).toBe(testContent.length);
+    expect(result.path).toContain("readme.txt");
+    expect(result.kind).toBe("text");
+    expect(new TextDecoder().decode(result.bytes)).toBe(testContent);
+    expect(result.size).toBe(testContent.length);
 
     // Cleanup
     await ctx.client.deleteAgent(agent.id);
@@ -124,10 +118,7 @@ describe("exploreFileSystem", () => {
     expect(agent.id).toBeTruthy();
 
     // Try to list non-existent path
-    const result = await ctx.client.exploreFileSystem(cwd, "does-not-exist", "list");
-
-    // Should return error
-    expect(result.error).toBeTruthy();
+    await expect(ctx.client.listDirectory(cwd, "does-not-exist")).rejects.toThrow();
 
     // Cleanup
     await ctx.client.deleteAgent(agent.id);

@@ -31,7 +31,7 @@ function createTestStore(): AttachmentStore {
       } else if (input.source.kind === "file_uri") {
         byteSize = input.source.uri.length;
       } else {
-        byteSize = input.source.base64.length;
+        byteSize = input.source.bytes.byteLength;
       }
       return {
         id,

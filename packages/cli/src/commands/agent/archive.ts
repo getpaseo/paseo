@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import type { DaemonClient } from "@getpaseo/server";
 import { connectToDaemon, getDaemonHost, resolveAgentId } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -55,7 +56,7 @@ export async function runArchiveCommand(
     throw error;
   }
 
-  let client;
+  let client: DaemonClient;
   try {
     client = await connectToDaemon({ host: options.host as string | undefined });
   } catch (err) {

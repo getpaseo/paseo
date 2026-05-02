@@ -35,7 +35,11 @@ import {
 } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
-import type { TerminalStreamFrame } from "../shared/terminal-stream-protocol.js";
+import {
+  encodeFileTransferFrame,
+  FileTransferOpcode,
+  type TerminalStreamFrame,
+} from "../shared/binary-frames/index.js";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import { TTSManager } from "./agent/tts-manager.js";
@@ -149,6 +153,7 @@ import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
   listDirectoryEntries,
   readExplorerFile,
+  readExplorerFileBytes,
   getDownloadableFileInfo,
 } from "./file-explorer/service.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
@@ -5475,23 +5480,56 @@ export class Session {
           },
         });
       } else {
-        const file = await readExplorerFile({
-          root: cwd,
-          relativePath: requestedPath,
-        });
+        if (request.acceptBinary && this.onBinaryMessage) {
+          const file = await readExplorerFileBytes({
+            root: cwd,
+            relativePath: requestedPath,
+          });
 
-        this.emit({
-          type: "file_explorer_response",
-          payload: {
-            cwd,
-            path: file.path,
-            mode,
-            directory: null,
-            file,
-            error: null,
-            requestId,
-          },
-        });
+          this.emitBinary(
+            encodeFileTransferFrame({
+              opcode: FileTransferOpcode.FileBegin,
+              requestId,
+              metadata: {
+                mime: file.mimeType,
+                size: file.size,
+                encoding: file.encoding,
+                modifiedAt: file.modifiedAt,
+              },
+            }),
+          );
+          this.emitBinary(
+            encodeFileTransferFrame({
+              opcode: FileTransferOpcode.FileChunk,
+              requestId,
+              payload: file.bytes,
+            }),
+          );
+          this.emitBinary(
+            encodeFileTransferFrame({
+              opcode: FileTransferOpcode.FileEnd,
+              requestId,
+            }),
+          );
+        } else {
+          const file = await readExplorerFile({
+            root: cwd,
+            relativePath: requestedPath,
+          });
+
+          this.emit({
+            type: "file_explorer_response",
+            payload: {
+              cwd,
+              path: file.path,
+              mode,
+              directory: null,
+              file,
+              error: null,
+              requestId,
+            },
+          });
+        }
       }
     } catch (error) {
       this.sessionLogger.error(

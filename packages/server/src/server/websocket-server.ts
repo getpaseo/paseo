@@ -26,7 +26,7 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
-import { asUint8Array, decodeTerminalStreamFrame } from "../shared/terminal-stream-protocol.js";
+import { asUint8Array, decodeTerminalStreamFrame } from "../shared/binary-frames/index.js";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";

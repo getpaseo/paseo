@@ -1,3 +1,4 @@
+import { File } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 import {
   type AttachmentStore,
@@ -6,7 +7,6 @@ import {
   type SaveAttachmentInput,
 } from "@/attachments/types";
 import {
-  blobToBase64,
   fileUriToPath,
   generateAttachmentId,
   getFileExtensionFromName,
@@ -45,6 +45,15 @@ async function ensureDirectory(uri: string): Promise<void> {
   await FileSystem.makeDirectoryAsync(uri, { intermediates: true });
 }
 
+async function dataUrlToBytes(dataUrl: string): Promise<Uint8Array> {
+  const response = await fetch(dataUrl);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function blobToBytes(blob: Blob): Promise<Uint8Array> {
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 async function writeFromSource(input: {
   source: SaveAttachmentInput["source"];
   targetUri: string;
@@ -59,30 +68,16 @@ async function writeFromSource(input: {
     return;
   }
 
+  let bytes: Uint8Array;
   if (input.source.kind === "data_url") {
-    const parsed = parseDataUrl(input.source.dataUrl);
-    const mimeType = normalizeMimeType(parsed.mimeType || input.mimeType);
-    const base64 = parsed.base64;
-    await FileSystem.writeAsStringAsync(input.targetUri, base64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    if (mimeType !== input.mimeType) {
-      return;
-    }
-    return;
+    bytes = await dataUrlToBytes(input.source.dataUrl);
+  } else if (input.source.kind === "blob") {
+    bytes = await blobToBytes(input.source.blob);
+  } else {
+    bytes = input.source.bytes;
   }
 
-  if (input.source.kind === "base64") {
-    await FileSystem.writeAsStringAsync(input.targetUri, input.source.base64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    return;
-  }
-
-  const base64 = await blobToBase64(input.source.blob);
-  await FileSystem.writeAsStringAsync(input.targetUri, base64, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
+  new File(input.targetUri).write(bytes);
 }
 
 function attachmentUri(metadata: AttachmentMetadata): string {

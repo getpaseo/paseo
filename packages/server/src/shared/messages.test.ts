@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { SessionOutboundMessageSchema } from "./messages.js";
+import { FileExplorerRequestSchema, SessionOutboundMessageSchema } from "./messages.js";
 
 function workspaceDescriptor(overrides: Record<string, unknown> = {}) {
   return {
@@ -123,6 +123,41 @@ describe("workspace descriptor message compatibility", () => {
       workspaceDirectory: "/repo/app",
       gitRuntime: null,
       githubRuntime: null,
+    });
+  });
+});
+
+describe("file explorer request compatibility", () => {
+  test("acceptBinary is optional for old clients and accepted for new clients", () => {
+    expect(
+      FileExplorerRequestSchema.parse({
+        type: "file_explorer_request",
+        cwd: "/repo/app",
+        path: "image.png",
+        mode: "file",
+        requestId: "req-old",
+      }),
+    ).toEqual({
+      type: "file_explorer_request",
+      cwd: "/repo/app",
+      path: "image.png",
+      mode: "file",
+      requestId: "req-old",
+    });
+
+    expect(
+      FileExplorerRequestSchema.parse({
+        type: "file_explorer_request",
+        cwd: "/repo/app",
+        path: "image.png",
+        mode: "file",
+        requestId: "req-new",
+        acceptBinary: true,
+      }),
+    ).toMatchObject({
+      type: "file_explorer_request",
+      requestId: "req-new",
+      acceptBinary: true,
     });
   });
 });

@@ -39,6 +39,16 @@ export interface FileExplorerFile {
   modifiedAt: string;
 }
 
+export interface FileExplorerFileBytes {
+  path: string;
+  kind: ExplorerFileKind;
+  encoding: "utf-8" | "binary";
+  bytes: Uint8Array;
+  mimeType: string;
+  size: number;
+  modifiedAt: string;
+}
+
 const TEXT_MIME_TYPES: Record<string, string> = {
   ".json": "application/json",
 };
@@ -120,6 +130,46 @@ export async function readExplorerFile({
   root,
   relativePath,
 }: ReadFileParams): Promise<FileExplorerFile> {
+  const file = await readExplorerFileBytes({ root, relativePath });
+
+  if (file.kind === "image") {
+    return {
+      path: file.path,
+      kind: file.kind,
+      encoding: "base64",
+      content: Buffer.from(file.bytes).toString("base64"),
+      mimeType: file.mimeType,
+      size: file.size,
+      modifiedAt: file.modifiedAt,
+    };
+  }
+
+  if (file.kind === "binary") {
+    return {
+      path: file.path,
+      kind: file.kind,
+      encoding: "none",
+      mimeType: file.mimeType,
+      size: file.size,
+      modifiedAt: file.modifiedAt,
+    };
+  }
+
+  return {
+    path: file.path,
+    kind: file.kind,
+    encoding: "utf-8",
+    content: Buffer.from(file.bytes).toString("utf-8"),
+    mimeType: file.mimeType,
+    size: file.size,
+    modifiedAt: file.modifiedAt,
+  };
+}
+
+export async function readExplorerFileBytes({
+  root,
+  relativePath,
+}: ReadFileParams): Promise<FileExplorerFileBytes> {
   const filePath = await resolveScopedPath({ root, relativePath });
   const stats = await fs.stat(filePath);
 
@@ -139,8 +189,8 @@ export async function readExplorerFile({
     return {
       ...basePayload,
       kind: "image",
-      encoding: "base64",
-      content: buffer.toString("base64"),
+      encoding: "binary",
+      bytes: buffer,
       mimeType: IMAGE_MIME_TYPES[ext],
     };
   }
@@ -150,7 +200,8 @@ export async function readExplorerFile({
     return {
       ...basePayload,
       kind: "binary",
-      encoding: "none",
+      encoding: "binary",
+      bytes: buffer,
       mimeType: "application/octet-stream",
     };
   }
@@ -159,7 +210,7 @@ export async function readExplorerFile({
     ...basePayload,
     kind: "text",
     encoding: "utf-8",
-    content: buffer.toString("utf-8"),
+    bytes: buffer,
     mimeType: textMimeTypeForExtension(ext),
   };
 }

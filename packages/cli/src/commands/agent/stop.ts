@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import type { DaemonClient } from "@getpaseo/server";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
 import type {
@@ -53,7 +54,7 @@ export async function runStopCommand(
     throw error;
   }
 
-  let client;
+  let client: DaemonClient;
   try {
     client = await connectToDaemon({ host: options.host as string | undefined });
   } catch (err) {

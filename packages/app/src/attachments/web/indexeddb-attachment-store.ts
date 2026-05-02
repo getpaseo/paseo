@@ -74,17 +74,18 @@ function runTx<T>(
   });
 }
 
-function base64ToBlob(input: { base64: string; mimeType: string }): Blob {
-  const binary = atob(input.base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return new Blob([bytes], { type: input.mimeType });
-}
-
 async function sourceToBlob(input: SaveAttachmentInput): Promise<{ blob: Blob; mimeType: string }> {
   const source = input.source;
+  if (source.kind === "bytes") {
+    const mimeType = normalizeMimeType(input.mimeType);
+    const buffer = new ArrayBuffer(source.bytes.byteLength);
+    new Uint8Array(buffer).set(source.bytes);
+    return {
+      blob: new Blob([buffer], { type: mimeType }),
+      mimeType,
+    };
+  }
+
   if (source.kind === "blob") {
     const mimeType = normalizeMimeType(input.mimeType ?? source.blob.type);
     const blob =
@@ -101,14 +102,6 @@ async function sourceToBlob(input: SaveAttachmentInput): Promise<{ blob: Blob; m
     const mimeType = normalizeMimeType(input.mimeType ?? parsed.mimeType ?? blob.type);
     return {
       blob: blob.type === mimeType ? blob : blob.slice(0, blob.size, mimeType),
-      mimeType,
-    };
-  }
-
-  if (source.kind === "base64") {
-    const mimeType = normalizeMimeType(input.mimeType);
-    return {
-      blob: base64ToBlob({ base64: source.base64, mimeType }),
       mimeType,
     };
   }

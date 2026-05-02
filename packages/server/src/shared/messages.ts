@@ -1505,6 +1505,7 @@ export const FileExplorerRequestSchema = z.object({
   path: z.string().optional(),
   mode: z.enum(["list", "file"]),
   requestId: z.string(),
+  acceptBinary: z.boolean().optional(),
 });
 
 export const ProjectIconRequestSchema = z.object({

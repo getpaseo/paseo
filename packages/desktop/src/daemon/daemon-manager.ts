@@ -10,6 +10,7 @@ import {
   garbageCollectManagedAttachmentFiles,
   readManagedFileBase64,
   writeAttachmentBase64,
+  writeAttachmentBytes,
 } from "../features/attachments.js";
 import {
   checkForAppUpdate,
@@ -539,6 +540,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     desktop_get_system_idle_time: () => powerMonitor.getSystemIdleTime() * 1000,
     cli_daemon_status: () => getCliDaemonStatus(),
     write_attachment_base64: (args) => writeAttachmentBase64(args ?? {}),
+    write_attachment_bytes: (args) => writeAttachmentBytes(args ?? {}),
     copy_attachment_file: (args) => copyAttachmentFileToManagedStorage(args ?? {}),
     read_file_base64: (args) => readManagedFileBase64(args ?? {}),
     delete_attachment_file: (args) => deleteManagedAttachmentFile(args ?? {}),

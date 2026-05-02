@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { AttachmentMetadata, AttachmentStore, SaveAttachmentInput } from "@/attachments/types";
 import { __setAttachmentStoreForTests } from "./store";
-import { encodeAttachmentsForSend, persistAttachmentFromBase64 } from "./service";
+import { encodeAttachmentsForSend, persistAttachmentFromBytes } from "./service";
 
 function createAttachment(input: Partial<AttachmentMetadata> = {}): AttachmentMetadata {
   return {
@@ -54,19 +54,20 @@ describe("attachment service", () => {
     __setAttachmentStoreForTests(null);
   });
 
-  it("persists raw base64 without requiring a data URL wrapper", async () => {
+  it("persists raw bytes without requiring a base64 wrapper", async () => {
     const store = createRecordingStore();
     __setAttachmentStoreForTests(store);
+    const bytes = new Uint8Array([0, 1, 2, 3]);
 
-    const attachment = await persistAttachmentFromBase64({
-      id: "att_base64",
-      base64: "AAECAw==",
+    const attachment = await persistAttachmentFromBytes({
+      id: "att_bytes",
+      bytes,
       mimeType: "image/png",
       fileName: "image.png",
     });
 
     expect(attachment).toEqual({
-      id: "att_base64",
+      id: "att_bytes",
       mimeType: "image/png",
       storageType: "web-indexeddb",
       storageKey: "att_1",
@@ -76,10 +77,10 @@ describe("attachment service", () => {
     });
     expect(store.savedSources).toEqual([
       {
-        id: "att_base64",
+        id: "att_bytes",
         mimeType: "image/png",
         fileName: "image.png",
-        source: { kind: "base64", base64: "AAECAw==" },
+        source: { kind: "bytes", bytes },
       },
     ]);
   });

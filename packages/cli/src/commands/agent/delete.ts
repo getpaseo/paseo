@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import type { DaemonClient } from "@getpaseo/server";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
 
@@ -49,7 +50,7 @@ export async function runDeleteCommand(
     throw error;
   }
 
-  let client;
+  let client: DaemonClient;
   try {
     client = await connectToDaemon({ host: options.host as string | undefined });
   } catch (err) {
