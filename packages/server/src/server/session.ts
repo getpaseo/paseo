@@ -31,7 +31,6 @@ import {
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
-  type WorkspaceStateBucket,
 } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
@@ -196,6 +195,11 @@ import {
   type GitHubService,
   type PullRequestTimelineItem,
 } from "../services/github-service.js";
+import {
+  summarizeFetchWorkspacesEntries,
+  WorkspaceDirectory,
+  type WorkspaceUpdatesFilter,
+} from "./workspace-directory.js";
 import {
   attemptFirstAgentBranchAutoName,
   createPaseoWorktree,
@@ -420,12 +424,6 @@ function getFirstUserMessageText(timeline: readonly AgentTimelineItem[]): string
 }
 
 const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "title"] as const;
-const FETCH_WORKSPACES_SORT_KEYS = [
-  "status_priority",
-  "activity_at",
-  "name",
-  "project_id",
-] as const;
 
 export function resolveWaitForFinishError(options: {
   status: "permission" | "error" | "idle";
@@ -484,7 +482,6 @@ type FetchWorkspacesRequestMessage = Extract<
   { type: "fetch_workspaces_request" }
 >;
 type FetchWorkspacesRequestFilter = NonNullable<FetchWorkspacesRequestMessage["filter"]>;
-type FetchWorkspacesRequestSort = NonNullable<FetchWorkspacesRequestMessage["sort"]>[number];
 type FetchWorkspacesResponsePayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_workspaces_response" }
@@ -495,48 +492,12 @@ type WorkspaceUpdatePayload = Extract<
   SessionOutboundMessage,
   { type: "workspace_update" }
 >["payload"];
-type WorkspaceUpdatesFilter = FetchWorkspacesRequestFilter;
 interface WorkspaceUpdatesSubscriptionState {
   subscriptionId: string;
   filter?: WorkspaceUpdatesFilter;
   isBootstrapping: boolean;
   pendingUpdatesByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
   lastEmittedByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
-}
-function summarizeFetchWorkspacesEntries(entries: Iterable<FetchWorkspacesResponseEntry>): {
-  count: number;
-  projectIds: string[];
-  statusCounts: Record<string, number>;
-  workspaces: Array<{
-    id: string;
-    projectId: string;
-    projectDisplayName: string;
-    name: string;
-    status: FetchWorkspacesResponseEntry["status"];
-    workspaceKind: FetchWorkspacesResponseEntry["workspaceKind"];
-    activityAt: string | null;
-  }>;
-} {
-  const workspaces = Array.from(entries, (entry) => ({
-    id: entry.id,
-    projectId: entry.projectId,
-    projectDisplayName: entry.projectDisplayName,
-    name: entry.name,
-    status: entry.status,
-    workspaceKind: entry.workspaceKind,
-    activityAt: entry.activityAt,
-  }));
-  const statusCounts = new Map<string, number>();
-  for (const workspace of workspaces) {
-    statusCounts.set(workspace.status, (statusCounts.get(workspace.status) ?? 0) + 1);
-  }
-
-  return {
-    count: workspaces.length,
-    projectIds: [...new Set(workspaces.map((workspace) => workspace.projectId))],
-    statusCounts: Object.fromEntries(statusCounts),
-    workspaces,
-  };
 }
 
 class SessionRequestError extends Error {
@@ -872,7 +833,7 @@ export class Session {
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
   private readonly workspaceGitFetchSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitSubscriptions = new Map<string, () => void>();
-  private readonly archivingByWorkspaceId = new Map<string, string>();
+  private readonly workspaceDirectory: WorkspaceDirectory;
   private registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
   private unregisterVoiceSpeakHandler?: (agentId: string) => void;
   private registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
@@ -974,6 +935,14 @@ export class Session {
     this.providerOverrides = providerOverrides;
     this.isDev = isDev === true;
     this.abortController = new AbortController();
+    this.workspaceDirectory = new WorkspaceDirectory({
+      logger: this.sessionLogger,
+      projectRegistry: this.projectRegistry,
+      workspaceRegistry: this.workspaceRegistry,
+      listAgentPayloads: () => this.listAgentPayloads(),
+      isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
+      buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
+    });
 
     this.initializePerSessionManagers({ tts, stt, dictation });
 
@@ -5939,14 +5908,6 @@ export class Session {
     };
   }
 
-  private readonly workspaceStatePriority: Record<WorkspaceStateBucket, number> = {
-    needs_input: 0,
-    failed: 1,
-    running: 2,
-    attention: 3,
-    done: 4,
-  };
-
   private readonly agentsPager = new SortablePager<
     AgentSnapshotPayload,
     FetchAgentsRequestSort["key"]
@@ -5969,28 +5930,6 @@ export class Session {
     },
   });
 
-  private readonly workspacesPager = new SortablePager<
-    WorkspaceDescriptorPayload,
-    FetchWorkspacesRequestSort["key"]
-  >({
-    validKeys: FETCH_WORKSPACES_SORT_KEYS,
-    defaultSort: [{ key: "activity_at", direction: "desc" }],
-    label: "fetch_workspaces",
-    getId: (workspace) => workspace.id,
-    getSortValue: (workspace, key) => {
-      switch (key) {
-        case "status_priority":
-          return this.workspaceStatePriority[workspace.status];
-        case "activity_at":
-          return workspace.activityAt ? Date.parse(workspace.activityAt) : null;
-        case "name":
-          return workspace.name.toLocaleLowerCase();
-        case "project_id":
-          return workspace.projectId.toLocaleLowerCase();
-      }
-    },
-  });
-
   private decodeAgentCursor(token: string, sort: SortSpec<FetchAgentsRequestSort["key"]>[]) {
     try {
       return this.agentsPager.decode(token, sort);
@@ -6000,37 +5939,6 @@ export class Session {
       }
       throw error;
     }
-  }
-
-  private decodeWorkspaceCursor(
-    token: string,
-    sort: SortSpec<FetchWorkspacesRequestSort["key"]>[],
-  ) {
-    try {
-      return this.workspacesPager.decode(token, sort);
-    } catch (error) {
-      if (error instanceof CursorError) {
-        throw new SessionRequestError("invalid_cursor", error.message);
-      }
-      throw error;
-    }
-  }
-
-  private deriveWorkspaceStateBucket(agent: AgentSnapshotPayload): WorkspaceStateBucket {
-    const pendingPermissionCount = agent.pendingPermissions?.length ?? 0;
-    if (pendingPermissionCount > 0 || agent.attentionReason === "permission") {
-      return "needs_input";
-    }
-    if (agent.status === "error" || agent.attentionReason === "error") {
-      return "failed";
-    }
-    if (agent.status === "running") {
-      return "running";
-    }
-    if (agent.requiresAttention) {
-      return "attention";
-    }
-    return "done";
   }
 
   private async describeWorkspaceRecord(
@@ -6173,160 +6081,32 @@ export class Session {
   }
 
   markWorkspaceArchiving(workspaceIds: Iterable<string>, archivingAt: string): void {
-    for (const workspaceId of workspaceIds) {
-      this.archivingByWorkspaceId.set(workspaceId, archivingAt);
-    }
+    this.workspaceDirectory.markArchiving(workspaceIds, archivingAt);
   }
 
   clearWorkspaceArchiving(workspaceIds: Iterable<string>): void {
-    for (const workspaceId of workspaceIds) {
-      this.archivingByWorkspaceId.delete(workspaceId);
-    }
+    this.workspaceDirectory.clearArchiving(workspaceIds);
   }
 
   private async buildWorkspaceDescriptorMap(options: {
     includeGitData: boolean;
     workspaceIds?: Iterable<string>;
   }): Promise<Map<string, WorkspaceDescriptorPayload>> {
-    const [agents, persistedWorkspaces, persistedProjects] = await Promise.all([
-      this.listAgentPayloads(),
-      this.workspaceRegistry.list(),
-      this.projectRegistry.list(),
-    ]);
-
-    const activeProjects = new Map(
-      persistedProjects
-        .filter((project) => !project.archivedAt)
-        .map((project) => [project.projectId, project] as const),
-    );
-    const archivedProjectIds = new Set(
-      persistedProjects.filter((project) => project.archivedAt).map((project) => project.projectId),
-    );
-    const activeRecords = persistedWorkspaces.filter(
-      (workspace) => !workspace.archivedAt && !archivedProjectIds.has(workspace.projectId),
-    );
-    const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
-    const workspaceIds = options.workspaceIds ? new Set(options.workspaceIds) : null;
-    const workspaceIdsByDirectory = new Map(
-      activeRecords.map(
-        (workspace) =>
-          [normalizePersistedWorkspaceId(workspace.cwd), workspace.workspaceId] as const,
-      ),
-    );
-
-    const includedWorkspaces = activeRecords.filter(
-      (workspace) => !workspaceIds || workspaceIds.has(workspace.workspaceId),
-    );
-    const workspaceDescriptors = await Promise.all(
-      includedWorkspaces.map((workspace) =>
-        this.buildWorkspaceDescriptor({
-          workspace,
-          projectRecord: activeProjects.get(workspace.projectId) ?? null,
-          includeGitData: options.includeGitData,
-        }),
-      ),
-    );
-    for (let i = 0; i < includedWorkspaces.length; i += 1) {
-      const workspaceId = includedWorkspaces[i]!.workspaceId;
-      descriptorsByWorkspaceId.set(workspaceId, {
-        ...workspaceDescriptors[i]!,
-        archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
-      });
-    }
-
-    for (const agent of agents) {
-      if (agent.archivedAt) {
-        continue;
-      }
-      if (!this.isProviderVisibleToClient(agent.provider)) {
-        continue;
-      }
-
-      const workspaceId = workspaceIdsByDirectory.get(normalizePersistedWorkspaceId(agent.cwd));
-      if (workspaceId === undefined) {
-        continue;
-      }
-      const existing = descriptorsByWorkspaceId.get(workspaceId);
-      if (!existing) {
-        continue;
-      }
-
-      const bucket = this.deriveWorkspaceStateBucket(agent);
-      if (this.workspaceStatePriority[bucket] < this.workspaceStatePriority[existing.status]) {
-        existing.status = bucket;
-      }
-    }
-
-    return descriptorsByWorkspaceId;
+    return this.workspaceDirectory.buildDescriptorMap(options);
   }
 
   private resolveRegisteredWorkspaceIdForCwd(
     cwd: string,
     workspaces: PersistedWorkspaceRecord[],
   ): string {
-    const normalizedCwd = normalizePersistedWorkspaceId(cwd);
-    const exact = workspaces.find((workspace) => workspace.cwd === normalizedCwd);
-    if (exact) {
-      return exact.workspaceId;
-    }
-
-    const userHome = homedir();
-    let bestMatch: PersistedWorkspaceRecord | null = null;
-    for (const workspace of workspaces) {
-      if (workspace.cwd === userHome) continue;
-      if (workspace.archivedAt) continue;
-      const prefix = workspace.cwd.endsWith(sep) ? workspace.cwd : `${workspace.cwd}${sep}`;
-      if (!normalizedCwd.startsWith(prefix)) {
-        continue;
-      }
-      if (!bestMatch || workspace.cwd.length > bestMatch.cwd.length) {
-        bestMatch = workspace;
-      }
-    }
-
-    return bestMatch?.workspaceId ?? normalizedCwd;
-  }
-
-  private async listWorkspaceDescriptors(): Promise<WorkspaceDescriptorPayload[]> {
-    return Array.from(
-      (
-        await this.buildWorkspaceDescriptorMap({
-          includeGitData: true,
-        })
-      ).values(),
-    );
+    return this.workspaceDirectory.resolveRegisteredWorkspaceIdForCwd(cwd, workspaces);
   }
 
   private matchesWorkspaceFilter(input: {
     workspace: WorkspaceDescriptorPayload;
     filter: FetchWorkspacesRequestFilter | undefined;
   }): boolean {
-    const { workspace, filter } = input;
-    if (!filter) {
-      return true;
-    }
-
-    if (filter.projectId && filter.projectId.trim().length > 0) {
-      if (workspace.projectId !== filter.projectId.trim()) {
-        return false;
-      }
-    }
-
-    if (filter.idPrefix && filter.idPrefix.trim().length > 0) {
-      if (!String(workspace.id).startsWith(filter.idPrefix.trim())) {
-        return false;
-      }
-    }
-
-    if (filter.query && filter.query.trim().length > 0) {
-      const query = filter.query.trim().toLocaleLowerCase();
-      const haystacks = [workspace.name, String(workspace.projectId), String(workspace.id)];
-      if (!haystacks.some((value) => value.toLocaleLowerCase().includes(query))) {
-        return false;
-      }
-    }
-
-    return true;
+    return this.workspaceDirectory.matchesFilter(input);
   }
 
   private async listFetchWorkspacesEntries(
@@ -6335,53 +6115,14 @@ export class Session {
     entries: FetchWorkspacesResponseEntry[];
     pageInfo: FetchWorkspacesResponsePageInfo;
   }> {
-    const filter = request.filter;
-    const sort = this.workspacesPager.normalizeSort(request.sort);
-    let entries = await this.listWorkspaceDescriptors();
-    const listedCount = entries.length;
-    entries = entries.filter((workspace) => this.matchesWorkspaceFilter({ workspace, filter }));
-    const filteredCount = entries.length;
-    entries.sort((left, right) => this.workspacesPager.compare(left, right, sort));
-
-    const cursorToken = request.page?.cursor;
-    if (cursorToken) {
-      const cursor = this.decodeWorkspaceCursor(cursorToken, sort);
-      entries = entries.filter(
-        (workspace) => this.workspacesPager.compareWithCursor(workspace, cursor, sort) > 0,
-      );
+    try {
+      return await this.workspaceDirectory.listFetchEntries(request);
+    } catch (error) {
+      if (error instanceof CursorError) {
+        throw new SessionRequestError("invalid_cursor", error.message);
+      }
+      throw error;
     }
-
-    const limit = request.page?.limit ?? 200;
-    const pagedEntries = entries.slice(0, limit);
-    const hasMore = entries.length > limit;
-    const nextCursor =
-      hasMore && pagedEntries.length > 0
-        ? this.workspacesPager.encode(pagedEntries[pagedEntries.length - 1], sort)
-        : null;
-
-    this.sessionLogger.debug(
-      {
-        requestId: request.requestId,
-        filter: request.filter ?? null,
-        sort,
-        page: request.page ?? null,
-        listedCount,
-        filteredCount,
-        returnedCount: pagedEntries.length,
-        hasMore,
-        nextCursor,
-      },
-      "fetch_workspaces_entries_listed",
-    );
-
-    return {
-      entries: pagedEntries,
-      pageInfo: {
-        nextCursor,
-        prevCursor: request.page?.cursor ?? null,
-        hasMore,
-      },
-    };
   }
 
   private bufferOrEmitWorkspaceUpdate(
