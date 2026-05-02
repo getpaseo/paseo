@@ -39,6 +39,7 @@ import readline from "node:readline";
 import { z } from "zod";
 import { loadCodexPersistedTimeline } from "./codex-rollout-timeline.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import { curateAgentActivity, curateAgentActivityActions } from "../activity-curator.js";
 import {
   mapCodexRolloutToolCall,
   mapCodexToolCallFromThreadItem,
@@ -1176,6 +1177,8 @@ function normalizeCodexThreadItemType(rawType: string | undefined): string | und
       return "mcpToolCall";
     case "WebSearch":
       return "webSearch";
+    case "CollabAgentToolCall":
+      return "collabAgentToolCall";
     default:
       return rawType;
   }
@@ -1547,6 +1550,7 @@ function threadItemToTimeline(
     case "fileChange":
     case "mcpToolCall":
     case "webSearch":
+    case "collabAgentToolCall":
       return mapCodexToolCallFromThreadItem(normalizedItem, { cwd });
     default:
       return null;
@@ -1608,12 +1612,14 @@ const ThreadStartedNotificationSchema = z
 
 const TurnStartedNotificationSchema = z
   .object({
+    threadId: z.string().optional(),
     turn: z.object({ id: z.string() }).passthrough(),
   })
   .passthrough();
 
 const TurnCompletedNotificationSchema = z
   .object({
+    threadId: z.string().optional(),
     turn: z
       .object({
         status: z.string(),
@@ -1656,6 +1662,7 @@ const ThreadTokenUsageUpdatedNotificationSchema = z
 
 const ItemTextDeltaNotificationSchema = z
   .object({
+    threadId: z.string().optional(),
     itemId: z.string(),
     delta: z.string(),
   })
@@ -1663,6 +1670,7 @@ const ItemTextDeltaNotificationSchema = z
 
 const ItemLifecycleNotificationSchema = z
   .object({
+    threadId: z.string().optional(),
     item: z
       .object({
         id: z.string().optional(),
@@ -1695,9 +1703,12 @@ const CodexEventTaskCompleteNotificationSchema = z
 
 const CodexEventItemLifecycleNotificationSchema = z
   .object({
+    threadId: z.string().optional(),
     msg: z
       .object({
         type: z.enum(["item_started", "item_completed"]),
+        threadId: z.string().optional(),
+        thread_id: z.string().optional(),
         item: z
           .object({
             id: z.string().optional(),
@@ -1827,21 +1838,28 @@ const CodexEventTurnDiffNotificationSchema = z
 
 type ParsedCodexNotification =
   | { kind: "thread_started"; threadId: string }
-  | { kind: "turn_started"; turnId: string }
-  | { kind: "turn_completed"; status: string; errorMessage: string | null }
+  | { kind: "turn_started"; turnId: string; threadId: string | null }
+  | {
+      kind: "turn_completed";
+      status: string;
+      errorMessage: string | null;
+      threadId: string | null;
+    }
   | { kind: "plan_updated"; plan: Array<{ step: string | null; status: string | null }> }
   | { kind: "diff_updated"; diff: string }
   | { kind: "token_usage_updated"; tokenUsage: unknown }
-  | { kind: "agent_message_delta"; itemId: string; delta: string }
-  | { kind: "reasoning_delta"; itemId: string; delta: string }
+  | { kind: "agent_message_delta"; itemId: string; delta: string; threadId: string | null }
+  | { kind: "reasoning_delta"; itemId: string; delta: string; threadId: string | null }
   | {
       kind: "item_completed";
       source: "item" | "codex_event";
+      threadId: string | null;
       item: { id?: string; type?: string; [key: string]: unknown };
     }
   | {
       kind: "item_started";
       source: "item" | "codex_event";
+      threadId: string | null;
       item: { id?: string; type?: string; [key: string]: unknown };
     }
   | {
@@ -1910,11 +1928,13 @@ const CodexNotificationSchema = z.union([
       params,
     }),
   ),
-  z
-    .object({ method: z.literal("turn/started"), params: TurnStartedNotificationSchema })
-    .transform(
-      ({ params }): ParsedCodexNotification => ({ kind: "turn_started", turnId: params.turn.id }),
-    ),
+  z.object({ method: z.literal("turn/started"), params: TurnStartedNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "turn_started",
+      turnId: params.turn.id,
+      threadId: params.threadId ?? null,
+    }),
+  ),
   z.object({ method: z.literal("turn/started"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({
       kind: "invalid_payload",
@@ -1929,6 +1949,7 @@ const CodexNotificationSchema = z.union([
         kind: "turn_completed",
         status: params.turn.status,
         errorMessage: params.turn.error?.message ?? null,
+        threadId: params.threadId ?? null,
       }),
     ),
   z.object({ method: z.literal("turn/completed"), params: z.unknown() }).transform(
@@ -1996,6 +2017,7 @@ const CodexNotificationSchema = z.union([
         kind: "agent_message_delta",
         itemId: params.itemId,
         delta: params.delta,
+        threadId: params.threadId ?? null,
       }),
     ),
   z.object({ method: z.literal("item/agentMessage/delta"), params: z.unknown() }).transform(
@@ -2015,6 +2037,7 @@ const CodexNotificationSchema = z.union([
         kind: "reasoning_delta",
         itemId: params.itemId,
         delta: params.delta,
+        threadId: params.threadId ?? null,
       }),
     ),
   z.object({ method: z.literal("item/reasoning/summaryTextDelta"), params: z.unknown() }).transform(
@@ -2030,6 +2053,7 @@ const CodexNotificationSchema = z.union([
       ({ params }): ParsedCodexNotification => ({
         kind: "item_completed",
         source: "item",
+        threadId: params.threadId ?? null,
         item: params.item,
       }),
     ),
@@ -2046,6 +2070,7 @@ const CodexNotificationSchema = z.union([
       ({ params }): ParsedCodexNotification => ({
         kind: "item_started",
         source: "item",
+        threadId: params.threadId ?? null,
         item: params.item,
       }),
     ),
@@ -2065,6 +2090,7 @@ const CodexNotificationSchema = z.union([
       ({ params }): ParsedCodexNotification => ({
         kind: "item_started",
         source: "codex_event",
+        threadId: params.threadId ?? params.msg.threadId ?? params.msg.thread_id ?? null,
         item: params.msg.item,
       }),
     ),
@@ -2084,6 +2110,7 @@ const CodexNotificationSchema = z.union([
       ({ params }): ParsedCodexNotification => ({
         kind: "item_completed",
         source: "codex_event",
+        threadId: params.threadId ?? params.msg.threadId ?? params.msg.thread_id ?? null,
         item: params.msg.item,
       }),
     ),
@@ -2311,6 +2338,7 @@ const CodexNotificationSchema = z.union([
         kind: "turn_completed",
         status: "interrupted",
         errorMessage: null,
+        threadId: null,
       }),
     ),
   z.object({ method: z.literal("codex/event/turn_aborted"), params: z.unknown() }).transform(
@@ -2330,6 +2358,7 @@ const CodexNotificationSchema = z.union([
         kind: "turn_completed",
         status: "completed",
         errorMessage: null,
+        threadId: null,
       }),
     ),
   z.object({ method: z.literal("codex/event/task_complete"), params: z.unknown() }).transform(
@@ -2508,6 +2537,13 @@ function buildCodexAppServerInitializeParams(): {
   };
 }
 
+interface CodexSubAgentCallState {
+  callId: string;
+  toolCall: ToolCallTimelineItem;
+  childItemOrder: string[];
+  childItems: Map<string, AgentTimelineItem>;
+}
+
 class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -2549,6 +2585,8 @@ class CodexAppServerAgentSession implements AgentSession {
   private emittedExecCommandCompletedCallIds = new Set<string>();
   private emittedItemStartedIds = new Set<string>();
   private emittedItemCompletedIds = new Set<string>();
+  private subAgentCallsByCallId = new Map<string, CodexSubAgentCallState>();
+  private subAgentCallIdByChildThreadId = new Map<string, string>();
   private warnedUnknownNotificationMethods = new Set<string>();
   private warnedInvalidNotificationPayloads = new Set<string>();
   private warnedIncompleteEditToolCallIds = new Set<string>();
@@ -3562,6 +3600,141 @@ class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private getSubAgentCallIdForThread(threadId: string | null | undefined): string | null {
+    if (!threadId || threadId === this.currentThreadId) {
+      return null;
+    }
+    return this.subAgentCallIdByChildThreadId.get(threadId) ?? null;
+  }
+
+  private registerSubAgentToolCall(
+    timelineItem: ToolCallTimelineItem,
+    rawItem: { [key: string]: unknown },
+  ): void {
+    if (timelineItem.detail.type !== "sub_agent") {
+      return;
+    }
+
+    const existing = this.subAgentCallsByCallId.get(timelineItem.callId);
+    const state: CodexSubAgentCallState =
+      existing ??
+      ({
+        callId: timelineItem.callId,
+        toolCall: timelineItem,
+        childItemOrder: [],
+        childItems: new Map<string, AgentTimelineItem>(),
+      } satisfies CodexSubAgentCallState);
+
+    let actions = timelineItem.detail.actions;
+    if (actions.length === 0 && state.toolCall.detail.type === "sub_agent") {
+      actions = state.toolCall.detail.actions;
+    }
+
+    state.toolCall = {
+      ...timelineItem,
+      detail: {
+        ...timelineItem.detail,
+        log:
+          timelineItem.detail.log ||
+          (state.toolCall.detail.type === "sub_agent" ? state.toolCall.detail.log : ""),
+        actions,
+      },
+    };
+    this.subAgentCallsByCallId.set(timelineItem.callId, state);
+
+    const receiverThreadIds = Array.isArray(rawItem.receiverThreadIds)
+      ? rawItem.receiverThreadIds.filter((value): value is string => typeof value === "string")
+      : [];
+    for (const receiverThreadId of receiverThreadIds) {
+      this.subAgentCallIdByChildThreadId.set(receiverThreadId, timelineItem.callId);
+    }
+  }
+
+  private upsertSubAgentChildItem(callId: string, itemId: string, item: AgentTimelineItem): void {
+    const state = this.subAgentCallsByCallId.get(callId);
+    if (!state) {
+      return;
+    }
+    if (!state.childItems.has(itemId)) {
+      state.childItemOrder.push(itemId);
+    }
+    state.childItems.set(itemId, item);
+  }
+
+  private getSubAgentChildTimeline(state: CodexSubAgentCallState): AgentTimelineItem[] {
+    return state.childItemOrder
+      .map((itemId) => state.childItems.get(itemId))
+      .filter((item): item is AgentTimelineItem => Boolean(item));
+  }
+
+  private emitSubAgentActivityUpdate(
+    callId: string,
+    status?: ToolCallTimelineItem["status"],
+  ): void {
+    const state = this.subAgentCallsByCallId.get(callId);
+    if (!state || state.toolCall.detail.type !== "sub_agent") {
+      return;
+    }
+    const childTimeline = this.getSubAgentChildTimeline(state);
+    const log = childTimeline.length > 0 ? curateAgentActivity(childTimeline) : "";
+    const actions = childTimeline.length > 0 ? curateAgentActivityActions(childTimeline) : [];
+    const resolvedStatus = status ?? state.toolCall.status;
+    const baseToolCall = {
+      ...state.toolCall,
+      detail: {
+        ...state.toolCall.detail,
+        log,
+        actions,
+      },
+    };
+    const nextToolCall: ToolCallTimelineItem =
+      resolvedStatus === "failed"
+        ? {
+            ...baseToolCall,
+            status: "failed",
+            error: state.toolCall.error ?? { message: "Sub-agent failed" },
+          }
+        : {
+            ...baseToolCall,
+            status: resolvedStatus,
+            error: null,
+          };
+    state.toolCall = nextToolCall;
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: nextToolCall });
+  }
+
+  private handleSubAgentChildItemCompleted(
+    callId: string,
+    itemId: string | undefined,
+    timelineItem: AgentTimelineItem,
+  ): void {
+    this.applyBufferedDeltaTextToTimelineItem(timelineItem, itemId);
+    if (itemId) {
+      this.upsertSubAgentChildItem(callId, itemId, timelineItem);
+      this.pendingAgentMessages.delete(itemId);
+      this.pendingReasoning.delete(itemId);
+      this.pendingCommandOutputDeltas.delete(itemId);
+      this.pendingFileChangeOutputDeltas.delete(itemId);
+    }
+    this.emitSubAgentActivityUpdate(
+      callId,
+      timelineItem.type === "tool_call" && timelineItem.status === "failed" ? "failed" : "running",
+    );
+  }
+
+  private shouldSkipCompletedThreadItem(
+    timelineItem: AgentTimelineItem,
+    normalizedItemType: string | undefined,
+    itemId: string | undefined,
+  ): boolean {
+    // For commandExecution items, codex/event/exec_command_* is authoritative.
+    if (timelineItem.type === "tool_call" && normalizedItemType === "commandExecution") {
+      const callId = timelineItem.callId || itemId;
+      return Boolean(callId && this.emittedExecCommandCompletedCallIds.has(callId));
+    }
+    return Boolean(itemId && this.emittedItemCompletedIds.has(itemId));
+  }
+
   private handleCodexDeltaNotification(
     parsed: Extract<
       ParsedCodexNotification,
@@ -3576,7 +3749,17 @@ class CodexAppServerAgentSession implements AgentSession {
   ): void {
     if (parsed.kind === "agent_message_delta") {
       const prev = this.pendingAgentMessages.get(parsed.itemId) ?? "";
-      this.pendingAgentMessages.set(parsed.itemId, prev + parsed.delta);
+      const text = prev + parsed.delta;
+      this.pendingAgentMessages.set(parsed.itemId, text);
+      const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
+      if (subAgentCallId) {
+        this.upsertSubAgentChildItem(subAgentCallId, parsed.itemId, {
+          type: "assistant_message",
+          text,
+        });
+        this.emitSubAgentActivityUpdate(subAgentCallId, "running");
+        return;
+      }
       const isFirstDeltaForItem = prev.length === 0;
       this.emitEvent({
         type: "timeline",
@@ -3598,6 +3781,15 @@ class CodexAppServerAgentSession implements AgentSession {
       const prev = this.pendingReasoning.get(parsed.itemId) ?? [];
       prev.push(parsed.delta);
       this.pendingReasoning.set(parsed.itemId, prev);
+      const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
+      if (subAgentCallId) {
+        this.upsertSubAgentChildItem(subAgentCallId, parsed.itemId, {
+          type: "reasoning",
+          text: prev.join(""),
+        });
+        this.emitSubAgentActivityUpdate(subAgentCallId, "running");
+        return;
+      }
       this.emitEvent({
         type: "timeline",
         provider: CODEX_PROVIDER,
@@ -3628,6 +3820,11 @@ class CodexAppServerAgentSession implements AgentSession {
   private handleTurnStartedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "turn_started" }>,
   ): void {
+    const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
+    if (subAgentCallId) {
+      this.emitSubAgentActivityUpdate(subAgentCallId, "running");
+      return;
+    }
     this.currentTurnId = parsed.turnId;
     this.resetTurnTrackingState();
     this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
@@ -3636,6 +3833,17 @@ class CodexAppServerAgentSession implements AgentSession {
   private handleTurnCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "turn_completed" }>,
   ): void {
+    const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
+    if (subAgentCallId) {
+      let status: ToolCallTimelineItem["status"] = "completed";
+      if (parsed.status === "failed") {
+        status = "failed";
+      } else if (parsed.status === "interrupted") {
+        status = "canceled";
+      }
+      this.emitSubAgentActivityUpdate(subAgentCallId, status);
+      return;
+    }
     if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
@@ -3833,18 +4041,16 @@ class CodexAppServerAgentSession implements AgentSession {
     if (!timelineItem) {
       return;
     }
+    const childSubAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
+    if (childSubAgentCallId) {
+      this.handleSubAgentChildItemCompleted(childSubAgentCallId, parsed.item.id, timelineItem);
+      return;
+    }
     const normalizedItemType = normalizeCodexThreadItemType(
       typeof parsed.item.type === "string" ? parsed.item.type : undefined,
     );
     const itemId = parsed.item.id;
-    // For commandExecution items, codex/event/exec_command_* is authoritative.
-    if (timelineItem.type === "tool_call" && normalizedItemType === "commandExecution") {
-      const callId = timelineItem.callId || itemId;
-      if (callId && this.emittedExecCommandCompletedCallIds.has(callId)) {
-        return;
-      }
-    }
-    if (itemId && this.emittedItemCompletedIds.has(itemId)) {
+    if (this.shouldSkipCompletedThreadItem(timelineItem, normalizedItemType, itemId)) {
       return;
     }
     if (this.consumeStreamedTextCompletion(timelineItem, itemId)) {
@@ -3859,6 +4065,7 @@ class CodexAppServerAgentSession implements AgentSession {
     }
     this.applyBufferedDeltaTextToTimelineItem(timelineItem, itemId);
     if (timelineItem.type === "tool_call") {
+      this.registerSubAgentToolCall(timelineItem, parsed.item);
       if (timelineItem.detail.type === "plan") {
         this.rememberPlanResult(timelineItem);
         // Codex can surface plans both as turn/plan updates and as completed
@@ -3957,6 +4164,14 @@ class CodexAppServerAgentSession implements AgentSession {
     if (!timelineItem || timelineItem.type !== "tool_call") {
       return;
     }
+    const childSubAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
+    if (childSubAgentCallId) {
+      if (parsed.item.id) {
+        this.upsertSubAgentChildItem(childSubAgentCallId, parsed.item.id, timelineItem);
+      }
+      this.emitSubAgentActivityUpdate(childSubAgentCallId, "running");
+      return;
+    }
     const normalizedItemType = normalizeCodexThreadItemType(
       typeof parsed.item.type === "string" ? parsed.item.type : undefined,
     );
@@ -3971,6 +4186,7 @@ class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.warnOnIncompleteEditToolCall(timelineItem, "item_started", parsed.item);
+    this.registerSubAgentToolCall(timelineItem, parsed.item);
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
     if (itemId) {
       this.emittedItemStartedIds.add(itemId);
