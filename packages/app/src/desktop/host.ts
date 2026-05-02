@@ -69,6 +69,11 @@ export interface DesktopEventsBridge {
   on?: (event: string, handler: (payload: unknown) => void) => Promise<() => void> | (() => void);
 }
 
+export interface DesktopBrowserShortcutEvent {
+  browserId?: string;
+  action: "focus-url";
+}
+
 export interface DesktopInvokeBridge {
   invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 }

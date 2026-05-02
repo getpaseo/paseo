@@ -17,10 +17,38 @@ export interface AttachmentMetadata {
   createdAt: number;
 }
 
+export interface BrowserElementAttachment {
+  url: string;
+  selector: string;
+  tag: string;
+  text: string;
+  outerHTML: string;
+  computedStyles: Record<string, string>;
+  boundingRect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  reactSource: {
+    fileName: string | null;
+    lineNumber: number | null;
+    columnNumber: number | null;
+    componentName: string | null;
+  } | null;
+  parentChain: string[];
+  children: string[];
+  formatted: string;
+}
+
 export type ComposerAttachment =
   | { kind: "image"; metadata: AttachmentMetadata }
   | { kind: "github_issue"; item: GitHubSearchItem }
   | { kind: "github_pr"; item: GitHubSearchItem }
+  | {
+      kind: "browser_element";
+      attachment: BrowserElementAttachment;
+    }
   | {
       kind: "review";
       attachment: Extract<AgentAttachment, { type: "review" }>;
@@ -28,9 +56,15 @@ export type ComposerAttachment =
       commentCount: number;
     };
 
-export type UserComposerAttachment = Exclude<ComposerAttachment, { kind: "review" }>;
+export type UserComposerAttachment = Exclude<
+  ComposerAttachment,
+  { kind: "review" } | { kind: "browser_element" }
+>;
 
-export type WorkspaceComposerAttachment = Extract<ComposerAttachment, { kind: "review" }>;
+export type WorkspaceComposerAttachment = Extract<
+  ComposerAttachment,
+  { kind: "review" } | { kind: "browser_element" }
+>;
 
 export type AttachmentDataSource =
   | { kind: "bytes"; bytes: Uint8Array }

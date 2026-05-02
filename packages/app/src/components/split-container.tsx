@@ -91,6 +91,8 @@ interface SplitContainerProps {
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string }) => void;
+  onCreateBrowserTab: (input: { paneId?: string }) => void;
+  showCreateBrowserTab?: boolean;
   buildPaneContentModel: (input: {
     paneId: string;
     tab: WorkspaceTabDescriptor;
@@ -158,6 +160,7 @@ interface MountedTabSlotProps {
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
   paneId: string;
+  onFocusPane: (paneId: string) => void;
   buildPaneContentModel: (input: {
     paneId: string;
     tab: WorkspaceTabDescriptor;
@@ -170,6 +173,7 @@ const MountedTabSlot = memo(function MountedTabSlot({
   isWorkspaceFocused,
   isPaneFocused,
   paneId,
+  onFocusPane,
   buildPaneContentModel,
 }: MountedTabSlotProps) {
   const content = useMemo(
@@ -185,6 +189,9 @@ const MountedTabSlot = memo(function MountedTabSlot({
     () => ({ display: (isVisible ? "flex" : "none") as "flex" | "none", flex: 1 }),
     [isVisible],
   );
+  const handleFocusPane = useCallback(() => {
+    onFocusPane(paneId);
+  }, [onFocusPane, paneId]);
 
   return (
     <View style={wrapperStyle}>
@@ -192,6 +199,7 @@ const MountedTabSlot = memo(function MountedTabSlot({
         content={content}
         isWorkspaceFocused={isWorkspaceFocused}
         isPaneFocused={isPaneFocused}
+        onFocusPane={handleFocusPane}
       />
     </View>
   );
@@ -339,6 +347,8 @@ export function SplitContainer({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateBrowserTab,
+  showCreateBrowserTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -557,6 +567,8 @@ export function SplitContainer({
         onCloseOtherTabs={onCloseOtherTabs}
         onCreateDraftTab={onCreateDraftTab}
         onCreateTerminalTab={onCreateTerminalTab}
+        onCreateBrowserTab={onCreateBrowserTab}
+        showCreateBrowserTab={showCreateBrowserTab}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
@@ -694,6 +706,8 @@ function SplitNodeView({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateBrowserTab,
+  showCreateBrowserTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane,
@@ -744,6 +758,8 @@ function SplitNodeView({
         onCloseOtherTabs={onCloseOtherTabs}
         onCreateDraftTab={onCreateDraftTab}
         onCreateTerminalTab={onCreateTerminalTab}
+        onCreateBrowserTab={onCreateBrowserTab}
+        showCreateBrowserTab={showCreateBrowserTab}
         buildPaneContentModel={buildPaneContentModel}
         onFocusPane={onFocusPane}
         onSplitPane={onSplitPane}
@@ -787,6 +803,8 @@ function SplitNodeView({
               onCloseOtherTabs={onCloseOtherTabs}
               onCreateDraftTab={onCreateDraftTab}
               onCreateTerminalTab={onCreateTerminalTab}
+              onCreateBrowserTab={onCreateBrowserTab}
+              showCreateBrowserTab={showCreateBrowserTab}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
               onSplitPane={onSplitPane}
@@ -836,6 +854,8 @@ function SplitPaneView({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateBrowserTab,
+  showCreateBrowserTab,
   buildPaneContentModel,
   onFocusPane,
   onSplitPane: _onSplitPane,
@@ -977,6 +997,8 @@ function SplitPaneView({
           onCloseOtherTabs={handleCloseOtherTabs}
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminalTab={onCreateTerminalTab}
+          onCreateBrowserTab={onCreateBrowserTab}
+          showCreateBrowserTab={showCreateBrowserTab}
           onReorderTabs={handleReorderTabs}
           onSplitRight={handleSplitRight}
           onSplitDown={handleSplitDown}
@@ -1004,6 +1026,7 @@ function SplitPaneView({
                   isWorkspaceFocused={isWorkspaceFocused}
                   isPaneFocused={isFocused && tabId === activeTabDescriptor?.tabId}
                   paneId={pane.id}
+                  onFocusPane={stableOnFocusPane}
                   buildPaneContentModel={buildPaneContentModel}
                 />
               );

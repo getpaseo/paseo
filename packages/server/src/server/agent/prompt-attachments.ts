@@ -24,6 +24,9 @@ export function renderPromptAttachmentAsText(attachment: AgentAttachment): strin
       }
       return lines.join("\n");
     }
+    case "text": {
+      return attachment.text;
+    }
     case "review": {
       const lines = [`Paseo review attachment (${attachment.mode})`, `CWD: ${attachment.cwd}`];
       if (attachment.baseRef) {

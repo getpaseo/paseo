@@ -33,6 +33,10 @@ import {
 } from "./features/notifications.js";
 import { registerOpenerHandlers } from "./features/opener.js";
 import { setupApplicationMenu } from "./features/menu.js";
+import {
+  getPaseoBrowserIdForWebContents,
+  registerPaseoBrowserWebContents,
+} from "./features/browser-webviews.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
 import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js";
 import {
@@ -47,10 +51,59 @@ import { autoUpdateSkillsIfInstalled } from "./integrations/integrations-manager
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
+
+function isAllowedBrowserWebviewUrl(value: string | undefined): boolean {
+  if (!value) {
+    return true;
+  }
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.href === "about:blank"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function preventUnsafeBrowserWebviewNavigation(
+  event: Electron.Event,
+  url: string | undefined,
+): void {
+  if (!isAllowedBrowserWebviewUrl(url)) {
+    event.preventDefault();
+  }
+}
 const OPEN_PROJECT_EVENT = "paseo:event:open-project";
+const BROWSER_SHORTCUT_EVENT = "paseo:event:browser-shortcut";
 const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
 const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
 app.setName("Paseo");
+
+function getBrowserIdFromWebviewPartition(partition: string | undefined): string | null {
+  const prefix = "persist:paseo-browser-";
+  if (!partition?.startsWith(prefix)) {
+    return null;
+  }
+  const browserId = partition.slice(prefix.length).trim();
+  return browserId.length > 0 ? browserId : null;
+}
+
+const pendingBrowserWebviewIds: string[] = [];
+
+function isBrowserRefreshInput(input: Electron.Input): boolean {
+  if (input.type !== "keyDown" || input.alt || input.shift) {
+    return false;
+  }
+  return (input.meta || input.control) && input.key.toLowerCase() === "r";
+}
+
+function isBrowserLocationInput(input: Electron.Input): boolean {
+  if (input.type !== "keyDown" || input.alt || input.shift) {
+    return false;
+  }
+  return (input.meta || input.control) && input.key.toLowerCase() === "l";
+}
 
 // In dev mode, detect git worktrees and isolate each instance so multiple
 // Electron windows can run side-by-side (separate userData = separate lock).
@@ -206,6 +259,7 @@ async function createMainWindow(): Promise<void> {
       preload: getPreloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
     },
   });
 
@@ -217,6 +271,71 @@ async function createMainWindow(): Promise<void> {
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
+  mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    if (!isAllowedBrowserWebviewUrl(params.src)) {
+      event.preventDefault();
+      return;
+    }
+    const browserId = getBrowserIdFromWebviewPartition(params.partition);
+    if (!browserId) {
+      event.preventDefault();
+      return;
+    }
+    pendingBrowserWebviewIds.push(browserId);
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.nodeIntegrationInWorker = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.webviewTag = false;
+    webPreferences.allowRunningInsecureContent = false;
+    delete webPreferences.preload;
+    delete params.preload;
+    delete (webPreferences as { preloadURL?: string }).preloadURL;
+    delete (params as { preloadURL?: string }).preloadURL;
+  });
+  mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
+    const browserId = pendingBrowserWebviewIds.shift() ?? null;
+    if (browserId) {
+      registerPaseoBrowserWebContents(contents, browserId);
+    }
+    contents.on("before-input-event", (event, input) => {
+      if (isBrowserRefreshInput(input)) {
+        event.preventDefault();
+        if (contents.isLoadingMainFrame()) {
+          contents.stop();
+        } else {
+          contents.reload();
+        }
+        return;
+      }
+      if (isBrowserLocationInput(input)) {
+        event.preventDefault();
+        const focusedBrowserId = getPaseoBrowserIdForWebContents(contents);
+        mainWindow.webContents.send(BROWSER_SHORTCUT_EVENT, {
+          action: "focus-url",
+          ...(focusedBrowserId ? { browserId: focusedBrowserId } : {}),
+        });
+      }
+    });
+    contents.setWindowOpenHandler(({ url }) => {
+      if (!isAllowedBrowserWebviewUrl(url)) {
+        return { action: "deny" };
+      }
+      contents.loadURL(url).catch(() => undefined);
+      return { action: "deny" };
+    });
+    contents.on("will-navigate", (event) => {
+      preventUnsafeBrowserWebviewNavigation(event, event.url);
+    });
+    contents.on("will-frame-navigate", (event) => {
+      preventUnsafeBrowserWebviewNavigation(event, event.url);
+    });
+    contents.on("will-redirect", (event) => {
+      preventUnsafeBrowserWebviewNavigation(event, event.url);
+    });
+  });
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();

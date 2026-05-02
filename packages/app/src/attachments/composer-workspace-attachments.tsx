@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { MessageSquareCode } from "lucide-react-native";
+import { MessageSquareCode, MousePointer2 } from "lucide-react-native";
 import type {
   ComposerAttachment,
   UserComposerAttachment,
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
 import { AttachmentPill } from "@/components/attachment-pill";
+import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { AgentAttachment } from "@server/shared/messages";
 import { useClearReviewDraft } from "@/review/store";
@@ -43,6 +44,16 @@ interface ComposerWorkspaceAttachmentBinding {
 }
 
 function getAttachmentKey(attachment: WorkspaceComposerAttachment): string {
+  if (attachment.kind === "browser_element") {
+    return JSON.stringify({
+      type: "browser_element",
+      url: attachment.attachment.url,
+      selector: attachment.attachment.selector,
+      tag: attachment.attachment.tag,
+      text: attachment.attachment.text,
+      html: attachment.attachment.outerHTML,
+    });
+  }
   return JSON.stringify({
     type: "review",
     cwd: attachment.attachment.cwd,
@@ -61,23 +72,32 @@ function getAttachmentKey(attachment: WorkspaceComposerAttachment): string {
 function isWorkspaceAttachment(
   attachment: ComposerAttachment | undefined,
 ): attachment is WorkspaceComposerAttachment {
-  return attachment?.kind === "review";
+  return attachment?.kind === "review" || attachment?.kind === "browser_element";
 }
 
 function userAttachmentsOnly(attachments: readonly ComposerAttachment[]): UserComposerAttachment[] {
   return attachments.filter(
-    (attachment): attachment is UserComposerAttachment => attachment.kind !== "review",
+    (attachment): attachment is UserComposerAttachment =>
+      attachment.kind !== "review" && attachment.kind !== "browser_element",
   );
 }
 
 function toSubmitAttachment(attachment: ComposerAttachment): AgentAttachment | null {
-  return isWorkspaceAttachment(attachment) ? attachment.attachment : null;
+  if (attachment.kind === "browser_element") {
+    return {
+      type: "text",
+      mimeType: "text/plain",
+      title: `Browser element · ${attachment.attachment.tag}`,
+      text: attachment.attachment.formatted,
+    };
+  }
+  return attachment.kind === "review" ? attachment.attachment : null;
 }
 
 function renderPill(args: RenderWorkspaceAttachmentPillArgs): ReactElement {
   return (
     <WorkspaceAttachmentPill
-      key={`workspace:${args.attachment.attachment.cwd}:${args.attachment.attachment.mode}`}
+      key={`workspace:${getAttachmentKey(args.attachment)}`}
       {...args}
       attachment={args.attachment}
     />
@@ -90,6 +110,9 @@ function useWorkspaceAttachmentBinding({
   onOpenWorkspaceAttachment,
 }: WorkspaceAttachmentBindingInput): ComposerWorkspaceAttachmentBinding {
   const clearReviewDraft = useClearReviewDraft();
+  const setWorkspaceAttachments = useWorkspaceAttachmentsStore(
+    (state) => state.setWorkspaceAttachments,
+  );
   const [suppressedKeys, setSuppressedKeys] = useState<readonly string[]>([]);
   const workspaceAttachmentKeys = useMemo(
     () => workspaceAttachments.map(getAttachmentKey),
@@ -136,7 +159,7 @@ function useWorkspaceAttachmentBinding({
   const clearSentAttachments = useCallback(
     (attachments: readonly ComposerAttachment[]) => {
       for (const attachment of attachments) {
-        if (isWorkspaceAttachment(attachment)) {
+        if (attachment.kind === "review") {
           clearReviewDraft({ key: attachment.reviewDraftKey });
         }
       }
@@ -148,17 +171,30 @@ function useWorkspaceAttachmentBinding({
     ({ selectedAttachments: current, index }: RemoveWorkspaceAttachmentInput) => {
       const selected = current[index];
       if (isWorkspaceAttachment(selected)) {
+        if (selected.kind === "browser_element") {
+          const selectedKey = getAttachmentKey(selected);
+          const { attachmentsByScope } = useWorkspaceAttachmentsStore.getState();
+          for (const [scopeKey, attachments] of Object.entries(attachmentsByScope)) {
+            const nextAttachments = attachments.filter(
+              (attachment) => getAttachmentKey(attachment) !== selectedKey,
+            );
+            if (nextAttachments.length !== attachments.length) {
+              setWorkspaceAttachments({ scopeKey, attachments: nextAttachments });
+            }
+          }
+          return true;
+        }
         suppressWorkspaceAttachment(selected);
         return true;
       }
       return false;
     },
-    [suppressWorkspaceAttachment],
+    [setWorkspaceAttachments, suppressWorkspaceAttachment],
   );
 
   const openAttachment = useCallback(
     ({ attachment }: OpenWorkspaceAttachmentInput) => {
-      if (!isWorkspaceAttachment(attachment)) {
+      if (!isWorkspaceAttachment(attachment) || attachment.kind !== "review") {
         return false;
       }
       onOpenWorkspaceAttachment?.(attachment);
@@ -216,10 +252,15 @@ function WorkspaceAttachmentPill({
   onOpen,
   onRemove,
 }: WorkspaceAttachmentPillProps) {
-  const label =
-    attachment.commentCount === 1
-      ? "Review · 1 comment"
-      : `Review · ${attachment.commentCount} comments`;
+  let label: string;
+  if (attachment.kind === "browser_element") {
+    label = `Element · ${attachment.attachment.tag}`;
+  } else {
+    label =
+      attachment.commentCount === 1
+        ? "Review · 1 comment"
+        : `Review · ${attachment.commentCount} comments`;
+  }
   const handleOpen = useCallback(() => {
     onOpen(attachment);
   }, [onOpen, attachment]);
@@ -231,13 +272,25 @@ function WorkspaceAttachmentPill({
       testID="composer-review-attachment-pill"
       onOpen={handleOpen}
       onRemove={handleRemove}
-      openAccessibilityLabel="Open review attachment"
-      removeAccessibilityLabel="Remove review attachment"
+      openAccessibilityLabel={
+        attachment.kind === "browser_element"
+          ? "Open browser element attachment"
+          : "Open review attachment"
+      }
+      removeAccessibilityLabel={
+        attachment.kind === "browser_element"
+          ? "Remove browser element attachment"
+          : "Remove review attachment"
+      }
       disabled={disabled}
     >
       <View style={styles.pillBody}>
         <View style={styles.pillIcon}>
-          <ThemedMessageSquareCode size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+          {attachment.kind === "browser_element" ? (
+            <ThemedMousePointer2 size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+          ) : (
+            <ThemedMessageSquareCode size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+          )}
         </View>
         <Text style={styles.pillText} numberOfLines={1}>
           {label}
@@ -279,5 +332,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
 })) as unknown as Record<string, object>;
 
+const ThemedMousePointer2 = withUnistyles(MousePointer2);
 const ThemedMessageSquareCode = withUnistyles(MessageSquareCode);
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });

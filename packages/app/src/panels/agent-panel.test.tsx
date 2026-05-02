@@ -314,6 +314,7 @@ async function renderAgentPanel(
     isWorkspaceFocused: true,
     isPaneFocused: false,
     isInteractive: false,
+    focusPane: vi.fn(),
   },
 ) {
   const AgentPanel = agentPanelRegistration.component;
@@ -462,6 +463,7 @@ describe("AgentPanel render isolation", () => {
       isWorkspaceFocused: false,
       isPaneFocused: true,
       isInteractive: false,
+      focusPane: vi.fn(),
     });
 
     expect(latestComposerIsPaneFocused.current).toBe(false);
@@ -545,6 +547,7 @@ describe("AgentPanel render isolation", () => {
       isWorkspaceFocused: true,
       isPaneFocused: true,
       isInteractive: true,
+      focusPane: vi.fn(),
     });
 
     const timeoutAt = Date.now() + 300;

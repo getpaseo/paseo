@@ -13,6 +13,7 @@ import {
   Copy,
   Ellipsis,
   EllipsisVertical,
+  Globe,
   PanelRight,
   RotateCw,
   Settings,
@@ -80,6 +81,7 @@ import { upsertTerminalListEntry } from "@/utils/terminal-list";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { createWorkspaceBrowser } from "@/stores/browser-store";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
 import {
@@ -128,7 +130,7 @@ import {
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { isAbsolutePath } from "@/utils/path";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
-import { isWeb, isNative } from "@/constants/platform";
+import { getIsElectron, isNative, isWeb } from "@/constants/platform";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 
 const TERMINALS_QUERY_STALE_TIME = 5_000;
@@ -149,6 +151,7 @@ const ThemedCopyX = withUnistyles(CopyX);
 const ThemedX = withUnistyles(X);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
+const ThemedGlobe = withUnistyles(Globe);
 const ThemedSettings = withUnistyles(Settings);
 const ThemedPanelRight = withUnistyles(PanelRight);
 const ThemedSourceControlPanelIcon = withUnistyles(SourceControlPanelIcon);
@@ -160,6 +163,7 @@ const sourceControlPanelStrokeWidth15 = { strokeWidth: 1.5 };
 
 const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_TERMINAL_ICON = <ThemedSquareTerminal size={16} uniProps={mutedColorMapping} />;
+const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
 
@@ -199,6 +203,9 @@ function getFallbackTabOptionLabel(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "terminal") {
     return "Terminal";
   }
+  if (tab.target.kind === "browser") {
+    return "Browser";
+  }
   if (tab.target.kind === "file") {
     return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
@@ -217,6 +224,9 @@ function getFallbackTabOptionDescription(tab: WorkspaceTabDescriptor): string {
   }
   if (tab.target.kind === "terminal") {
     return "Terminal";
+  }
+  if (tab.target.kind === "browser") {
+    return "Browser";
   }
   return tab.target.path;
 }
@@ -723,14 +733,17 @@ interface WorkspaceHeaderMenuProps {
   normalizedWorkspaceId: string;
   currentBranchName: string | null;
   showWorkspaceSetup: boolean;
+  showCreateBrowserTab: boolean;
   isMobile: boolean;
   createTerminalDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
+  menuNewBrowserIcon: ReactElement;
   menuCopyIcon: ReactElement;
   menuSettingsIcon: ReactElement;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
+  onCreateBrowser: () => void;
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
@@ -754,14 +767,17 @@ function WorkspaceHeaderMenu({
   normalizedWorkspaceId,
   currentBranchName,
   showWorkspaceSetup,
+  showCreateBrowserTab,
   isMobile,
   createTerminalDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
+  menuNewBrowserIcon,
   menuCopyIcon,
   menuSettingsIcon,
   onCreateDraftTab,
   onCreateTerminal,
+  onCreateBrowser,
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
@@ -799,6 +815,15 @@ function WorkspaceHeaderMenu({
         >
           New terminal
         </DropdownMenuItem>
+        {showCreateBrowserTab ? (
+          <DropdownMenuItem
+            testID="workspace-header-new-browser"
+            leading={menuNewBrowserIcon}
+            onSelect={onCreateBrowser}
+          >
+            New browser tab
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem
           testID="workspace-header-copy-path"
           leading={menuCopyIcon}
@@ -843,14 +868,17 @@ interface WorkspaceHeaderTitleBarProps {
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   showWorkspaceSetup: boolean;
+  showCreateBrowserTab: boolean;
   isMobile: boolean;
   createTerminalDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
+  menuNewBrowserIcon: ReactElement;
   menuCopyIcon: ReactElement;
   menuSettingsIcon: ReactElement;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
+  onCreateBrowser: () => void;
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
@@ -866,14 +894,17 @@ function WorkspaceHeaderTitleBar({
   normalizedServerId,
   normalizedWorkspaceId,
   showWorkspaceSetup,
+  showCreateBrowserTab,
   isMobile,
   createTerminalDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
+  menuNewBrowserIcon,
   menuCopyIcon,
   menuSettingsIcon,
   onCreateDraftTab,
   onCreateTerminal,
+  onCreateBrowser,
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
@@ -908,14 +939,17 @@ function WorkspaceHeaderTitleBar({
         normalizedWorkspaceId={normalizedWorkspaceId}
         currentBranchName={currentBranchName}
         showWorkspaceSetup={showWorkspaceSetup}
+        showCreateBrowserTab={showCreateBrowserTab}
         isMobile={isMobile}
         createTerminalDisabled={createTerminalDisabled}
         menuNewAgentIcon={menuNewAgentIcon}
         menuNewTerminalIcon={menuNewTerminalIcon}
+        menuNewBrowserIcon={menuNewBrowserIcon}
         menuCopyIcon={menuCopyIcon}
         menuSettingsIcon={menuSettingsIcon}
         onCreateDraftTab={onCreateDraftTab}
         onCreateTerminal={onCreateTerminal}
+        onCreateBrowser={onCreateBrowser}
         onCopyWorkspacePath={onCopyWorkspacePath}
         onCopyBranchName={onCopyBranchName}
         onOpenSetupTab={onOpenSetupTab}
@@ -1928,6 +1962,20 @@ function WorkspaceScreenContent({
     toast.show("Preparing workspace, opening terminal when ready...");
   });
 
+  const handleCreateBrowserTab = useCallback(
+    (input?: { paneId?: string }) => {
+      if (!persistenceKey || !getIsElectron()) {
+        return;
+      }
+      if (input?.paneId) {
+        focusWorkspacePane(persistenceKey, input.paneId);
+      }
+      const { browserId } = createWorkspaceBrowser();
+      openWorkspaceTabFocused(persistenceKey, { kind: "browser", browserId });
+    },
+    [focusWorkspacePane, openWorkspaceTabFocused, persistenceKey],
+  );
+
   const handleSelectSwitcherTab = useCallback(
     (key: string) => {
       navigateToTabId(key);
@@ -2823,6 +2871,7 @@ function WorkspaceScreenContent({
     () => createTerminalMutation.isPending || pendingTerminalCreateInput !== null,
     [createTerminalMutation.isPending, pendingTerminalCreateInput],
   );
+  const showCreateBrowserTab = getIsElectron();
   const focusedPaneIdOrUndefined = useMemo(() => focusedPaneId ?? undefined, [focusedPaneId]);
   const desktopFocusModeEnabled = useMemo(
     () => isFocusModeEnabled && !isMobile,
@@ -2855,6 +2904,8 @@ function WorkspaceScreenContent({
         onCloseOtherTabs={handleCloseOtherTabsInPane}
         onCreateDraftTab={handleCreateDraftTab}
         onCreateTerminalTab={handleCreateTerminal}
+        onCreateBrowserTab={handleCreateBrowserTab}
+        showCreateBrowserTab={showCreateBrowserTab}
         buildPaneContentModel={buildDesktopPaneContentModel}
         onFocusPane={handleFocusPane}
         onSplitPane={handleSplitPane}
@@ -2887,6 +2938,8 @@ function WorkspaceScreenContent({
     handleCloseOtherTabsInPane,
     handleCreateDraftTab,
     handleCreateTerminal,
+    handleCreateBrowserTab,
+    showCreateBrowserTab,
     buildDesktopPaneContentModel,
     handleFocusPane,
     handleSplitPane,
@@ -2932,14 +2985,17 @@ function WorkspaceScreenContent({
                       normalizedServerId={normalizedServerId}
                       normalizedWorkspaceId={normalizedWorkspaceId}
                       showWorkspaceSetup={showWorkspaceSetup}
+                      showCreateBrowserTab={showCreateBrowserTab}
                       isMobile={isMobile}
                       createTerminalDisabled={createTerminalDisabled}
                       menuNewAgentIcon={menuNewAgentIcon}
                       menuNewTerminalIcon={menuNewTerminalIcon}
+                      menuNewBrowserIcon={MENU_NEW_BROWSER_ICON}
                       menuCopyIcon={menuCopyIcon}
                       menuSettingsIcon={menuSettingsIcon}
                       onCreateDraftTab={handleCreateDraftTab}
                       onCreateTerminal={handleCreateTerminal}
+                      onCreateBrowser={handleCreateBrowserTab}
                       onCopyWorkspacePath={handleCopyWorkspacePath}
                       onCopyBranchName={handleCopyBranchName}
                       onOpenSetupTab={handleOpenSetupTab}
@@ -2989,6 +3045,8 @@ function WorkspaceScreenContent({
                 onCloseOtherTabs={handleCloseOtherTabs}
                 onCreateDraftTab={handleCreateDraftTab}
                 onCreateTerminalTab={handleCreateTerminal}
+                onCreateBrowserTab={handleCreateBrowserTab}
+                showCreateBrowserTab={showCreateBrowserTab}
                 disableCreateTerminal={createTerminalMutation.isPending}
                 isWaitingOnTerminalReadiness={pendingTerminalCreateInput !== null}
                 onReorderTabs={handleReorderTabsInFocusedPane}

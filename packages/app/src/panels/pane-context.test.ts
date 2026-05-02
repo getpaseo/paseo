@@ -12,6 +12,7 @@ describe("createPaneFocusContextValue", () => {
       isWorkspaceFocused: true,
       isPaneFocused: true,
       isInteractive: true,
+      focusPane: expect.any(Function),
     });
     expect(
       createPaneFocusContextValue({
@@ -22,6 +23,7 @@ describe("createPaneFocusContextValue", () => {
       isWorkspaceFocused: false,
       isPaneFocused: true,
       isInteractive: false,
+      focusPane: expect.any(Function),
     });
   });
 });

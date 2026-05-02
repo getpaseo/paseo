@@ -63,7 +63,7 @@
     "web": "npm run web --workspace=@getpaseo/app",
     "dev:desktop": "npm run dev --workspace=@getpaseo/desktop",
     "dev:win:desktop": "npm run dev:win --workspace=@getpaseo/desktop",
-    "build:desktop": "npm run version:sync-internal && npm run build:web --workspace=@getpaseo/app && npm run build --workspace=@getpaseo/desktop",
+    "build:desktop": "npm run version:sync-internal && PASEO_WEB_PLATFORM=electron npm run build:web --workspace=@getpaseo/app && npm run build --workspace=@getpaseo/desktop",
     "db:query": "npm run db:query --workspace=@getpaseo/server --",
     "cli": "npx tsx packages/cli/src/index.js",
     "version": "npm run version:sync-internal && npm run release:prepare && git add -A",

@@ -24,6 +24,7 @@ import {
   Copy,
   RotateCw,
   Rows2,
+  Globe,
   SquarePen,
   SquareTerminal,
   X,
@@ -72,6 +73,7 @@ const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
+const ThemedGlobe = withUnistyles(Globe);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedRows2 = withUnistyles(Rows2);
 
@@ -153,6 +155,8 @@ interface WorkspaceDesktopTabsRowProps {
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
   onCreateDraftTab: (input: { paneId?: string }) => void;
   onCreateTerminalTab: (input: { paneId?: string }) => void;
+  onCreateBrowserTab: (input: { paneId?: string }) => void;
+  showCreateBrowserTab?: boolean;
   disableCreateTerminal?: boolean;
   isWaitingOnTerminalReadiness?: boolean;
   onReorderTabs: (nextTabs: WorkspaceTabDescriptor[]) => void;
@@ -468,6 +472,8 @@ export function WorkspaceDesktopTabsRow({
   onCloseOtherTabs,
   onCreateDraftTab,
   onCreateTerminalTab,
+  onCreateBrowserTab,
+  showCreateBrowserTab = false,
   disableCreateTerminal = false,
   isWaitingOnTerminalReadiness = false,
   onReorderTabs,
@@ -548,6 +554,10 @@ export function WorkspaceDesktopTabsRow({
   const handleCreateTerminal = useCallback(() => {
     onCreateTerminalTab({ paneId });
   }, [onCreateTerminalTab, paneId]);
+
+  const handleCreateBrowser = useCallback(() => {
+    onCreateBrowserTab({ paneId });
+  }, [onCreateBrowserTab, paneId]);
 
   const terminalDisabled = disableCreateTerminal || isWaitingOnTerminalReadiness;
   const newTerminalActionButtonStyle = useCallback(
@@ -707,6 +717,24 @@ export function WorkspaceDesktopTabsRow({
             </View>
           </TooltipContent>
         </Tooltip>
+        {showCreateBrowserTab ? (
+          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+            <TooltipTrigger
+              testID="workspace-new-browser"
+              onPress={handleCreateBrowser}
+              accessibilityRole="button"
+              accessibilityLabel="New browser tab"
+              style={newTabActionButtonStyle}
+            >
+              <ThemedGlobe size={14} uniProps={mutedColorMapping} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center" offset={8}>
+              <View style={styles.newTabTooltipRow}>
+                <Text style={styles.newTabTooltipText}>New browser tab</Text>
+              </View>
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
         {showPaneSplitActions ? (
           <>
             <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>

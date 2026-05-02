@@ -426,6 +426,8 @@ function getUserMessageAttachmentLabel(attachment: AgentAttachment): string {
       return `PR #${attachment.number}`;
     case "github_issue":
       return `Issue #${attachment.number}`;
+    case "text":
+      return attachment.title ?? "Text attachment";
   }
 }
 

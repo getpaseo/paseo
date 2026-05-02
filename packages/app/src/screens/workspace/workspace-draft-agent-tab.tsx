@@ -342,6 +342,9 @@ export function WorkspaceDraftAgentTab({
   const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
   const handleOpenWorkspaceAttachment = useCallback(
     (attachment: WorkspaceComposerAttachment) => {
+      if (attachment.kind !== "review") {
+        return;
+      }
       const checkout = {
         serverId,
         cwd: attachment.attachment.cwd,
