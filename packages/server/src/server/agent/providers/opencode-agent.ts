@@ -8,7 +8,10 @@ import {
   type Part as OpenCodePart,
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
+import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -691,6 +694,14 @@ export const __openCodeInternals = {
   resolveOpenCodeSelectedModelContextWindow,
 };
 
+interface OpenCodeServeState {
+  pid: number;
+  port: number;
+  startedAt: string;
+}
+
+const OPENCODE_SERVE_STATE_FILENAME = "opencode-serve.json";
+
 export class OpenCodeServerManager {
   private static instance: OpenCodeServerManager | null = null;
   private static exitHandlerRegistered = false;
@@ -700,11 +711,14 @@ export class OpenCodeServerManager {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
+  private readonly stateFilePath: string;
 
   private constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
     this.logger = logger;
     this.runtimeSettings = runtimeSettings;
     this.runtimeSettingsKey = JSON.stringify(runtimeSettings ?? {});
+    const paseoHome = process.env.PASEO_HOME ?? path.join(os.homedir(), ".paseo");
+    this.stateFilePath = path.join(paseoHome, OPENCODE_SERVE_STATE_FILENAME);
   }
 
   static getInstance(
@@ -714,6 +728,7 @@ export class OpenCodeServerManager {
     const nextSettingsKey = JSON.stringify(runtimeSettings ?? {});
     if (!OpenCodeServerManager.instance) {
       OpenCodeServerManager.instance = new OpenCodeServerManager(logger, runtimeSettings);
+      OpenCodeServerManager.instance.cleanupOrphanedServer();
       OpenCodeServerManager.registerExitHandler();
     } else if (OpenCodeServerManager.instance.runtimeSettingsKey !== nextSettingsKey) {
       logger.warn(
@@ -727,6 +742,91 @@ export class OpenCodeServerManager {
     return OpenCodeServerManager.instance;
   }
 
+  /**
+   * On daemon startup, check for a state file left by a previous daemon instance.
+   * If the recorded PID is still alive, kill it — it's an orphan from a prior run.
+   * Then remove the stale state file so we start clean.
+   */
+  private cleanupOrphanedServer(): void {
+    try {
+      if (!fs.existsSync(this.stateFilePath)) {
+        return;
+      }
+
+      const raw = fs.readFileSync(this.stateFilePath, "utf8");
+      let state: OpenCodeServeState;
+      try {
+        state = JSON.parse(raw);
+      } catch {
+        // Malformed JSON — just remove the corrupt file
+        this.logger.warn(
+          { stateFile: this.stateFilePath },
+          "Removing malformed opencode serve state file",
+        );
+        fs.unlinkSync(this.stateFilePath);
+        return;
+      }
+
+      if (typeof state.pid !== "number") {
+        fs.unlinkSync(this.stateFilePath);
+        return;
+      }
+
+      try {
+        // Check if the process is still running (throws if not)
+        process.kill(state.pid, 0);
+        this.logger.info(
+          { orphanPid: state.pid, orphanPort: state.port, stateFile: this.stateFilePath },
+          "Killing orphaned opencode serve process from previous daemon instance",
+        );
+        process.kill(state.pid, "SIGTERM");
+      } catch {
+        // Process doesn't exist — stale state file from a prior crash
+        this.logger.debug(
+          { pid: state.pid, stateFile: this.stateFilePath },
+          "OpenCode serve state file found but process is already dead, cleaning up",
+        );
+      }
+
+      fs.unlinkSync(this.stateFilePath);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, stateFile: this.stateFilePath },
+        "Failed to clean up orphaned opencode serve state",
+      );
+    }
+  }
+
+  /**
+   * Persist the server PID and port to a state file so a future daemon instance
+   * can detect and clean up orphaned processes on startup.
+   */
+  private writeStateFile(): void {
+    try {
+      const state: OpenCodeServeState = {
+        pid: this.server!.pid!,
+        port: this.port!,
+        startedAt: new Date().toISOString(),
+      };
+      fs.writeFileSync(this.stateFilePath, JSON.stringify(state, null, 2));
+    } catch (error) {
+      this.logger.warn(
+        { err: error, stateFile: this.stateFilePath },
+        "Failed to write opencode serve state file",
+      );
+    }
+  }
+
+  private removeStateFile(): void {
+    try {
+      if (fs.existsSync(this.stateFilePath)) {
+        fs.unlinkSync(this.stateFilePath);
+      }
+    } catch {
+      // Best-effort cleanup
+    }
+  }
+
   private static registerExitHandler(): void {
     if (OpenCodeServerManager.exitHandlerRegistered) {
       return;
@@ -738,6 +838,10 @@ export class OpenCodeServerManager {
       if (instance?.server && !instance.server.killed) {
         instance.server.kill("SIGTERM");
       }
+      instance?.removeStateFile();
+      // Reset singleton so a new daemon process starts fresh
+      OpenCodeServerManager.instance = null;
+      OpenCodeServerManager.exitHandlerRegistered = false;
     };
 
     process.on("exit", cleanup);
@@ -793,6 +897,7 @@ export class OpenCodeServerManager {
         if (output.includes("listening on") && !started) {
           started = true;
           clearTimeout(timeout);
+          this.writeStateFile();
           resolve({ port: this.port!, url });
         }
       });
@@ -813,6 +918,7 @@ export class OpenCodeServerManager {
         }
         this.server = null;
         this.port = null;
+        this.removeStateFile();
       });
     });
   }
@@ -833,6 +939,20 @@ export class OpenCodeServerManager {
     }
     this.server = null;
     this.port = null;
+    this.removeStateFile();
+  }
+
+  /**
+   * Reset the singleton. For testing and daemon restart scenarios.
+   */
+  static resetInstance(): void {
+    const instance = OpenCodeServerManager.instance;
+    if (instance?.server && !instance.server.killed) {
+      instance.server.kill("SIGTERM");
+    }
+    instance?.removeStateFile();
+    OpenCodeServerManager.instance = null;
+    OpenCodeServerManager.exitHandlerRegistered = false;
   }
 }
 
