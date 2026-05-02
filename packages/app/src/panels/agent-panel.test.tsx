@@ -126,7 +126,6 @@ vi.mock("react-native-unistyles", () => {
     StyleSheet: {
       create: createPanelTestStyles,
     },
-    useUnistyles: () => ({ theme }),
     withUnistyles: <T,>(component: T) => component,
     useUnistyles: () => ({ theme, rt: { breakpoint: "lg" } }),
   };
