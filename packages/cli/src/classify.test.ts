@@ -174,6 +174,8 @@ describe("path helpers", () => {
     expect(isPathLikeArg("~")).toBe(true);
     expect(isPathLikeArg("~/project")).toBe(true);
     expect(isPathLikeArg("C:\\project")).toBe(true);
+    expect(isPathLikeArg("C:/project")).toBe(true);
+    expect(isPathLikeArg("\\\\server\\share")).toBe(true);
     expect(isPathLikeArg("status")).toBe(false);
   });
 

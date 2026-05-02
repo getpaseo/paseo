@@ -50,7 +50,7 @@ function relativeTime(date: Date | string): string {
 /** Shorten home directory in path */
 function shortenPath(path: string): string {
   const home = process.env.HOME;
-  if (home && path.startsWith(home)) {
+  if (home && (path === home || path.startsWith(home + "/") || path.startsWith(home + "\\"))) {
     return "~" + path.slice(home.length);
   }
   return path;
@@ -215,7 +215,7 @@ export async function runLsCommand(
     // Apply label filtering only when explicitly requested.
     if (Object.keys(labelFilters).length > 0) {
       agents = agents.filter((a) => {
-        const agentLabels = a.labels;
+        const agentLabels = a.labels ?? {};
         for (const [key, value] of Object.entries(labelFilters)) {
           if (agentLabels[key] !== value) {
             return false;
