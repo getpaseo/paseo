@@ -226,6 +226,7 @@ describe("workspace-layout-store actions", () => {
       splitSizesByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
       hiddenAgentIdsByWorkspace: {},
+      focusRestorationByWorkspace: {},
     });
     vi.restoreAllMocks();
   });
@@ -311,6 +312,66 @@ describe("workspace-layout-store actions", () => {
     expect(duplicateTabId).toBe(firstTabId);
     expect(pane.tabIds).toEqual([firstTabId, secondTabId]);
     expect(pane.focusedTabId).toBe(secondTabId);
+  });
+
+  it("unfocuses and restores the previous focused pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-1" });
+    const token = store.unfocusPane(workspaceKey);
+    expect(token).toBeTruthy();
+    expect(
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]?.focusedPaneId,
+    ).toBeNull();
+
+    store.restorePaneFocus(workspaceKey, token!);
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]?.focusedPaneId).toBe(
+      "main",
+    );
+  });
+
+  it("does not restore stale focus after another pane is focused", () => {
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(
+      "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    );
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+
+    const firstTabId = store.openTabFocused(workspaceKey, { kind: "draft", draftId: "draft-1" });
+    store.splitPane(workspaceKey, {
+      tabId: firstTabId!,
+      targetPaneId: "main",
+      position: "right",
+    });
+    store.focusPane(workspaceKey, "main");
+
+    const token = store.unfocusPane(workspaceKey);
+    store.focusPane(workspaceKey, "pane_bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    store.restorePaneFocus(workspaceKey, token!);
+
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]?.focusedPaneId).toBe(
+      "pane_bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    );
+  });
+
+  it("waits for nested focus restorations before restoring", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = useWorkspaceLayoutStore.getState();
+
+    store.openTabFocused(workspaceKey, { kind: "agent", agentId: "agent-1" });
+    const outerToken = store.unfocusPane(workspaceKey);
+    const innerToken = store.unfocusPane(workspaceKey);
+
+    store.restorePaneFocus(workspaceKey, outerToken!);
+    expect(
+      useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]?.focusedPaneId,
+    ).toBeNull();
+
+    store.restorePaneFocus(workspaceKey, innerToken!);
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]?.focusedPaneId).toBe(
+      "main",
+    );
   });
 
   it("openTab creates distinct draft tabs for repeated Cmd+T/new-tab opens", () => {

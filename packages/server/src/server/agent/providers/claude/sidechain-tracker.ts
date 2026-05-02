@@ -99,12 +99,6 @@ export class ClaudeSidechainTracker {
           action.summary ? `[${action.toolName}] ${action.summary}` : `[${action.toolName}]`,
         )
         .join("\n"),
-      actions: state.actions.map((action) =>
-        Object.assign(
-          { index: action.index, toolName: action.toolName },
-          action.summary ? { summary: action.summary } : {},
-        ),
-      ),
     };
 
     return [

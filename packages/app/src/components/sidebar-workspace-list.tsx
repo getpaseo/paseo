@@ -2724,10 +2724,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
   },
-  projectActionTooltipShortcut: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.borderAccent,
-  },
+  projectActionTooltipShortcut: {},
   workspaceRow: {
     minHeight: 36,
     marginBottom: theme.spacing[1],

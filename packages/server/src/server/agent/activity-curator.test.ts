@@ -153,13 +153,6 @@ second line'`,
           subAgentType: "Explore",
           description: "Investigate repository",
           log: "[Read] README.md",
-          actions: [
-            {
-              index: 1,
-              toolName: "Read",
-              summary: "README.md",
-            },
-          ],
         },
       }),
       toolCallItem({
@@ -171,18 +164,6 @@ second line'`,
           subAgentType: "Explore",
           description: "Investigate repository",
           log: "[Read] README.md\n[Bash] ls",
-          actions: [
-            {
-              index: 1,
-              toolName: "Read",
-              summary: "README.md",
-            },
-            {
-              index: 2,
-              toolName: "Bash",
-              summary: "ls",
-            },
-          ],
         },
       }),
     ];
@@ -235,37 +216,5 @@ second line'`,
 
   it("returns a default message when timeline is empty", () => {
     expect(curateAgentActivity([])).toBe("No activity to display.");
-  });
-});
-
-describe("curateAgentActivityActions", () => {
-  it("converts curated activity lines into sub-agent action entries", async () => {
-    const { curateAgentActivityActions } = await import("./activity-curator.js");
-    const timeline: AgentTimelineItem[] = [
-      { type: "assistant_message", text: "Inspecting the repo" },
-      toolCallItem({
-        callId: "shell-1",
-        name: "shell",
-        detail: {
-          type: "shell",
-          command: "npm test",
-          output: "ok",
-          exitCode: 0,
-        },
-      }),
-    ];
-
-    expect(curateAgentActivityActions(timeline)).toEqual([
-      {
-        index: 1,
-        toolName: "Assistant",
-        summary: "Inspecting the repo",
-      },
-      {
-        index: 2,
-        toolName: "Shell",
-        summary: "npm test",
-      },
-    ]);
   });
 });

@@ -271,7 +271,6 @@ describe("opencode tool-call mapper", () => {
       subAgentType: "explore",
       description: "Explore agent-tools codebase",
       log: "",
-      actions: [],
     });
   });
 
@@ -296,7 +295,6 @@ describe("opencode tool-call mapper", () => {
       subAgentType: "explore",
       description: "Explore agent-tools codebase",
       log: "Found the CLI entrypoint and provider registry.",
-      actions: [],
     });
   });
 
@@ -320,7 +318,6 @@ describe("opencode tool-call mapper", () => {
       description: "Explore current directory",
       childSessionId: "ses_2268db431ffe299vL1bbot8R7Z",
       log: "task_id: ses_2268db431ffe299vL1bbot8R7Z\n\n<task_result>done</task_result>",
-      actions: [],
     });
   });
 
@@ -346,7 +343,6 @@ describe("opencode tool-call mapper", () => {
       subAgentType: "explore",
       description: "Explore agent-tools codebase",
       log: "Tool execution aborted",
-      actions: [],
     });
   });
 

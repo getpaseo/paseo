@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleDot, MousePointer2 } from "lucide-react-native";
+import { MessageSquareCode, MousePointer2 } from "lucide-react-native";
 import type {
   ComposerAttachment,
   UserComposerAttachment,
@@ -289,7 +289,7 @@ function WorkspaceAttachmentPill({
           {attachment.kind === "browser_element" ? (
             <ThemedMousePointer2 size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
           ) : (
-            <ThemedCircleDot size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+            <ThemedMessageSquareCode size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
           )}
         </View>
         <Text style={styles.pillText} numberOfLines={1}>
@@ -332,6 +332,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
 })) as unknown as Record<string, object>;
 
-const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedMousePointer2 = withUnistyles(MousePointer2);
+const ThemedMessageSquareCode = withUnistyles(MessageSquareCode);
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });

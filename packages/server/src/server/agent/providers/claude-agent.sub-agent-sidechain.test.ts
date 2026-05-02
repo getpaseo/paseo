@@ -280,18 +280,6 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
 
     expect(latest.detail.subAgentType).toBe("Explore");
     expect(latest.detail.description).toBe("Inspect repository structure");
-    expect(latest.detail.actions).toEqual([
-      {
-        index: 1,
-        toolName: "Read",
-        summary: "README.md",
-      },
-      {
-        index: 2,
-        toolName: "Edit",
-        summary: "src/index.ts",
-      },
-    ]);
     expect(latest.detail.log).toContain("[Read] README.md");
     expect(latest.detail.log).toContain("[Edit] src/index.ts");
     expect(latest.detail.log).not.toContain("VERY_LARGE_OLD_STRING");
@@ -333,18 +321,6 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     if (!latest || latest.detail.type !== "sub_agent") {
       throw new Error("expected sub_agent detail");
     }
-
-    expect(latest.detail.actions).toHaveLength(200);
-    expect(latest.detail.actions[0]).toEqual({
-      index: 6,
-      toolName: "Read",
-      summary: "file-6.md",
-    });
-    expect(latest.detail.actions[199]).toEqual({
-      index: 205,
-      toolName: "Read",
-      summary: "file-205.md",
-    });
 
     expect(latest.detail.log).not.toContain("[Read] file-1.md");
     expect(latest.detail.log).not.toContain("[Read] file-5.md");

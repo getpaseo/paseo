@@ -49,9 +49,7 @@ function hasMeaningfulWorktreeSetupDetail(
 function hasMeaningfulSubAgentDetail(
   detail: Extract<ToolCallDetail, { type: "sub_agent" }>,
 ): boolean {
-  return Boolean(
-    detail.subAgentType || detail.description || detail.log || detail.actions.length > 0,
-  );
+  return Boolean(detail.subAgentType || detail.description || detail.log);
 }
 
 function hasMeaningfulPlainTextDetail(

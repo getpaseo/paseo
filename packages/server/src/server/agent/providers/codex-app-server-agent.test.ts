@@ -30,6 +30,7 @@ interface CollaborationModeRecord {
 interface CodexSessionTestAccess {
   handleToolApprovalRequest(params: unknown): Promise<unknown>;
   handleNotification(method: string, params: unknown): void;
+  loadPersistedHistory(): Promise<void>;
   refreshResolvedCollaborationMode(): void;
   serviceTier: "fast" | null;
   planModeEnabled: boolean;
@@ -705,7 +706,6 @@ describe("Codex app-server provider", () => {
             subAgentType: "Sub-agent",
             description: "Inspect the stream path.",
             log: "",
-            actions: [],
           },
         },
       },
@@ -762,10 +762,58 @@ describe("Codex app-server provider", () => {
         type: "sub_agent",
         subAgentType: "Sub-agent",
         description: "Report findings.",
-        log: "Found the path.",
-        actions: [{ index: 1, toolName: "Assistant", summary: "Found the path." }],
+        log: "[Assistant] Found the path.",
       },
     });
+  });
+
+  test("loads Codex persisted history from the app-server thread", async () => {
+    const session = createSession();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method !== "thread/read") {
+          return {};
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "agentMessage",
+                    id: "message-history",
+                    text: "History loaded.",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(requests.map((request) => [request.method, request.params])).toEqual([
+      ["thread/read", { threadId: "test-thread", includeTurns: true }],
+    ]);
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "assistant_message",
+          text: "History loaded.",
+        },
+      },
+    ]);
   });
 
   test("maps question responses from headers back to question ids and completes the tool call", async () => {

@@ -244,31 +244,62 @@ function resolveSubAgentFallbackHeader(
 
 interface SubAgentDetailProps {
   log: string;
-  actions: Extract<ToolCallDetail, { type: "sub_agent" }>["actions"];
   childSessionId: string | null | undefined;
   subAgentType: string | null | undefined;
   description: string | null | undefined;
   ds: DetailStyles;
 }
 
-function buildSubAgentActionLog(actions: SubAgentDetailProps["actions"]): string {
-  return actions
-    .map((action) =>
-      action.summary ? `[${action.toolName}] ${action.summary}` : `[${action.toolName}]`,
-    )
-    .join("\n");
+interface SubAgentActivityRow {
+  index: number;
+  toolName: string;
+  summary?: string;
 }
 
-function stripSubAgentActionLog(log: string, actions: SubAgentDetailProps["actions"]): string {
-  const actionLog = buildSubAgentActionLog(actions);
-  const trimmedLog = log.replace(/^\n+/, "");
-  if (!actionLog || !trimmedLog.startsWith(actionLog)) {
-    return trimmedLog;
+interface ParsedSubAgentLog {
+  actions: SubAgentActivityRow[];
+  remainingLog: string;
+}
+
+function parseBracketedSubAgentLine(line: string, index: number): SubAgentActivityRow | null {
+  const match = line.match(/^\[([^\]]+)\](?:\s+(.*))?$/);
+  if (!match) {
+    return null;
   }
-  return trimmedLog.slice(actionLog.length).replace(/^\n+/, "");
+  const toolName = match[1]?.trim();
+  if (!toolName) {
+    return null;
+  }
+  const summary = match[2]?.trim();
+  return {
+    index,
+    toolName,
+    ...(summary ? { summary } : {}),
+  };
 }
 
-function SubAgentActionRow({ action }: { action: SubAgentDetailProps["actions"][number] }) {
+function parseSubAgentLog(log: string): ParsedSubAgentLog {
+  const actions: SubAgentActivityRow[] = [];
+  const remainingLines: string[] = [];
+  for (const line of log.replace(/^\n+/, "").split("\n")) {
+    const normalizedLine = line.trim();
+    if (!normalizedLine) {
+      continue;
+    }
+    const parsedAction = parseBracketedSubAgentLine(normalizedLine, actions.length + 1);
+    if (parsedAction) {
+      actions.push(parsedAction);
+    } else {
+      remainingLines.push(line);
+    }
+  }
+  return {
+    actions,
+    remainingLog: remainingLines.join("\n").replace(/^\n+/, ""),
+  };
+}
+
+function SubAgentActionRow({ action }: { action: SubAgentActivityRow }) {
   return (
     <View style={styles.subAgentActionRow}>
       <Text selectable style={styles.subAgentActionTool}>
@@ -324,13 +355,12 @@ function SubAgentLogText({
 
 function SubAgentDetailSection({
   log,
-  actions,
   childSessionId,
   subAgentType,
   description,
   ds,
 }: SubAgentDetailProps) {
-  const activityLog = stripSubAgentActionLog(log, actions);
+  const { actions, remainingLog } = useMemo(() => parseSubAgentLog(log), [log]);
   const fallbackHeader = resolveSubAgentFallbackHeader(subAgentType, description);
   const hasActions = actions.length > 0;
   return (
@@ -363,7 +393,7 @@ function SubAgentDetailSection({
                 </View>
               ) : null}
               <SubAgentLogText
-                activityLog={activityLog}
+                activityLog={remainingLog}
                 fallbackHeader={fallbackHeader}
                 hasActions={hasActions}
               />
@@ -624,7 +654,6 @@ function buildDetailSections(
       <SubAgentDetailSection
         key="sub-agent"
         log={detail.log}
-        actions={detail.actions}
         childSessionId={detail.childSessionId}
         subAgentType={detail.subAgentType}
         description={detail.description}
@@ -844,7 +873,6 @@ const styles = StyleSheet.create((theme) => {
       gap: theme.spacing[2],
     },
     subAgentActionTool: {
-      minWidth: 56,
       fontFamily: Fonts.mono,
       fontSize: theme.fontSize.xs,
       color: theme.colors.foregroundMuted,

@@ -23,7 +23,6 @@ describe("tool-call-icon", () => {
       subAgentType: "Explore",
       description: "Inspect repository",
       log: "[Read] README.md",
-      actions: [{ index: 1, toolName: "Read", summary: "README.md" }],
     });
 
     expect(icon).toBe(iconMocks.Bot);

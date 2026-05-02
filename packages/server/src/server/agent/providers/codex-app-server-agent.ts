@@ -37,9 +37,8 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { z } from "zod";
-import { loadCodexPersistedTimeline } from "./codex-rollout-timeline.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
-import { curateAgentActivity, curateAgentActivityActions } from "../activity-curator.js";
+import { curateAgentActivity } from "../activity-curator.js";
 import {
   mapCodexRolloutToolCall,
   mapCodexToolCallFromThreadItem,
@@ -1557,6 +1556,61 @@ function threadItemToTimeline(
   }
 }
 
+const CodexThreadReadResponseSchema = z
+  .object({
+    thread: z
+      .object({
+        turns: z
+          .array(
+            z
+              .object({
+                items: z.array(z.unknown()).default([]),
+              })
+              .passthrough(),
+          )
+          .default([]),
+      })
+      .passthrough()
+      .default({ turns: [] }),
+  })
+  .passthrough();
+
+type CodexThreadReadResponse = z.infer<typeof CodexThreadReadResponseSchema>;
+type CodexThreadReadRequest = (threadId: string) => Promise<unknown>;
+
+async function requestCodexThreadHistory(
+  requestThread: CodexThreadReadRequest,
+  threadId: string,
+): Promise<CodexThreadReadResponse> {
+  const response = await requestThread(threadId);
+  return CodexThreadReadResponseSchema.parse(response);
+}
+
+async function loadCodexThreadHistoryTimeline(params: {
+  threadId: string;
+  cwd: string | null;
+  requestThread: CodexThreadReadRequest;
+}): Promise<AgentTimelineItem[]> {
+  const response = await requestCodexThreadHistory(params.requestThread, params.threadId);
+  const timeline: AgentTimelineItem[] = [];
+  for (const turn of response.thread.turns) {
+    for (const item of turn.items) {
+      const timelineItem = threadItemToTimeline(item, { cwd: params.cwd });
+      if (timelineItem) {
+        timeline.push(timelineItem);
+      }
+    }
+  }
+  return timeline;
+}
+
+function readCodexThread(client: CodexAppServerClient, threadId: string): Promise<unknown> {
+  return client.request("thread/read", {
+    threadId,
+    includeTurns: true,
+  });
+}
+
 function toSandboxPolicy(type: string, networkAccess?: boolean): Record<string, unknown> {
   switch (type) {
     case "read-only":
@@ -2662,8 +2716,8 @@ class CodexAppServerAgentSession implements AgentSession {
     await this.loadSkills();
 
     if (this.currentThreadId) {
-      await this.loadPersistedHistory();
       await this.ensureThreadLoaded();
+      await this.loadPersistedHistory();
     }
 
     this.connected = true;
@@ -2867,33 +2921,17 @@ class CodexAppServerAgentSession implements AgentSession {
 
   private async loadPersistedHistory(): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
+    const client = this.client;
+    const threadId = this.currentThreadId;
+
     try {
-      let rolloutTimeline: AgentTimelineItem[] = [];
-      try {
-        rolloutTimeline = await loadCodexPersistedTimeline(
-          this.currentThreadId,
-          undefined,
-          this.logger,
-        );
-      } catch {
-        rolloutTimeline = [];
-      }
-
-      const response = (await this.client.request("thread/read", {
-        threadId: this.currentThreadId,
-        includeTurns: true,
-      })) as { thread?: { turns?: Array<{ items?: unknown[] }> } };
-      const thread = response?.thread;
-      const threadTimeline: AgentTimelineItem[] = [];
-      if (thread && Array.isArray(thread.turns)) {
-        for (const turn of thread.turns) {
-          const items = Array.isArray(turn.items) ? turn.items : [];
-          this.collectThreadTurnTimelineItems(items, threadTimeline);
-        }
-      }
-
-      const timeline = rolloutTimeline.length > 0 ? rolloutTimeline : threadTimeline;
-
+      const timeline = await loadCodexThreadHistoryTimeline({
+        threadId,
+        cwd: this.config.cwd ?? null,
+        requestThread: (threadIdToRead) => {
+          return readCodexThread(client, threadIdToRead);
+        },
+      });
       if (timeline.length > 0) {
         this.persistedHistory = timeline;
         this.historyPending = true;
@@ -3625,11 +3663,6 @@ class CodexAppServerAgentSession implements AgentSession {
         childItems: new Map<string, AgentTimelineItem>(),
       } satisfies CodexSubAgentCallState);
 
-    let actions = timelineItem.detail.actions;
-    if (actions.length === 0 && state.toolCall.detail.type === "sub_agent") {
-      actions = state.toolCall.detail.actions;
-    }
-
     state.toolCall = {
       ...timelineItem,
       detail: {
@@ -3637,7 +3670,6 @@ class CodexAppServerAgentSession implements AgentSession {
         log:
           timelineItem.detail.log ||
           (state.toolCall.detail.type === "sub_agent" ? state.toolCall.detail.log : ""),
-        actions,
       },
     };
     this.subAgentCallsByCallId.set(timelineItem.callId, state);
@@ -3676,15 +3708,16 @@ class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     const childTimeline = this.getSubAgentChildTimeline(state);
-    const log = childTimeline.length > 0 ? curateAgentActivity(childTimeline) : "";
-    const actions = childTimeline.length > 0 ? curateAgentActivityActions(childTimeline) : [];
+    const log =
+      childTimeline.length > 0
+        ? curateAgentActivity(childTimeline, { labelAssistantMessages: true })
+        : "";
     const resolvedStatus = status ?? state.toolCall.status;
     const baseToolCall = {
       ...state.toolCall,
       detail: {
         ...state.toolCall.detail,
         log,
-        actions,
       },
     };
     const nextToolCall: ToolCallTimelineItem =
@@ -4284,21 +4317,6 @@ class CodexAppServerAgentSession implements AgentSession {
     return true;
   }
 
-  private collectThreadTurnTimelineItems(items: unknown[], target: AgentTimelineItem[]): void {
-    for (const item of items) {
-      const timelineItem = threadItemToTimeline(item, {
-        cwd: this.config.cwd ?? null,
-      });
-      if (!timelineItem) {
-        continue;
-      }
-      if (timelineItem.type === "tool_call") {
-        this.warnOnIncompleteEditToolCall(timelineItem, "thread_read", item);
-      }
-      target.push(timelineItem);
-    }
-  }
-
   private warnOnIncompleteEditToolCall(
     item: ToolCallTimelineItem,
     source: string,
@@ -4549,23 +4567,15 @@ export class CodexAppServerAgentClient implements AgentClient {
           const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
           const title = typeof thread.preview === "string" ? thread.preview : null;
           let timeline: AgentTimelineItem[] = [];
+
           try {
-            const [rolloutTimeline, read] = await Promise.all([
-              loadCodexPersistedTimeline(threadId, undefined, this.logger),
-              client.request("thread/read", {
-                threadId,
-                includeTurns: true,
-              }) as Promise<{ thread?: { turns?: Array<{ items?: unknown[] }> } }>,
-            ]);
-            const turns = read.thread?.turns ?? [];
-            const itemsFromThreadRead: AgentTimelineItem[] = [];
-            for (const turn of turns) {
-              for (const item of turn.items ?? []) {
-                const timelineItem = threadItemToTimeline(item, { cwd });
-                if (timelineItem) itemsFromThreadRead.push(timelineItem);
-              }
-            }
-            timeline = rolloutTimeline.length > 0 ? rolloutTimeline : itemsFromThreadRead;
+            timeline = await loadCodexThreadHistoryTimeline({
+              threadId,
+              cwd,
+              requestThread: (threadIdToRead) => {
+                return readCodexThread(client, threadIdToRead);
+              },
+            });
           } catch {
             timeline = [];
           }

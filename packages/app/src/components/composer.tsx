@@ -853,9 +853,7 @@ function ComposerCancelButton({
   ) : (
     <Square size={buttonIconSize} color="white" fill="white" />
   );
-  const shortcutNode = agentInterruptKeys ? (
-    <Shortcut chord={agentInterruptKeys} style={styles.tooltipShortcut} />
-  ) : null;
+  const shortcutNode = agentInterruptKeys ? <Shortcut chord={agentInterruptKeys} /> : null;
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger
@@ -941,9 +939,7 @@ function ComposerVoiceModeButton({
   realtimeVoiceButtonStyle,
   voiceToggleKeys,
 }: ComposerVoiceModeButtonProps) {
-  const shortcutNode = voiceToggleKeys ? (
-    <Shortcut chord={voiceToggleKeys} style={styles.tooltipShortcut} />
-  ) : null;
+  const shortcutNode = voiceToggleKeys ? <Shortcut chord={voiceToggleKeys} /> : null;
   const renderTriggerContent = useCallback(
     ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
       if (isVoiceSwitching) {
@@ -1873,10 +1869,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   tooltipText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
-  },
-  tooltipShortcut: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.borderAccent,
   },
   buttonDisabled: {
     opacity: 0.5,

@@ -68,6 +68,7 @@ interface WorkspaceLayoutStore {
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
+  focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   openTabFocused: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
   openTabInBackground: (workspaceKey: string, target: WorkspaceTabTarget) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
@@ -94,6 +95,8 @@ interface WorkspaceLayoutStore {
   ) => string | null;
   moveTabToPane: (workspaceKey: string, tabId: string, toPaneId: string) => void;
   focusPane: (workspaceKey: string, paneId: string) => void;
+  unfocusPane: (workspaceKey: string) => string | null;
+  restorePaneFocus: (workspaceKey: string, token: string) => void;
   resizeSplit: (workspaceKey: string, groupId: string, sizes: number[]) => void;
   reorderTabsInPane: (workspaceKey: string, paneId: string, tabIds: string[]) => void;
   pinAgent: (workspaceKey: string, agentId: string) => void;
@@ -101,6 +104,11 @@ interface WorkspaceLayoutStore {
   hideAgent: (workspaceKey: string, agentId: string) => void;
   unhideAgent: (workspaceKey: string, agentId: string) => void;
   purgeWorkspace: (workspaceKey: string) => void;
+}
+
+interface WorkspaceFocusRestorationState {
+  restorePaneId: string | null;
+  tokens: string[];
 }
 
 const MAX_TREE_DEPTH = 4;
@@ -162,6 +170,26 @@ function getWorkspaceLayout(
   return normalizeLayout(state[workspaceKey] ?? createDefaultLayout());
 }
 
+function createFocusRestorationToken(): string {
+  const randomValue =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `workspace-focus-${randomValue}`;
+}
+
+function withoutFocusRestoration(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+): Pick<WorkspaceLayoutStore, "focusRestorationByWorkspace"> | null {
+  if (!(workspaceKey in state.focusRestorationByWorkspace)) {
+    return null;
+  }
+  const { [workspaceKey]: _removed, ...focusRestorationByWorkspace } =
+    state.focusRestorationByWorkspace;
+  return { focusRestorationByWorkspace };
+}
+
 export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
   persist(
     (set, get) => ({
@@ -169,6 +197,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
       splitSizesByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
       hiddenAgentIdsByWorkspace: {},
+      focusRestorationByWorkspace: {},
       openTabFocused: (workspaceKey, target) => {
         const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
         const normalizedTarget = normalizeWorkspaceTabTarget(target);
@@ -183,6 +212,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         });
 
         set((state) => ({
+          ...withoutFocusRestoration(state, normalizedWorkspaceKey),
           hiddenAgentIdsByWorkspace:
             normalizedTarget.kind !== "agent"
               ? state.hiddenAgentIdsByWorkspace
@@ -246,6 +276,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
           }
 
           return {
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: nextLayout,
@@ -270,6 +301,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
           }
 
           return {
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: nextLayout,
@@ -295,6 +327,9 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         }
 
         set((state) => ({
+          ...(result.layout.focusedPaneId !== null
+            ? (withoutFocusRestoration(state, normalizedWorkspaceKey) ?? {})
+            : {}),
           hiddenAgentIdsByWorkspace:
             normalizedTarget.kind !== "agent"
               ? state.hiddenAgentIdsByWorkspace
@@ -329,6 +364,9 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         }
 
         set((state) => ({
+          ...(result.layout.focusedPaneId !== null
+            ? (withoutFocusRestoration(state, normalizedWorkspaceKey) ?? {})
+            : {}),
           hiddenAgentIdsByWorkspace: removeAgentIdFromWorkspaceSet(
             state.hiddenAgentIdsByWorkspace,
             normalizedWorkspaceKey,
@@ -429,6 +467,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         }
 
         set((state) => ({
+          ...withoutFocusRestoration(state, normalizedWorkspaceKey),
           layoutByWorkspace: {
             ...state.layoutByWorkspace,
             [normalizedWorkspaceKey]: result.layout,
@@ -462,6 +501,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
         }
 
         set((state) => ({
+          ...withoutFocusRestoration(state, normalizedWorkspaceKey),
           layoutByWorkspace: {
             ...state.layoutByWorkspace,
             [normalizedWorkspaceKey]: result.layout,
@@ -489,6 +529,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
           }
 
           return {
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: nextLayout,
@@ -513,9 +554,94 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
           }
 
           return {
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: nextLayout,
+            },
+          };
+        });
+      },
+      unfocusPane: (workspaceKey) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        if (!normalizedWorkspaceKey) {
+          return null;
+        }
+
+        const token = createFocusRestorationToken();
+        set((state) => {
+          const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+          const currentRestoration = state.focusRestorationByWorkspace[normalizedWorkspaceKey];
+          const restorePaneId = currentRestoration?.restorePaneId ?? layout.focusedPaneId;
+
+          return {
+            focusRestorationByWorkspace: {
+              ...state.focusRestorationByWorkspace,
+              [normalizedWorkspaceKey]: {
+                restorePaneId,
+                tokens: [...(currentRestoration?.tokens ?? []), token],
+              },
+            },
+            layoutByWorkspace: {
+              ...state.layoutByWorkspace,
+              [normalizedWorkspaceKey]:
+                layout.focusedPaneId === null ? layout : { ...layout, focusedPaneId: null },
+            },
+          };
+        });
+        return token;
+      },
+      restorePaneFocus: (workspaceKey, token) => {
+        const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+        const normalizedToken = trimNonEmpty(token);
+        if (!normalizedWorkspaceKey || !normalizedToken) {
+          return;
+        }
+
+        set((state) => {
+          const restoration = state.focusRestorationByWorkspace[normalizedWorkspaceKey];
+          if (!restoration?.tokens.includes(normalizedToken)) {
+            return state;
+          }
+
+          const nextTokens = restoration.tokens.filter((entry) => entry !== normalizedToken);
+          const { [normalizedWorkspaceKey]: _removed, ...remainingRestorations } =
+            state.focusRestorationByWorkspace;
+          const layout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+
+          if (layout.focusedPaneId !== null) {
+            return {
+              focusRestorationByWorkspace: remainingRestorations,
+            };
+          }
+
+          if (nextTokens.length > 0) {
+            return {
+              focusRestorationByWorkspace: {
+                ...remainingRestorations,
+                [normalizedWorkspaceKey]: {
+                  restorePaneId: restoration.restorePaneId,
+                  tokens: nextTokens,
+                },
+              },
+            };
+          }
+
+          const restorePaneId = findPaneById(layout.root, restoration.restorePaneId)?.id ?? null;
+          if (!restorePaneId) {
+            return {
+              focusRestorationByWorkspace: remainingRestorations,
+            };
+          }
+
+          return {
+            focusRestorationByWorkspace: remainingRestorations,
+            layoutByWorkspace: {
+              ...state.layoutByWorkspace,
+              [normalizedWorkspaceKey]: {
+                ...layout,
+                focusedPaneId: restorePaneId,
+              },
             },
           };
         });
@@ -555,6 +681,7 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
           }
 
           return {
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
             layoutByWorkspace: {
               ...state.layoutByWorkspace,
               [normalizedWorkspaceKey]: nextLayout,
@@ -682,7 +809,8 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
             normalizedWorkspaceKey in state.layoutByWorkspace ||
             normalizedWorkspaceKey in state.splitSizesByWorkspace ||
             normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
-            normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace;
+            normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
+            normalizedWorkspaceKey in state.focusRestorationByWorkspace;
           if (!hasAny) {
             return state;
           }
@@ -694,11 +822,14 @@ export const useWorkspaceLayoutStore = create<WorkspaceLayoutStore>()(
             state.pinnedAgentIdsByWorkspace;
           const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
             state.hiddenAgentIdsByWorkspace;
+          const { [normalizedWorkspaceKey]: _restoration, ...focusRestorationByWorkspace } =
+            state.focusRestorationByWorkspace;
           return {
             layoutByWorkspace,
             splitSizesByWorkspace,
             pinnedAgentIdsByWorkspace,
             hiddenAgentIdsByWorkspace,
+            focusRestorationByWorkspace,
           };
         });
       },

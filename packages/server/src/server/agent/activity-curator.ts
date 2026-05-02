@@ -7,14 +7,13 @@ const DEFAULT_MAX_ITEMS = 0;
 const MAX_TOOL_INPUT_CHARS = 400;
 const MAX_TOOL_SUMMARY_CHARS = 200;
 
-interface ActivityAction {
-  toolName: string;
-  summary?: string;
+interface ActivityCuratorOptions {
+  maxItems?: number;
+  labelAssistantMessages?: boolean;
 }
 
 interface ActivityEntry {
   text: string;
-  action: ActivityAction;
 }
 
 function appendText(buffer: string, text: string): string {
@@ -28,24 +27,22 @@ function appendText(buffer: string, text: string): string {
   return `${buffer}\n${normalized}`;
 }
 
-function activityEntry(text: string, toolName: string, summary?: string): ActivityEntry {
-  return {
-    text,
-    action: {
-      toolName,
-      ...(summary ? { summary } : {}),
-    },
-  };
+function activityEntry(text: string): ActivityEntry {
+  return { text };
 }
 
-function flushBuffers(entries: ActivityEntry[], buffers: { message: string; thought: string }) {
+function flushBuffers(
+  entries: ActivityEntry[],
+  buffers: { message: string; thought: string },
+  options?: ActivityCuratorOptions,
+) {
   if (buffers.message.trim()) {
     const text = buffers.message.trim();
-    entries.push(activityEntry(text, "Assistant", text));
+    entries.push(activityEntry(options?.labelAssistantMessages ? `[Assistant] ${text}` : text));
   }
   if (buffers.thought.trim()) {
     const text = buffers.thought.trim();
-    entries.push(activityEntry(`[Thought] ${text}`, "Thought", text));
+    entries.push(activityEntry(`[Thought] ${text}`));
   }
   buffers.message = "";
   buffers.thought = "";
@@ -100,7 +97,7 @@ function projectForCuration(items: readonly AgentTimelineItem[]): AgentTimelineI
 
 function curateAgentActivityEntries(
   timeline: AgentTimelineItem[],
-  options?: { maxItems?: number },
+  options?: ActivityCuratorOptions,
 ): ActivityEntry[] {
   if (timeline.length === 0) {
     return [];
@@ -118,8 +115,8 @@ function curateAgentActivityEntries(
   for (const item of recentItems) {
     switch (item.type) {
       case "user_message":
-        flushBuffers(entries, buffers);
-        entries.push(activityEntry(`[User] ${item.text.trim()}`, "User", item.text.trim()));
+        flushBuffers(entries, buffers, options);
+        entries.push(activityEntry(`[User] ${item.text.trim()}`));
         break;
       case "assistant_message":
         buffers.message = appendText(buffers.message, item.text);
@@ -128,7 +125,7 @@ function curateAgentActivityEntries(
         buffers.thought = appendText(buffers.thought, item.text);
         break;
       case "tool_call": {
-        flushBuffers(entries, buffers);
+        flushBuffers(entries, buffers, options);
         const inputJson = formatToolInputJson(inputFromUnknownDetail(item.detail));
         const display = buildToolCallDisplayModel({
           name: item.name,
@@ -140,37 +137,37 @@ function curateAgentActivityEntries(
         const displayName = display.displayName;
         const summary = formatToolSummary(display.summary);
         if (isLikelyExternalToolName(item.name) && inputJson) {
-          entries.push(activityEntry(`[${displayName}] ${inputJson}`, displayName, inputJson));
+          entries.push(activityEntry(`[${displayName}] ${inputJson}`));
           break;
         }
         if (summary) {
-          entries.push(activityEntry(`[${displayName}] ${summary}`, displayName, summary));
+          entries.push(activityEntry(`[${displayName}] ${summary}`));
         } else {
-          entries.push(activityEntry(`[${displayName}]`, displayName));
+          entries.push(activityEntry(`[${displayName}]`));
         }
         break;
       }
       case "todo":
-        flushBuffers(entries, buffers);
-        entries.push(activityEntry("[Tasks]", "Tasks"));
+        flushBuffers(entries, buffers, options);
+        entries.push(activityEntry("[Tasks]"));
         for (const entry of item.items) {
           const checkbox = entry.completed ? "[x]" : "[ ]";
           const text = `- ${checkbox} ${entry.text}`;
-          entries.push(activityEntry(text, "Assistant", text));
+          entries.push(activityEntry(text));
         }
         break;
       case "error":
-        flushBuffers(entries, buffers);
-        entries.push(activityEntry(`[Error] ${item.message}`, "Error", item.message));
+        flushBuffers(entries, buffers, options);
+        entries.push(activityEntry(`[Error] ${item.message}`));
         break;
       case "compaction":
-        flushBuffers(entries, buffers);
-        entries.push(activityEntry("[Compacted]", "Compacted"));
+        flushBuffers(entries, buffers, options);
+        entries.push(activityEntry("[Compacted]"));
         break;
     }
   }
 
-  flushBuffers(entries, buffers);
+  flushBuffers(entries, buffers, options);
 
   return entries;
 }
@@ -180,19 +177,10 @@ function curateAgentActivityEntries(
  */
 export function curateAgentActivity(
   timeline: AgentTimelineItem[],
-  options?: { maxItems?: number },
+  options?: ActivityCuratorOptions,
 ): string {
   const entries = curateAgentActivityEntries(timeline, options);
   return entries.length > 0
     ? entries.map((entry) => entry.text).join("\n")
     : "No activity to display.";
-}
-
-export function curateAgentActivityActions(
-  timeline: AgentTimelineItem[],
-  options?: { maxItems?: number },
-): Array<{ index: number; toolName: string; summary?: string }> {
-  return curateAgentActivityEntries(timeline, options).map((entry, index) =>
-    Object.assign({ index: index + 1 }, entry.action),
-  );
 }

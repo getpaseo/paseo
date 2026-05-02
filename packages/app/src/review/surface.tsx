@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { MessageCircle, Pencil, Trash2 } from "lucide-react-native";
+import { Pencil, Plus, Trash2 } from "lucide-react-native";
 import {
   Pressable,
   type PressableStateCallbackType,
@@ -12,11 +12,19 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { Button } from "@/components/ui/button";
+import { Shortcut } from "@/components/ui/shortcut";
 import { isWeb } from "@/constants/platform";
+import type { ShortcutKey } from "@/utils/format-shortcut";
+import { useWorkspaceFocusRestoration } from "@/workspace/focus";
 import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
 
 type PressableState = PressableStateCallbackType & { hovered?: boolean };
+type WebTextInputRef = TextInput & {
+  getNativeElement?: () => unknown;
+  getNativeRef?: () => unknown;
+};
 
 function iconButtonStyle({ hovered, pressed }: PressableState): StyleProp<ViewStyle> {
   return [styles.iconButton, (hovered || pressed) && styles.iconButtonHovered];
@@ -26,14 +34,48 @@ function iconButtonDestructiveStyle({ hovered, pressed }: PressableState): Style
   return [styles.iconButton, (hovered || pressed) && styles.iconButtonDestructiveHovered];
 }
 
-function ghostButtonStyle({ hovered, pressed }: PressableState): StyleProp<ViewStyle> {
-  return [styles.ghostButton, (hovered || pressed) && styles.ghostButtonHovered];
+function getWebTextInputElement(input: TextInput | null): HTMLElement | null {
+  if (!isWeb || typeof HTMLElement === "undefined" || !input) {
+    return null;
+  }
+  const webInput = input as WebTextInputRef;
+  const element = webInput.getNativeElement?.() ?? webInput.getNativeRef?.() ?? input;
+  return element instanceof HTMLElement ? element : null;
+}
+
+function getCanShowReviewKeyboardHints(): boolean {
+  if (!isWeb || typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+}
+
+function useCanShowReviewKeyboardHints(): boolean {
+  const [canShowHints, setCanShowHints] = useState(getCanShowReviewKeyboardHints);
+
+  useEffect(() => {
+    if (!isWeb || typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const handleChange = () => setCanShowHints(mediaQuery.matches);
+    handleChange();
+    mediaQuery.addEventListener?.("change", handleChange);
+    return () => {
+      mediaQuery.removeEventListener?.("change", handleChange);
+    };
+  }, []);
+
+  return canShowHints;
 }
 
 export const INLINE_REVIEW_COMMENT_HEIGHT = 72;
 export const INLINE_REVIEW_EDITOR_HEIGHT = 132;
 const INLINE_REVIEW_GAP = 6;
 export const SMALL_ACTION_HIT_SLOP = 8;
+const REVIEW_CANCEL_SHORTCUT_KEYS: ShortcutKey[] = ["Esc"];
+const REVIEW_SAVE_SHORTCUT_KEYS: ShortcutKey[] = ["mod", "Enter"];
 
 export interface InlineReviewEditorState {
   target: ReviewableDiffTarget;
@@ -228,7 +270,7 @@ export function InlineReviewGutterCell({
   children,
   reviewTarget,
   comments,
-  isEditorOpen,
+  isLineHovered = false,
   onStartComment,
   style,
 }: {
@@ -236,26 +278,49 @@ export function InlineReviewGutterCell({
   reviewTarget: ReviewableDiffTarget | null | undefined;
   comments: readonly ReviewDraftComment[];
   isEditorOpen: boolean;
+  isLineHovered?: boolean;
   onStartComment: (target: ReviewableDiffTarget) => void;
   style?: StyleProp<ViewStyle>;
 }) {
   const { theme } = useUnistyles();
   const canComment = Boolean(reviewTarget);
   const hasComments = comments.length > 0;
+  const [isGutterHovered, setIsGutterHovered] = useState(false);
+  const [isPressed, setIsPressed] = useState(false);
+  const [isDismissedAfterPress, setIsDismissedAfterPress] = useState(false);
+  const isInteractionActive = isGutterHovered || isLineHovered || isPressed;
+  const showAction = canComment && isInteractionActive && !isDismissedAfterPress;
 
   const handlePress = useCallback(() => {
     if (reviewTarget) {
+      setIsDismissedAfterPress(true);
       onStartComment(reviewTarget);
     }
   }, [reviewTarget, onStartComment]);
 
-  const pressableStyle = useCallback(
-    ({ hovered, pressed }: PressableState): StyleProp<ViewStyle> => [
-      style,
-      canComment && (hovered || pressed) && styles.gutterHovered,
-    ],
-    [style, canComment],
-  );
+  const handleHoverIn = useCallback(() => {
+    setIsGutterHovered(true);
+  }, []);
+
+  const handleHoverOut = useCallback(() => {
+    setIsGutterHovered(false);
+  }, []);
+
+  const handlePressIn = useCallback(() => {
+    setIsPressed(true);
+  }, []);
+
+  const handlePressOut = useCallback(() => {
+    setIsPressed(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isInteractionActive) {
+      setIsDismissedAfterPress(false);
+    }
+  }, [isInteractionActive]);
+
+  const pressableStyle = useCallback((): StyleProp<ViewStyle> => style, [style]);
 
   const labelStyle = useMemo<StyleProp<ViewStyle>>(
     () => [styles.gutterLabel, hasComments && styles.gutterLabelActive],
@@ -269,26 +334,22 @@ export function InlineReviewGutterCell({
       hitSlop={canComment ? SMALL_ACTION_HIT_SLOP : undefined}
       disabled={!canComment}
       onPress={handlePress}
+      onHoverIn={handleHoverIn}
+      onHoverOut={handleHoverOut}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       style={pressableStyle}
     >
-      {({ hovered, pressed }) => {
-        const showAction = canComment && (hovered || pressed || hasComments || isEditorOpen);
-        return (
-          <View style={styles.gutterInner}>
-            <View style={labelStyle}>
-              {showAction ? (
-                <MessageCircle
-                  size={13}
-                  strokeWidth={hasComments ? 2.25 : 1.75}
-                  color={hasComments ? theme.colors.accent : theme.colors.foregroundMuted}
-                />
-              ) : (
-                children
-              )}
+      <View style={styles.gutterInner}>
+        <View style={labelStyle}>
+          {children}
+          {showAction ? (
+            <View style={styles.gutterActionIcon}>
+              <Plus size={16} strokeWidth={2.4} color={theme.colors.accentForeground} />
             </View>
-          </View>
-        );
-      }}
+          ) : null}
+        </View>
+      </View>
     </Pressable>
   );
 }
@@ -438,31 +499,73 @@ export function InlineReviewEditor({
 }) {
   const { theme } = useUnistyles();
   const inputRef = useRef<TextInput | null>(null);
+  const focus = useWorkspaceFocusRestoration();
+  const canShowKeyboardHints = useCanShowReviewKeyboardHints();
   const [body, setBody] = useState(initialBody);
   const [isFocused, setIsFocused] = useState(false);
   const trimmedBody = body.trim();
   const canSave = trimmedBody.length > 0;
+  const showKeyboardHints = isFocused && canShowKeyboardHints;
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  const handleFocus = useCallback(() => setIsFocused(true), []);
-  const handleBlur = useCallback(() => setIsFocused(false), []);
+  const handleFocus = useCallback(() => {
+    focus.unfocus();
+    setIsFocused(true);
+  }, [focus]);
+  const handleBlur = useCallback(() => {
+    setIsFocused(false);
+    focus.restore();
+  }, [focus]);
   const handleSave = useCallback(() => onSave(trimmedBody), [onSave, trimmedBody]);
+  const cancelShortcut = useMemo(
+    () => (showKeyboardHints ? <Shortcut keys={REVIEW_CANCEL_SHORTCUT_KEYS} /> : null),
+    [showKeyboardHints],
+  );
+  const saveShortcut = useMemo(
+    () => (showKeyboardHints ? <Shortcut keys={REVIEW_SAVE_SHORTCUT_KEYS} /> : null),
+    [showKeyboardHints],
+  );
+
+  useEffect(() => {
+    const element = getWebTextInputElement(inputRef.current);
+    if (!element) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+        return;
+      }
+
+      if (event.key !== "Enter" || event.shiftKey) {
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (!canSave) {
+        return;
+      }
+      handleSave();
+    };
+
+    element.addEventListener("keydown", handleKeyDown);
+    return () => {
+      element.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [canSave, handleSave, onCancel]);
 
   const inputStyle = useMemo<StyleProp<TextStyle>>(
     () => [styles.editorInput, isFocused && styles.editorInputFocused],
     [isFocused],
-  );
-
-  const saveButtonStyle = useCallback(
-    ({ hovered, pressed }: PressableState): StyleProp<ViewStyle> => [
-      styles.saveButton,
-      !canSave && styles.saveButtonDisabled,
-      canSave && (hovered || pressed) && styles.saveButtonHovered,
-    ],
-    [canSave],
   );
 
   return (
@@ -481,40 +584,40 @@ export function InlineReviewEditor({
         style={inputStyle}
       />
       <View style={styles.editorActions}>
-        <Pressable
-          accessibilityRole="button"
+        <Button
           accessibilityLabel="Cancel review comment"
           testID={testID ? `${testID}-cancel` : undefined}
           hitSlop={SMALL_ACTION_HIT_SLOP}
           onPress={onCancel}
-          style={ghostButtonStyle}
+          variant="ghost"
+          size="xs"
+          trailing={cancelShortcut}
         >
-          <Text style={styles.ghostButtonText}>Cancel</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
+          Cancel
+        </Button>
+        <Button
           accessibilityLabel="Save review comment"
           testID={testID ? `${testID}-save` : undefined}
           hitSlop={SMALL_ACTION_HIT_SLOP}
           disabled={!canSave}
           onPress={handleSave}
-          style={saveButtonStyle}
+          variant="default"
+          size="xs"
+          trailing={saveShortcut}
         >
-          <Text style={styles.saveButtonText}>Save</Text>
-        </Pressable>
+          Comment
+        </Button>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  gutterHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
   gutterInner: {
     minHeight: theme.lineHeight.diff,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "visible",
   },
   gutterLabel: {
     width: "100%",
@@ -522,9 +625,24 @@ const styles = StyleSheet.create((theme) => ({
     height: theme.lineHeight.diff,
     alignItems: "center",
     justifyContent: "center",
+    position: "relative",
+    overflow: "visible",
   },
   gutterLabelActive: {
     backgroundColor: theme.colors.surface2,
+  },
+  gutterActionIcon: {
+    position: "absolute",
+    right: -10,
+    top: Math.floor((theme.lineHeight.diff - 22) / 2),
+    width: 22,
+    height: 22,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.accent,
+    zIndex: 10,
+    elevation: 10,
   },
   threadContainer: {
     flex: 1,
@@ -615,39 +733,5 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     alignItems: "center",
     gap: theme.spacing[2],
-  },
-  ghostButton: {
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-  },
-  ghostButtonHovered: {
-    backgroundColor: theme.colors.surface3,
-  },
-  ghostButtonText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.medium,
-  },
-  saveButton: {
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.accent,
-  },
-  saveButtonHovered: {
-    opacity: 0.9,
-  },
-  saveButtonDisabled: {
-    opacity: 0.4,
-  },
-  saveButtonText: {
-    color: theme.colors.accentForeground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.semibold,
   },
 }));

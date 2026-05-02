@@ -128,7 +128,7 @@ interface SplitPaneDropData {
 interface SplitNodeViewProps extends Omit<SplitContainerProps, "layout" | "onMoveTabToPane"> {
   node: SplitNode;
   uiTabs: WorkspaceTab[];
-  focusedPaneId: string;
+  focusedPaneId: string | null;
   activeDragTabId: string | null;
   showDropZones: boolean;
   dropPreview: SplitDropZoneHover | null;
@@ -380,7 +380,7 @@ export function SplitContainer({
     if (!focusModeEnabled) {
       return layout.root;
     }
-    const focusedPane = panesById.get(layout.focusedPaneId);
+    const focusedPane = layout.focusedPaneId ? panesById.get(layout.focusedPaneId) : null;
     if (!focusedPane) {
       return layout.root;
     }

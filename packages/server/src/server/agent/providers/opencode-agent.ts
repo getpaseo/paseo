@@ -1667,11 +1667,6 @@ function buildOpenCodeSubAgentTimelineItem(
       ...toolCall.detail,
       ...(childSessionId ? { childSessionId } : {}),
       log: buildOpenCodeSubAgentLog(toolCall.detail, activity),
-      actions: activity.actions.map((action) => ({
-        index: action.index,
-        toolName: action.toolName,
-        ...(action.summary ? { summary: action.summary } : {}),
-      })),
     },
   };
 }

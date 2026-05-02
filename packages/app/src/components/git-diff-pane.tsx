@@ -231,35 +231,59 @@ const EMPTY_COMMENTS: readonly ReviewDraftComment[] = [];
 
 function noopStartComment(): void {}
 
-const LONG_PRESS_COMMENT_DELAY_MS = 350;
+const DIFF_LINE_HOVER_STYLE = isWeb ? ({ cursor: "auto" } as const) : null;
 
 function LongPressableLine({
   reviewTarget,
   reviewActions,
+  onHoverChange,
+  hoverTargetKey,
+  onHoverTargetChange,
   style,
   children,
 }: {
   reviewTarget: ReviewableDiffTarget | null | undefined;
   reviewActions: InlineReviewActions | undefined;
+  onHoverChange?: (hovered: boolean) => void;
+  hoverTargetKey?: string | null;
+  onHoverTargetChange?: (key: string | null) => void;
   style: StyleProp<ViewStyle>;
   children: ReactNode;
 }) {
   const onStartComment = reviewActions?.onStartComment;
-  const handleLongPress = useCallback(() => {
+  const handlePress = useCallback(() => {
     if (reviewTarget && onStartComment) {
       onStartComment(reviewTarget);
     }
   }, [reviewTarget, onStartComment]);
 
+  const handleHoverIn = useCallback(() => {
+    onHoverChange?.(true);
+    if (hoverTargetKey) {
+      onHoverTargetChange?.(hoverTargetKey);
+    }
+  }, [hoverTargetKey, onHoverChange, onHoverTargetChange]);
+  const handleHoverOut = useCallback(() => {
+    onHoverChange?.(false);
+    if (hoverTargetKey) {
+      onHoverTargetChange?.(null);
+    }
+  }, [hoverTargetKey, onHoverChange, onHoverTargetChange]);
+  const hoverStyle = useMemo(() => [style, DIFF_LINE_HOVER_STYLE], [style]);
+
+  if (isWeb && (onHoverChange || onHoverTargetChange)) {
+    return (
+      <Pressable onHoverIn={handleHoverIn} onHoverOut={handleHoverOut} style={hoverStyle}>
+        {children}
+      </Pressable>
+    );
+  }
+
   if (!isNative || !reviewTarget || !onStartComment) {
     return <View style={style}>{children}</View>;
   }
   return (
-    <Pressable
-      onLongPress={handleLongPress}
-      delayLongPress={LONG_PRESS_COMMENT_DELAY_MS}
-      style={style}
-    >
+    <Pressable onPress={handlePress} style={style}>
       {children}
     </Pressable>
   );
@@ -279,6 +303,7 @@ function DiffGutterCell({
   gutterWidth,
   reviewTarget,
   reviewActions,
+  isLineHovered,
   style,
 }: {
   lineNumber: number | null;
@@ -286,6 +311,7 @@ function DiffGutterCell({
   gutterWidth: number;
   reviewTarget?: ReviewableDiffTarget | null;
   reviewActions?: InlineReviewActions;
+  isLineHovered?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const containerStyle = useMemo(
@@ -315,6 +341,7 @@ function DiffGutterCell({
       reviewTarget={reviewTarget}
       comments={comments}
       isEditorOpen={isEditorOpen}
+      isLineHovered={isLineHovered}
       onStartComment={onStartComment}
       style={containerStyle}
     >
@@ -330,11 +357,17 @@ function DiffTextLine({
   wrapLines,
   reviewTarget,
   reviewActions,
+  onHoverChange,
+  hoverTargetKey,
+  onHoverTargetChange,
 }: {
   line: DiffLine;
   wrapLines: boolean;
   reviewTarget?: ReviewableDiffTarget | null;
   reviewActions?: InlineReviewActions;
+  onHoverChange?: (hovered: boolean) => void;
+  hoverTargetKey?: string | null;
+  onHoverTargetChange?: (key: string | null) => void;
 }) {
   const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
 
@@ -358,6 +391,9 @@ function DiffTextLine({
     <LongPressableLine
       reviewTarget={reviewTarget}
       reviewActions={reviewActions}
+      onHoverChange={onHoverChange}
+      hoverTargetKey={hoverTargetKey}
+      onHoverTargetChange={onHoverTargetChange}
       style={containerStyle}
     >
       {line.type !== "header" && visibleTokens ? (
@@ -373,10 +409,16 @@ function SplitTextLine({
   line,
   wrapLines,
   reviewActions,
+  onHoverChange,
+  hoverTargetKey,
+  onHoverTargetChange,
 }: {
   line: SplitDiffDisplayLine | null;
   wrapLines: boolean;
   reviewActions?: InlineReviewActions;
+  onHoverChange?: (hovered: boolean) => void;
+  hoverTargetKey?: string | null;
+  onHoverTargetChange?: (key: string | null) => void;
 }) {
   const visibleTokens = line && hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
 
@@ -400,6 +442,9 @@ function SplitTextLine({
     <LongPressableLine
       reviewTarget={line?.reviewTarget}
       reviewActions={reviewActions}
+      onHoverChange={onHoverChange}
+      hoverTargetKey={hoverTargetKey}
+      onHoverTargetChange={onHoverTargetChange}
       style={containerStyle}
     >
       {visibleTokens ? (
@@ -426,6 +471,7 @@ function DiffLineView({
   reviewTarget?: ReviewableDiffTarget | null;
   reviewActions?: InlineReviewActions;
 }) {
+  const [isLineHovered, setIsLineHovered] = useState(false);
   const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
 
   const containerStyle = useMemo(
@@ -448,6 +494,7 @@ function DiffLineView({
     <LongPressableLine
       reviewTarget={reviewTarget}
       reviewActions={reviewActions}
+      onHoverChange={setIsLineHovered}
       style={containerStyle}
     >
       <DiffGutterCell
@@ -456,6 +503,7 @@ function DiffLineView({
         gutterWidth={gutterWidth}
         reviewTarget={reviewTarget}
         reviewActions={reviewActions}
+        isLineHovered={isLineHovered}
         style={styles.lineNumberGutter}
       />
       {line.type !== "header" && visibleTokens ? (
@@ -478,6 +526,7 @@ function SplitDiffLine({
   wrapLines: boolean;
   reviewActions?: InlineReviewActions;
 }) {
+  const [isLineHovered, setIsLineHovered] = useState(false);
   const visibleTokens = line && hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
 
   const containerStyle = useMemo(
@@ -500,6 +549,7 @@ function SplitDiffLine({
     <LongPressableLine
       reviewTarget={line?.reviewTarget}
       reviewActions={reviewActions}
+      onHoverChange={setIsLineHovered}
       style={containerStyle}
     >
       <DiffGutterCell
@@ -508,6 +558,7 @@ function SplitDiffLine({
         gutterWidth={gutterWidth}
         reviewTarget={line?.reviewTarget}
         reviewActions={reviewActions}
+        isLineHovered={isLineHovered}
         style={styles.lineNumberGutter}
       />
       {visibleTokens ? (
@@ -635,6 +686,7 @@ function SplitDiffColumn({
   showDivider?: boolean;
 }) {
   const [scrollWidth, setScrollWidth] = useState(0);
+  const [hoveredReviewTargetKey, setHoveredReviewTargetKey] = useState<string | null>(null);
 
   const wrapCellStyle = useMemo(
     () => [styles.splitCell, showDivider && styles.splitCellWithDivider],
@@ -701,6 +753,7 @@ function SplitDiffColumn({
             );
           }
           const line = side === "left" ? row.left : row.right;
+          const reviewTargetKey = line?.reviewTarget?.key ?? null;
           const reviewRowState = getSplitInlineReviewThreadState({
             left: row.left?.reviewTarget,
             right: row.right?.reviewTarget,
@@ -714,6 +767,9 @@ function SplitDiffColumn({
                 gutterWidth={gutterWidth}
                 reviewTarget={line?.reviewTarget}
                 reviewActions={reviewActions}
+                isLineHovered={
+                  reviewTargetKey !== null && hoveredReviewTargetKey === reviewTargetKey
+                }
               />
               <InlineReviewGutterSpacer
                 reviewTarget={line?.reviewTarget}
@@ -741,6 +797,7 @@ function SplitDiffColumn({
               );
             }
             const line = side === "left" ? row.left : row.right;
+            const reviewTargetKey = line?.reviewTarget?.key ?? null;
             const reviewRowState = getSplitInlineReviewThreadState({
               left: row.left?.reviewTarget,
               right: row.right?.reviewTarget,
@@ -748,7 +805,13 @@ function SplitDiffColumn({
             });
             return (
               <View key={key}>
-                <SplitTextLine line={line} wrapLines={false} reviewActions={reviewActions} />
+                <SplitTextLine
+                  line={line}
+                  wrapLines={false}
+                  reviewActions={reviewActions}
+                  hoverTargetKey={reviewTargetKey}
+                  onHoverTargetChange={setHoveredReviewTargetKey}
+                />
                 <InlineReviewThreadContent
                   reviewTarget={line?.reviewTarget}
                   reviewActions={reviewActions}
@@ -872,6 +935,7 @@ function DiffFileBody({
 }) {
   const [scrollViewWidth, setScrollViewWidth] = useState(0);
   const [bodyWidth, setBodyWidth] = useState(0);
+  const [hoveredReviewTargetKey, setHoveredReviewTargetKey] = useState<string | null>(null);
   const { theme } = useUnistyles();
 
   const handleLayout = useCallback(
@@ -975,6 +1039,9 @@ function DiffFileBody({
                     gutterWidth={gutterWidth}
                     reviewTarget={reviewTarget}
                     reviewActions={reviewActions}
+                    isLineHovered={
+                      reviewTarget?.key !== undefined && hoveredReviewTargetKey === reviewTarget.key
+                    }
                   />
                   <InlineReviewGutterSpacer
                     reviewTarget={reviewTarget}
@@ -998,6 +1065,8 @@ function DiffFileBody({
                       wrapLines={false}
                       reviewTarget={reviewTarget}
                       reviewActions={reviewActions}
+                      hoverTargetKey={reviewTarget?.key ?? null}
+                      onHoverTargetChange={setHoveredReviewTargetKey}
                     />
                     <InlineReviewThreadContent
                       reviewTarget={reviewTarget}
@@ -2998,11 +3067,17 @@ const styles = StyleSheet.create((theme) => ({
   },
   gutterColumn: {
     backgroundColor: theme.colors.surface1,
+    zIndex: 4,
+    elevation: 4,
+    overflow: "visible",
   },
   gutterCell: {
     borderRightWidth: theme.borderWidth[1],
     borderRightColor: theme.colors.border,
     justifyContent: "flex-start",
+    zIndex: 4,
+    elevation: 4,
+    overflow: "visible",
   },
   inlineReviewRow: {
     flexDirection: "row",
@@ -3050,6 +3125,7 @@ const styles = StyleSheet.create((theme) => ({
   diffLineContainer: {
     flexDirection: "row",
     alignItems: "stretch",
+    overflow: "visible",
   },
   lineNumberGutter: {
     borderRightWidth: theme.borderWidth[1],
@@ -3057,8 +3133,12 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: theme.spacing[2],
     alignSelf: "stretch",
     justifyContent: "flex-start",
+    zIndex: 4,
+    elevation: 4,
+    overflow: "visible",
   },
   lineNumberText: {
+    width: "100%",
     textAlign: "right",
     paddingRight: theme.spacing[2],
     fontSize: theme.fontSize.xs,

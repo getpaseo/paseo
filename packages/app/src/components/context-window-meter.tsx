@@ -138,7 +138,6 @@ const styles = StyleSheet.create((theme) => ({
   tooltipTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.semibold,
   },
   tooltipText: {
     color: theme.colors.foreground,

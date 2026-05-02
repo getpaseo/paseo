@@ -24,9 +24,10 @@ const { theme, pressablePropsByLabel } = vi.hoisted(() => {
     theme: {
       spacing: { 1: 4, 2: 8, 3: 12 },
       borderWidth: { 1: 1 },
-      borderRadius: { base: 4 },
+      borderRadius: { base: 4, md: 6, lg: 8, xl: 12, full: 999 },
+      opacity: { 50: 0.5 },
       fontSize: { xs: 11, sm: 13 },
-      fontWeight: { medium: "500" },
+      fontWeight: { normal: "400", medium: "500" },
       lineHeight: { diff: 18 },
       colors: {
         accent: "#0a84ff",
@@ -38,6 +39,7 @@ const { theme, pressablePropsByLabel } = vi.hoisted(() => {
         surface1: "#111",
         surface2: "#222",
         surface3: "#333",
+        palette: { white: "#fff" },
       },
     },
     pressablePropsByLabel: new Map<string, Record<string, unknown>>(),
@@ -91,6 +93,8 @@ vi.mock("react-native-unistyles", () => ({
 }));
 
 vi.mock("@/constants/platform", () => ({
+  getIsElectron: () => false,
+  getIsElectronMac: () => false,
   isNative: false,
   isWeb: true,
 }));
@@ -101,8 +105,8 @@ vi.mock("lucide-react-native", () => {
   return {
     Check: createIcon("Check"),
     CircleDot: createIcon("CircleDot"),
-    MessageCircle: createIcon("MessageCircle"),
     Pencil: createIcon("Pencil"),
+    Plus: createIcon("Plus"),
     Trash2: createIcon("Trash2"),
     X: createIcon("X"),
   };
@@ -293,7 +297,7 @@ describe("git diff inline review helpers", () => {
     expect(pressablePropsByLabel.get("Add review comment")?.hitSlop).toBe(SMALL_ACTION_HIT_SLOP);
   });
 
-  it("shows the line number by default and replaces it with the icon when comments exist or the editor is open", () => {
+  it("keeps the line number visible and only floats the plus for line hover", () => {
     const reviewTarget = target();
     const { container, queryByText, rerender } = render(
       <InlineReviewGutterCell
@@ -307,7 +311,7 @@ describe("git diff inline review helpers", () => {
     );
 
     expect(queryByText("2")).toBeTruthy();
-    expect(container.querySelector("[data-icon='MessageCircle']")).toBeNull();
+    expect(container.querySelector("[data-icon='Plus']")).toBeNull();
 
     rerender(
       <InlineReviewGutterCell
@@ -320,8 +324,8 @@ describe("git diff inline review helpers", () => {
       </InlineReviewGutterCell>,
     );
 
-    expect(queryByText("2")).toBeNull();
-    expect(container.querySelector("[data-icon='MessageCircle']")).toBeTruthy();
+    expect(queryByText("2")).toBeTruthy();
+    expect(container.querySelector("[data-icon='Plus']")).toBeNull();
 
     rerender(
       <InlineReviewGutterCell
@@ -334,13 +338,31 @@ describe("git diff inline review helpers", () => {
       </InlineReviewGutterCell>,
     );
 
-    expect(queryByText("2")).toBeNull();
-    expect(container.querySelector("[data-icon='MessageCircle']")).toBeTruthy();
+    expect(queryByText("2")).toBeTruthy();
+    expect(container.querySelector("[data-icon='Plus']")).toBeNull();
+
+    rerender(
+      <InlineReviewGutterCell
+        reviewTarget={reviewTarget}
+        comments={COMMENT_LIST}
+        isEditorOpen={false}
+        isLineHovered
+        onStartComment={vi.fn()}
+      >
+        <span>2</span>
+      </InlineReviewGutterCell>,
+    );
+
+    expect(queryByText("2")).toBeTruthy();
+    expect(container.querySelector("[data-icon='Plus']")).toBeTruthy();
   });
 });
 
 describe("InlineReviewEditor", () => {
+  const originalMatchMedia = window.matchMedia;
+
   afterEach(() => {
+    window.matchMedia = originalMatchMedia;
     cleanup();
     vi.clearAllMocks();
   });
@@ -363,6 +385,50 @@ describe("InlineReviewEditor", () => {
 
     fireEvent.click(getByTestId("editor-cancel"));
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles Escape cancel and Mod+Enter save from the focused textarea", () => {
+    const onCancel = vi.fn();
+    const onSave = vi.fn();
+    const { getByTestId } = render(
+      <InlineReviewEditor
+        initialBody="ready"
+        onCancel={onCancel}
+        onSave={onSave}
+        testID="editor"
+      />,
+    );
+    const input = getByTestId("editor-input");
+
+    fireEvent.focus(input);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+    expect(onSave).toHaveBeenCalledWith("ready");
+  });
+
+  it("shows shared shortcut hints while focused on a fine-pointer screen", () => {
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    const { getByTestId, getByText, queryByText } = render(
+      <InlineReviewEditor
+        initialBody="ready"
+        onCancel={vi.fn()}
+        onSave={vi.fn()}
+        testID="editor"
+      />,
+    );
+    const input = getByTestId("editor-input");
+
+    expect(getByText("Esc")).toBeTruthy();
+    expect(getByText(/(?:⌘⏎|Ctrl\+⏎)/)).toBeTruthy();
+
+    fireEvent.blur(input);
+    expect(queryByText("Esc")).toBeNull();
   });
 });
 

@@ -1,10 +1,12 @@
 import {
+  default as React,
   useCallback,
   useMemo,
   useState,
   type ComponentType,
   type PropsWithChildren,
   type ReactElement,
+  type ReactNode,
 } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import type {
@@ -17,7 +19,7 @@ import type {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 type ButtonVariant = "default" | "secondary" | "outline" | "ghost" | "destructive";
-type ButtonSize = "sm" | "md" | "lg";
+type ButtonSize = "xs" | "sm" | "md" | "lg";
 
 type LeftIcon =
   | ReactElement
@@ -25,7 +27,7 @@ type LeftIcon =
   | ((color: string) => ReactElement)
   | null;
 
-const ICON_SIZE: Record<ButtonSize, number> = { sm: 14, md: 16, lg: 20 };
+const ICON_SIZE: Record<ButtonSize, number> = { xs: 12, sm: 14, md: 16, lg: 20 };
 
 const styles = StyleSheet.create((theme) => ({
   base: {
@@ -40,6 +42,12 @@ const styles = StyleSheet.create((theme) => ({
   md: {
     paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[4],
+  },
+  xs: {
+    minHeight: 28,
+    paddingVertical: theme.spacing[1],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
   },
   sm: {
     paddingVertical: theme.spacing[2],
@@ -82,6 +90,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
+  textXs: {
+    fontSize: theme.fontSize.xs,
+  },
   textDefault: {
     color: theme.colors.palette.white,
   },
@@ -101,6 +112,7 @@ export function Button({
   variant = "secondary",
   size = "md",
   leftIcon,
+  trailing,
   style,
   textStyle,
   disabled,
@@ -112,6 +124,7 @@ export function Button({
     variant?: ButtonVariant;
     size?: ButtonSize;
     leftIcon?: LeftIcon;
+    trailing?: ReactNode;
     style?: StyleProp<ViewStyle>;
     textStyle?: StyleProp<TextStyle>;
     loading?: boolean;
@@ -135,7 +148,9 @@ export function Button({
   }
 
   let sizeStyle: ViewStyle;
-  if (size === "sm") {
+  if (size === "xs") {
+    sizeStyle = styles.xs;
+  } else if (size === "sm") {
     sizeStyle = styles.sm;
   } else if (size === "lg") {
     sizeStyle = styles.lg;
@@ -162,13 +177,14 @@ export function Button({
   const resolvedTextStyle = useMemo(
     () => [
       styles.text,
+      size === "xs" ? styles.textXs : null,
       variant === "default" ? styles.textDefault : null,
       variant === "destructive" ? styles.textDestructive : null,
       variant === "ghost" ? styles.textGhost : null,
       textStyle,
       isGhostHovered ? styles.textGhostHovered : null,
     ],
-    [variant, textStyle, isGhostHovered],
+    [size, variant, textStyle, isGhostHovered],
   );
 
   const accessibilityState = useMemo(
@@ -235,6 +251,7 @@ export function Button({
     >
       {renderIcon()}
       {children != null ? <Text style={resolvedTextStyle}>{children}</Text> : null}
+      {trailing}
     </Pressable>
   );
 }

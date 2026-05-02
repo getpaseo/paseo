@@ -88,8 +88,5 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
   },
-  shortcut: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.borderAccent,
-  },
+  shortcut: {},
 }));

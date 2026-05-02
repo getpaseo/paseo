@@ -120,6 +120,7 @@ import {
   type WorkspacePaneContentModel,
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
+import { WorkspaceFocusProvider } from "@/workspace/focus";
 import { shouldSeedEmptyWorkspaceDraft } from "@/screens/workspace/workspace-empty-draft-seed";
 import {
   buildBulkCloseConfirmationMessage,
@@ -2950,132 +2951,134 @@ function WorkspaceScreenContent({
   ]);
 
   return (
-    <View style={containerStyle}>
-      {documentTitleEffectTab ? (
-        <WorkspaceTabPresentationResolver
-          tab={documentTitleEffectTab}
-          serverId={normalizedServerId}
-          workspaceId={normalizedWorkspaceId}
-        >
-          {(presentation) => (
-            <WorkspaceDocumentTitleEffect
-              label={presentation.label}
-              titleState={presentation.titleState}
-            />
-          )}
-        </WorkspaceTabPresentationResolver>
-      ) : null}
-      <View style={styles.threePaneRow}>
-        <View style={styles.centerColumn}>
-          {showScreenHeader && (
-            <ScreenHeader
-              onRowLayout={onHeaderLayout}
-              left={
-                <>
-                  <SidebarMenuToggle />
-                  <WorkspaceHeaderTitleBar
-                    isLoading={isWorkspaceHeaderLoading}
-                    title={workspaceHeaderTitle}
-                    subtitle={workspaceHeaderSubtitle}
-                    showSubtitle={shouldShowWorkspaceHeaderSubtitle}
-                    currentBranchName={currentBranchName}
-                    isGitCheckout={isGitCheckout}
-                    normalizedServerId={normalizedServerId}
-                    normalizedWorkspaceId={normalizedWorkspaceId}
-                    showWorkspaceSetup={showWorkspaceSetup}
-                    showCreateBrowserTab={showCreateBrowserTab}
-                    isMobile={isMobile}
-                    createTerminalDisabled={createTerminalDisabled}
-                    menuNewAgentIcon={menuNewAgentIcon}
-                    menuNewTerminalIcon={menuNewTerminalIcon}
-                    menuNewBrowserIcon={MENU_NEW_BROWSER_ICON}
-                    menuCopyIcon={menuCopyIcon}
-                    menuSettingsIcon={menuSettingsIcon}
-                    onCreateDraftTab={handleCreateDraftTab}
-                    onCreateTerminal={handleCreateTerminal}
-                    onCreateBrowser={handleCreateBrowserTab}
-                    onCopyWorkspacePath={handleCopyWorkspacePath}
-                    onCopyBranchName={handleCopyBranchName}
-                    onOpenSetupTab={handleOpenSetupTab}
-                  />
-                </>
-              }
-              right={headerRight}
-            />
-          )}
-
-          {isMobile ? (
-            <MobileWorkspaceTabSwitcher
-              tabs={tabs}
-              activeTabKey={activeTabKey}
-              activeTab={activeTabDescriptor}
-              tabSwitcherOptions={tabSwitcherOptions}
-              tabByKey={tabByKey}
-              normalizedServerId={normalizedServerId}
-              normalizedWorkspaceId={normalizedWorkspaceId}
-              onSelectSwitcherTab={handleSelectSwitcherTab}
-              onCopyResumeCommand={handleCopyResumeCommand}
-              onCopyAgentId={handleCopyAgentId}
-              onReloadAgent={handleReloadAgent}
-              onCloseTab={handleCloseTabById}
-              onCloseTabsAbove={handleCloseTabsToLeft}
-              onCloseTabsBelow={handleCloseTabsToRight}
-              onCloseOtherTabs={handleCloseOtherTabs}
-            />
-          ) : null}
-
-          {shouldRenderDesktopPaneFallback ? (
-            <WorkspaceDesktopTabsRow
-              paneId={focusedPaneIdOrUndefined}
-              isFocused={isRouteFocused}
-              tabs={desktopTabRowItems}
-              normalizedServerId={normalizedServerId}
-              normalizedWorkspaceId={normalizedWorkspaceId}
-              setHoveredTabKey={setHoveredTabKey}
-              setHoveredCloseTabKey={setHoveredCloseTabKey}
-              onNavigateTab={navigateToTabId}
-              onCloseTab={handleCloseTabById}
-              onCopyResumeCommand={handleCopyResumeCommand}
-              onCopyAgentId={handleCopyAgentId}
-              onReloadAgent={handleReloadAgent}
-              onCloseTabsToLeft={handleCloseTabsToLeft}
-              onCloseTabsToRight={handleCloseTabsToRight}
-              onCloseOtherTabs={handleCloseOtherTabs}
-              onCreateDraftTab={handleCreateDraftTab}
-              onCreateTerminalTab={handleCreateTerminal}
-              onCreateBrowserTab={handleCreateBrowserTab}
-              showCreateBrowserTab={showCreateBrowserTab}
-              disableCreateTerminal={createTerminalMutation.isPending}
-              isWaitingOnTerminalReadiness={pendingTerminalCreateInput !== null}
-              onReorderTabs={handleReorderTabsInFocusedPane}
-              onSplitRight={noop}
-              onSplitDown={noop}
-              showPaneSplitActions={false}
-            />
-          ) : null}
-
-          <View style={styles.centerContent}>
-            {isMobile ? (
-              <GestureDetector gesture={explorerOpenGesture} touchAction="pan-y">
-                <View style={styles.content}>{content}</View>
-              </GestureDetector>
-            ) : (
-              <View style={styles.content}>{desktopContent}</View>
-            )}
-          </View>
-        </View>
-
-        {showExplorerSidebar && workspaceDirectory ? (
-          <ExplorerSidebar
+    <WorkspaceFocusProvider workspaceKey={persistenceKey}>
+      <View style={containerStyle}>
+        {documentTitleEffectTab ? (
+          <WorkspaceTabPresentationResolver
+            tab={documentTitleEffectTab}
             serverId={normalizedServerId}
             workspaceId={normalizedWorkspaceId}
-            workspaceRoot={workspaceDirectory}
-            isGit={isGitCheckout}
-            onOpenFile={handleOpenFileFromExplorer}
-          />
+          >
+            {(presentation) => (
+              <WorkspaceDocumentTitleEffect
+                label={presentation.label}
+                titleState={presentation.titleState}
+              />
+            )}
+          </WorkspaceTabPresentationResolver>
         ) : null}
+        <View style={styles.threePaneRow}>
+          <View style={styles.centerColumn}>
+            {showScreenHeader && (
+              <ScreenHeader
+                onRowLayout={onHeaderLayout}
+                left={
+                  <>
+                    <SidebarMenuToggle />
+                    <WorkspaceHeaderTitleBar
+                      isLoading={isWorkspaceHeaderLoading}
+                      title={workspaceHeaderTitle}
+                      subtitle={workspaceHeaderSubtitle}
+                      showSubtitle={shouldShowWorkspaceHeaderSubtitle}
+                      currentBranchName={currentBranchName}
+                      isGitCheckout={isGitCheckout}
+                      normalizedServerId={normalizedServerId}
+                      normalizedWorkspaceId={normalizedWorkspaceId}
+                      showWorkspaceSetup={showWorkspaceSetup}
+                      showCreateBrowserTab={showCreateBrowserTab}
+                      isMobile={isMobile}
+                      createTerminalDisabled={createTerminalDisabled}
+                      menuNewAgentIcon={menuNewAgentIcon}
+                      menuNewTerminalIcon={menuNewTerminalIcon}
+                      menuNewBrowserIcon={MENU_NEW_BROWSER_ICON}
+                      menuCopyIcon={menuCopyIcon}
+                      menuSettingsIcon={menuSettingsIcon}
+                      onCreateDraftTab={handleCreateDraftTab}
+                      onCreateTerminal={handleCreateTerminal}
+                      onCreateBrowser={handleCreateBrowserTab}
+                      onCopyWorkspacePath={handleCopyWorkspacePath}
+                      onCopyBranchName={handleCopyBranchName}
+                      onOpenSetupTab={handleOpenSetupTab}
+                    />
+                  </>
+                }
+                right={headerRight}
+              />
+            )}
+
+            {isMobile ? (
+              <MobileWorkspaceTabSwitcher
+                tabs={tabs}
+                activeTabKey={activeTabKey}
+                activeTab={activeTabDescriptor}
+                tabSwitcherOptions={tabSwitcherOptions}
+                tabByKey={tabByKey}
+                normalizedServerId={normalizedServerId}
+                normalizedWorkspaceId={normalizedWorkspaceId}
+                onSelectSwitcherTab={handleSelectSwitcherTab}
+                onCopyResumeCommand={handleCopyResumeCommand}
+                onCopyAgentId={handleCopyAgentId}
+                onReloadAgent={handleReloadAgent}
+                onCloseTab={handleCloseTabById}
+                onCloseTabsAbove={handleCloseTabsToLeft}
+                onCloseTabsBelow={handleCloseTabsToRight}
+                onCloseOtherTabs={handleCloseOtherTabs}
+              />
+            ) : null}
+
+            {shouldRenderDesktopPaneFallback ? (
+              <WorkspaceDesktopTabsRow
+                paneId={focusedPaneIdOrUndefined}
+                isFocused={isRouteFocused}
+                tabs={desktopTabRowItems}
+                normalizedServerId={normalizedServerId}
+                normalizedWorkspaceId={normalizedWorkspaceId}
+                setHoveredTabKey={setHoveredTabKey}
+                setHoveredCloseTabKey={setHoveredCloseTabKey}
+                onNavigateTab={navigateToTabId}
+                onCloseTab={handleCloseTabById}
+                onCopyResumeCommand={handleCopyResumeCommand}
+                onCopyAgentId={handleCopyAgentId}
+                onReloadAgent={handleReloadAgent}
+                onCloseTabsToLeft={handleCloseTabsToLeft}
+                onCloseTabsToRight={handleCloseTabsToRight}
+                onCloseOtherTabs={handleCloseOtherTabs}
+                onCreateDraftTab={handleCreateDraftTab}
+                onCreateTerminalTab={handleCreateTerminal}
+                onCreateBrowserTab={handleCreateBrowserTab}
+                showCreateBrowserTab={showCreateBrowserTab}
+                disableCreateTerminal={createTerminalMutation.isPending}
+                isWaitingOnTerminalReadiness={pendingTerminalCreateInput !== null}
+                onReorderTabs={handleReorderTabsInFocusedPane}
+                onSplitRight={noop}
+                onSplitDown={noop}
+                showPaneSplitActions={false}
+              />
+            ) : null}
+
+            <View style={styles.centerContent}>
+              {isMobile ? (
+                <GestureDetector gesture={explorerOpenGesture} touchAction="pan-y">
+                  <View style={styles.content}>{content}</View>
+                </GestureDetector>
+              ) : (
+                <View style={styles.content}>{desktopContent}</View>
+              )}
+            </View>
+          </View>
+
+          {showExplorerSidebar && workspaceDirectory ? (
+            <ExplorerSidebar
+              serverId={normalizedServerId}
+              workspaceId={normalizedWorkspaceId}
+              workspaceRoot={workspaceDirectory}
+              isGit={isGitCheckout}
+              onOpenFile={handleOpenFileFromExplorer}
+            />
+          ) : null}
+        </View>
       </View>
-    </View>
+    </WorkspaceFocusProvider>
   );
 }
 
@@ -3212,10 +3215,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  newTabTooltipShortcut: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.borderAccent,
-  },
+  newTabTooltipShortcut: {},
   explorerTooltipRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -3225,10 +3225,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
   },
-  explorerTooltipShortcut: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.borderAccent,
-  },
+  explorerTooltipShortcut: {},
   mobileTabsRow: {
     backgroundColor: theme.colors.surface0,
     borderBottomWidth: theme.borderWidth[1],

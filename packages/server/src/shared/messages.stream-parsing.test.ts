@@ -179,13 +179,6 @@ describe("shared messages stream parsing", () => {
               subAgentType: "Explore",
               description: "Inspect repository structure",
               log: "[Read] README.md",
-              actions: [
-                {
-                  index: 1,
-                  toolName: "Read",
-                  summary: "README.md",
-                },
-              ],
             },
             error: null,
           },

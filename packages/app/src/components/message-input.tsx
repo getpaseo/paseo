@@ -278,7 +278,7 @@ function VoiceTooltipBody({
   return (
     <View style={styles.tooltipRow}>
       <Text style={styles.tooltipText}>{voiceTooltipText}</Text>
-      {shortcut ? <Shortcut chord={shortcut} style={styles.tooltipShortcut} /> : null}
+      {shortcut ? <Shortcut chord={shortcut} /> : null}
     </View>
   );
 }
@@ -293,7 +293,7 @@ function SendTooltipBody({
   return (
     <View style={styles.tooltipRow}>
       <Text style={styles.tooltipText}>{label}</Text>
-      {sendKeys ? <Shortcut chord={sendKeys} style={styles.tooltipShortcut} /> : null}
+      {sendKeys ? <Shortcut chord={sendKeys} /> : null}
     </View>
   );
 }
@@ -1924,10 +1924,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   tooltipText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.popoverForeground,
-  },
-  tooltipShortcut: {
-    backgroundColor: theme.colors.surface3,
-    borderColor: theme.colors.borderAccent,
   },
   buttonDisabled: {
     opacity: 0.5,
