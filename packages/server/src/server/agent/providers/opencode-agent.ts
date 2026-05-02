@@ -774,12 +774,8 @@ async function collectOpenCodePersistedAgentsFromStorage(
     .sort((left, right) => getOpenCodeSessionTimestamp(right) - getOpenCodeSessionTimestamp(left))
     .slice(0, limit);
 
-  const descriptors = await Promise.all(
+  return await Promise.all(
     candidates.map((session) => buildOpenCodePersistedAgentDescriptor(storageRoot, session)),
-  );
-
-  return descriptors.filter((descriptor): descriptor is PersistedAgentDescriptor =>
-    Boolean(descriptor),
   );
 }
 
@@ -798,7 +794,7 @@ async function readOpenCodeStoredSessions(sessionRoot: string): Promise<OpenCode
 async function buildOpenCodePersistedAgentDescriptor(
   storageRoot: string,
   session: OpenCodeStoredSession,
-): Promise<PersistedAgentDescriptor | null> {
+): Promise<PersistedAgentDescriptor> {
   const timeline = await readOpenCodeSessionTimeline(storageRoot, session.id);
   return {
     provider: "opencode",

@@ -232,7 +232,7 @@ describe("WorkspaceImportSheet", () => {
       "fetchRecentProviderSessions" | "importAgent"
     >);
 
-    expect(await screen.findByText("Loading recent sessions...")).toBeTruthy();
+    await screen.findByText("Loading recent sessions...");
     expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
       cwd: "/repo/paseo",
       limit: 20,
@@ -251,7 +251,7 @@ describe("WorkspaceImportSheet", () => {
       "fetchRecentProviderSessions" | "importAgent"
     >);
 
-    expect(await screen.findByText("No recent sessions to import.")).toBeTruthy();
+    await screen.findByText("No recent sessions to import.");
   });
 
   it("shows the all-already-imported empty state when filteredAlreadyImportedCount is positive", async () => {
@@ -267,7 +267,7 @@ describe("WorkspaceImportSheet", () => {
       "fetchRecentProviderSessions" | "importAgent"
     >);
 
-    expect(await screen.findByText("All recent sessions are already imported.")).toBeTruthy();
+    await screen.findByText("All recent sessions are already imported.");
     expect(screen.queryByText("No recent sessions to import.")).toBeNull();
   });
 
@@ -282,7 +282,7 @@ describe("WorkspaceImportSheet", () => {
       "fetchRecentProviderSessions" | "importAgent"
     >);
 
-    expect(await screen.findByText("Could not load recent sessions.")).toBeTruthy();
+    await screen.findByText("Could not load recent sessions.");
   });
 
   it("loads recent provider sessions for the workspace and renders descriptor-owned labels", async () => {
@@ -311,10 +311,10 @@ describe("WorkspaceImportSheet", () => {
       });
     });
 
-    expect(await screen.findByText("Custom Agent")).toBeTruthy();
-    expect(screen.getByText("2h ago")).toBeTruthy();
-    expect(screen.getByText("Implement the importer sheet")).toBeTruthy();
-    expect(screen.getByText("Make the rows readable and provider opaque")).toBeTruthy();
+    await screen.findByText("Custom Agent");
+    screen.getByText("2h ago");
+    screen.getByText("Implement the importer sheet");
+    screen.getByText("Make the rows readable and provider opaque");
   });
 
   it("keeps cached rows visible and revalidates when reopened", async () => {
@@ -349,14 +349,14 @@ describe("WorkspaceImportSheet", () => {
 
     const { rerender } = render(<TestSheet visible />);
 
-    expect(await screen.findByText("Cached importable session")).toBeTruthy();
+    await screen.findByText("Cached importable session");
     expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
 
     rerender(<TestSheet visible={false} />);
     fetchRecentProviderSessions.mockClear();
     rerender(<TestSheet visible />);
 
-    expect(await screen.findByText("Cached importable session")).toBeTruthy();
+    await screen.findByText("Cached importable session");
     await waitFor(() => {
       expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
         cwd: "/repo/paseo",
@@ -420,7 +420,7 @@ describe("WorkspaceImportSheet", () => {
       await screen.findByTestId("workspace-import-session-custom-provider-provider-thread-1"),
     );
 
-    expect(await screen.findByText("Could not import selected session.")).toBeTruthy();
+    await screen.findByText("Could not import selected session.");
     expect(importAgent).toHaveBeenCalledWith({
       providerId: "custom-provider",
       providerHandleId: "provider-thread-1",
@@ -484,8 +484,8 @@ describe("WorkspaceImportSheet", () => {
       expect.objectContaining({ providers: ["z-ai"] }),
     );
 
-    expect(await screen.findByText("Session claude")).toBeTruthy();
-    expect(await screen.findByText("Session codex")).toBeTruthy();
+    await screen.findByText("Session claude");
+    await screen.findByText("Session codex");
   });
 
   it("shows partial-failure note when one provider request fails but others succeed", async () => {
@@ -523,8 +523,8 @@ describe("WorkspaceImportSheet", () => {
       },
     );
 
-    expect(await screen.findByText("Session codex")).toBeTruthy();
-    expect(await screen.findByText("Could not load sessions for Claude Code.")).toBeTruthy();
+    await screen.findByText("Session codex");
+    await screen.findByText("Could not load sessions for Claude Code.");
   });
 
   it("filters the merged list when a provider badge is selected and restores it on All", async () => {
@@ -561,18 +561,18 @@ describe("WorkspaceImportSheet", () => {
       },
     );
 
-    expect(await screen.findByText("Session claude")).toBeTruthy();
-    expect(await screen.findByText("Session codex")).toBeTruthy();
+    await screen.findByText("Session claude");
+    await screen.findByText("Session codex");
 
     fireEvent.click(screen.getByTestId("workspace-import-filter-codex"));
 
-    expect(screen.getByText("Session codex")).toBeTruthy();
+    screen.getByText("Session codex");
     expect(screen.queryByText("Session claude")).toBeNull();
 
     fireEvent.click(screen.getByTestId("workspace-import-filter-all"));
 
-    expect(screen.getByText("Session claude")).toBeTruthy();
-    expect(screen.getByText("Session codex")).toBeTruthy();
+    screen.getByText("Session claude");
+    screen.getByText("Session codex");
   });
 
   it("does not render filter badges when only one importable provider is enabled", async () => {
@@ -627,7 +627,7 @@ describe("WorkspaceImportSheet", () => {
       },
     );
 
-    expect(await screen.findByText("No importable providers are enabled.")).toBeTruthy();
+    await screen.findByText("No importable providers are enabled.");
     expect(fetchRecentProviderSessions).not.toHaveBeenCalled();
   });
 });
