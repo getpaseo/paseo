@@ -12,11 +12,9 @@ import type {
   AgentClient,
   AgentMode,
   AgentModelDefinition,
-  AgentTimelineItem,
   ListModesOptions,
   ListModelsOptions,
 } from "./agent/agent-sdk-types.js";
-import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderDefinition } from "./agent/provider-registry.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
@@ -29,7 +27,6 @@ interface SessionHandlerInternals {
   handleCheckoutPullRequest(params: unknown): Promise<unknown>;
   handleCheckoutPushRequest(params: unknown): Promise<unknown>;
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
-  handleImportAgentRequest(params: unknown): Promise<unknown>;
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   handleValidateBranchRequest(params: unknown): Promise<unknown>;
@@ -58,16 +55,13 @@ const checkoutGitMocks = vi.hoisted(() => ({
   mergeToBase: vi.fn(),
   pullCurrentBranch: vi.fn(),
   pushCurrentBranch: vi.fn(),
+  renameCurrentBranch: vi.fn(),
   resolveBranchCheckout: vi.fn(),
   warmCheckoutShortstatInBackground: vi.fn(),
 }));
 
 const agentResponseMocks = vi.hoisted(() => ({
   generateStructuredAgentResponseWithFallback: vi.fn(),
-}));
-
-const agentMetadataMocks = vi.hoisted(() => ({
-  scheduleAgentMetadataGeneration: vi.fn(),
 }));
 
 const spawnMocks = vi.hoisted(() => ({
@@ -149,6 +143,7 @@ vi.mock("../utils/checkout-git.js", async (importOriginal) => {
     mergeToBase: checkoutGitMocks.mergeToBase,
     pullCurrentBranch: checkoutGitMocks.pullCurrentBranch,
     pushCurrentBranch: checkoutGitMocks.pushCurrentBranch,
+    renameCurrentBranch: checkoutGitMocks.renameCurrentBranch,
     resolveBranchCheckout: checkoutGitMocks.resolveBranchCheckout,
     warmCheckoutShortstatInBackground: checkoutGitMocks.warmCheckoutShortstatInBackground,
   };
@@ -176,14 +171,6 @@ vi.mock("./agent/agent-response-loop.js", async (importOriginal) => {
     ...actual,
     generateStructuredAgentResponseWithFallback:
       agentResponseMocks.generateStructuredAgentResponseWithFallback,
-  };
-});
-
-vi.mock("./agent/agent-metadata-generator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./agent/agent-metadata-generator.js")>();
-  return {
-    ...actual,
-    scheduleAgentMetadataGeneration: agentMetadataMocks.scheduleAgentMetadataGeneration,
   };
 });
 
@@ -581,89 +568,18 @@ function createProviderSnapshotManagerStub(): ProviderSnapshotManager {
   return stub as unknown as ProviderSnapshotManager;
 }
 
+function createTerminalManagerStub(options?: { setTerminalTitle?: ReturnType<typeof vi.fn> }): {
+  setTerminalTitle: ReturnType<typeof vi.fn>;
+  subscribeTerminalsChanged: ReturnType<typeof vi.fn>;
+} {
+  return {
+    setTerminalTitle: options?.setTerminalTitle ?? vi.fn(),
+    subscribeTerminalsChanged: vi.fn(() => () => {}),
+  };
+}
+
 afterEach(() => {
   vi.clearAllMocks();
-});
-
-describe("session agent import", () => {
-  test("sets a provisional title and schedules auto-title generation from the first hydrated user message", async () => {
-    const messages: unknown[] = [];
-    const cwd = "/tmp/imported-agent";
-    const timeline: AgentTimelineItem[] = [
-      { type: "user_message", text: "Investigate flaky checkout status\n\ninclude logs" },
-      { type: "assistant_message", text: "I will inspect the checkout flow." },
-    ];
-    const snapshot = {
-      id: "00000000-0000-4000-8000-000000000632",
-      provider: "codex",
-      cwd,
-      capabilities: TEST_CAPABILITIES,
-      config: { provider: "codex", cwd },
-      createdAt: new Date("2026-04-30T00:00:00.000Z"),
-      updatedAt: new Date("2026-04-30T00:00:00.000Z"),
-      availableModes: [],
-      currentModeId: null,
-      pendingPermissions: new Map(),
-      bufferedPermissionResolutions: new Map(),
-      inFlightPermissionResponses: new Set(),
-      pendingReplacement: false,
-      persistence: {
-        provider: "codex",
-        sessionId: "thread-imported",
-        nativeHandle: "thread-imported",
-        metadata: { provider: "codex", cwd },
-      },
-      historyPrimed: true,
-      lastUserMessageAt: null,
-      attention: { requiresAttention: false },
-      foregroundTurnWaiters: new Set(),
-      finalizedForegroundTurnIds: new Set(),
-      unsubscribeSession: null,
-      internal: false,
-      labels: {},
-      lifecycle: "closed",
-      session: null,
-      activeForegroundTurnId: null,
-    } satisfies ManagedAgent;
-    const agentManager = {
-      listAgents: vi.fn(() => []),
-      subscribe: vi.fn(() => () => {}),
-      findPersistedAgent: vi.fn().mockResolvedValue(null),
-      resumeAgentFromPersistence: vi.fn().mockResolvedValue(snapshot),
-      hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
-      getTimeline: vi.fn().mockReturnValue(timeline),
-      setTitle: vi.fn().mockResolvedValue(undefined),
-      notifyAgentState: vi.fn(),
-    };
-    const agentStorage = {
-      list: vi.fn().mockResolvedValue([]),
-      get: vi.fn().mockResolvedValue(null),
-    };
-    const session = createSessionForTest({ messages });
-    Object.assign(session, { agentManager, agentStorage });
-
-    await asSessionInternals(session).handleImportAgentRequest({
-      type: "import_agent_request",
-      provider: "codex",
-      sessionId: "thread-imported",
-      cwd,
-      requestId: "import-thread",
-    });
-
-    expect(agentManager.setTitle).toHaveBeenCalledWith(
-      snapshot.id,
-      "Investigate flaky checkout status",
-    );
-    expect(agentMetadataMocks.scheduleAgentMetadataGeneration).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentManager,
-        agentId: snapshot.id,
-        cwd,
-        initialPrompt: "Investigate flaky checkout status\n\ninclude logs",
-        explicitTitle: null,
-      }),
-    );
-  });
 });
 
 describe("session PR status payload normalization", () => {
@@ -1895,6 +1811,231 @@ describe("session checkout switch branch handling", () => {
         source: "local",
         error: null,
         requestId: "request-switch",
+      },
+    });
+  });
+});
+
+describe("session checkout rename branch handling", () => {
+  test("rejects invalid branch slugs without renaming", async () => {
+    const messages: unknown[] = [];
+    const workspaceGitService = {
+      getSnapshot: vi.fn(),
+      peekSnapshot: vi.fn(),
+    };
+    const session = createSessionForTest({ workspaceGitService, messages });
+
+    await session.handleMessage({
+      type: "checkout_rename_branch_request",
+      cwd: "/tmp/repo",
+      branch: "Feature Name",
+      requestId: "request-rename-invalid",
+    });
+
+    expect(checkoutGitMocks.renameCurrentBranch).not.toHaveBeenCalled();
+    expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "checkout_rename_branch_response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: false,
+        currentBranch: null,
+        error: {
+          code: "UNKNOWN",
+          message:
+            "Branch name must contain only lowercase letters, numbers, hyphens, and forward slashes",
+        },
+        requestId: "request-rename-invalid",
+      },
+    });
+  });
+
+  test("reports null current branch when branch rename fails", async () => {
+    const messages: unknown[] = [];
+    const workspaceGitService = {
+      getSnapshot: vi.fn(),
+      peekSnapshot: vi.fn(),
+    };
+    const session = createSessionForTest({ workspaceGitService, messages });
+    checkoutGitMocks.renameCurrentBranch.mockRejectedValue(new Error("branch already exists"));
+
+    await session.handleMessage({
+      type: "checkout_rename_branch_request",
+      cwd: "/tmp/repo",
+      branch: "feature/new-name",
+      requestId: "request-rename-failure",
+    });
+
+    expect(checkoutGitMocks.renameCurrentBranch).toHaveBeenCalledWith(
+      "/tmp/repo",
+      "feature/new-name",
+    );
+    expect(workspaceGitService.peekSnapshot).not.toHaveBeenCalled();
+    expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "checkout_rename_branch_response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: false,
+        currentBranch: null,
+        error: {
+          code: "UNKNOWN",
+          message: "branch already exists",
+        },
+        requestId: "request-rename-failure",
+      },
+    });
+  });
+
+  test("forces workspace git refresh after renaming the current branch", async () => {
+    const messages: unknown[] = [];
+    const github = { invalidate: vi.fn() };
+    const workspaceGitService = {
+      getSnapshot: vi.fn().mockResolvedValue(
+        createWorkspaceGitSnapshot("/tmp/repo", {
+          git: {
+            currentBranch: "feature/new-name",
+            isDirty: false,
+          },
+        }),
+      ),
+      peekSnapshot: vi.fn(() =>
+        createWorkspaceGitSnapshot("/tmp/repo", {
+          git: { currentBranch: "feature/old-name" },
+        }),
+      ),
+    };
+    const session = createSessionForTest({ github, workspaceGitService, messages });
+    checkoutGitMocks.renameCurrentBranch.mockResolvedValue({
+      previousBranch: "feature/old-name",
+      currentBranch: "feature/new-name",
+    });
+
+    await session.handleMessage({
+      type: "checkout_rename_branch_request",
+      cwd: "/tmp/repo",
+      branch: "feature/new-name",
+      requestId: "request-rename-success",
+    });
+
+    expect(checkoutGitMocks.renameCurrentBranch).toHaveBeenCalledWith(
+      "/tmp/repo",
+      "feature/new-name",
+    );
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
+      force: true,
+      reason: "rename-branch",
+    });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/repo" });
+    expect(messages).toContainEqual({
+      type: "checkout_rename_branch_response",
+      payload: {
+        cwd: "/tmp/repo",
+        success: true,
+        currentBranch: "feature/new-name",
+        error: null,
+        requestId: "request-rename-success",
+      },
+    });
+  });
+});
+
+describe("session terminal rename handling", () => {
+  test("rejects an empty terminal title without calling the terminal manager", async () => {
+    const messages: unknown[] = [];
+    const terminalManager = createTerminalManagerStub();
+    const session = createSessionForTest({ terminalManager, messages });
+
+    await session.handleMessage({
+      type: "rename_terminal_request",
+      terminalId: "terminal-1",
+      title: "   ",
+      requestId: "request-empty-title",
+    });
+
+    expect(terminalManager.setTerminalTitle).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "rename_terminal_response",
+      payload: {
+        requestId: "request-empty-title",
+        success: false,
+        error: "Title is required",
+      },
+    });
+  });
+
+  test("rejects an overlong terminal title without calling the terminal manager", async () => {
+    const messages: unknown[] = [];
+    const terminalManager = createTerminalManagerStub();
+    const session = createSessionForTest({ terminalManager, messages });
+
+    await session.handleMessage({
+      type: "rename_terminal_request",
+      terminalId: "terminal-1",
+      title: "x".repeat(201),
+      requestId: "request-long-title",
+    });
+
+    expect(terminalManager.setTerminalTitle).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "rename_terminal_response",
+      payload: {
+        requestId: "request-long-title",
+        success: false,
+        error: "Title is too long",
+      },
+    });
+  });
+
+  test("reports when the terminal manager cannot find the terminal", async () => {
+    const messages: unknown[] = [];
+    const terminalManager = createTerminalManagerStub({
+      setTerminalTitle: vi.fn(() => false),
+    });
+    const session = createSessionForTest({ terminalManager, messages });
+
+    await session.handleMessage({
+      type: "rename_terminal_request",
+      terminalId: "missing-terminal",
+      title: "Renamed terminal",
+      requestId: "request-missing-terminal",
+    });
+
+    expect(terminalManager.setTerminalTitle).toHaveBeenCalledWith(
+      "missing-terminal",
+      "Renamed terminal",
+    );
+    expect(messages).toContainEqual({
+      type: "rename_terminal_response",
+      payload: {
+        requestId: "request-missing-terminal",
+        success: false,
+        error: "Terminal not found",
+      },
+    });
+  });
+
+  test("trims and sets a valid terminal title", async () => {
+    const messages: unknown[] = [];
+    const terminalManager = createTerminalManagerStub({
+      setTerminalTitle: vi.fn(() => true),
+    });
+    const session = createSessionForTest({ terminalManager, messages });
+
+    await session.handleMessage({
+      type: "rename_terminal_request",
+      terminalId: "terminal-1",
+      title: "  Renamed terminal  ",
+      requestId: "request-title-success",
+    });
+
+    expect(terminalManager.setTerminalTitle).toHaveBeenCalledWith("terminal-1", "Renamed terminal");
+    expect(messages).toContainEqual({
+      type: "rename_terminal_response",
+      payload: {
+        requestId: "request-title-success",
+        success: true,
+        error: null,
       },
     });
   });

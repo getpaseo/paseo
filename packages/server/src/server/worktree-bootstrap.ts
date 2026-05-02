@@ -996,6 +996,43 @@ export async function spawnWorkspaceScript(
   }
 }
 
+export async function spawnWorktreeScripts(options: {
+  repoRoot: string;
+  workspaceId: string;
+  projectSlug: string;
+  branchName: string | null;
+  daemonPort?: number | null;
+  daemonListenHost?: string | null;
+  routeStore: ScriptRouteStore;
+  runtimeStore: WorkspaceScriptRuntimeStore;
+  terminalManager: TerminalManager;
+  logger?: Logger;
+  onLifecycleChanged?: () => void;
+}): Promise<WorktreeScriptResult[]> {
+  const { repoRoot, projectSlug } = options;
+  const configResult = readPaseoConfig(repoRoot);
+  if (!configResult.ok) {
+    throw paseoConfigParseError(configResult);
+  }
+  const scriptConfigs = getScriptConfigs(configResult.config);
+  if (scriptConfigs.size === 0) {
+    return [];
+  }
+
+  const results: WorktreeScriptResult[] = [];
+  for (const scriptName of scriptConfigs.keys()) {
+    results.push(
+      await spawnWorkspaceScript({
+        ...options,
+        projectSlug,
+        scriptName,
+      }),
+    );
+  }
+
+  return results;
+}
+
 export function teardownWorktreeScripts(options: {
   hostnames: string[];
   routeStore: ScriptRouteStore;

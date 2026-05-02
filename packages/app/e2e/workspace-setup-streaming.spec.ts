@@ -277,7 +277,14 @@ test.describe("Workspace setup streaming", () => {
       await expect(page.locator('[data-testid^="workspace-tab-terminal_"]')).toHaveCount(0);
       await page.getByTestId("workspace-scripts-button").click();
       await expect(page.getByTestId("workspace-scripts-menu")).toBeVisible({ timeout: 10_000 });
-      await page.getByTestId("workspace-scripts-start-web").click();
+
+      const scriptAction = page
+        .locator(
+          '[data-testid="workspace-scripts-start-web"], [data-testid="workspace-scripts-view-web"]',
+        )
+        .first();
+      await expect(scriptAction).toBeVisible({ timeout: 30_000 });
+      await scriptAction.click();
       await page.getByTestId("workspace-scripts-menu-backdrop").click();
 
       const terminalTab = page.locator('[data-testid^="workspace-tab-terminal_"]').first();

@@ -33,6 +33,7 @@ export interface TerminalManager {
   }): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   getTerminal(id: string): TerminalSession | undefined;
+  setTerminalTitle(id: string, title: string): boolean;
   killTerminal(id: string): void;
   killTerminalAndWait(
     id: string,
@@ -208,6 +209,16 @@ export function createTerminalManager(): TerminalManager {
 
     getTerminal(id: string): TerminalSession | undefined {
       return terminalsById.get(id);
+    },
+
+    setTerminalTitle(id: string, title: string): boolean {
+      const session = terminalsById.get(id);
+      if (!session) {
+        return false;
+      }
+
+      session.setTitle(title);
+      return true;
     },
 
     killTerminal(id: string): void {

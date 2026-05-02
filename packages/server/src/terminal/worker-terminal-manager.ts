@@ -240,6 +240,16 @@ export function createWorkerTerminalManager(
       getTitle(): string | undefined {
         return record.info.title;
       },
+      setTitle(nextTitle: string): void {
+        const manualTitle = nextTitle.trim();
+        if (!manualTitle) {
+          return;
+        }
+        record.info = { ...record.info, title: manualTitle };
+        for (const listener of Array.from(record.titleChangeListeners)) {
+          listener(manualTitle);
+        }
+      },
       getExitInfo(): TerminalExitInfo | null {
         return record.exitInfo;
       },
@@ -523,6 +533,15 @@ export function createWorkerTerminalManager(
 
     getTerminal(id: string): TerminalSession | undefined {
       return recordsById.get(id)?.session;
+    },
+
+    setTerminalTitle(id: string, title: string): boolean {
+      const session = recordsById.get(id)?.session;
+      if (!session) {
+        return false;
+      }
+      session.setTitle(title);
+      return true;
     },
 
     killTerminal(id: string): void {

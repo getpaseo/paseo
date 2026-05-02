@@ -20,6 +20,7 @@ import {
   type GitSetupOptions,
   type CheckoutPrStatusResponse,
   type CheckoutStatusResponse,
+  type CheckoutRenameBranchRequest,
   type StartWorkspaceScriptRequest,
   type CloseItemsRequest,
   type SubscribeCheckoutDiffRequest,
@@ -169,7 +170,9 @@ import {
   pullCurrentBranch,
   pushCurrentBranch,
   createPullRequest,
+  renameCurrentBranch,
 } from "../utils/checkout-git.js";
+import { validateBranchSlug } from "../utils/branch-slug.js";
 import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
@@ -261,6 +264,7 @@ type GitMutationRefreshReason =
   | "merge-from-base"
   | "create-pr"
   | "switch-branch"
+  | "rename-branch"
   | "create-branch"
   | "rename-branch"
   | "stash-push"
@@ -437,6 +441,7 @@ type ProcessingPhase = "idle" | "transcribing";
 
 interface WorkspaceGitWatchTarget {
   cwd: string;
+  workspaceId: string;
   watchers: FSWatcher[];
   debounceTimer: ReturnType<typeof setTimeout> | null;
   refreshPromise: Promise<void> | null;
@@ -2026,12 +2031,8 @@ export class Session {
         return undefined;
       case "checkout_switch_branch_request":
         return this.handleCheckoutSwitchBranchRequest(msg);
-      case "stash_save_request":
-        return this.handleStashSaveRequest(msg);
-      case "stash_pop_request":
-        return this.handleStashPopRequest(msg);
-      case "stash_list_request":
-        return this.handleStashListRequest(msg);
+      case "checkout_rename_branch_request":
+        return this.handleCheckoutRenameBranchRequest(msg);
       case "checkout_commit_request":
         return this.handleCheckoutCommitRequest(msg);
       case "checkout_merge_request":
@@ -2050,6 +2051,19 @@ export class Session {
         return this.handlePullRequestTimelineRequest(msg);
       case "github_search_request":
         return this.handleGitHubSearchRequest(msg);
+      default:
+        return this.dispatchStashMessage(msg);
+    }
+  }
+
+  private dispatchStashMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "stash_save_request":
+        return this.handleStashSaveRequest(msg);
+      case "stash_pop_request":
+        return this.handleStashPopRequest(msg);
+      case "stash_list_request":
+        return this.handleStashListRequest(msg);
       default:
         return undefined;
     }
@@ -4719,16 +4733,35 @@ export class Session {
     target.lastBranchName = workspace?.name ?? null;
   }
 
+  private handleWorkspaceGitBranchSnapshot(cwd: string, branchName: string | null): void {
+    const target = this.workspaceGitWatchTargets.get(normalizePersistedWorkspaceId(cwd));
+    if (!target) {
+      return;
+    }
+
+    const previousBranchName = target.lastBranchName;
+    if (branchName === previousBranchName) {
+      return;
+    }
+
+    target.lastBranchName = branchName;
+    this.onBranchChanged?.(target.workspaceId, previousBranchName, branchName);
+  }
+
   private syncWorkspaceGitObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void {
     for (const workspace of workspaces) {
       this.syncWorkspaceGitObserver(workspace.workspaceDirectory, {
         isGit: workspace.projectKind === "git",
+        workspaceId: workspace.id,
       });
       this.rememberWorkspaceGitDescriptorState(workspace.workspaceDirectory, workspace);
     }
   }
 
-  private syncWorkspaceGitObserver(cwd: string, options: { isGit: boolean }): void {
+  private syncWorkspaceGitObserver(
+    cwd: string,
+    options: { isGit: boolean; workspaceId: string },
+  ): void {
     const normalizedCwd = normalizePersistedWorkspaceId(cwd);
     if (!options.isGit) {
       this.removeWorkspaceGitSubscription(normalizedCwd);
@@ -4739,9 +4772,22 @@ export class Session {
       return;
     }
 
+    const target: WorkspaceGitWatchTarget = {
+      cwd: normalizedCwd,
+      workspaceId: options.workspaceId,
+      watchers: [],
+      debounceTimer: null,
+      refreshPromise: null,
+      refreshQueued: false,
+      latestDescriptorStateKey: null,
+      lastBranchName: null,
+    };
+    this.workspaceGitWatchTargets.set(normalizedCwd, target);
+
     const subscription = this.workspaceGitService.registerWorkspace(
       { cwd: normalizedCwd },
       (snapshot) => {
+        this.handleWorkspaceGitBranchSnapshot(normalizedCwd, snapshot.git.currentBranch ?? null);
         void this.emitWorkspaceUpdateForCwd(normalizedCwd);
         this.emitCheckoutStatusUpdate(normalizedCwd, snapshot);
       },
@@ -4939,6 +4985,58 @@ export class Session {
           cwd,
           success: false,
           branch,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutRenameBranchRequest(msg: CheckoutRenameBranchRequest): Promise<void> {
+    const { cwd, branch, requestId } = msg;
+    const validation = validateBranchSlug(branch);
+
+    if (!validation.valid) {
+      this.emit({
+        type: "checkout_rename_branch_response",
+        payload: {
+          cwd,
+          success: false,
+          currentBranch: null,
+          error: toCheckoutError(new Error(validation.error ?? "Invalid branch name")),
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const result = await renameCurrentBranch(cwd, branch);
+      await this.notifyGitMutation(cwd, "rename-branch", { invalidateGithub: true });
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.handleWorkspaceGitBranchSnapshot(cwd, result.currentBranch);
+
+      // Push a workspace_update immediately so the sidebar/header reflect
+      // the new branch name without waiting for the background git watcher.
+      await this.emitWorkspaceUpdateForCwd(cwd);
+
+      this.emit({
+        type: "checkout_rename_branch_response",
+        payload: {
+          cwd,
+          success: true,
+          currentBranch: result.currentBranch,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout_rename_branch_response",
+        payload: {
+          cwd,
+          success: false,
+          currentBranch: null,
           error: toCheckoutError(error),
           requestId,
         },
@@ -6741,7 +6839,10 @@ export class Session {
 
   private async emitWorkspaceUpdateForCwd(
     cwd: string,
-    options?: { skipReconcile?: boolean; dedupeGitState?: boolean },
+    options?: {
+      skipReconcile?: boolean;
+      dedupeGitState?: boolean;
+    },
   ): Promise<void> {
     const workspaces = await this.workspaceRegistry.list();
     const workspaceId = this.resolveRegisteredWorkspaceIdForCwd(cwd, workspaces);
@@ -7174,6 +7275,7 @@ export class Session {
         },
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
+        workspaceGitService: this.workspaceGitService,
         terminalManager: this.terminalManager,
         archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
         scriptRouteStore: this.scriptRouteStore,

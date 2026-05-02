@@ -5,7 +5,11 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
-import { runAsyncWorktreeBootstrap, spawnWorkspaceScript } from "./worktree-bootstrap.js";
+import {
+  runAsyncWorktreeBootstrap,
+  spawnWorkspaceScript,
+  spawnWorktreeScripts,
+} from "./worktree-bootstrap.js";
 import { ensureWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptRouteStore } from "./script-proxy.js";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -804,6 +808,51 @@ describe("runAsyncWorktreeBootstrap", () => {
       exitCode: null,
       terminalId: "term-1",
     });
+  });
+
+  it("uses the repository project slug instead of the worktree directory slug for service hostnames", async () => {
+    const worktreeDir = join(tempDir, "somber-turtle");
+    execSync(`git worktree add ${JSON.stringify(worktreeDir)} -b somber-turtle`, {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    writeFileSync(
+      join(worktreeDir, "paseo.json"),
+      JSON.stringify({
+        scripts: {
+          app: {
+            type: "service",
+            command: "npm run app",
+          },
+        },
+      }),
+    );
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+
+    await spawnWorktreeScripts({
+      repoRoot: worktreeDir,
+      workspaceId: worktreeDir,
+      projectSlug: "paseo",
+      branchName: "somber-turtle",
+      daemonPort: 6767,
+      routeStore,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls),
+    });
+
+    expect(routeStore.listRoutes()).toEqual([
+      {
+        hostname: "app.somber-turtle.paseo.localhost",
+        port: expect.any(Number),
+        workspaceId: worktreeDir,
+        projectSlug: "paseo",
+        scriptName: "app",
+      },
+    ]);
+    expect(routeStore.findRoute("app.somber-turtle.somber-turtle.localhost")).toBeNull();
   });
 
   it("records plain script exit codes from shell command completion without terminal exit", async () => {

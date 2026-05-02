@@ -1506,6 +1506,119 @@ test("requests checkout pull via RPC", async () => {
   });
 });
 
+test("renames a branch via RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.renameBranch({
+    cwd: "/tmp/project",
+    branch: "feature/new-name",
+    requestId: "req-rename-branch",
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = JSON.parse(mock.sent[0]) as {
+    type: "session";
+    message: {
+      type: "checkout_rename_branch_request";
+      cwd: string;
+      branch: string;
+      requestId: string;
+    };
+  };
+  expect(request.message.type).toBe("checkout_rename_branch_request");
+  expect(request.message.cwd).toBe("/tmp/project");
+  expect(request.message.branch).toBe("feature/new-name");
+  expect(request.message.requestId).toBe("req-rename-branch");
+
+  mock.triggerMessage(
+    JSON.stringify({
+      type: "session",
+      message: {
+        type: "checkout_rename_branch_response",
+        payload: {
+          requestId: "req-rename-branch",
+          success: true,
+          cwd: "/tmp/project",
+          currentBranch: "feature/new-name",
+          error: null,
+        },
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    requestId: "req-rename-branch",
+    success: true,
+    cwd: "/tmp/project",
+    currentBranch: "feature/new-name",
+    error: null,
+  });
+});
+
+test("returns renameBranch business failures", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.renameBranch({
+    cwd: "/tmp/project",
+    branch: "already-exists",
+    requestId: "req-rename-branch-fail",
+  });
+
+  expect(mock.sent).toHaveLength(1);
+
+  mock.triggerMessage(
+    JSON.stringify({
+      type: "session",
+      message: {
+        type: "checkout_rename_branch_response",
+        payload: {
+          requestId: "req-rename-branch-fail",
+          success: false,
+          cwd: "/tmp/project",
+          currentBranch: null,
+          error: { code: "NOT_ALLOWED", message: "Branch already exists" },
+        },
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    requestId: "req-rename-branch-fail",
+    success: false,
+    cwd: "/tmp/project",
+    currentBranch: null,
+    error: { code: "NOT_ALLOWED", message: "Branch already exists" },
+  });
+});
+
 test("resubscribes checkout diff streams after reconnect", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

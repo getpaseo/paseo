@@ -606,6 +606,7 @@ export async function createPaseoDaemon(
               cacheWorkspaceSetupSnapshot: () => {},
               emit: emitMcpArchiveSessionMessage,
               sessionLogger: logger,
+              workspaceGitService,
               terminalManager,
               archiveWorkspaceRecord: archiveWorkspaceRecordForMcp,
               scriptRouteStore,
