@@ -4783,6 +4783,13 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
+    if (options?.persistSession === false) {
+      this.logger.debug(
+        "Codex app-server does not expose an ephemeral-session option; persistSession=false is currently a no-op",
+      );
+      // TODO: Honor persistSession=false if app-server adds support, or route
+      // utility generations through `codex exec --ephemeral` in a larger change.
+    }
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const session = new CodexAppServerAgentSession(
