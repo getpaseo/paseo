@@ -1,10 +1,11 @@
-import React, { useCallback, useMemo } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient, FetchRecentProviderSessionEntry } from "@server/client/daemon-client";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { getProviderIcon } from "@/components/provider-icons";
 import { formatTimeAgo } from "@/utils/time";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 
@@ -220,6 +221,67 @@ function SheetStatusMessages({
   );
 }
 
+interface ProviderFilterBadgeProps {
+  testID: string;
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}
+
+function ProviderFilterBadge({ testID, label, selected, onPress }: ProviderFilterBadgeProps) {
+  const accessibilityState = useMemo(() => ({ selected }), [selected]);
+  const containerStyle = useMemo(
+    () => [
+      styles.filterBadge,
+      selected ? styles.filterBadgeSelected : styles.filterBadgeUnselected,
+    ],
+    [selected],
+  );
+  const textStyle = useMemo(
+    () => [
+      styles.filterBadgeLabel,
+      selected ? styles.filterBadgeLabelSelected : styles.filterBadgeLabelUnselected,
+    ],
+    [selected],
+  );
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      onPress={onPress}
+      style={containerStyle}
+      testID={testID}
+    >
+      <Text style={textStyle} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function ProviderFilterBadgeItem({
+  provider,
+  label,
+  selected,
+  onSelect,
+}: {
+  provider: string;
+  label: string;
+  selected: boolean;
+  onSelect: (provider: string) => void;
+}) {
+  const handlePress = useCallback(() => onSelect(provider), [onSelect, provider]);
+  return (
+    <ProviderFilterBadge
+      testID={`workspace-import-filter-${provider}`}
+      label={label}
+      selected={selected}
+      onPress={handlePress}
+    />
+  );
+}
+
 function WorkspaceImportSheetRow({
   entry,
   disabled,
@@ -231,9 +293,11 @@ function WorkspaceImportSheetRow({
   importing: boolean;
   onImportSession: (entry: FetchRecentProviderSessionEntry) => void;
 }) {
+  const { theme } = useUnistyles();
   const title = getSessionTitle(entry);
   const promptPreview = getPromptPreview(entry);
   const lastActivity = formatTimeAgo(new Date(entry.lastActivityAt));
+  const ProviderIcon = getProviderIcon(entry.providerId);
   const accessibilityState = useMemo(
     () => (disabled ? DISABLED_ACCESSIBILITY_STATE : undefined),
     [disabled],
@@ -252,9 +316,12 @@ function WorkspaceImportSheetRow({
       testID={`workspace-import-session-${entry.providerId}-${entry.providerHandleId}`}
     >
       <View style={styles.rowHeader}>
-        <Text style={styles.providerLabel} numberOfLines={1}>
-          {entry.providerLabel}
-        </Text>
+        <View style={styles.rowProvider}>
+          <ProviderIcon size={theme.fontSize.sm} color={theme.colors.foregroundMuted} />
+          <Text style={styles.providerLabel} numberOfLines={1}>
+            {entry.providerLabel}
+          </Text>
+        </View>
         <Text style={styles.lastActivity}>{lastActivity}</Text>
       </View>
       <Text style={styles.rowTitle} numberOfLines={1}>
@@ -313,6 +380,32 @@ export function WorkspaceImportSheet({
 
   const aggregatedEntries = useMemo(() => aggregateSessionEntries(queries), [queries]);
 
+  const badgeProviders = useMemo(() => {
+    if (!Array.isArray(providersToFetch)) return [];
+    return [...providersToFetch].sort();
+  }, [providersToFetch]);
+
+  const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!visible) {
+      setSelectedProvider(null);
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (selectedProvider !== null && !badgeProviders.includes(selectedProvider)) {
+      setSelectedProvider(null);
+    }
+  }, [badgeProviders, selectedProvider]);
+
+  const visibleEntries = useMemo(() => {
+    if (selectedProvider === null) return aggregatedEntries;
+    return aggregatedEntries.filter((entry) => entry.providerId === selectedProvider);
+  }, [aggregatedEntries, selectedProvider]);
+
+  const handleSelectAll = useCallback(() => setSelectedProvider(null), []);
+
   const importMutation = useMutation({
     mutationFn: async (entry: FetchRecentProviderSessionEntry) => {
       if (!client || !workspaceDirectory) {
@@ -364,6 +457,7 @@ export function WorkspaceImportSheet({
     isQueryingProviders &&
     allQueriesSettled &&
     aggregatedEntries.length === 0;
+  const showBadges = badgeProviders.length > 1;
 
   return (
     <AdaptiveModalSheet
@@ -374,6 +468,30 @@ export function WorkspaceImportSheet({
       desktopMaxWidth={560}
       snapPoints={IMPORT_SHEET_SNAP_POINTS}
     >
+      {showBadges ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+          testID="workspace-import-filters"
+        >
+          <ProviderFilterBadge
+            testID="workspace-import-filter-all"
+            label="All"
+            selected={selectedProvider === null}
+            onPress={handleSelectAll}
+          />
+          {badgeProviders.map((provider) => (
+            <ProviderFilterBadgeItem
+              key={provider}
+              provider={provider}
+              label={providerLabelById.get(provider) ?? provider}
+              selected={selectedProvider === provider}
+              onSelect={setSelectedProvider}
+            />
+          ))}
+        </ScrollView>
+      ) : null}
       <SheetStatusMessages
         isClientReady={Boolean(client && workspaceDirectory)}
         hasNoImportableProviders={hasNoImportableProviders}
@@ -383,9 +501,9 @@ export function WorkspaceImportSheet({
         importErrored={importMutation.isError}
         showEmptyState={showEmptyState}
       />
-      {aggregatedEntries.length > 0 ? (
+      {visibleEntries.length > 0 ? (
         <View style={styles.list}>
-          {aggregatedEntries.map((entry) => (
+          {visibleEntries.map((entry) => (
             <WorkspaceImportSheetRow
               key={`${entry.providerId}:${entry.providerHandleId}`}
               entry={entry}
@@ -419,12 +537,48 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: theme.spacing[2],
   },
+  rowProvider: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
   providerLabel: {
     flex: 1,
     minWidth: 0,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.medium,
+  },
+  filterRow: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+  },
+  filterBadge: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+    borderWidth: theme.borderWidth[1],
+  },
+  filterBadgeSelected: {
+    backgroundColor: theme.colors.surface3,
+    borderColor: theme.colors.borderAccent,
+  },
+  filterBadgeUnselected: {
+    backgroundColor: "transparent",
+    borderColor: theme.colors.border,
+  },
+  filterBadgeLabel: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+  },
+  filterBadgeLabelSelected: {
+    color: theme.colors.foreground,
+  },
+  filterBadgeLabelUnselected: {
+    color: theme.colors.foregroundMuted,
   },
   lastActivity: {
     color: theme.colors.foregroundMuted,

@@ -13,7 +13,7 @@ const { theme } = vi.hoisted(() => ({
   theme: {
     spacing: { 1: 4, 1.5: 6, 2: 8, 3: 12, 4: 16 },
     borderWidth: { 1: 1 },
-    borderRadius: { md: 6 },
+    borderRadius: { md: 6, full: 9999 },
     fontSize: { xs: 11, sm: 13, base: 15 },
     fontWeight: { normal: "400", medium: "500", semibold: "600" },
     colors: {
@@ -21,8 +21,9 @@ const { theme } = vi.hoisted(() => ({
       foregroundMuted: "#aaa",
       surface1: "#111",
       surface2: "#222",
-      borderSubtle: "#333",
-      borderAccent: "#444",
+      surface3: "#333",
+      border: "#444",
+      borderAccent: "#555",
     },
   },
 }));
@@ -35,6 +36,7 @@ vi.mock("react-native-unistyles", () => ({
   StyleSheet: {
     create: (factory: unknown) => (typeof factory === "function" ? factory(theme) : factory),
   },
+  useUnistyles: () => ({ theme }),
   withUnistyles:
     (Component: React.ComponentType<Record<string, unknown>>) =>
     ({
@@ -50,6 +52,10 @@ vi.mock("react-native-unistyles", () => ({
 
 vi.mock("@/constants/layout", () => ({
   useIsCompactFormFactor: () => false,
+}));
+
+vi.mock("@/components/provider-icons", () => ({
+  getProviderIcon: () => () => null,
 }));
 
 vi.mock("@/components/adaptive-modal-sheet", () => ({
@@ -443,6 +449,84 @@ describe("WorkspaceImportSheet", () => {
 
     expect(await screen.findByText("Session codex")).toBeTruthy();
     expect(await screen.findByText("Could not load sessions for Claude Code.")).toBeTruthy();
+  });
+
+  it("filters the merged list when a provider badge is selected and restores it on All", async () => {
+    const fetchRecentProviderSessions = vi.fn(
+      async (options: { providers?: string[] } | undefined) => {
+        const provider = options?.providers?.[0] ?? "claude";
+        return {
+          requestId: `recent-${provider}`,
+          entries: [
+            createProviderSessionEntry({
+              providerId: provider,
+              providerLabel: provider === "claude" ? "Claude Code" : "Codex",
+              providerHandleId: `${provider}-thread`,
+              title: `Session ${provider}`,
+              lastActivityAt:
+                provider === "claude" ? "2026-04-30T09:00:00.000Z" : "2026-04-30T10:00:00.000Z",
+            }),
+          ],
+        };
+      },
+    );
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: {
+          supportsSnapshot: true,
+          entries: [createSnapshotEntry("claude"), createSnapshotEntry("codex")],
+        },
+      },
+    );
+
+    expect(await screen.findByText("Session claude")).toBeTruthy();
+    expect(await screen.findByText("Session codex")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("workspace-import-filter-codex"));
+
+    expect(screen.getByText("Session codex")).toBeTruthy();
+    expect(screen.queryByText("Session claude")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("workspace-import-filter-all"));
+
+    expect(screen.getByText("Session claude")).toBeTruthy();
+    expect(screen.getByText("Session codex")).toBeTruthy();
+  });
+
+  it("does not render filter badges when only one importable provider is enabled", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-codex",
+      entries: [createProviderSessionEntry({ providerId: "codex", providerLabel: "Codex" })],
+    }));
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: {
+          supportsSnapshot: true,
+          entries: [
+            createSnapshotEntry("codex"),
+            createSnapshotEntry("claude", { enabled: false }),
+          ],
+        },
+      },
+    );
+
+    await waitFor(() => {
+      expect(fetchRecentProviderSessions).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("workspace-import-filters")).toBeNull();
+    expect(screen.queryByTestId("workspace-import-filter-all")).toBeNull();
   });
 
   it("shows a no-importable-providers message when snapshot has no enabled importable providers", async () => {
