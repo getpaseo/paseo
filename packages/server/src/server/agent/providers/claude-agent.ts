@@ -33,7 +33,13 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
 } from "./claude/task-notification-tool-call.js";
-import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./claude/claude-models.js";
+import {
+  CLAUDE_MODEL_ENV_MAPPINGS,
+  getClaudeModels,
+  normalizeClaudeRuntimeModelId,
+} from "./claude/claude-models.js";
+import { applyModelEnvOverrides } from "./shared/model-env-override.js";
+import { loadClaudeUserSettingsEnv } from "./claude/user-settings.js";
 import { parsePartialJsonObject } from "./claude/partial-json.js";
 import { ClaudeSidechainTracker } from "./claude/sidechain-tracker.js";
 import {
@@ -1189,7 +1195,9 @@ export class ClaudeAgentClient implements AgentClient {
 
   async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
     // Claude exposes a static catalog here; cwd/force are intentionally irrelevant.
-    return getClaudeModels();
+    const settingsEnv = loadClaudeUserSettingsEnv(this.logger);
+    const mergedEnv = { ...process.env, ...settingsEnv, ...this.runtimeSettings?.env };
+    return applyModelEnvOverrides(getClaudeModels(), mergedEnv, CLAUDE_MODEL_ENV_MAPPINGS);
   }
 
   async listPersistedAgents(
