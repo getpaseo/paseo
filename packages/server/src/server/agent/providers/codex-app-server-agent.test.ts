@@ -671,6 +671,103 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("converts Codex collab agent notifications through the normal timeline path", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-sub-agent-normal-path",
+        tool: "spawnAgent",
+        status: "inProgress",
+        prompt: "Inspect the stream path.",
+        receiverThreadIds: [],
+        agentsStates: {},
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "tool_call",
+          callId: "call-sub-agent-normal-path",
+          name: "Sub-agent",
+          status: "running",
+          error: null,
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Sub-agent",
+            description: "Inspect the stream path.",
+            log: "",
+            actions: [],
+          },
+        },
+      },
+    ]);
+  });
+
+  test("folds child-thread Codex activity into the parent sub-agent tool call", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-sub-agent-child-activity",
+        tool: "spawnAgent",
+        status: "completed",
+        prompt: "Report findings.",
+        receiverThreadIds: ["child-thread-1"],
+        agentsStates: {
+          "child-thread-1": { status: "pendingInit", message: null },
+        },
+      },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "child-thread-1",
+      itemId: "child-message-1",
+      delta: "Found the path.",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "child-thread-1",
+      item: {
+        type: "agentMessage",
+        id: "child-message-1",
+        text: "Found the path.",
+      },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "child-thread-1",
+      turn: { status: "completed" },
+    });
+
+    const timelineEvents = events.filter((event) => event.type === "timeline");
+    expect(timelineEvents).toHaveLength(4);
+    expect(timelineEvents.every((event) => event.item.type === "tool_call")).toBe(true);
+    const finalItem = timelineEvents.at(-1)?.item;
+    expect(finalItem).toMatchObject({
+      type: "tool_call",
+      callId: "call-sub-agent-child-activity",
+      name: "Sub-agent",
+      status: "completed",
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Report findings.",
+        log: "Found the path.",
+        actions: [{ index: 1, toolName: "Assistant", summary: "Found the path." }],
+      },
+    });
+  });
+
   test("maps question responses from headers back to question ids and completes the tool call", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

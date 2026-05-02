@@ -170,11 +170,32 @@ const CodexWebSearchItemSchema = z
   })
   .passthrough();
 
+const CodexCollabAgentToolCallItemSchema = z
+  .object({
+    type: z.literal("collabAgentToolCall"),
+    id: z.string().min(1),
+    status: z.string().optional(),
+    error: z.unknown().optional(),
+    prompt: z.string().optional(),
+    tool: z.string().optional(),
+    receiverThreadIds: z.array(z.string()).optional(),
+    agentsStates: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+const CodexToolThreadItemSchema = z.discriminatedUnion("type", [
+  CodexCommandExecutionItemSchema,
+  CodexFileChangeItemSchema,
+  CodexMcpToolCallItemSchema,
+  CodexWebSearchItemSchema,
+]);
+
 const CodexThreadItemSchema = z.discriminatedUnion("type", [
   CodexCommandExecutionItemSchema,
   CodexFileChangeItemSchema,
   CodexMcpToolCallItemSchema,
   CodexWebSearchItemSchema,
+  CodexCollabAgentToolCallItemSchema,
 ]);
 
 function maybeUnwrapShellWrapperCommand(command: string): string {
@@ -479,6 +500,38 @@ function hasRenderableEditDetail(detail: ToolCallTimelineItem["detail"]): boolea
     (typeof detail.newString === "string" && detail.newString.trim().length > 0) ||
     (typeof detail.oldString === "string" && detail.oldString.trim().length > 0)
   );
+}
+
+function readStatus(value: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return typeof value.status === "string" ? value.status : undefined;
+}
+
+function resolveCollabAgentStatus(
+  item: z.infer<typeof CodexCollabAgentToolCallItemSchema>,
+): ToolCallTimelineItem["status"] {
+  if (item.error !== undefined && item.error !== null) {
+    return "failed";
+  }
+
+  const childStatuses = Object.values(item.agentsStates ?? {})
+    .map(readStatus)
+    .filter((status): status is string => typeof status === "string" && status.trim().length > 0)
+    .map((status) => normalizeToolCallStatus(status, null, null));
+
+  if (childStatuses.some((status) => status === "failed")) {
+    return "failed";
+  }
+  if (childStatuses.some((status) => status === "canceled")) {
+    return "canceled";
+  }
+  if (childStatuses.length > 0) {
+    return childStatuses.every((status) => status === "completed") ? "completed" : "running";
+  }
+
+  return normalizeToolCallStatus(item.status, item.error ?? null, null);
 }
 
 function buildMcpToolName(server: string | undefined, tool: string): string {
@@ -789,8 +842,41 @@ function mapWebSearchItem(
   };
 }
 
+function mapCollabAgentToolCallItem(
+  item: z.infer<typeof CodexCollabAgentToolCallItemSchema>,
+): ToolCallTimelineItem {
+  const status = resolveCollabAgentStatus(item);
+  const detail: ToolCallTimelineItem["detail"] = {
+    type: "sub_agent",
+    subAgentType: "Sub-agent",
+    ...(item.prompt ? { description: item.prompt } : {}),
+    log: "",
+    actions: [],
+  };
+
+  if (status === "failed") {
+    return {
+      type: "tool_call",
+      callId: item.id,
+      name: "Sub-agent",
+      status,
+      error: item.error ?? { message: "Sub-agent failed" },
+      detail,
+    };
+  }
+
+  return {
+    type: "tool_call",
+    callId: item.id,
+    name: "Sub-agent",
+    status,
+    error: null,
+    detail,
+  };
+}
+
 function mapThreadItemToNormalizedEnvelope(
-  item: z.infer<typeof CodexThreadItemSchema>,
+  item: z.infer<typeof CodexToolThreadItemSchema>,
   options?: CodexMapperOptions,
 ): CodexNormalizedToolCallEnvelope | null {
   switch (item.type) {
@@ -820,6 +906,9 @@ export function mapCodexToolCallFromThreadItem(
   const parsed = CodexThreadItemSchema.safeParse(item);
   if (!parsed.success) {
     return null;
+  }
+  if (parsed.data.type === "collabAgentToolCall") {
+    return mapCollabAgentToolCallItem(parsed.data);
   }
   const envelope = mapThreadItemToNormalizedEnvelope(parsed.data, options);
   if (!envelope) {

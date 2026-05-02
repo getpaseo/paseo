@@ -150,6 +150,35 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("maps collabAgentToolCall into canonical sub-agent detail", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: "call-sub-agent-1",
+      tool: "spawnAgent",
+      status: "completed",
+      prompt: "Inspect the Codex stream path.",
+      receiverThreadIds: ["child-thread-1"],
+      agentsStates: {
+        "child-thread-1": { status: "pendingInit", message: null },
+      },
+    });
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "call-sub-agent-1",
+      name: "Sub-agent",
+      status: "running",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Inspect the Codex stream path.",
+        log: "",
+        actions: [],
+      },
+    });
+  });
+
   it("maps mcp read_file completion with detail", () => {
     const item = mapCodexToolCallFromThreadItem(
       {

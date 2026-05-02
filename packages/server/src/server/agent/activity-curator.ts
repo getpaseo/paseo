@@ -7,6 +7,16 @@ const DEFAULT_MAX_ITEMS = 0;
 const MAX_TOOL_INPUT_CHARS = 400;
 const MAX_TOOL_SUMMARY_CHARS = 200;
 
+interface ActivityAction {
+  toolName: string;
+  summary?: string;
+}
+
+interface ActivityEntry {
+  text: string;
+  action: ActivityAction;
+}
+
 function appendText(buffer: string, text: string): string {
   const normalized = text.trim();
   if (!normalized) {
@@ -18,12 +28,24 @@ function appendText(buffer: string, text: string): string {
   return `${buffer}\n${normalized}`;
 }
 
-function flushBuffers(lines: string[], buffers: { message: string; thought: string }) {
+function activityEntry(text: string, toolName: string, summary?: string): ActivityEntry {
+  return {
+    text,
+    action: {
+      toolName,
+      ...(summary ? { summary } : {}),
+    },
+  };
+}
+
+function flushBuffers(entries: ActivityEntry[], buffers: { message: string; thought: string }) {
   if (buffers.message.trim()) {
-    lines.push(buffers.message.trim());
+    const text = buffers.message.trim();
+    entries.push(activityEntry(text, "Assistant", text));
   }
   if (buffers.thought.trim()) {
-    lines.push(`[Thought] ${buffers.thought.trim()}`);
+    const text = buffers.thought.trim();
+    entries.push(activityEntry(`[Thought] ${text}`, "Thought", text));
   }
   buffers.message = "";
   buffers.thought = "";
@@ -76,15 +98,12 @@ function projectForCuration(items: readonly AgentTimelineItem[]): AgentTimelineI
   return projectTimelineRows({ rows, mode: "projected" }).map((entry) => entry.item);
 }
 
-/**
- * Convert normalized agent timeline items into a concise text summary.
- */
-export function curateAgentActivity(
+function curateAgentActivityEntries(
   timeline: AgentTimelineItem[],
   options?: { maxItems?: number },
-): string {
+): ActivityEntry[] {
   if (timeline.length === 0) {
-    return "No activity to display.";
+    return [];
   }
 
   const collapsed = projectForCuration(timeline);
@@ -93,14 +112,14 @@ export function curateAgentActivity(
   const recentItems =
     maxItems > 0 && collapsed.length > maxItems ? collapsed.slice(-maxItems) : collapsed;
 
-  const lines: string[] = [];
+  const entries: ActivityEntry[] = [];
   const buffers = { message: "", thought: "" };
 
   for (const item of recentItems) {
     switch (item.type) {
       case "user_message":
-        flushBuffers(lines, buffers);
-        lines.push(`[User] ${item.text.trim()}`);
+        flushBuffers(entries, buffers);
+        entries.push(activityEntry(`[User] ${item.text.trim()}`, "User", item.text.trim()));
         break;
       case "assistant_message":
         buffers.message = appendText(buffers.message, item.text);
@@ -109,7 +128,7 @@ export function curateAgentActivity(
         buffers.thought = appendText(buffers.thought, item.text);
         break;
       case "tool_call": {
-        flushBuffers(lines, buffers);
+        flushBuffers(entries, buffers);
         const inputJson = formatToolInputJson(inputFromUnknownDetail(item.detail));
         const display = buildToolCallDisplayModel({
           name: item.name,
@@ -121,36 +140,59 @@ export function curateAgentActivity(
         const displayName = display.displayName;
         const summary = formatToolSummary(display.summary);
         if (isLikelyExternalToolName(item.name) && inputJson) {
-          lines.push(`[${displayName}] ${inputJson}`);
+          entries.push(activityEntry(`[${displayName}] ${inputJson}`, displayName, inputJson));
           break;
         }
         if (summary) {
-          lines.push(`[${displayName}] ${summary}`);
+          entries.push(activityEntry(`[${displayName}] ${summary}`, displayName, summary));
         } else {
-          lines.push(`[${displayName}]`);
+          entries.push(activityEntry(`[${displayName}]`, displayName));
         }
         break;
       }
       case "todo":
-        flushBuffers(lines, buffers);
-        lines.push("[Tasks]");
+        flushBuffers(entries, buffers);
+        entries.push(activityEntry("[Tasks]", "Tasks"));
         for (const entry of item.items) {
           const checkbox = entry.completed ? "[x]" : "[ ]";
-          lines.push(`- ${checkbox} ${entry.text}`);
+          const text = `- ${checkbox} ${entry.text}`;
+          entries.push(activityEntry(text, "Assistant", text));
         }
         break;
       case "error":
-        flushBuffers(lines, buffers);
-        lines.push(`[Error] ${item.message}`);
+        flushBuffers(entries, buffers);
+        entries.push(activityEntry(`[Error] ${item.message}`, "Error", item.message));
         break;
       case "compaction":
-        flushBuffers(lines, buffers);
-        lines.push("[Compacted]");
+        flushBuffers(entries, buffers);
+        entries.push(activityEntry("[Compacted]", "Compacted"));
         break;
     }
   }
 
-  flushBuffers(lines, buffers);
+  flushBuffers(entries, buffers);
 
-  return lines.length > 0 ? lines.join("\n") : "No activity to display.";
+  return entries;
+}
+
+/**
+ * Convert normalized agent timeline items into a concise text summary.
+ */
+export function curateAgentActivity(
+  timeline: AgentTimelineItem[],
+  options?: { maxItems?: number },
+): string {
+  const entries = curateAgentActivityEntries(timeline, options);
+  return entries.length > 0
+    ? entries.map((entry) => entry.text).join("\n")
+    : "No activity to display.";
+}
+
+export function curateAgentActivityActions(
+  timeline: AgentTimelineItem[],
+  options?: { maxItems?: number },
+): Array<{ index: number; toolName: string; summary?: string }> {
+  return curateAgentActivityEntries(timeline, options).map((entry, index) =>
+    Object.assign({ index: index + 1 }, entry.action),
+  );
 }

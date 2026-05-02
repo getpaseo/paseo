@@ -237,3 +237,35 @@ second line'`,
     expect(curateAgentActivity([])).toBe("No activity to display.");
   });
 });
+
+describe("curateAgentActivityActions", () => {
+  it("converts curated activity lines into sub-agent action entries", async () => {
+    const { curateAgentActivityActions } = await import("./activity-curator.js");
+    const timeline: AgentTimelineItem[] = [
+      { type: "assistant_message", text: "Inspecting the repo" },
+      toolCallItem({
+        callId: "shell-1",
+        name: "shell",
+        detail: {
+          type: "shell",
+          command: "npm test",
+          output: "ok",
+          exitCode: 0,
+        },
+      }),
+    ];
+
+    expect(curateAgentActivityActions(timeline)).toEqual([
+      {
+        index: 1,
+        toolName: "Assistant",
+        summary: "Inspecting the repo",
+      },
+      {
+        index: 2,
+        toolName: "Shell",
+        summary: "npm test",
+      },
+    ]);
+  });
+});
