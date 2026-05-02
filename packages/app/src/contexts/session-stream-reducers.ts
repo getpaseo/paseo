@@ -4,15 +4,6 @@ import type { Agent } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
 import { applyStreamEvent, hydrateStreamState, reduceStreamUpdate } from "@/types/stream";
-import {
-  classifySessionTimelineSeq,
-  type SessionTimelineSeqDecision,
-} from "@/contexts/session-timeline-seq-gate";
-import {
-  deriveBootstrapTailTimelinePolicy,
-  shouldResolveTimelineInit,
-} from "@/contexts/session-timeline-bootstrap-policy";
-import { deriveOptimisticLifecycleStatus } from "@/contexts/session-stream-lifecycle";
 
 const AGENT_STREAM_REDUCER_FLUSH_DELAY_MS = 16 * 3;
 
@@ -45,6 +36,16 @@ export interface AgentStreamReducerSideEffect {
 
 type TimelineDirection = "tail" | "before" | "after";
 type InitRequestDirection = "tail" | "after";
+
+type SessionTimelineSeqCursor =
+  | {
+      epoch: string;
+      endSeq: number;
+    }
+  | null
+  | undefined;
+
+type SessionTimelineSeqDecision = "accept" | "drop_stale" | "drop_epoch" | "gap" | "init";
 
 interface TimelineResponseEntry {
   seqStart: number;
@@ -97,6 +98,106 @@ interface TimelinePathResult {
   cursor: TimelineCursor | null | undefined;
   cursorChanged: boolean;
   sideEffects: TimelineReducerSideEffect[];
+}
+
+function classifySessionTimelineSeq({
+  cursor,
+  epoch,
+  seq,
+}: {
+  cursor: SessionTimelineSeqCursor;
+  epoch: string;
+  seq: number;
+}): SessionTimelineSeqDecision {
+  if (!cursor) {
+    return "init";
+  }
+  if (cursor.epoch !== epoch) {
+    return "drop_epoch";
+  }
+  if (seq <= cursor.endSeq) {
+    return "drop_stale";
+  }
+  if (seq === cursor.endSeq + 1) {
+    return "accept";
+  }
+  return "gap";
+}
+
+function deriveBootstrapTailTimelinePolicy({
+  direction,
+  reset,
+  epoch,
+  endCursor,
+  isInitializing,
+  hasActiveInitDeferred,
+}: {
+  direction: TimelineDirection;
+  reset: boolean;
+  epoch: string;
+  endCursor: { seq: number } | null;
+  isInitializing: boolean;
+  hasActiveInitDeferred: boolean;
+}): {
+  replace: boolean;
+  catchUpCursor: { epoch: string; endSeq: number } | null;
+} {
+  if (reset) {
+    return { replace: true, catchUpCursor: null };
+  }
+
+  const isBootstrapTailInit = direction === "tail" && isInitializing && hasActiveInitDeferred;
+  if (!isBootstrapTailInit) {
+    return { replace: false, catchUpCursor: null };
+  }
+
+  return {
+    replace: true,
+    catchUpCursor: endCursor ? { epoch, endSeq: endCursor.seq } : null,
+  };
+}
+
+function shouldResolveTimelineInit({
+  hasActiveInitDeferred,
+  isInitializing,
+  initRequestDirection,
+  responseDirection,
+  reset,
+}: {
+  hasActiveInitDeferred: boolean;
+  isInitializing: boolean;
+  initRequestDirection: InitRequestDirection;
+  responseDirection: TimelineDirection;
+  reset: boolean;
+}): boolean {
+  if (!hasActiveInitDeferred || !isInitializing) {
+    return false;
+  }
+  if (reset) {
+    return true;
+  }
+  return responseDirection === initRequestDirection;
+}
+
+function deriveOptimisticLifecycleStatus(
+  currentStatus: AgentLifecycleStatus,
+  event: AgentStreamEventPayload,
+): AgentLifecycleStatus | null {
+  if (currentStatus !== "running") {
+    return null;
+  }
+  switch (event.type) {
+    case "turn_completed":
+      return "idle";
+    case "turn_failed":
+      return "error";
+    case "turn_canceled":
+      // A canceled turn can be either a final user cancel or an interrupt before
+      // a replacement turn starts. The daemon snapshot is authoritative here.
+      return null;
+    default:
+      return null;
+  }
 }
 
 function preserveReplacePathAssistantHead(params: {
