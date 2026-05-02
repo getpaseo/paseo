@@ -749,17 +749,15 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (isNative) {
         const session = useSessionStore.getState().sessions[serverId];
         const agentId = session?.focusedAgentId;
-        const cursor = agentId ? session?.agentTimelineCursor.get(agentId) : undefined;
-        if (agentId && cursor) {
+        if (agentId) {
           void client
             .fetchAgentTimeline(agentId, {
-              direction: "after",
-              cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
+              direction: "tail",
               limit: TIMELINE_FETCH_PAGE_SIZE,
               projection: "canonical",
             })
             .catch((error) => {
-              console.warn("[Session] failed to fetch catch-up timeline on resume", agentId, error);
+              console.warn("[Session] failed to fetch tail timeline on resume", agentId, error);
             });
         }
       }
