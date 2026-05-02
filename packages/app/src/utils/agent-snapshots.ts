@@ -26,6 +26,11 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     ? new Date(snapshot.attentionTimestamp)
     : null;
   const archivedAt = snapshot.archivedAt ? new Date(snapshot.archivedAt) : null;
+  const parentAgentLabel = snapshot.labels?.["paseo.parent-agent-id"];
+  const parentAgentId =
+    typeof parentAgentLabel === "string" && parentAgentLabel.trim().length > 0
+      ? parentAgentLabel.trim()
+      : null;
 
   return {
     serverId,
@@ -53,6 +58,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,
     archivedAt,
+    parentAgentId,
     labels: snapshot.labels,
   };
 }

@@ -265,6 +265,7 @@ function buildDraftAgentSnapshot(input: {
     model,
     features: composerState.statusControls.features,
     thinkingOptionId,
+    parentAgentId: null,
     labels: {},
   };
 }

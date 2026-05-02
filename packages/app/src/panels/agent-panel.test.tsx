@@ -16,6 +16,7 @@ import type { StreamItem } from "@/types/stream";
 import type { AgentPermissionRequest } from "@server/server/agent/agent-sdk-types";
 
 interface PanelTestTheme {
+  colorScheme: string;
   colors: {
     foreground: string;
     foregroundMuted: string;
@@ -24,10 +25,18 @@ interface PanelTestTheme {
     surface2: string;
     surface3: string;
     border: string;
+    borderAccent: string;
     destructive: string;
+    palette: {
+      amber: Record<number, string>;
+      blue: Record<number, string>;
+      red: Record<number, string>;
+      green: Record<number, string>;
+    };
   };
   spacing: Record<number, number>;
   borderRadius: Record<string, number>;
+  borderWidth: Record<number, number>;
   fontSize: Record<string, number>;
   fontWeight: Record<string, string>;
   iconSize: Record<string, number>;
@@ -74,6 +83,7 @@ const {
     latestStreamText: { current: null as string | null },
     runtimeIsConnected: { current: false },
     theme: {
+      colorScheme: "dark",
       colors: {
         foreground: "#ffffff",
         foregroundMuted: "#999999",
@@ -82,11 +92,19 @@ const {
         surface2: "#222222",
         surface3: "#333333",
         border: "#444444",
+        borderAccent: "#555555",
         destructive: "#ff0000",
+        palette: {
+          amber: { 500: "#ffbf00", 700: "#aa8000" },
+          blue: { 500: "#0a84ff" },
+          red: { 500: "#ff453a" },
+          green: { 500: "#30d158" },
+        },
       },
       spacing: { 1: 4, 2: 8, 3: 12, 4: 16, 6: 24 },
-      borderRadius: { md: 6, lg: 8, xl: 12 },
-      fontSize: { sm: 13, base: 15, lg: 18 },
+      borderRadius: { md: 6, lg: 8, xl: 12, "2xl": 16, full: 999 },
+      borderWidth: { 0: 0, 1: 1, 2: 2 },
+      fontSize: { xs: 11, sm: 13, base: 15, lg: 18 },
       fontWeight: { medium: "500" },
       iconSize: { lg: 22 },
     } satisfies PanelTestTheme,
@@ -136,8 +154,37 @@ vi.mock("@/attachments/service", () => ({
 }));
 
 vi.mock("@/components/provider-icons", () => ({
-  getProviderIcon: () => null,
+  getProviderIcon: (provider: unknown) =>
+    function ProviderIconStub(props: { size: number; color: string }) {
+      return React.createElement("span", {
+        "data-testid": "agent-panel-provider-icon",
+        "data-provider": String(provider ?? "none"),
+        "data-size": String(props.size),
+      });
+    },
 }));
+
+vi.mock("@/components/synced-loader", () => ({
+  SyncedLoader: (props: { size: number; color: string }) =>
+    React.createElement("span", {
+      "data-testid": "agent-panel-synced-loader",
+      "data-size": String(props.size),
+    }),
+}));
+
+vi.mock("@/panels/register-panels", () => ({
+  ensurePanelsRegistered: () => {},
+}));
+
+vi.mock("lucide-react-native", () => {
+  const createIcon = (name: string) => (props: Record<string, unknown>) =>
+    React.createElement("span", { ...props, "data-icon": name });
+  return {
+    Check: createIcon("Check"),
+    ChevronDown: createIcon("ChevronDown"),
+    ChevronRight: createIcon("ChevronRight"),
+  };
+});
 
 vi.mock("@/components/file-drop-zone", () => ({
   FileDropZone: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -238,6 +285,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     title: "Render isolation",
     cwd: "/workspace/one",
     model: null,
+    parentAgentId: null,
     labels: {},
     ...overrides,
   };
@@ -288,21 +336,39 @@ function makeFetchedAgentResult(agent: Agent): Awaited<ReturnType<DaemonClient["
   };
 }
 
-function seedReadyAgent(agent: Agent = makeAgent()) {
+function seedReadyAgents(agents: Agent[]) {
   const store = useSessionStore.getState();
   store.initializeSession("server", makeClient());
-  store.setAgents("server", new Map([["agent", agent]]));
-  store.setAgentAuthoritativeHistoryApplied("server", "agent", true);
+  store.setAgents("server", new Map(agents.map((agent) => [agent.id, agent])));
+  for (const agent of agents) {
+    store.setAgentAuthoritativeHistoryApplied("server", agent.id, true);
+  }
 }
 
-function buildTestPaneValue() {
+function seedReadyAgent(agent: Agent = makeAgent()) {
+  seedReadyAgents([agent]);
+}
+
+interface PaneOverrides {
+  agentId?: string;
+  openTab?: (target: { kind: "agent"; agentId: string }) => void;
+  closeCurrentTab?: () => void;
+}
+
+Object.defineProperty(globalThis, "React", {
+  value: React,
+  configurable: true,
+});
+
+function buildTestPaneValue(options: PaneOverrides = {}) {
+  const agentId = options.agentId ?? "agent";
   return {
     serverId: "server",
     workspaceId: "workspace",
-    tabId: "agent-agent",
-    target: { kind: "agent" as const, agentId: "agent" },
-    openTab: vi.fn(),
-    closeCurrentTab: vi.fn(),
+    tabId: `agent-${agentId}`,
+    target: { kind: "agent" as const, agentId },
+    openTab: options.openTab ?? vi.fn(),
+    closeCurrentTab: options.closeCurrentTab ?? vi.fn(),
     retargetCurrentTab: vi.fn(),
     openFileInWorkspace: vi.fn(),
   };
@@ -315,6 +381,7 @@ async function renderAgentPanel(
     isPaneFocused: false,
     isInteractive: false,
   },
+  options: PaneOverrides = {},
 ) {
   const AgentPanel = agentPanelRegistration.component;
   const queryClient = new QueryClient({
@@ -323,7 +390,7 @@ async function renderAgentPanel(
       mutations: { retry: false },
     },
   });
-  const paneValue = buildTestPaneValue();
+  const paneValue = buildTestPaneValue(options);
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
@@ -336,6 +403,22 @@ async function renderAgentPanel(
     );
     await Promise.resolve();
   });
+}
+
+function click(element: Element): void {
+  act(() => {
+    element.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  });
+}
+
+function queryByTestId(testID: string): HTMLElement | null {
+  return document.querySelector(`[data-testid="${testID}"]`);
+}
+
+function querySubagentRowIds(): string[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[data-testid^="subagents-section-row-"]'),
+  ).map((node) => node.getAttribute("data-testid")?.replace("subagents-section-row-", "") ?? "");
 }
 
 function updateCurrentAgentStream(text: string) {
@@ -563,5 +646,157 @@ describe("AgentPanel render isolation", () => {
     expect(
       useSessionStore.getState().sessions.server?.agentDetails.get("agent")?.archivedAt,
     ).toEqual(archivedAgent.archivedAt);
+  });
+
+  it("renders the collapsed subagents header above the composer for a parent agent", async () => {
+    seedReadyAgents([
+      makeAgent({ id: "agent", title: "Parent" }),
+      makeAgent({
+        id: "child-a",
+        title: "Child A",
+        parentAgentId: "agent",
+        createdAt: new Date("2026-04-20T00:00:01.000Z"),
+      }),
+      makeAgent({
+        id: "child-b",
+        title: "Child B",
+        parentAgentId: "agent",
+        createdAt: new Date("2026-04-20T00:00:02.000Z"),
+      }),
+    ]);
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await renderAgentPanel(root);
+
+    const header = queryByTestId("subagents-section-header");
+    const composer = queryByTestId("composer");
+    expect(header?.textContent).toBe("2 subagents · 2 running");
+    expect(querySubagentRowIds()).toEqual([]);
+    expect(composer).not.toBeNull();
+    expect(
+      header!.compareDocumentPosition(composer!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("opens a clicked subagent row through pane context", async () => {
+    const openTab = vi.fn();
+    seedReadyAgents([
+      makeAgent({ id: "agent", title: "Parent" }),
+      makeAgent({
+        id: "child-a",
+        title: "Child A",
+        parentAgentId: "agent",
+        createdAt: new Date("2026-04-20T00:00:01.000Z"),
+      }),
+      makeAgent({
+        id: "child-b",
+        title: "Child B",
+        parentAgentId: "agent",
+        createdAt: new Date("2026-04-20T00:00:02.000Z"),
+      }),
+    ]);
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await renderAgentPanel(root, undefined, { openTab });
+    click(queryByTestId("subagents-section-header")!);
+    click(queryByTestId("subagents-section-row-child-b")!);
+
+    expect(openTab).toHaveBeenCalledTimes(1);
+    expect(openTab).toHaveBeenCalledWith({ kind: "agent", agentId: "child-b" });
+  });
+
+  it("hides the subagents section for an archived parent agent", async () => {
+    seedReadyAgents([
+      makeAgent({
+        id: "agent",
+        title: "Archived parent",
+        archivedAt: new Date("2026-04-20T00:00:03.000Z"),
+      }),
+      makeAgent({
+        id: "child-a",
+        title: "Child A",
+        parentAgentId: "agent",
+      }),
+    ]);
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await renderAgentPanel(root);
+
+    expect(queryByTestId("subagents-section")).toBeNull();
+    expect(queryByTestId("composer")).toBeNull();
+    expect(queryByTestId("archived-agent-callout")).not.toBeNull();
+  });
+
+  it("shows only direct children when rendering a child agent pane", async () => {
+    seedReadyAgents([
+      makeAgent({ id: "parent", title: "Parent" }),
+      makeAgent({
+        id: "child-a",
+        title: "Child A",
+        parentAgentId: "parent",
+        createdAt: new Date("2026-04-20T00:00:01.000Z"),
+      }),
+      makeAgent({
+        id: "sibling",
+        title: "Sibling",
+        parentAgentId: "parent",
+        createdAt: new Date("2026-04-20T00:00:02.000Z"),
+      }),
+      makeAgent({
+        id: "grandchild",
+        title: "Grandchild",
+        parentAgentId: "child-a",
+        createdAt: new Date("2026-04-20T00:00:03.000Z"),
+      }),
+      makeAgent({
+        id: "great-grandchild",
+        title: "Great grandchild",
+        parentAgentId: "grandchild",
+        createdAt: new Date("2026-04-20T00:00:04.000Z"),
+      }),
+    ]);
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await renderAgentPanel(root, undefined, { agentId: "child-a" });
+    expect(queryByTestId("subagents-section-header")?.textContent).toBe("1 subagent · 1 running");
+
+    click(queryByTestId("subagents-section-header")!);
+
+    expect(querySubagentRowIds()).toEqual(["grandchild"]);
+  });
+
+  it("invokes the pane open path again after a manually opened subagent tab is closed", async () => {
+    const openTab = vi.fn();
+    const closeCurrentTab = vi.fn();
+    seedReadyAgents([
+      makeAgent({ id: "agent", title: "Parent" }),
+      makeAgent({
+        id: "child-a",
+        title: "Child A",
+        parentAgentId: "agent",
+      }),
+    ]);
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await renderAgentPanel(root, undefined, { openTab, closeCurrentTab });
+    click(queryByTestId("subagents-section-header")!);
+    click(queryByTestId("subagents-section-row-child-a")!);
+    closeCurrentTab();
+    click(queryByTestId("subagents-section-row-child-a")!);
+
+    expect(closeCurrentTab).toHaveBeenCalledTimes(1);
+    expect(openTab).toHaveBeenCalledTimes(2);
+    expect(openTab).toHaveBeenNthCalledWith(1, { kind: "agent", agentId: "child-a" });
+    expect(openTab).toHaveBeenNthCalledWith(2, { kind: "agent", agentId: "child-a" });
   });
 });

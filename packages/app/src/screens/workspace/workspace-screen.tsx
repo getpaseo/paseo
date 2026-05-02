@@ -1646,6 +1646,7 @@ function WorkspaceScreenContent({
       agentsHydrated: hasHydratedAgents,
       terminalsHydrated: terminalsQuery.isSuccess,
       activeAgentIds: Array.from(workspaceAgentVisibility.activeAgentIds),
+      autoOpenAgentIds: Array.from(workspaceAgentVisibility.autoOpenAgentIds),
       knownAgentIds: Array.from(workspaceAgentVisibility.knownAgentIds),
       knownTerminalIds,
       standaloneTerminalIds,
