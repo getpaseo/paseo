@@ -60,6 +60,7 @@ import {
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { runProviderTurn } from "./provider-runner.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
@@ -2962,81 +2963,22 @@ class CodexAppServerAgentSession implements AgentSession {
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
-    const timeline: AgentTimelineItem[] = [];
-    let finalText = "";
-    let usage: AgentUsage | undefined;
-    let turnId: string | null = null;
-    const bufferedEvents: AgentStreamEvent[] = [];
-    let settled = false;
-    let resolveCompletion!: () => void;
-    let rejectCompletion!: (error: Error) => void;
-
-    const processEvent = (event: AgentStreamEvent) => {
-      if (settled) {
-        return;
-      }
-      const eventTurnId = (event as { turnId?: string }).turnId;
-      if (turnId && eventTurnId && eventTurnId !== turnId) {
-        return;
-      }
-      if (event.type === "timeline") {
-        timeline.push(event.item);
-        if (event.item.type === "assistant_message") {
-          finalText = event.item.text;
-        } else if (event.item.type === "tool_call" && event.item.detail.type === "plan") {
-          finalText = event.item.detail.text;
+    return runProviderTurn({
+      prompt,
+      runOptions: options,
+      startTurn: (p, o) => this.startTurn(p, o),
+      subscribe: (callback) => this.subscribe(callback),
+      getSessionId: async () => (await this.getRuntimeInfo()).sessionId ?? "",
+      reduceFinalText: ({ current, item }) => {
+        if (item.type === "assistant_message") {
+          return item.text;
         }
-        return;
-      }
-      if (event.type === "turn_completed") {
-        usage = event.usage;
-        settled = true;
-        resolveCompletion();
-        return;
-      }
-      if (event.type === "turn_failed") {
-        settled = true;
-        rejectCompletion(new Error(event.error));
-        return;
-      }
-      if (event.type === "turn_canceled") {
-        settled = true;
-        resolveCompletion();
-      }
-    };
-
-    const completion = new Promise<void>((resolve, reject) => {
-      resolveCompletion = resolve;
-      rejectCompletion = reject;
+        if (item.type === "tool_call" && item.detail.type === "plan") {
+          return item.detail.text;
+        }
+        return current;
+      },
     });
-    const unsubscribe = this.subscribe((event) => {
-      if (!turnId) {
-        bufferedEvents.push(event);
-        return;
-      }
-      processEvent(event);
-    });
-
-    try {
-      const result = await this.startTurn(prompt, options);
-      turnId = result.turnId;
-      for (const event of bufferedEvents) {
-        processEvent(event);
-      }
-      if (!settled) {
-        await completion;
-      }
-    } finally {
-      unsubscribe();
-    }
-
-    const info = await this.getRuntimeInfo();
-    return {
-      sessionId: info.sessionId ?? "",
-      finalText,
-      usage,
-      timeline,
-    };
   }
 
   async startTurn(

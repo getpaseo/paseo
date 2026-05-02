@@ -86,6 +86,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
 import { findExecutable } from "../../../utils/executable.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 
@@ -857,84 +858,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
-    const timeline: AgentTimelineItem[] = [];
-    let finalText = "";
-    let usage: AgentUsage | undefined;
-    let turnId: string | null = null;
-    let settled = false;
-    let resolveCompletion!: () => void;
-    let rejectCompletion!: (error: Error) => void;
-    const buffered: AgentStreamEvent[] = [];
-
-    const completion = new Promise<void>((resolve, reject) => {
-      resolveCompletion = resolve;
-      rejectCompletion = reject;
+    const result = await runProviderTurn({
+      prompt,
+      runOptions: options,
+      startTurn: (p, o) => this.startTurn(p, o),
+      subscribe: (callback) => this.subscribe(callback),
+      getSessionId: () => this.sessionId ?? "",
+      reduceFinalText: appendOrReplaceGrowingAssistantMessage,
     });
-
-    const processEvent = (event: AgentStreamEvent) => {
-      if (settled) {
-        return;
-      }
-      if (turnId && "turnId" in event && event.turnId && event.turnId !== turnId) {
-        return;
-      }
-      if (event.type === "timeline") {
-        timeline.push(event.item);
-        if (event.item.type === "assistant_message") {
-          finalText = event.item.text.startsWith(finalText)
-            ? event.item.text
-            : `${finalText}${event.item.text}`;
-        }
-        return;
-      }
-      if (event.type === "turn_completed") {
-        usage = event.usage;
-        settled = true;
-        resolveCompletion();
-        return;
-      }
-      if (event.type === "turn_failed") {
-        settled = true;
-        rejectCompletion(new Error(event.error));
-        return;
-      }
-      if (event.type === "turn_canceled") {
-        settled = true;
-        resolveCompletion();
-      }
-    };
-
-    const unsubscribe = this.subscribe((event) => {
-      if (!turnId) {
-        buffered.push(event);
-        return;
-      }
-      processEvent(event);
-    });
-
-    try {
-      const started = await this.startTurn(prompt, options);
-      turnId = started.turnId;
-      for (const event of buffered) {
-        processEvent(event);
-      }
-      if (!settled) {
-        await completion;
-      }
-    } finally {
-      unsubscribe();
-    }
 
     if (!this.sessionId) {
       throw new Error("ACP session did not expose a session id");
     }
 
-    return {
-      sessionId: this.sessionId,
-      finalText,
-      usage,
-      timeline,
-    };
+    return result;
   }
 
   async startTurn(
