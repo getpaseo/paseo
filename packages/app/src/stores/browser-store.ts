@@ -36,6 +36,9 @@ function normalizeBrowserUrl(value: string | null | undefined): string {
   if (!trimmed) {
     return "https://example.com";
   }
+  if (/^(localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\da-fA-F:.]+])(?::\d+)?(?:[/?#]|$)/.test(trimmed)) {
+    return `http://${trimmed}`;
+  }
   if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed)) {
     return trimmed;
   }
@@ -138,7 +141,12 @@ export const useBrowserStore = create<BrowserStoreState>()(
       name: "workspace-browser-store",
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
-        browsersById: state.browsersById,
+        browsersById: Object.fromEntries(
+          Object.entries(state.browsersById).map(([browserId, browser]) => [
+            browserId,
+            { ...browser, isLoading: false, lastError: null },
+          ]),
+        ),
       }),
     },
   ),

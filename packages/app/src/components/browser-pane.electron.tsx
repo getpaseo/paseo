@@ -8,14 +8,7 @@ import {
   createElement,
 } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
-import {
-  ArrowLeft,
-  ArrowRight,
-  Globe,
-  MousePointer2,
-  RefreshCw,
-  Search,
-} from "lucide-react-native";
+import { ArrowLeft, ArrowRight, MousePointer2, RefreshCw } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   buildWorkspaceAttachmentScopeKey,
@@ -33,7 +26,7 @@ type ElectronWebview = HTMLElement & {
   goForward?: () => void;
   reload?: () => void;
   stop?: () => void;
-  loadURL?: (url: string) => void;
+  loadURL?: (url: string) => Promise<void>;
   getURL?: () => string;
   openDevTools?: () => void;
   executeJavaScript?: (code: string) => Promise<unknown>;
@@ -45,8 +38,62 @@ type BrowserElementSelection = Omit<BrowserElementAttachment, "formatted"> & {
   attributes?: Record<string, string>;
 };
 
+const ERR_ABORTED = -3;
+const ALLOWED_BROWSER_PROTOCOLS = new Set(["http:", "https:"]);
+
 function truncateText(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength).trim()}...` : value;
+}
+
+function getWebviewLoadErrorMessage(event: Event): string | null {
+  const details = event as Event & {
+    errorCode?: unknown;
+    errorDescription?: unknown;
+    isMainFrame?: unknown;
+    validatedURL?: unknown;
+  };
+  if (details.isMainFrame === false || details.errorCode === ERR_ABORTED) {
+    return null;
+  }
+
+  const description =
+    typeof details.errorDescription === "string" && details.errorDescription.trim()
+      ? details.errorDescription.trim()
+      : "Failed to load page";
+  const url =
+    typeof details.validatedURL === "string" && details.validatedURL.trim()
+      ? details.validatedURL.trim()
+      : null;
+
+  return url ? `${description}: ${url}` : description;
+}
+
+function getLoadUrlRejectionMessage(error: unknown): string | null {
+  if (error instanceof Error && error.message.trim()) {
+    if (error.message.includes("ERR_ABORTED") || error.message.includes("ERR_BLOCKED_BY_CLIENT")) {
+      return null;
+    }
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim()) {
+    if (error.includes("ERR_ABORTED") || error.includes("ERR_BLOCKED_BY_CLIENT")) {
+      return null;
+    }
+    return error.trim();
+  }
+  return "Failed to load page";
+}
+
+function getUnsafeNavigationMessage(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (ALLOWED_BROWSER_PROTOCOLS.has(parsed.protocol) || parsed.href === "about:blank") {
+      return null;
+    }
+    return `Blocked unsupported browser URL: ${parsed.protocol}`;
+  } catch {
+    return "Invalid browser URL";
+  }
 }
 
 function formatElementAttachment(selection: BrowserElementSelection): string {
@@ -254,13 +301,17 @@ export function BrowserPane({
 
     host.replaceChildren();
 
+    const initialUnsafeNavigationMessage = getUnsafeNavigationMessage(initialUrlRef.current);
     const webview = document.createElement("webview") as ElectronWebview;
     webviewRef.current = webview;
     webview.setAttribute("partition", `persist:paseo-browser-${browserId}`);
     webview.setAttribute("allowpopups", "true");
     webview.setAttribute("spellcheck", "false");
     webview.setAttribute("autosize", "on");
-    webview.setAttribute("src", initialUrlRef.current);
+    webview.setAttribute(
+      "src",
+      initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
+    );
     webview.style.display = "flex";
     webview.style.flex = "1";
     webview.style.width = "100%";
@@ -269,11 +320,11 @@ export function BrowserPane({
     webview.style.background = "transparent";
 
     const handleStartLoading = () => {
-      updateBrowser(browserId, { isLoading: true, lastError: null });
+      updateBrowser(browserId, { isLoading: true, faviconUrl: null, lastError: null });
       syncNavigationState();
     };
     const handleStopLoading = () => {
-      updateBrowser(browserId, { isLoading: false, lastError: null });
+      updateBrowser(browserId, { isLoading: false });
       syncNavigationState();
     };
     const handleNavigate = (event: Event) => {
@@ -305,18 +356,17 @@ export function BrowserPane({
       updateBrowserRef.current(browserIdRef.current, { faviconUrl: favicons[0] ?? null });
     };
     const handleLoadFailed = (event: Event) => {
-      const errorDescription =
-        typeof (event as Event & { errorDescription?: unknown }).errorDescription === "string"
-          ? ((event as Event & { errorDescription?: string }).errorDescription ?? "")
-          : "Failed to load page";
+      const message = getWebviewLoadErrorMessage(event);
+      if (!message) {
+        return;
+      }
       updateBrowserRef.current(browserIdRef.current, {
         isLoading: false,
-        lastError: errorDescription,
+        lastError: message,
       });
     };
     const handleDomReady = () => {
       domReadyRef.current = true;
-      updateBrowserRef.current(browserIdRef.current, { isLoading: false });
       syncNavigationState();
     };
 
@@ -330,6 +380,12 @@ export function BrowserPane({
     webview.addEventListener("dom-ready", handleDomReady);
 
     host.appendChild(webview);
+    if (initialUnsafeNavigationMessage) {
+      updateBrowserRef.current(browserIdRef.current, {
+        isLoading: false,
+        lastError: initialUnsafeNavigationMessage,
+      });
+    }
 
     return () => {
       webview.removeEventListener("did-start-loading", handleStartLoading);
@@ -354,14 +410,31 @@ export function BrowserPane({
   const navigate = useCallback((nextUrl: string) => {
     const normalizedUrl = normalizeWorkspaceBrowserUrl(nextUrl);
     const webview = webviewRef.current;
+    const unsafeNavigationMessage = getUnsafeNavigationMessage(normalizedUrl);
     updateBrowserRef.current(browserIdRef.current, {
       url: normalizedUrl,
-      isLoading: true,
+      isLoading: unsafeNavigationMessage === null,
       lastError: null,
     });
     setDraftUrl((current) => (current === normalizedUrl ? current : normalizedUrl));
+    if (unsafeNavigationMessage) {
+      updateBrowserRef.current(browserIdRef.current, {
+        isLoading: false,
+        lastError: unsafeNavigationMessage,
+      });
+      return;
+    }
     if (webview?.loadURL) {
-      webview.loadURL(normalizedUrl);
+      void webview.loadURL(normalizedUrl).catch((error: unknown) => {
+        const message = getLoadUrlRejectionMessage(error);
+        if (!message) {
+          return;
+        }
+        updateBrowserRef.current(browserIdRef.current, {
+          isLoading: false,
+          lastError: message,
+        });
+      });
       return;
     }
     if (webview) {
@@ -704,17 +777,6 @@ export function BrowserPane({
           </Pressable>
         </View>
         <View style={styles.urlBarWrap}>
-          <View style={styles.urlBarIconWrap}>
-            {browser?.faviconUrl ? (
-              createElement("img", {
-                alt: "",
-                src: browser.faviconUrl,
-                style: { width: 14, height: 14, borderRadius: 3 } satisfies CSSProperties,
-              })
-            ) : (
-              <Globe size={14} color={theme.colors.foregroundMuted} />
-            )}
-          </View>
           <TextInput
             accessibilityLabel="Browser URL"
             autoCapitalize="none"
@@ -728,14 +790,6 @@ export function BrowserPane({
           />
         </View>
         <View style={styles.chromeRight}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Go to URL"
-            onPress={handleNavigateDraftUrl}
-            style={baseIconButtonStyle}
-          >
-            <Search size={16} color={theme.colors.foregroundMuted} />
-          </Pressable>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={selectorActive ? "Cancel element selector" : "Select element"}
@@ -825,16 +879,10 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.surface3,
   },
-  urlBarIconWrap: {
-    width: 14,
-    height: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   urlInput: {
     flex: 1,
     minWidth: 0,
-    fontSize: 12,
+    fontSize: theme.fontSize.sm,
     paddingVertical: 0,
     paddingHorizontal: 0,
   },

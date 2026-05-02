@@ -1,8 +1,10 @@
+import { useMemo } from "react";
+import { Image } from "react-native";
 import { Globe } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { BrowserPane } from "@/components/browser-pane";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import type { PanelDescriptor, PanelIconProps, PanelRegistration } from "@/panels/panel-registry";
 import { useBrowserStore } from "@/stores/browser-store";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 
@@ -20,19 +22,33 @@ function getBrowserLabel(input: { title: string; url: string }): string {
   }
 }
 
+function createBrowserTabIcon(faviconUrl: string | null) {
+  return function BrowserTabIcon({ size, color }: PanelIconProps) {
+    const source = useMemo(() => (faviconUrl ? { uri: faviconUrl } : undefined), []);
+    const imageStyle = useMemo(() => ({ width: size, height: size, borderRadius: 3 }), [size]);
+
+    if (faviconUrl) {
+      return <Image accessibilityIgnoresInvertColors source={source} style={imageStyle} />;
+    }
+
+    return <Globe size={size} color={color} />;
+  };
+}
+
 function useBrowserPanelDescriptor(target: {
   kind: "browser";
   browserId: string;
 }): PanelDescriptor {
   const browser = useBrowserStore((state) => state.browsersById[target.browserId] ?? null);
   const url = browser?.url ?? "https://example.com";
+  const icon = createBrowserTabIcon(browser?.faviconUrl ?? null);
 
   return {
     label: getBrowserLabel({ title: browser?.title ?? "", url }),
     subtitle: url,
     titleState: "ready",
-    icon: Globe,
-    statusBucket: null,
+    icon,
+    statusBucket: browser?.isLoading ? "running" : null,
   };
 }
 

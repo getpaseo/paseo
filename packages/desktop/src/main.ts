@@ -47,6 +47,29 @@ import { autoUpdateSkillsIfInstalled } from "./integrations/integrations-manager
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
+
+function isAllowedBrowserWebviewUrl(value: string | undefined): boolean {
+  if (!value) {
+    return true;
+  }
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.href === "about:blank"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function preventUnsafeBrowserWebviewNavigation(
+  event: Electron.Event,
+  url: string | undefined,
+): void {
+  if (!isAllowedBrowserWebviewUrl(url)) {
+    event.preventDefault();
+  }
+}
 const OPEN_PROJECT_EVENT = "paseo:event:open-project";
 const DESKTOP_SMOKE_ENV = "PASEO_DESKTOP_SMOKE";
 const DESKTOP_SMOKE_STOP_REQUEST = "paseo-smoke-stop";
@@ -218,15 +241,40 @@ async function createMainWindow(): Promise<void> {
   setupWindowResizeEvents(mainWindow);
   setupDefaultContextMenu(mainWindow);
   setupDragDropPrevention(mainWindow);
-  mainWindow.webContents.on("will-attach-webview", (_event, webPreferences) => {
+  mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    if (!isAllowedBrowserWebviewUrl(params.src)) {
+      event.preventDefault();
+      return;
+    }
     webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.nodeIntegrationInWorker = false;
     webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.webviewTag = false;
+    webPreferences.allowRunningInsecureContent = false;
     delete webPreferences.preload;
+    delete params.preload;
+    delete (webPreferences as { preloadURL?: string }).preloadURL;
+    delete (params as { preloadURL?: string }).preloadURL;
   });
   mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
     contents.setWindowOpenHandler(({ url }) => {
+      if (!isAllowedBrowserWebviewUrl(url)) {
+        return { action: "deny" };
+      }
       contents.loadURL(url).catch(() => undefined);
       return { action: "deny" };
+    });
+    contents.on("will-navigate", (event) => {
+      preventUnsafeBrowserWebviewNavigation(event, event.url);
+    });
+    contents.on("will-frame-navigate", (event) => {
+      preventUnsafeBrowserWebviewNavigation(event, event.url);
+    });
+    contents.on("will-redirect", (event) => {
+      preventUnsafeBrowserWebviewNavigation(event, event.url);
     });
   });
 
