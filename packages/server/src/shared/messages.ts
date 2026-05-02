@@ -661,6 +661,21 @@ export type AgentListItemPayload = z.infer<typeof AgentListItemPayloadSchema>;
 
 export type AgentStreamEventPayload = z.infer<typeof AgentStreamEventPayloadSchema>;
 
+export const RecentProviderSessionDescriptorPayloadSchema = z.object({
+  providerId: z.string(),
+  providerLabel: z.string(),
+  providerHandleId: z.string(),
+  cwd: z.string(),
+  title: z.string().nullable(),
+  firstPromptPreview: z.string().nullable(),
+  lastPromptPreview: z.string().nullable(),
+  lastActivityAt: z.string(),
+});
+
+export type RecentProviderSessionDescriptorPayload = z.infer<
+  typeof RecentProviderSessionDescriptorPayloadSchema
+>;
+
 // ============================================================================
 // Session Inbound Messages (Session receives these)
 // ============================================================================
@@ -905,6 +920,15 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
     .optional(),
 });
 
+export const FetchRecentProviderSessionsRequestMessageSchema = z.object({
+  type: z.literal("fetch_recent_provider_sessions_request"),
+  requestId: z.string(),
+  cwd: z.string().optional(),
+  providers: z.array(z.string()).optional(),
+  since: z.string().optional(),
+  limit: z.number().int().positive().max(200).optional(),
+});
+
 export const FetchAgentRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_request"),
   requestId: z.string(),
@@ -1060,8 +1084,10 @@ export const ResumeAgentRequestMessageSchema = z.object({
 
 export const ImportAgentRequestMessageSchema = z.object({
   type: z.literal("import_agent_request"),
-  provider: AgentProviderSchema,
-  sessionId: z.string(),
+  provider: AgentProviderSchema.optional(),
+  providerId: z.string().optional(),
+  sessionId: z.string().optional(),
+  providerHandleId: z.string().optional(),
   cwd: z.string().optional(),
   labels: z.record(z.string()).optional(),
   requestId: z.string(),
@@ -1673,6 +1699,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AudioPlayedMessageSchema,
   FetchAgentsRequestMessageSchema,
   FetchAgentHistoryRequestMessageSchema,
+  FetchRecentProviderSessionsRequestMessageSchema,
   FetchWorkspacesRequestMessageSchema,
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
@@ -2276,6 +2303,15 @@ export const FetchAgentHistoryResponseMessageSchema = z.object({
     requestId: z.string(),
     entries: z.array(AgentDirectoryResponseEntrySchema),
     pageInfo: AgentDirectoryPageInfoSchema,
+  }),
+});
+
+export const FetchRecentProviderSessionsResponseMessageSchema = z.object({
+  type: z.literal("fetch_recent_provider_sessions_response"),
+  payload: z.object({
+    requestId: z.string(),
+    entries: z.array(RecentProviderSessionDescriptorPayloadSchema),
+    filteredAlreadyImportedCount: z.number().int().nonnegative().optional(),
   }),
 });
 
@@ -3301,6 +3337,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentStatusMessageSchema,
   FetchAgentsResponseMessageSchema,
   FetchAgentHistoryResponseMessageSchema,
+  FetchRecentProviderSessionsResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,
   OpenProjectResponseMessageSchema,
   StartWorkspaceScriptResponseMessageSchema,
@@ -3430,6 +3467,9 @@ export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessa
 export type FetchAgentHistoryResponseMessage = z.infer<
   typeof FetchAgentHistoryResponseMessageSchema
 >;
+export type FetchRecentProviderSessionsResponseMessage = z.infer<
+  typeof FetchRecentProviderSessionsResponseMessageSchema
+>;
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>;
 export type ScriptStatusUpdateMessage = z.infer<typeof ScriptStatusUpdateMessageSchema>;
 export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessageSchema>;
@@ -3506,6 +3546,9 @@ export type ActivityLogPayload = z.infer<typeof ActivityLogPayloadSchema>;
 export type VoiceAudioChunkMessage = z.infer<typeof VoiceAudioChunkMessageSchema>;
 export type FetchAgentsRequestMessage = z.infer<typeof FetchAgentsRequestMessageSchema>;
 export type FetchAgentHistoryRequestMessage = z.infer<typeof FetchAgentHistoryRequestMessageSchema>;
+export type FetchRecentProviderSessionsRequestMessage = z.infer<
+  typeof FetchRecentProviderSessionsRequestMessageSchema
+>;
 export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;

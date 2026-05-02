@@ -243,6 +243,23 @@ describe("WorkspaceImportSheet", () => {
     expect(await screen.findByText("No recent sessions to import.")).toBeTruthy();
   });
 
+  it("shows the all-already-imported empty state when filteredAlreadyImportedCount is positive", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [],
+      filteredAlreadyImportedCount: 3,
+    }));
+    const importAgent = vi.fn();
+
+    renderSheet({ fetchRecentProviderSessions, importAgent } as Pick<
+      DaemonClient,
+      "fetchRecentProviderSessions" | "importAgent"
+    >);
+
+    expect(await screen.findByText("All recent sessions are already imported.")).toBeTruthy();
+    expect(screen.queryByText("No recent sessions to import.")).toBeNull();
+  });
+
   it("shows a fetch error state when recent provider sessions cannot be loaded", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => {
       throw new Error("recent sessions unavailable");

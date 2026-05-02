@@ -140,6 +140,14 @@ function aggregateSessionEntries(
   return collected;
 }
 
+function sumFilteredAlreadyImportedCount(queries: ReadonlyArray<SessionsQueryResult>): number {
+  let total = 0;
+  for (const query of queries) {
+    total += query.data?.filteredAlreadyImportedCount ?? 0;
+  }
+  return total;
+}
+
 function collectErroredProviderLabels(
   providersToFetch: ProvidersToFetch,
   queries: ReadonlyArray<SessionsQueryResult>,
@@ -180,6 +188,7 @@ interface SheetStatusMessagesProps {
   erroredProviderLabels: ReadonlyArray<string>;
   importErrored: boolean;
   showEmptyState: boolean;
+  allAlreadyImported: boolean;
 }
 
 function SheetStatusMessages({
@@ -190,6 +199,7 @@ function SheetStatusMessages({
   erroredProviderLabels,
   importErrored,
   showEmptyState,
+  allAlreadyImported,
 }: SheetStatusMessagesProps) {
   if (!isClientReady) {
     return <Text style={styles.statusText}>Connect to a workspace to import agents.</Text>;
@@ -216,7 +226,13 @@ function SheetStatusMessages({
       {importErrored ? (
         <Text style={styles.statusText}>Could not import selected session.</Text>
       ) : null}
-      {showEmptyState ? <Text style={styles.statusText}>No recent sessions to import.</Text> : null}
+      {showEmptyState ? (
+        <Text style={styles.statusText}>
+          {allAlreadyImported
+            ? "All recent sessions are already imported."
+            : "No recent sessions to import."}
+        </Text>
+      ) : null}
     </>
   );
 }
@@ -379,6 +395,10 @@ export function WorkspaceImportSheet({
   const queries = useQueries({ queries: queriesConfig });
 
   const aggregatedEntries = useMemo(() => aggregateSessionEntries(queries), [queries]);
+  const totalAlreadyImportedCount = useMemo(
+    () => sumFilteredAlreadyImportedCount(queries),
+    [queries],
+  );
 
   const badgeProviders = useMemo(() => {
     if (!Array.isArray(providersToFetch)) return [];
@@ -457,6 +477,7 @@ export function WorkspaceImportSheet({
     isQueryingProviders &&
     allQueriesSettled &&
     aggregatedEntries.length === 0;
+  const allAlreadyImported = showEmptyState && totalAlreadyImportedCount > 0;
   const showBadges = badgeProviders.length > 1;
 
   return (
@@ -500,6 +521,7 @@ export function WorkspaceImportSheet({
         erroredProviderLabels={erroredProviderLabels}
         importErrored={importMutation.isError}
         showEmptyState={showEmptyState}
+        allAlreadyImported={allAlreadyImported}
       />
       {visibleEntries.length > 0 ? (
         <View style={styles.list}>

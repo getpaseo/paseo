@@ -2019,6 +2019,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
             lastActivityAt: "2026-04-30T12:00:00.000Z",
           },
         ],
+        filteredAlreadyImportedCount: 2,
       },
     },
   ]);
@@ -2052,6 +2053,52 @@ test("fetch_recent_provider_sessions_request forwards providerFilter to agent ma
       payload: {
         requestId: "req-provider-filter",
         entries: [],
+      },
+    },
+  ]);
+});
+
+test("fetch_recent_provider_sessions_request reports filteredAlreadyImportedCount when all candidates are already imported", async () => {
+  const emitted: Array<{ type: string; payload: unknown }> = [];
+  const session = createSessionForWorkspaceTests();
+
+  session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
+  session.agentManager.listAgents = () => [
+    {
+      provider: "codex",
+      persistence: {
+        provider: "codex",
+        sessionId: "live-session",
+        nativeHandle: "live-handle",
+      },
+    },
+  ];
+  session.agentStorage.list = async () => [];
+  session.agentManager.listPersistedAgents = async () => [
+    makePersistedProviderSession({
+      provider: "codex",
+      sessionId: "live-session",
+      nativeHandle: "live-handle",
+      cwd: "/tmp/recent",
+      title: "Already live",
+      lastActivityAt: "2026-04-30T12:01:00.000Z",
+    }),
+  ];
+
+  await session.handleMessage({
+    type: "fetch_recent_provider_sessions_request",
+    requestId: "req-all-imported",
+    cwd: "/tmp/recent",
+    providers: ["codex"],
+  });
+
+  expect(emitted).toEqual([
+    {
+      type: "fetch_recent_provider_sessions_response",
+      payload: {
+        requestId: "req-all-imported",
+        entries: [],
+        filteredAlreadyImportedCount: 1,
       },
     },
   ]);

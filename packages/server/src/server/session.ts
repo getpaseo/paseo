@@ -6682,12 +6682,15 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "fetch_recent_provider_sessions_request" }>,
   ): Promise<void> {
     try {
-      const entries = await this.listRecentProviderSessionDescriptors(request);
+      const result = await this.listRecentProviderSessionDescriptors(request);
       this.emit({
         type: "fetch_recent_provider_sessions_response",
         payload: {
           requestId: request.requestId,
-          entries,
+          entries: result.entries,
+          ...(result.filteredAlreadyImportedCount > 0
+            ? { filteredAlreadyImportedCount: result.filteredAlreadyImportedCount }
+            : {}),
         },
       });
     } catch (error) {
@@ -6725,20 +6728,24 @@ export class Session {
       providerFilter,
       cwd: request.cwd,
     });
-    return descriptors
-      .filter((descriptor) => {
-        if (request.cwd && descriptor.cwd !== request.cwd) {
-          return false;
-        }
-        if (sinceTimestamp !== null && descriptor.lastActivityAt.getTime() < sinceTimestamp) {
-          return false;
-        }
-        const providerHandleId =
-          descriptor.persistence.nativeHandle ?? descriptor.persistence.sessionId;
-        return !importedHandles.has(
-          toProviderSessionHandleKey(descriptor.provider, providerHandleId),
-        );
-      })
+    let filteredAlreadyImportedCount = 0;
+    const candidates: typeof descriptors = [];
+    for (const descriptor of descriptors) {
+      if (request.cwd && descriptor.cwd !== request.cwd) {
+        continue;
+      }
+      if (sinceTimestamp !== null && descriptor.lastActivityAt.getTime() < sinceTimestamp) {
+        continue;
+      }
+      const providerHandleId =
+        descriptor.persistence.nativeHandle ?? descriptor.persistence.sessionId;
+      if (importedHandles.has(toProviderSessionHandleKey(descriptor.provider, providerHandleId))) {
+        filteredAlreadyImportedCount += 1;
+        continue;
+      }
+      candidates.push(descriptor);
+    }
+    const entries = candidates
       .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
       .slice(0, limit)
       .map((descriptor) =>
@@ -6746,6 +6753,7 @@ export class Session {
           providerLabel: providerRegistry[descriptor.provider]?.label ?? descriptor.provider,
         }),
       );
+    return { entries, filteredAlreadyImportedCount };
   }
 
   private parseRecentProviderSessionsSince(since: string | undefined): number | null {
