@@ -9,10 +9,35 @@ interface TempRepo {
   cleanup: () => Promise<void>;
 }
 
+async function configureRemote(input: {
+  repoPath: string;
+  withRemote: boolean;
+  originUrl: string | undefined;
+}): Promise<void> {
+  const { repoPath, withRemote, originUrl } = input;
+  if (withRemote) {
+    // Deterministic local remote to avoid relying on external auth/network in e2e.
+    const remoteDir = path.join(repoPath, "remote.git");
+    await mkdir(remoteDir, { recursive: true });
+    execSync(`git init --bare -b main ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
+    execSync(`git remote add origin ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
+    execSync("git push -u origin --all", { cwd: repoPath, stdio: "ignore" });
+    return;
+  }
+  if (originUrl) {
+    // Daemon reads origin for project grouping; no fetch occurs, so a synthetic URL is fine.
+    execSync(`git remote add origin ${JSON.stringify(originUrl)}`, {
+      cwd: repoPath,
+      stdio: "ignore",
+    });
+  }
+}
+
 export const createTempGitRepo = async (
   prefix = "paseo-e2e-",
   options?: {
     withRemote?: boolean;
+    originUrl?: string;
     paseoConfig?: Record<string, unknown>;
     files?: Array<{ path: string; content: string }>;
     branches?: string[];
@@ -74,14 +99,7 @@ export const createTempGitRepo = async (
     execSync("git checkout main", { cwd: repoPath, stdio: "ignore" });
   }
 
-  if (withRemote) {
-    // Deterministic local remote to avoid relying on external auth/network in e2e.
-    const remoteDir = path.join(repoPath, "remote.git");
-    await mkdir(remoteDir, { recursive: true });
-    execSync(`git init --bare -b main ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
-    execSync(`git remote add origin ${remoteDir}`, { cwd: repoPath, stdio: "ignore" });
-    execSync("git push -u origin --all", { cwd: repoPath, stdio: "ignore" });
-  }
+  await configureRemote({ repoPath, withRemote, originUrl: options?.originUrl });
 
   return {
     path: repoPath,

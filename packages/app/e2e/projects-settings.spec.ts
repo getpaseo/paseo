@@ -14,6 +14,7 @@ interface ProjectsSettingsProject {
 
 interface ProjectsSettingsFixtures {
   editableProject: ProjectsSettingsProject;
+  gitlabRemoteProject: ProjectsSettingsProject;
 }
 
 const initialPaseoConfig = {
@@ -38,6 +39,22 @@ const test = base.extend<ProjectsSettingsFixtures>({
     const client = await connectNewWorkspaceDaemonClient();
     const repo = await createTempGitRepo("projects-settings-", {
       paseoConfig: initialPaseoConfig,
+    });
+    const openedProject = await openProjectViaDaemon(client, repo.path);
+
+    await provide({
+      name: openedProject.projectDisplayName,
+      path: repo.path,
+    });
+
+    await client.close();
+    await repo.cleanup();
+  },
+  gitlabRemoteProject: async ({ page: _page }, provide) => {
+    const client = await connectNewWorkspaceDaemonClient();
+    const repo = await createTempGitRepo("projects-settings-gitlab-", {
+      paseoConfig: initialPaseoConfig,
+      originUrl: "https://gitlab.com/acme/app.git",
     });
     const openedProject = await openProjectViaDaemon(client, repo.path);
 
@@ -118,5 +135,17 @@ test.describe("Projects settings", () => {
     await editWorktreeSetup(page, updatedSetup);
     await saveProjectConfig(page);
     await expectProjectConfigSaved(editableProject);
+  });
+
+  test("user edits worktree setup on a non-GitHub remote project", async ({
+    page,
+    gitlabRemoteProject,
+  }) => {
+    expect(gitlabRemoteProject.name).toBe("acme/app");
+    await openProjects(page);
+    await openProjectSettings(page, gitlabRemoteProject.name);
+    await editWorktreeSetup(page, updatedSetup);
+    await saveProjectConfig(page);
+    await expectProjectConfigSaved(gitlabRemoteProject);
   });
 });
