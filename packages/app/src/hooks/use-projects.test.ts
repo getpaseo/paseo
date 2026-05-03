@@ -252,7 +252,6 @@ describe("useProjects", () => {
     });
     expect(Object.keys(result.current.projects[0] ?? {}).sort()).toEqual([
       "githubUrl",
-      "hiddenUnsupportedRemoteCount",
       "hostCount",
       "hosts",
       "onlineHostCount",

@@ -27,7 +27,6 @@ export interface ProjectSummary {
   hostCount: number;
   onlineHostCount: number;
   githubUrl?: string;
-  hiddenUnsupportedRemoteCount: number;
 }
 
 export interface ProjectHost {
@@ -43,7 +42,6 @@ export interface BuildProjectsInput {
 
 export interface BuildProjectsResult {
   projects: ProjectSummary[];
-  hiddenUnsupportedRemoteCount: number;
 }
 
 const GITHUB_PROJECT_KEY_PATTERN = /^remote:github\.com\/([^/]+)\/([^/]+)$/;
@@ -59,10 +57,6 @@ interface ProjectGroup {
   projectKey: string;
   projectName: string;
   hostsByServerId: Map<string, HostGroup>;
-}
-
-function isSupportedProjectKey(projectKey: string): boolean {
-  return !projectKey.startsWith("remote:") || projectKey.startsWith("remote:github.com/");
 }
 
 function deriveGithubUrl(projectKey: string): string | undefined {
@@ -118,38 +112,27 @@ function compareHosts(left: ProjectHostEntry, right: ProjectHostEntry): number {
   return left.serverId.localeCompare(right.serverId);
 }
 
-function toProjectSummary(input: {
-  draft: ProjectGroup;
-  hiddenUnsupportedRemoteCount: number;
-}): ProjectSummary {
-  const hosts = Array.from(input.draft.hostsByServerId.values())
-    .map(toHostEntry)
-    .sort(compareHosts);
+function toProjectSummary(draft: ProjectGroup): ProjectSummary {
+  const hosts = Array.from(draft.hostsByServerId.values()).map(toHostEntry).sort(compareHosts);
   const totalWorkspaceCount = hosts.reduce((sum, host) => sum + host.workspaceCount, 0);
   const onlineHostCount = hosts.filter((host) => host.isOnline).length;
   return {
-    projectKey: input.draft.projectKey,
-    projectName: input.draft.projectName,
+    projectKey: draft.projectKey,
+    projectName: draft.projectName,
     hosts,
     totalWorkspaceCount,
     hostCount: hosts.length,
     onlineHostCount,
-    githubUrl: deriveGithubUrl(input.draft.projectKey),
-    hiddenUnsupportedRemoteCount: input.hiddenUnsupportedRemoteCount,
+    githubUrl: deriveGithubUrl(draft.projectKey),
   };
 }
 
 export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
   const groups = new Map<string, ProjectGroup>();
-  let hiddenUnsupportedRemoteCount = 0;
 
   for (const host of input.hosts) {
     for (const workspace of host.workspaces) {
       const projectKey = workspace.projectId;
-      if (!isSupportedProjectKey(projectKey)) {
-        hiddenUnsupportedRemoteCount += 1;
-        continue;
-      }
 
       let group = groups.get(projectKey);
       if (!group) {
@@ -175,9 +158,7 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
     }
   }
 
-  const projects = Array.from(groups.values()).map((draft) =>
-    toProjectSummary({ draft, hiddenUnsupportedRemoteCount }),
-  );
+  const projects = Array.from(groups.values()).map(toProjectSummary);
   projects.sort((left, right) => {
     const name = left.projectName.localeCompare(right.projectName);
     if (name !== 0) {
@@ -186,8 +167,5 @@ export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
     return left.projectKey.localeCompare(right.projectKey);
   });
 
-  return {
-    projects,
-    hiddenUnsupportedRemoteCount,
-  };
+  return { projects };
 }

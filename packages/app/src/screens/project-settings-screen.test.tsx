@@ -66,7 +66,6 @@ const { theme, projectsState, hostState, navigate, confirmDialogMock, client } =
       current: {
         projects: [],
         hostErrors: [] as ProjectHostError[],
-        hiddenUnsupportedRemoteCount: 0,
         isLoading: false,
         isFetching: false,
         refetch: vi.fn(),
@@ -442,7 +441,6 @@ function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
     hostCount: hosts.length,
     onlineHostCount: hosts.filter((host) => host.isOnline).length,
     githubUrl: "https://github.com/acme/app",
-    hiddenUnsupportedRemoteCount: 0,
     ...overrides,
   };
 }
@@ -451,7 +449,6 @@ function setProjectsState(overrides: Partial<UseProjectsResult>) {
   projectsState.current = {
     projects: [],
     hostErrors: [],
-    hiddenUnsupportedRemoteCount: 0,
     isLoading: false,
     isFetching: false,
     refetch: vi.fn(),

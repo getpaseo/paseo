@@ -356,7 +356,7 @@ describe("buildProjects", () => {
     ]);
   });
 
-  it("filters non-GitHub remote projects while keeping GitHub and local projects", () => {
+  it("includes GitHub, GitLab, Bitbucket and local projects together, sorted by name", () => {
     const result = buildProjects({
       hosts: [
         {
@@ -368,20 +368,30 @@ describe("buildProjects", () => {
               id: "github",
               repoRoot: "/repo/github",
               project: placement({
-                projectKey: "remote:github.com/acme/app",
-                projectName: "acme/app",
+                projectKey: "remote:github.com/acme/web",
+                projectName: "acme/web",
                 cwd: "/repo/github",
-                remoteUrl: "https://github.com/acme/app.git",
+                remoteUrl: "https://github.com/acme/web.git",
               }),
             }),
             workspace({
               id: "gitlab",
               repoRoot: "/repo/gitlab",
               project: placement({
-                projectKey: "remote:gitlab.com/acme/app",
-                projectName: "app",
+                projectKey: "remote:gitlab.com/acme/api",
+                projectName: "acme/api",
                 cwd: "/repo/gitlab",
-                remoteUrl: "https://gitlab.com/acme/app.git",
+                remoteUrl: "https://gitlab.com/acme/api.git",
+              }),
+            }),
+            workspace({
+              id: "bitbucket",
+              repoRoot: "/repo/bitbucket",
+              project: placement({
+                projectKey: "remote:bitbucket.org/acme/cli",
+                projectName: "acme/cli",
+                cwd: "/repo/bitbucket",
+                remoteUrl: "https://bitbucket.org/acme/cli.git",
               }),
             }),
             workspace({
@@ -399,14 +409,15 @@ describe("buildProjects", () => {
       ],
     });
 
-    expect(result.hiddenUnsupportedRemoteCount).toBe(1);
     expect(result.projects.map((project) => project.projectKey)).toEqual([
-      "remote:github.com/acme/app",
+      "remote:gitlab.com/acme/api",
+      "remote:bitbucket.org/acme/cli",
+      "remote:github.com/acme/web",
       "/repo/local",
     ]);
   });
 
-  it("produces the unsupported empty-state signal when only non-GitHub remote projects are present", () => {
+  it("renders a non-GitHub remote project on its own when no other projects are present", () => {
     const result = buildProjects({
       hosts: [
         {
@@ -419,7 +430,7 @@ describe("buildProjects", () => {
               repoRoot: "/repo/gitlab",
               project: placement({
                 projectKey: "remote:gitlab.com/acme/app",
-                projectName: "app",
+                projectName: "acme/app",
                 cwd: "/repo/gitlab",
                 remoteUrl: "https://gitlab.com/acme/app.git",
               }),
@@ -429,8 +440,48 @@ describe("buildProjects", () => {
       ],
     });
 
-    expect(result.projects).toEqual([]);
-    expect(result.hiddenUnsupportedRemoteCount).toBe(1);
+    expect(result.projects).toHaveLength(1);
+    expect(result.projects[0]?.projectKey).toBe("remote:gitlab.com/acme/app");
+    expect(result.projects[0]?.projectName).toBe("acme/app");
+    expect(result.projects[0]?.githubUrl).toBeUndefined();
+  });
+
+  it("groups two workspaces sharing a non-GitHub remote into one project with workspaceCount two", () => {
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "local",
+          serverName: "Local",
+          isOnline: true,
+          workspaces: [
+            workspace({
+              id: "main",
+              repoRoot: "/repo/gitlab",
+              project: placement({
+                projectKey: "remote:gitlab.com/acme/app",
+                projectName: "acme/app",
+                cwd: "/repo/gitlab",
+                remoteUrl: "https://gitlab.com/acme/app.git",
+              }),
+            }),
+            workspace({
+              id: "feature",
+              repoRoot: "/repo/gitlab",
+              project: placement({
+                projectKey: "remote:gitlab.com/acme/app",
+                projectName: "acme/app",
+                cwd: "/repo/gitlab/feature",
+                remoteUrl: "https://gitlab.com/acme/app.git",
+              }),
+            }),
+          ],
+        },
+      ],
+    });
+
+    expect(result.projects).toHaveLength(1);
+    expect(result.projects[0]?.hosts).toHaveLength(1);
+    expect(result.projects[0]?.hosts[0]?.workspaceCount).toBe(2);
   });
 
   it("falls back conservatively for mixed-version daemons whose descriptors lack project", () => {
@@ -461,6 +512,5 @@ describe("buildProjects", () => {
     expect(summary?.hosts).toHaveLength(1);
     expect(summary?.hosts[0]?.repoRoot).toBe("/repo/legacy");
     expect(summary?.hosts[0]?.workspaceCount).toBe(1);
-    expect(result.hiddenUnsupportedRemoteCount).toBe(0);
   });
 });

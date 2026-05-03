@@ -15,7 +15,6 @@ export interface ProjectHostError {
 
 export interface UseProjectsResult {
   projects: ProjectSummary[];
-  hiddenUnsupportedRemoteCount: number;
   hostErrors: ProjectHostError[];
   isLoading: boolean;
   isFetching: boolean;
@@ -127,7 +126,6 @@ export function useProjects(): UseProjectsResult {
 
   return {
     projects: projectsQuery.data?.projects ?? [],
-    hiddenUnsupportedRemoteCount: projectsQuery.data?.hiddenUnsupportedRemoteCount ?? 0,
     hostErrors: projectsQuery.data?.hostErrors ?? [],
     isLoading: projectsQuery.isLoading,
     isFetching: projectsQuery.isFetching,
