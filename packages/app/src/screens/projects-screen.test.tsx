@@ -32,7 +32,6 @@ const { theme, projectsState, navigate } = vi.hoisted(() => ({
     current: {
       projects: [],
       hostErrors: [],
-      hiddenUnsupportedRemoteCount: 0,
       isLoading: false,
       isFetching: false,
       refetch: vi.fn(),
@@ -231,7 +230,6 @@ function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
     hostCount: hosts.length,
     onlineHostCount,
     githubUrl: "https://github.com/acme/app",
-    hiddenUnsupportedRemoteCount: 0,
     ...overrides,
   };
 }
@@ -240,7 +238,6 @@ function setProjectsState(overrides: Partial<UseProjectsResult>) {
   projectsState.current = {
     projects: [],
     hostErrors: [],
-    hiddenUnsupportedRemoteCount: 0,
     isLoading: false,
     isFetching: false,
     refetch: vi.fn(),
@@ -343,19 +340,12 @@ describe("ProjectsScreen", () => {
   });
 
   it("renders the empty state when there are no projects", () => {
-    setProjectsState({ projects: [], hiddenUnsupportedRemoteCount: 0 });
+    setProjectsState({ projects: [] });
 
     render({ kind: "projects" });
 
     expect(container?.textContent).toContain("No projects yet");
-  });
-
-  it("renders the unsupported empty state when only non-GitHub remotes were filtered", () => {
-    setProjectsState({ projects: [], hiddenUnsupportedRemoteCount: 3 });
-
-    render({ kind: "projects" });
-
-    expect(container?.textContent).toContain("Non-GitHub remote projects aren't supported yet");
+    expect(container?.textContent).not.toContain("Non-GitHub remote projects aren't supported yet");
   });
 
   it("renders a partial-host-failure banner above the list, naming each failed host", () => {

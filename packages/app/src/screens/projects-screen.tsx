@@ -15,7 +15,7 @@ interface ProjectsScreenProps {
 }
 
 export default function ProjectsScreen({ view }: ProjectsScreenProps) {
-  const { projects, hostErrors, hiddenUnsupportedRemoteCount, isLoading } = useProjects();
+  const { projects, hostErrors, isLoading } = useProjects();
   const selectedProjectKey = view.kind === "project" ? view.projectKey : null;
 
   if (isLoading && projects.length === 0) {
@@ -27,13 +27,9 @@ export default function ProjectsScreen({ view }: ProjectsScreenProps) {
   }
 
   if (projects.length === 0) {
-    const message =
-      hiddenUnsupportedRemoteCount > 0
-        ? "Non-GitHub remote projects aren't supported yet"
-        : "No projects yet";
     return (
       <View style={styles.centered} testID="projects-list">
-        <Text style={styles.emptyText}>{message}</Text>
+        <Text style={styles.emptyText}>No projects yet</Text>
       </View>
     );
   }
