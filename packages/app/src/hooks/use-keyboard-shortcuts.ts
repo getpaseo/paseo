@@ -32,6 +32,25 @@ import {
   getLastNavigationWorkspaceRouteSelection,
   getNavigationActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { handlePaneFindKeyboardAction } from "@/panels/pane-find-registry";
+
+type KeyboardShortcutResult = ReturnType<typeof resolveKeyboardShortcut>;
+
+function applyPendingChordEventHandling(event: KeyboardEvent, result: KeyboardShortcutResult) {
+  if (result.preventDefault && !result.match) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
+
+function applyHandledShortcutEventHandling(event: KeyboardEvent, result: KeyboardShortcutResult) {
+  if (result.preventDefault || result.match?.preventDefault) {
+    event.preventDefault();
+  }
+  if (result.preventDefault || result.match?.stopPropagation) {
+    event.stopPropagation();
+  }
+}
 
 function hasPayloadKey<K extends string>(
   payload: KeyboardShortcutPayload,
@@ -182,6 +201,11 @@ export function useKeyboardShortcuts({
         case "workspace.tab.close.current":
           return keyboardActionDispatcher.dispatch({
             id: "workspace.tab.close-current",
+            scope: "workspace",
+          });
+        case "workspace.find.open":
+          return handlePaneFindKeyboardAction({
+            id: "workspace.find.open",
             scope: "workspace",
           });
         case "sidebar.toggle.right":
@@ -375,10 +399,7 @@ export function useKeyboardShortcuts({
 
       chordStateRef.current = result.nextChordState;
 
-      if (result.preventDefault) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
+      applyPendingChordEventHandling(event, result);
 
       if (!result.match) {
         return;
@@ -393,12 +414,7 @@ export function useKeyboardShortcuts({
         return;
       }
 
-      if (result.match.preventDefault) {
-        event.preventDefault();
-      }
-      if (result.match.stopPropagation) {
-        event.stopPropagation();
-      }
+      applyHandledShortcutEventHandling(event, result);
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {

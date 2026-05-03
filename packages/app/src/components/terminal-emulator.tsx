@@ -17,7 +17,10 @@ import "@xterm/xterm/css/xterm.css";
 import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@server/shared/messages";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
-import { TerminalEmulatorRuntime } from "../terminal/runtime/terminal-emulator-runtime";
+import {
+  TerminalEmulatorRuntime,
+  type TerminalFindResultChangeEvent,
+} from "../terminal/runtime/terminal-emulator-runtime";
 import { openExternalUrl } from "../utils/open-external-url";
 import { focusWithRetries } from "../utils/web-focus";
 import {
@@ -29,6 +32,10 @@ export interface TerminalEmulatorHandle {
   writeOutput: (text: string) => void;
   renderSnapshot: (state: TerminalState | null) => void;
   clear: () => void;
+  findNext: (input: { query: string }) => boolean;
+  findPrevious: (input: { query: string }) => boolean;
+  clearFindDecorations: () => void;
+  onFindResultsChanged: (listener: (event: TerminalFindResultChangeEvent) => void) => () => void;
 }
 
 const SCROLLBAR_HANDLE_WIDTH_IDLE = 6;
@@ -236,6 +243,18 @@ export default function TerminalEmulator({
         },
         clear: () => {
           runtimeRef.current?.clear();
+        },
+        findNext: (input: { query: string }) => {
+          return runtimeRef.current?.findNext(input) ?? false;
+        },
+        findPrevious: (input: { query: string }) => {
+          return runtimeRef.current?.findPrevious(input) ?? false;
+        },
+        clearFindDecorations: () => {
+          runtimeRef.current?.clearFindDecorations();
+        },
+        onFindResultsChanged: (listener: (event: TerminalFindResultChangeEvent) => void) => {
+          return runtimeRef.current?.onFindResultsChanged(listener) ?? (() => {});
         },
       }) as unknown as DOMImperativeFactory,
     [],

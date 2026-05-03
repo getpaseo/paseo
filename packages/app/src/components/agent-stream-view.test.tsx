@@ -6,10 +6,33 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StreamItem } from "@/types/stream";
+import {
+  PaneFocusProvider,
+  PaneProvider,
+  type PaneContextValue,
+  type PaneFocusContextValue,
+} from "@/panels/pane-context";
+import {
+  clearActivePaneFindPaneId,
+  handlePaneFindKeyboardAction,
+  setActivePaneFindPaneId,
+} from "@/panels/pane-find-registry";
 import { AgentStreamView } from "./agent-stream-view";
 
 const assistantMessageCalls = vi.hoisted(
-  () => [] as Array<{ message: string; spacing: string | undefined }>,
+  () =>
+    [] as Array<{
+      message: string;
+      spacing: string | undefined;
+      findHighlights: Array<{ id: string; start: number; end: number; isCurrent: boolean }>;
+    }>,
+);
+const userMessageCalls = vi.hoisted(
+  () =>
+    [] as Array<{
+      message: string;
+      findHighlights: Array<{ id: string; start: number; end: number; isCurrent: boolean }>;
+    }>,
 );
 const turnCopyButtonCalls = vi.hoisted(() => [] as Array<{ getContent: () => string }>);
 
@@ -77,7 +100,21 @@ vi.mock("react-native-unistyles", () => ({
         },
       }),
   },
-  useUnistyles: () => ({ rt: { breakpoint: "md" } }),
+  useUnistyles: () => ({
+    rt: { breakpoint: "md" },
+    theme: {
+      colors: {
+        foreground: "#fff",
+        foregroundMuted: "#aaa",
+        surface1: "#111",
+        surface2: "#222",
+        border: "#333",
+      },
+      fontSize: {
+        xs: 12,
+      },
+    },
+  }),
   withUnistyles: (Component: unknown) => Component,
 }));
 
@@ -105,6 +142,7 @@ vi.mock("lucide-react-native", async () => {
   return {
     Check: Icon,
     ChevronDown: Icon,
+    ChevronUp: Icon,
     X: Icon,
   };
 });
@@ -113,8 +151,16 @@ vi.mock("./message", async () => {
   const ReactModule = await import("react");
   return {
     ActivityLog: () => null,
-    AssistantMessage: (props: { message: string; spacing?: string }) => {
-      assistantMessageCalls.push({ message: props.message, spacing: props.spacing });
+    AssistantMessage: (props: {
+      message: string;
+      spacing?: string;
+      findHighlights?: Array<{ id: string; start: number; end: number; isCurrent: boolean }>;
+    }) => {
+      assistantMessageCalls.push({
+        message: props.message,
+        spacing: props.spacing,
+        findHighlights: props.findHighlights ?? [],
+      });
       return ReactModule.createElement("div", {
         "data-message": props.message,
         "data-spacing": props.spacing ?? "",
@@ -133,7 +179,16 @@ vi.mock("./message", async () => {
         type: "button",
       });
     },
-    UserMessage: () => null,
+    UserMessage: (props: {
+      message: string;
+      findHighlights?: Array<{ id: string; start: number; end: number; isCurrent: boolean }>;
+    }) => {
+      userMessageCalls.push({
+        message: props.message,
+        findHighlights: props.findHighlights ?? [],
+      });
+      return ReactModule.createElement("div", { "data-message": props.message });
+    },
   };
 });
 
@@ -203,11 +258,89 @@ function runningToolCall(id: string): Extract<StreamItem, { kind: "tool_call" }>
   };
 }
 
-describe("AgentStreamView", () => {
-  let root: Root | null = null;
-  let container: HTMLDivElement | null = null;
-  let originalScrollTo: HTMLElement["scrollTo"] | undefined;
+function userMessage(id: string, text: string): Extract<StreamItem, { kind: "user_message" }> {
+  return {
+    kind: "user_message",
+    id,
+    text,
+    timestamp: new Date("2026-05-01T00:00:00.000Z"),
+  };
+}
 
+const paneInstanceId = "server:workspace:agent";
+const paneContext: PaneContextValue = {
+  serverId: "server",
+  workspaceId: "workspace",
+  paneInstanceId,
+  tabId: "tab",
+  target: { kind: "agent", agentId: "agent-1" },
+  openTab: vi.fn(),
+  closeCurrentTab: vi.fn(),
+  retargetCurrentTab: vi.fn(),
+  openFileInWorkspace: vi.fn(),
+};
+const paneFocus: PaneFocusContextValue = {
+  isWorkspaceFocused: true,
+  isPaneFocused: true,
+  isInteractive: true,
+  focusPane: vi.fn(),
+};
+
+let root: Root | null = null;
+let container: HTMLDivElement | null = null;
+let originalScrollTo: HTMLElement["scrollTo"] | undefined;
+let originalScrollIntoView: HTMLElement["scrollIntoView"] | undefined;
+
+function renderAgentStreamView(props: React.ComponentProps<typeof AgentStreamView>) {
+  act(() => {
+    root?.render(
+      <PaneProvider value={paneContext}>
+        <PaneFocusProvider value={paneFocus}>
+          <AgentStreamView {...props} />
+        </PaneFocusProvider>
+      </PaneProvider>,
+    );
+  });
+  setActivePaneFindPaneId(paneInstanceId);
+}
+
+function inputElement(): HTMLInputElement {
+  const input = container?.querySelector('[data-testid="pane-find-input"]');
+  expect(input).toBeInstanceOf(HTMLInputElement);
+  return input as HTMLInputElement;
+}
+
+function changeInput(value: string): void {
+  const input = inputElement();
+  act(() => {
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    valueSetter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+function click(testId: string): void {
+  const element = container?.querySelector(`[data-testid="${testId}"]`);
+  expect(element).toBeInstanceOf(HTMLElement);
+  act(() => {
+    element?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+function openFind(): void {
+  act(() => {
+    expect(handlePaneFindKeyboardAction({ id: "workspace.find.open", scope: "workspace" })).toBe(
+      true,
+    );
+  });
+}
+
+function findLastCall<T>(calls: T[], predicate: (call: T) => boolean): T | undefined {
+  return calls.toReversed().find(predicate);
+}
+
+describe("AgentStreamView", () => {
   beforeEach(() => {
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
       value: true,
@@ -215,7 +348,10 @@ describe("AgentStreamView", () => {
     });
     originalScrollTo = HTMLElement.prototype.scrollTo;
     HTMLElement.prototype.scrollTo = vi.fn();
+    originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
     assistantMessageCalls.length = 0;
+    userMessageCalls.length = 0;
     turnCopyButtonCalls.length = 0;
     mockSessionState.sessions.server.agentStreamHead = new Map();
     container = document.createElement("div");
@@ -232,10 +368,16 @@ describe("AgentStreamView", () => {
     root = null;
     container?.remove();
     container = null;
+    clearActivePaneFindPaneId(paneInstanceId);
     if (originalScrollTo) {
       HTMLElement.prototype.scrollTo = originalScrollTo;
     } else {
       Reflect.deleteProperty(HTMLElement.prototype, "scrollTo");
+    }
+    if (originalScrollIntoView) {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     }
     vi.restoreAllMocks();
   });
@@ -261,16 +403,12 @@ describe("AgentStreamView", () => {
     const streamItems = [tailBlock];
     const pendingPermissions = new Map();
 
-    act(() => {
-      root?.render(
-        React.createElement(AgentStreamView, {
-          agentId: "agent-1",
-          serverId: "server",
-          agent,
-          streamItems,
-          pendingPermissions,
-        }),
-      );
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems,
+      pendingPermissions,
     });
 
     const tailCalls = assistantMessageCalls.filter((call) => call.message === "First paragraph");
@@ -300,16 +438,12 @@ describe("AgentStreamView", () => {
       cwd: "/tmp/project",
     } as never;
 
-    act(() => {
-      root?.render(
-        React.createElement(AgentStreamView, {
-          agentId: "agent-1",
-          serverId: "server",
-          agent,
-          streamItems: [],
-          pendingPermissions: new Map(),
-        }),
-      );
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems: [],
+      pendingPermissions: new Map(),
     });
 
     expect(container?.querySelector('[data-testid="turn-working-indicator"]')).not.toBeNull();
@@ -338,16 +472,12 @@ describe("AgentStreamView", () => {
       cwd: "/tmp/project",
     } as never;
 
-    act(() => {
-      root?.render(
-        React.createElement(AgentStreamView, {
-          agentId: "agent-1",
-          serverId: "server",
-          agent,
-          streamItems: [tailBlock],
-          pendingPermissions: new Map(),
-        }),
-      );
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems: [tailBlock],
+      pendingPermissions: new Map(),
     });
 
     expect(container?.querySelectorAll('[data-testid="turn-working-indicator"]')).toHaveLength(1);
@@ -365,16 +495,12 @@ describe("AgentStreamView", () => {
       cwd: "/tmp/project",
     } as never;
 
-    act(() => {
-      root?.render(
-        React.createElement(AgentStreamView, {
-          agentId: "agent-1",
-          serverId: "server",
-          agent,
-          streamItems: [],
-          pendingPermissions: new Map(),
-        }),
-      );
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems: [],
+      pendingPermissions: new Map(),
     });
 
     expect(container?.querySelector('[data-testid="turn-working-indicator"]')).toBeNull();
@@ -397,16 +523,12 @@ describe("AgentStreamView", () => {
       cwd: "/tmp/project",
     } as never;
 
-    act(() => {
-      root?.render(
-        React.createElement(AgentStreamView, {
-          agentId: "agent-1",
-          serverId: "server",
-          agent,
-          streamItems: [],
-          pendingPermissions: new Map(),
-        }),
-      );
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems: [],
+      pendingPermissions: new Map(),
     });
 
     expect(container?.querySelector('[data-testid="turn-working-indicator"]')).toBeNull();
@@ -415,5 +537,182 @@ describe("AgentStreamView", () => {
     expect(turnCopyButtonCalls.map((call) => call.getContent())).toEqual(
       Array.from({ length: turnCopyButtonCalls.length }, () => "Complete paragraph"),
     );
+  });
+
+  it("registers chat find and navigates mounted history plus live head matches", () => {
+    const liveBlock = assistantBlock({
+      id: "live-match",
+      text: "needle in live head",
+      blockIndex: 0,
+    });
+    mockSessionState.sessions.server.agentStreamHead.set("agent-1", [liveBlock]);
+    const agent = {
+      id: "agent-1",
+      serverId: "server",
+      status: "idle",
+      cwd: "/tmp/project",
+    } as never;
+
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems: [userMessage("history-match", "needle in mounted history")],
+      pendingPermissions: new Map(),
+    });
+
+    openFind();
+    changeInput("needle");
+
+    expect(container?.querySelector('[data-testid="pane-find-bar"]')?.textContent).toContain(
+      "1 / 2",
+    );
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenLastCalledWith({
+      block: "center",
+      behavior: "auto",
+    });
+
+    click("pane-find-next");
+
+    expect(container?.querySelector('[data-testid="pane-find-bar"]')?.textContent).toContain(
+      "2 / 2",
+    );
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates match state after loaded history changes without scrolling until navigation", () => {
+    const agent = {
+      id: "agent-1",
+      serverId: "server",
+      status: "idle",
+      cwd: "/tmp/project",
+    } as never;
+
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems: [userMessage("current", "needle current history")],
+      pendingPermissions: new Map(),
+    });
+
+    openFind();
+    changeInput("needle");
+    expect(container?.querySelector('[data-testid="pane-find-bar"]')?.textContent).toContain(
+      "1 / 1",
+    );
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear();
+    vi.mocked(HTMLElement.prototype.scrollTo).mockClear();
+
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems: [
+        userMessage("older", "needle older loaded history"),
+        userMessage("current", "needle current history"),
+      ],
+      pendingPermissions: new Map(),
+    });
+
+    expect(container?.querySelector('[data-testid="pane-find-bar"]')?.textContent).toContain(
+      "2 / 2",
+    );
+    expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+    expect(HTMLElement.prototype.scrollTo).not.toHaveBeenCalled();
+
+    click("pane-find-next");
+
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes current and non-current find highlights to user and assistant text rows", () => {
+    const assistant = assistantBlock({
+      id: "assistant-match",
+      text: "assistant needle text",
+      blockIndex: 0,
+    });
+    const agent = {
+      id: "agent-1",
+      serverId: "server",
+      status: "idle",
+      cwd: "/tmp/project",
+    } as never;
+
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems: [userMessage("user-match", "user needle text"), assistant],
+      pendingPermissions: new Map(),
+    });
+
+    openFind();
+    changeInput("needle");
+
+    const userCall = findLastCall(userMessageCalls, (call) => call.message === "user needle text");
+    const assistantCall = findLastCall(
+      assistantMessageCalls,
+      (call) => call.message === "assistant needle text",
+    );
+
+    expect(userCall?.findHighlights).toEqual([
+      expect.objectContaining({
+        id: "user-match:text:0:5:11",
+        start: 5,
+        end: 11,
+        isCurrent: true,
+      }),
+    ]);
+    expect(assistantCall?.findHighlights).toEqual([
+      expect.objectContaining({
+        id: "assistant-match:text:0:10:16",
+        start: 10,
+        end: 16,
+        isCurrent: false,
+      }),
+    ]);
+
+    click("pane-find-next");
+
+    const latestAssistantCall = findLastCall(
+      assistantMessageCalls,
+      (call) => call.message === "assistant needle text",
+    );
+    expect(latestAssistantCall?.findHighlights).toEqual([
+      expect.objectContaining({
+        id: "assistant-match:text:0:10:16",
+        isCurrent: true,
+      }),
+    ]);
+  });
+
+  it("clears chat find highlights on empty query and close", () => {
+    const agent = {
+      id: "agent-1",
+      serverId: "server",
+      status: "idle",
+      cwd: "/tmp/project",
+    } as never;
+
+    renderAgentStreamView({
+      agentId: "agent-1",
+      serverId: "server",
+      agent,
+      streamItems: [userMessage("user-match", "user needle text")],
+      pendingPermissions: new Map(),
+    });
+
+    openFind();
+    changeInput("needle");
+    expect(userMessageCalls.at(-1)?.findHighlights).toHaveLength(1);
+
+    changeInput("");
+    expect(userMessageCalls.at(-1)?.findHighlights).toEqual([]);
+
+    changeInput("needle");
+    expect(userMessageCalls.at(-1)?.findHighlights).toHaveLength(1);
+    click("pane-find-close");
+    expect(userMessageCalls.at(-1)?.findHighlights).toEqual([]);
   });
 });

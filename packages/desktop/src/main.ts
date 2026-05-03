@@ -34,8 +34,11 @@ import {
 import { registerOpenerHandlers } from "./features/opener.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import {
+  clearActivePaseoBrowserFind,
   getPaseoBrowserIdForWebContents,
+  getPaseoBrowserWebContents,
   registerPaseoBrowserWebContents,
+  setActivePaseoBrowserFind,
   setActivePaseoBrowserPaneId,
 } from "./features/browser-webviews.js";
 import { parseOpenProjectPathFromArgv } from "./open-project-routing.js";
@@ -219,6 +222,48 @@ ipcMain.handle("paseo:browser:set-active-pane", (_event, browserId: unknown) => 
   setActivePaseoBrowserPaneId(typeof browserId === "string" ? browserId : null);
 });
 
+ipcMain.handle(
+  "paseo:browser:find-in-page",
+  (_event, browserId: unknown, text: unknown, options: unknown): number | null => {
+    if (typeof browserId !== "string" || typeof text !== "string" || text.length === 0) {
+      return null;
+    }
+    const contents = getPaseoBrowserWebContents(browserId);
+    if (!contents) {
+      return null;
+    }
+    setActivePaseoBrowserFind(browserId);
+    const inputOptions =
+      options && typeof options === "object"
+        ? (options as { forward?: unknown; findNext?: unknown; matchCase?: unknown })
+        : {};
+    return contents.findInPage(text, {
+      forward: inputOptions.forward !== false,
+      findNext: inputOptions.findNext === true,
+      matchCase: inputOptions.matchCase === true,
+    });
+  },
+);
+
+ipcMain.handle(
+  "paseo:browser:stop-find-in-page",
+  (_event, browserId: unknown, action: unknown): null => {
+    if (typeof browserId !== "string") {
+      return null;
+    }
+    if (
+      action !== "clearSelection" &&
+      action !== "keepSelection" &&
+      action !== "activateSelection"
+    ) {
+      return null;
+    }
+    getPaseoBrowserWebContents(browserId)?.stopFindInPage(action);
+    clearActivePaseoBrowserFind(browserId);
+    return null;
+  },
+);
+
 protocol.registerSchemesAsPrivileged([
   { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
@@ -340,7 +385,7 @@ async function createMainWindow(): Promise<void> {
   mainWindow.webContents.on("did-attach-webview", (_event, contents) => {
     const browserId = pendingBrowserWebviewIds.shift() ?? null;
     if (browserId) {
-      registerPaseoBrowserWebContents(contents, browserId);
+      registerPaseoBrowserWebContents(contents, browserId, mainWindow.webContents);
     }
     contents.on("before-input-event", (event, input) => {
       if (isBrowserRefreshInput(input)) {

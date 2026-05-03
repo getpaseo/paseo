@@ -45,6 +45,7 @@ import {
   TurnCopyButton,
   MessageOuterSpacingProvider,
   type InlinePathTarget,
+  type MessageFindHighlight,
 } from "./message";
 import { PlanCard } from "./plan-card";
 import type { StreamItem } from "@/types/stream";
@@ -72,6 +73,11 @@ import {
   type StreamViewportHandle,
 } from "./agent-stream-render-strategy";
 import {
+  buildAgentStreamSearchModel,
+  findAgentStreamSearchMatches,
+  type AgentStreamSearchMatch,
+} from "./agent-stream-search-model";
+import {
   type BottomAnchorLocalRequest,
   type BottomAnchorRouteRequest,
 } from "./use-bottom-anchor-controller";
@@ -80,6 +86,12 @@ import { normalizeInlinePathTarget } from "@/utils/inline-path";
 import { resolveWorkspaceIdByExecutionDirectory } from "@/utils/workspace-execution";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import {
+  FindBar,
+  type PaneFindMatchState,
+  type UsePaneFindResult,
+  usePaneFind,
+} from "@/panels/pane-find";
 import {
   getWorkingIndicatorDotStrength,
   WORKING_INDICATOR_CYCLE_MS,
@@ -127,6 +139,69 @@ const getAssistantBlockSpacing = (params: {
     return "compactBottom";
   }
   return "default";
+};
+
+function createAgentStreamFindMatchState(input: {
+  query: string;
+  matches: AgentStreamSearchMatch[];
+  currentMatchId: string | null;
+}): PaneFindMatchState {
+  if (input.query.length === 0) {
+    return { status: "empty" };
+  }
+  if (input.matches.length === 0) {
+    return { status: "no-match" };
+  }
+  const currentIndex = Math.max(
+    0,
+    input.matches.findIndex((match) => match.id === input.currentMatchId),
+  );
+  return {
+    status: "matched",
+    current: currentIndex + 1,
+    total: input.matches.length,
+  };
+}
+
+function createAgentStreamFindHighlightsByItemId(input: {
+  matches: AgentStreamSearchMatch[];
+  currentMatchId: string | null;
+}): Map<string, MessageFindHighlight[]> {
+  const highlightsByItemId = new Map<string, MessageFindHighlight[]>();
+
+  for (const match of input.matches) {
+    if (match.segmentKey !== "text") {
+      continue;
+    }
+
+    const itemKind = match.entry.item.kind;
+    if (itemKind !== "user_message" && itemKind !== "assistant_message") {
+      continue;
+    }
+
+    const highlights = highlightsByItemId.get(match.entry.item.id) ?? [];
+    highlights.push({
+      id: match.id,
+      start: match.start,
+      end: match.end,
+      isCurrent: match.id === input.currentMatchId,
+    });
+    highlightsByItemId.set(match.entry.item.id, highlights);
+  }
+
+  return highlightsByItemId;
+}
+
+interface AgentStreamFindState {
+  query: string;
+  matches: AgentStreamSearchMatch[];
+  currentMatchId: string | null;
+}
+
+const EMPTY_AGENT_STREAM_FIND_STATE: AgentStreamFindState = {
+  query: "",
+  matches: [],
+  currentMatchId: null,
 };
 
 interface StreamItemBoundarySeams {
@@ -301,6 +376,154 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isMobileBreakpoint: isMobile,
       });
     }, [isMobile, streamHead, streamItems]);
+    const searchModel = useMemo(
+      () =>
+        buildAgentStreamSearchModel({
+          streamItems,
+          streamHead: streamHead ?? [],
+          platform: isWeb ? "web" : "native",
+          isMobileBreakpoint: isMobile,
+          cwd: agent.cwd,
+        }),
+      [agent.cwd, isMobile, streamHead, streamItems],
+    );
+    const [findState, setFindState] = useState<AgentStreamFindState>(EMPTY_AGENT_STREAM_FIND_STATE);
+    const findQuery = findState.query;
+    const findMatches = findState.matches;
+    const currentFindMatchId = findState.currentMatchId;
+    const currentFindMatchIndex = useMemo(() => {
+      if (findMatches.length === 0) {
+        return -1;
+      }
+      const existingIndex = findMatches.findIndex((match) => match.id === currentFindMatchId);
+      return existingIndex >= 0 ? existingIndex : 0;
+    }, [currentFindMatchId, findMatches]);
+    const findMatchState = useMemo(
+      () =>
+        createAgentStreamFindMatchState({
+          query: findQuery,
+          matches: findMatches,
+          currentMatchId: currentFindMatchId,
+        }),
+      [currentFindMatchId, findMatches, findQuery],
+    );
+    const findHighlightsByItemId = useMemo(
+      () =>
+        createAgentStreamFindHighlightsByItemId({
+          matches: findMatches,
+          currentMatchId: currentFindMatchId,
+        }),
+      [currentFindMatchId, findMatches],
+    );
+    const scrollFindMatchIntoView = useCallback((match: AgentStreamSearchMatch | undefined) => {
+      if (!match) {
+        return;
+      }
+      viewportRef.current?.scrollToStreamItem({
+        source: match.entry.source,
+        index: match.entry.index,
+        itemId: match.entry.item.id,
+      });
+    }, []);
+    const paneFind = usePaneFind({
+      matchState: findMatchState,
+      onQuery: (query) => {
+        const nextMatches = findAgentStreamSearchMatches({
+          model: searchModel,
+          query,
+        });
+        const nextMatchId = nextMatches[0]?.id ?? null;
+        setFindState({ query, matches: nextMatches, currentMatchId: nextMatchId });
+        scrollFindMatchIntoView(nextMatches[0]);
+        return createAgentStreamFindMatchState({
+          query,
+          matches: nextMatches,
+          currentMatchId: nextMatchId,
+        });
+      },
+      onNext: () => {
+        if (findMatches.length === 0) {
+          return findMatchState;
+        }
+        const nextIndex = (currentFindMatchIndex + 1) % findMatches.length;
+        const nextMatch = findMatches[nextIndex];
+        setFindState((current) => ({
+          ...current,
+          currentMatchId: nextMatch?.id ?? null,
+        }));
+        scrollFindMatchIntoView(nextMatch);
+        return createAgentStreamFindMatchState({
+          query: findQuery,
+          matches: findMatches,
+          currentMatchId: nextMatch?.id ?? null,
+        });
+      },
+      onPrev: () => {
+        if (findMatches.length === 0) {
+          return findMatchState;
+        }
+        const nextIndex = (currentFindMatchIndex - 1 + findMatches.length) % findMatches.length;
+        const nextMatch = findMatches[nextIndex];
+        setFindState((current) => ({
+          ...current,
+          currentMatchId: nextMatch?.id ?? null,
+        }));
+        scrollFindMatchIntoView(nextMatch);
+        return createAgentStreamFindMatchState({
+          query: findQuery,
+          matches: findMatches,
+          currentMatchId: nextMatch?.id ?? null,
+        });
+      },
+      onClose: () => {
+        setFindState(EMPTY_AGENT_STREAM_FIND_STATE);
+      },
+    });
+    useEffect(() => {
+      setFindState((current) => {
+        if (current.query.length === 0) {
+          return current.currentMatchId === null && current.matches.length === 0
+            ? current
+            : EMPTY_AGENT_STREAM_FIND_STATE;
+        }
+
+        const nextMatches = findAgentStreamSearchMatches({
+          model: searchModel,
+          query: current.query,
+        });
+        let keepsCurrentMatch = false;
+        if (current.currentMatchId) {
+          for (const match of nextMatches) {
+            if (match.id === current.currentMatchId) {
+              keepsCurrentMatch = true;
+              break;
+            }
+          }
+        }
+        const nextMatchId = keepsCurrentMatch
+          ? current.currentMatchId
+          : (nextMatches[0]?.id ?? null);
+
+        let matchesUnchanged = current.matches.length === nextMatches.length;
+        if (matchesUnchanged) {
+          for (let index = 0; index < current.matches.length; index += 1) {
+            if (current.matches[index]?.id !== nextMatches[index]?.id) {
+              matchesUnchanged = false;
+              break;
+            }
+          }
+        }
+        if (matchesUnchanged && current.currentMatchId === nextMatchId) {
+          return current;
+        }
+
+        return {
+          query: current.query,
+          matches: nextMatches,
+          currentMatchId: nextMatchId,
+        };
+      });
+    }, [searchModel]);
     const inlineWorkingIndicatorItemId = useMemo(() => {
       if (agent.status !== "running") {
         return null;
@@ -420,10 +643,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             timestamp={item.timestamp.getTime()}
             isFirstInGroup={isFirstInGroup}
             isLastInGroup={isLastInGroup}
+            findHighlights={findHighlightsByItemId.get(item.id)}
           />
         );
       },
-      [streamRenderStrategy],
+      [findHighlightsByItemId, streamRenderStrategy],
     );
 
     const renderAssistantMessageItem = useCallback(
@@ -465,10 +689,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             serverId={serverId}
             client={client}
             spacing={spacing}
+            findHighlights={findHighlightsByItemId.get(item.id)}
           />
         );
       },
-      [handleInlinePathPress, streamRenderStrategy, workspaceRoot, serverId, client],
+      [
+        client,
+        findHighlightsByItemId,
+        handleInlinePathPress,
+        serverId,
+        streamRenderStrategy,
+        workspaceRoot,
+      ],
     );
 
     const renderThoughtItem = useCallback(
@@ -794,6 +1026,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     return (
       <ToolCallSheetProvider>
         <View style={stylesheet.container}>
+          <AgentStreamFindBarSlot paneFind={paneFind} />
           <MessageOuterSpacingProvider disableOuterSpacing>
             {streamRenderStrategy.render({
               agentId,
@@ -916,6 +1149,10 @@ function InlineWorkingIndicatorSlot() {
       <WorkingIndicator variant="inline" />
     </View>
   );
+}
+
+function AgentStreamFindBarSlot({ paneFind }: { paneFind: UsePaneFindResult }) {
+  return paneFind.isOpen ? <FindBar {...paneFind.findBarProps} /> : null;
 }
 
 // Permission Request Card Component

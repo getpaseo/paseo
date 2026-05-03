@@ -1,4 +1,4 @@
-import {
+import React, {
   useCallback,
   useEffect,
   useMemo,
@@ -20,8 +20,11 @@ import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import {
   getDesktopHost,
   isElectronRuntime,
+  type DesktopBrowserFoundInPageResult,
+  type DesktopBrowserFindAction,
   type DesktopBrowserShortcutEvent,
 } from "@/desktop/host";
+import { FindBar, usePaneFind, type PaneFindMatchState } from "@/panels/pane-find";
 import { useBrowserStore, normalizeWorkspaceBrowserUrl } from "@/stores/browser-store";
 
 type ElectronWebview = HTMLElement & {
@@ -50,6 +53,15 @@ type BrowserElementSelection = Omit<BrowserElementAttachment, "formatted"> & {
 
 const ERR_ABORTED = -3;
 const ALLOWED_BROWSER_PROTOCOLS = new Set(["http:", "https:"]);
+const EMPTY_FIND_MATCH_STATE: PaneFindMatchState = { status: "empty" };
+const NO_FIND_MATCH_STATE: PaneFindMatchState = { status: "no-match" };
+const PENDING_FIND_MATCH_STATE: PaneFindMatchState = { status: "pending" };
+
+interface ActiveBrowserFind {
+  generation: number;
+  query: string;
+  requestId: number | null;
+}
 
 function truncateText(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength).trim()}...` : value;
@@ -234,6 +246,18 @@ function isDesktopBrowserShortcutEvent(payload: unknown): payload is DesktopBrow
   return event.action === "focus-url";
 }
 
+function stopBrowserFindInPage(input: {
+  browserId: string;
+  action: DesktopBrowserFindAction;
+}): void {
+  const bridge = getDesktopHost()?.browser;
+  if (!bridge?.stopFindInPage) {
+    console.warn("Electron browser find bridge is unavailable; cannot stop find-in-page.");
+    return;
+  }
+  void bridge.stopFindInPage(input.browserId, input.action);
+}
+
 function startSelectorResultPolling(input: {
   webview: ElectronWebview;
   onSelection: (selection: BrowserElementSelection) => void;
@@ -295,7 +319,13 @@ export function BrowserPane({
   browserRef.current = browser;
   const pendingNavigationUrlRef = useRef<string | null>(null);
   const domReadyRef = useRef(false);
+  const browserFindQueryRef = useRef("");
+  const browserFindGenerationRef = useRef(0);
+  const activeBrowserFindRef = useRef<ActiveBrowserFind | null>(null);
+  const browserFindOpenRef = useRef(false);
   const [selectorActive, setSelectorActive] = useState(false);
+  const [browserFindMatchState, setBrowserFindMatchState] =
+    useState<PaneFindMatchState>(EMPTY_FIND_MATCH_STATE);
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
   const workspaceAttachmentScopeKey = useMemo(
     () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
@@ -378,6 +408,115 @@ export function BrowserPane({
     }
   }, []);
 
+  const clearBrowserFindSelection = useCallback((input?: { resetQuery?: boolean }) => {
+    if (input?.resetQuery) {
+      browserFindQueryRef.current = "";
+    }
+    browserFindGenerationRef.current += 1;
+    activeBrowserFindRef.current = null;
+    setBrowserFindMatchState(EMPTY_FIND_MATCH_STATE);
+    if (domReadyRef.current) {
+      stopBrowserFindInPage({
+        browserId: browserIdRef.current,
+        action: "clearSelection",
+      });
+    }
+  }, []);
+
+  const runBrowserFind = useCallback(
+    (query: string, direction: "next" | "previous", input?: { reset?: boolean }) => {
+      browserFindQueryRef.current = query;
+      if (!query) {
+        clearBrowserFindSelection({ resetQuery: true });
+        return;
+      }
+
+      if (!domReadyRef.current) {
+        setBrowserFindMatchState(PENDING_FIND_MATCH_STATE);
+        return;
+      }
+      const bridgeFindInPage = getDesktopHost()?.browser?.findInPage;
+      if (!bridgeFindInPage) {
+        console.warn("Electron browser find bridge is unavailable; cannot start find-in-page.");
+        setBrowserFindMatchState(NO_FIND_MATCH_STATE);
+        return;
+      }
+
+      const generation = (browserFindGenerationRef.current += 1);
+      activeBrowserFindRef.current = {
+        generation,
+        query,
+        requestId: null,
+      };
+      setBrowserFindMatchState(PENDING_FIND_MATCH_STATE);
+
+      const options = {
+        forward: direction === "next",
+        findNext: !input?.reset,
+        matchCase: false,
+      };
+      const requestIdResult = bridgeFindInPage(browserIdRef.current, query, options);
+      if (typeof requestIdResult === "number") {
+        activeBrowserFindRef.current = {
+          generation,
+          query,
+          requestId: requestIdResult,
+        };
+        return;
+      }
+      void Promise.resolve(requestIdResult ?? null).then((requestId) => {
+        const activeFind = activeBrowserFindRef.current;
+        if (
+          !activeFind ||
+          activeFind.generation !== generation ||
+          activeFind.query !== browserFindQueryRef.current
+        ) {
+          return undefined;
+        }
+        activeBrowserFindRef.current = {
+          ...activeFind,
+          requestId: typeof requestId === "number" ? requestId : null,
+        };
+        return undefined;
+      });
+    },
+    [clearBrowserFindSelection],
+  );
+
+  const handleFoundInPageResult = useCallback((result: DesktopBrowserFoundInPageResult) => {
+    const activeFind = activeBrowserFindRef.current;
+    if (
+      !activeFind ||
+      activeFind.generation !== browserFindGenerationRef.current ||
+      activeFind.query !== browserFindQueryRef.current
+    ) {
+      return;
+    }
+    const requestId = result.requestId;
+    if (typeof requestId !== "number") {
+      return;
+    }
+    if (typeof activeFind.requestId !== "number" || requestId !== activeFind.requestId) {
+      return;
+    }
+
+    const total = typeof result.matches === "number" ? Math.max(0, result.matches) : 0;
+    if (total === 0) {
+      setBrowserFindMatchState(NO_FIND_MATCH_STATE);
+      return;
+    }
+
+    const current =
+      typeof result.activeMatchOrdinal === "number" && result.activeMatchOrdinal > 0
+        ? result.activeMatchOrdinal
+        : 1;
+    setBrowserFindMatchState({
+      status: "matched",
+      current: Math.min(current, total),
+      total,
+    });
+  }, []);
+
   useEffect(() => {
     if (!isElectronRuntime()) {
       return;
@@ -409,6 +548,7 @@ export function BrowserPane({
     webview.style.background = "transparent";
 
     const handleStartLoading = () => {
+      clearBrowserFindSelection();
       updateBrowser(browserId, { isLoading: true, lastError: null });
       syncNavigationState({ syncUrl: false });
     };
@@ -435,6 +575,7 @@ export function BrowserPane({
       syncNavigationState();
     };
     const handleWillNavigate = (event: Event) => {
+      clearBrowserFindSelection();
       const nextUrl =
         typeof (event as Event & { url?: unknown }).url === "string"
           ? ((event as Event & { url?: string }).url ?? "")
@@ -477,6 +618,9 @@ export function BrowserPane({
     const handleDomReady = () => {
       domReadyRef.current = true;
       syncNavigationState();
+      if (browserFindOpenRef.current && browserFindQueryRef.current) {
+        runBrowserFind(browserFindQueryRef.current, "next", { reset: true });
+      }
     };
     const handleWebviewFocus = () => {
       onFocusPane?.();
@@ -494,6 +638,29 @@ export function BrowserPane({
     webview.addEventListener("dom-ready", handleDomReady);
     webview.addEventListener("focus", handleWebviewFocus);
     webview.addEventListener("mousedown", handleWebviewFocus);
+
+    const foundInPageBridge = getDesktopHost()?.browser?.onFoundInPage;
+    let unsubscribeFoundInPage: (() => void) | null = null;
+    let didCleanupFoundInPage = false;
+    if (foundInPageBridge) {
+      const unsubscribeResult = foundInPageBridge(browserId, (result) => {
+        handleFoundInPageResult(result);
+      });
+      if (typeof unsubscribeResult === "function") {
+        unsubscribeFoundInPage = unsubscribeResult;
+      } else {
+        void Promise.resolve(unsubscribeResult).then((unsubscribe) => {
+          if (didCleanupFoundInPage) {
+            unsubscribe();
+            return undefined;
+          }
+          unsubscribeFoundInPage = unsubscribe;
+          return undefined;
+        });
+      }
+    } else {
+      console.warn("Electron browser find bridge is unavailable; found-in-page events disabled.");
+    }
 
     host.appendChild(webview);
     if (initialUnsafeNavigationMessage) {
@@ -513,8 +680,16 @@ export function BrowserPane({
       webview.removeEventListener("page-favicon-updated", handleFaviconUpdated);
       webview.removeEventListener("did-fail-load", handleLoadFailed);
       webview.removeEventListener("dom-ready", handleDomReady);
+      didCleanupFoundInPage = true;
+      unsubscribeFoundInPage?.();
       webview.removeEventListener("focus", handleWebviewFocus);
       webview.removeEventListener("mousedown", handleWebviewFocus);
+      if (domReadyRef.current) {
+        stopBrowserFindInPage({
+          browserId: browserIdRef.current,
+          action: "clearSelection",
+        });
+      }
       if (host.contains(webview)) {
         host.removeChild(webview);
       }
@@ -525,6 +700,35 @@ export function BrowserPane({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [browserId, onFocusPane]);
+
+  const paneFind = usePaneFind({
+    matchState: browserFindMatchState,
+    onQuery: (query) => runBrowserFind(query, "next", { reset: true }),
+    onNext: () => runBrowserFind(browserFindQueryRef.current, "next"),
+    onPrev: () => runBrowserFind(browserFindQueryRef.current, "previous"),
+    onClose: () => clearBrowserFindSelection({ resetQuery: true }),
+  });
+
+  useEffect(() => {
+    browserFindOpenRef.current = paneFind.isOpen;
+    if (!paneFind.isOpen) {
+      clearBrowserFindSelection({ resetQuery: true });
+    }
+  }, [clearBrowserFindSelection, paneFind.isOpen]);
+
+  useEffect(() => {
+    if (isInteractive) {
+      if (paneFind.isOpen && browserFindQueryRef.current) {
+        runBrowserFind(browserFindQueryRef.current, "next", { reset: true });
+      }
+      return;
+    }
+    clearBrowserFindSelection();
+  }, [clearBrowserFindSelection, isInteractive, paneFind.isOpen, runBrowserFind]);
+
+  useEffect(() => {
+    return () => clearBrowserFindSelection({ resetQuery: true });
+  }, [clearBrowserFindSelection]);
 
   const navigate = useCallback((nextUrl: string) => {
     const normalizedUrl = normalizeWorkspaceBrowserUrl(nextUrl);
@@ -926,6 +1130,7 @@ export function BrowserPane({
 
   return (
     <View style={styles.container}>
+      {paneFind.isOpen ? <FindBar {...paneFind.findBarProps} /> : null}
       <View style={styles.chromeRow}>
         <View style={styles.chromeLeft}>
           <Pressable

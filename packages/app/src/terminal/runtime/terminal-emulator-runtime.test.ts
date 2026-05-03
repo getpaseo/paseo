@@ -26,6 +26,16 @@ vi.mock("@xterm/addon-ligatures/lib/addon-ligatures.mjs", () => ({
 
 vi.mock("@xterm/addon-search", () => ({
   SearchAddon: class SearchAddon {
+    findNext(): boolean {
+      return false;
+    }
+    findPrevious(): boolean {
+      return false;
+    }
+    clearDecorations(): void {}
+    onDidChangeResults(): { dispose: () => void } {
+      return { dispose: () => {} };
+    }
     dispose(): void {}
   },
 }));
@@ -66,6 +76,15 @@ interface StubTerminal {
   options?: { theme?: unknown };
   rows?: number;
   cols?: number;
+}
+
+interface StubSearchAddon {
+  findNext: (term: string, options?: unknown) => boolean;
+  findPrevious: (term: string, options?: unknown) => boolean;
+  clearDecorations: () => void;
+  onDidChangeResults: (listener: (event: { resultIndex: number; resultCount: number }) => void) => {
+    dispose: () => void;
+  };
 }
 
 function createRuntimeWithTerminal(): {
@@ -109,6 +128,55 @@ function createRuntimeWithTerminal(): {
     writeCallbacks,
     writeTexts,
   };
+}
+
+function createRuntimeWithSearchAddon(input?: {
+  findNextResult?: boolean;
+  findPreviousResult?: boolean;
+}): {
+  runtime: TerminalEmulatorRuntime;
+  searchAddon: StubSearchAddon;
+  calls: {
+    findNext: Array<{ term: string; options: unknown }>;
+    findPrevious: Array<{ term: string; options: unknown }>;
+    clearDecorations: number;
+    subscribedListeners: Array<(event: { resultIndex: number; resultCount: number }) => void>;
+    disposeSubscription: number;
+  };
+} {
+  const runtime = new TerminalEmulatorRuntime();
+  const calls = {
+    findNext: [] as Array<{ term: string; options: unknown }>,
+    findPrevious: [] as Array<{ term: string; options: unknown }>,
+    clearDecorations: 0,
+    subscribedListeners: [] as Array<(event: { resultIndex: number; resultCount: number }) => void>,
+    disposeSubscription: 0,
+  };
+  const searchAddon: StubSearchAddon = {
+    findNext: (term, options) => {
+      calls.findNext.push({ term, options });
+      return input?.findNextResult ?? true;
+    },
+    findPrevious: (term, options) => {
+      calls.findPrevious.push({ term, options });
+      return input?.findPreviousResult ?? true;
+    },
+    clearDecorations: () => {
+      calls.clearDecorations += 1;
+    },
+    onDidChangeResults: (listener) => {
+      calls.subscribedListeners.push(listener);
+      return {
+        dispose: () => {
+          calls.disposeSubscription += 1;
+        },
+      };
+    },
+  };
+
+  (runtime as unknown as { searchAddon: StubSearchAddon }).searchAddon = searchAddon;
+
+  return { runtime, searchAddon, calls };
 }
 
 describe("terminal-emulator-runtime", () => {
@@ -321,5 +389,72 @@ describe("terminal-emulator-runtime", () => {
     ).handleVisibilityRestore();
 
     expect(fitAndEmitResize).not.toHaveBeenCalled();
+  });
+
+  it("delegates find navigation and clearing to the stored xterm search addon", () => {
+    const { runtime, calls } = createRuntimeWithSearchAddon({
+      findNextResult: true,
+      findPreviousResult: false,
+    });
+
+    expect(runtime.findNext({ query: "needle" })).toBe(true);
+    expect(runtime.findPrevious({ query: "needle" })).toBe(false);
+    runtime.clearFindDecorations();
+
+    expect(calls.findNext).toEqual([
+      {
+        term: "needle",
+        options: {
+          caseSensitive: false,
+          decorations: {
+            matchBackground: "#facc15",
+            matchOverviewRuler: "#facc15",
+            activeMatchBackground: "#38bdf8",
+            activeMatchColorOverviewRuler: "#38bdf8",
+          },
+        },
+      },
+    ]);
+    expect(calls.findPrevious).toEqual([
+      {
+        term: "needle",
+        options: {
+          caseSensitive: false,
+          decorations: {
+            matchBackground: "#facc15",
+            matchOverviewRuler: "#facc15",
+            activeMatchBackground: "#38bdf8",
+            activeMatchColorOverviewRuler: "#38bdf8",
+          },
+        },
+      },
+    ]);
+    expect(calls.clearDecorations).toBe(1);
+  });
+
+  it("forwards xterm search result changes and disposes the subscription", () => {
+    const { runtime, calls } = createRuntimeWithSearchAddon();
+    const events: Array<{ resultIndex: number; resultCount: number }> = [];
+
+    const unsubscribe = runtime.onFindResultsChanged((event) => {
+      events.push(event);
+    });
+    calls.subscribedListeners[0]?.({ resultIndex: 2, resultCount: 5 });
+    unsubscribe();
+
+    expect(events).toEqual([{ resultIndex: 2, resultCount: 5 }]);
+    expect(calls.disposeSubscription).toBe(1);
+  });
+
+  it("keeps find methods inert before the search addon is mounted", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const listener = vi.fn();
+
+    expect(runtime.findNext({ query: "needle" })).toBe(false);
+    expect(runtime.findPrevious({ query: "needle" })).toBe(false);
+    runtime.clearFindDecorations();
+    runtime.onFindResultsChanged(listener)();
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });

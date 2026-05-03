@@ -112,6 +112,7 @@ describe("WorkspacePaneContent", () => {
       isInteractive: false,
       focusPane: expect.any(Function),
     });
+    expect(snapshots[0]?.paneContextValue.paneInstanceId).toBeNull();
     expect(snapshots[1]?.focus).toEqual({
       isWorkspaceFocused: true,
       isPaneFocused: true,

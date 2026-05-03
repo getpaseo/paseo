@@ -2527,6 +2527,7 @@ function WorkspaceScreenContent({
     }) =>
       buildWorkspacePaneContentModel({
         tab: input.tab,
+        paneId: input.paneId,
         normalizedServerId,
         normalizedWorkspaceId,
         onOpenTab: (target) => {

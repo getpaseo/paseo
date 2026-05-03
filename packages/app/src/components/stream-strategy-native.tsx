@@ -32,9 +32,28 @@ const DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({
   autoscrollToTopThreshold: 0,
 });
 const HISTORY_START_THRESHOLD_PX = 96;
+const SCROLL_TO_INDEX_RETRY_DELAY_MS = 80;
+
+interface NativeScrollToIndexFailedInfo {
+  index: number;
+  highestMeasuredFrameIndex: number;
+  averageItemLength: number;
+}
+
+interface NativeScrollIndexFallbackInput {
+  index: number;
+  averageItemLength: number;
+}
 
 function keyExtractor(item: { id: string }): string {
   return item.id;
+}
+
+export function getNativeScrollToIndexFallbackOffset(input: NativeScrollIndexFallbackInput) {
+  if (!Number.isFinite(input.averageItemLength) || input.averageItemLength <= 0) {
+    return 0;
+  }
+  return Math.max(0, input.averageItemLength * input.index);
 }
 
 function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrategy }) {
@@ -69,6 +88,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
   const scrollOffsetYRef = useRef(0);
   const programmaticScrollEventBudgetRef = useRef(0);
+  const scrollToIndexRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
   const historyStartReadyRef = useRef(false);
@@ -84,6 +104,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     if (nativeViewportSettlingFrameIdRef.current !== null) {
       cancelAnimationFrame(nativeViewportSettlingFrameIdRef.current);
       nativeViewportSettlingFrameIdRef.current = null;
+    }
+  }, []);
+
+  const clearScrollToIndexRetry = useCallback(() => {
+    if (scrollToIndexRetryTimeoutRef.current !== null) {
+      clearTimeout(scrollToIndexRetryTimeoutRef.current);
+      scrollToIndexRetryTimeoutRef.current = null;
     }
   }, []);
 
@@ -149,6 +176,37 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     scrollToBottom,
   });
 
+  const scrollToHistoryIndex = useCallback(
+    (index: number) => {
+      programmaticScrollEventBudgetRef.current = 3;
+      clearScrollToIndexRetry();
+      flatListRef.current?.scrollToIndex({
+        index,
+        animated: true,
+        viewPosition: 0.5,
+      });
+    },
+    [clearScrollToIndexRetry],
+  );
+
+  const handleScrollToIndexFailed = useStableEvent((info: NativeScrollToIndexFailedInfo) => {
+    programmaticScrollEventBudgetRef.current = 3;
+    flatListRef.current?.scrollToOffset({
+      offset: getNativeScrollToIndexFallbackOffset(info),
+      animated: true,
+    });
+    clearScrollToIndexRetry();
+    scrollToIndexRetryTimeoutRef.current = setTimeout(() => {
+      scrollToIndexRetryTimeoutRef.current = null;
+      programmaticScrollEventBudgetRef.current = 3;
+      flatListRef.current?.scrollToIndex({
+        index: info.index,
+        animated: true,
+        viewPosition: 0.5,
+      });
+    }, SCROLL_TO_INDEX_RETRY_DELAY_MS);
+  });
+
   useEffect(() => {
     streamViewportMetricsRef.current = {
       containerKey: "native-virtualized",
@@ -161,6 +219,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     };
     scrollOffsetYRef.current = 0;
     clearNativeViewportSettling();
+    clearScrollToIndexRetry();
     setIsNativeViewportSettling(false);
     historyStartReadyRef.current = false;
     const frame = requestAnimationFrame(() => {
@@ -169,7 +228,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [agentId, clearNativeViewportSettling]);
+  }, [agentId, clearNativeViewportSettling, clearScrollToIndexRetry]);
 
   useEffect(() => {
     const keyboardEvents = [
@@ -190,8 +249,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         subscription.remove();
       }
       clearNativeViewportSettling();
+      clearScrollToIndexRetry();
     };
-  }, [clearNativeViewportSettling, markNativeViewportSettling]);
+  }, [clearNativeViewportSettling, clearScrollToIndexRetry, markNativeViewportSettling]);
 
   useEffect(() => {
     bottomAnchorController.prepareForStickyContentChange();
@@ -209,6 +269,17 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
       },
+      scrollToStreamItem: (target) => {
+        programmaticScrollEventBudgetRef.current = 3;
+        if (target.source === "liveHead") {
+          flatListRef.current?.scrollToOffset({
+            offset: 0,
+            animated: true,
+          });
+          return;
+        }
+        scrollToHistoryIndex(target.index);
+      },
     };
     viewportRef.current = handle;
     return () => {
@@ -216,7 +287,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         viewportRef.current = null;
       }
     };
-  }, [agentId, bottomAnchorController, markNativeViewportSettling, viewportRef]);
+  }, [
+    agentId,
+    bottomAnchorController,
+    markNativeViewportSettling,
+    scrollToHistoryIndex,
+    viewportRef,
+  ]);
 
   const handleScroll = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -360,6 +437,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       onScroll={handleScroll}
       scrollEventThrottle={16}
       onContentSizeChange={handleContentSizeChange}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
       maintainVisibleContentPosition={DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION}
       initialNumToRender={40}
       maxToRenderPerBatch={40}
