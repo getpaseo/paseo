@@ -103,9 +103,16 @@ export function deriveProjectGroupingKey(options: {
 }
 
 export function deriveProjectGroupingName(projectKey: string): string {
-  const githubRemotePrefix = "remote:github.com/";
-  if (projectKey.startsWith(githubRemotePrefix)) {
-    return projectKey.slice(githubRemotePrefix.length) || projectKey;
+  if (projectKey.startsWith("remote:")) {
+    const remainder = projectKey.slice("remote:".length);
+    const pathSegments = remainder.split("/").filter(Boolean).slice(1);
+    if (pathSegments.length >= 2) {
+      return pathSegments.slice(-2).join("/");
+    }
+    if (pathSegments.length === 1) {
+      return pathSegments[0]!;
+    }
+    return projectKey;
   }
 
   const segments = projectKey.split(/[\\/]/).filter(Boolean);

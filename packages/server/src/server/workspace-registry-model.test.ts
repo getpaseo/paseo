@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import {
   classifyDirectoryForProjectMembership,
+  deriveProjectGroupingName,
   deriveProjectRootPath,
   deriveWorkspaceKind,
   deriveWorkspaceId,
@@ -21,6 +22,36 @@ function createWorkspaceRecord(workspaceId: string) {
     updatedAt: "2026-03-01T00:00:00.000Z",
   });
 }
+
+describe("deriveProjectGroupingName", () => {
+  test("returns owner/repo for a github remote project key", () => {
+    expect(deriveProjectGroupingName("remote:github.com/acme/app")).toBe("acme/app");
+  });
+
+  test("returns owner/repo for a gitlab remote project key", () => {
+    expect(deriveProjectGroupingName("remote:gitlab.com/acme/app")).toBe("acme/app");
+  });
+
+  test("returns last two segments for a self-hosted remote project key", () => {
+    expect(deriveProjectGroupingName("remote:git.acme.internal/platform/api")).toBe("platform/api");
+  });
+
+  test("returns last two segments for a deeply-nested remote project key", () => {
+    expect(deriveProjectGroupingName("remote:gitlab.com/group/sub/app")).toBe("sub/app");
+  });
+
+  test("returns the lone path segment when only one segment follows the host", () => {
+    expect(deriveProjectGroupingName("remote:github.com/solo")).toBe("solo");
+  });
+
+  test("returns the trailing path segment for a non-remote project key", () => {
+    expect(deriveProjectGroupingName("/repo/local")).toBe("local");
+  });
+
+  test("returns the project key itself when no segments are present", () => {
+    expect(deriveProjectGroupingName("")).toBe("");
+  });
+});
 
 describe("detectStaleWorkspaces", () => {
   test("returns workspace ids whose directories no longer exist", async () => {
