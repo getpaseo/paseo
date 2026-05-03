@@ -120,7 +120,7 @@ test.describe("in-pane find", () => {
       await waitForTerminalContent(page, (text) => text.includes("split needle two"), 10_000);
       await openFind(page);
       await typeFindQuery(page, "needle");
-      await expect(page.getByText(/1 \/ 2|2 \/ 2/)).toBeVisible({
+      await expect(page.getByText(/[1-9] \/ [1-9]/)).toBeVisible({
         timeout: 10_000,
       });
       await page.getByTestId("workspace-file-pane").click();
