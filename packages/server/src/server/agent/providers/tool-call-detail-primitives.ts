@@ -859,19 +859,14 @@ export function toolDetailBranchByName<
     output: z.infer<OutputSchema> | null,
   ) => ToolCallDetail | undefined,
 ) {
-  return z
-    .object({
-      name: z.literal(name),
-      input: inputSchema.nullable(),
-      output: outputSchema.nullable(),
-    })
-    .transform((value) => {
-      const parsed = value as unknown as {
-        input: z.infer<InputSchema> | null;
-        output: z.infer<OutputSchema> | null;
-      };
-      return mapper(parsed.input, parsed.output);
-    });
+  const schema = z.object({
+    name: z.literal(name),
+    input: inputSchema.nullable(),
+    output: outputSchema.nullable(),
+  });
+  return schema.transform((value: z.infer<typeof schema>) => {
+    return mapper(value.input, value.output);
+  });
 }
 
 export function toolDetailBranchByToolName<
@@ -887,19 +882,14 @@ export function toolDetailBranchByToolName<
     output: z.infer<OutputSchema> | null,
   ) => ToolCallDetail | undefined,
 ) {
-  return z
-    .object({
-      toolName: z.literal(toolName),
-      input: inputSchema.nullable(),
-      output: outputSchema.nullable(),
-    })
-    .transform((value) => {
-      const parsed = value as unknown as {
-        input: z.infer<InputSchema> | null;
-        output: z.infer<OutputSchema> | null;
-      };
-      return mapper(parsed.input, parsed.output);
-    });
+  const schema = z.object({
+    toolName: z.literal(toolName),
+    input: inputSchema.nullable(),
+    output: outputSchema.nullable(),
+  });
+  return schema.transform((value: z.infer<typeof schema>) => {
+    return mapper(value.input, value.output);
+  });
 }
 
 export function toolDetailBranchByNameWithCwd<
@@ -916,19 +906,13 @@ export function toolDetailBranchByNameWithCwd<
     cwd: string | null,
   ) => ToolCallDetail | undefined,
 ) {
-  return z
-    .object({
-      name: z.literal(name),
-      input: inputSchema.nullable(),
-      output: outputSchema.nullable(),
-      cwd: z.string().optional().nullable(),
-    })
-    .transform((value) => {
-      const parsed = value as unknown as {
-        input: z.infer<InputSchema> | null;
-        output: z.infer<OutputSchema> | null;
-        cwd?: string | null;
-      };
-      return mapper(parsed.input, parsed.output, parsed.cwd ?? null);
-    });
+  const schema = z.object({
+    name: z.literal(name),
+    input: inputSchema.nullable(),
+    output: outputSchema.nullable(),
+    cwd: z.string().optional().nullable(),
+  });
+  return schema.transform((value: z.infer<typeof schema>) => {
+    return mapper(value.input, value.output, value.cwd ?? null);
+  });
 }

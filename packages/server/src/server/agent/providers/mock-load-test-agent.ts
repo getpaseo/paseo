@@ -166,9 +166,13 @@ function parseLargeAgentStreamPayloadPrompt(
   if (!Number.isFinite(bytes) || bytes <= 0) {
     return null;
   }
+  const kindValue = match[2]?.toLowerCase();
+  if (kindValue !== "diff" && kindValue !== "file" && kindValue !== "image") {
+    return null;
+  }
   return {
     bytes: Math.min(bytes, 1_000_000),
-    kind: match[2]?.toLowerCase() as LargeAgentStreamPayloadRequest["kind"],
+    kind: kindValue,
   };
 }
 

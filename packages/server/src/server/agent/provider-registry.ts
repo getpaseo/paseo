@@ -28,6 +28,10 @@ import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
 import { PiDirectAgentClient } from "./providers/pi-direct-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
+
+function isNonEmptyStringArray(value: string[]): value is [string, ...string[]] {
+  return value.length > 0;
+}
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
@@ -461,9 +465,11 @@ function addDerivedProviders(
     }
 
     if (override.extends === "acp") {
-      if (!override.command) {
+      if (!override.command || !isNonEmptyStringArray(override.command)) {
         throw new Error(`ACP provider '${providerId}' requires a command`);
       }
+      // Capture command in const for closure - TypeScript can't track type refinement inside closures
+      const command = override.command;
 
       resolvedProviders.set(providerId, {
         definition: createDerivedDefinition(
@@ -484,7 +490,7 @@ function addDerivedProviders(
         createBaseClient: (logger) =>
           new GenericACPAgentClient({
             logger,
-            command: override.command!,
+            command,
             env: override.env,
           }),
       });

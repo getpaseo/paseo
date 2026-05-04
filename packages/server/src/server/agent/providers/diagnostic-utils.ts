@@ -43,8 +43,9 @@ function truncateForDiagnostic(value: string): string {
   return `${trimmed.slice(0, DIAGNOSTIC_OUTPUT_CAP)}…(truncated)`;
 }
 
-function readStringProperty(error: object, key: string): string | undefined {
-  const value = (error as Record<string, unknown>)[key];
+function readStringProperty(error: Error, key: string): string | undefined {
+  if (!(key in error)) return undefined;
+  const value = (error as Error & Record<string, unknown>)[key];
   if (typeof value === "string") {
     return value;
   }
@@ -54,8 +55,9 @@ function readStringProperty(error: object, key: string): string | undefined {
   return undefined;
 }
 
-function readUnknownProperty(error: object, key: string): unknown {
-  return (error as Record<string, unknown>)[key];
+function readUnknownProperty(error: Error, key: string): unknown {
+  if (!(key in error)) return undefined;
+  return (error as Error & Record<string, unknown>)[key];
 }
 
 function pushIfNonEmpty(sections: string[], label: string, value: string | undefined): void {

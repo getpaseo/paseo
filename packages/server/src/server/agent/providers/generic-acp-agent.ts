@@ -5,15 +5,19 @@ import { ACPAgentClient } from "./acp-agent.js";
 
 interface GenericACPAgentClientOptions {
   logger: Logger;
-  command: string[];
+  command: [string, ...string[]];
   env?: Record<string, string>;
+}
+
+function isNonEmptyStringArray(value: string[]): value is [string, ...string[]] {
+  return value.length > 0;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
   private readonly command: [string, ...string[]];
 
   constructor(options: GenericACPAgentClientOptions) {
-    if (options.command.length === 0) {
+    if (!isNonEmptyStringArray(options.command)) {
       throw new Error("Generic ACP provider requires a non-empty command");
     }
 
@@ -23,10 +27,10 @@ export class GenericACPAgentClient extends ACPAgentClient {
       runtimeSettings: {
         env: options.env,
       },
-      defaultCommand: options.command as [string, ...string[]],
+      defaultCommand: options.command,
     });
 
-    this.command = options.command as [string, ...string[]];
+    this.command = options.command;
   }
 
   protected override async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
