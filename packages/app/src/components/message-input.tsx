@@ -53,6 +53,7 @@ import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isWeb } from "@/constants/platform";
 import { useComposerHeightMirror } from "./composer-height-mirror";
+import { computeCanStartDictation } from "./message-input-state";
 
 export type ImageAttachment = AttachmentMetadata;
 
@@ -966,19 +967,6 @@ function computeSendableContent(input: SendableContentInput): SendableContentOut
   const shouldShowSendButton =
     hasSendableContent || input.allowEmptySubmit || input.isSubmitLoading;
   return { hasAttachments, hasRealContent, hasSendableContent, shouldShowSendButton };
-}
-
-function computeCanStartDictation(input: {
-  client: DaemonClient | null;
-  isReadyForDictation: boolean | undefined;
-  disabled: boolean;
-  dictationUnavailableMessage: string | null | undefined;
-}): boolean {
-  const socketConnected = input.client?.isConnected ?? false;
-  const readyForDictation = input.isReadyForDictation ?? socketConnected;
-  return (
-    socketConnected && readyForDictation && !input.disabled && !input.dictationUnavailableMessage
-  );
 }
 
 function computeIsDictationStartEnabled(

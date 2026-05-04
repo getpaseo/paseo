@@ -72,6 +72,11 @@ import {
   type StreamViewportHandle,
 } from "./agent-stream-render-strategy";
 import {
+  getAssistantBlockSpacing,
+  isSameAssistantBlockGroup,
+  resolveInlineWorkingIndicatorItemId,
+} from "./agent-stream-view-data";
+import {
   type BottomAnchorLocalRequest,
   type BottomAnchorRouteRequest,
 } from "./use-bottom-anchor-controller";
@@ -91,43 +96,6 @@ import { SPACING, type Theme } from "@/styles/theme";
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
   item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
-
-const isSameAssistantBlockGroup = (params: {
-  item: StreamItem | null | undefined;
-  other: StreamItem | null | undefined;
-}) =>
-  params.item?.kind === "assistant_message" &&
-  params.other?.kind === "assistant_message" &&
-  params.item.blockGroupId !== undefined &&
-  params.item.blockGroupId === params.other.blockGroupId;
-
-const getAssistantBlockSpacing = (params: {
-  item: StreamItem;
-  aboveItem: StreamItem | null | undefined;
-  belowItem: StreamItem | null | undefined;
-}): "default" | "compactTop" | "compactBottom" | "compactBoth" => {
-  if (params.item.kind !== "assistant_message") {
-    return "default";
-  }
-  const compactTop = isSameAssistantBlockGroup({
-    item: params.item,
-    other: params.aboveItem,
-  });
-  const compactBottom = isSameAssistantBlockGroup({
-    item: params.item,
-    other: params.belowItem,
-  });
-  if (compactTop && compactBottom) {
-    return "compactBoth";
-  }
-  if (compactTop) {
-    return "compactTop";
-  }
-  if (compactBottom) {
-    return "compactBottom";
-  }
-  return "default";
-};
 
 interface StreamItemBoundarySeams {
   aboveItem?: StreamItem | null;
@@ -301,25 +269,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isMobileBreakpoint: isMobile,
       });
     }, [isMobile, streamHead, streamItems]);
-    const inlineWorkingIndicatorItemId = useMemo(() => {
-      if (agent.status !== "running") {
-        return null;
-      }
-      const footerItem = baseRenderModel.segments.liveHead.find((item, index, items) => {
-        if (item.kind !== "assistant_message") {
-          return false;
-        }
-        return (
-          getStreamNeighborItem({
-            strategy: streamRenderStrategy,
-            items,
-            index,
-            relation: "below",
-          }) === undefined
-        );
-      });
-      return footerItem?.id ?? null;
-    }, [agent.status, baseRenderModel.segments.liveHead, streamRenderStrategy]);
+    const inlineWorkingIndicatorItemId = useMemo(
+      () =>
+        resolveInlineWorkingIndicatorItemId(
+          agent.status,
+          baseRenderModel.segments.liveHead,
+          streamRenderStrategy,
+        ),
+      [agent.status, baseRenderModel.segments.liveHead, streamRenderStrategy],
+    );
     useImperativeHandle(
       ref,
       () => ({
