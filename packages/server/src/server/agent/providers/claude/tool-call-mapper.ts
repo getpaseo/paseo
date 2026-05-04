@@ -100,7 +100,7 @@ function resolveDetailName(toolKind: ClaudeToolKind, name: string): string {
 function mapClaudeToolCall(
   params: MapperParams,
   status: ClaudeToolCallStatus,
-  error: unknown | null,
+  error: unknown,
 ): ToolCallTimelineItem | null {
   const parsed = ClaudeRawToolCallSchema.safeParse({ ...params, status, error });
   if (!parsed.success) {

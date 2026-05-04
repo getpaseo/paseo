@@ -31,10 +31,10 @@ const CodexRolloutToolCallParamsSchema = z
 interface CodexNormalizedToolCallEnvelope {
   callId: string;
   name: string;
-  input?: unknown | null;
-  output?: unknown | null;
+  input?: unknown;
+  output?: unknown;
   status?: ToolCallTimelineItem["status"];
-  error?: unknown | null;
+  error?: unknown;
   metadata?: Record<string, unknown>;
   cwd?: string | null;
 }

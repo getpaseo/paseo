@@ -136,7 +136,7 @@ function getLatestCompletedBashCall(events: AgentStreamEvent[]): ToolCallTimelin
 }
 
 function getInternalQuery(session: AgentSession): unknown {
-  return (session as AgentSession & { query?: unknown | null }).query ?? null;
+  return (session as AgentSession & { query?: unknown }).query ?? null;
 }
 
 async function createSession(params?: {

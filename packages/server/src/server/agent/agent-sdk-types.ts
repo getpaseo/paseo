@@ -255,8 +255,8 @@ export type ToolCallDetail =
     }
   | {
       type: "unknown";
-      input: unknown | null;
-      output: unknown | null;
+      input: unknown;
+      output: unknown;
     };
 
 interface ToolCallBase {

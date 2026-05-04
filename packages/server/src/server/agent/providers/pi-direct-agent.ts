@@ -201,7 +201,7 @@ interface PiLsToolCall {
 interface PiUnknownToolCall {
   kind: "unknown";
   toolName: string;
-  args: unknown | null;
+  args: unknown;
 }
 
 type PiTrackedToolCall =

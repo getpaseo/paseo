@@ -6,8 +6,8 @@ function toolCallItem(params: {
   callId: string;
   name: string;
   status?: "running" | "completed" | "failed" | "canceled";
-  input?: unknown | null;
-  output?: unknown | null;
+  input?: unknown;
+  output?: unknown;
   error?: unknown;
   metadata?: Record<string, unknown>;
   detail?: Extract<AgentTimelineItem, { type: "tool_call" }>["detail"];

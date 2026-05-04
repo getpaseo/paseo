@@ -46,7 +46,7 @@ export function statPaseoConfigPath(repoRoot: string): PaseoConfigRevision | nul
   };
 }
 
-export function readPaseoConfigJson(repoRoot: string): unknown | null {
+export function readPaseoConfigJson(repoRoot: string): unknown {
   const configPath = resolvePaseoConfigPath(repoRoot);
   if (!existsSync(configPath)) {
     return null;
