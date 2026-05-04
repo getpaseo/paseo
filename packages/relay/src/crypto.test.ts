@@ -10,113 +10,107 @@ import {
 
 describe("crypto", () => {
   describe("generateKeyPair", () => {
-    it("generates a valid keypair", async () => {
-      const keypair = await generateKeyPair();
+    it("generates a valid keypair", () => {
+      const keypair = generateKeyPair();
       expect(keypair.secretKey).toBeDefined();
       expect(keypair.publicKey).toBeDefined();
     });
   });
 
   describe("exportPublicKey / importPublicKey", () => {
-    it("roundtrips public key through base64", async () => {
-      const keypair = await generateKeyPair();
-      const exported = await exportPublicKey(keypair.publicKey);
+    it("roundtrips public key through base64", () => {
+      const keypair = generateKeyPair();
+      const exported = exportPublicKey(keypair.publicKey);
 
       expect(typeof exported).toBe("string");
       expect(exported.length).toBeGreaterThan(0);
 
-      const imported = await importPublicKey(exported);
+      const imported = importPublicKey(exported);
       expect(imported).toBeDefined();
 
       // Re-export should match
-      const reExported = await exportPublicKey(imported);
+      const reExported = exportPublicKey(imported);
       expect(reExported).toBe(exported);
     });
   });
 
   describe("deriveSharedKey", () => {
-    it("derives the same key on both sides", async () => {
+    it("derives the same key on both sides", () => {
       // Simulate daemon and client
-      const daemonKeyPair = await generateKeyPair();
-      const clientKeyPair = await generateKeyPair();
+      const daemonKeyPair = generateKeyPair();
+      const clientKeyPair = generateKeyPair();
 
       // Export public keys (what would go over the wire)
-      const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
-      const clientPubKeyB64 = await exportPublicKey(clientKeyPair.publicKey);
+      const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
+      const clientPubKeyB64 = exportPublicKey(clientKeyPair.publicKey);
 
       // Import peer's public key
-      const daemonSeesClientPubKey = await importPublicKey(clientPubKeyB64);
-      const clientSeesDaemonPubKey = await importPublicKey(daemonPubKeyB64);
+      const daemonSeesClientPubKey = importPublicKey(clientPubKeyB64);
+      const clientSeesDaemonPubKey = importPublicKey(daemonPubKeyB64);
 
       // Derive shared keys
-      const daemonSharedKey = await deriveSharedKey(
-        daemonKeyPair.secretKey,
-        daemonSeesClientPubKey,
-      );
-      const clientSharedKey = await deriveSharedKey(
-        clientKeyPair.secretKey,
-        clientSeesDaemonPubKey,
-      );
+      const daemonSharedKey = deriveSharedKey(daemonKeyPair.secretKey, daemonSeesClientPubKey);
+      const clientSharedKey = deriveSharedKey(clientKeyPair.secretKey, clientSeesDaemonPubKey);
 
       // Both should derive the same key - test by encrypting with one, decrypting with other
       const testMessage = "Hello, encrypted world!";
-      const encrypted = await encrypt(daemonSharedKey, testMessage);
-      const decrypted = await decrypt(clientSharedKey, encrypted);
+      const encrypted = encrypt(daemonSharedKey, testMessage);
+      const decrypted = decrypt(clientSharedKey, encrypted);
 
       expect(decrypted).toBe(testMessage);
     });
   });
 
   describe("encrypt / decrypt", () => {
-    it("roundtrips a string message", async () => {
-      const daemonKeyPair = await generateKeyPair();
-      const clientKeyPair = await generateKeyPair();
-      const sharedKey = await deriveSharedKey(daemonKeyPair.secretKey, clientKeyPair.publicKey);
+    it("roundtrips a string message", () => {
+      const daemonKeyPair = generateKeyPair();
+      const clientKeyPair = generateKeyPair();
+      const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientKeyPair.publicKey);
 
       const plaintext = "Test message with unicode: 你好世界 🎉";
-      const ciphertext = await encrypt(sharedKey, plaintext);
+      const ciphertext = encrypt(sharedKey, plaintext);
 
       expect(ciphertext).toBeInstanceOf(ArrayBuffer);
       expect(ciphertext.byteLength).toBeGreaterThan(plaintext.length);
 
-      const decrypted = await decrypt(sharedKey, ciphertext);
+      const decrypted = decrypt(sharedKey, ciphertext);
       expect(decrypted).toBe(plaintext);
     });
 
-    it("roundtrips binary data", async () => {
-      const daemonKeyPair = await generateKeyPair();
-      const clientKeyPair = await generateKeyPair();
-      const sharedKey = await deriveSharedKey(daemonKeyPair.secretKey, clientKeyPair.publicKey);
+    it("roundtrips binary data", () => {
+      const daemonKeyPair = generateKeyPair();
+      const clientKeyPair = generateKeyPair();
+      const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientKeyPair.publicKey);
 
       const binary = new Uint8Array([0, 1, 2, 255, 254, 253]);
-      const ciphertext = await encrypt(sharedKey, binary.buffer);
+      const ciphertext = encrypt(sharedKey, binary.buffer);
 
-      const decrypted = await decrypt(sharedKey, ciphertext);
+      const decrypted = decrypt(sharedKey, ciphertext);
       expect(new Uint8Array(decrypted as ArrayBuffer)).toEqual(binary);
     });
 
-    it("fails to decrypt with wrong key", async () => {
-      const keypair1 = await generateKeyPair();
-      const keypair2 = await generateKeyPair();
-      const keypair3 = await generateKeyPair();
+    it("fails to decrypt with wrong key", () => {
+      const keypair1 = generateKeyPair();
+      const keypair2 = generateKeyPair();
+      const keypair3 = generateKeyPair();
 
-      const correctKey = await deriveSharedKey(keypair1.secretKey, keypair2.publicKey);
-      const wrongKey = await deriveSharedKey(keypair1.secretKey, keypair3.publicKey);
+      const correctKey = deriveSharedKey(keypair1.secretKey, keypair2.publicKey);
+      const wrongKey = deriveSharedKey(keypair1.secretKey, keypair3.publicKey);
 
-      const ciphertext = await encrypt(correctKey, "secret");
+      const ciphertext = encrypt(correctKey, "secret");
 
       const tryDecrypt = () => decrypt(wrongKey, ciphertext);
       expect(tryDecrypt).toThrow();
     });
 
-    it("produces different ciphertext for same plaintext (random IV)", async () => {
-      const keypair1 = await generateKeyPair();
-      const keypair2 = await generateKeyPair();
-      const sharedKey = await deriveSharedKey(keypair1.secretKey, keypair2.publicKey);
+    it("produces different ciphertext for same plaintext (random IV)", () => {
+      const keypair1 = generateKeyPair();
+      const keypair2 = generateKeyPair();
+      const sharedKey = deriveSharedKey(keypair1.secretKey, keypair2.publicKey);
 
       const plaintext = "Same message";
-      const ciphertext1 = await encrypt(sharedKey, plaintext);
-      const ciphertext2 = await encrypt(sharedKey, plaintext);
+      const ciphertext1 = encrypt(sharedKey, plaintext);
+      const ciphertext2 = encrypt(sharedKey, plaintext);
 
       // Should be different due to random IV
       const arr1 = new Uint8Array(ciphertext1);
@@ -124,49 +118,49 @@ describe("crypto", () => {
       expect(arr1).not.toEqual(arr2);
 
       // But both should decrypt to same plaintext
-      expect(await decrypt(sharedKey, ciphertext1)).toBe(plaintext);
-      expect(await decrypt(sharedKey, ciphertext2)).toBe(plaintext);
+      expect(decrypt(sharedKey, ciphertext1)).toBe(plaintext);
+      expect(decrypt(sharedKey, ciphertext2)).toBe(plaintext);
     });
   });
 
   describe("full handshake simulation", () => {
-    it("simulates complete daemon<->client key exchange", async () => {
+    it("simulates complete daemon<->client key exchange", () => {
       // === DAEMON SIDE (generates session) ===
-      const daemonKeyPair = await generateKeyPair();
-      const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
+      const daemonKeyPair = generateKeyPair();
+      const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
 
       // QR code would contain: { serverId, daemonPubKeyB64, relay: { endpoint } }
 
       // === CLIENT SIDE (scans QR) ===
-      const clientKeyPair = await generateKeyPair();
-      const clientPubKeyB64 = await exportPublicKey(clientKeyPair.publicKey);
+      const clientKeyPair = generateKeyPair();
+      const clientPubKeyB64 = exportPublicKey(clientKeyPair.publicKey);
 
       // Client imports daemon's public key from QR
-      const daemonPubKeyOnClient = await importPublicKey(daemonPubKeyB64);
+      const daemonPubKeyOnClient = importPublicKey(daemonPubKeyB64);
 
       // Client derives shared key
-      const clientSharedKey = await deriveSharedKey(clientKeyPair.secretKey, daemonPubKeyOnClient);
+      const clientSharedKey = deriveSharedKey(clientKeyPair.secretKey, daemonPubKeyOnClient);
 
       // Client sends hello: { type: "hello", key: clientPubKeyB64 }
 
       // === DAEMON SIDE (receives hello) ===
       // Daemon imports client's public key from hello message
-      const clientPubKeyOnDaemon = await importPublicKey(clientPubKeyB64);
+      const clientPubKeyOnDaemon = importPublicKey(clientPubKeyB64);
 
       // Daemon derives shared key
-      const daemonSharedKey = await deriveSharedKey(daemonKeyPair.secretKey, clientPubKeyOnDaemon);
+      const daemonSharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPubKeyOnDaemon);
 
       // === VERIFY BOTH HAVE SAME KEY ===
       const testFromDaemon = "Message from daemon";
       const testFromClient = "Message from client";
 
       // Daemon encrypts, client decrypts
-      const encryptedFromDaemon = await encrypt(daemonSharedKey, testFromDaemon);
-      expect(await decrypt(clientSharedKey, encryptedFromDaemon)).toBe(testFromDaemon);
+      const encryptedFromDaemon = encrypt(daemonSharedKey, testFromDaemon);
+      expect(decrypt(clientSharedKey, encryptedFromDaemon)).toBe(testFromDaemon);
 
       // Client encrypts, daemon decrypts
-      const encryptedFromClient = await encrypt(clientSharedKey, testFromClient);
-      expect(await decrypt(daemonSharedKey, encryptedFromClient)).toBe(testFromClient);
+      const encryptedFromClient = encrypt(clientSharedKey, testFromClient);
+      expect(decrypt(daemonSharedKey, encryptedFromClient)).toBe(testFromClient);
     });
   });
 });

@@ -331,7 +331,7 @@ export class EncryptedChannel {
       })();
 
       if (ciphertext) {
-        const plaintext = await decrypt(this.sharedKey, ciphertext);
+        const plaintext = decrypt(this.sharedKey, ciphertext);
         this.events.onmessage?.(plaintext);
       }
     } catch (error) {
@@ -361,7 +361,7 @@ export class EncryptedChannel {
       throw new Error("Channel not open");
     }
 
-    const ciphertext = await encrypt(this.sharedKey, data);
+    const ciphertext = encrypt(this.sharedKey, data);
     // Send as base64 for WebSocket text compatibility
     this.transport.send(arrayBufferToBase64(ciphertext));
   }

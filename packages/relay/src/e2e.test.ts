@@ -234,8 +234,8 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
 
       // === DAEMON SIDE ===
       // Generate keypair (public key goes in QR)
-      const daemonKeyPair = await generateKeyPair();
-      const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
+      const daemonKeyPair = generateKeyPair();
+      const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
 
       // QR would contain: { serverId, daemonPubKeyB64, relay: { endpoint } }
 
@@ -252,12 +252,12 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
       // === CLIENT SIDE ===
       // Client scans QR, gets daemon's public key and session ID
       // Client generates own keypair
-      const clientKeyPair = await generateKeyPair();
-      const clientPubKeyB64 = await exportPublicKey(clientKeyPair.publicKey);
+      const clientKeyPair = generateKeyPair();
+      const clientPubKeyB64 = exportPublicKey(clientKeyPair.publicKey);
 
       // Client imports daemon's public key and derives shared secret
-      const daemonPubKeyOnClient = await importPublicKey(daemonPubKeyB64);
-      const clientSharedKey = await deriveSharedKey(clientKeyPair.secretKey, daemonPubKeyOnClient);
+      const daemonPubKeyOnClient = importPublicKey(daemonPubKeyB64);
+      const clientSharedKey = deriveSharedKey(clientKeyPair.secretKey, daemonPubKeyOnClient);
 
       const waitForClientSeen = new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(
@@ -324,21 +324,21 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
       expect(hello.key).toBe(clientPubKeyB64);
 
       // Daemon imports client's public key and derives shared secret
-      const clientPubKeyOnDaemon = await importPublicKey(hello.key);
-      const daemonSharedKey = await deriveSharedKey(daemonKeyPair.secretKey, clientPubKeyOnDaemon);
+      const clientPubKeyOnDaemon = importPublicKey(hello.key);
+      const daemonSharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPubKeyOnDaemon);
 
       // === VERIFY BOTH HAVE SAME KEY - Exchange encrypted messages ===
 
       // Daemon sends encrypted "ready" message
       const readyPlaintext = JSON.stringify({ type: "ready" });
-      const readyCiphertext = await encrypt(daemonSharedKey, readyPlaintext);
+      const readyCiphertext = encrypt(daemonSharedKey, readyPlaintext);
       daemonWs.send(Buffer.from(readyCiphertext));
 
       // Client receives and decrypts
       const clientReceivedReady = await new Promise<Buffer>((resolve) => {
         clientWs.once("message", (data) => resolve(data as Buffer));
       });
-      const decryptedReady = await decrypt(
+      const decryptedReady = decrypt(
         clientSharedKey,
         clientReceivedReady.buffer.slice(
           clientReceivedReady.byteOffset,
@@ -349,14 +349,14 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
 
       // Client sends encrypted message
       const clientMessage = "Hello from client!";
-      const clientCiphertext = await encrypt(clientSharedKey, clientMessage);
+      const clientCiphertext = encrypt(clientSharedKey, clientMessage);
       clientWs.send(Buffer.from(clientCiphertext));
 
       // Daemon receives and decrypts
       const daemonReceivedMsg = await new Promise<Buffer>((resolve) => {
         daemonWs.once("message", (data) => resolve(data as Buffer));
       });
-      const decryptedClientMsg = await decrypt(
+      const decryptedClientMsg = decrypt(
         daemonSharedKey,
         daemonReceivedMsg.buffer.slice(
           daemonReceivedMsg.byteOffset,
@@ -367,14 +367,14 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
 
       // Daemon sends encrypted response
       const daemonMessage = "Hello from daemon!";
-      const daemonCiphertext = await encrypt(daemonSharedKey, daemonMessage);
+      const daemonCiphertext = encrypt(daemonSharedKey, daemonMessage);
       daemonWs.send(Buffer.from(daemonCiphertext));
 
       // Client receives and decrypts
       const clientReceivedMsg = await new Promise<Buffer>((resolve) => {
         clientWs.once("message", (data) => resolve(data as Buffer));
       });
-      const decryptedDaemonMsg = await decrypt(
+      const decryptedDaemonMsg = decrypt(
         clientSharedKey,
         clientReceivedMsg.buffer.slice(
           clientReceivedMsg.byteOffset,
@@ -394,17 +394,17 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
     const connectionId = "clt_opaque_" + Date.now() + "_" + Math.random().toString(36).slice(2);
 
     // Setup keys
-    const daemonKeyPair = await generateKeyPair();
-    const clientKeyPair = await generateKeyPair();
+    const daemonKeyPair = generateKeyPair();
+    const clientKeyPair = generateKeyPair();
 
-    const daemonPubKeyB64 = await exportPublicKey(daemonKeyPair.publicKey);
-    const clientPubKeyB64 = await exportPublicKey(clientKeyPair.publicKey);
+    const daemonPubKeyB64 = exportPublicKey(daemonKeyPair.publicKey);
+    const clientPubKeyB64 = exportPublicKey(clientKeyPair.publicKey);
 
-    const clientPubKey = await importPublicKey(clientPubKeyB64);
-    const daemonPubKey = await importPublicKey(daemonPubKeyB64);
+    const clientPubKey = importPublicKey(clientPubKeyB64);
+    const daemonPubKey = importPublicKey(daemonPubKeyB64);
 
-    const daemonSharedKey = await deriveSharedKey(daemonKeyPair.secretKey, clientPubKey);
-    const clientSharedKey = await deriveSharedKey(clientKeyPair.secretKey, daemonPubKey);
+    const daemonSharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPubKey);
+    const clientSharedKey = deriveSharedKey(clientKeyPair.secretKey, daemonPubKey);
 
     const daemonControlWs = new WebSocket(
       `ws://127.0.0.1:${relayPort}/ws?serverId=${serverId}&role=server&v=2`,
@@ -458,7 +458,7 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
 
     // Send encrypted secret
     const secret = "This is a secret that relay cannot read";
-    const ciphertext = await encrypt(clientSharedKey, secret);
+    const ciphertext = encrypt(clientSharedKey, secret);
     clientWs.send(Buffer.from(ciphertext));
 
     // Daemon receives
@@ -471,7 +471,7 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
     expect(rawString).not.toContain(secret);
 
     // But daemon can decrypt
-    const decrypted = await decrypt(
+    const decrypted = decrypt(
       daemonSharedKey,
       received.buffer.slice(received.byteOffset, received.byteOffset + received.byteLength),
     );
@@ -482,22 +482,22 @@ async function stopRelayProcess(relayProcess: ChildProcess): Promise<void> {
     clientWs.close();
   });
 
-  it("wrong key cannot decrypt", async () => {
+  it("wrong key cannot decrypt", () => {
     // Setup - daemon and client with correct keys
-    const daemonKeyPair = await generateKeyPair();
-    const clientKeyPair = await generateKeyPair();
-    const attackerKeyPair = await generateKeyPair();
+    const daemonKeyPair = generateKeyPair();
+    const clientKeyPair = generateKeyPair();
+    const attackerKeyPair = generateKeyPair();
 
-    const clientPubKey = await importPublicKey(await exportPublicKey(clientKeyPair.publicKey));
-    const daemonSharedKey = await deriveSharedKey(daemonKeyPair.secretKey, clientPubKey);
+    const clientPubKey = importPublicKey(exportPublicKey(clientKeyPair.publicKey));
+    const daemonSharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPubKey);
 
     // Attacker tries to derive key with their own keypair
-    const attackerPubKey = await importPublicKey(await exportPublicKey(attackerKeyPair.publicKey));
-    const attackerKey = await deriveSharedKey(attackerKeyPair.secretKey, attackerPubKey);
+    const attackerPubKey = importPublicKey(exportPublicKey(attackerKeyPair.publicKey));
+    const attackerKey = deriveSharedKey(attackerKeyPair.secretKey, attackerPubKey);
 
     // Encrypt with daemon's key
     const secret = "Top secret message";
-    const ciphertext = await encrypt(daemonSharedKey, secret);
+    const ciphertext = encrypt(daemonSharedKey, secret);
 
     // Attacker cannot decrypt
     expect(() => decrypt(attackerKey, ciphertext)).toThrow();
