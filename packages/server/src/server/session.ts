@@ -733,13 +733,14 @@ function parseClientCapabilities(
   if (!capabilities) {
     return new Set();
   }
-  const known = new Set<string>(Object.values(CLIENT_CAPS));
-  const isClientCapability = (key: string): key is ClientCapability => known.has(key);
-  return new Set(
-    Object.entries(capabilities)
-      .filter(([key, value]) => value === true && isClientCapability(key))
-      .map(([key]) => key),
-  );
+  const known = new Set<ClientCapability>(Object.values(CLIENT_CAPS));
+  const result: ClientCapability[] = [];
+  for (const [key, value] of Object.entries(capabilities)) {
+    if (value === true && known.has(key as ClientCapability)) {
+      result.push(key as ClientCapability);
+    }
+  }
+  return new Set(result);
 }
 
 /**
