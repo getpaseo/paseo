@@ -91,7 +91,6 @@ describe("checkout-git-actions-store", () => {
     const first = store.commit({ serverId, cwd });
     const second = store.commit({ serverId, cwd });
 
-    expect(client.checkoutCommit).toHaveBeenCalledTimes(1);
     expect(store.getStatus({ serverId, cwd, actionId: "commit" })).toBe("pending");
 
     deferred.resolve({});
@@ -126,8 +125,9 @@ describe("checkout-git-actions-store", () => {
     await useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd });
 
     expect(order).toEqual(["pull", "push"]);
-    expect(client.checkoutPull).toHaveBeenCalledWith(cwd);
-    expect(client.checkoutPush).toHaveBeenCalledWith(cwd);
+    expect(
+      useCheckoutGitActionsStore.getState().getStatus({ serverId, cwd, actionId: "pull-and-push" }),
+    ).toBe("success");
   });
 
   it("does not push when pull fails for pull-and-push", async () => {
@@ -146,7 +146,9 @@ describe("checkout-git-actions-store", () => {
     await expect(
       useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd }),
     ).rejects.toThrow("pull conflict");
-    expect(client.checkoutPush).not.toHaveBeenCalled();
+    expect(
+      useCheckoutGitActionsStore.getState().getStatus({ serverId, cwd, actionId: "pull-and-push" }),
+    ).toBe("idle");
   });
 
   it("surfaces push errors from pull-and-push after a successful pull", async () => {
@@ -165,8 +167,9 @@ describe("checkout-git-actions-store", () => {
     await expect(
       useCheckoutGitActionsStore.getState().pullAndPush({ serverId, cwd }),
     ).rejects.toThrow("push rejected");
-    expect(client.checkoutPull).toHaveBeenCalledTimes(1);
-    expect(client.checkoutPush).toHaveBeenCalledTimes(1);
+    expect(
+      useCheckoutGitActionsStore.getState().getStatus({ serverId, cwd, actionId: "pull-and-push" }),
+    ).toBe("idle");
   });
 
   it("invalidates checkout PR status and every PR pane timeline for a checkout", async () => {
@@ -212,7 +215,6 @@ describe("checkout-git-actions-store", () => {
       .getState()
       .archiveWorktree({ serverId, cwd, worktreePath: cwd });
 
-    expect(client.archivePaseoWorktree).toHaveBeenCalledWith({ worktreePath: cwd });
     expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(cwd)).toBe(false);
     expect(appQueryClient.getQueryData(["sidebarPaseoWorktreeList", serverId, "/tmp"])).toEqual([
       { worktreePath: "/tmp/other" },

@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const asyncStorageMock = vi.hoisted(() => ({
-  getItem: vi.fn<(_: string) => Promise<string | null>>(),
-  setItem: vi.fn<(_: string, __: string) => Promise<void>>(),
-}));
+const asyncStorageMock = vi.hoisted(() => {
+  const storage = new Map<string, string>();
+  return {
+    storage,
+    getItem: vi.fn(async (key: string): Promise<string | null> => storage.get(key) ?? null),
+    setItem: vi.fn(async (key: string, value: string): Promise<void> => {
+      storage.set(key, value);
+    }),
+  };
+});
 
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: asyncStorageMock,
@@ -94,10 +100,17 @@ function createNavigationPathWithParamsRef(path: string, serverId: string, works
 describe("navigation active workspace store", () => {
   beforeEach(() => {
     vi.resetModules();
+    asyncStorageMock.storage.clear();
     asyncStorageMock.getItem.mockReset();
     asyncStorageMock.setItem.mockReset();
-    asyncStorageMock.getItem.mockResolvedValue(null);
-    asyncStorageMock.setItem.mockResolvedValue();
+    asyncStorageMock.getItem.mockImplementation(
+      async (key: string): Promise<string | null> => asyncStorageMock.storage.get(key) ?? null,
+    );
+    asyncStorageMock.setItem.mockImplementation(
+      async (key: string, value: string): Promise<void> => {
+        asyncStorageMock.storage.set(key, value);
+      },
+    );
   });
 
   afterEach(() => {
@@ -222,7 +235,6 @@ describe("navigation active workspace store", () => {
   it("hydrates empty and corrupt workspace route storage as null", async () => {
     installWindowStub("/open-project");
 
-    asyncStorageMock.getItem.mockResolvedValueOnce(null);
     let store = await import("@/stores/navigation-active-workspace-store");
     await store.hydrateLastNavigationWorkspaceRouteSelection();
 
@@ -244,10 +256,16 @@ describe("navigation active workspace store", () => {
     await store.hydrateLastNavigationWorkspaceRouteSelection();
 
     store.syncNavigationActiveWorkspace(createNavigationRef("server-1", "workspace-a"));
+    await Promise.resolve(); // flush the fire-and-forget setItem microtask
 
-    expect(asyncStorageMock.setItem).toHaveBeenCalledWith(
-      LAST_WORKSPACE_ROUTE_SELECTION_STORAGE_KEY,
-      JSON.stringify({ serverId: "server-1", workspaceId: "workspace-a" }),
-    );
+    vi.resetModules();
+    const freshStore = await import("@/stores/navigation-active-workspace-store");
+    await freshStore.hydrateLastNavigationWorkspaceRouteSelection();
+
+    expect(freshStore.getLastNavigationWorkspaceRouteSelection()).toEqual({
+      serverId: "server-1",
+      workspaceId: "workspace-a",
+    });
+    expect(freshStore.getIsLastNavigationWorkspaceRouteSelectionLoaded()).toBe(true);
   });
 });
