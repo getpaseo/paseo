@@ -136,7 +136,11 @@ import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
-import { createRequireBearerMiddleware, type DaemonAuthConfig } from "./auth.js";
+import {
+  createRequireBearerMiddleware,
+  extractHttpBearerToken,
+  type DaemonAuthConfig,
+} from "./auth.js";
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
@@ -556,7 +560,10 @@ export async function createPaseoDaemon(
       wsServer?.broadcast(wrapSessionMessage(message));
     };
 
-    const createAgentMcpTransport = async (callerAgentId?: string) => {
+    const createAgentMcpTransport = async (
+      callerAgentId?: string,
+      mcpServerHeaders?: Record<string, string>,
+    ) => {
       const agentMcpServer = await createAgentMcpServer({
         agentManager,
         agentStorage,
@@ -622,6 +629,7 @@ export async function createPaseoDaemon(
         },
         paseoHome: config.paseoHome,
         callerAgentId,
+        mcpServerHeaders,
         enableVoiceTools: false,
         resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
         resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
@@ -708,7 +716,11 @@ export async function createPaseoDaemon(
           } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
             callerAgentId = callerAgentIdRaw[0];
           }
-          transport = await createAgentMcpTransport(callerAgentId);
+          const token = extractHttpBearerToken(req.header("authorization"));
+          transport = await createAgentMcpTransport(
+            callerAgentId,
+            token ? { Authorization: `Bearer ${token}` } : undefined,
+          );
         }
 
         await transport.handleRequest(

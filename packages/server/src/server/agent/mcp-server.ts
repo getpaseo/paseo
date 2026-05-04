@@ -94,6 +94,7 @@ export interface AgentMcpServerOptions {
    * Used for cwd/mode inheritance when agents spawn child agents.
    */
   callerAgentId?: string;
+  mcpServerHeaders?: Record<string, string>;
   /**
    * Optional resolver for session-bound speak handlers.
    * Used by hidden voice agents to narrate through daemon-managed TTS.
@@ -816,7 +817,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           thinkingOptionId: thinking,
         },
         undefined,
-        Object.keys(mergedLabels).length > 0 ? { labels: mergedLabels } : undefined,
+        {
+          ...(Object.keys(mergedLabels).length > 0 ? { labels: mergedLabels } : {}),
+          ...(options.mcpServerHeaders ? { mcpServerHeaders: options.mcpServerHeaders } : {}),
+        },
       );
 
       setupContinuation?.startAfterAgentCreate({

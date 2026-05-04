@@ -797,6 +797,86 @@ test("createAgent injects paseo MCP server when manager has an MCP base URL", as
   expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
 });
 
+test("createAgent passes injected MCP auth headers only to provider launch config", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class CaptureClient extends TestAgentClient {
+    lastConfig: AgentSessionConfig | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.lastConfig = config;
+      return new PersistingTestAgentSession(config);
+    }
+  }
+
+  class PersistingTestAgentSession extends TestAgentSession {
+    private readonly persistedConfig: AgentSessionConfig;
+
+    constructor(persistedConfig: AgentSessionConfig) {
+      super(persistedConfig);
+      this.persistedConfig = persistedConfig;
+    }
+
+    override describePersistence() {
+      return {
+        provider: this.provider,
+        sessionId: this.id,
+        metadata: {
+          mcpServers: this.persistedConfig.mcpServers,
+        },
+      };
+    }
+  }
+
+  const client = new CaptureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    idFactory: () => "00000000-0000-4000-8000-000000000105",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+    },
+    undefined,
+    {
+      mcpServerHeaders: {
+        Authorization: "Bearer shared-secret",
+      },
+    },
+  );
+
+  expect(snapshot.config.mcpServers).toEqual({
+    paseo: {
+      type: "http",
+      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+    },
+  });
+  expect(client.lastConfig?.mcpServers).toEqual({
+    paseo: {
+      type: "http",
+      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+      headers: {
+        Authorization: "Bearer shared-secret",
+      },
+    },
+  });
+
+  const stored = await storage.get(snapshot.id);
+  expect(stored?.config?.mcpServers).toEqual(snapshot.config.mcpServers);
+  expect(JSON.stringify(stored)).not.toContain("shared-secret");
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("createAgent preserves a user-provided paseo MCP config", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

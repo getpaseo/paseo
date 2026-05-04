@@ -69,6 +69,7 @@ export interface ExternalSocketMetadata {
 interface PendingConnection {
   connectionLogger: pino.Logger;
   helloTimeout: ReturnType<typeof setTimeout> | null;
+  daemonAuthToken: string | null;
 }
 
 interface WebSocketServerConfig {
@@ -641,10 +642,11 @@ export class VoiceAssistantWebSocketServer {
     request: IncomingMessage,
     password: string | undefined,
   ): Promise<void> {
+    let token: string | null = null;
     if (password) {
       const requestMetadata = extractSocketRequestMetadata(request);
       const protocol = extractWsBearerProtocol(request.headers["sec-websocket-protocol"]);
-      const token = extractWsBearerToken(protocol);
+      token = extractWsBearerToken(protocol);
       const isAuthorized = isBearerTokenValid({ password, token });
       if (!isAuthorized) {
         const reason = token === null ? "Password required" : "Incorrect password";
@@ -657,7 +659,7 @@ export class VoiceAssistantWebSocketServer {
       }
     }
 
-    await this.attachSocket(ws, request);
+    await this.attachSocket(ws, request, undefined, token);
   }
 
   public broadcast(message: WSOutboundMessage): void {
@@ -817,6 +819,7 @@ export class VoiceAssistantWebSocketServer {
     ws: WebSocketLike,
     request?: unknown,
     metadata?: ExternalSocketMetadata,
+    daemonAuthToken?: string | null,
   ): Promise<void> {
     const requestMetadata = extractSocketRequestMetadata(request);
     const connectionLoggerFields: Record<string, string> = {
@@ -839,6 +842,7 @@ export class VoiceAssistantWebSocketServer {
     const pending: PendingConnection = {
       connectionLogger,
       helloTimeout: null,
+      daemonAuthToken: daemonAuthToken ?? null,
     };
     const timeout = setTimeout(() => {
       if (this.pendingConnections.get(ws) !== pending) {
@@ -877,8 +881,10 @@ export class VoiceAssistantWebSocketServer {
     appVersion: string | null;
     clientCapabilities: Record<string, unknown> | null;
     connectionLogger: pino.Logger;
+    daemonAuthToken: string | null;
   }): SessionConnection {
-    const { ws, clientId, appVersion, clientCapabilities, connectionLogger } = params;
+    const { ws, clientId, appVersion, clientCapabilities, connectionLogger, daemonAuthToken } =
+      params;
     let connection: SessionConnection | null = null;
 
     const session = new Session({
@@ -916,6 +922,7 @@ export class VoiceAssistantWebSocketServer {
       workspaceGitService: this.workspaceGitService,
       daemonConfigStore: this.daemonConfigStore,
       mcpBaseUrl: this.mcpBaseUrl,
+      daemonAuthToken,
       stt: () => this.speech?.resolveStt() ?? null,
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
@@ -1061,6 +1068,7 @@ export class VoiceAssistantWebSocketServer {
       appVersion: message.appVersion ?? null,
       clientCapabilities: message.capabilities ?? null,
       connectionLogger,
+      daemonAuthToken: pending.daemonAuthToken,
     });
     this.sessions.set(ws, connection);
     this.externalSessionsByKey.set(clientId, connection);

@@ -21,6 +21,7 @@ import type {
   AgentPermissionResponse,
   AgentPermissionResult,
   AgentPersistenceHandle,
+  AgentMetadata,
   AgentPromptInput,
   AgentProvider,
   AgentRunOptions,
@@ -285,9 +286,34 @@ function attachPersistenceCwd(
   return {
     ...handle,
     metadata: {
-      ...handle.metadata,
+      ...sanitizePersistenceMetadata(handle.metadata),
       cwd,
     },
+  };
+}
+
+function sanitizePersistenceMetadata(metadata: AgentMetadata | undefined): AgentMetadata {
+  if (!metadata) {
+    return {};
+  }
+  const mcpServers = metadata.mcpServers;
+  if (!mcpServers || typeof mcpServers !== "object" || Array.isArray(mcpServers)) {
+    return { ...metadata };
+  }
+
+  const sanitizedMcpServers: Record<string, unknown> = {};
+  for (const [name, serverConfig] of Object.entries(mcpServers)) {
+    if (!serverConfig || typeof serverConfig !== "object" || Array.isArray(serverConfig)) {
+      sanitizedMcpServers[name] = serverConfig;
+      continue;
+    }
+    const { headers: _headers, ...rest } = serverConfig as Record<string, unknown>;
+    sanitizedMcpServers[name] = rest;
+  }
+
+  return {
+    ...metadata,
+    mcpServers: sanitizedMcpServers,
   };
 }
 
@@ -455,6 +481,52 @@ export class AgentManager {
 
   setMcpBaseUrl(url: string | null): void {
     this.mcpBaseUrl = url;
+  }
+
+  private buildInjectedMcpConfig(config: AgentSessionConfig, agentId: string): AgentSessionConfig {
+    if (this.mcpBaseUrl == null) {
+      return config;
+    }
+    return {
+      ...config,
+      mcpServers: {
+        paseo: {
+          type: "http" as const,
+          url: `${this.mcpBaseUrl}?callerAgentId=${agentId}`,
+        },
+        ...config.mcpServers,
+      },
+    };
+  }
+
+  private withInjectedMcpHeaders(
+    config: AgentSessionConfig,
+    agentId: string,
+    headers: Record<string, string> | undefined,
+  ): AgentSessionConfig {
+    if (!headers || !this.mcpBaseUrl) {
+      return config;
+    }
+
+    const expectedInjectedUrl = `${this.mcpBaseUrl}?callerAgentId=${agentId}`;
+    const paseo = config.mcpServers?.paseo;
+    if (!paseo || paseo.type !== "http" || paseo.url !== expectedInjectedUrl) {
+      return config;
+    }
+
+    return {
+      ...config,
+      mcpServers: {
+        ...config.mcpServers,
+        paseo: {
+          ...paseo,
+          headers: {
+            ...headers,
+            ...paseo.headers,
+          },
+        },
+      },
+    };
   }
 
   public getMetricsSnapshot(): AgentMetricsSnapshot {
@@ -729,30 +801,24 @@ export class AgentManager {
       workspaceId?: string;
       initialPrompt?: string;
       persistSession?: boolean;
+      mcpServerHeaders?: Record<string, string>;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
-    const injectedConfig =
-      this.mcpBaseUrl == null
-        ? config
-        : {
-            ...config,
-            mcpServers: {
-              paseo: {
-                type: "http" as const,
-                url: `${this.mcpBaseUrl}?callerAgentId=${resolvedAgentId}`,
-              },
-              ...config.mcpServers,
-            },
-          };
+    const injectedConfig = this.buildInjectedMcpConfig(config, resolvedAgentId);
     this.requireEnabledProvider(injectedConfig.provider);
     const normalizedConfig = await this.normalizeConfig(injectedConfig);
+    const launchConfig = this.withInjectedMcpHeaders(
+      normalizedConfig,
+      resolvedAgentId,
+      options?.mcpServerHeaders,
+    );
     const launchContext = this.buildLaunchContext(resolvedAgentId);
     const client = await this.requireAvailableClient({
       provider: normalizedConfig.provider,
     });
     const createOptions = this.buildCreateSessionOptions(options);
-    const session = await client.createSession(normalizedConfig, launchContext, createOptions);
+    const session = await client.createSession(launchConfig, launchContext, createOptions);
     return this.registerSession(session, normalizedConfig, resolvedAgentId, {
       labels: options?.labels,
       workspaceId: options?.workspaceId,
