@@ -28,10 +28,6 @@ import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient, OpenCodeServerManager } from "./providers/opencode-agent.js";
 import { PiDirectAgentClient } from "./providers/pi-direct-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
-
-function isNonEmptyStringArray(value: string[]): value is [string, ...string[]] {
-  return value.length > 0;
-}
 import {
   AGENT_PROVIDER_DEFINITIONS,
   BUILTIN_PROVIDER_IDS,
@@ -39,6 +35,10 @@ import {
   getAgentProviderDefinition,
   type AgentProviderDefinition,
 } from "./provider-manifest.js";
+
+function isNonEmptyStringArray(value: string[]): value is [string, ...string[]] {
+  return value.length > 0;
+}
 
 export type { AgentProviderDefinition };
 

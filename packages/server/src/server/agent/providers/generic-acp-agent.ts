@@ -9,18 +9,10 @@ interface GenericACPAgentClientOptions {
   env?: Record<string, string>;
 }
 
-function isNonEmptyStringArray(value: string[]): value is [string, ...string[]] {
-  return value.length > 0;
-}
-
 export class GenericACPAgentClient extends ACPAgentClient {
   private readonly command: [string, ...string[]];
 
   constructor(options: GenericACPAgentClientOptions) {
-    if (!isNonEmptyStringArray(options.command)) {
-      throw new Error("Generic ACP provider requires a non-empty command");
-    }
-
     super({
       provider: "acp",
       logger: options.logger,
