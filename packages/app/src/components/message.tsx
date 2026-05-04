@@ -159,7 +159,9 @@ interface MarkdownWithStableRendererProps {
 
 const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
 const ThemedMarkdown = withUnistyles(MarkdownWithStableRenderer);
-const markdownStyleMapping = (theme: Theme) => ({ style: createMarkdownStyles(theme) }) as never;
+const markdownStyleMapping = (theme: Theme): Partial<MarkdownWithStableRendererProps> => ({
+  style: createMarkdownStyles(theme),
+});
 
 const ThemedMicVocal = withUnistyles(MicVocal);
 const ThemedTodoCheckIcon = withUnistyles(Check);
@@ -428,6 +430,8 @@ function getUserMessageAttachmentLabel(attachment: AgentAttachment): string {
       return `Issue #${attachment.number}`;
     case "text":
       return attachment.title ?? "Text attachment";
+    default:
+      return "";
   }
 }
 
@@ -634,7 +638,7 @@ const AssistantMarkdownResolvedImage = memo(function AssistantMarkdownResolvedIm
   useEffect(() => {
     if (cachedMetadata) {
       setLoadState(getAssistantImageLoadStateFromMetadata(cachedMetadata));
-      return;
+      return () => {};
     }
 
     setLoadState({ status: "loading" });
@@ -924,11 +928,11 @@ function getInlineCodeAutoLinkUrl(
     return null;
   }
 
-  const matches = markdownParser.linkify.match(trimmed) as Array<{
+  const matches: Array<{
     index: number;
     lastIndex: number;
     url: string;
-  }> | null;
+  }> | null = markdownParser.linkify.match(trimmed);
   if (!matches || matches.length !== 1) {
     return null;
   }
@@ -950,7 +954,7 @@ function nodeHasParentType(parent: unknown, type: string): boolean {
     typeof parent === "object" &&
     parent !== null &&
     "type" in parent &&
-    (parent as { type?: string }).type === type
+    (parent as Record<"type", unknown>)["type"] === type
   );
 }
 
@@ -1638,16 +1642,13 @@ export const AssistantMessage = memo(function AssistantMessage({
           style={styles.link}
           onPress={handleLinkPress}
         >
-          {Children.map(children, (child) =>
-            isValidElement(child)
-              ? cloneElement(child, {
-                  style: [
-                    (child.props as { style?: StyleProp<TextStyle> }).style,
-                    { color: styles.link.color as string | undefined },
-                  ],
-                } as Partial<{ style: StyleProp<TextStyle> }>)
-              : child,
-          )}
+          {Children.map(children, (child) => {
+            if (!isValidElement(child)) return child;
+            const childProps = child.props as { style?: StyleProp<TextStyle> };
+            return cloneElement(child, {
+              style: [childProps.style, { color: styles.link.color }],
+            } as Partial<{ style: StyleProp<TextStyle> }>);
+          })}
         </MarkdownLink>
       ),
       image: (
@@ -2421,12 +2422,13 @@ function useDetailWheelPropagationBlocker(input: {
   const { detailWrapperRef, enabled } = input;
   useEffect(() => {
     if (!enabled) {
-      return;
+      return () => {};
     }
-    const node = detailWrapperRef.current as unknown as HTMLElement | null;
-    if (!node || typeof node.addEventListener !== "function") {
-      return;
+    const rawRef: unknown = detailWrapperRef.current;
+    if (!(rawRef instanceof HTMLElement)) {
+      return () => {};
     }
+    const node = rawRef;
     const stopWheelPropagation = (event: WheelEvent) => {
       if (shouldStopDetailWheelPropagation(node, event)) {
         event.stopPropagation();
@@ -2596,7 +2598,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
     enabled: !isNative && isExpanded && hasDetailContent,
   });
 
-  const shimmerLabelStyle = useMemo(
+  const shimmerLabelStyle = useMemo<StyleProp<TextStyle>>(
     () =>
       buildShimmerTextStyle({
         isWebShimmer,
@@ -2605,7 +2607,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
         webShimmerTrackStart,
         webShimmerTrackEnd,
         offsetX: labelOffsetX,
-      }) as never,
+      }),
     [
       isWebShimmer,
       webShimmerPeakWidth,
@@ -2616,7 +2618,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
     ],
   );
 
-  const shimmerSecondaryStyle = useMemo(
+  const shimmerSecondaryStyle = useMemo<StyleProp<TextStyle>>(
     () =>
       buildShimmerTextStyle({
         isWebShimmer,
@@ -2625,7 +2627,7 @@ const ExpandableBadge = memo(function ExpandableBadge({
         webShimmerTrackStart,
         webShimmerTrackEnd,
         offsetX: secondaryOffsetX,
-      }) as never,
+      }),
     [
       isWebShimmer,
       webShimmerPeakWidth,
@@ -2807,9 +2809,9 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
 
 interface ToolCallProps {
   toolName: string;
-  args?: unknown | null;
-  result?: unknown | null;
-  error?: unknown | null;
+  args?: unknown;
+  result?: unknown;
+  error?: unknown;
   status: "executing" | "running" | "completed" | "failed" | "canceled";
   detail?: ToolCallDetail;
   cwd?: string;
@@ -2948,7 +2950,7 @@ export const ToolCall = memo(function ToolCall({
 
   useEffect(() => {
     if (!onInlineDetailsExpandedChange) {
-      return;
+      return () => {};
     }
     return () => {
       onInlineDetailsExpandedChange(false);

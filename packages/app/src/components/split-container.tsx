@@ -125,6 +125,26 @@ interface SplitPaneDropData {
   paneId: string;
 }
 
+function isWorkspaceTabDragData(data: unknown): data is WorkspaceTabDragData {
+  return typeof data === "object" && data !== null && Reflect.get(data, "kind") === "workspace-tab";
+}
+
+function isSplitPaneDropData(data: unknown): data is SplitPaneDropData {
+  return (
+    typeof data === "object" && data !== null && Reflect.get(data, "kind") === "split-pane-drop"
+  );
+}
+
+function asWorkspaceTabDragData(data: unknown): WorkspaceTabDragData | undefined {
+  return isWorkspaceTabDragData(data) ? data : undefined;
+}
+
+function asDragOverData(data: unknown): WorkspaceTabDragData | SplitPaneDropData | undefined {
+  if (isWorkspaceTabDragData(data)) return data;
+  if (isSplitPaneDropData(data)) return data;
+  return undefined;
+}
+
 interface SplitNodeViewProps extends Omit<SplitContainerProps, "layout" | "onMoveTabToPane"> {
   node: SplitNode;
   uiTabs: WorkspaceTab[];
@@ -185,10 +205,10 @@ const MountedTabSlot = memo(function MountedTabSlot({
     [buildPaneContentModel, paneId, tabDescriptor],
   );
 
-  const wrapperStyle = useMemo(
-    () => ({ display: (isVisible ? "flex" : "none") as "flex" | "none", flex: 1 }),
-    [isVisible],
-  );
+  const wrapperStyle = useMemo(() => {
+    const display: "flex" | "none" = isVisible ? "flex" : "none";
+    return { display, flex: 1 };
+  }, [isVisible]);
   const handleFocusPane = useCallback(() => {
     onFocusPane(paneId);
   }, [onFocusPane, paneId]);
@@ -388,8 +408,8 @@ export function SplitContainer({
   }, [focusModeEnabled, layout.root, layout.focusedPaneId, panesById]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
-    const data = event.active.data.current as WorkspaceTabDragData | undefined;
-    if (data?.kind !== "workspace-tab") {
+    const data = asWorkspaceTabDragData(event.active.data.current);
+    if (!data) {
       setActiveDragTabId(null);
       setDropPreview(null);
       setTabDropPreview(null);
@@ -406,11 +426,8 @@ export function SplitContainer({
 
   const updateDropPreview = useCallback(
     (event: Pick<DragMoveEvent, "active" | "over"> | Pick<DragOverEvent, "active" | "over">) => {
-      const activeData = event.active.data.current as WorkspaceTabDragData | undefined;
-      const overData = event.over?.data.current as
-        | WorkspaceTabDragData
-        | SplitPaneDropData
-        | undefined;
+      const activeData = asWorkspaceTabDragData(event.active.data.current);
+      const overData = asDragOverData(event.over?.data.current);
 
       if (activeData?.kind !== "workspace-tab") {
         setDropPreview(null);
@@ -513,11 +530,8 @@ export function SplitContainer({
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      const activeData = event.active.data.current as WorkspaceTabDragData | undefined;
-      const overData = event.over?.data.current as
-        | WorkspaceTabDragData
-        | SplitPaneDropData
-        | undefined;
+      const activeData = asWorkspaceTabDragData(event.active.data.current);
+      const overData = asDragOverData(event.over?.data.current);
 
       setActiveDragTabId(null);
 
@@ -905,17 +919,14 @@ function SplitPaneView({
 
   useEffect(() => {
     if (isNative) {
-      return;
+      return () => {};
     }
 
-    const paneElement = paneRef.current as unknown as HTMLElement | null;
-    if (
-      !paneElement ||
-      typeof paneElement.addEventListener !== "function" ||
-      typeof paneElement.removeEventListener !== "function"
-    ) {
-      return;
+    const rawRef: unknown = paneRef.current;
+    if (!(rawRef instanceof HTMLElement)) {
+      return () => {};
     }
+    const paneElement = rawRef;
 
     const handlePanePointerDown = (event: PointerEvent) => {
       if (!shouldFocusPaneFromEventTarget(event.target)) {

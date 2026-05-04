@@ -11,7 +11,6 @@ import {
   useState,
   type PropsWithChildren,
   type ReactElement,
-  type Ref,
 } from "react";
 import {
   Dimensions,
@@ -82,24 +81,20 @@ function shouldOpenOnFocus(): boolean {
   return !isWeb || lastInputWasKeyboard;
 }
 
-function composeEventHandlers<E>(
-  original?: (event: E) => void,
-  injected?: (event: E) => void,
-): (event: E) => void {
-  return (event: E) => {
-    original?.(event);
-    injected?.(event);
-  };
+function isCallable(fn: unknown): fn is (...args: unknown[]) => void {
+  return typeof fn === "function";
 }
 
-function assignRef<T>(ref: Ref<T> | undefined, value: T): void {
-  if (typeof ref === "function") {
-    ref(value);
-    return;
-  }
-  if (ref && typeof ref === "object") {
-    (ref as { current: T }).current = value;
-  }
+function composeEventHandlers(
+  original: unknown,
+  injected: (event: unknown) => void,
+): (event: unknown) => void {
+  return (event: unknown) => {
+    if (isCallable(original)) {
+      original(event);
+    }
+    injected(event);
+  };
 }
 
 function useControllableOpenState({
@@ -320,7 +315,7 @@ export function TooltipTrigger({
 
   const handleHoverIn = useCallback(
     (e?: unknown) => {
-      onHoverIn?.(e as never);
+      if (isCallable(onHoverIn)) onHoverIn(e);
       scheduleOpen();
     },
     [onHoverIn, scheduleOpen],
@@ -328,7 +323,7 @@ export function TooltipTrigger({
 
   const handleHoverOut = useCallback(
     (e?: unknown) => {
-      onHoverOut?.(e as never);
+      if (isCallable(onHoverOut)) onHoverOut(e);
       close();
     },
     [onHoverOut, close],
@@ -336,7 +331,7 @@ export function TooltipTrigger({
 
   const handleFocus = useCallback(
     (e: unknown) => {
-      onFocus?.(e as never);
+      if (isCallable(onFocus)) onFocus(e);
       if (!ctx.enabled || disabled) return;
       if (!shouldOpenOnFocus()) return;
       clearOpenTimer();
@@ -347,7 +342,7 @@ export function TooltipTrigger({
 
   const handleBlur = useCallback(
     (e: unknown) => {
-      onBlur?.(e as never);
+      if (isCallable(onBlur)) onBlur(e);
       close();
     },
     [close, onBlur],
@@ -355,7 +350,7 @@ export function TooltipTrigger({
 
   const handlePress = useCallback(
     (e: unknown) => {
-      onPress?.(e as never);
+      if (isCallable(onPress)) onPress(e);
       if (!ctx.enabled || disabled) {
         return;
       }
@@ -394,26 +389,33 @@ export function TooltipTrigger({
       throw new Error("TooltipTrigger with asChild expects a single React element child");
     }
 
-    const childProps = child.props as Record<string, unknown>;
-    const mergedProps = {
-      ...childProps,
+    const rawProps: unknown = child.props;
+    if (typeof rawProps !== "object" || rawProps === null) {
+      throw new Error("TooltipTrigger asChild child must have props object");
+    }
+    const mergedProps: Record<string, unknown> = {
+      ...Object.assign({}, rawProps),
       ...triggerProps,
-      disabled: childProps.disabled || disabled,
-      onHoverIn: composeEventHandlers(childProps.onHoverIn as never, handleHoverIn),
-      onHoverOut: composeEventHandlers(childProps.onHoverOut as never, handleHoverOut),
-      onFocus: composeEventHandlers(childProps.onFocus as never, handleFocus),
-      onBlur: composeEventHandlers(childProps.onBlur as never, handleBlur),
-      onPress: composeEventHandlers(childProps.onPress as never, handlePress),
-      onPointerEnter: composeEventHandlers(childProps.onPointerEnter as never, handleHoverIn),
-      onPointerLeave: composeEventHandlers(childProps.onPointerLeave as never, handleHoverOut),
-      onMouseEnter: composeEventHandlers(childProps.onMouseEnter as never, handleHoverIn),
-      onMouseLeave: composeEventHandlers(childProps.onMouseLeave as never, handleHoverOut),
-    } as Record<string, unknown>;
+      disabled: Reflect.get(rawProps, "disabled") || disabled,
+      onHoverIn: composeEventHandlers(Reflect.get(rawProps, "onHoverIn"), handleHoverIn),
+      onHoverOut: composeEventHandlers(Reflect.get(rawProps, "onHoverOut"), handleHoverOut),
+      onFocus: composeEventHandlers(Reflect.get(rawProps, "onFocus"), handleFocus),
+      onBlur: composeEventHandlers(Reflect.get(rawProps, "onBlur"), handleBlur),
+      onPress: composeEventHandlers(Reflect.get(rawProps, "onPress"), handlePress),
+      onPointerEnter: composeEventHandlers(Reflect.get(rawProps, "onPointerEnter"), handleHoverIn),
+      onPointerLeave: composeEventHandlers(Reflect.get(rawProps, "onPointerLeave"), handleHoverOut),
+      onMouseEnter: composeEventHandlers(Reflect.get(rawProps, "onMouseEnter"), handleHoverIn),
+      onMouseLeave: composeEventHandlers(Reflect.get(rawProps, "onMouseLeave"), handleHoverOut),
+    };
 
-    const existingRefProp = childProps[triggerRefProp] as Ref<View | null> | undefined;
-    mergedProps[triggerRefProp] = (node: View | null) => {
-      assignRef(existingRefProp, node);
-      assignRef(ctx.triggerRef, node);
+    const existingRefProp = Reflect.get(rawProps, triggerRefProp);
+    mergedProps[triggerRefProp] = (node: View) => {
+      if (isCallable(existingRefProp)) {
+        existingRefProp(node);
+      } else if (existingRefProp && typeof existingRefProp === "object") {
+        Object.assign(existingRefProp, { current: node });
+      }
+      Object.assign(ctx.triggerRef, { current: node });
     };
 
     return cloneElement(child, mergedProps);
@@ -453,16 +455,15 @@ export function TooltipContent({
       setTriggerRect(null);
       setContentSize(null);
       setPosition(null);
-      return;
+      return () => {};
     }
 
     const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
     let cancelled = false;
 
-    measureElement(ctx.triggerRef.current).then((rect) => {
-      if (cancelled) return;
-      setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
-      return;
+    void measureElement(ctx.triggerRef.current).then((rect) => {
+      if (!cancelled) setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
+      return undefined;
     });
 
     return () => {

@@ -11,7 +11,6 @@ import {
   type ReactElement,
   type ReactNode,
   type Ref,
-  type MutableRefObject,
 } from "react";
 import {
   ActivityIndicator,
@@ -89,7 +88,7 @@ function useControllableOpenState({
 }): [boolean, (next: boolean) => void] {
   const [internalOpen, setInternalOpen] = useState(Boolean(defaultOpen));
   const isControlled = typeof open === "boolean";
-  const value = isControlled ? Boolean(open) : internalOpen;
+  const value = isControlled ? open : internalOpen;
   const setValue = useCallback(
     (next: boolean) => {
       if (!isControlled) setInternalOpen(next);
@@ -175,25 +174,23 @@ function computePosition({
   return { x, y, actualPlacement };
 }
 
+function isCallable(fn: unknown): fn is (...args: unknown[]) => void {
+  return typeof fn === "function";
+}
+
 function coerceEventPoint(event: unknown): { pageX: number; pageY: number } | null {
-  const wrapper = event as
-    | {
-        nativeEvent?: { pageX?: number; pageY?: number; clientX?: number; clientY?: number };
-        pageX?: number;
-        pageY?: number;
-        clientX?: number;
-        clientY?: number;
-      }
-    | null
-    | undefined;
-  const nativeEvent = wrapper?.nativeEvent ?? wrapper;
-  const pageX = nativeEvent?.pageX;
-  const pageY = nativeEvent?.pageY;
+  if (typeof event !== "object" || event === null) {
+    return null;
+  }
+  const nativeEvent = Reflect.get(event, "nativeEvent");
+  const native = typeof nativeEvent === "object" && nativeEvent !== null ? nativeEvent : event;
+  const pageX = Reflect.get(native, "pageX");
+  const pageY = Reflect.get(native, "pageY");
   if (typeof pageX === "number" && typeof pageY === "number") {
     return { pageX, pageY };
   }
-  const clientX = nativeEvent?.clientX;
-  const clientY = nativeEvent?.clientY;
+  const clientX = Reflect.get(native, "clientX");
+  const clientY = Reflect.get(native, "clientY");
   if (typeof clientX === "number" && typeof clientY === "number") {
     return { pageX: clientX, pageY: clientY };
   }
@@ -206,7 +203,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T): void {
     return;
   }
   if (ref && typeof ref === "object") {
-    (ref as MutableRefObject<T>).current = value;
+    Object.assign(ref, { current: value });
   }
 }
 
@@ -326,10 +323,13 @@ export function ContextMenuTrigger({
       if (isNative) {
         return;
       }
-      const e = event as { preventDefault?: () => void; stopPropagation?: () => void } | undefined;
-      e?.preventDefault?.();
-      e?.stopPropagation?.();
-      openAtEvent(event as GestureResponderEvent);
+      if (typeof event === "object" && event !== null) {
+        const preventDefault = Reflect.get(event, "preventDefault");
+        const stopPropagation = Reflect.get(event, "stopPropagation");
+        if (isCallable(preventDefault)) preventDefault.call(event);
+        if (isCallable(stopPropagation)) stopPropagation.call(event);
+      }
+      openAtEvent(event);
     },
     [openAtEvent],
   );
@@ -337,7 +337,7 @@ export function ContextMenuTrigger({
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
       if (typeof style === "function") {
-        return style({ pressed, hovered: Boolean(hovered), open: ctx.open });
+        return style({ pressed, hovered, open: ctx.open });
       }
       return style;
     },
@@ -434,40 +434,29 @@ export function ContextMenuContent({
 
   // Measure trigger when opening (fallback) and capture point anchors.
   useEffect(() => {
-    if (useMobileSheet) {
+    if (useMobileSheet || !open) {
       setTriggerRect(null);
       setContentSize(null);
       setPosition(null);
-      return;
-    }
-
-    if (!open) {
-      setTriggerRect(null);
-      setContentSize(null);
-      setPosition(null);
-      return;
+      return () => {};
     }
 
     if (anchorRect) {
       setTriggerRect(anchorRect);
-      return;
+      return () => {};
     }
 
     if (!triggerRef.current) {
       setTriggerRect(null);
-      return;
+      return () => {};
     }
 
     const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
     let cancelled = false;
 
-    measureElement(triggerRef.current).then((rect) => {
-      if (cancelled) return;
-      setTriggerRect({
-        ...rect,
-        y: rect.y + statusBarHeight,
-      });
-      return;
+    void measureElement(triggerRef.current).then((rect) => {
+      if (!cancelled) setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
+      return undefined;
     });
 
     return () => {
