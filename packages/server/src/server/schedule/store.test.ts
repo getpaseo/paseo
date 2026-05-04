@@ -47,6 +47,44 @@ describe("ScheduleStore", () => {
     expect(listed).toEqual([created]);
   });
 
+  test("put round-trips an updated schedule to disk", async () => {
+    const created = await store.create({
+      name: "before",
+      prompt: "before",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+      status: "active",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      nextRunAt: "2026-01-01T00:01:00.000Z",
+      lastRunAt: null,
+      pausedAt: null,
+      expiresAt: null,
+      maxRuns: null,
+      runs: [],
+    });
+
+    const updated = {
+      ...created,
+      name: "after",
+      prompt: "after",
+      cadence: { type: "cron" as const, expression: "0 9 * * *" },
+      target: {
+        type: "new-agent" as const,
+        config: { provider: "codex", cwd: "/elsewhere", modeId: "full-access" },
+      },
+      nextRunAt: "2026-01-01T09:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:30.000Z",
+    };
+    await store.put(updated);
+
+    const reloaded = await new ScheduleStore(tempDir).get(created.id);
+    expect(reloaded).toEqual(updated);
+  });
+
   test("deletes schedules from disk", async () => {
     const created = await store.create({
       name: null,

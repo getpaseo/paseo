@@ -29,6 +29,7 @@ import {
   ScheduleResumeRequestSchema,
   ScheduleDeleteRequestSchema,
   ScheduleRunOnceRequestSchema,
+  ScheduleUpdateRequestSchema,
   ScheduleCreateResponseSchema,
   ScheduleListResponseSchema,
   ScheduleInspectResponseSchema,
@@ -37,6 +38,7 @@ import {
   ScheduleResumeResponseSchema,
   ScheduleDeleteResponseSchema,
   ScheduleRunOnceResponseSchema,
+  ScheduleUpdateResponseSchema,
 } from "../server/schedule/rpc-schemas.js";
 import {
   LoopRunRequestSchema,
@@ -1768,6 +1770,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ScheduleResumeRequestSchema,
   ScheduleDeleteRequestSchema,
   ScheduleRunOnceRequestSchema,
+  ScheduleUpdateRequestSchema,
   LoopRunRequestSchema,
   LoopListRequestSchema,
   LoopInspectRequestSchema,
@@ -3382,6 +3385,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ScheduleResumeResponseSchema,
   ScheduleDeleteResponseSchema,
   ScheduleRunOnceResponseSchema,
+  ScheduleUpdateResponseSchema,
   LoopRunResponseSchema,
   LoopListResponseSchema,
   LoopInspectResponseSchema,
@@ -3488,6 +3492,7 @@ export type SchedulePauseResponse = z.infer<typeof SchedulePauseResponseSchema>;
 export type ScheduleResumeResponse = z.infer<typeof ScheduleResumeResponseSchema>;
 export type ScheduleDeleteResponse = z.infer<typeof ScheduleDeleteResponseSchema>;
 export type ScheduleRunOnceResponse = z.infer<typeof ScheduleRunOnceResponseSchema>;
+export type ScheduleUpdateResponse = z.infer<typeof ScheduleUpdateResponseSchema>;
 export type LoopRunResponse = z.infer<typeof LoopRunResponseSchema>;
 export type LoopListResponse = z.infer<typeof LoopListResponseSchema>;
 export type LoopInspectResponse = z.infer<typeof LoopInspectResponseSchema>;
@@ -3547,6 +3552,7 @@ export type SchedulePauseRequest = z.infer<typeof SchedulePauseRequestSchema>;
 export type ScheduleResumeRequest = z.infer<typeof ScheduleResumeRequestSchema>;
 export type ScheduleDeleteRequest = z.infer<typeof ScheduleDeleteRequestSchema>;
 export type ScheduleRunOnceRequest = z.infer<typeof ScheduleRunOnceRequestSchema>;
+export type ScheduleUpdateRequest = z.infer<typeof ScheduleUpdateRequestSchema>;
 export type LoopRunRequest = z.infer<typeof LoopRunRequestSchema>;
 export type LoopListRequest = z.infer<typeof LoopListRequestSchema>;
 export type LoopInspectRequest = z.infer<typeof LoopInspectRequestSchema>;

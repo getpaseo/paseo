@@ -493,6 +493,244 @@ describe("ScheduleService", () => {
     });
   });
 
+  test("update mutates cadence, prompt, name, and target fields in place", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const created = await service.create({
+      name: "morning",
+      prompt: "first prompt",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir, modeId: "default" },
+      },
+    });
+    expect(created.runs).toEqual([]);
+
+    now = new Date("2026-01-01T00:00:30.000Z");
+    const updated = await service.update({
+      id: created.id,
+      prompt: "second prompt",
+      name: "renamed",
+      cadence: { type: "every", everyMs: 5 * 60_000 },
+      newAgentConfig: {
+        provider: "codex",
+        model: "gpt-5",
+        modeId: "full-access",
+        cwd: "/new/path",
+      },
+    });
+
+    expect(updated.prompt).toBe("second prompt");
+    expect(updated.name).toBe("renamed");
+    expect(updated.cadence).toEqual({ type: "every", everyMs: 5 * 60_000 });
+    expect(updated.target).toEqual({
+      type: "new-agent",
+      config: {
+        provider: "codex",
+        cwd: "/new/path",
+        model: "gpt-5",
+        modeId: "full-access",
+      },
+    });
+    expect(updated.nextRunAt).toBe("2026-01-01T00:05:30.000Z");
+    expect(updated.updatedAt).toBe("2026-01-01T00:00:30.000Z");
+    expect(updated.createdAt).toBe(created.createdAt);
+  });
+
+  test("update switches between every and cron cadences and recomputes nextRunAt", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const created = await service.create({
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    expect(created.nextRunAt).toBe("2026-01-01T00:00:00.000Z");
+
+    const cron = await service.update({
+      id: created.id,
+      cadence: { type: "cron", expression: "30 9 * * *" },
+    });
+    expect(cron.cadence).toEqual({ type: "cron", expression: "30 9 * * *" });
+    expect(cron.nextRunAt).toBe("2026-01-01T09:30:00.000Z");
+
+    const back = await service.update({
+      id: created.id,
+      cadence: { type: "every", everyMs: 2 * 60_000 },
+    });
+    expect(back.cadence).toEqual({ type: "every", everyMs: 2 * 60_000 });
+    expect(back.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+  });
+
+  test("update preserves nextRunAt and run history when cadence is unchanged", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ran" }),
+    });
+
+    const created = await service.create({
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+    const after = await service.inspect(created.id);
+    expect(after.runs).toHaveLength(1);
+
+    now = new Date("2026-01-01T00:01:30.000Z");
+    const updated = await service.update({ id: created.id, prompt: "new prompt" });
+
+    expect(updated.prompt).toBe("new prompt");
+    expect(updated.cadence).toEqual(created.cadence);
+    expect(updated.nextRunAt).toBe(after.nextRunAt);
+    expect(updated.runs).toEqual(after.runs);
+    expect(updated.lastRunAt).toBe(after.lastRunAt);
+  });
+
+  test("update clears the schedule name when given an empty string", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const created = await service.create({
+      name: "named",
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    expect(created.name).toBe("named");
+
+    const cleared = await service.update({ id: created.id, name: "" });
+    expect(cleared.name).toBeNull();
+
+    const renamed = await service.update({ id: created.id, name: "again" });
+    expect(renamed.name).toBe("again");
+  });
+
+  test("update rejects new-agent fields on agent-target schedules", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const created = await service.create({
+      prompt: "agent target",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: "00000000-0000-0000-0000-000000000005" },
+    });
+
+    await expect(
+      service.update({
+        id: created.id,
+        newAgentConfig: { provider: "codex" },
+      }),
+    ).rejects.toThrow("only valid for new-agent target schedules");
+  });
+
+  test("update changes individual new-agent fields independently", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const created = await service.create({
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir, model: "sonnet", modeId: "default" },
+      },
+    });
+
+    const modeOnly = await service.update({
+      id: created.id,
+      newAgentConfig: { modeId: "bypassPermissions" },
+    });
+    expect(modeOnly.target).toMatchObject({
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: tempDir,
+        model: "sonnet",
+        modeId: "bypassPermissions",
+      },
+    });
+
+    const clearModel = await service.update({
+      id: created.id,
+      newAgentConfig: { model: null },
+    });
+    if (clearModel.target.type !== "new-agent") {
+      throw new Error("target type changed unexpectedly");
+    }
+    expect(clearModel.target.config.model).toBeUndefined();
+    expect(clearModel.target.config.modeId).toBe("bypassPermissions");
+  });
+
+  test("update returns a schedule that round-trips through the store", async () => {
+    const service = new ScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const created = await service.create({
+      prompt: "p",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    await service.update({
+      id: created.id,
+      cadence: { type: "cron", expression: "0 9 * * *" },
+      newAgentConfig: { provider: "codex", modeId: "full-access" },
+    });
+
+    const reloaded = await service.inspect(created.id);
+    expect(reloaded.cadence).toEqual({ type: "cron", expression: "0 9 * * *" });
+    expect(reloaded.target).toEqual({
+      type: "new-agent",
+      config: { provider: "codex", cwd: tempDir, modeId: "full-access" },
+    });
+  });
+
   test("runOnce rejects completed schedules", async () => {
     const service = new ScheduleService({
       paseoHome: tempDir,

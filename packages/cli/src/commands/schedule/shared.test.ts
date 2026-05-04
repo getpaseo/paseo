@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { parseScheduleCreateInput } from "./shared.js";
+import { parseScheduleCreateInput, parseScheduleUpdateInput } from "./shared.js";
 
 const baseOptions = {
   prompt: "do the thing",
@@ -104,5 +104,129 @@ describe("parseScheduleCreateInput first-run timing", () => {
         message: expect.stringContaining("--no-run-now is redundant with --cron"),
       }),
     );
+  });
+});
+
+describe("parseScheduleUpdateInput", () => {
+  test("rejects calls with no fields to update", () => {
+    expect(() => parseScheduleUpdateInput({ id: "abc" })).toThrow(
+      expect.objectContaining({ code: "NO_UPDATES" }),
+    );
+  });
+
+  test("parses prompt and name updates", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", prompt: "  hello  ", name: "  named  " })).toEqual(
+      {
+        id: "abc",
+        name: "named",
+        prompt: "hello",
+      },
+    );
+  });
+
+  test("name set to empty string clears the name", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", name: "" })).toEqual({
+      id: "abc",
+      name: null,
+    });
+  });
+
+  test("rejects empty prompt", () => {
+    expect(() => parseScheduleUpdateInput({ id: "abc", prompt: "   " })).toThrow(
+      expect.objectContaining({ code: "INVALID_PROMPT" }),
+    );
+  });
+
+  test("parses --every cadence", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", every: "5m" })).toEqual({
+      id: "abc",
+      cadence: { type: "every", everyMs: 5 * 60_000 },
+    });
+  });
+
+  test("parses --cron cadence", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", cron: "30 9 * * *" })).toEqual({
+      id: "abc",
+      cadence: { type: "cron", expression: "30 9 * * *" },
+    });
+  });
+
+  test("rejects passing both --every and --cron", () => {
+    expect(() => parseScheduleUpdateInput({ id: "abc", every: "5m", cron: "0 9 * * *" })).toThrow(
+      expect.objectContaining({ code: "INVALID_CADENCE" }),
+    );
+  });
+
+  test("parses provider/model shorthand and explicit mode", () => {
+    expect(
+      parseScheduleUpdateInput({
+        id: "abc",
+        provider: "codex/gpt-5",
+        mode: "full-access",
+        cwd: "/tmp/proj",
+      }),
+    ).toEqual({
+      id: "abc",
+      newAgentConfig: {
+        provider: "codex",
+        model: "gpt-5",
+        modeId: "full-access",
+        cwd: "/tmp/proj",
+      },
+    });
+  });
+
+  test("--mode with empty value clears the modeId", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", mode: "" })).toEqual({
+      id: "abc",
+      newAgentConfig: { modeId: null },
+    });
+  });
+
+  test("rejects empty --cwd", () => {
+    expect(() => parseScheduleUpdateInput({ id: "abc", cwd: "   " })).toThrow(
+      expect.objectContaining({ code: "INVALID_CWD" }),
+    );
+  });
+
+  test("--max-runs sets a positive integer; --no-max-runs clears", () => {
+    expect(parseScheduleUpdateInput({ id: "abc", maxRuns: "3" })).toEqual({
+      id: "abc",
+      maxRuns: 3,
+    });
+    expect(parseScheduleUpdateInput({ id: "abc", clearMaxRuns: true })).toEqual({
+      id: "abc",
+      maxRuns: null,
+    });
+  });
+
+  test("rejects passing both --max-runs and --no-max-runs", () => {
+    expect(() => parseScheduleUpdateInput({ id: "abc", maxRuns: "3", clearMaxRuns: true })).toThrow(
+      expect.objectContaining({ code: "CONFLICTING_MAX_RUNS" }),
+    );
+  });
+
+  test("--expires-in computes an absolute timestamp; --no-expires-in clears", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      expect(parseScheduleUpdateInput({ id: "abc", expiresIn: "1h" })).toEqual({
+        id: "abc",
+        expiresAt: "2026-01-01T01:00:00.000Z",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(parseScheduleUpdateInput({ id: "abc", clearExpires: true })).toEqual({
+      id: "abc",
+      expiresAt: null,
+    });
+  });
+
+  test("rejects passing both --expires-in and --no-expires-in", () => {
+    expect(() =>
+      parseScheduleUpdateInput({ id: "abc", expiresIn: "1h", clearExpires: true }),
+    ).toThrow(expect.objectContaining({ code: "CONFLICTING_EXPIRES" }));
   });
 });

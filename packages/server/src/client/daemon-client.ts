@@ -392,6 +392,10 @@ type ScheduleRunOncePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/run-once/response" }
 >["payload"];
+type ScheduleUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "schedule/update/response" }
+>["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
@@ -550,6 +554,30 @@ export interface CreateScheduleOptions {
 }
 export interface InspectScheduleOptions {
   id: string;
+  requestId?: string;
+}
+export interface UpdateScheduleNewAgentConfig {
+  provider?: string;
+  model?: string | null;
+  modeId?: string | null;
+  cwd?: string;
+}
+export interface UpdateScheduleOptions {
+  id: string;
+  name?: string | null;
+  prompt?: string;
+  cadence?:
+    | {
+        type: "every";
+        everyMs: number;
+      }
+    | {
+        type: "cron";
+        expression: string;
+      };
+  newAgentConfig?: UpdateScheduleNewAgentConfig;
+  maxRuns?: number | null;
+  expiresAt?: string | null;
   requestId?: string;
 }
 type ListAvailableEditorsPayload = ListAvailableEditorsResponseMessage["payload"];
@@ -3758,6 +3786,24 @@ export class DaemonClient {
         scheduleId: options.id,
       },
       responseType: "schedule/run-once/response",
+      timeout: 10000,
+    });
+  }
+
+  async scheduleUpdate(options: UpdateScheduleOptions): Promise<ScheduleUpdatePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "schedule/update",
+        scheduleId: options.id,
+        ...(options.name !== undefined ? { name: options.name } : {}),
+        ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
+        ...(options.cadence !== undefined ? { cadence: options.cadence } : {}),
+        ...(options.newAgentConfig !== undefined ? { newAgentConfig: options.newAgentConfig } : {}),
+        ...(options.maxRuns !== undefined ? { maxRuns: options.maxRuns } : {}),
+        ...(options.expiresAt !== undefined ? { expiresAt: options.expiresAt } : {}),
+      },
+      responseType: "schedule/update/response",
       timeout: 10000,
     });
   }
