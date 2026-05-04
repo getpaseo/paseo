@@ -658,23 +658,6 @@ export const createAgentInRepo = async (
   await createAgent(page, config.prompt);
 };
 
-export const waitForPermissionPrompt = async (page: Page, timeout = 30000) => {
-  const promptText = page.getByTestId("permission-request-question").first();
-  await expect(promptText).toBeVisible({ timeout });
-};
-
-export const allowPermission = async (page: Page) => {
-  const acceptButton = page.getByTestId("permission-request-accept").first();
-  await expect(acceptButton).toBeVisible({ timeout: 5000 });
-  await acceptButton.click();
-};
-
-export const denyPermission = async (page: Page) => {
-  const denyButton = page.getByTestId("permission-request-deny").first();
-  await expect(denyButton).toBeVisible({ timeout: 5000 });
-  await denyButton.click();
-};
-
 export async function waitForAgentFinishUI(page: Page, timeout = 30000) {
   // Wait for the stop button to disappear
   const stopButton = page.getByRole("button", { name: /stop|cancel/i });

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
 import { TEST_HOST_LABEL } from "./helpers/daemon-registry";
+import { expectSettingsHeader, openSettingsHost } from "./helpers/settings";
 
 function getSeededServerId(): string {
   const serverId = process.env.E2E_SERVER_ID;
@@ -18,13 +19,8 @@ function getSeededDaemonPort(): string {
   return port;
 }
 
-async function openHostPage(page: Page, serverId: string) {
-  await page.getByTestId(`settings-host-entry-${serverId}`).click();
-  await expect(page.getByTestId(`settings-host-page-${serverId}`)).toBeVisible();
-}
-
 async function expectHostLabelHeader(page: Page) {
-  await expect(page.getByTestId("settings-detail-header-title")).toHaveText(TEST_HOST_LABEL);
+  await expectSettingsHeader(page, TEST_HOST_LABEL);
   await expect(page.getByTestId("host-page-label-edit-button")).toBeVisible();
   await expect(page.getByTestId("host-page-label-input")).toHaveCount(0);
 }
@@ -38,7 +34,7 @@ test.describe("Settings host page", () => {
 
     await gotoAppShell(page);
     await openSettings(page);
-    await openHostPage(page, serverId);
+    await openSettingsHost(page, serverId);
 
     // Label renders in the detail header with a pencil edit affordance; the input is hidden until edit.
     await expectHostLabelHeader(page);
@@ -67,7 +63,7 @@ test.describe("Settings host page", () => {
 
     await gotoAppShell(page);
     await openSettings(page);
-    await openHostPage(page, serverId);
+    await openSettingsHost(page, serverId);
 
     await expect(page.getByTestId("host-page-label-input")).toHaveCount(0);
 
@@ -85,7 +81,7 @@ test.describe("Settings host page", () => {
 
     await gotoAppShell(page);
     await openSettings(page);
-    await openHostPage(page, serverId);
+    await openSettingsHost(page, serverId);
 
     // TODO: add local-daemon fixture for positive Pair/Daemon coverage.
     // Pair-device now lives behind a row that only the local host sees

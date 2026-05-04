@@ -1,6 +1,6 @@
 import { expect, test } from "./fixtures";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { allowPermission, waitForPermissionPrompt } from "./helpers/app";
+import { allowPermission, waitForPermissionPrompt } from "./helpers/permissions";
 import { connectTerminalClient } from "./helpers/terminal-perf";
 import { createTempGitRepo } from "./helpers/workspace";
 

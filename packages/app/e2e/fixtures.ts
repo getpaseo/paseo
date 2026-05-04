@@ -1,12 +1,13 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
+import { createWithWorkspace, type WithWorkspace } from "./helpers/with-workspace";
 
 // Test setup is wired through an `auto: true` fixture rather than `test.beforeEach`.
 // `test.beforeEach` declared at the top level of a non-test fixture file is unreliable
 // across spec-file boundaries — Playwright sometimes skips it for the first test of a
 // subsequent spec when multiple specs run in the same worker. Auto fixtures run
 // reliably for every test that uses this `test` object.
-const test = base.extend<{ paseoE2ESetup: void }>({
+const test = base.extend<{ paseoE2ESetup: void; withWorkspace: WithWorkspace }>({
   baseURL: async ({}, provide) => {
     const metroPort = process.env.E2E_METRO_PORT;
     if (!metroPort) {
@@ -102,6 +103,11 @@ const test = base.extend<{ paseoE2ESetup: void }>({
     },
     { auto: true },
   ],
+  withWorkspace: async ({ page }, provide) => {
+    const handle = createWithWorkspace(page);
+    await provide(handle.withWorkspace);
+    await handle.cleanup();
+  },
 });
 
 export { test, expect, type Page };
