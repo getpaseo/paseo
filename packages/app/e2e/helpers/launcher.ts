@@ -68,20 +68,6 @@ export async function getActiveTabTestId(page: Page): Promise<string | null> {
 
 // ─── Tab actions ───────────────────────────────────────────────────────────
 
-/** Click the new agent tab button in the tab bar. Creates a draft/chat tab directly. */
-export async function clickNewTabButton(page: Page): Promise<void> {
-  const button = page.getByTestId("workspace-new-agent-tab").filter({ visible: true }).first();
-  await expect(button).toBeVisible({ timeout: 10_000 });
-  await button.click();
-}
-
-/** Click the new terminal button in the workspace tab bar. Creates a terminal tab directly. */
-export async function clickNewTerminalButton(page: Page): Promise<void> {
-  const button = page.getByTestId("workspace-new-terminal").filter({ visible: true }).first();
-  await expect(button).toBeVisible({ timeout: 10_000 });
-  await button.click();
-}
-
 /** Press Cmd+T (macOS) or Ctrl+T (Linux/Windows) to open a new tab. */
 export async function pressNewTabShortcut(page: Page): Promise<void> {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
@@ -89,11 +75,6 @@ export async function pressNewTabShortcut(page: Page): Promise<void> {
 }
 
 // ─── Tab bar assertions ───────────────────────────────────────────────────
-
-/** @deprecated The launcher panel was removed. Actions go directly to their target. */
-export async function waitForLauncherPanel(_page: Page): Promise<void> {
-  // No-op: the launcher panel no longer exists.
-}
 
 /** Assert the new agent tab button is visible in the tab bar. */
 export async function assertNewChatTileVisible(page: Page): Promise<void> {
@@ -119,7 +100,7 @@ export async function clickNewChat(page: Page): Promise<void> {
 }
 
 /** Click the new terminal button to create a terminal tab. */
-export async function clickTerminal(page: Page): Promise<void> {
+export async function clickNewTerminal(page: Page): Promise<void> {
   const button = page.getByTestId("workspace-new-terminal").filter({ visible: true }).first();
   await expect(button).toBeVisible({ timeout: 10_000 });
   await button.click();

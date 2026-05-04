@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { clickNewChat, clickTerminal } from "./launcher";
+import { clickNewChat, clickNewTerminal } from "./launcher";
 import { setupDeterministicPrompt, waitForTerminalContent } from "./terminal-perf";
 
 function terminalSurface(page: Page) {
@@ -20,7 +20,7 @@ export async function expectTerminalCwd(page: Page, expectedPath: string): Promi
 }
 
 export async function createStandaloneTerminalFromLauncher(page: Page): Promise<void> {
-  await clickTerminal(page);
+  await clickNewTerminal(page);
   await expect(terminalSurface(page)).toBeVisible({ timeout: 20_000 });
 }
 

@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import { clickTerminal } from "./helpers/launcher";
+import { clickNewTerminal } from "./helpers/launcher";
 import { setupDeterministicPrompt, waitForTerminalContent } from "./helpers/terminal-perf";
 
 test.describe("Workspace cwd correctness", () => {
@@ -11,7 +11,7 @@ test.describe("Workspace cwd correctness", () => {
 
     const workspace = await withWorkspace({ prefix: "workspace-cwd-main-" });
     await workspace.navigateTo();
-    await clickTerminal(page);
+    await clickNewTerminal(page);
 
     const terminal = page.locator('[data-testid="terminal-surface"]');
     await expect(terminal.first()).toBeVisible({ timeout: 20_000 });
@@ -31,7 +31,7 @@ test.describe("Workspace cwd correctness", () => {
 
     const workspace = await withWorkspace({ worktree: true, prefix: "workspace-cwd-worktree-" });
     await workspace.navigateTo();
-    await clickTerminal(page);
+    await clickNewTerminal(page);
 
     const terminal = page.locator('[data-testid="terminal-surface"]');
     await expect(terminal.first()).toBeVisible({ timeout: 20_000 });

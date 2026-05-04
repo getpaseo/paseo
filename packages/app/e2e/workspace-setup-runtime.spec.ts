@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { expect, test } from "./fixtures";
 import { createTempGitRepo } from "./helpers/workspace";
-import { clickTerminal, waitForTabBar } from "./helpers/launcher";
+import { clickNewTerminal, waitForTabBar } from "./helpers/launcher";
 import {
   connectWorkspaceSetupClient,
   createWorkspaceThroughDaemon,
@@ -86,7 +86,7 @@ test.describe("Workspace setup runtime authority", () => {
       await openHomeWithProject(page, repo.path);
       await navigateToWorkspaceViaSidebar(page, workspaceId);
 
-      await clickTerminal(page);
+      await clickNewTerminal(page);
 
       const terminal = page.locator('[data-testid="terminal-surface"]');
       await expect(terminal.first()).toBeVisible({ timeout: 20_000 });

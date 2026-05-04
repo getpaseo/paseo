@@ -5,10 +5,9 @@ import {
   assertNewChatTileVisible,
   assertTerminalTileVisible,
   assertSingleNewTabButton,
-  clickNewTabButton,
   pressNewTabShortcut,
   clickNewChat,
-  clickTerminal,
+  clickNewTerminal,
   countTabsOfKind,
   getTabTestIds,
   waitForTabWithTitle,
@@ -77,7 +76,7 @@ test.describe("Tab creation", () => {
   test("clicking new agent tab creates a draft tab", async ({ page }) => {
     await gotoWorkspace(page, workspaceId);
 
-    await clickNewTabButton(page);
+    await clickNewChat(page);
 
     // Draft composer should appear (the agent message input)
     const composer = page.getByRole("textbox", { name: "Message agent..." });
@@ -92,7 +91,7 @@ test.describe("Tab creation", () => {
     test.setTimeout(45_000);
     await gotoWorkspace(page, workspaceId);
 
-    await clickTerminal(page);
+    await clickNewTerminal(page);
 
     // Terminal surface should appear
     const terminal = page.locator('[data-testid="terminal-surface"]');
@@ -141,7 +140,7 @@ test.describe("Terminal title propagation", () => {
     try {
       // Navigate to workspace and open a terminal
       await gotoWorkspace(page, workspaceId);
-      await clickTerminal(page);
+      await clickNewTerminal(page);
 
       const terminal = page.locator('[data-testid="terminal-surface"]');
       await expect(terminal.first()).toBeVisible({ timeout: 20_000 });
@@ -171,7 +170,7 @@ test.describe("Terminal title propagation", () => {
 
     try {
       await gotoWorkspace(page, workspaceId);
-      await clickTerminal(page);
+      await clickNewTerminal(page);
 
       const terminal = page.locator('[data-testid="terminal-surface"]');
       await expect(terminal.first()).toBeVisible({ timeout: 20_000 });
@@ -231,7 +230,7 @@ test.describe("Tab transitions (no flash)", () => {
     const terminal = page.locator('[data-testid="terminal-surface"]');
     const elapsed = await measureTileTransition(
       page,
-      () => clickTerminal(page),
+      () => clickNewTerminal(page),
       terminal.first(),
       20_000,
     );
