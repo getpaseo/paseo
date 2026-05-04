@@ -29,6 +29,7 @@ export function createScheduleCommand(): Command {
         "--mode <mode>",
         "Provider-specific mode (e.g. claude bypassPermissions, opencode build)",
       )
+      .option("--cwd <path>", "Working directory (default: current; required with --host)")
       .option("--max-runs <n>", "Maximum number of runs")
       .option("--expires-in <duration>", "Time to live for the schedule"),
   ).action(withOutput(runCreateCommand));

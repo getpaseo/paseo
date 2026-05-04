@@ -131,6 +131,8 @@ export function parseScheduleCreateInput(options: {
   target?: string;
   provider?: string;
   mode?: string;
+  cwd?: string;
+  host?: string;
   maxRuns?: string;
   expiresIn?: string;
 }): CreateScheduleInput {
@@ -154,6 +156,15 @@ export function parseScheduleCreateInput(options: {
     ? { type: "every", everyMs: parseDuration(options.every) }
     : { type: "cron", expression: options.cron!.trim() };
 
+  const cwdInput = options.cwd?.trim();
+  if (options.host !== undefined && !cwdInput) {
+    throw {
+      code: "MISSING_CWD",
+      message:
+        "--cwd is required when --host is specified (the local working directory will not exist on the remote daemon)",
+    } satisfies CommandError;
+  }
+
   const targetValue = options.target?.trim();
   const modeId = options.mode?.trim();
   const hasExplicitNewAgentOption = options.provider !== undefined || options.mode !== undefined;
@@ -165,7 +176,7 @@ export function parseScheduleCreateInput(options: {
       type: "new-agent",
       config: {
         provider: resolvedProviderModel.provider,
-        cwd: process.cwd(),
+        cwd: cwdInput ?? process.cwd(),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(modeId ? { modeId } : {}),
       },
