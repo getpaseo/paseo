@@ -31,7 +31,7 @@ function makeTranscriptionHandler(
       return;
     }
     resolve({
-      text: String(message.payload.text ?? ""),
+      text: message.payload.text ?? "",
       isLowConfidence: Boolean(message.payload.isLowConfidence),
     });
   };
@@ -83,7 +83,7 @@ function makeActivityErrorHandler(reject: (error: Error) => void) {
     if (message.payload.type !== "error") {
       return;
     }
-    reject(new Error(String(message.payload.content)));
+    reject(new Error(message.payload.content));
   };
 }
 
@@ -237,7 +237,7 @@ for (const targetProvider of [
           return;
         }
         timelineToolAgentIds.add(message.payload.agentId);
-        timelineTools.push(String(item.name ?? ""));
+        timelineTools.push(item.name ?? "");
       });
       const offErrors = ctx.client.on("activity_log", (message) => {
         if (message.type !== "activity_log") {
@@ -246,7 +246,7 @@ for (const targetProvider of [
         if (message.payload.type !== "error") {
           return;
         }
-        activityErrors.push(String(message.payload.content ?? ""));
+        activityErrors.push(message.payload.content ?? "");
       });
 
       const inputSpeech = await withTimeout(

@@ -398,7 +398,7 @@ export class MockLoadTestAgentClient implements AgentClient {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     return new MockLoadTestAgentSession({
       config: {
-        cwd: String(metadata.cwd ?? overrides?.cwd ?? process.cwd()),
+        cwd: metadata.cwd ?? overrides?.cwd ?? process.cwd(),
         ...metadata,
         ...overrides,
         provider: MOCK_LOAD_TEST_PROVIDER_ID,

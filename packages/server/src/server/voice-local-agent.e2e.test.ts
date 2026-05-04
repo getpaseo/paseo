@@ -17,7 +17,7 @@ type SessionMessage<T extends SessionOutboundMessage["type"]> = Extract<
 function makeTranscriptionHandler(resolve: (value: string) => void) {
   return (msg: SessionMessage<"transcription_result">) => {
     if (msg.type !== "transcription_result") return;
-    const text = String(msg.payload.text ?? "").trim();
+    const text = (msg.payload.text ?? "").trim();
     if (!text) return;
     resolve(text);
   };
@@ -27,7 +27,7 @@ function makeErrorHandler(reject: (error: Error) => void) {
   return (msg: SessionMessage<"activity_log">) => {
     if (msg.type !== "activity_log") return;
     if (msg.payload.type !== "error") return;
-    reject(new Error(String(msg.payload.content)));
+    reject(new Error(msg.payload.content));
   };
 }
 
@@ -37,7 +37,7 @@ function makeSpeakToolHandler(resolve: (value: string) => void) {
     if (msg.payload.event.type !== "timeline") return;
     const item = msg.payload.event.item;
     if (item.type !== "tool_call") return;
-    const name = String(item.name ?? "");
+    const name = item.name ?? "";
     if (!name.toLowerCase().includes("speak")) return;
     resolve(name);
   };

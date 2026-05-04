@@ -259,14 +259,14 @@ export class WorkspaceDirectory {
     }
 
     if (filter.idPrefix && filter.idPrefix.trim().length > 0) {
-      if (!String(workspace.id).startsWith(filter.idPrefix.trim())) {
+      if (!workspace.id.startsWith(filter.idPrefix.trim())) {
         return false;
       }
     }
 
     if (filter.query && filter.query.trim().length > 0) {
       const query = filter.query.trim().toLocaleLowerCase();
-      const haystacks = [workspace.name, String(workspace.projectId), String(workspace.id)];
+      const haystacks = [workspace.name, workspace.projectId, workspace.id];
       if (!haystacks.some((value) => value.toLocaleLowerCase().includes(query))) {
         return false;
       }
