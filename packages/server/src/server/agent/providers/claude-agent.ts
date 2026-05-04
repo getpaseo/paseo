@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -87,11 +87,31 @@ import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js
 const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
+  return isObjectRecord(value) ? value : undefined;
+}
+
+function isUnknownArray(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
+function isChildProcessWithStreams(child: ChildProcess): child is ChildProcessWithoutNullStreams {
+  return child.stdin !== null && child.stdout !== null && child.stderr !== null;
+}
+
+function isImageMimeType(
+  value: string,
+): value is "image/jpeg" | "image/png" | "image/gif" | "image/webp" {
+  return (
+    value === "image/jpeg" ||
+    value === "image/png" ||
+    value === "image/gif" ||
+    value === "image/webp"
+  );
 }
 
 type TurnState = "idle" | "foreground" | "autonomous";
@@ -287,7 +307,10 @@ function applyRuntimeSettingsToClaudeOptions(
           options.stderr?.(chunk.toString());
         });
       }
-      return child as ChildProcessWithoutNullStreams;
+      if (!isChildProcessWithStreams(child)) {
+        throw new Error("Claude process was spawned without stdio streams");
+      }
+      return child;
     },
   };
 }
@@ -504,21 +527,22 @@ function collectClaudeTextContentParts(content: unknown): string[] {
     return normalized ? [normalized] : [];
   }
 
-  if (!Array.isArray(content)) {
+  if (!isUnknownArray(content)) {
     return [];
   }
 
   const parts: string[] = [];
   for (const block of content) {
-    if (!block || typeof block !== "object") {
+    const blockRecord = toObjectRecord(block);
+    if (!blockRecord) {
       continue;
     }
-    const text = normalizeClaudeTranscriptText((block as { text?: unknown }).text);
+    const text = normalizeClaudeTranscriptText(blockRecord.text);
     if (text) {
       parts.push(text);
       continue;
     }
-    const input = normalizeClaudeTranscriptText((block as { input?: unknown }).input);
+    const input = normalizeClaudeTranscriptText(blockRecord.input);
     if (input) {
       parts.push(input);
     }
@@ -732,6 +756,7 @@ function toClaudeSdkMcpConfig(config: McpServerConfig): ClaudeSdkMcpServerConfig
         headers: config.headers,
       };
   }
+  throw new Error("Unhandled MCP server config type");
 }
 
 function isClaudeContentChunk(value: unknown): value is ClaudeContentChunk {
@@ -1083,26 +1108,24 @@ class TimelineAssembler {
   private readMessageIdFromAssistantMessage(
     message: SDKMessage & { type: "assistant" },
   ): string | null {
-    const candidate = message as unknown as {
-      message_id?: unknown;
-      message?: { id?: unknown } | null;
-    };
+    const candidate = toObjectRecord(message);
+    const messageContainer = toObjectRecord(candidate?.message);
     return (
-      readTrimmedString(candidate.message_id) ?? readTrimmedString(candidate.message?.id) ?? null
+      readTrimmedString(candidate?.message_id) ?? readTrimmedString(messageContainer?.id) ?? null
     );
   }
 
   private readMessageIdFromStreamEvent(event: Record<string, unknown>): string | null {
-    const message = event.message as { id?: unknown } | undefined;
-    return readTrimmedString(event.message_id) ?? readTrimmedString(message?.id) ?? null;
+    const messageContainer = toObjectRecord(event.message);
+    return readTrimmedString(event.message_id) ?? readTrimmedString(messageContainer?.id) ?? null;
   }
 }
 
 function isSyntheticUserEntry(entry: unknown): boolean {
-  if (!entry || typeof entry !== "object") {
+  const candidate = toObjectRecord(entry);
+  if (!candidate) {
     return false;
   }
-  const candidate = entry as { isSynthetic?: unknown; isMeta?: unknown };
   return candidate.isSynthetic === true || candidate.isMeta === true;
 }
 
@@ -1117,11 +1140,11 @@ function firstTrimmedString(sources: readonly unknown[]): string | null {
 }
 
 export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
-  const root = message as unknown as Record<string, unknown>;
+  const root = toObjectRecord(message) ?? {};
   const messageType = readTrimmedString(root.type);
-  const streamEvent = root.event as Record<string, unknown> | undefined;
-  const streamEventMessage = streamEvent?.message as Record<string, unknown> | undefined;
-  const messageContainer = root.message as Record<string, unknown> | undefined;
+  const streamEvent = toObjectRecord(root.event);
+  const streamEventMessage = toObjectRecord(streamEvent?.message);
+  const messageContainer = toObjectRecord(root.message);
 
   const messageIdFromUuid = messageType === "user" ? root.uuid : undefined;
 
@@ -1338,15 +1361,11 @@ async function resolveClaudeAuth(
         timeout: 5_000,
       });
     } catch (error) {
-      const err = error as {
-        stdout?: string;
-        stderr?: string;
-        message?: string;
-      };
-      return {
-        stdout: err.stdout ?? "",
-        stderr: err.stderr ?? err.message ?? "",
-      };
+      const err = toObjectRecord(error);
+      const stdout = typeof err?.stdout === "string" ? err.stdout : "";
+      const stderr = typeof err?.stderr === "string" ? err.stderr : "";
+      const fallbackMessage = typeof err?.message === "string" ? err.message : "";
+      return { stdout, stderr: stderr || fallbackMessage };
     }
   };
 
@@ -1373,16 +1392,18 @@ async function resolveClaudeAuth(
 }
 
 function extractContextWindowSize(modelUsage: unknown): number | undefined {
-  if (!modelUsage || typeof modelUsage !== "object") {
+  const usageRecord = toObjectRecord(modelUsage);
+  if (!usageRecord) {
     return undefined;
   }
 
   let maxContextWindow: number | undefined;
-  for (const value of Object.values(modelUsage as Record<string, unknown>)) {
-    if (!value || typeof value !== "object") {
+  for (const value of Object.values(usageRecord)) {
+    const valueRecord = toObjectRecord(value);
+    if (!valueRecord) {
       continue;
     }
-    const contextWindow = (value as { contextWindow?: unknown }).contextWindow;
+    const contextWindow = valueRecord.contextWindow;
     if (
       typeof contextWindow !== "number" ||
       !Number.isFinite(contextWindow) ||
@@ -1418,15 +1439,11 @@ function readUsageFromTaskNotification(message: { usage?: unknown }): number | u
 }
 
 function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
-  const messageUsage = (event.message as { usage?: unknown } | undefined)?.usage;
-  if (!messageUsage || typeof messageUsage !== "object") {
+  const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
+  if (!messageUsage) {
     return undefined;
   }
-  const usage = messageUsage as {
-    input_tokens?: unknown;
-    cache_creation_input_tokens?: unknown;
-    cache_read_input_tokens?: unknown;
-  };
+  const usage = messageUsage;
   const inputTokens =
     typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)
       ? usage.input_tokens
@@ -1448,7 +1465,7 @@ function readStreamRequestInputTokens(event: Record<string, unknown>): number | 
 }
 
 function readStreamRequestOutputTokens(event: Record<string, unknown>): number | undefined {
-  const outputTokens = (event.usage as { output_tokens?: unknown } | undefined)?.output_tokens;
+  const outputTokens = toObjectRecord(event.usage)?.output_tokens;
   if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens) || outputTokens < 0) {
     return undefined;
   }
@@ -2164,12 +2181,12 @@ class ClaudeAgentSession implements AgentSession {
         ? this.config.thinkingOptionId
         : undefined;
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
-      // SDK 0.2.71 types `effort` as 'low' | 'medium' | 'high' | 'max'; Opus 4.7
-      // adds 'xhigh' which the binary accepts but the typings don't yet expose.
-      return {
-        thinking: { type: "adaptive" },
-        effort: thinkingOptionId as ClaudeOptions["effort"],
-      };
+      if (thinkingOptionId === "xhigh") {
+        // "xhigh" is accepted by Claude Opus 4.7 but not yet in the SDK type definitions
+        // @ts-expect-error -- SDK 0.2.71 effort type doesn't include "xhigh" yet
+        return { thinking: { type: "adaptive" }, effort: thinkingOptionId };
+      }
+      return { thinking: { type: "adaptive" }, effort: thinkingOptionId };
     }
     return { thinking: undefined, effort: undefined };
   }
@@ -2295,14 +2312,16 @@ class ClaudeAgentSession implements AgentSession {
         if (chunk.type === "text") {
           content.push({ type: "text", text: chunk.text });
         } else if (chunk.type === "image") {
-          content.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: chunk.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-              data: chunk.data,
-            },
-          });
+          if (isImageMimeType(chunk.mimeType)) {
+            content.push({
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: chunk.mimeType,
+                data: chunk.data,
+              },
+            });
+          }
         } else {
           content.push({ type: "text", text: renderPromptAttachmentAsText(chunk) });
         }
@@ -2555,7 +2574,7 @@ class ClaudeAgentSession implements AgentSession {
     });
 
     this.queryPumpPromise = pump;
-    pump.finally(() => {
+    void pump.finally(() => {
       if (this.queryPumpPromise === pump) {
         this.queryPumpPromise = null;
       }
@@ -2903,7 +2922,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     if (message.subtype === "status") {
-      const status = (message as { status?: string }).status;
+      const status = toObjectRecord(message)?.status;
       if (status === "compacting") {
         this.compacting = true;
         events.push({
@@ -2915,7 +2934,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     if (message.subtype === "compact_boundary") {
-      const compactMetadata = readCompactionMetadata(message as Record<string, unknown>);
+      const compactMetadata = readCompactionMetadata(message);
       events.push({
         type: "timeline",
         item: {
@@ -3078,12 +3097,12 @@ class ClaudeAgentSession implements AgentSession {
     threadStartedSessionId: string | null;
     notice: AgentTimelineItem | null;
   } {
-    const msg = message as unknown as {
-      session_id?: unknown;
-      sessionId?: unknown;
-      session?: { id?: unknown } | null;
-    };
-    const sessionId = extractSessionIdRaw(msg).trim();
+    const msgRecord = toObjectRecord(message) ?? {};
+    const sessionId = extractSessionIdRaw({
+      session_id: msgRecord.session_id,
+      sessionId: msgRecord.sessionId,
+      session: isObjectRecord(msgRecord.session) ? { id: msgRecord.session.id } : null,
+    }).trim();
     if (!sessionId) {
       return { threadStartedSessionId: null, notice: null };
     }
@@ -3119,12 +3138,12 @@ class ClaudeAgentSession implements AgentSession {
       return { threadStartedSessionId: null, notice: null };
     }
 
-    const msg = message as unknown as {
-      session_id?: unknown;
-      sessionId?: unknown;
-      session?: { id?: unknown } | null;
-    };
-    const newSessionId = extractSessionIdRaw(msg).trim();
+    const msgRecord = toObjectRecord(message) ?? {};
+    const newSessionId = extractSessionIdRaw({
+      session_id: msgRecord.session_id,
+      sessionId: msgRecord.sessionId,
+      session: isObjectRecord(msgRecord.session) ? { id: msgRecord.session.id } : null,
+    }).trim();
     if (!newSessionId) {
       return { threadStartedSessionId: null, notice: null };
     }
@@ -3257,10 +3276,10 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private trackStreamEventUsage(event: unknown): AgentStreamEvent | null {
-    if (!event || typeof event !== "object") {
+    const streamEvent = toObjectRecord(event);
+    if (!streamEvent) {
       return null;
     }
-    const streamEvent = event as Record<string, unknown>;
     const eventType = readTrimmedString(streamEvent.type);
     if (eventType === "message_start") {
       const inputTokens = readStreamRequestInputTokens(streamEvent);
@@ -3476,7 +3495,12 @@ class ClaudeAgentSession implements AgentSession {
 
     let entry: Record<string, unknown>;
     try {
-      entry = JSON.parse(trimmed) as Record<string, unknown>;
+      const parsed: unknown = JSON.parse(trimmed);
+      const record = toObjectRecord(parsed);
+      if (!record) {
+        return;
+      }
+      entry = record;
     } catch {
       return;
     }
@@ -4140,15 +4164,21 @@ function hasToolLikeBlock(block?: ClaudeContentChunk | null): boolean {
   return type.includes("tool");
 }
 
-function readCompactionMetadata(
-  source: Record<string, unknown>,
-): { trigger?: string; preTokens?: number } | null {
-  const candidates = [source.compact_metadata, source.compactMetadata, source.compactionMetadata];
+function readCompactionMetadata(source: unknown): { trigger?: string; preTokens?: number } | null {
+  const sourceRecord = toObjectRecord(source);
+  if (!sourceRecord) {
+    return null;
+  }
+  const candidates = [
+    sourceRecord.compact_metadata,
+    sourceRecord.compactMetadata,
+    sourceRecord.compactionMetadata,
+  ];
   for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== "object") {
+    const metadata = toObjectRecord(candidate);
+    if (!metadata) {
       continue;
     }
-    const metadata = candidate as Record<string, unknown>;
     const trigger = typeof metadata.trigger === "string" ? metadata.trigger : undefined;
     const preTokensRaw = metadata.preTokens ?? metadata.pre_tokens;
     const preTokens = typeof preTokensRaw === "number" ? preTokensRaw : undefined;
@@ -4182,7 +4212,7 @@ function convertClaudeHistoryEntryPreamble(
   entry: ClaudeHistoryEntry,
 ): { shortCircuit: AgentTimelineItem[] } | { proceed: { content: unknown } } {
   if (entry.type === "system" && entry.subtype === "compact_boundary") {
-    const compactMetadata = readCompactionMetadata(entry as Record<string, unknown>);
+    const compactMetadata = readCompactionMetadata(entry);
     return {
       shortCircuit: [
         {
@@ -4397,10 +4427,10 @@ function applyClaudeSessionEntryToAccumulator(
   entryRaw: unknown,
   acc: ClaudeSessionDescriptorAccumulator,
 ): void {
-  if (!entryRaw || typeof entryRaw !== "object") {
+  const entry = toObjectRecord(entryRaw);
+  if (!entry) {
     return;
   }
-  const entry = entryRaw as Record<string, unknown> & { message?: unknown };
   if (entry.isSidechain) {
     return;
   }
@@ -4492,10 +4522,10 @@ async function parseClaudeSessionDescriptor(
 }
 
 function extractClaudeUserText(messageRaw: unknown): string | null {
-  if (!messageRaw || typeof messageRaw !== "object") {
+  const message = toObjectRecord(messageRaw);
+  if (!message) {
     return null;
   }
-  const message = messageRaw as Record<string, unknown>;
   if (typeof message.content === "string") {
     const normalized = message.content.trim();
     return normalized && !isClaudeTranscriptNoiseText(normalized) ? normalized : null;
@@ -4504,14 +4534,11 @@ function extractClaudeUserText(messageRaw: unknown): string | null {
     const normalized = message.text.trim();
     return normalized && !isClaudeTranscriptNoiseText(normalized) ? normalized : null;
   }
-  if (Array.isArray(message.content)) {
+  if (isUnknownArray(message.content)) {
     for (const block of message.content) {
-      if (
-        block &&
-        typeof block === "object" &&
-        typeof (block as { text?: unknown }).text === "string"
-      ) {
-        const normalized = (block as { text: string }).text.trim();
+      const blockRecord = toObjectRecord(block);
+      if (blockRecord && typeof blockRecord.text === "string") {
+        const normalized = blockRecord.text.trim();
         if (normalized && !isClaudeTranscriptNoiseText(normalized)) {
           return normalized;
         }
