@@ -513,6 +513,17 @@ export interface AgentSession {
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
+  /**
+   * Out-of-band prompt handler. When non-null, the manager runs the returned
+   * handler instead of allocating a turn. The handler emits stream events
+   * directly via the provided `emit` callback, which routes through the
+   * manager's persistence + broadcast pipeline. The active foreground turn
+   * (if any) is left untouched, so this is how mid-turn side-effect commands
+   * (e.g. /goal pause) reach the provider without canceling the running turn.
+   */
+  tryHandleOutOfBand?(prompt: AgentPromptInput): {
+    run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
+  } | null;
 }
 
 export interface ListModelsOptions {

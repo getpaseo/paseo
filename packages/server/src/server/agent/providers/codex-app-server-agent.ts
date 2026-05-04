@@ -88,6 +88,47 @@ const ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN = "\n\n---\n\n";
 const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
   "The user approved the plan. Implement it now. Do not restate or revise the plan unless blocked.";
 
+// Codex's experimental `goals` feature ships in 0.128.0+. Older binaries reject
+// `--enable goals` at launch, so we gate by version and silently skip the flag
+// (and the /goal slash command) when the binary is too old.
+const CODEX_GOALS_MIN_VERSION: readonly [number, number, number] = [0, 128, 0];
+
+function parseCodexVersion(versionOutput: string): [number, number, number] | null {
+  const match = versionOutput.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function codexVersionAtLeast(
+  versionOutput: string,
+  min: readonly [number, number, number],
+): boolean {
+  const parsed = parseCodexVersion(versionOutput);
+  if (!parsed) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (parsed[i] > min[i]) return true;
+    if (parsed[i] < min[i]) return false;
+  }
+  return true;
+}
+
+type GoalSubcommand =
+  | { kind: "set"; objective: string }
+  | { kind: "pause" }
+  | { kind: "resume" }
+  | { kind: "clear" }
+  | { kind: "usage" };
+
+function parseGoalSubcommand(args: string | undefined): GoalSubcommand {
+  const trimmed = (args ?? "").trim();
+  if (!trimmed) return { kind: "usage" };
+  const lower = trimmed.toLowerCase();
+  if (lower === "pause") return { kind: "pause" };
+  if (lower === "resume") return { kind: "resume" };
+  if (lower === "clear") return { kind: "clear" };
+  return { kind: "set", objective: trimmed };
+}
+
 const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -2648,6 +2689,7 @@ class CodexAppServerAgentSession implements AgentSession {
     private readonly spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>,
     private readonly deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
+    private readonly goalsEnabled: boolean = false,
   ) {
     this.logger = logger.child({ module: "agent", provider: CODEX_PROVIDER });
     if (config.modeId === undefined) {
@@ -3448,9 +3490,88 @@ class CodexAppServerAgentSession implements AgentSession {
       appServerSkills.length === 0
         ? await listCodexSkills(this.config.cwd, this.deps.workspaceGitService)
         : [];
-    return [...appServerSkills, ...fallbackSkills, ...prompts].sort((a, b) =>
+    const builtin: AgentSlashCommand[] = [];
+    if (this.goalsEnabled) {
+      builtin.push({
+        name: "goal",
+        description: "Set, pause, resume, or clear the agent's goal",
+        argumentHint: "[<objective>|pause|resume|clear]",
+      });
+    }
+    return [...builtin, ...appServerSkills, ...fallbackSkills, ...prompts].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
+  }
+
+  tryHandleOutOfBand(
+    prompt: AgentPromptInput,
+  ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
+    if (!this.goalsEnabled) return null;
+    if (typeof prompt !== "string") return null;
+    const parsed = this.parseSlashCommandInput(prompt);
+    if (!parsed || parsed.commandName !== "goal") return null;
+
+    const subcommand = parseGoalSubcommand(parsed.args);
+    return {
+      run: async ({ emit }) => {
+        const text = await this.executeGoalSubcommand(subcommand);
+        emit({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
+          item: { type: "assistant_message", text },
+        });
+      },
+    };
+  }
+
+  private async executeGoalSubcommand(subcommand: GoalSubcommand): Promise<string> {
+    if (subcommand.kind === "usage") {
+      return "Usage: /goal <objective>|pause|resume|clear";
+    }
+    try {
+      await this.connect();
+      if (this.currentThreadId) {
+        await this.ensureThreadLoaded();
+      } else {
+        await this.ensureThread();
+      }
+      if (!this.client || !this.currentThreadId) {
+        throw new Error("Codex thread is not available");
+      }
+      switch (subcommand.kind) {
+        case "set": {
+          await this.client.request("thread/goal/set", {
+            threadId: this.currentThreadId,
+            objective: subcommand.objective,
+            status: "active",
+          });
+          return `Goal set: ${subcommand.objective}`;
+        }
+        case "pause": {
+          await this.client.request("thread/goal/set", {
+            threadId: this.currentThreadId,
+            status: "paused",
+          });
+          return "Goal paused.";
+        }
+        case "resume": {
+          await this.client.request("thread/goal/set", {
+            threadId: this.currentThreadId,
+            status: "active",
+          });
+          return "Goal resumed.";
+        }
+        case "clear": {
+          await this.client.request("thread/goal/clear", {
+            threadId: this.currentThreadId,
+          });
+          return "Goal cleared.";
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      return `Failed to update goal: ${message}`;
+    }
   }
 
   private async resolveModelAndThinking(): Promise<{
@@ -4489,6 +4610,7 @@ class CodexAppServerAgentSession implements AgentSession {
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  private goalsEnabledPromise: Promise<boolean> | null = null;
 
   constructor(
     private readonly logger: Logger,
@@ -4496,17 +4618,41 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly deps: CodexAppServerAgentDeps = {},
   ) {}
 
+  private resolveGoalsEnabled(): Promise<boolean> {
+    if (!this.goalsEnabledPromise) {
+      this.goalsEnabledPromise = (async () => {
+        try {
+          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
+          const enabled = codexVersionAtLeast(versionOutput, CODEX_GOALS_MIN_VERSION);
+          this.logger.trace({ versionOutput, enabled }, "Resolved codex goals feature gate");
+          return enabled;
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to probe codex version for goals gate");
+          return false;
+        }
+      })();
+    }
+    return this.goalsEnabledPromise;
+  }
+
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
+    options?: { goalsEnabled?: boolean },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+    const args = [...launchPrefix.args, "app-server"];
+    if (options?.goalsEnabled) {
+      args.push("--enable", "goals");
+    }
     this.logger.trace(
       {
         launchPrefix,
+        goalsEnabled: options?.goalsEnabled === true,
       },
       "Spawning Codex app server",
     );
-    const child = spawnProcess(launchPrefix.command, [...launchPrefix.args, "app-server"], {
+    const child = spawnProcess(launchPrefix.command, args, {
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
       ...createProviderEnvSpec({
@@ -4524,13 +4670,15 @@ export class CodexAppServerAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
+    const goalsEnabled = await this.resolveGoalsEnabled();
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env),
+      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
       this.deps,
       options?.persistSession === false,
+      goalsEnabled,
     );
     await session.connect();
     return session;
@@ -4548,12 +4696,15 @@ export class CodexAppServerAgentClient implements AgentClient {
       provider: CODEX_PROVIDER,
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
     };
+    const goalsEnabled = await this.resolveGoalsEnabled();
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env),
+      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
       this.deps,
+      false,
+      goalsEnabled,
     );
     await session.connect();
     return session;
