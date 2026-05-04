@@ -6,6 +6,7 @@ import { expect, type Page } from "@playwright/test";
 import { parseHostWorkspaceRouteFromPathname } from "../../src/utils/host-routes";
 import { gotoAppShell } from "./app";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
+import { switchWorkspaceViaSidebar } from "./workspace-ui";
 import type { SessionOutboundMessage } from "@server/shared/messages";
 
 interface WorkspaceSetupDaemonClient {
@@ -313,6 +314,30 @@ export async function fetchWorkspaceById(
     throw new Error(`Workspace not found: ${workspaceId}`);
   }
   return workspace;
+}
+
+export async function navigateToWorkspaceViaSidebar(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  const serverId = process.env.E2E_SERVER_ID;
+  if (!serverId) {
+    throw new Error("E2E_SERVER_ID is not set.");
+  }
+  await switchWorkspaceViaSidebar({ page, serverId, targetWorkspacePath: workspaceId });
+}
+
+export async function openWorkspaceScriptsMenu(page: Page): Promise<void> {
+  await page.getByTestId("workspace-scripts-button").click();
+  await expect(page.getByTestId("workspace-scripts-menu")).toBeVisible({ timeout: 10_000 });
+}
+
+export async function startWorkspaceScriptFromMenu(page: Page, scriptName: string): Promise<void> {
+  await page.getByTestId(`workspace-scripts-start-${scriptName}`).click();
+}
+
+export async function closeWorkspaceScriptsMenu(page: Page): Promise<void> {
+  await page.getByTestId("workspace-scripts-menu-backdrop").click();
 }
 
 export async function waitForWorkspaceSetupProgress(

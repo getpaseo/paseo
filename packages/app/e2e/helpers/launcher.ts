@@ -174,6 +174,19 @@ export async function sampleTabsDuringTransition(
   return snapshots;
 }
 
+export function terminalSurfaceLocator(page: Page) {
+  return page.locator('[data-testid="terminal-surface"]').first();
+}
+
+export async function expectAgentTabActive(page: Page, agentId: string): Promise<void> {
+  const tabTestId = `workspace-tab-agent_${agentId}`;
+  await expect(page.getByTestId(tabTestId).filter({ visible: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(getActiveTabTestId(page)).resolves.toBe(tabTestId);
+}
+
 // ─── Workspace setup ───────────────────────────────────────────────────────
 
 /** Create a temp git repo and return its path with a cleanup function. */

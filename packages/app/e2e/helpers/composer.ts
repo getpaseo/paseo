@@ -4,6 +4,17 @@ function composerInput(page: Page) {
   return page.getByRole("textbox", { name: "Message agent..." }).first();
 }
 
+export function composerLocator(page: Page) {
+  return composerInput(page);
+}
+
+export async function expectComposerVisible(
+  page: Page,
+  options?: { timeout?: number },
+): Promise<void> {
+  await expect(composerInput(page)).toBeVisible({ timeout: options?.timeout ?? 15_000 });
+}
+
 export async function submitMessage(page: Page, text: string): Promise<void> {
   const input = composerInput(page);
   await expect(input).toBeEditable({ timeout: 30_000 });

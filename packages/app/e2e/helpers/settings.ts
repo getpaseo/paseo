@@ -165,3 +165,74 @@ export async function expectAboutContent(page: Page): Promise<void> {
 export async function expectGeneralContent(page: Page): Promise<void> {
   await expect(page.getByText("Theme", { exact: true }).first()).toBeVisible();
 }
+
+export async function expectHostLabelDisplayed(page: Page): Promise<void> {
+  await expect(page.getByTestId("host-page-label-edit-button")).toBeVisible();
+  await expect(page.getByTestId("host-page-label-input")).toHaveCount(0);
+}
+
+export async function clickEditHostLabel(page: Page): Promise<void> {
+  await page.getByTestId("host-page-label-edit-button").click();
+}
+
+export async function expectHostLabelEditMode(page: Page, expectedLabel: string): Promise<void> {
+  await expect(page.getByTestId("host-page-label-input")).toBeVisible();
+  await expect(page.getByTestId("host-page-label-input")).toHaveValue(expectedLabel);
+  await expect(page.getByTestId("host-page-label-save")).toBeVisible();
+}
+
+export async function expectHostConnectionsCard(page: Page, port: string): Promise<void> {
+  const card = page.getByTestId("host-page-connections-card");
+  await expect(card).toBeVisible();
+  await expect(page.getByText("Connections", { exact: true })).toBeVisible();
+  await expect(
+    card.getByText(new RegExp(`TCP \\((localhost|127\\.0\\.0\\.1):${port}\\)`)),
+  ).toBeVisible();
+}
+
+export async function expectHostInjectMcpCard(page: Page): Promise<void> {
+  const card = page.getByTestId("host-page-inject-mcp-card");
+  await expect(card).toBeVisible();
+  await expect(card.getByRole("switch", { name: "Inject Paseo tools" })).toBeVisible();
+}
+
+export async function expectHostActionCards(page: Page): Promise<void> {
+  await expect(page.getByTestId("host-page-restart-card")).toBeVisible();
+  await expect(page.getByTestId("host-page-restart-button")).toBeVisible();
+  await expect(page.getByTestId("host-page-providers-card")).toBeVisible();
+  await expect(page.getByTestId("host-page-remove-host-card")).toBeVisible();
+  await expect(page.getByTestId("host-page-remove-host-button")).toBeVisible();
+}
+
+export async function expectHostNoLocalOnlyRows(page: Page): Promise<void> {
+  await expect(page.getByTestId("host-page-pair-device-row")).toHaveCount(0);
+  await expect(page.getByTestId("host-page-daemon-lifecycle-card")).toHaveCount(0);
+}
+
+export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<void> {
+  const sidebar = page.getByTestId("settings-sidebar");
+  await expect(sidebar).toBeVisible();
+  await expect(sidebar.getByRole("button", { name: "Hosts", exact: true })).toHaveCount(0);
+  await expect(sidebar.getByRole("button", { name: "Providers", exact: true })).toHaveCount(0);
+  await expect(sidebar.getByRole("button", { name: "Pair device", exact: true })).toHaveCount(0);
+  await expect(sidebar.getByRole("button", { name: "Daemon", exact: true })).toHaveCount(0);
+  await expect(sidebar.getByRole("button", { name: "General", exact: true })).toBeVisible();
+  await expect(sidebar.getByRole("button", { name: "Diagnostics", exact: true })).toBeVisible();
+  await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeVisible();
+}
+
+export async function expectHostPageVisible(page: Page, serverId: string): Promise<void> {
+  await expect(page.getByTestId(`settings-host-page-${serverId}`)).toBeVisible();
+}
+
+export async function expectLocalHostEntryFirst(page: Page, serverId: string): Promise<void> {
+  const sidebar = page.getByTestId("settings-sidebar");
+  await expect(sidebar).toBeVisible({ timeout: 15_000 });
+  await expect(sidebar.locator('[data-testid^="settings-host-entry-"]').first()).toHaveAttribute(
+    "data-testid",
+    `settings-host-entry-${serverId}`,
+  );
+  const localHostEntry = page.getByTestId(`settings-host-entry-${serverId}`);
+  await expect(localHostEntry.getByTestId("settings-host-local-marker")).toBeVisible();
+  await expect(localHostEntry.getByText("Local", { exact: true })).toBeVisible();
+}

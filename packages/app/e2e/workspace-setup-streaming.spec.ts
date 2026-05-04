@@ -1,22 +1,27 @@
 import { test, expect } from "./fixtures";
 import { createTempGitRepo } from "./helpers/workspace";
-import { waitForWorkspaceTabsVisible } from "./helpers/workspace-tabs";
+import {
+  waitForWorkspaceTabsVisible,
+  expectNoTerminalTabs,
+  clickFirstTerminalTab,
+  expectFirstTerminalTabContains,
+} from "./helpers/workspace-tabs";
+import { clickNewChat } from "./helpers/launcher";
+import { expectComposerVisible } from "./helpers/composer";
+import { openFileExplorer, expectExplorerEntryVisible } from "./helpers/file-explorer";
+import { expectTerminalSurfaceVisible, waitForTerminalAttached } from "./helpers/terminal-perf";
 import {
   connectWorkspaceSetupClient,
   createWorkspaceThroughDaemon,
   expectSetupPanel,
   openHomeWithProject,
+  navigateToWorkspaceViaSidebar,
+  openWorkspaceScriptsMenu,
+  startWorkspaceScriptFromMenu,
+  closeWorkspaceScriptsMenu,
   seedProjectForWorkspaceSetup,
   waitForWorkspaceSetupProgress,
 } from "./helpers/workspace-setup";
-
-function getServerId(): string {
-  const serverId = process.env.E2E_SERVER_ID;
-  if (!serverId) {
-    throw new Error("E2E_SERVER_ID is not set.");
-  }
-  return serverId;
-}
 
 interface WorkspaceScriptStarter {
   startWorkspaceScript(
@@ -28,18 +33,6 @@ interface WorkspaceScriptStarter {
     terminalId: string | null;
     error: string | null;
   }>;
-}
-
-/** Click the sidebar row for a workspace (by ID) and wait for navigation. */
-async function navigateToWorkspaceViaSidebar(
-  page: import("@playwright/test").Page,
-  workspaceId: string,
-): Promise<void> {
-  const testId = `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
-  const row = page.getByTestId(testId);
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.click();
-  await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
 }
 
 test.describe("Workspace setup streaming", () => {
@@ -100,31 +93,15 @@ test.describe("Workspace setup streaming", () => {
       });
       await completed;
 
-      // Navigate to workspace and verify it's usable
       await openHomeWithProject(page, repo.path);
       await navigateToWorkspaceViaSidebar(page, workspace.id);
 
       await waitForWorkspaceTabsVisible(page);
-      await page.getByTestId("workspace-new-agent-tab").filter({ visible: true }).first().click();
-      await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible({
-        timeout: 30_000,
-      });
-
-      const explorerToggle = page.getByTestId("workspace-explorer-toggle").first();
-      if ((await explorerToggle.getAttribute("aria-label")) === "Open explorer") {
-        await explorerToggle.click();
-      }
-      await expect(explorerToggle).toHaveAttribute("aria-label", "Close explorer", {
-        timeout: 30_000,
-      });
-      await page.getByTestId("explorer-tab-files").click();
-      await expect(page.getByTestId("file-explorer-tree-scroll")).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText("README.md", { exact: true }).first()).toBeVisible({
-        timeout: 30_000,
-      });
-      await expect(page.getByText("src", { exact: true }).first()).toBeVisible({
-        timeout: 30_000,
-      });
+      await clickNewChat(page);
+      await expectComposerVisible(page, { timeout: 30_000 });
+      await openFileExplorer(page);
+      await expectExplorerEntryVisible(page, "README.md");
+      await expectExplorerEntryVisible(page, "src");
     } finally {
       await client.close();
       await repo.cleanup();
@@ -273,33 +250,14 @@ test.describe("Workspace setup streaming", () => {
       await navigateToWorkspaceViaSidebar(page, workspace.id);
 
       await waitForWorkspaceTabsVisible(page);
-
-      await expect(page.locator('[data-testid^="workspace-tab-terminal_"]')).toHaveCount(0);
-      await page.getByTestId("workspace-scripts-button").click();
-      await expect(page.getByTestId("workspace-scripts-menu")).toBeVisible({ timeout: 10_000 });
-      await page.getByTestId("workspace-scripts-start-web").click();
-      await page.getByTestId("workspace-scripts-menu-backdrop").click();
-
-      const terminalTab = page.locator('[data-testid^="workspace-tab-terminal_"]').first();
-      await expect(terminalTab).toBeVisible({ timeout: 30_000 });
-
-      await terminalTab.click();
-
-      // Verify the terminal surface rendered
-      const terminalSurface = page.getByTestId("terminal-surface").first();
-      await expect(terminalSurface).toBeVisible({ timeout: 10_000 });
-
-      // Wait for terminal to fully attach (loading overlay gone)
-      await page
-        .locator('[data-testid="terminal-attach-loading"]')
-        .waitFor({ state: "hidden", timeout: 10_000 })
-        .catch(() => {
-          // overlay may never appear if attachment is instant
-        });
-
-      await terminalSurface.click();
-
-      await expect(terminalTab).toContainText("web");
+      await expectNoTerminalTabs(page);
+      await openWorkspaceScriptsMenu(page);
+      await startWorkspaceScriptFromMenu(page, "web");
+      await closeWorkspaceScriptsMenu(page);
+      await clickFirstTerminalTab(page);
+      await expectTerminalSurfaceVisible(page, { timeout: 10_000 });
+      await waitForTerminalAttached(page);
+      await expectFirstTerminalTabContains(page, "web");
     } finally {
       await client.close();
       await repo.cleanup();

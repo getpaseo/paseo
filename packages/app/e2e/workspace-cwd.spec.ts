@@ -1,6 +1,12 @@
-import { expect, test } from "./fixtures";
+import { test } from "./fixtures";
 import { clickNewTerminal } from "./helpers/launcher";
-import { setupDeterministicPrompt, waitForTerminalContent } from "./helpers/terminal-perf";
+import {
+  expectTerminalSurfaceVisible,
+  focusTerminalSurface,
+  typeInTerminal,
+  setupDeterministicPrompt,
+  waitForTerminalContent,
+} from "./helpers/terminal-perf";
 
 test.describe("Workspace cwd correctness", () => {
   test("main checkout workspace opens terminals in the project root", async ({
@@ -13,13 +19,10 @@ test.describe("Workspace cwd correctness", () => {
     await workspace.navigateTo();
     await clickNewTerminal(page);
 
-    const terminal = page.locator('[data-testid="terminal-surface"]');
-    await expect(terminal.first()).toBeVisible({ timeout: 20_000 });
-    await terminal.first().click();
-
+    await expectTerminalSurfaceVisible(page);
+    await focusTerminalSurface(page);
     await setupDeterministicPrompt(page, `PWD_READY_${Date.now()}`);
-    await terminal.first().pressSequentially("pwd\n", { delay: 0 });
-
+    await typeInTerminal(page, "pwd\n");
     await waitForTerminalContent(page, (text) => text.includes(workspace.repoPath), 10_000);
   });
 
@@ -33,12 +36,10 @@ test.describe("Workspace cwd correctness", () => {
     await workspace.navigateTo();
     await clickNewTerminal(page);
 
-    const terminal = page.locator('[data-testid="terminal-surface"]');
-    await expect(terminal.first()).toBeVisible({ timeout: 20_000 });
-    await terminal.first().click();
-
+    await expectTerminalSurfaceVisible(page);
+    await focusTerminalSurface(page);
     await setupDeterministicPrompt(page, `PWD_READY_${Date.now()}`);
-    await terminal.first().pressSequentially("pwd\n", { delay: 0 });
+    await typeInTerminal(page, "pwd\n");
     await waitForTerminalContent(page, (text) => text.includes(workspace.repoPath), 10_000);
   });
 });

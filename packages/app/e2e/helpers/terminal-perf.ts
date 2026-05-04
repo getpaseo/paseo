@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -261,6 +261,34 @@ export async function measureKeystrokeLatency(page: Page, char: string): Promise
       (window as unknown as { __perfKeystroke: { promise: Promise<number> } }).__perfKeystroke
         .promise,
   );
+}
+
+export async function expectTerminalSurfaceVisible(
+  page: Page,
+  options?: { timeout?: number },
+): Promise<void> {
+  await expect(page.locator('[data-testid="terminal-surface"]').first()).toBeVisible({
+    timeout: options?.timeout ?? 20_000,
+  });
+}
+
+export async function focusTerminalSurface(page: Page): Promise<void> {
+  await expectTerminalSurfaceVisible(page);
+  await page.locator('[data-testid="terminal-surface"]').first().click();
+}
+
+export async function typeInTerminal(page: Page, text: string): Promise<void> {
+  await page
+    .locator('[data-testid="terminal-surface"]')
+    .first()
+    .pressSequentially(text, { delay: 0 });
+}
+
+export async function waitForTerminalAttached(page: Page): Promise<void> {
+  await page
+    .locator('[data-testid="terminal-attach-loading"]')
+    .waitFor({ state: "hidden", timeout: 10_000 })
+    .catch(() => undefined);
 }
 
 export function computePercentile(samples: number[], p: number): number {

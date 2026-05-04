@@ -13,7 +13,10 @@ import {
   waitForTabWithTitle,
   measureTileTransition,
   sampleTabsDuringTransition,
+  terminalSurfaceLocator,
 } from "./helpers/launcher";
+import { expectComposerVisible, composerLocator } from "./helpers/composer";
+import { expectTerminalSurfaceVisible } from "./helpers/terminal-perf";
 import {
   connectTerminalClient,
   setupDeterministicPrompt,
@@ -49,9 +52,7 @@ test.describe("Tab creation", () => {
 
     await pressNewTabShortcut(page);
 
-    // Should show the composer directly (no launcher panel)
-    const composer = page.getByRole("textbox", { name: "Message agent..." });
-    await expect(composer.first()).toBeVisible({ timeout: 15_000 });
+    await expectComposerVisible(page);
   });
 
   test("opening two new tabs creates two draft tabs", async ({ page }) => {
@@ -78,9 +79,7 @@ test.describe("Tab creation", () => {
 
     await clickNewChat(page);
 
-    // Draft composer should appear (the agent message input)
-    const composer = page.getByRole("textbox", { name: "Message agent..." });
-    await expect(composer.first()).toBeVisible({ timeout: 15_000 });
+    await expectComposerVisible(page);
 
     const tabsAfter = await getTabTestIds(page);
     const draftCountAfter = tabsAfter.filter((id) => id.includes("draft")).length;
@@ -93,9 +92,7 @@ test.describe("Tab creation", () => {
 
     await clickNewTerminal(page);
 
-    // Terminal surface should appear
-    const terminal = page.locator('[data-testid="terminal-surface"]');
-    await expect(terminal.first()).toBeVisible({ timeout: 20_000 });
+    await expectTerminalSurfaceVisible(page);
 
     const tabsAfter = await getTabTestIds(page);
     const terminalTabs = tabsAfter.filter((id) => id.includes("terminal"));
@@ -142,17 +139,16 @@ test.describe("Terminal title propagation", () => {
       await gotoWorkspace(page, workspaceId);
       await clickNewTerminal(page);
 
-      const terminal = page.locator('[data-testid="terminal-surface"]');
-      await expect(terminal.first()).toBeVisible({ timeout: 20_000 });
-      await terminal.first().click();
+      await expectTerminalSurfaceVisible(page);
+      await terminalSurfaceLocator(page).click();
 
       await setupDeterministicPrompt(page);
 
       // Send OSC 0 (set window title) escape sequence
       const testTitle = `E2E-Title-${Date.now()}`;
-      await terminal
-        .first()
-        .pressSequentially(`printf '\\033]0;${testTitle}\\007'\n`, { delay: 0 });
+      await terminalSurfaceLocator(page).pressSequentially(`printf '\\033]0;${testTitle}\\007'\n`, {
+        delay: 0,
+      });
 
       // Wait for the tab to reflect the new title
       await waitForTabWithTitle(page, testTitle, 15_000);
@@ -172,22 +168,22 @@ test.describe("Terminal title propagation", () => {
       await gotoWorkspace(page, workspaceId);
       await clickNewTerminal(page);
 
-      const terminal = page.locator('[data-testid="terminal-surface"]');
-      await expect(terminal.first()).toBeVisible({ timeout: 20_000 });
-      await terminal.first().click();
+      await expectTerminalSurfaceVisible(page);
+      await terminalSurfaceLocator(page).click();
 
       await setupDeterministicPrompt(page);
 
       // Fire many rapid title changes — only the last should stick
       const finalTitle = `Final-${Date.now()}`;
       for (let i = 0; i < 5; i++) {
-        await terminal
-          .first()
-          .pressSequentially(`printf '\\033]0;Rapid-${i}\\007'\n`, { delay: 0 });
+        await terminalSurfaceLocator(page).pressSequentially(`printf '\\033]0;Rapid-${i}\\007'\n`, {
+          delay: 0,
+        });
       }
-      await terminal
-        .first()
-        .pressSequentially(`printf '\\033]0;${finalTitle}\\007'\n`, { delay: 0 });
+      await terminalSurfaceLocator(page).pressSequentially(
+        `printf '\\033]0;${finalTitle}\\007'\n`,
+        { delay: 0 },
+      );
 
       // The tab should eventually settle on the final title
       await waitForTabWithTitle(page, finalTitle, 15_000);
@@ -227,11 +223,10 @@ test.describe("Tab transitions (no flash)", () => {
     test.setTimeout(30_000);
     await gotoWorkspace(page, workspaceId);
 
-    const terminal = page.locator('[data-testid="terminal-surface"]');
     const elapsed = await measureTileTransition(
       page,
       () => clickNewTerminal(page),
-      terminal.first(),
+      terminalSurfaceLocator(page),
       20_000,
     );
 
@@ -244,9 +239,12 @@ test.describe("Tab transitions (no flash)", () => {
   test("New agent tab click shows composer without flash", async ({ page }) => {
     await gotoWorkspace(page, workspaceId);
 
-    const composer = page.getByRole("textbox", { name: "Message agent..." }).first();
-
-    const elapsed = await measureTileTransition(page, () => clickNewChat(page), composer, 10_000);
+    const elapsed = await measureTileTransition(
+      page,
+      () => clickNewChat(page),
+      composerLocator(page),
+      10_000,
+    );
 
     // Draft creation is fully in-memory — should be fast
     // We use a generous budget here because CI can be slow, but the key assertion

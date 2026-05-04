@@ -114,6 +114,49 @@ export async function expectWorkspaceHeader(
   });
 }
 
+export async function expectReconnectingToastVisible(
+  page: Page,
+  options?: { timeout?: number },
+): Promise<void> {
+  await expect(page.getByTestId("agent-reconnecting-toast")).toBeVisible({
+    timeout: options?.timeout ?? 30_000,
+  });
+}
+
+export async function expectReconnectingToastGone(
+  page: Page,
+  options?: { timeout?: number },
+): Promise<void> {
+  await expect(page.getByTestId("agent-reconnecting-toast")).toHaveCount(0, {
+    timeout: options?.timeout ?? 30_000,
+  });
+}
+
+export async function expectHostConnectingOrOffline(
+  page: Page,
+  options?: { timeout?: number },
+): Promise<void> {
+  await expect(
+    page.getByText(/^Connecting$|localhost is offline|Cannot reach localhost/i),
+  ).toBeVisible({ timeout: options?.timeout ?? 30_000 });
+}
+
+export async function expectMenuButtonVisible(page: Page): Promise<void> {
+  await expect(page.getByTestId("menu-button")).toBeVisible();
+}
+
+export async function expectWorkspaceHeaderAbsent(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-header-title")).toHaveCount(0);
+}
+
+export function workspaceDeckEntryLocator(page: Page, serverId: string, workspaceId: string) {
+  return page.getByTestId(`workspace-deck-entry-${serverId}:${workspaceId}`);
+}
+
+export async function expectWorkspaceDeckEntryCount(page: Page, count: number): Promise<void> {
+  await expect(page.locator('[data-testid^="workspace-deck-entry-"]')).toHaveCount(count);
+}
+
 export async function seedWorkspaceActivity(page: Page, marker: string): Promise<void> {
   const input = page.getByRole("textbox", { name: "Message agent..." });
   await expect(input).toBeEditable({ timeout: 30_000 });

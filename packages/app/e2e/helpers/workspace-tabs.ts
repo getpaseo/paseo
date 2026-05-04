@@ -70,6 +70,29 @@ export async function ensureWorkspaceAgentPaneVisible(page: Page): Promise<void>
   }
 }
 
+export async function expectWorkspaceTabsAbsent(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-tabs-row")).toHaveCount(0);
+}
+
+export async function expectNoTerminalTabs(page: Page): Promise<void> {
+  await expect(page.locator('[data-testid^="workspace-tab-terminal_"]')).toHaveCount(0);
+}
+
+export async function clickFirstTerminalTab(
+  page: Page,
+  options?: { timeout?: number },
+): Promise<void> {
+  const tab = page.locator('[data-testid^="workspace-tab-terminal_"]').first();
+  await expect(tab).toBeVisible({ timeout: options?.timeout ?? 30_000 });
+  await tab.click();
+}
+
+export async function expectFirstTerminalTabContains(page: Page, text: string): Promise<void> {
+  await expect(page.locator('[data-testid^="workspace-tab-terminal_"]').first()).toContainText(
+    text,
+  );
+}
+
 export async function sampleWorkspaceTabIds(
   page: Page,
   options: { durationMs?: number; intervalMs?: number } = {},

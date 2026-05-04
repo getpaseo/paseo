@@ -1,12 +1,12 @@
 import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { expect, test, type Page } from "./fixtures";
+import { expect, test } from "./fixtures";
 import {
   archiveAgentFromDaemon,
   connectArchiveTabDaemonClient,
   createIdleAgent,
   openWorkspaceWithAgents,
 } from "./helpers/archive-tab";
-import { getActiveTabTestId, waitForTabBar } from "./helpers/launcher";
+import { waitForTabBar, expectAgentTabActive } from "./helpers/launcher";
 import { createTempGitRepo } from "./helpers/workspace";
 
 function getServerId(): string {
@@ -17,12 +17,15 @@ function getServerId(): string {
   return serverId;
 }
 
-async function pressSettingsToggleShortcut(page: Page) {
+async function pressSettingsToggleShortcut(page: import("@playwright/test").Page) {
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
   await page.keyboard.press(`${modifier}+Comma`);
 }
 
-async function expectSendBehavior(page: Page, expected: "interrupt" | "queue") {
+async function expectSendBehavior(
+  page: import("@playwright/test").Page,
+  expected: "interrupt" | "queue",
+) {
   await expect
     .poll(async () => {
       const raw = await page.evaluate(() => localStorage.getItem("@paseo:app-settings"));
@@ -35,12 +38,11 @@ async function expectSendBehavior(page: Page, expected: "interrupt" | "queue") {
 }
 
 async function openAgentRouteAndExpectFocused(input: {
-  page: Page;
+  page: import("@playwright/test").Page;
   serverId: string;
   workspaceId: string;
   agentId: string;
 }) {
-  const expectedActiveTabId = `workspace-tab-agent_${input.agentId}`;
   await input.page.goto(
     buildHostAgentDetailRoute(input.serverId, input.agentId, input.workspaceId),
   );
@@ -49,10 +51,7 @@ async function openAgentRouteAndExpectFocused(input: {
     { timeout: 60_000 },
   );
   await waitForTabBar(input.page);
-  await expect(
-    input.page.getByTestId(expectedActiveTabId).filter({ visible: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(getActiveTabTestId(input.page)).resolves.toBe(expectedActiveTabId);
+  await expectAgentTabActive(input.page, input.agentId);
 }
 
 test.describe("Settings toggle tab regression", () => {
@@ -79,13 +78,7 @@ test.describe("Settings toggle tab regression", () => {
 
       await openWorkspaceWithAgents(page, [firstAgent, secondAgent]);
       await waitForTabBar(page);
-
-      const expectedActiveTabId = `workspace-tab-agent_${secondAgent.id}`;
-      await expect(page.getByTestId(expectedActiveTabId).filter({ visible: true })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
-      await expect(getActiveTabTestId(page)).resolves.toBe(expectedActiveTabId);
+      await expectAgentTabActive(page, secondAgent.id);
 
       await pressSettingsToggleShortcut(page);
       await expect(page).toHaveURL(/\/settings\/general$/);
@@ -98,19 +91,11 @@ test.describe("Settings toggle tab regression", () => {
       await pressSettingsToggleShortcut(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, repo.path));
       await waitForTabBar(page);
-      await expect(page.getByTestId(expectedActiveTabId).filter({ visible: true })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
-      await expect(getActiveTabTestId(page)).resolves.toBe(expectedActiveTabId);
+      await expectAgentTabActive(page, secondAgent.id);
 
       await page.reload();
       await waitForTabBar(page);
-      await expect(page.getByTestId(expectedActiveTabId).filter({ visible: true })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
-      await expect(getActiveTabTestId(page)).resolves.toBe(expectedActiveTabId);
+      await expectAgentTabActive(page, secondAgent.id);
     } finally {
       for (const agentId of agentIds) {
         await archiveAgentFromDaemon(client, agentId).catch(() => undefined);
@@ -152,14 +137,10 @@ test.describe("Settings toggle tab regression", () => {
         agentId: secondAgent.id,
       });
 
-      const expectedActiveTabId = `workspace-tab-agent_${secondAgent.id}`;
       for (let attempt = 0; attempt < 5; attempt += 1) {
         await page.reload();
         await waitForTabBar(page);
-        await expect(
-          page.getByTestId(expectedActiveTabId).filter({ visible: true }),
-        ).toHaveAttribute("aria-selected", "true");
-        await expect(getActiveTabTestId(page)).resolves.toBe(expectedActiveTabId);
+        await expectAgentTabActive(page, secondAgent.id);
       }
     } finally {
       for (const agentId of agentIds) {
