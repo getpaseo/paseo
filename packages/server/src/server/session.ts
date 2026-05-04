@@ -2163,6 +2163,8 @@ export class Session {
         return this.handleScheduleDeleteRequest(msg);
       case "schedule/run-once":
         return this.handleScheduleRunOnceRequest(msg);
+      case "schedule/update":
+        return this.handleScheduleUpdateRequest(msg);
       default:
         return undefined;
     }
@@ -8405,7 +8407,8 @@ export class Session {
           | "schedule/pause"
           | "schedule/resume"
           | "schedule/delete"
-          | "schedule/run-once";
+          | "schedule/run-once"
+          | "schedule/update";
       }
     >,
     error: unknown,
@@ -8568,6 +8571,32 @@ export class Session {
       const schedule = await this.scheduleService.runOnce(request.scheduleId);
       this.emit({
         type: "schedule/run-once/response",
+        payload: {
+          requestId: request.requestId,
+          schedule,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emitScheduleRpcError(request, error);
+    }
+  }
+
+  private async handleScheduleUpdateRequest(
+    request: Extract<SessionInboundMessage, { type: "schedule/update" }>,
+  ): Promise<void> {
+    try {
+      const schedule = await this.scheduleService.update({
+        id: request.scheduleId,
+        ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
+        ...(request.cadence !== undefined ? { cadence: request.cadence } : {}),
+        ...(request.newAgentConfig !== undefined ? { newAgentConfig: request.newAgentConfig } : {}),
+        ...(request.maxRuns !== undefined ? { maxRuns: request.maxRuns } : {}),
+        ...(request.expiresAt !== undefined ? { expiresAt: request.expiresAt } : {}),
+      });
+      this.emit({
+        type: "schedule/update/response",
         payload: {
           requestId: request.requestId,
           schedule,
