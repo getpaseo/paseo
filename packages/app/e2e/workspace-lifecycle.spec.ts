@@ -54,7 +54,7 @@ test.describe("Workspace lifecycle", () => {
         if (!workspaceResult.workspace) {
           throw new Error(workspaceResult.error ?? `Failed to open project ${repo.path}`);
         }
-        const workspaceId = String(workspaceResult.workspace.id);
+        const workspaceId = workspaceResult.workspace.id;
 
         await openHomeWithProject(page, repo.path);
         await navigateToWorkspaceViaSidebar(page, workspaceId);
@@ -77,7 +77,7 @@ test.describe("Workspace lifecycle", () => {
         if (!workspaceResult.workspace) {
           throw new Error(workspaceResult.error ?? `Failed to open project ${repo.path}`);
         }
-        const workspaceId = String(workspaceResult.workspace.id);
+        const workspaceId = workspaceResult.workspace.id;
 
         await openHomeWithProject(page, repo.path);
         await navigateToWorkspaceViaSidebar(page, workspaceId);
@@ -120,7 +120,7 @@ test.describe("Workspace lifecycle", () => {
         if (!workspaceResult.workspace) {
           throw new Error(workspaceResult.error ?? `Failed to open project ${worktreePath}`);
         }
-        const workspaceId = String(workspaceResult.workspace.id);
+        const workspaceId = workspaceResult.workspace.id;
 
         await openHomeWithProject(page, repo.path);
         await navigateToWorkspaceViaSidebar(page, workspaceId);
@@ -170,7 +170,7 @@ test.describe("Workspace lifecycle", () => {
         if (!workspaceResult.workspace) {
           throw new Error(workspaceResult.error ?? `Failed to open project ${worktreePath}`);
         }
-        const workspaceId = String(workspaceResult.workspace.id);
+        const workspaceId = workspaceResult.workspace.id;
 
         await openHomeWithProject(page, repo.path);
         await navigateToWorkspaceViaSidebar(page, workspaceId);

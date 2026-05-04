@@ -52,7 +52,7 @@ async function openProjectViaDaemon(
     throw new Error(result.error ?? `Failed to open project ${cwd}`);
   }
   return {
-    id: String(result.workspace.id),
+    id: result.workspace.id,
     name: result.workspace.name,
   };
 }

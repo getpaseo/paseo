@@ -86,7 +86,7 @@ function useControllableOpenState({
 }): [boolean, (next: boolean) => void] {
   const [internalOpen, setInternalOpen] = useState(Boolean(defaultOpen));
   const isControlled = typeof open === "boolean";
-  const value = isControlled ? Boolean(open) : internalOpen;
+  const value = isControlled ? open : internalOpen;
   const setValue = useCallback(
     (next: boolean) => {
       if (!isControlled) setInternalOpen(next);
@@ -748,12 +748,12 @@ export function DropdownMenuItem({
       return [
         styles.item,
         selectedStyle,
-        selected && (Boolean(hovered) || pressed) && selectedVariant !== "accent"
+        selected && (hovered || pressed) && selectedVariant !== "accent"
           ? styles.itemSelectedInteractive
           : null,
         isDisabled ? styles.itemDisabled : null,
         muted && !isDisabled ? styles.itemMuted : null,
-        Boolean(hovered) && !pressed && !isDisabled ? styles.itemHovered : null,
+        hovered && !pressed && !isDisabled ? styles.itemHovered : null,
         pressed && !isDisabled ? styles.itemPressed : null,
       ];
     },

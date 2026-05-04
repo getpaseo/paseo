@@ -21,7 +21,7 @@ export function polyfillCrypto(): void {
   if (typeof g.TextEncoder !== "function") {
     class BufferTextEncoder {
       encode(input = ""): Uint8Array {
-        return Uint8Array.from(Buffer.from(String(input), "utf8"));
+        return Uint8Array.from(Buffer.from(input, "utf8"));
       }
     }
     g.TextEncoder = BufferTextEncoder as unknown as typeof TextEncoder;

@@ -514,7 +514,7 @@ function appendTodoList(
 ): StreamItem[] {
   const normalizedItems = items.map((item) => ({
     text: item.text,
-    completed: Boolean(item.completed),
+    completed: item.completed,
   }));
 
   const lastItem = state[state.length - 1];
@@ -658,7 +658,7 @@ function reduceTimelineEvent(
       }
       const items: TodoEntry[] = (item.items ?? []).map((todo) => ({
         text: todo.text,
-        completed: Boolean(todo.completed),
+        completed: todo.completed,
       }));
       return finalizeActiveThoughts(appendTodoList(state, event.provider, items, timestamp));
     }

@@ -32,7 +32,7 @@ test.beforeAll(async () => {
   seedClient = await connectTerminalClient();
   const result = await seedClient.openProject(tempRepo.path);
   if (!result.workspace) throw new Error(result.error ?? "Failed to seed workspace");
-  workspaceId = String(result.workspace.id);
+  workspaceId = result.workspace.id;
 });
 
 test.afterAll(async () => {

@@ -337,7 +337,7 @@ test.describe("Workspace setup streaming", () => {
         throw new Error(result.error ?? "Failed to create workspace");
       }
       const workspaceDir = result.workspace.workspaceDirectory;
-      const workspaceId = String(result.workspace.id);
+      const workspaceId = result.workspace.id;
 
       await completed;
 

@@ -113,7 +113,7 @@ function useControllableOpenState({
 }): [boolean, (next: boolean) => void] {
   const [internalOpen, setInternalOpen] = useState(Boolean(defaultOpen));
   const isControlled = typeof open === "boolean";
-  const value = isControlled ? Boolean(open) : internalOpen;
+  const value = isControlled ? open : internalOpen;
   const setValue = useCallback(
     (next: boolean) => {
       if (!isControlled) setInternalOpen(next);

@@ -228,8 +228,7 @@ export function ComboboxItem({
   const itemPressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.comboboxItem,
-      Boolean(hovered) &&
-        (elevated ? styles.comboboxItemHoveredElevated : styles.comboboxItemHovered),
+      hovered && (elevated ? styles.comboboxItemHoveredElevated : styles.comboboxItemHovered),
       pressed && (elevated ? styles.comboboxItemPressedElevated : styles.comboboxItemPressed),
       active && styles.comboboxItemActive,
       disabled && styles.comboboxItemDisabled,

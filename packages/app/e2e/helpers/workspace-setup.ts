@@ -265,7 +265,7 @@ export async function createWorkspaceThroughDaemon(
     throw new Error(result.error ?? `Failed to create workspace for ${input.cwd}`);
   }
   return {
-    id: String(result.workspace.id),
+    id: result.workspace.id,
     name: result.workspace.name,
   };
 }
@@ -291,7 +291,7 @@ export async function findWorktreeWorkspaceForProject(
     throw new Error(`Failed to find created worktree workspace for ${repoPath}`);
   }
   return {
-    id: String(workspace.id),
+    id: workspace.id,
     name: workspace.name,
     projectRootPath: workspace.projectRootPath,
     workspaceDirectory: workspace.workspaceDirectory,
@@ -308,7 +308,7 @@ export async function fetchWorkspaceById(
   projectRootPath: string;
 }> {
   const payload = await client.fetchWorkspaces();
-  const workspace = payload.entries.find((entry) => String(entry.id) === workspaceId) ?? null;
+  const workspace = payload.entries.find((entry) => entry.id === workspaceId) ?? null;
   if (!workspace) {
     throw new Error(`Workspace not found: ${workspaceId}`);
   }

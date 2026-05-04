@@ -42,7 +42,7 @@ test.describe("Workspace setup runtime authority", () => {
         cwd: repo.path,
         worktreeSlug: `setup-chat-${Date.now()}`,
       });
-      const workspaceId = String(workspace.id);
+      const workspaceId = workspace.id;
 
       const wsInfo = await findWorktreeWorkspaceForProject(client, repo.path);
       expect(wsInfo.workspaceDirectory).not.toBe(repo.path);
@@ -78,7 +78,7 @@ test.describe("Workspace setup runtime authority", () => {
         throw new Error(result.error ?? "Failed to create workspace");
       }
       const workspaceDir = result.workspace.workspaceDirectory;
-      const workspaceId = String(result.workspace.id);
+      const workspaceId = result.workspace.id;
 
       // Navigate to the worktree workspace via sidebar click (direct URL
       // navigation for freshly created worktree workspaces can race with

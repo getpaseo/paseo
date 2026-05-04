@@ -130,8 +130,8 @@ export function normalizeWorkspaceDescriptor(
   payload: WorkspaceDescriptorPayload,
 ): WorkspaceDescriptor {
   return {
-    id: normalizeWorkspaceOpaqueId(String(payload.id)) ?? String(payload.id),
-    projectId: String(payload.projectId),
+    id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
+    projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
     projectRootPath: payload.projectRootPath,
     workspaceDirectory: payload.workspaceDirectory,

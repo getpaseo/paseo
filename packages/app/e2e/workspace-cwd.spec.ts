@@ -45,7 +45,7 @@ test.describe("Workspace cwd correctness", () => {
       if (!workspaceResult.workspace) {
         throw new Error(workspaceResult.error ?? `Failed to open project ${repo.path}`);
       }
-      const workspaceId = String(workspaceResult.workspace.id);
+      const workspaceId = workspaceResult.workspace.id;
 
       // Use sidebar navigation to avoid Expo Router hydration issues
       await openHomeWithProject(page, repo.path);
@@ -95,7 +95,7 @@ test.describe("Workspace cwd correctness", () => {
       if (!workspaceResult.workspace) {
         throw new Error(workspaceResult.error ?? `Failed to open project ${worktreePath}`);
       }
-      const workspaceId = String(workspaceResult.workspace.id);
+      const workspaceId = workspaceResult.workspace.id;
 
       // Use sidebar navigation to avoid Expo Router hydration issues
       // with direct URL navigation to the 2nd+ workspace.
