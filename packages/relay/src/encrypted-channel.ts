@@ -56,9 +56,25 @@ interface E2EEReadyMessage {
   type: "e2ee_ready";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isE2EEHelloMessage(value: unknown): value is E2EEHelloMessage {
+  return (
+    isRecord(value) &&
+    value.type === "e2ee_hello" &&
+    typeof value.key === "string" &&
+    value.key.trim().length > 0
+  );
+}
+
+function isE2EEReadyMessage(value: unknown): value is E2EEReadyMessage {
+  return isRecord(value) && value.type === "e2ee_ready";
+}
+
 function buildInvalidHelloError(rawText: string, parsed?: unknown): Error {
-  const parsedRecord =
-    parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  const parsedRecord = isRecord(parsed) ? parsed : null;
   const rawType = parsedRecord?.type;
   function describeType(value: unknown): string {
     if (typeof value === "string") return value;
@@ -76,6 +92,19 @@ function buildInvalidHelloError(rawText: string, parsed?: unknown): Error {
 
 const HANDSHAKE_RETRY_MS = 1000;
 const MAX_PENDING_SENDS = 200;
+
+interface TimeoutWithUnref {
+  unref(): void;
+}
+
+function hasUnref(timeout: unknown): timeout is TimeoutWithUnref {
+  return (
+    typeof timeout === "object" &&
+    timeout !== null &&
+    "unref" in timeout &&
+    typeof (timeout as Record<string, unknown>).unref === "function"
+  );
+}
 
 /**
  * Creates an encrypted channel as the initiator (client).
@@ -137,7 +166,9 @@ export async function createClientChannel(
     sendHello();
   }, HANDSHAKE_RETRY_MS);
   // Avoid keeping Node processes alive (e.g. tests) if the handshake is stuck.
-  (retry as unknown as { unref?: () => void }).unref?.();
+  if (hasUnref(retry)) {
+    retry.unref();
+  }
 
   return channel;
 }
@@ -160,8 +191,8 @@ export async function createDaemonChannel(
     const shouldIgnorePostHelloPlaintext = (data: string | ArrayBuffer): boolean => {
       try {
         const text = typeof data === "string" ? data : new TextDecoder().decode(data);
-        const parsed = JSON.parse(text) as Partial<E2EEHelloMessage | E2EEReadyMessage>;
-        return parsed.type === "e2ee_hello" || parsed.type === "e2ee_ready";
+        const parsed: unknown = JSON.parse(text);
+        return isE2EEHelloMessage(parsed) || isE2EEReadyMessage(parsed);
       } catch {
         return false;
       }
@@ -178,10 +209,11 @@ export async function createDaemonChannel(
           throw buildInvalidHelloError(helloText);
         }
 
-        const msg = parsed as Partial<E2EEHelloMessage>;
-        if (msg.type !== "e2ee_hello" || typeof msg.key !== "string" || !msg.key.trim()) {
+        if (!isE2EEHelloMessage(parsed)) {
           throw buildInvalidHelloError(helloText, parsed);
         }
+
+        const msg = parsed;
 
         // Buffer any subsequent messages that arrive while we're doing async
         // WebCrypto work to derive the shared key. Without this, it's possible
@@ -269,8 +301,8 @@ export class EncryptedChannel {
     if (this.state === "handshaking") {
       try {
         const text = typeof data === "string" ? data : new TextDecoder().decode(data);
-        const msg = JSON.parse(text) as Partial<E2EEReadyMessage>;
-        if (msg.type === "e2ee_ready") {
+        const parsed: unknown = JSON.parse(text);
+        if (isE2EEReadyMessage(parsed)) {
           this.state = "open";
           this.events.onopen?.();
           for (const cb of this.onOpenCallbacks) cb();
@@ -290,16 +322,16 @@ export class EncryptedChannel {
         try {
           const text = typeof data === "string" ? data : new TextDecoder().decode(data);
           if (text.trim().startsWith("{")) {
-            const parsed = JSON.parse(text) as Partial<E2EEHelloMessage | E2EEReadyMessage>;
+            const parsed: unknown = JSON.parse(text);
 
-            if (parsed.type === "e2ee_hello" && typeof parsed.key === "string") {
+            if (isE2EEHelloMessage(parsed)) {
               if (this.options.daemonKeyPair) {
                 await this.handleDaemonRehello(parsed.key);
               }
               return null;
             }
 
-            if (parsed.type === "e2ee_ready") {
+            if (isE2EEReadyMessage(parsed)) {
               return null;
             }
 
