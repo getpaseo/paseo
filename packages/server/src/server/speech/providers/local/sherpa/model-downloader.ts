@@ -55,7 +55,9 @@ async function downloadToFile(options: DownloadToFileOptions): Promise<void> {
   const tmpPath = `${outputPath}.tmp-${Date.now()}`;
   await mkdir(path.dirname(outputPath), { recursive: true });
 
-  const nodeStream = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
+  // The fetch ReadableStream type is slightly different from what Readable.fromWeb expects
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nodeStream = Readable.fromWeb(res.body as any);
 
   try {
     await pipeline(nodeStream, createWriteStream(tmpPath));
@@ -207,18 +209,16 @@ export async function ensureSherpaOnnxModels(options: {
   logger: pino.Logger;
 }): Promise<Record<SherpaOnnxModelId, string>> {
   const uniq = Array.from(new Set(options.modelIds));
-  const out: Partial<Record<SherpaOnnxModelId, string>> = {};
-  const paths = await Promise.all(
-    uniq.map((id) =>
-      ensureSherpaOnnxModel({
+  const entries: Array<[SherpaOnnxModelId, string]> = await Promise.all(
+    uniq.map(async (id) => {
+      const modelPath = await ensureSherpaOnnxModel({
         modelsDir: options.modelsDir,
         modelId: id,
         logger: options.logger,
-      }),
-    ),
+      });
+      return [id, modelPath] as [SherpaOnnxModelId, string];
+    }),
   );
-  for (let i = 0; i < uniq.length; i += 1) {
-    out[uniq[i]] = paths[i]!;
-  }
-  return out as Record<SherpaOnnxModelId, string>;
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
+  return Object.fromEntries(entries) as Record<SherpaOnnxModelId, string>;
 }
