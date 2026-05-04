@@ -31,6 +31,7 @@ import type { ImageAttachment, MessagePayload } from "@/components/message-input
 import type { AgentAttachment, GitHubSearchItem } from "@server/shared/messages";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
 import { pickerItemToCheckoutRequest, type PickerItem } from "./new-workspace-picker-item";
+import { syncPickerPrAttachment } from "./new-workspace-picker-state";
 
 interface NewWorkspaceScreenProps {
   serverId: string;
@@ -192,36 +193,6 @@ function pickerItemLabel(item: PickerItem): string {
 
 function pickerItemTriggerLabel(item: PickerItem): string {
   return item.kind === "branch" ? item.name : formatPrLabel(item.item);
-}
-
-function syncPickerPrAttachment(input: {
-  attachments: UserComposerAttachment[];
-  previousPickerPrNumber: number | null;
-  item: PickerItem;
-}): { attachments: UserComposerAttachment[]; attachedPrNumber: number | null } {
-  let nextAttachments = input.attachments;
-  let attachedPrNumber: number | null = null;
-
-  if (input.previousPickerPrNumber !== null) {
-    nextAttachments = nextAttachments.filter(
-      (attachment) =>
-        attachment.kind !== "github_pr" || attachment.item.number !== input.previousPickerPrNumber,
-    );
-  }
-
-  if (input.item.kind === "github-pr") {
-    const selectedPr = input.item.item;
-    const hasExistingPrAttachment = nextAttachments.some(
-      (attachment) =>
-        attachment.kind === "github_pr" && attachment.item.number === selectedPr.number,
-    );
-    if (!hasExistingPrAttachment) {
-      nextAttachments = [...nextAttachments, { kind: "github_pr", item: selectedPr }];
-      attachedPrNumber = selectedPr.number;
-    }
-  }
-
-  return { attachments: nextAttachments, attachedPrNumber };
 }
 
 function computePickerOptionData(
