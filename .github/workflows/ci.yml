@@ -252,7 +252,12 @@ jobs:
         run: npm run test --workspace=@getpaseo/relay
 
   cli-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     runs-on: ubuntu-latest
+    name: cli-tests (shard ${{ matrix.shard }}/3)
     steps:
       - uses: actions/checkout@v4
 
@@ -276,3 +281,5 @@ jobs:
           PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: "0"
           PASEO_DICTATION_ENABLED: "0"
           PASEO_VOICE_MODE_ENABLED: "0"
+          PASEO_CLI_TEST_SHARD: ${{ matrix.shard }}
+          PASEO_CLI_TEST_SHARD_TOTAL: "3"

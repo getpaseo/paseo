@@ -44,10 +44,25 @@ try {
     const readPayload = JSON.parse(readJson.stdout);
     assert.strictEqual(readPayload[0]?.author, "00000000-0000-4000-8000-000000000111");
 
-    const waitPromise = ctx.paseo(["chat", "wait", "coord-room", "--timeout", "5s"]);
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    const secondPost = await ctx.paseo(["chat", "post", "coord-room", "second message"]);
-    assert.strictEqual(secondPost.exitCode, 0, secondPost.stderr);
+    // `chat wait` reads "latest message id" then subscribes for newer ones.
+    // Under CI load the subprocess can take >1s to bootstrap, so a single
+    // delayed post races against the read. Post repeatedly and race against
+    // wait — every post is newer than the snapshot wait took, so one of them
+    // always wakes it up.
+    const waitPromise = ctx.paseo(["chat", "wait", "coord-room", "--timeout", "30s"]);
+    const waitSentinel = waitPromise.then(() => "settled" as const);
+    let postedSecond = false;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const post = await ctx.paseo(["chat", "post", "coord-room", "second message"]);
+      assert.strictEqual(post.exitCode, 0, post.stderr);
+      const tick = new Promise<"tick">((resolve) => setTimeout(() => resolve("tick"), 250));
+      const result = await Promise.race([waitSentinel, tick]);
+      if (result === "settled") {
+        postedSecond = true;
+        break;
+      }
+    }
+    assert(postedSecond, "chat wait did not return after repeated posts");
 
     const waited = await waitPromise;
     assert.strictEqual(waited.exitCode, 0, waited.stderr);

@@ -30,6 +30,21 @@ const concurrency =
     ? parsedConcurrency
     : DEFAULT_CONCURRENCY;
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const shardTotal = parsePositiveInt(process.env.PASEO_CLI_TEST_SHARD_TOTAL, 1);
+const shardIndexRaw = parsePositiveInt(process.env.PASEO_CLI_TEST_SHARD, 1);
+if (shardIndexRaw < 1 || shardIndexRaw > shardTotal) {
+  throw new Error(
+    `PASEO_CLI_TEST_SHARD=${shardIndexRaw} out of range for SHARD_TOTAL=${shardTotal}`,
+  );
+}
+const shardIndex = shardIndexRaw - 1;
+
 let jsonOutputPath: string | null = null;
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -106,15 +121,47 @@ console.log("=".repeat(50));
 
 // Discover all test files
 const files = await readdir(__dirname);
-const testFiles = files.filter((f) => f.match(/^\d{2}-.*\.test\.ts$/)).sort();
+const allTestFiles = files.filter((f) => f.match(/^\d{2}-.*\.test\.ts$/)).sort();
 
-if (testFiles.length === 0) {
+// Naive `index % shardTotal` round-robin clusters slow tests by accident
+// because their numeric prefixes (05, 06, 11, 13, 14) align with the stride.
+// Hand off the known long-pole tests round-robin first, then fill the
+// remainder in the reverse direction so shards heavy on slow tests get
+// fewer light tests. Update KNOWN_HEAVY_TESTS from the runner's "Slowest
+// tests" report when timings shift materially.
+const KNOWN_HEAVY_TESTS = new Set([
+  "05-agent-run.test.ts",
+  "06-agent-send.test.ts",
+  "11-agent-wait.test.ts",
+  "13-permit-allow-deny.test.ts",
+  "14-worktree.test.ts",
+]);
+const heavyFiles = allTestFiles.filter((f) => KNOWN_HEAVY_TESTS.has(f));
+const otherFiles = allTestFiles.filter((f) => !KNOWN_HEAVY_TESTS.has(f));
+const shardBuckets: string[][] = Array.from({ length: shardTotal }, () => []);
+heavyFiles.forEach((f, i) => {
+  shardBuckets[i % shardTotal].push(f);
+});
+otherFiles.forEach((f, i) => {
+  shardBuckets[shardTotal - 1 - (i % shardTotal)].push(f);
+});
+const testFiles = shardBuckets[shardIndex];
+
+if (allTestFiles.length === 0) {
   console.log("❌ No test files found");
   await writeJsonSummary({ passed: 0, failed: 0, failures: [] });
   process.exit(1);
 }
 
-console.log(`Found ${testFiles.length} test file(s):\n`);
+if (testFiles.length === 0) {
+  console.log(`❌ No test files for shard ${shardIndex + 1}/${shardTotal}`);
+  await writeJsonSummary({ passed: 0, failed: 0, failures: [] });
+  process.exit(1);
+}
+
+console.log(
+  `Shard ${shardIndex + 1}/${shardTotal}: ${testFiles.length} of ${allTestFiles.length} test file(s):\n`,
+);
 for (const file of testFiles) {
   console.log(`  - ${file}`);
 }
@@ -213,7 +260,9 @@ function flushTestBlock(
   process.stdout.write(`${lines.join("\n")}\n\n`);
 }
 
-console.log(`\nRunning tests with concurrency=${concurrency}\n`);
+console.log(
+  `\nRunning tests with concurrency=${concurrency}, shard=${shardIndex + 1}/${shardTotal}\n`,
+);
 
 const totalStart = Date.now();
 const queue = [...testFiles];
